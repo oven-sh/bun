@@ -107,8 +107,14 @@ fn is_in_test<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
 
 /// Whether the primitive values of each sort have a `then`: that of `Boolean`, `Number`, `BigInt`
 /// and `String`, which a program can add to. `None`: not asked yet.
-#[derive(Default)]
 struct ThenablePrimitives([Cell<Option<bool>>; 4]);
+
+impl ThenablePrimitives {
+    #[inline]
+    fn new() -> Self {
+        Self(core::array::from_fn(|_| core::cell::Cell::new(None)))
+    }
+}
 
 /// Whether the type of `node` can have a `then`. All primitive values of a sort have the same.
 fn can_be_thenable(node: Expr, known: &ThenablePrimitives) -> bool {
@@ -152,8 +158,14 @@ fn can_be_thenable(node: Expr, known: &ThenablePrimitives) -> bool {
 
 /// Whether the literals of each sort have call signatures: those of `Boolean`, `Number`, `BigInt`,
 /// `String` and `Array`, which a program can add to. `None`: not asked yet.
-#[derive(Default)]
 struct CallableLiterals([Cell<Option<bool>>; 5]);
+
+impl CallableLiterals {
+    #[inline]
+    fn new() -> Self {
+        Self(core::array::from_fn(|_| core::cell::Cell::new(None)))
+    }
+}
 
 /// Whether the type of `node` can have call signatures. All literals of a sort have the same.
 fn can_be_function(node: Expr, known: &CallableLiterals) -> bool {
@@ -182,12 +194,22 @@ fn can_be_function(node: Expr, known: &CallableLiterals) -> bool {
     })
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// Whether what has been passed on the way up from an operand is in a test.
     tests: AncestorMemo<'a, bool>,
     callable_literals: CallableLiterals,
     thenable_primitives: ThenablePrimitives,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            tests: AncestorMemo::new(),
+            callable_literals: CallableLiterals::new(),
+            thenable_primitives: ThenablePrimitives::new(),
+        }
+    }
 }
 
 /// Whether an annotated type is maybe a function type, as far as the syntax tells.
@@ -321,7 +343,7 @@ struct HeritageType<'a> {
 
 impl<'a> HeritageType<'a> {
     fn new(ty: Type<'a>) -> Self {
-        let mut members = FxHashMap::default();
+        let mut members = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for member in ty.get_symbol().into_iter().flat_map(|symbol| symbol.members()) {
             members.entry(member.name()).or_insert(member);
         }
@@ -348,10 +370,20 @@ fn is_promise_finally_method(node: Expr) -> bool {
 }
 
 /// Whether functions that return a thenable, and functions that return nothing, are accepted somewhere.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Accepted {
     thenable_return: bool,
     void_return: bool,
+}
+
+impl Accepted {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            thenable_return: false,
+            void_return: false,
+        }
+    }
 }
 
 impl Accepted {
@@ -654,7 +686,7 @@ impl NoMisusedPromises {
             .map(|(index, node)| Argument {
                 index,
                 node,
-                accepted: Accepted::default(),
+                accepted: Accepted::new(),
                 parameter_type: None,
             })
             .collect();
@@ -1083,7 +1115,7 @@ impl Rule for NoMisusedPromises {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {

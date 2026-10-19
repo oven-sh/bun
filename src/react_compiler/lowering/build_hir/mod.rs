@@ -390,7 +390,7 @@ pub(super) fn gather_captured_context<'h>(
         stack: bun_core::StackCheck::init(),
         is_out_of_stack: false,
         scope_stack: vec![enclosing_scope],
-        declared: RefSet::default(),
+        declared: RefSet::with_hasher(rustc_hash::FxBuildHasher),
         referenced: Vec::new(),
     };
     walker.push_scope(func.args_loc());
@@ -412,7 +412,7 @@ pub(super) fn gather_captured_context<'h>(
         reason = "vendored react_compiler_hir HashMap<BindingId, _> contract"
     )]
     let mut captured: crate::collections::FxHashMap<Ref, (i32, Option<SourceLocation>)> =
-        crate::collections::FxHashMap::default();
+        crate::collections::FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 
     for (ref_, ref_loc) in walker.referenced {
         if !ref_.is_symbol() {

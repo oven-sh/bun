@@ -10,15 +10,22 @@ use crate::posix_event_loop::js_vm_ctx;
 
 /// Track if an object whose file descriptor is being watched should keep the
 /// event loop alive. This is not reference counted — only Active / Inactive.
-#[derive(Default)]
 pub struct KeepAlive {
     status: Status,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+impl KeepAlive {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            status: Status::Inactive,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
 enum Status {
     Active,
-    #[default]
     Inactive,
     Done,
 }
@@ -36,7 +43,7 @@ impl KeepAlive {
     }
 
     pub fn init() -> KeepAlive {
-        KeepAlive::default()
+        KeepAlive::new()
     }
 
     /// Prevent a poll from keeping the process alive.

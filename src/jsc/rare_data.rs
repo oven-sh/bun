@@ -63,8 +63,8 @@ pub struct HotMapEntry {
     pub tag: u8,
     pub ptr: *mut (),
 }
-impl Default for HotMapEntry {
-    fn default() -> Self {
+impl HotMapEntry {
+    pub fn new() -> Self {
         Self {
             tag: 0,
             ptr: core::ptr::null_mut(),
@@ -86,7 +86,7 @@ impl HotMap {
     /// Untyped insert — typed `insert<T>` lives in `bun_runtime` where the
     /// `TaggedPointerUnion` payload list is named.
     pub fn insert_raw(&mut self, key: &[u8], entry: HotMapEntry) {
-        let gop = bun_core::handle_oom(self._map.get_or_put(key));
+        let gop = bun_core::handle_oom(self._map.get_or_put(key, HotMapEntry::new));
         if gop.found_existing {
             panic!("HotMap already contains key");
         }
@@ -116,8 +116,8 @@ pub struct EntropyCache {
     pub(crate) cache: [u8; Self::SIZE],
     pub(crate) index: usize,
 }
-impl Default for EntropyCache {
-    fn default() -> Self {
+impl EntropyCache {
+    pub fn new() -> Self {
         Self {
             cache: [0u8; Self::SIZE],
             index: 0,
@@ -280,8 +280,8 @@ pub struct RareData {
 
 pub(crate) type FilePollStore = Async::file_poll::Store;
 
-impl Default for RareData {
-    fn default() -> Self {
+impl RareData {
+    pub fn new() -> Self {
         Self {
             boring_ssl_engine: None,
             stderr_store: None,
@@ -294,9 +294,9 @@ impl Default for RareData {
             hot_map: None,
             cleanup_hooks: Vec::new(),
             file_polls: None,
-            spawn_ipc_group: SocketGroup::default(),
-            test_parallel_ipc_group: SocketGroup::default(),
-            socket_groups: SocketGroups::default(),
+            spawn_ipc_group: SocketGroup::new(),
+            test_parallel_ipc_group: SocketGroup::new(),
+            socket_groups: SocketGroups::new(),
             default_client_ssl_ctx: None,
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
@@ -308,10 +308,10 @@ impl Default for RareData {
             libdeflate_decompressor: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
-            default_csrf_secret: Box::default(),
+            default_csrf_secret: Box::new([]),
             tls_default_ciphers: None,
             spawn_sync_event_loop_: None,
-            path_buf: PathBuf::default(),
+            path_buf: PathBuf::new(),
         }
     }
 }
@@ -322,11 +322,21 @@ impl Default for RareData {
 
 /// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
 /// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
-#[derive(Default)]
 pub struct PathBuf {
     pub(crate) small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
     pub(crate) medium: Option<Box<[u8; 8 * MAX_PATH_BYTES]>>,
     pub(crate) large: Option<Box<[u8; 32 * MAX_PATH_BYTES]>>,
+}
+
+impl PathBuf {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            small: None,
+            medium: None,
+            large: None,
+        }
+    }
 }
 
 impl PathBuf {
@@ -369,8 +379,14 @@ pub type H2PaddedFrameBuffer = [u8; 16384];
 /// the slots.
 ///
 /// PORTING.md §Concurrency: lock owns the data — no sidecar `Mutex<()>` field.
-#[derive(Default)]
 pub struct ProxyEnvStorage(Mutex<ProxyEnvSlots>);
+
+impl ProxyEnvStorage {
+    #[inline]
+    pub fn new() -> Self {
+        Self(Mutex::new(ProxyEnvSlots::new()))
+    }
+}
 
 impl ProxyEnvStorage {
     #[inline]
@@ -393,8 +409,14 @@ const PROXY_ENV_KEYS: [&[u8]; 8] = [
 ];
 
 /// One value per `PROXY_ENV_KEYS` entry.
-#[derive(Default)]
 pub struct ProxyEnvSlots([Option<Arc<RefCountedEnvValue>>; PROXY_ENV_KEYS.len()]);
+
+impl ProxyEnvSlots {
+    #[inline]
+    pub fn new() -> Self {
+        Self([None; PROXY_ENV_KEYS.len()])
+    }
+}
 
 pub struct Slot<'a> {
     /// Static-lifetime name (e.g. "NO_PROXY") — safe to use as
@@ -449,7 +471,7 @@ impl ProxyEnvSlots {
     /// slot refs and put the captured values back into `map`. Caller holds
     /// the `ProxyEnvStorage` lock, like the setter.
     pub(crate) fn restore(&mut self, map: &mut bun_dotenv::Map, snapshot: &ProxyEnvSnapshot) {
-        self.0 = Default::default();
+        self.0 = [None; 8];
         for (key, value) in &snapshot.entries {
             match value {
                 Some(value) => bun_core::handle_oom(map.put(key, value)),
@@ -505,7 +527,6 @@ impl RefCountedEnvValue {
 /// per [`ScriptExecutionContext`](crate::ScriptExecutionContext) that owns
 /// sockets (the VM's own contexts share `RareData`'s), so a context that stops
 /// closes exactly what its script connected.
-#[derive(Default)]
 pub struct SocketGroups {
     /// `Bun.connect` client sockets — one group per context (not per connection).
     bun_connect_group_tcp: SocketGroup,
@@ -525,6 +546,26 @@ pub struct SocketGroups {
     ws_upgrade_tls_group: SocketGroup,
     ws_client_group_: SocketGroup,
     ws_client_tls_group: SocketGroup,
+}
+
+impl SocketGroups {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            bun_connect_group_tcp: SocketGroup::new(),
+            bun_connect_group_tls: SocketGroup::new(),
+            postgres_group: SocketGroup::new(),
+            postgres_tls_group: SocketGroup::new(),
+            mysql_group_: SocketGroup::new(),
+            mysql_tls_group: SocketGroup::new(),
+            valkey_group_: SocketGroup::new(),
+            valkey_tls_group: SocketGroup::new(),
+            ws_upgrade_group_: SocketGroup::new(),
+            ws_upgrade_tls_group: SocketGroup::new(),
+            ws_client_group_: SocketGroup::new(),
+            ws_client_tls_group: SocketGroup::new(),
+        }
+    }
 }
 
 impl SocketGroups {
@@ -715,7 +756,7 @@ impl RareData {
     // ── lazy-init: entropy ─────────────────────────────────────────────────
     fn entropy(&mut self) -> &mut EntropyCache {
         self.entropy_cache.get_or_insert_with(|| {
-            let mut c = Box::new(EntropyCache::default());
+            let mut c = Box::new(EntropyCache::new());
             c.fill();
             c
         })

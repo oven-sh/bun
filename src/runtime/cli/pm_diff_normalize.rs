@@ -57,7 +57,7 @@ pub(crate) fn kind_for(path: &[u8]) -> Option<Kind> {
 pub(crate) const MAX_BYTES: usize = 64 * 1024 * 1024;
 
 /// How hard to normalise before comparing.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct Options {
     /// Fold equivalent syntax too (`!0`/`true`, quote style, redundant parens), not only layout.
     pub minify_syntax: bool,
@@ -65,6 +65,17 @@ pub(crate) struct Options {
     pub dce: bool,
     /// One declaration / call per line: undo `var a, b, c` and `a(), b()` chains (the un-minified display).
     pub relayout: bool,
+}
+
+impl Options {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            minify_syntax: false,
+            dce: false,
+            relayout: false,
+        }
+    }
 }
 
 impl Options {
@@ -315,7 +326,8 @@ fn parse_js<'a>(
     loader: bun_ast::Loader,
     options: Options,
 ) -> Option<Box<bun_ast::Ast<'a>>> {
-    let mut opts = bun_js_parser::ParserOptions::init(Default::default(), loader);
+    let mut opts =
+        bun_js_parser::ParserOptions::init(bun_options_types::jsx::Pragma::new(), loader);
     // Print what is there: no dead-code removal, no macro execution, no import trimming.
     opts.features.dead_code_elimination = options.dce;
     opts.features.no_macros = true;
@@ -329,7 +341,7 @@ fn parse_js<'a>(
     opts.features.standard_decorators = !loader.is_typescript();
     opts.transform_only = true;
     opts.suppress_warnings_about_weird_code = true;
-    let define: &'a bun_js_parser::Define = arena.alloc(bun_js_parser::Define::default());
+    let define: &'a bun_js_parser::Define = arena.alloc(bun_js_parser::Define::new());
     let mut log = bun_ast::Log::init();
     let parser = bun_js_parser::Parser::init(opts, &mut log, source, define, arena).ok()?;
     let bun_js_parser::Result::Ast(ast) = parser.parse().ok()? else {
@@ -402,7 +414,7 @@ fn print_js<'a>(
         import_meta_ref: ast.import_meta_ref,
         source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&mut collector)),
         mangled_props: None,
-        ..Default::default()
+        ..bun_js_printer::Options::new()
     };
     bun_js_printer::print_ast::<_, false, true>(
         &mut printer,
@@ -545,7 +557,7 @@ impl<'s> Namer<'s> {
         taken.dedup();
         Namer {
             arenas: [arena_o, arena_n],
-            weights: Default::default(),
+            weights: bun_collections::HashMap::init(),
             too_deep: false,
             all_names: false,
             profiles: [Vec::new(), Vec::new()],
@@ -927,7 +939,7 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
     let alloc: &'static Arena = &ARENA;
     let mut opts = bun_css::ParserOptions::default(None);
     opts.filename = alloc.alloc_slice_copy(path);
-    let mut import_records = Vec::<bun_ast::ImportRecord>::default();
+    let mut import_records = Vec::<bun_ast::ImportRecord>::new();
     let (sheet, _extra) = bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
         alloc,
         bytes,
@@ -936,7 +948,7 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
         bun_ast::Index::INVALID,
     )
     .ok()?;
-    let symbols = bun_ast::symbol::Map::init_list(Default::default());
+    let symbols = bun_ast::symbol::Map::init_list(Vec::new());
     let result = sheet
         .to_css(
             alloc,
@@ -977,7 +989,7 @@ fn normalize_json(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
         &source,
         bun_js_printer::PrintJsonOptions {
             mangled_props: None,
-            ..Default::default()
+            ..bun_js_printer::PrintJsonOptions::new()
         },
     )
     .ok()?;

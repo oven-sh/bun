@@ -186,7 +186,7 @@ fn write_string(w: &mut Vec<u8>, bytes: &[u8]) {
     write!(
         w,
         "{}",
-        format_json_string_utf8(bytes, JSONFormatterUTF8Options::default())
+        format_json_string_utf8(bytes, JSONFormatterUTF8Options::new())
     )
     .unwrap();
 }

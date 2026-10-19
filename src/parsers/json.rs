@@ -170,7 +170,7 @@ fn parse_impl_in(
                 source: Some(source),
                 loc: range.loc,
                 len: range.len,
-                ..Default::default()
+                ..bun_ast::AddErrorOptions::new()
             },
         );
         return Err(crate::Error::SyntaxError);
@@ -202,7 +202,7 @@ fn run_stage2<'s>(
         indentation: if opts.guess_indentation {
             guess_indentation(&source.contents)
         } else {
-            Indentation::default()
+            Indentation::new()
         },
     })
 }
@@ -220,7 +220,7 @@ fn report_index_error(
                 bun_ast::AddErrorOptions {
                     source: Some(source),
                     loc: bun_ast::usize2loc(source.contents.len()),
-                    ..Default::default()
+                    ..bun_ast::AddErrorOptions::new()
                 },
             );
         }
@@ -230,7 +230,7 @@ fn report_index_error(
                 bun_ast::AddErrorOptions {
                     source: Some(source),
                     loc: bun_ast::usize2loc(pos + 1),
-                    ..Default::default()
+                    ..bun_ast::AddErrorOptions::new()
                 },
             );
         }
@@ -240,7 +240,7 @@ fn report_index_error(
                 bun_ast::AddErrorOptions {
                     source: Some(source),
                     loc: bun_ast::Loc { start: 0 },
-                    ..Default::default()
+                    ..bun_ast::AddErrorOptions::new()
                 },
             );
         }
@@ -269,7 +269,7 @@ pub fn guess_indentation(s: &[u8]) -> Indentation {
         }
         if s[i] == b'/' && s.get(i + 1) == Some(&b'*') {
             let Some(close) = bun_core::strings::index_of(&s[i + 2..], b"*/") else {
-                return Indentation::default();
+                return Indentation::new();
             };
             i += 2 + close + 2;
             continue;
@@ -294,14 +294,14 @@ pub fn guess_indentation(s: &[u8]) -> Indentation {
                 return Indentation {
                     character,
                     scalar: count,
-                    ..Indentation::default()
+                    ..Indentation::new()
                 };
             }
             continue;
         }
         i += 1;
     }
-    Indentation::default()
+    Indentation::new()
 }
 
 /// Parse JSON into the classic `E::Object` / `E::Array` AST, with every string stored as UTF-8.
@@ -345,7 +345,7 @@ fn parse_classic(
                 bun_ast::AddErrorOptions {
                     source: Some(source),
                     loc: out.root.loc,
-                    ..Default::default()
+                    ..bun_ast::AddErrorOptions::new()
                 },
             );
             return Err(e);
@@ -496,10 +496,19 @@ pub fn parse_package_json_utf8(
     Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS, false)?.root)
 }
 
-#[derive(Default)]
 pub struct JsonResult {
     pub root: Expr,
     pub indentation: Indentation,
+}
+
+impl JsonResult {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            root: Expr::EMPTY,
+            indentation: Indentation::new(),
+        }
+    }
 }
 
 /// package.json with runtime options, into the classic AST plus the document's guessed indentation.
@@ -512,7 +521,7 @@ pub fn parse_package_json_utf8_with_opts(
     if source.contents.is_empty() {
         return Ok(JsonResult {
             root: empty_object_expr(),
-            ..Default::default()
+            ..JsonResult::new()
         });
     }
     let out = parse_classic(source, log, bump, opts, false)?;
@@ -867,7 +876,7 @@ pub(crate) fn skip_ws_and_comments(contents: &[u8], mut p: usize) -> Option<usiz
             },
             _ if b >= 0x80 => {
                 let iterator = strings::CodepointIterator::init(&contents[p..]);
-                let mut cursor = strings::Cursor::default();
+                let mut cursor = strings::Cursor::new();
                 if !iterator.next(&mut cursor)
                     || !crate::json_stage2::is_exotic_whitespace(cursor.c)
                 {
@@ -942,7 +951,7 @@ pub fn materialize(
             bun_ast::AddErrorOptions {
                 source: Some(source),
                 loc: root.loc,
-                ..Default::default()
+                ..bun_ast::AddErrorOptions::new()
             },
         );
     })
@@ -991,7 +1000,7 @@ impl Materializer<'_> {
     fn object(&self, o: &E::ObjectJSON) -> E::Object {
         if !self.stack_check.is_safe_to_recurse() {
             self.overflowed.set(true);
-            return E::Object::default();
+            return E::Object::new();
         }
         let rows = o.properties();
         let mut properties: G::PropertyList =
@@ -1001,7 +1010,7 @@ impl Materializer<'_> {
             let key = Expr::init(
                 E::String {
                     data: self.rehome(row.key),
-                    ..Default::default()
+                    ..E::String::new()
                 },
                 row.key_loc,
             );
@@ -1015,7 +1024,7 @@ impl Materializer<'_> {
                 value: Some(self.json_value(&row.value, value_loc)),
                 kind: G::PropertyKind::Normal,
                 initializer: None,
-                ..Default::default()
+                ..G::Property::new()
             });
         }
         E::Object {
@@ -1023,14 +1032,14 @@ impl Materializer<'_> {
             is_single_line: o.is_single_line,
             was_originally_macro: self.was_originally_macro,
             close_brace_loc: o.close_brace_loc,
-            ..Default::default()
+            ..E::Object::new()
         }
     }
 
     fn array(&self, a: &E::ArrayJSON, loc: bun_ast::Loc) -> E::Array {
         if !self.stack_check.is_safe_to_recurse() {
             self.overflowed.set(true);
-            return E::Array::default();
+            return E::Array::new();
         }
         let rows = a.items();
         let mut items: js_ast::ExprNodeList =
@@ -1057,7 +1066,7 @@ impl Materializer<'_> {
             is_single_line: a.is_single_line,
             was_originally_macro: self.was_originally_macro,
             close_bracket_loc: a.close_bracket_loc,
-            ..Default::default()
+            ..E::Array::new()
         }
     }
 

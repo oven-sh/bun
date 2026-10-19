@@ -233,10 +233,10 @@ impl ZStr {
 /// **exclude** the trailing NUL. This is the owned counterpart of `&ZStr`.
 #[derive(Clone)]
 pub struct ZBox(Box<[u8]>); // invariant: last byte == 0
-impl Default for ZBox {
+impl ZBox {
     /// An empty NUL-terminated string.
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         ZBox(Box::new([0u8; 1]))
     }
 }
@@ -2092,7 +2092,7 @@ impl ThreadLock {
                     crate::DumpStackTraceOptions {
                         frame_count: 10,
                         stop_at_jsc_llint: true,
-                        ..Default::default()
+                        ..crate::DumpStackTraceOptions::new()
                     },
                 );
                 panic!("ThreadLock: thread {cur} tried to lock, already held by {prev}");
@@ -2191,11 +2191,11 @@ unsafe extern "C" {
     #[cfg(windows)]
     safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64);
 }
-impl Default for StackCheck {
+impl StackCheck {
     /// `cached_stack_end` defaults to `0`, so
     /// `is_safe_to_recurse()` always reports true until `init`/`update`.
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             cached_stack_end: 0,
         }
@@ -2360,12 +2360,6 @@ impl Ordinal {
         self.0 >= 0
     }
 }
-impl Default for Ordinal {
-    #[inline]
-    fn default() -> Self {
-        Self::INVALID
-    }
-}
 
 // ── Once ──────────────────────────────────────────────────────────────────
 // One-shot initialization cell. Callers use `Once<T>` with the init fn
@@ -2523,13 +2517,6 @@ impl<T> Drop for Once<T> {
             // SAFETY: DONE ⇒ cell holds a valid `T`; we have `&mut self`.
             unsafe { self.cell.get_mut().assume_init_drop() };
         }
-    }
-}
-
-impl<T> Default for Once<T> {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -3017,10 +3004,20 @@ macro_rules! __runtime_embed_impl {
 /// match `extern struct { offset: u32, length: u32 }` — C++ (`WebCore::FetchHeaders`)
 /// and on-disk formats (lockfile, npm manifest cache) read it directly.
 #[repr(C)]
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StringPointer {
     pub offset: u32,
     pub length: u32,
+}
+
+impl StringPointer {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            offset: 0,
+            length: 0,
+        }
+    }
 }
 impl StringPointer {
     #[inline]
@@ -4465,9 +4462,8 @@ pub mod spawn_ffi {
 
     /// Matches `bun_spawn_request_file_action_t::kind`.
     #[repr(u8)]
-    #[derive(Copy, Clone, PartialEq, Eq, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum FileActionType {
-        #[default]
         None = 0,
         Close = 1,
         Dup2 = 2,
@@ -4491,8 +4487,8 @@ pub mod spawn_ffi {
         pub mode: c_int,
     }
 
-    impl Default for Action {
-        fn default() -> Self {
+    impl Action {
+        pub fn new() -> Self {
             Self {
                 kind: FileActionType::None,
                 path: core::ptr::null(),
@@ -4510,8 +4506,8 @@ pub mod spawn_ffi {
         pub len: usize,
     }
 
-    impl Default for ActionsList {
-        fn default() -> Self {
+    impl ActionsList {
+        pub fn new() -> Self {
             Self {
                 ptr: core::ptr::null(),
                 len: 0,
@@ -4538,13 +4534,13 @@ pub mod spawn_ffi {
         pub cgroup_fd: c_int,
     }
 
-    impl Default for BunSpawnRequest {
-        fn default() -> Self {
+    impl BunSpawnRequest {
+        pub fn new() -> Self {
             Self {
                 chdir_buf: core::ptr::null(),
                 detached: false,
                 new_process_group: false,
-                actions: ActionsList::default(),
+                actions: ActionsList::new(),
                 pty_slave_fd: -1,
                 linux_pdeathsig: 0,
                 uid: 0,
@@ -4641,7 +4637,7 @@ fn spawn_sync_inherit_impl(
                 core::array::from_fn(|fd| spawn_ffi::Action {
                     kind: spawn_ffi::FileActionType::Dup2,
                     fds: [fd as core::ffi::c_int, fd as core::ffi::c_int],
-                    ..Default::default()
+                    ..spawn_ffi::Action::new()
                 });
             if stdin == StdinBehavior::Ignore {
                 inherit_stdio[0] = spawn_ffi::Action {
@@ -4657,7 +4653,7 @@ fn spawn_sync_inherit_impl(
                     ptr: inherit_stdio.as_ptr(),
                     len: inherit_stdio.len(),
                 },
-                ..Default::default()
+                ..spawn_ffi::BunSpawnRequest::new()
             };
             let mut pid: core::ffi::c_int = 0;
             // SAFETY: exe/ptrs/environ are NUL-terminated; req layout matches C.
@@ -4831,7 +4827,7 @@ fn spawn_sync_inherit_impl(
 // shims are DIFFERENT types (kernel/libc timespec layouts)
 // for syscall ABI and intentionally do NOT alias this.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Timespec {
     pub sec: i64,
     pub nsec: i64,
@@ -5094,7 +5090,7 @@ pub mod mock_time {
 // soft-float decode; revisit once `core::f16` stabilizes.
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct f16(pub(crate) u16);
 
 impl f16 {

@@ -6,7 +6,6 @@ use smallvec::SmallVec;
 
 /// A direct-mapped cache of results keyed by two numbers, not both 0. It belongs to one checker and
 /// sits in front of a slower lookup. A new entry overwrites whatever occupied its slot.
-#[derive(Default)]
 pub(super) struct Recent {
     /// The two key numbers, the result and a tag. Initially empty, then a power of two of entries.
     places: Vec<[u32; 4]>,
@@ -14,6 +13,17 @@ pub(super) struct Recent {
     shift: u32,
     /// Number of entries inserted since the table last grew.
     added: usize,
+}
+
+impl Recent {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            places: Vec::new(),
+            shift: 0,
+            added: 0,
+        }
+    }
 }
 
 impl Recent {
@@ -78,11 +88,21 @@ impl Recent {
 /// with that mapper is in progress (`activeTypeMappersCaches`), and a hit in that cache does not
 /// add to `instantiationCount`. The results are cached elsewhere here. This records what that
 /// cache would hold, for the count.
-#[derive(Default)]
 pub(super) struct ActiveMappers {
     mappers: Vec<MapperId>,
     activations: Vec<Activation>,
     pushed: u32,
+}
+
+impl ActiveMappers {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            mappers: Vec::new(),
+            activations: Vec::new(),
+            pushed: 0,
+        }
+    }
 }
 
 struct Activation {

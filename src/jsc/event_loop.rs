@@ -115,15 +115,15 @@ pub struct EventLoop {
     pub signal_handler: Option<bun_ptr::BackRef<PosixSignalHandle>>,
 }
 
-impl Default for EventLoop {
-    fn default() -> Self {
+impl EventLoop {
+    pub fn new() -> Self {
         Self {
             tasks: Queue::init(),
             closed_for_tasks: false,
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
             yield_tasks: Vec::new(),
-            concurrent_tasks: ConcurrentQueue::default(),
+            concurrent_tasks: ConcurrentQueue::new(),
             isolated_poster: None,
             global: None,
             virtual_machine: None,
@@ -132,7 +132,7 @@ impl Default for EventLoop {
             forever_timer: None,
             #[cfg(not(windows))]
             holds_forever_poll: false,
-            deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
+            deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::new(),
             uws_loop: None,
             entered_event_loop_count: 0,
             task_drains: AtomicU64::new(0),
@@ -966,7 +966,7 @@ impl EventLoop {
         // the JSC teardown before this finalized it. A worker's VM box is
         // `dealloc`'d without running `Drop` (WebWorker::shutdown), so nothing
         // else frees it.
-        self.deferred_tasks = DeferredTaskQueue::DeferredTaskQueue::default();
+        self.deferred_tasks = DeferredTaskQueue::DeferredTaskQueue::new();
     }
 
     /// Note (§Dispatch): `task` is an erased
@@ -1597,7 +1597,7 @@ fn vm_from_ptr<'a>(vm: *mut ()) -> &'a mut VirtualMachine {
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut () {
     let vm = vm_from_ptr(vm);
-    let mut el = Box::new(EventLoop::default());
+    let mut el = Box::new(EventLoop::new());
     el.global = NonNull::new(vm.global);
     el.virtual_machine = NonNull::new(std::ptr::from_mut(vm));
     el.uws_loop = NonNull::new(uws_loop);

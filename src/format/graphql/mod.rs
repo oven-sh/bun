@@ -29,11 +29,21 @@ pub fn is_graphql_path(path: &[u8]) -> bool {
 }
 
 /// Everything that is allocated to format a text. It is reused for the next one.
-#[derive(Default)]
 pub struct Scratch {
     tree: parser::Tree,
     attached: Vec<comments::Attached>,
     document: crate::Scratch,
+}
+
+impl Scratch {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            tree: parser::Tree::new(),
+            attached: Vec::new(),
+            document: crate::Scratch::new(),
+        }
+    }
 }
 
 /// Appends the formatted `text` to `out`: Prettier's `formatWithCursor`, without the cursor.
@@ -104,7 +114,8 @@ fn format_range(
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
     parser::parse(text, &mut scratch.tree).map_err(because_of)?;
-    let range = range::calculate_range(text, &scratch.tree, start, end).unwrap_or_default();
+    let range = range::calculate_range(text, &scratch.tree, start, end)
+        .unwrap_or_else(bun_lint::span::Span::init);
     let (before, rest) = text.split_at((range.start as usize).min(text.len()));
     let (slice, after) = rest.split_at((range.len() as usize).min(rest.len()));
 

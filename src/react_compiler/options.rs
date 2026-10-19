@@ -5,7 +5,7 @@ use crate::hir::environment_config::{EnvironmentConfig, ExternalFunctionConfig};
 /// This is the Bun port of upstream's `PluginOptions`
 /// (`vendor/react-compiler/crates/react_compiler/src/entrypoint/plugin_options.rs`);
 /// only the fields the Bun integration actually consumes are kept.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ReactCompilerOptions {
     pub enabled: bool,
     pub is_dev: bool,
@@ -37,4 +37,26 @@ pub struct ReactCompilerOptions {
     pub logger_test_only: bool,
     /// Test-only: assert that nothing was compiled.
     pub expect_nothing_compiled: bool,
+}
+
+impl ReactCompilerOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            enabled: false,
+            is_dev: false,
+            filename: None,
+            compilation_mode: None,
+            panic_threshold: None,
+            target: None,
+            environment: EnvironmentConfig::new(),
+            gating: None,
+            dynamic_gating: None,
+            output_mode: None,
+            parse_test_pragmas: false,
+            ignore_use_no_forget: false,
+            logger_test_only: false,
+            expect_nothing_compiled: false,
+        }
+    }
 }

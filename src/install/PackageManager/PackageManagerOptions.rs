@@ -10,10 +10,9 @@ use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
 
 /// Network policy for this install.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum OfflineMode {
     /// Default: revalidate stale manifests, download what is missing.
-    #[default]
     Online,
     /// `--prefer-offline` / `install.prefer = "offline"`: a cached manifest of any age
     /// satisfies resolution; only what is missing from the cache is fetched.
@@ -125,8 +124,8 @@ pub struct Options {
     pub(crate) config_version: Option<ConfigVersion>,
 }
 
-impl Default for Options {
-    fn default() -> Self {
+impl Options {
+    pub fn new() -> Self {
         Self {
             log_level: LogLevel::Default,
             global: false,
@@ -136,26 +135,26 @@ impl Default for Options {
             did_override_default_scope: false,
             registry_from_command_line: false,
             // Always assigned in `load()` before read.
-            scope: Npm::registry::Scope::default(),
-            registries: Npm::registry::Map::default(),
+            scope: Npm::registry::Scope::new(),
+            registries: Npm::registry::Map::init(),
             url_auth: Vec::new(),
             cache_directory: b"",
-            enable: Enable::default(),
-            do_: Do::default(),
+            enable: Enable::new(),
+            do_: Do::new(),
             positionals: &[],
-            update: DependencyGroup::default(),
+            update: DependencyGroup::DEPENDENCIES,
             dry_run: false,
             check: false,
             link_workspace_packages: true,
             remote_package_features: Features {
                 optional_dependencies: true,
-                ..Features::default()
+                ..Features::new()
             },
             local_package_features: Features {
                 optional_dependencies: true,
                 dev_dependencies: true,
                 workspaces: true,
-                ..Features::default()
+                ..Features::new()
             },
             patch_features: PatchFeatures::Nothing,
             filter_patterns: &[],
@@ -167,8 +166,8 @@ impl Default for Options {
             max_retry_count: 5,
             min_simultaneous_requests: 4,
             max_concurrent_lifecycle_scripts: usize::from(bun_core::get_thread_count()) * 2,
-            publish_config: PublishConfig::default(),
-            ca: Box::default(),
+            publish_config: PublishConfig::new(),
+            ca: Box::new([]),
             ca_file_name: b"",
             save_text_lockfile: None,
             lockfile_only: false,
@@ -202,7 +201,7 @@ pub enum PatchFeatures {
     Commit { patches_dir: &'static [u8] },
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct PublishConfig {
     pub access: Option<Access>,
     pub tag: &'static [u8],
@@ -211,6 +210,21 @@ pub struct PublishConfig {
     pub tolerate_republish: bool,
     pub provenance_flag: Option<bool>,
     pub provenance_npmrc: Option<bool>,
+}
+
+impl PublishConfig {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            access: None,
+            tag: &[],
+            otp: &[],
+            auth_type: None,
+            tolerate_republish: false,
+            provenance_flag: None,
+            provenance_npmrc: None,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -557,9 +571,8 @@ fn publish_config_registry<'b>(
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum LogLevel {
-    #[default]
     Default,
     Verbose,
     Silent,
@@ -598,7 +611,7 @@ pub use bun_install_types::NodeLinker::NodeLinker;
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 fn make_open_dir(path: &[u8]) -> crate::Result<bun_sys::Fd> {
     bun_sys::Dir::cwd()
-        .make_open_path(path, Default::default())
+        .make_open_path(path, bun_sys::OpenDirOptions::new())
         .map(|d| d.into_raw())
         .map_err(Into::into)
 }
@@ -705,7 +718,7 @@ impl Options {
                 .set(Enable::MANIFEST_CACHE_CONTROL, manifest_cache == b"2");
         }
 
-        let mut base = Api::NpmRegistry::default();
+        let mut base = Api::NpmRegistry::new();
         if let Some(registry) = runtime_npmrc.and_then(|npmrc| npmrc.default_registry.as_ref()) {
             base = registry.clone();
         }
@@ -1303,8 +1316,8 @@ bitflags::bitflags! {
     }
 }
 
-impl Default for Do {
-    fn default() -> Self {
+impl Do {
+    pub fn new() -> Self {
         Do::SAVE_LOCKFILE
             | Do::LOAD_LOCKFILE
             | Do::INSTALL_PACKAGES
@@ -1345,8 +1358,8 @@ bitflags::bitflags! {
     }
 }
 
-impl Default for Enable {
-    fn default() -> Self {
+impl Enable {
+    pub fn new() -> Self {
         Enable::MANIFEST_CACHE | Enable::MANIFEST_CACHE_CONTROL | Enable::CACHE
     }
 }

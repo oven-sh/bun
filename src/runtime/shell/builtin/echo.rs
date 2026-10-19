@@ -3,7 +3,6 @@ use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
 pub(crate) struct Echo {
     /// The fully-rendered output (joined argv + optional trailing newline).
     /// Kept on the state so the async IOWriter path can borrow it across
@@ -12,9 +11,17 @@ pub(crate) struct Echo {
     state: State,
 }
 
-#[derive(Default)]
+impl Echo {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            output: Vec::new(),
+            state: State::Idle,
+        }
+    }
+}
+
 enum State {
-    #[default]
     Idle,
     WaitingIo,
     Done,

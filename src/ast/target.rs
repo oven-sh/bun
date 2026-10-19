@@ -7,9 +7,8 @@ use enum_map::Enum;
 
 /// Defaults to `Browser`; keep `Default` so resolver can field-default it.
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr)]
 pub enum Target {
-    #[default]
     Browser,
     Bun,
     BunMacro,

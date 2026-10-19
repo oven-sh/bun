@@ -96,11 +96,21 @@ impl Rule for OnlyExportComponents {
     }
 }
 
-#[derive(Default)]
 struct ExportAnalysis {
     has_react_export: bool,
     non_component_exports: Vec<Span>,
     react_context_exports: Vec<Span>,
+}
+
+impl ExportAnalysis {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            has_react_export: false,
+            non_component_exports: Vec::new(),
+            react_context_exports: Vec::new(),
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -195,7 +205,7 @@ impl OnlyExportComponents {
             _ => stmt.is_default_export() || is_export_declaration(stmt),
         };
         let has_exports = file.body().iter().any(exports_something);
-        let mut analysis = ExportAnalysis::default();
+        let mut analysis = ExportAnalysis::new();
         if has_exports {
             for stmt in module_items(file) {
                 self.analyze_export(stmt, &mut analysis, cx);
@@ -216,7 +226,7 @@ impl OnlyExportComponents {
             NO_EXPORT
         };
         // What is in an `export`.
-        let mut exported = AncestorMemo::default();
+        let mut exported = AncestorMemo::new();
         let mut is_exported = |node: Node<'a>| {
             let is_export = |node: Node| {
                 matches!(node, Node::Stmt(it)

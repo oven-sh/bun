@@ -160,7 +160,8 @@ impl Moves<'_, '_> {
         else {
             return;
         };
-        let (mut bounds, mut ranks): (SmallVec<[u32; 8]>, SmallVec<[u8; 8]>) = Default::default();
+        let (mut bounds, mut ranks): (SmallVec<[u32; 8]>, SmallVec<[u8; 8]>) =
+            (smallvec::SmallVec::new(), smallvec::SmallVec::new());
         let mut end = 0;
         if let Some([first, .., last] | [first @ last]) =
             hir.type_params.get(function.type_params.range())

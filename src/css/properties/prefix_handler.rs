@@ -5,7 +5,6 @@ use crate::generics::{DeepClone as _, IsCompatible as _};
 use bun_alloc::ArenaVecExt as _;
 
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
-#[derive(Default)]
 pub struct FallbackHandler {
     pub(crate) color: Option<usize>,
     pub(crate) text_shadow: Option<usize>,
@@ -16,6 +15,16 @@ pub struct FallbackHandler {
     // stroke: Option<usize>,
     // caret_color: Option<usize>,
     // caret: Option<usize>,
+}
+
+impl FallbackHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            color: None,
+            text_shadow: None,
+        }
+    }
 }
 
 impl FallbackHandler {

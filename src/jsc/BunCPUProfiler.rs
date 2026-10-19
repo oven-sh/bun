@@ -229,7 +229,6 @@ pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
 #[cfg(windows)]
 pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
     #[repr(C)]
-    #[derive(Default)]
     struct SystemTime {
         year: u16,
         month: u16,
@@ -240,10 +239,26 @@ pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
         second: u16,
         milliseconds: u16,
     }
+
+    impl SystemTime {
+        #[inline]
+        fn new() -> Self {
+            Self {
+                year: 0,
+                month: 0,
+                day_of_week: 0,
+                day: 0,
+                hour: 0,
+                minute: 0,
+                second: 0,
+                milliseconds: 0,
+            }
+        }
+    }
     unsafe extern "system" {
         fn GetLocalTime(system_time: *mut SystemTime);
     }
-    let mut st = SystemTime::default();
+    let mut st = SystemTime::new();
     // SAFETY: GetLocalTime only writes the out-param (kernel32 SYSTEMTIME layout).
     unsafe { GetLocalTime(&mut st) };
     (

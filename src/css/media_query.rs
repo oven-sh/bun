@@ -128,8 +128,8 @@ pub struct MediaList {
     pub media_queries: Vec<MediaQuery, ArenaPtr>,
 }
 
-impl Default for MediaList {
-    fn default() -> Self {
+impl MediaList {
+    pub fn new() -> Self {
         Self {
             media_queries: Vec::new_in(ArenaPtr::global()),
         }

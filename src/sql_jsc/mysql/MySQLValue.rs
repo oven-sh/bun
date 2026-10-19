@@ -58,7 +58,9 @@ impl ExecuteParam for Value<'_> {
             Value::Double(value) => writer.write(&value.to_le_bytes()),
             Value::String(value) => writer.write_length_encoded_string(value.slice()),
             Value::Bytes(global_object, value) => {
-                let buffer = value.as_array_buffer(global_object).unwrap_or_default();
+                let buffer = value
+                    .as_array_buffer(global_object)
+                    .unwrap_or_else(bun_jsc::ArrayBuffer::new);
                 writer.write_length_encoded_string(buffer.byte_slice())
             }
             Value::Date(value) => {
@@ -176,7 +178,7 @@ impl<'a> Value<'a> {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct DateTime {
     year: u16,
     month: u8,
@@ -185,6 +187,21 @@ pub struct DateTime {
     minute: u8,
     second: u8,
     microsecond: u32,
+}
+
+impl DateTime {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            year: 0,
+            month: 0,
+            day: 0,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            microsecond: 0,
+        }
+    }
 }
 
 impl DateTime {
@@ -202,7 +219,7 @@ impl DateTime {
                     ),
                     month: val[2],
                     day: val[3],
-                    ..Default::default()
+                    ..DateTime::new()
                 }
             }
             7 => {
@@ -222,7 +239,7 @@ impl DateTime {
                     hour: val[4],
                     minute: val[5],
                     second: val[6],
-                    ..Default::default()
+                    ..DateTime::new()
                 }
             }
             11 => {
@@ -358,7 +375,7 @@ impl DateTime {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Time {
     pub(crate) negative: bool,
     pub(crate) days: u32,
@@ -369,13 +386,27 @@ pub struct Time {
 }
 
 impl Time {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            negative: false,
+            days: 0,
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+            microseconds: 0,
+        }
+    }
+}
+
+impl Time {
     /// `val` is 0, 8 or 12 bytes long.
     pub(crate) fn from_binary(val: &[u8]) -> Time {
         if val.is_empty() {
-            return Time::default();
+            return Time::new();
         }
 
-        let mut time = Time::default();
+        let mut time = Time::new();
         if val.len() >= 8 {
             time.negative = val[0] != 0;
             time.days = u32::from_le_bytes(val[1..5].try_into().expect("infallible: size matches"));

@@ -19,13 +19,23 @@ const STATE_INIT_CLASS_PROP: Message =
 const OXLINT_IN_CONSTRUCTOR: Message = Message::new("", "State initialization should be in a constructor");
 const OXLINT_IN_CLASS_PROPERTY: Message = Message::new("", "State initialization should be in a class property");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// As oxlint finds it.
     in_es6_component: AncestorMemo<'a, ()>,
     /// Whether the innermost method around something is a constructor, for oxlint.
     in_constructor: AncestorMemo<'a, bool>,
     pragmas: OnceCell<Pragmas<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            in_es6_component: AncestorMemo::new(),
+            in_constructor: AncestorMemo::new(),
+            pragmas: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 impl Rule for StateInConstructor {
@@ -49,7 +59,7 @@ impl Rule for StateInConstructor {
         if file.language().is_oxlint && file.find_name("Component").or_else(|| file.find_name("PureComponent")).is_none() {
             return None;
         }
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

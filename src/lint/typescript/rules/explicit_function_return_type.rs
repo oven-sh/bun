@@ -288,7 +288,7 @@ impl Rule for ExplicitFunctionReturnType {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(AncestorMemo::default())
+        Some(AncestorMemo::new())
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

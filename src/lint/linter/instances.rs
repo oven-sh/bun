@@ -20,11 +20,20 @@ pub(super) struct Instances<R> {
     made: Guarded<Made>,
 }
 
-#[derive(Default)]
 struct Made {
     /// For each rule, by its index in the registry: what has been made of it, by the options.
     by_rule: Vec<Vec<(Arc<[Json]>, Instance)>>,
     len: u32,
+}
+
+impl Made {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            by_rule: Vec::new(),
+            len: 0,
+        }
+    }
 }
 
 /// Where an [`Instance`] is.
@@ -48,7 +57,7 @@ impl<R> Instances<R> {
     pub(super) fn new() -> Instances<R> {
         Instances {
             chunks: std::array::from_fn(|_| OnceLock::new()),
-            made: Guarded::new(Made::default()),
+            made: Guarded::new(Made::new()),
         }
     }
 

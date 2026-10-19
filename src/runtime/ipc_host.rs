@@ -77,7 +77,7 @@ fn do_send_err(
             // safe `emit_process_error_event` is `JSHostFnZig`, not `JSHostFn`.
             __jsc_host_emit_process_error_event,
             1,
-            Default::default(),
+            bun_jsc::js_function::CreateJSFunctionOptions::new(),
         );
         JSValue::call_next_tick_1(target, global_object, ex)?;
         return Ok(JSValue::FALSE);
@@ -104,7 +104,7 @@ pub(crate) fn do_send(
     } else if options_.is_callable() {
         callback = options_;
     } else if !options_.is_undefined() {
-        global_object.validate_object("options", options_, Default::default())?;
+        global_object.validate_object("options", options_, bun_jsc::ValidateObjectOpts::new())?;
         if options_
             .fast_get(global_object, bun_jsc::BuiltinName::internal)?
             .is_some_and(|v| v.to_boolean())

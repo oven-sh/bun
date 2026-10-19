@@ -75,8 +75,8 @@ impl Rule for NoDeprecated {
         }
         let mut state = State {
             maps: ExportMaps::of(file)?,
-            deprecated: FxHashMap::default(),
-            namespaces: FxHashMap::default(),
+            deprecated: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            namespaces: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             found: Vec::new(),
             first_references: None,
         };
@@ -328,7 +328,7 @@ impl<'a> State<'a> {
             ..
         } = self;
         let first_references = first_references.get_or_insert_with(|| {
-            let mut first_references = FxHashMap::default();
+            let mut first_references = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for reference in node.file().references_as_visited() {
                 let name = reference.name();
                 if deprecated.contains_key(&name) || namespaces.contains_key(&name) {

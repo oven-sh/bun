@@ -62,7 +62,7 @@ fn check_regex<'a>(
     if !strings::contains_char(pattern, b'(') {
         return;
     }
-    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default()) else {
+    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::new()) else {
         return;
     };
     let as_is = OnceCell::new();

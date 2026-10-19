@@ -88,19 +88,29 @@ pub fn is_builtin_symbol_like_recurser<'a>(
     ty: Type<'a>,
     mut predicate: impl FnMut(Type<'a>) -> Option<bool>,
 ) -> bool {
-    recurse(ty, &mut predicate, &mut BaseTypeAnswers::default())
+    recurse(ty, &mut predicate, &mut BaseTypeAnswers::new())
 }
 
 /// The answers to one question about the types that extend several, where the answer for a type is made of those for its base
 /// types. Where interfaces extend each other in the shape of diamonds, the paths to a base type are two to the power of their
 /// number.
-#[derive(Default)]
 pub(crate) struct BaseTypeAnswers<'a> {
     known: IdMap<Type<'a>, bool>,
     /// The types that are being asked about, from the outermost.
     open: SmallVec<[Type<'a>; 4]>,
     /// The first of `open` that has been come across again since the last of them was begun with.
     first_reopened: Option<usize>,
+}
+
+impl<'a> BaseTypeAnswers<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            known: IdMap::init(),
+            open: SmallVec::new(),
+            first_reopened: None,
+        }
+    }
 }
 
 impl<'a> BaseTypeAnswers<'a> {

@@ -9,7 +9,7 @@ use crate::utils::text;
 pub(super) type Id = u32;
 
 /// Some consecutive elements of one of the vectors of a [`Program`].
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(super) struct Run {
     pub(super) start: u32,
     pub(super) len: u32,
@@ -38,8 +38,15 @@ impl Run {
 }
 
 /// A set of types of nodes.
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) struct TypeSet([u64; 3]);
+
+impl TypeSet {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self([0; 3])
+    }
+}
 
 const _: () = assert!(NodeType::ALL.len() <= 3 * 64);
 
@@ -50,7 +57,7 @@ impl TypeSet {
 
     /// The types for which `holds`.
     pub(super) fn where_(holds: impl Fn(NodeType) -> bool) -> TypeSet {
-        let mut set = TypeSet::default();
+        let mut set = TypeSet::new();
         for &node_type in NodeType::ALL.iter().filter(|it| holds(**it)) {
             set.0[node_type as usize / 64] |= 1 << (node_type as usize % 64);
         }
@@ -337,11 +344,23 @@ impl Literal {
     }
 }
 
-#[derive(Default)]
 pub(super) struct Program {
     pub(super) ops: Vec<Op>,
     pub(super) lists: Vec<Id>,
     pub(super) keys: Vec<Key>,
     pub(super) tests: Vec<Test>,
     pub(super) bytes: Vec<u8>,
+}
+
+impl Program {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            ops: Vec::new(),
+            lists: Vec::new(),
+            keys: Vec::new(),
+            tests: Vec::new(),
+            bytes: Vec::new(),
+        }
+    }
 }

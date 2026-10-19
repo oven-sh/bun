@@ -355,8 +355,8 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     rwf_unsupported: core::cell::Cell<bool>,
 }
 
-impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> {
-    fn default() -> Self {
+impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
+    pub fn new() -> Self {
         Self {
             handle: PollOrFd::Closed,
             parent: None,
@@ -689,10 +689,10 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     rwf_unsupported: core::cell::Cell<bool>,
 }
 
-impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent> {
-    fn default() -> Self {
+impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
+    pub fn new() -> Self {
         Self {
-            outgoing: StreamBuffer::default(),
+            outgoing: StreamBuffer::new(),
             handle: PollOrFd::Closed,
             parent: core::ptr::null_mut(),
             is_done: false,
@@ -1489,8 +1489,8 @@ pub struct WindowsBufferedWriter<Parent: WindowsBufferedWriterParent> {
 }
 
 #[cfg(windows)]
-impl<Parent: WindowsBufferedWriterParent> Default for WindowsBufferedWriter<Parent> {
-    fn default() -> Self {
+impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
+    pub fn new() -> Self {
         Self {
             source: None,
             owns_fd: true,
@@ -1849,10 +1849,19 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Basic Vec<u8> + usize cursor wrapper
-#[derive(Default)]
 pub struct StreamBuffer {
     pub list: Vec<u8>,
     pub cursor: usize,
+}
+
+impl StreamBuffer {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            list: Vec::new(),
+            cursor: 0,
+        }
+    }
 }
 
 impl StreamBuffer {
@@ -2035,8 +2044,8 @@ pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
 }
 
 #[cfg(windows)]
-impl<Parent: WindowsStreamingWriterParent> Default for WindowsStreamingWriter<Parent> {
-    fn default() -> Self {
+impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
+    pub fn new() -> Self {
         Self {
             source: None,
             owns_fd: true,
@@ -2044,8 +2053,8 @@ impl<Parent: WindowsStreamingWriterParent> Default for WindowsStreamingWriter<Pa
             is_done: false,
             write_req: bun_core::ffi::zeroed(),
             write_buffer: uv::uv_buf_t::init(b""),
-            outgoing: StreamBuffer::default(),
-            current_payload: StreamBuffer::default(),
+            outgoing: StreamBuffer::new(),
+            current_payload: StreamBuffer::new(),
             last_write_result: WriteResult::Wrote(0),
             closed_without_reporting: false,
         }

@@ -68,7 +68,7 @@ pub(crate) struct Edge<const SIDE: bake::Side> {
 }
 
 /// Heads of one file's two edge linked lists.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct EdgeLists {
     /// Start of the "dependencies" linked list (files that import this file).
     pub(crate) first_dep: Option<EdgeIndex>,
@@ -76,9 +76,17 @@ pub(crate) struct EdgeLists {
     pub(crate) first_import: Option<EdgeIndex>,
 }
 
-#[derive(Default)]
+impl EdgeLists {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            first_dep: None,
+            first_import: None,
+        }
+    }
+}
+
 pub(crate) enum Content {
-    #[default]
     Unknown,
     /// When stale, the code is "", otherwise it contains at least one
     /// non-whitespace character (empty chunks contain a function wrapper).
@@ -146,10 +154,10 @@ impl File {
     }
 }
 
-impl Default for File {
+impl File {
     /// Only exists to satisfy `StringArrayHashMap::get_or_put`'s `V: Default`
     /// bound; the slot is always overwritten on `!found_existing`.
-    fn default() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             kind: FileKind::Unknown,
             failed: false,
@@ -160,7 +168,7 @@ impl Default for File {
             is_hmr_root: false,
             is_special_framework_file: false,
             html_route_bundle_index: None,
-            source_map: Default::default(),
+            source_map: crate::bake::dev_server::packed_map::Shared::None,
             content: Content::Unknown,
         }
     }
@@ -246,8 +254,8 @@ pub(crate) struct TakeJSBundleOptionsClient<'a> {
     /// The page and layouts of a route whose pages also run in the browser: `config.route`.
     pub(crate) route_page_files: Option<&'a super::router_glue::ClientPageFiles>,
 }
-impl Default for TakeJSBundleOptionsClient<'_> {
-    fn default() -> Self {
+impl TakeJSBundleOptionsClient<'_> {
+    pub(crate) fn new() -> Self {
         Self {
             kind: ChunkKind::InitialResponse,
             script_id: source_map_store::Key::init(0),
@@ -264,16 +272,24 @@ pub(crate) struct TakeJSBundleOptionsServer {
 }
 
 #[repr(C)]
-#[derive(Default)]
 struct TempLookup {
     edge_index: EdgeIndex,
     seen: bool,
 }
 
+impl TempLookup {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            edge_index: EdgeIndex::init(0),
+            seen: false,
+        }
+    }
+}
+
 /// Parameterized via `adt_const_params` on `bake::Side`; `File` itself is
 /// still the folded union (see TODO above) until a trait dispatch picks the
 /// per-side layout.
-#[derive(Default)]
 pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Keys are absolute paths for the "file" namespace (owned). Index = `FileIndex`.
     pub(crate) bundled_files: StringArrayHashMap<File>,
@@ -300,9 +316,27 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_css_files: Vec<u64>,
 }
 
+impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            bundled_files: StringArrayHashMap::init(),
+            stale_files: DynamicBitSetUnmanaged::new(),
+            edge_lists: Vec::new(),
+            edges: Vec::new(),
+            edges_free_list: Vec::new(),
+            current_chunk_len: 0,
+            current_chunk_parts: Vec::new(),
+            current_chunk_code: Vec::new(),
+            current_chunk_source_maps: Vec::new(),
+            current_css_files: Vec::new(),
+        }
+    }
+}
+
 /// Byte-count breakdown of an incremental graph's memory usage (graph
 /// structures, cached code, source maps).
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct GraphMemoryCost {
     pub(crate) graph: usize,
     pub(crate) code: usize,
@@ -535,7 +569,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // Free the key string and tombstone the slot. Cannot swap-remove since
         // FrameworkRouter / SerializedFailure hold FileIndices into this graph.
         // Tombstoned slots are not reused; a free-list is a pending idea.
-        self.bundled_files.keys_mut()[file_index.get() as usize] = Box::default();
+        self.bundled_files.keys_mut()[file_index.get() as usize] = Box::new([]);
         let lists = &self.edge_lists[file_index.get() as usize];
         debug_assert!(lists.first_dep.is_none());
         debug_assert!(lists.first_import.is_none());
@@ -585,7 +619,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
 
-        let gop = self.bundled_files.get_or_put(key)?;
+        let gop = self.bundled_files.get_or_put(key, File::new)?;
         let file_index = FileIndex::<SIDE>::init(gop.index as u32);
         let found_existing = gop.found_existing;
         if !found_existing {
@@ -593,7 +627,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         // Note: drop `gop` borrow before pushing to other Vecs / re-borrowing.
         if !found_existing {
-            self.edge_lists.push(EdgeLists::default());
+            self.edge_lists.push(EdgeLists::new());
         }
 
         if self.stale_files.bit_length > file_index.get() as usize {
@@ -611,8 +645,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if found_existing {
                     // Note: take the existing slot out so `free_file_content`
                     // can borrow `&mut self` while we hold the `File` by value.
-                    let mut existing = core::mem::take(
+                    let mut existing = core::mem::replace(
                         &mut self.bundled_files.values_mut()[file_index.get() as usize],
+                        File::new(),
                     );
                     self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
 
@@ -702,7 +737,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         is_ssr: is_ssr_graph,
                         is_client_component_boundary: scb,
                         is_route: false,
-                        ..Default::default()
+                        ..File::new()
                     };
                     if scb {
                         self.dev_incremental_result()
@@ -813,7 +848,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // Build a map from the existing import list. Later, entries that
         // were not marked as `.seen = true` will be freed.
-        let mut quick_lookup: ArrayHashMap<FileIndex<SIDE>, TempLookup> = ArrayHashMap::default();
+        let mut quick_lookup: ArrayHashMap<FileIndex<SIDE>, TempLookup> = ArrayHashMap::new();
         {
             let mut it = self.edge_lists[file_index.get() as usize].first_import;
             while let Some(edge_index) = it {
@@ -1035,7 +1070,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             ctx.gts.bits(SIDE).set(imported_file_index.get() as usize);
         }
 
-        let gop = quick_lookup.get_or_put(imported_file_index)?;
+        let gop = quick_lookup.get_or_put(imported_file_index, TempLookup::new)?;
         if gop.found_existing {
             if gop.value_ptr.seen {
                 return Ok(EdgeAttachmentResult::Continue);
@@ -1310,7 +1345,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Client => graph == bake::Graph::Client,
             Side::Server => graph != bake::Graph::Client,
         });
-        let gop = self.bundled_files.get_or_put(abs_path)?;
+        let gop = self.bundled_files.get_or_put(abs_path, File::new)?;
         let idx = gop.index;
         let found_existing = gop.found_existing;
         if found_existing {
@@ -1321,7 +1356,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             *gop.key_ptr = Box::<[u8]>::from(abs_path);
         }
         if !found_existing {
-            self.edge_lists.push(EdgeLists::default());
+            self.edge_lists.push(EdgeLists::new());
         }
         self.ensure_stale_bit_capacity(true)?;
         self.stale_files.set(idx);
@@ -1329,7 +1364,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         match SIDE {
             Side::Client => {
                 if found_existing {
-                    let mut existing = core::mem::take(&mut self.bundled_files.values_mut()[idx]);
+                    let mut existing =
+                        core::mem::replace(&mut self.bundled_files.values_mut()[idx], File::new());
                     // Note: re-derive owned key via `RawSlice` so
                     // `free_file_content` can borrow `&mut self`.
                     let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
@@ -1337,7 +1373,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     existing.kind = FileKind::Unknown;
                     self.bundled_files.values_mut()[idx] = existing;
                 } else {
-                    self.bundled_files.values_mut()[idx] = File::default();
+                    self.bundled_files.values_mut()[idx] = File::new();
                 }
             }
             Side::Server => {
@@ -1350,7 +1386,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         is_ssr: is_ssr_graph,
                         is_route: route == RouteKind::Route,
                         is_client_component_boundary: false,
-                        ..Default::default()
+                        ..File::new()
                     };
                 } else if is_ssr_graph {
                     self.bundled_files.values_mut()[idx].is_ssr = true;
@@ -1368,7 +1404,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         abs_path: &[u8],
         kind: FileKind,
     ) -> Result<InsertEmptyResult<SIDE>, bun_alloc::AllocError> {
-        let gop = self.bundled_files.get_or_put(abs_path)?;
+        let gop = self.bundled_files.get_or_put(abs_path, File::new)?;
         let idx = gop.index;
         let found_existing = gop.found_existing;
         if !found_existing {
@@ -1378,15 +1414,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     kind,
                     content: match kind {
                         FileKind::Unknown => Content::Unknown,
-                        FileKind::Js => Content::Js(Box::default()),
-                        FileKind::Asset => Content::Asset(Box::default()),
+                        FileKind::Js => Content::Js(Box::new([])),
+                        FileKind::Asset => Content::Asset(Box::new([])),
                         FileKind::Css => Content::CssChild,
                     },
-                    ..Default::default()
+                    ..File::new()
                 },
                 Side::Server => File {
                     kind,
-                    ..Default::default()
+                    ..File::new()
                 },
             };
         }
@@ -1394,7 +1430,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // `bundled_files` ends before `ensure_stale_bit_capacity` reborrows.
         let key = bun_ptr::RawSlice::new(&**gop.key_ptr);
         if !found_existing {
-            self.edge_lists.push(EdgeLists::default());
+            self.edge_lists.push(EdgeLists::new());
             self.ensure_stale_bit_capacity(true)?;
         }
         Ok(InsertEmptyResult {
@@ -1413,7 +1449,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         abs_path: &[u8],
     ) -> Result<(), crate::Error> {
         debug_assert!(matches!(SIDE, Side::Server));
-        let gop = self.bundled_files.get_or_put(abs_path)?;
+        let gop = self.bundled_files.get_or_put(abs_path, File::new)?;
         let file_index = FileIndex::<SIDE>::init(gop.index as u32);
         let found_existing = gop.found_existing;
         if !found_existing {
@@ -1421,10 +1457,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         *gop.value_ptr = File {
             kind: FileKind::Css,
-            ..Default::default()
+            ..File::new()
         };
         if !found_existing {
-            self.edge_lists.push(EdgeLists::default());
+            self.edge_lists.push(EdgeLists::new());
         }
         *ctx.get_cached_index(Side::Server, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));
@@ -1440,13 +1476,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     ) -> Result<(), bun_alloc::AllocError> {
         let (idx, found_existing) = match key {
             InsertFailureKey::AbsPath(abs_path) => {
-                let gop = self.bundled_files.get_or_put(abs_path)?;
+                let gop = self.bundled_files.get_or_put(abs_path, File::new)?;
                 if !gop.found_existing {
                     *gop.key_ptr = Box::<[u8]>::from(abs_path);
                 }
                 let (i, fe) = (gop.index, gop.found_existing);
                 if !fe {
-                    self.edge_lists.push(EdgeLists::default());
+                    self.edge_lists.push(EdgeLists::new());
                 }
                 (i, fe)
             }
@@ -1458,7 +1494,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         match SIDE {
             Side::Client => {
                 if found_existing {
-                    let mut existing = core::mem::take(&mut self.bundled_files.values_mut()[idx]);
+                    let mut existing =
+                        core::mem::replace(&mut self.bundled_files.values_mut()[idx], File::new());
                     let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
                     self.free_file_content(key.slice(), &mut existing, FreeCssMode::UnrefCss);
                     existing.failed = true;
@@ -1467,7 +1504,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 } else {
                     self.bundled_files.values_mut()[idx] = File {
                         failed: true,
-                        ..Default::default()
+                        ..File::new()
                     };
                 }
             }
@@ -1477,7 +1514,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         failed: true,
                         is_rsc: !is_ssr_graph,
                         is_ssr: is_ssr_graph,
-                        ..Default::default()
+                        ..File::new()
                     };
                 } else {
                     let f = &mut self.bundled_files.values_mut()[idx];
@@ -1515,7 +1552,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         };
         // SAFETY: sibling-field access.
         unsafe {
-            let fail_gop = (*dev).bundling_failures.get_or_put(fail_owner)?;
+            let fail_gop = (*dev)
+                .bundling_failures
+                .get_or_put(fail_owner, SerializedFailure::new)?;
             (*dev)
                 .incremental_result
                 .failures_added

@@ -4,7 +4,6 @@ use bun_ptr::RawSlice;
 pub(crate) type InlineStorage = BoundedArray<u8, 15>;
 
 /// Represents data that can be either owned or temporary
-#[derive(Default)]
 pub enum Data {
     Owned(Vec<u8>),
     // `Temporary` borrows external bytes (see `substring`, which returns a
@@ -14,7 +13,6 @@ pub enum Data {
     // enforced by callers, not the compiler.
     Temporary(RawSlice<u8>),
     InlineStorage(InlineStorage),
-    #[default]
     Empty,
 }
 

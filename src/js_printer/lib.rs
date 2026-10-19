@@ -116,11 +116,22 @@ pub mod analyze_transpiled_module {
 
     /// Kept as plain bools for ergonomic field access
     /// (`mi.flags.contains_import_meta = true`); bitcast at the (de)serialize boundary.
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct Flags {
         pub contains_import_meta: bool,
         pub is_typescript: bool,
         pub has_tla: bool,
+    }
+
+    impl Flags {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                contains_import_meta: false,
+                is_typescript: false,
+                has_tla: false,
+            }
+        }
     }
     impl Flags {
         #[inline]
@@ -431,12 +442,23 @@ pub mod analyze_transpiled_module {
     /// `(specifier, ScriptFetchParameters::Type, phase)` per JSC's
     /// `ModuleAnalyzer::appendRequestedModule` (WebKit 90b2ecf79ae3).
     // PERF: three allocations + a side HashMap; revisit with a real IndexMap.
-    #[derive(Default)]
     struct RequestedModules {
         keys: Vec<StringID>,
         values: Vec<FetchParameters>,
         phases: Vec<ModulePhase>,
         index: HashMap<(StringID, u8, ModulePhase), usize>,
+    }
+
+    impl RequestedModules {
+        #[inline]
+        fn new() -> Self {
+            Self {
+                keys: Vec::new(),
+                values: Vec::new(),
+                phases: Vec::new(),
+                index: HashMap::init(),
+            }
+        }
     }
     impl RequestedModules {
         fn keys(&self) -> &[StringID] {
@@ -489,17 +511,17 @@ pub mod analyze_transpiled_module {
         }
         fn init(is_typescript: bool) -> Self {
             Self {
-                strings_map: HashMap::default(),
+                strings_map: HashMap::init(),
                 strings_buf: Vec::new(),
                 strings_lens: Vec::new(),
-                requested_modules: RequestedModules::default(),
+                requested_modules: RequestedModules::new(),
                 buffer: Vec::new(),
                 record_kinds: Vec::new(),
                 flags: Flags {
                     is_typescript,
-                    ..Flags::default()
+                    ..Flags::new()
                 },
-                exported_names: HashMap::default(),
+                exported_names: HashMap::init(),
                 finalized: false,
             }
         }
@@ -796,7 +818,7 @@ pub mod analyze_transpiled_module {
                 record_kinds_idx: usize,
                 is_namespace: bool,
             }
-            let mut local_name_to_module_name: HashMap<StringID, LocalImport> = HashMap::default();
+            let mut local_name_to_module_name: HashMap<StringID, LocalImport> = HashMap::init();
             {
                 let mut i = 0usize;
                 for (idx, &k) in self.record_kinds.iter().enumerate() {
@@ -1393,15 +1415,15 @@ impl<'a> Options<'a> {
             .ctx
             .is_none()
         {
-            return RequireOrImportMeta::default();
+            return RequireOrImportMeta::new();
         }
         self.require_or_import_meta_for_source_callback
             .call(id, was_unwrapped_require)
     }
 }
 
-impl<'a> Default for Options<'a> {
-    fn default() -> Self {
+impl<'a> Options<'a> {
+    pub fn new() -> Self {
         Self {
             bundling: false,
             to_commonjs_ref: Ref::NONE,
@@ -1410,7 +1432,7 @@ impl<'a> Default for Options<'a> {
             require_ref: None,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
-            indent: Indentation::default(),
+            indent: Indentation::new(),
             source_map_handler: None,
             target: bun_ast::Target::Browser,
             runtime_transpiler_cache: None,
@@ -1427,7 +1449,7 @@ impl<'a> Default for Options<'a> {
             print_dce_annotations: true,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
-            require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
+            require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::new(),
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
@@ -1443,18 +1465,36 @@ use bun_ast::{Indentation, IndentationCharacter};
 
 // `is_export` gates whether printing a binding also records an export entry
 // in ModuleInfo; dead-code elimination drops it when MAY_HAVE_MODULE_INFO is false.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct TopLevelAndIsExport {
     pub is_export: bool,
 }
 
+impl TopLevelAndIsExport {
+    #[inline]
+    pub fn new() -> Self {
+        Self { is_export: false }
+    }
+}
+
 /// Downstream-compat: `print_json` callers pass this. Only the fields any caller actually sets are surfaced
 /// here and forwarded into `Options { .. }` inside `print_json`.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct PrintJsonOptions<'a> {
     pub indent: Indentation,
     pub mangled_props: Option<&'a MangledProps>,
     pub minify_whitespace: bool,
+}
+
+impl<'a> PrintJsonOptions<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            indent: Indentation::new(),
+            mangled_props: None,
+            minify_whitespace: false,
+        }
+    }
 }
 
 // `print_json` lives below the `Printer` impl (after `__gated_printer`) so it
@@ -1464,7 +1504,7 @@ pub struct PrintJsonOptions<'a> {
 // RequireOrImportMeta
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct RequireOrImportMeta {
     // CommonJS files will return the "require_*" wrapper function and an invalid
     // exports object reference. Lazily-initialized ESM files will return the
@@ -1475,6 +1515,18 @@ pub struct RequireOrImportMeta {
     pub was_unwrapped_require: bool,
 }
 
+impl RequireOrImportMeta {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            wrapper_ref: Ref::NONE,
+            exports_ref: Ref::NONE,
+            is_wrapper_async: false,
+            was_unwrapped_require: false,
+        }
+    }
+}
+
 // Clone/Copy: bitwise OK — `ctx` is a non-owning opaque backref the caller
 // keeps alive for the print pass; `callback` is POD.
 #[derive(Clone, Copy)]
@@ -1483,10 +1535,10 @@ pub struct RequireOrImportMetaCallback {
     pub(crate) callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
 }
 
-impl Default for RequireOrImportMetaCallback {
-    fn default() -> Self {
+impl RequireOrImportMetaCallback {
+    pub fn new() -> Self {
         fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
-            RequireOrImportMeta::default()
+            RequireOrImportMeta::new()
         }
         Self {
             ctx: None,
@@ -2308,7 +2360,7 @@ pub(crate) mod __gated_printer {
                             let mut temp_bindings = core::mem::take(&mut self.temporary_bindings);
                             temp_bindings.reserve(2);
                             temp_bindings.push(B::Property {
-                                flags: Default::default(),
+                                flags: enumset::EnumSet::empty(),
                                 key: Expr::init(
                                     E::String::init(&target_e_dot.name),
                                     target_e_dot.name_loc,
@@ -2317,7 +2369,7 @@ pub(crate) mod __gated_printer {
                                 default_value: None,
                             });
                             temp_bindings.push(B::Property {
-                                flags: Default::default(),
+                                flags: enumset::EnumSet::empty(),
                                 key: Expr::init(
                                     E::String::init(&second_e_dot.name),
                                     second_e_dot.name_loc,
@@ -2351,7 +2403,7 @@ pub(crate) mod __gated_printer {
                                     symbols.follow(binding.get().r#ref).eql(target_ref);
 
                                 temp_bindings.push(B::Property {
-                                    flags: Default::default(),
+                                    flags: enumset::EnumSet::empty(),
                                     key: Expr::init(E::String::init(&e_dot.name), e_dot.name_loc),
                                     value: decl.binding,
                                     default_value: None,
@@ -2488,7 +2540,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"...");
                 }
 
-                self.print_binding(arg.binding, TopLevelAndIsExport::default());
+                self.print_binding(arg.binding, TopLevelAndIsExport::new());
 
                 if let Some(default) = &arg.default {
                     self.print_whitespacer(ws!(b" = "));
@@ -3198,7 +3250,7 @@ pub(crate) mod __gated_printer {
             let mut ascii_start: usize = 0;
             let mut is_ascii = false;
             let iter = CodepointIterator::init(bytes);
-            let mut cursor = strings::Cursor::default();
+            let mut cursor = strings::Cursor::new();
 
             while iter.next(&mut cursor) {
                 match cursor.c as u32 {
@@ -4682,7 +4734,7 @@ pub(crate) mod __gated_printer {
                 let mut ascii_start: usize = 0;
                 let mut is_ascii = false;
                 let iter = CodepointIterator::init(&e.value);
-                let mut cursor = strings::Cursor::default();
+                let mut cursor = strings::Cursor::new();
                 while iter.next(&mut cursor) {
                     match cursor.c as u32 {
                         FIRST_ASCII..=LAST_ASCII => {
@@ -4831,7 +4883,7 @@ pub(crate) mod __gated_printer {
                 initializer: item_in.initializer,
                 // Vec is not Copy — re-slice instead of move.
                 ts_decorators: bun_alloc::AstAlloc::vec(),
-                ts_metadata: Default::default(),
+                ts_metadata: bun_ast::ts::Metadata::MNone,
             };
             if !IS_JSON {
                 if item.kind == G::PropertyKind::Spread {
@@ -5952,7 +6004,7 @@ pub(crate) mod __gated_printer {
                         if let Some(binding) = &catch.binding {
                             self.print_space();
                             self.print(b"(");
-                            self.print_binding(*binding, TopLevelAndIsExport::default());
+                            self.print_binding(*binding, TopLevelAndIsExport::new());
                             self.print(b")");
                         }
                         self.print_space();
@@ -6516,12 +6568,7 @@ pub(crate) mod __gated_printer {
                 }
                 StmtData::SLocal(s) => {
                     let flags = ExprFlag::ForbidIn.into();
-                    self.print_decls(
-                        s.kind,
-                        s.decls.slice(),
-                        flags,
-                        TopLevelAndIsExport::default(),
-                    );
+                    self.print_decls(s.kind, s.decls.slice(), flags, TopLevelAndIsExport::new());
                 }
                 // for(;)
                 StmtData::SEmpty(_) => {}
@@ -6796,7 +6843,7 @@ pub(crate) mod __gated_printer {
             let tlm: TopLevelAndIsExport = if Self::MAY_HAVE_MODULE_INFO {
                 TopLevelAndIsExport { is_export }
             } else {
-                TopLevelAndIsExport::default()
+                TopLevelAndIsExport::new()
             };
             self.print_decls(kind, decls, ExprFlag::none(), tlm);
             self.print_semicolon_after_statement();
@@ -6823,7 +6870,7 @@ pub(crate) mod __gated_printer {
             let mut ascii_start: usize = 0;
             let mut is_ascii = false;
             let iter = CodepointIterator::init(identifier);
-            let mut cursor = strings::Cursor::default();
+            let mut cursor = strings::Cursor::new();
             while iter.next(&mut cursor) {
                 match cursor.c as u32 {
                     FIRST_ASCII..=LAST_ASCII => {
@@ -7636,7 +7683,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     tree: &Ast,
 ) -> SourceMap::chunk::Builder<'a> {
     if generate_source_map == GenerateSourceMap::Disable {
-        return SourceMap::chunk::Builder::default();
+        return SourceMap::chunk::Builder::new();
     }
 
     let mut builder = SourceMap::chunk::Builder {
@@ -7656,7 +7703,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
             },
             None => LineOffsetTables::None,
         },
-        ..Default::default()
+        ..SourceMap::chunk::Builder::new()
     };
     // Pre-size the VLQ mappings buffer. With `--minify` we emit roughly one
     // mapping per token; growing from 0 by doubling means ~16 reallocs and
@@ -7778,7 +7825,11 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
         minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols)?;
         // `None` if the JS parser did not build `tree`: an empty file, a data loader.
-        let char_freq = tree.char_freq.as_deref().copied().unwrap_or_default();
+        let char_freq = tree
+            .char_freq
+            .as_deref()
+            .copied()
+            .unwrap_or_else(bun_ast::CharFreq::new);
         minify_renamer.assign_names_by_frequency(&char_freq.compile())?;
 
         rename::Renamer::MinifyRenamer(&mut *minify_renamer)
@@ -7929,7 +7980,7 @@ pub fn print_json<W: WriterTrait>(
         indent: opts.indent,
         mangled_props: opts.mangled_props,
         minify_whitespace: opts.minify_whitespace,
-        ..Default::default()
+        ..Options::new()
     };
     let mut printer = PrinterType::<W>::init(
         writer,
@@ -7937,7 +7988,7 @@ pub fn print_json<W: WriterTrait>(
         &[], // ast.import_records.slice()
         full_opts,
         no_op.to_renamer(),
-        SourceMap::chunk::Builder::default(), // undefined
+        SourceMap::chunk::Builder::new(), // undefined
     );
     printer.binary_expression_stack = Vec::new();
 

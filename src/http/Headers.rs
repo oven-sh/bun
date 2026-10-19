@@ -27,7 +27,7 @@ impl HeadersExt for Headers {
     fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers {
         let header_count = headers.len();
         let mut result = Headers {
-            entries: EntryList::default(),
+            entries: EntryList::new(),
             buf: Vec::new(),
         };
 

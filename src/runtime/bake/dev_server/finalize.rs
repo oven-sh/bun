@@ -251,8 +251,8 @@ pub(super) fn finalize_bundle(
     // placeholders and assigned AFTER Pass 1 (receive_chunk grows `bundled_files`, so the trace bitsets
     // must be sized post-Pass-1). Seed with empty placeholders; real init below.
     let mut gts_storage = GraphTraceState {
-        server_bits: DynamicBitSet::default(),
-        client_bits: DynamicBitSet::default(),
+        server_bits: DynamicBitSet::new(),
+        client_bits: DynamicBitSet::new(),
     };
     let mut ctx = HotUpdateContext {
         import_records,
@@ -260,7 +260,7 @@ pub(super) fn finalize_bundle(
         loaders: input_file_loaders,
         server_to_client_bitset: scb_bitset,
         resolved_index_cache: &mut resolved_index_cache,
-        server_seen_bit_set: DynamicBitSet::default(), // assigned below
+        server_seen_bit_set: DynamicBitSet::new(), // assigned below
         gts: &mut gts_storage,
     };
 
@@ -397,7 +397,7 @@ pub(super) fn finalize_bundle(
             if looks_like_tailwind {
                 // Note: `get_or_put` consumes the key by value; on miss the key
                 // already lives in the map so the explicit `*key_ptr =` is redundant.
-                let _ = map.get_or_put(Box::from(key))?;
+                let _ = map.get_or_put(Box::from(key), || ())?;
             } else {
                 let _ = map.swap_remove(&Box::<[u8]>::from(key));
             }
@@ -563,7 +563,7 @@ pub(super) fn finalize_bundle(
                 // Create a temporary source map entry to render
                 let mut source_map_entry = source_map_store::Entry {
                     ref_count: 1,
-                    ..Default::default()
+                    ..source_map_store::Entry::new()
                 };
 
                 // Fill the source map entry
@@ -912,7 +912,7 @@ pub(super) fn finalize_bundle(
                         // SAFETY: as above; the exclusive borrow of the socket's
                         // map ends when `entry` dies at the end of this block.
                         let entry = unsafe { &mut (**socket_ptr).referenced_source_maps }
-                            .get_or_put(script_id)
+                            .get_or_put(script_id, || ())
                             .expect("oom");
                         if !entry.found_existing {
                             sockets += 1;
@@ -943,7 +943,7 @@ pub(super) fn finalize_bundle(
                         kind: crate::bake::dev_server::ChunkKind::HmrChunk,
                         script_id,
                         console_log: dev.should_receive_console_log_from_browser(),
-                        ..Default::default()
+                        ..incremental_graph::TakeJSBundleOptionsClient::new()
                     },
                 )?;
             }

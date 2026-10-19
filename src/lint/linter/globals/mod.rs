@@ -199,7 +199,7 @@ pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, 
 
 /// What a configuration says about globals, computed once from its [`LanguageOptions`].
 #[doc(hidden)]
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ConfigGlobals {
     /// ESLint's `configGlobals`: what the version of ECMAScript and `sourceType: "commonjs"`
     /// define, overridden by `languageOptions.globals`. Sorted by name.
@@ -380,7 +380,7 @@ pub struct CommentGlobal {
 }
 
 /// What the comments of a file say about variables.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub(crate) struct CommentVariables {
     /// In the order they are first named.
     pub(crate) globals: Vec<CommentGlobal>,
@@ -391,6 +391,19 @@ pub(crate) struct CommentVariables {
     /// The names in `/* exported */` comments.
     pub(crate) exported: Vec<Box<[u8]>>,
     pub(crate) is_exported: FxHashSet<Box<[u8]>>,
+}
+
+impl CommentVariables {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            globals: Vec::new(),
+            global_by_name: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            of_environments: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            exported: Vec::new(),
+            is_exported: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 /// A variable of the global scope that the file does not declare.

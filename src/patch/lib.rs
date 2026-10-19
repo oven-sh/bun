@@ -34,10 +34,19 @@ enum PatchFilePart<'a> {
     FileModeChange(Box<FileModeChange<'a>>),
 }
 
-#[derive(Default)]
 pub struct PatchFile<'a> {
     pub(crate) parts: Vec<PatchFilePart<'a>>,
     pub skipped: Vec<SkippedSection<'a>>,
+}
+
+impl<'a> PatchFile<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            parts: Vec::new(),
+            skipped: Vec::new(),
+        }
+    }
 }
 
 /// A section of the patch file that `apply` ignores. It is not an error, because older versions of
@@ -424,7 +433,6 @@ fn open_target_file(
 // FileDeets
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 struct FileDeets<'a> {
     diff_line_from_path: Option<&'a [u8]>,
     diff_line_to_path: Option<&'a [u8]>,
@@ -442,6 +450,29 @@ struct FileDeets<'a> {
     is_binary: bool,
     /// Byte offset of the section's first line in the patch file.
     offset: usize,
+}
+
+impl<'a> FileDeets<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            diff_line_from_path: None,
+            diff_line_to_path: None,
+            old_mode: None,
+            new_mode: None,
+            deleted_file_mode: None,
+            new_file_mode: None,
+            rename_from: None,
+            rename_to: None,
+            before_hash: None,
+            after_hash: None,
+            from_path: None,
+            to_path: None,
+            hunks: Vec::new(),
+            is_binary: false,
+            offset: 0,
+        }
+    }
 }
 
 impl<'a> FileDeets<'a> {
@@ -474,7 +505,6 @@ impl<'a> FileDeets<'a> {
 // PatchMutationPart / Hunk
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 struct PatchMutationPart<'a> {
     pub(crate) ty: PartType,
     pub(crate) lines: Vec<&'a [u8]>,
@@ -482,20 +512,40 @@ struct PatchMutationPart<'a> {
     pub(crate) no_newline_at_end_of_file: bool,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+impl<'a> PatchMutationPart<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            ty: PartType::Context,
+            lines: Vec::new(),
+            no_newline_at_end_of_file: false,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum PartType {
-    #[default]
     Context,
     Insertion,
     Deletion,
 }
 
-#[derive(Default)]
 struct Hunk<'a> {
     pub(crate) header: Header,
     pub(crate) parts: Vec<PatchMutationPart<'a>>,
     /// Byte offset of the `@@` line in the patch file.
     offset: usize,
+}
+
+impl<'a> Hunk<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            header: Header::new(),
+            parts: Vec::new(),
+            offset: 0,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -504,16 +554,26 @@ struct HeaderRange {
     pub(crate) len: u32,
 }
 
-impl Default for HeaderRange {
-    fn default() -> Self {
+impl HeaderRange {
+    fn new() -> Self {
         Self { start: 1, len: 0 }
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct Header {
     pub(crate) original: HeaderRange,
     pub(crate) patched: HeaderRange,
+}
+
+impl Header {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            original: HeaderRange::new(),
+            patched: HeaderRange::new(),
+        }
+    }
 }
 
 impl<'a> Hunk<'a> {
@@ -841,7 +901,7 @@ pub struct ParseErrAt {
 
 /// NOTE: the returned `PatchFile` struct will contain pointers to original file text so make sure to not deallocate `file`
 pub fn parse_patch_file(file: &[u8]) -> Result<PatchFile<'_>, ParseErrAt> {
-    let mut lines_parser = PatchLinesParser::default();
+    let mut lines_parser = PatchLinesParser::new();
     let parsed = lines_parser.parse(file).and_then(|()| {
         // reshaped for borrowck — take ownership of result vec instead of slicing.
         let mut files = mem::take(&mut lines_parser.result);
@@ -859,7 +919,7 @@ fn patch_file_second_pass<'a>(
     files: &mut [FileDeets<'a>],
     offset: &mut usize,
 ) -> Result<PatchFile<'a>, ParseErr> {
-    let mut result = PatchFile::default();
+    let mut result = PatchFile::new();
 
     for file in files.iter_mut() {
         *offset = file.offset;
@@ -1057,7 +1117,6 @@ impl<'a> LookbackIterator<'a> {
 // PatchLinesParser
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 struct PatchLinesParser<'a> {
     result: Vec<FileDeets<'a>>,
     current_file_patch: FileDeets<'a>,
@@ -1068,9 +1127,22 @@ struct PatchLinesParser<'a> {
     offset: usize,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+impl<'a> PatchLinesParser<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            result: Vec::new(),
+            current_file_patch: FileDeets::new(),
+            state: ParserState::ParsingHeader,
+            current_hunk: None,
+            current_hunk_mutation_part: None,
+            offset: 0,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
 enum ParserState {
-    #[default]
     ParsingHeader,
     ParsingHunks,
 }
@@ -1210,7 +1282,7 @@ impl<'a> PatchLinesParser<'a> {
                     self.current_hunk_mutation_part
                         .get_or_insert_with(|| PatchMutationPart {
                             ty,
-                            ..Default::default()
+                            ..PatchMutationPart::new()
                         })
                         .lines
                         .push(&line[1.min(line.len())..]);
@@ -1244,7 +1316,7 @@ impl<'a> PatchLinesParser<'a> {
     fn commit_file_patch(&mut self) {
         self.commit_hunk();
         self.current_file_patch.nullify_empty_strings();
-        let fp = mem::take(&mut self.current_file_patch);
+        let fp = mem::replace(&mut self.current_file_patch, FileDeets::new());
         self.result.push(fp);
         self.current_file_patch.offset = self.offset;
     }
@@ -1288,7 +1360,7 @@ fn parse_hunk_header_line<'a>(line: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
     }
     Ok(Hunk {
         header: Header { original, patched },
-        ..Default::default()
+        ..Hunk::new()
     })
 }
 
@@ -1452,9 +1524,9 @@ pub fn spawn_opts(
             // `as_handle` owns the handle conversion so variant internals
             // stay encapsulated.
             loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
-            ..Default::default()
+            ..bun_spawn::sync::WindowsOptions::new()
         },
-        ..Default::default()
+        ..bun_spawn::sync::Options::new()
     };
 
     (

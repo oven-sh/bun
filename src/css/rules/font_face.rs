@@ -584,7 +584,7 @@ impl UrlSource {
         {
             input.parse_nested_block(|i| i.parse_list(FontTechnology::parse))?
         } else {
-            ArrayList::<FontTechnology>::default()
+            Vec::new()
         };
 
         Ok(UrlSource { url, format, tech })

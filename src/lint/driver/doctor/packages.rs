@@ -167,10 +167,19 @@ fn run_by(manifest: &Json, name: &[u8]) -> Option<Need> {
 }
 
 /// The verdict on `package.json`'s dependencies: which can be removed, and which are still needed and why.
-#[derive(Default)]
 pub(crate) struct Packages {
     removable: Vec<Vec<u8>>,
     needed: Vec<(Vec<u8>, Need)>,
+}
+
+impl Packages {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self {
+            removable: Vec::new(),
+            needed: Vec::new(),
+        }
+    }
 }
 
 impl Packages {
@@ -182,7 +191,7 @@ impl Packages {
         is_of_a_tool: &dyn Fn(&[u8]) -> bool,
         need: &dyn Fn(&[u8]) -> Option<Need>,
     ) -> Packages {
-        let mut packages = Packages::default();
+        let mut packages = Packages::init();
         let read = |it: &[u8]| fs::read(&paths::join(it, b"package.json")).ok();
         let nearest = paths::ancestors(cwd).find_map(|it| Some((it, read(it)?)));
         let Some((directory, Some(manifest))) =

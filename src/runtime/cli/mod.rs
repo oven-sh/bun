@@ -298,7 +298,7 @@ fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
 /// return the C-string pointer (for argv/envp construction).
 #[inline]
 fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
-    let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_default(s.len() + 1);
+    let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_copy(s.len() + 1, 0);
     buf[..s.len()].copy_from_slice(s);
     // buf[s.len()] is already 0 (Default for u8).
     buf.as_ptr().cast::<core::ffi::c_char>()
@@ -931,7 +931,7 @@ pub(crate) mod command {
         // avoids the second `Default` temporary (and its drop) that the
         // `..Default::default()` struct-update form would build on the stack.
         unsafe {
-            let ctx = (*CONTEXT_DATA.get()).write(ContextData::default());
+            let ctx = (*CONTEXT_DATA.get()).write(ContextData::new());
             ctx.log = std::ptr::from_mut::<bun_ast::Log>(log);
             ctx.start_time = bun_core::start_time();
             bun_options_types::context::set_global(ctx);
@@ -1595,7 +1595,7 @@ pub(crate) mod command {
         }
         let mut prefilled_completions: [&'static [u8]; add_completions::BIGGEST_LIST] =
             [b""; add_completions::BIGGEST_LIST];
-        let mut completions = ShellCompletions::default();
+        let mut completions = ShellCompletions::new();
 
         if filter.is_empty() {
             completions = RunCommand::completions::<{ Filter::All }>(

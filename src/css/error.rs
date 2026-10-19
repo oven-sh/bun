@@ -78,7 +78,7 @@ impl<T: fmt::Display> Err<T> {
                 },
                 text: text.into(),
             },
-            ..Default::default()
+            ..bun_ast::Msg::new()
         });
 
         log.errors += 1;
@@ -190,7 +190,7 @@ impl ErrorLocation {
             line: i32::try_from(self.line + 1).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
             line_text: line_text.map(std::borrow::Cow::Borrowed),
-            ..Default::default()
+            ..bun_ast::Location::new()
         })
     }
 }

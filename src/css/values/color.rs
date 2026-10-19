@@ -390,9 +390,9 @@ pub enum CssColor {
 /// `Result(CssColor)`.
 pub type ParseResult = css::CssResult<CssColor>;
 
-impl Default for CssColor {
+impl CssColor {
     #[inline]
-    fn default() -> CssColor {
+    pub fn new() -> CssColor {
         CssColor::Rgba(RGBA::transparent())
     }
 }
@@ -573,7 +573,7 @@ impl CssColor {
     ) -> crate::SmallList<CssColor, 2> {
         let fallbacks = self.get_necessary_fallbacks(targets);
 
-        let mut res = crate::SmallList::<CssColor, 2>::default();
+        let mut res = crate::SmallList::<CssColor, 2>::new();
 
         if fallbacks.contains(ColorFallbackKind::RGB) {
             if let Some(rgb) = self.to_rgb() {
@@ -943,7 +943,7 @@ fn take_dark_free_light(light: Box<CssColor>, dark: Box<CssColor>) -> Box<CssCol
 bitflags::bitflags! {
     /// A color type that is used as a fallback when compiling colors for
     /// older browsers.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct ColorFallbackKind: u8 {
         const RGB   = 1 << 0;
         const P3    = 1 << 1;

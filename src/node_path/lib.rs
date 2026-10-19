@@ -101,13 +101,25 @@ pub const CHAR_STR_DOT: &[u8] = b".";
 /// Based on Node v21.6.1 path.parse:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L919
 /// The structs returned by parse methods.
-#[derive(Default)]
 pub struct PathParsed<'a, T: PathCharCwd> {
     pub root: &'a [T],
     pub dir: &'a [T],
     pub base: &'a [T],
     pub ext: &'a [T],
     pub name: &'a [T],
+}
+
+impl<'a, T: PathCharCwd> PathParsed<'a, T> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            root: &[],
+            dir: &[],
+            base: &[],
+            ext: &[],
+            name: &[],
+        }
+    }
 }
 
 const fn max_path_size<T: PathCharCwd>() -> usize {

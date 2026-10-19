@@ -26,7 +26,7 @@ pub(crate) fn assert_well_formed_break_targets(
         env,
         is_well_formed: Cell::new(true),
     };
-    let mut state: HashSet<BlockId> = HashSet::default();
+    let mut state: HashSet<BlockId> = HashSet::with_hasher(rustc_hash::FxBuildHasher);
     visit_reactive_function(func, &visitor, &mut state);
     crate::diagnostics::invariant(
         visitor.is_well_formed.get(),

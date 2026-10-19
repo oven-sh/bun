@@ -59,7 +59,7 @@ fn throw_range_error_msg(
         jsc::RangeErrorOptions {
             field_name: name.as_bytes(),
             msg,
-            ..Default::default()
+            ..jsc::RangeErrorOptions::new()
         },
     )
 }
@@ -299,7 +299,7 @@ pub(crate) fn validate_boolean(
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub(crate) struct ValidateObjectOptions: u8 {
         const ALLOW_NULLABLE = 1 << 0;
         const ALLOW_ARRAY    = 1 << 1;

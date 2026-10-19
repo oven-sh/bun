@@ -68,7 +68,7 @@ pub trait HashContext<K: ?Sized> {
 }
 
 /// `std.AutoHashMap` context — wyhash over the key's `Hash` representation.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct AutoHashContext;
 
 impl<K: Hash + Eq + ?Sized> HashContext<K> for AutoHashContext {
@@ -106,9 +106,9 @@ pub struct HashMap<K, V, C = AutoHashContext> {
     _ctx: PhantomData<C>,
 }
 
-impl<K, V, C> Default for HashMap<K, V, C> {
+impl<K, V, C> HashMap<K, V, C> {
     #[inline]
-    fn default() -> Self {
+    pub fn init() -> Self {
         Self {
             metadata: Vec::new(),
             slots: Vec::new(),
@@ -122,7 +122,7 @@ impl<K, V, C> Default for HashMap<K, V, C> {
 impl<K, V, C> HashMap<K, V, C> {
     #[inline]
     pub fn new() -> Self {
-        Self::default()
+        Self::init()
     }
 
     #[inline]
@@ -141,7 +141,7 @@ impl<K, V, C> HashMap<K, V, C> {
     /// Release storage.
     #[inline]
     pub fn deinit(&mut self) {
-        *self = Self::default();
+        *self = Self::init();
     }
 
     /// Clear all entries, retaining capacity.
@@ -199,7 +199,7 @@ impl<K, V, C> HashMap<K, V, C> {
 
 impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
     pub fn with_capacity(capacity: usize) -> Self {
-        let mut m = Self::default();
+        let mut m = Self::init();
         if capacity > 0 {
             let _ = m.ensure_total_capacity(capacity);
         }
@@ -253,7 +253,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
             // LSAN: this Vec is owned by the map and freed by HashMap's auto-Drop.
             // A leak reported here means the *container* HashMap leaked, not grow().
             slots: Vec::with_capacity(new_cap as usize),
-            ..Default::default()
+            ..Self::init()
         };
         for _ in 0..new_cap {
             map.slots.push(None);

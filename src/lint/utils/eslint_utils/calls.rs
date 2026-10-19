@@ -423,7 +423,7 @@ fn new_regex<'a>(pattern: Cow<'a, [u8]>, flags: &[u8]) -> Option<StaticValue<'a>
     validate_pattern(
         &pattern,
         Mode::of_flags(&flags),
-        Options::default(),
+        Options::new(),
         &mut Ignore,
     )
     .ok()?;

@@ -74,7 +74,7 @@ pub(crate) fn get_credentials_with_options(
         acl: default_acl,
         storage_class: default_storage_class,
         request_payer: default_request_payer,
-        ..Default::default()
+        ..S3CredentialsWithOptions::new()
     };
 
     if let Some(opts) = options {
@@ -154,7 +154,7 @@ pub(crate) fn get_credentials_with_options(
                             min: MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64,
                             max: MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64,
                             field_name: b"pageSize",
-                            ..Default::default()
+                            ..RangeErrorOptions::new()
                         },
                     ));
                 } else {
@@ -171,7 +171,7 @@ pub(crate) fn get_credentials_with_options(
                             min: MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64,
                             max: MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64,
                             field_name: b"partSize",
-                            ..Default::default()
+                            ..RangeErrorOptions::new()
                         },
                     ));
                 } else {
@@ -186,7 +186,7 @@ pub(crate) fn get_credentials_with_options(
                         RangeErrorOptions {
                             min: 1,
                             field_name: b"queueSize",
-                            ..Default::default()
+                            ..RangeErrorOptions::new()
                         },
                     ));
                 } else {
@@ -202,7 +202,7 @@ pub(crate) fn get_credentials_with_options(
                             min: 0,
                             max: 255,
                             field_name: b"retry",
-                            ..Default::default()
+                            ..RangeErrorOptions::new()
                         },
                     ));
                 } else {

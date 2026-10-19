@@ -928,7 +928,7 @@ pub mod fs {
             #[cfg(windows)]
             let _ = file_limit;
             RealFS {
-                entries_mutex: Mutex::default(),
+                entries_mutex: Mutex::init(),
                 entries: EntriesMap::new(),
                 cwd,
                 #[cfg(not(windows))]
@@ -991,7 +991,7 @@ pub mod fs {
                     bun_sys::WindowsOpenDirOptions {
                         iterable: true,
                         no_follow: false,
-                        ..Default::default()
+                        ..bun_sys::WindowsOpenDirOptions::new()
                     },
                 )
                 .map_err(Into::into);
@@ -2003,12 +2003,6 @@ pub mod cache {
         }
     }
 
-    impl Default for ExternalFreeFunction {
-        fn default() -> Self {
-            Self::NONE
-        }
-    }
-
     /// Provenance-tagged backing for [`Entry`] source bytes.
     ///
     /// Replaces the prior `&'static [u8]` + `Box::leak`/`heap::take` pair
@@ -2016,10 +2010,8 @@ pub mod cache {
     /// provenance explicit so `deinit` matches on the variant instead of
     /// guessing — the old scheme would `heap::take` a `MutableString`-owned
     /// pointer on the `use_shared_buffer=true` path (UB).
-    #[derive(Default)]
     pub enum Contents {
         /// Empty / static literal. No-op on `deinit`.
-        #[default]
         Empty,
         /// Heap-owned buffer (default-allocator path). Freed when this variant
         /// drops. Stored as `Vec<u8>` (not `Box<[u8]>`) so a sentinel NUL can
@@ -2125,8 +2117,8 @@ pub mod cache {
         pub fd: Fd,
     }
 
-    impl Default for Entry {
-        fn default() -> Self {
+    impl Entry {
+        pub fn new() -> Self {
             Entry {
                 contents: Contents::Empty,
                 fd: Fd::INVALID,

@@ -57,9 +57,17 @@ unsafe extern "C" {
 
 // ───────────────────────────── JSPromise.Strong ──────────────────────────────
 
-#[derive(Default)]
 pub struct Strong {
     strong: JscStrong,
+}
+
+impl Strong {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            strong: JscStrong::new(),
+        }
+    }
 }
 
 impl Strong {
@@ -132,7 +140,7 @@ impl Strong {
     }
 
     pub fn value_or_empty(&self) -> JSValue {
-        self.strong.get().unwrap_or_default()
+        self.strong.get().unwrap_or_else(JSValue::new)
     }
 
     pub fn has_value(&self) -> bool {

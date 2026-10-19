@@ -46,7 +46,7 @@ impl<const OLD_NAME: bool> Rule for First<OLD_NAME> {
         let file = cx.file();
         let is_oxlint = file.language().is_oxlint;
         let (mut any_expressions, mut has_non_import, mut any_relative) = (false, false, false);
-        let (mut last_legal_imp, mut previous) = (None, Span::default());
+        let (mut last_legal_imp, mut previous) = (None, Span::init());
         let mut error_infos: SmallVec<[ErrorInfo; 4]> = SmallVec::new();
         for stmt in file.body() {
             let range = Span::after(std::mem::replace(&mut previous, stmt.span()), stmt.span().end);

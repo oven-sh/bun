@@ -2,7 +2,7 @@ use core::ffi::{c_int, c_void};
 
 /// Terminal size as reported by the tty (`struct winsize` on POSIX).
 #[repr(C)]
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Winsize {
     pub row: u16,
     pub col: u16,

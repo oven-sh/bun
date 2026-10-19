@@ -44,12 +44,20 @@ impl ReplaceableExport {
 /// Newtype (not a bare alias) so we can hang `get_ptr` (which borrows
 /// immutably) and expose a `.entries` accessor that satisfies the
 /// `replace_exports.entries.len` shape used by `visitStmt`.
-#[derive(Default)]
 pub struct ReplaceableExportMap {
     /// Backing map. Named `entries` so `replace_exports.entries.len()`
     /// resolves (`StringArrayHashMap` derefs to `ArrayHashMap`, which has
     /// `.len()`).
     pub entries: StringArrayHashMap<ReplaceableExport>,
+}
+
+impl ReplaceableExportMap {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            entries: StringArrayHashMap::init(),
+        }
+    }
 }
 
 impl core::ops::Deref for ReplaceableExportMap {
@@ -83,9 +91,8 @@ impl ReplaceableExportMap {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReactCompilerMode {
-    #[default]
     Disabled,
     Client,
     Ssr,
@@ -102,10 +109,9 @@ impl ReactCompilerMode {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ServerComponentsMode {
     /// Server components is disabled, strings "use client" and "use server" mean nothing.
-    #[default]
     None,
     /// This is a server-side file outside of the SSR graph, but not a "use server" file.
     /// - Handle functions with "use server", creating secret exports for them.
@@ -143,7 +149,7 @@ impl ServerComponentsMode {
 
 // If you change this, remember to update "runtime.js"
 #[allow(non_snake_case)]
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct Imports {
     pub(crate) __name: Ref,
     pub __require: Ref,
@@ -173,6 +179,41 @@ pub struct Imports {
     pub(crate) __promiseAll: Ref,
     pub(crate) __MEMO_CACHE_SENTINEL: Ref,
     pub(crate) __EARLY_RETURN_SENTINEL: Ref,
+}
+
+impl Imports {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            __name: Ref::NONE,
+            __require: Ref::NONE,
+            __export: Ref::NONE,
+            __reExport: Ref::NONE,
+            __exportValue: Ref::NONE,
+            __exportDefault: Ref::NONE,
+            __merge: Ref::NONE,
+            __legacyDecorateClassTS: Ref::NONE,
+            __legacyDecorateParamTS: Ref::NONE,
+            __legacyMetadataTS: Ref::NONE,
+            __publicField: Ref::NONE,
+            __privateIn: Ref::NONE,
+            __privateGet: Ref::NONE,
+            __privateAdd: Ref::NONE,
+            __privateSet: Ref::NONE,
+            __privateMethod: Ref::NONE,
+            __decoratorStart: Ref::NONE,
+            __decoratorMetadata: Ref::NONE,
+            __runInitializers: Ref::NONE,
+            __decorateElement: Ref::NONE,
+            dollar_dollar_typeof: Ref::NONE,
+            __using: Ref::NONE,
+            __callDispose: Ref::NONE,
+            __jsonParse: Ref::NONE,
+            __promiseAll: Ref::NONE,
+            __MEMO_CACHE_SENTINEL: Ref::NONE,
+            __EARLY_RETURN_SENTINEL: Ref::NONE,
+        }
+    }
 }
 
 impl Imports {

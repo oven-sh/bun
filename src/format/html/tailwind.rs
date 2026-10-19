@@ -91,7 +91,7 @@ pub(super) fn with_sorted_classes(
     parse: Option<js::Parse<'_>>,
 ) -> Option<Vec<u8>> {
     let (content, front_matter_len) = without_front_matter(text);
-    let mut tree = Tree::default();
+    let mut tree = Tree::new();
     parse::parse(&content, front_matter_len, parser, &mut tree).ok()?;
     let mut changes = Vec::new();
     let mut nodes: Vec<Id> = vec![tree.root];

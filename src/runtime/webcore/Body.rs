@@ -96,8 +96,8 @@ pub(crate) struct Body {
     pub value: JsCell<Value>, // = Value::Empty,
 }
 
-impl Default for Body {
-    fn default() -> Self {
+impl Body {
+    pub(crate) fn init() -> Self {
         Self {
             value: JsCell::new(Value::Empty),
         }
@@ -248,18 +248,18 @@ impl PendingValue {
     pub(crate) fn new(global: &JSGlobalObject) -> Self {
         Self {
             global: std::ptr::from_ref(global),
-            ..Default::default()
+            ..Self::init()
         }
     }
 }
 
-impl Default for PendingValue {
+impl PendingValue {
     /// Callers using `..Default::default()` must initialize `global`
     /// explicitly. Null here is the only viable default.
-    fn default() -> Self {
+    pub fn init() -> Self {
         Self {
             promise: None,
-            readable: webcore::readable_stream::Strong::default(),
+            readable: webcore::readable_stream::Strong::Empty,
             global: core::ptr::null(),
             task: None,
             on_receive_value: None,
@@ -637,10 +637,12 @@ impl ValueError {
             // takes `&mut self` — take the value out so a second call builds an
             // empty error rather than releasing those refs twice.
             ValueError::SystemError(system_error) => {
-                core::mem::take(system_error).to_error_instance(global_object)
+                core::mem::replace(system_error, SystemError::new())
+                    .to_error_instance(global_object)
             }
             ValueError::SystemTypeError(system_error) => {
-                core::mem::take(system_error).to_type_error_instance(global_object)
+                core::mem::replace(system_error, SystemError::new())
+                    .to_type_error_instance(global_object)
             }
             ValueError::Message(message) => message.to_error_instance(global_object),
             ValueError::TypeError(message) => message.to_type_error_instance(global_object),
@@ -915,7 +917,7 @@ impl Value {
             webcore::readable_stream::NewSource {
                 global_this: Some(bun_ptr::BackRef::new(cx.global())),
                 // `ByteStream::default()` is the post-setup state.
-                ..webcore::readable_stream::NewSource::with_context(ByteStream::default())
+                ..webcore::readable_stream::NewSource::with_context(ByteStream::new())
             },
         );
 
@@ -1200,7 +1202,7 @@ impl Value {
                 // `Value` has `Drop`, so we cannot move the `Blob` out by
                 // value (E0509). `mem::take` leaves a default `Blob` whose `deinit()`
                 // (run by `Value::drop` on the assignment below) is a no-op.
-                let new_blob = core::mem::take(b);
+                let new_blob = core::mem::replace(b, Blob::empty());
                 *self = Value::Used;
                 debug_assert!(!new_blob.is_heap_allocated()); // owned by Body
                 new_blob
@@ -1237,9 +1239,9 @@ impl Value {
             // don't-care contract here.
             Value::Empty => {
                 *self = Value::Used;
-                Blob::default()
+                Blob::empty()
             }
-            _ => Blob::default(),
+            _ => Blob::empty(),
         }
     }
 
@@ -1260,8 +1262,10 @@ impl Value {
 
     pub(crate) fn try_use_as_any_blob(&mut self) -> Option<AnyBlob> {
         let any_blob: AnyBlob = match self {
-            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
-            Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
+            Value::Blob(b) => AnyBlob::Blob(core::mem::replace(b, Blob::empty())),
+            Value::InternalBlob(b) => {
+                AnyBlob::InternalBlob(core::mem::replace(b, InternalBlob::new()))
+            }
             Value::WTFStringImpl(str) => {
                 if wtf_impl(str).can_use_as_utf8() {
                     return Some(AnyBlob::WTFStringImpl(self.take_wtf_string()));
@@ -1287,8 +1291,10 @@ impl Value {
         // emptied/residual variant (no-op for taken Blob/InternalBlob, releases
         // the +1 for the UTF-8-converted WTFStringImpl arm, deinit for Locked).
         let any_blob: AnyBlob = match self {
-            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
-            Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
+            Value::Blob(b) => AnyBlob::Blob(core::mem::replace(b, Blob::empty())),
+            Value::InternalBlob(b) => {
+                AnyBlob::InternalBlob(core::mem::replace(b, InternalBlob::new()))
+            }
             Value::WTFStringImpl(str) => 'brk: {
                 let str = *str;
                 let wtf_ref = wtf_impl(&str);
@@ -1306,8 +1312,8 @@ impl Value {
             }
             Value::Locked(l) => l
                 .to_any_blob_allow_promise()
-                .unwrap_or(AnyBlob::Blob(Blob::default())),
-            _ => AnyBlob::Blob(Blob::default()),
+                .unwrap_or(AnyBlob::Blob(Blob::empty())),
+            _ => AnyBlob::Blob(Blob::empty()),
         };
 
         *self = if was_null { Value::Null } else { Value::Used };
@@ -1318,13 +1324,15 @@ impl Value {
         let was_null = matches!(self, Value::Null);
         // see `use_as_any_blob` — match by `&mut` to avoid E0509.
         let any_blob: AnyBlob = match self {
-            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
-            Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
+            Value::Blob(b) => AnyBlob::Blob(core::mem::replace(b, Blob::empty())),
+            Value::InternalBlob(b) => {
+                AnyBlob::InternalBlob(core::mem::replace(b, InternalBlob::new()))
+            }
             Value::WTFStringImpl(_) => AnyBlob::WTFStringImpl(self.take_wtf_string()),
             Value::Locked(l) => l
                 .to_any_blob_allow_promise()
-                .unwrap_or(AnyBlob::Blob(Blob::default())),
-            _ => AnyBlob::Blob(Blob::default()),
+                .unwrap_or(AnyBlob::Blob(Blob::empty())),
+            _ => AnyBlob::Blob(Blob::empty()),
         };
 
         *self = if was_null { Value::Null } else { Value::Used };
@@ -1341,7 +1349,7 @@ impl Value {
             // the `PendingValue` out (leaves `Locked(default)`, whose Drop is a no-op on
             // an empty readable), then overwrite with `Error`.
             let mut locked = match self {
-                Value::Locked(l) => core::mem::take(l),
+                Value::Locked(l) => core::mem::replace(l, PendingValue::init()),
                 _ => unreachable!(),
             };
             let was_disturbed = !locked.action.is_none()
@@ -1353,8 +1361,13 @@ impl Value {
             };
 
             // `deinit` must run on every exit incl. `?` paths.
-            let strong_readable =
-                scopeguard::guard(core::mem::take(&mut locked.readable), |mut r| r.deinit());
+            let strong_readable = scopeguard::guard(
+                core::mem::replace(
+                    &mut locked.readable,
+                    crate::webcore::readable_stream::Strong::Empty,
+                ),
+                |mut r| r.deinit(),
+            );
 
             if let Some(promise_value) = locked.promise.take() {
                 // `unprotect` + `ensure_still_alive` are non-Drop side effects
@@ -1412,7 +1425,7 @@ impl Value {
             if !locked.deinit {
                 locked.deinit = true;
                 locked.readable.deinit();
-                locked.readable = Default::default();
+                locked.readable = crate::webcore::readable_stream::Strong::Empty;
             }
             return;
         }
@@ -1506,7 +1519,7 @@ impl Value {
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
                 global_this: Some(bun_ptr::BackRef::new(cx.global())),
-                ..webcore::readable_stream::NewSource::with_context(ByteStream::default())
+                ..webcore::readable_stream::NewSource::with_context(ByteStream::new())
             },
         );
 
@@ -1675,7 +1688,10 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
         if let Value::Locked(locked) = self.get_body_value() {
             // `mem::take` swaps in `Default` and drops the old value.
-            let _ = core::mem::take(&mut locked.readable);
+            let _ = core::mem::replace(
+                &mut locked.readable,
+                crate::webcore::readable_stream::Strong::Empty,
+            );
         }
     }
 

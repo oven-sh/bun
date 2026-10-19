@@ -24,7 +24,6 @@ use bun_sema::hir::{Diagnostic, DiagnosticKind, StmtKind};
 use std::borrow::Cow;
 
 /// Why a parser throws, and where.
-#[derive(Default)]
 struct SyntaxError {
     at: u32,
     /// Where oxc's label ends, like [`Diagnostic::end`]: 0 is the end of the token at `at`. ESLint's parsers only have a place.
@@ -33,8 +32,19 @@ struct SyntaxError {
     of_oxc: OfOxc,
 }
 
+impl SyntaxError {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            at: 0,
+            end: 0,
+            message: Vec::new(),
+            of_oxc: OfOxc::new(),
+        }
+    }
+}
+
 /// What oxlint prints about an error beside its message and the place of its first label, and when it prints it.
-#[derive(Default)]
 struct OfOxc {
     /// 1038 for `TS(1038)`. 0: the error has no code.
     code: u16,
@@ -50,11 +60,25 @@ struct OfOxc {
     noticed: Option<u32>,
 }
 
+impl OfOxc {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            code: 0,
+            first_label: Cow::Owned(String::new()),
+            labels: Vec::new(),
+            help: Cow::Owned(String::new()),
+            note: Cow::Owned(String::new()),
+            stage: Stage::Semantic,
+            noticed: None,
+        }
+    }
+}
+
 /// Which part of oxc reports an error.
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 enum Stage {
     /// The pass that builds the scopes. It reports all that it finds, and does not run on a file that the parser has an error for.
-    #[default]
     Semantic,
     /// The parser, which goes on.
     Parser,
@@ -80,7 +104,7 @@ impl SyntaxError {
                 false => label.end,
             },
             message: message.to_vec(),
-            of_oxc: OfOxc::default(),
+            of_oxc: OfOxc::new(),
         }
     }
 
@@ -240,7 +264,7 @@ fn in_words_of_oxc<'a>(
                 at: it.start,
                 end: it.end,
                 message,
-                ..SyntaxError::default()
+                ..SyntaxError::new()
             };
             errors.push(error.stage(Stage::Fatal));
         }
@@ -261,7 +285,7 @@ fn in_words_of_oxc<'a>(
     if all.is_empty() && of_parser.next().is_none() {
         let error = SyntaxError {
             message: b"Unexpected token".to_vec(),
-            ..SyntaxError::default()
+            ..SyntaxError::new()
         };
         all.push(error.stage(Stage::Fatal));
     }
@@ -296,7 +320,7 @@ pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage
         let refused = LintMessage {
             message: [b"Parsing error: ", &message[..]].concat(),
             is_fatal: true,
-            ..LintMessage::default()
+            ..LintMessage::new()
         };
         return (vec![refused], true);
     }
@@ -319,7 +343,7 @@ pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage
                 at: diagnostic.map_or(0, |it| it.start),
                 end: diagnostic.map_or(0, |it| it.end),
                 message,
-                ..SyntaxError::default()
+                ..SyntaxError::new()
             },
         )
     });
@@ -395,7 +419,7 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
         suggestions: Vec::new(),
         suppressions: Vec::new(),
         comments_apply_at: None,
-        not_numbers: NotNumbers::default(),
+        not_numbers: NotNumbers::new(),
         details,
         constant_help: None,
         reported: 0,

@@ -8,7 +8,6 @@ pub struct NoUnreachable;
 
 const UNREACHABLE_CODE: Message = Message::new("unreachableCode", "Unreachable code.");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// ESLint's `ConsecutiveRange`: consecutive unreachable statements that are not reported yet.
     range: Option<Span>,
@@ -20,6 +19,19 @@ pub struct State<'a> {
     found: Vec<Span>,
     /// The statements that cannot be reached, where the nodes are not entered one by one.
     unreachable: Vec<Stmt<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            range: None,
+            constructors: Vec::new(),
+            catch_block: None,
+            found: Vec::new(),
+            unreachable: Vec::new(),
+        }
+    }
 }
 
 /// Whether ESLint has a `MethodDefinition` with the kind `constructor` for it.
@@ -263,7 +275,7 @@ fn found_in_all<'a>(file: &'a File<'a>) -> Vec<Span> {
     let statements = KINDS.iter().flat_map(|&kind| file.stmts_of_kind(kind)).map(Node::Stmt);
     let mut all: Vec<Node<'a>> = statements.chain(file.funcs().map(Node::Func)).collect();
     sort_as_entered(&mut all);
-    let mut state = State::default();
+    let mut state = State::new();
     all.into_iter().for_each(|node| state.enter(node));
     state.report_range(None);
     state.found
@@ -339,7 +351,7 @@ impl Rule for NoUnreachable {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     #[inline]

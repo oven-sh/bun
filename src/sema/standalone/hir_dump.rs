@@ -153,7 +153,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         file,
         atoms,
         out: String::new(),
-        seen: Default::default(),
+        seen: bun_sema::util::FxHashSet::with_hasher(bun_sema::util::FxBuild),
     };
     d.list(0, "body", *body, Dump::stmt);
 

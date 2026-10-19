@@ -10,7 +10,6 @@ use crate::{FormatError, FormatOptions};
 use bun_lint::ast::File;
 
 /// Everything that is allocated to format a file. It is reused for the next file.
-#[derive(Default)]
 pub struct Scratch {
     formatter: super::formatter::FormatterBuffers,
     printer: super::printer::PrinterBuffers,
@@ -18,6 +17,18 @@ pub struct Scratch {
     unprinted_comments: Vec<u8>,
     /// Their ids, for the second pass.
     unprinted_comment_ids: Vec<u32>,
+}
+
+impl Scratch {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            formatter: super::formatter::FormatterBuffers::new(),
+            printer: super::printer::PrinterBuffers::new(),
+            unprinted_comments: Vec::new(),
+            unprinted_comment_ids: Vec::new(),
+        }
+    }
 }
 
 /// Appends the formatted text of `file` to `out`: the document that `write` writes. Returns where the ends of `cursor` are
@@ -118,7 +129,10 @@ pub(crate) fn write_with<'a>(
     scratch: &mut Scratch,
     write: impl FnOnce(&mut Formatter<'a>),
 ) -> Result<Interned, FormatError> {
-    let buffers = std::mem::take(&mut scratch.formatter);
+    let buffers = std::mem::replace(
+        &mut scratch.formatter,
+        crate::ir::formatter::FormatterBuffers::new(),
+    );
     let mut formatter = Formatter::new(context, source, buffers);
     write(&mut formatter);
     finish(formatter, scratch)

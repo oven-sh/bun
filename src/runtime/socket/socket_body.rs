@@ -812,7 +812,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 bun_sql_jsc::jsc::IntegerRange {
                     min: 0,
                     field_name: b"initialDelay",
-                    ..Default::default()
+                    ..bun_sql_jsc::jsc::IntegerRange::new()
                 },
             )?)
             .unwrap()
@@ -869,7 +869,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     min: 0,
                     max: 255,
                     field_name: b"tos",
-                    ..Default::default()
+                    ..bun_sql_jsc::jsc::IntegerRange::new()
                 },
             )?
         } else {
@@ -1285,7 +1285,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 message: BunString::static_("Failed to connect"),
                 syscall: BunString::static_("connect"),
                 code: code_,
-                ..Default::default()
+                ..SystemError::new()
             }
         };
 
@@ -2451,7 +2451,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             let err = SystemError {
                 code: BunString::clone_utf8(&stored.code),
                 message: BunString::clone_utf8(&stored.reason),
-                ..Default::default()
+                ..SystemError::new()
             };
             err.to_error_instance(global)
         })
@@ -2499,7 +2499,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let fallback = SystemError {
             code: BunString::clone_utf8(code),
             message: BunString::clone_utf8(reason),
-            ..Default::default()
+            ..SystemError::new()
         };
 
         Ok(fallback.to_error_instance(global))
@@ -4226,7 +4226,7 @@ bitflags::bitflags! {
 
 impl Flags {
     fn initial(reject_unauthorized: bool) -> Flags {
-        let mut flags = Flags::default();
+        let mut flags = Flags::OWNED_PROTOS;
         flags.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);
         flags
     }
@@ -4260,13 +4260,6 @@ pub(crate) fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
     // SAFETY: the caller holds a ref on `ctx` across the call; read-only.
     unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0 }
-}
-
-impl Default for Flags {
-    fn default() -> Self {
-        // Default: `owned_protos` true, all others false.
-        Flags::OWNED_PROTOS
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4556,7 +4549,7 @@ impl DuplexUpgradeContext {
                 );
                 let is_client = this.mode == SocketMode::Client;
                 let verify = this.server_verify;
-                let started: crate::Result<()> = if let Some(ctx) = this.owned_ctx.take() {
+                let started: crate::Result<()> = if let Some(ctx) = this.owned_ctx.replace(None) {
                     this.upgrade.start_tls_with_ctx(ctx, is_client, verify)
                 } else if let Some(config) = this.ssl_config.replace(None) {
                     // Lent out of the cell: `start_tls` dispatches `on_open` synchronously.

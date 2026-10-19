@@ -32,9 +32,8 @@ pub mod options {
     pub(crate) use crate::parser::Runtime::ServerComponentsMode as ServerComponents;
     pub use JSX::Runtime as JSXRuntime;
     pub use bun_options_types::jsx as JSX;
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum Format {
-        #[default]
         Esm,
         Iife,
         Cjs,
@@ -59,10 +58,9 @@ pub mod options {
     /// is captured.
     pub(crate) type AllowUnresolvedMatcher = fn(pattern: &[u8], shape: &[u8]) -> bool;
 
-    #[derive(Debug, Clone, Default)]
+    #[derive(Debug, Clone)]
     pub enum AllowUnresolved {
         /// Default. Skip all checks — current behavior.
-        #[default]
         All,
         /// Always error on dynamic specifiers.
         None,
@@ -121,7 +119,7 @@ pub mod options {
     /// for `'a` (parse lifetime), not `'static`, so `&'static [u8]` would
     /// wrongly restrict callers to literal defaults — see PORTING.md
     /// §Forbidden re: `&'static [T]` for arena-freed data.
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     pub struct Framework {
         pub is_built_in_react: bool,
         pub server_components: Option<FrameworkServerComponents>,
@@ -272,8 +270,8 @@ pub mod Runtime {
         pub jsx_optimization_inline: bool,
     }
 
-    impl Default for Features {
-        fn default() -> Self {
+    impl Features {
+        pub fn new() -> Self {
             Self {
                 react_fast_refresh: false,
                 react_compiler: ReactCompilerMode::Disabled,
@@ -296,7 +294,7 @@ pub mod Runtime {
                 set_breakpoint_on_first_line: false,
                 trim_unused_imports: false,
                 auto_polyfill_require: false,
-                replace_exports: ReplaceableExportMap::default(),
+                replace_exports: ReplaceableExportMap::new(),
                 dont_bundle_twice: false,
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,
@@ -467,7 +465,7 @@ pub enum SkipTypeParameterResult {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct TypeParameterFlag: u8 {
         /// TypeScript 4.7
         const ALLOW_IN_OUT_VARIANCE_ANNOTATIONS = 1 << 0;
@@ -501,13 +499,25 @@ impl JSXImport {
     }
 }
 
-#[derive(Default)]
 pub struct JSXImportSymbols {
     pub(crate) jsx: Option<LocRef>,
     pub(crate) jsx_dev: Option<LocRef>,
     pub(crate) jsxs: Option<LocRef>,
     pub(crate) fragment: Option<LocRef>,
     pub(crate) create_element: Option<LocRef>,
+}
+
+impl JSXImportSymbols {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            jsx: None,
+            jsx_dev: None,
+            jsxs: None,
+            fragment: None,
+            create_element: None,
+        }
+    }
 }
 
 impl JSXImportSymbols {
@@ -684,10 +694,19 @@ pub(crate) enum Substitution {
 /// if (false) var foo = 1;
 /// to nothing is unsafe
 /// Because "foo" was defined. And now it's not.
-#[derive(Default)]
 pub struct RelocateVars {
     pub(crate) stmt: Option<Stmt>,
     pub(crate) ok: bool,
+}
+
+impl RelocateVars {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            stmt: None,
+            ok: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -696,7 +715,6 @@ pub enum RelocateVarsMode {
     ForInOrForOf,
 }
 
-#[derive(Default)]
 pub struct VisitArgsOpts<'a> {
     pub(crate) body: &'a [Stmt],
     pub(crate) has_rest_arg: bool,
@@ -721,8 +739,8 @@ pub struct TransposeState {
     pub(crate) import_options: Expr,
 }
 
-impl Default for TransposeState {
-    fn default() -> Self {
+impl TransposeState {
+    pub fn new() -> Self {
         Self {
             is_await_target: false,
             is_then_catch_target: false,
@@ -799,7 +817,7 @@ impl<'a> JSXTag<'a> {
         let mut tag = p.new_expr(
             E::Identifier {
                 ref_,
-                ..Default::default()
+                ..E::Identifier::new()
             },
             loc,
         );
@@ -828,7 +846,7 @@ impl<'a> JSXTag<'a> {
 
             let new_name: &'a mut [u8] = p
                 .bump()
-                .alloc_slice_fill_default::<u8>(name.len() + 1 + member.len());
+                .alloc_slice_fill_copy::<u8>(name.len() + 1 + member.len(), 0);
             new_name[..name.len()].copy_from_slice(name);
             new_name[name.len()] = b'.';
             new_name[name.len() + 1..].copy_from_slice(member);
@@ -839,7 +857,7 @@ impl<'a> JSXTag<'a> {
                     target: tag,
                     name: member.into(),
                     name_loc: member_range.loc,
-                    ..Default::default()
+                    ..E::Dot::new()
                 },
                 loc,
             );
@@ -863,10 +881,10 @@ pub struct ExprOrLetStmt {
     pub(crate) decls: bun_collections::RawSlice<G::Decl>,
 }
 
-impl Default for ExprOrLetStmt {
-    fn default() -> Self {
+impl ExprOrLetStmt {
+    pub fn new() -> Self {
         Self {
-            stmt_or_expr: js_ast::StmtOrExpr::default(),
+            stmt_or_expr: js_ast::StmtOrExpr::new(),
             decls: bun_collections::RawSlice::EMPTY,
         }
     }
@@ -912,8 +930,15 @@ impl AsyncPrefixExpression {
 // Not all-bool (assign_target is a 2-bit enum), so per PORTING.md we use a
 // transparent u8 with manual shift accessors.
 #[repr(transparent)]
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct IdentifierOpts(u8);
+
+impl IdentifierOpts {
+    #[inline]
+    pub fn init() -> Self {
+        Self(0)
+    }
+}
 
 impl IdentifierOpts {
     const ASSIGN_TARGET_MASK: u8 = 0b0000_0011; // bits 0-1
@@ -1010,7 +1035,7 @@ pub(crate) fn statement_cares_about_scope(stmt: &Stmt) -> bool {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct ExprIn {
     /// This tells us if there are optional chain expressions (EDot, EIndex, or
     /// ECall) that are chained on to this expression. Because of the way the AST
@@ -1055,6 +1080,18 @@ pub struct ExprIn {
     pub(crate) is_property_access_target: bool,
 }
 
+impl ExprIn {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            assign_target: js_ast::AssignTarget::None,
+            is_immediately_assigned_to_decl: false,
+            property_access_for_method_call_maybe_should_replace_with_undefined: false,
+            is_property_access_target: false,
+        }
+    }
+}
+
 /// This function exists to tie all of these checks together in one place
 /// This can sometimes show up on benchmarks as a small thing.
 #[inline]
@@ -1062,27 +1099,33 @@ pub(crate) fn is_eval_or_arguments(name: &[u8]) -> bool {
     name == b"eval" || name == b"arguments"
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct PrependTempRefsOpts {
     pub(crate) kind: StmtsKind,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+impl PrependTempRefsOpts {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            kind: StmtsKind::None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StmtsKind {
-    #[default]
     None,
     LoopBody,
     SwitchStmt,
     FnBody,
 }
 
-#[derive(Default)]
 pub struct ExprBindingTuple {
     pub(crate) expr: Option<ExprNodeIndex>,
     pub(crate) binding: Option<Binding>,
 }
 
-#[derive(Default)]
 pub struct TempRef {
     pub(crate) r#ref: Ref,
 }
@@ -1114,14 +1157,13 @@ pub struct InvalidLoc {
     pub(crate) kind: InvalidLocTag,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum InvalidLocTag {
     Spread,
     Parentheses,
     Getter,
     Setter,
     Method,
-    #[default]
     Unknown,
 }
 
@@ -1154,13 +1196,13 @@ impl StringVoidMap {
     pub(crate) fn get_or_put_contains(&mut self, key: &[u8]) -> bool {
         // StringHashMap copies keys into owned heap allocations on insert,
         // so the pooled map outliving any one source is fine.
-        let entry = self.map.get_or_put(key).expect("unreachable");
+        let entry = self.map.get_or_put(key, || ()).expect("unreachable");
         entry.found_existing
     }
 
     fn init() -> Result<StringVoidMap, bun_core::Error> {
         Ok(StringVoidMap {
-            map: StringHashMap::default(),
+            map: StringHashMap::init(),
         })
     }
 
@@ -1223,17 +1265,27 @@ impl<'arena> ScopeOrder<'arena> {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
     pub(crate) is_after_question_and_before_colon: bool,
 }
 
+impl ParenExprOpts {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            is_async: false,
+            force_arrow_fn: false,
+            is_after_question_and_before_colon: false,
+        }
+    }
+}
+
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AwaitOrYield {
-    #[default]
     AllowIdent = 0,
     AllowExpr = 1,
     ForbidAll = 2,
@@ -1269,8 +1321,8 @@ pub struct FnOrArrowDataParse {
     pub(crate) allow_ts_decorators: bool,
 }
 
-impl Default for FnOrArrowDataParse {
-    fn default() -> Self {
+impl FnOrArrowDataParse {
+    pub fn new() -> Self {
         Self {
             needs_async_loc: bun_ast::Loc::EMPTY,
             allow_await: AwaitOrYield::AllowIdent,
@@ -1284,7 +1336,7 @@ impl Default for FnOrArrowDataParse {
             has_decorators: false,
             is_return_disallowed: false,
             is_this_disallowed: false,
-            arrow_arg_errors: DeferredArrowArgErrors::default(),
+            arrow_arg_errors: DeferredArrowArgErrors::new(),
             track_arrow_arg_errors: false,
             allow_missing_body_for_type_script: false,
             allow_ts_decorators: false,
@@ -1295,7 +1347,7 @@ impl Default for FnOrArrowDataParse {
 /// This is function-specific information used during visiting. It is saved and
 /// restored on the call stack around code that parses nested functions and
 /// arrow expressions.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct FnOrArrowDataVisit {
     pub(crate) is_inside_loop: bool,
     pub(crate) is_inside_switch: bool,
@@ -1308,10 +1360,21 @@ pub struct FnOrArrowDataVisit {
     pub(crate) try_body_count: i32,
 }
 
+impl FnOrArrowDataVisit {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            is_inside_loop: false,
+            is_inside_switch: false,
+            is_outside_fn_or_arrow: false,
+            try_body_count: 0,
+        }
+    }
+}
+
 /// This is function-specific information used during visiting. It is saved and
 /// restored on the call stack around code that parses nested functions (but not
 /// nested arrow functions).
-#[derive(Default)]
 pub struct FnOnlyDataVisit {
     /// If false, the value for "this" is the top-level module scope "this" value.
     /// That means it's "undefined" for ECMAScript modules and "exports" for
@@ -1326,16 +1389,35 @@ pub struct FnOnlyDataVisit {
     pub(crate) is_this_nested: bool,
 }
 
+impl FnOnlyDataVisit {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            is_this_nested: false,
+        }
+    }
+}
+
 /// Due to ES6 destructuring patterns, there are many cases where it's
 /// impossible to distinguish between an array or object literal and a
 /// destructuring assignment until we hit the "=" operator later on.
 /// This object defers errors about being in one state or the other
 /// until we discover which state we're in.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct DeferredErrors {
     /// These are errors for expressions
     pub(crate) invalid_expr_default_value: Option<bun_ast::Range>,
     pub(crate) invalid_expr_after_question: Option<bun_ast::Range>,
+}
+
+impl DeferredErrors {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            invalid_expr_default_value: None,
+            invalid_expr_after_question: None,
+        }
+    }
 }
 
 impl DeferredErrors {
@@ -1373,8 +1455,8 @@ pub struct PropertyOpts {
     pub(crate) has_class_decorators: bool,
 }
 
-impl Default for PropertyOpts {
-    fn default() -> Self {
+impl PropertyOpts {
+    pub fn new() -> Self {
         Self {
             declare_range: bun_ast::Range::NONE,
             is_async: false,
@@ -1409,8 +1491,8 @@ impl ScanPassResult {
     pub fn init() -> ScanPassResult {
         ScanPassResult {
             import_records: Vec::new(),
-            named_imports: Default::default(),
-            used_symbols: ParsePassSymbolUsageMap::default(),
+            named_imports: ArrayHashMap::new(),
+            used_symbols: ParsePassSymbolUsageMap::init(),
         }
     }
 
@@ -1428,7 +1510,7 @@ pub struct FindLabelSymbolResult {
     pub(crate) found: bool,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct FindSymbolResult {
     pub(crate) r#ref: Ref,
     pub(crate) declare_loc: Option<bun_ast::Loc>,
@@ -1453,27 +1535,35 @@ pub struct DeferredTsDecorators<'a> {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LexicalDecl {
-    #[default]
     Forbid = 0,
     AllowAll = 1,
     AllowFnInsideIf = 2,
     AllowFnInsideLabel = 3,
 }
 
-#[derive(Default)]
 pub struct ParseClassOptions<'a> {
     pub(crate) ts_decorators: &'a [Expr],
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_type_script_declare: bool,
 }
 
+impl<'a> ParseClassOptions<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            ts_decorators: &[],
+            allow_ts_decorators: false,
+            is_type_script_declare: false,
+        }
+    }
+}
+
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StatementScope {
     /// Any nested block/function body. ESM import/export are disallowed here.
-    #[default]
     Nested,
     /// Top-level module statement list.
     Module,
@@ -1492,7 +1582,7 @@ impl StatementScope {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct ParseStatementOptions<'a> {
     pub(crate) ts_decorators: Option<DeferredTsDecorators<'a>>,
     pub(crate) lexical_decl: LexicalDecl,
@@ -1503,6 +1593,22 @@ pub struct ParseStatementOptions<'a> {
     pub(crate) is_name_optional: bool,
     pub(crate) is_typescript_declare: bool,
     pub(crate) is_for_loop_init: bool,
+}
+
+impl<'a> ParseStatementOptions<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            ts_decorators: None,
+            lexical_decl: LexicalDecl::Forbid,
+            scope: StatementScope::Nested,
+            is_export: false,
+            is_using_statement: false,
+            is_name_optional: false,
+            is_typescript_declare: false,
+            is_for_loop_init: false,
+        }
+    }
 }
 
 impl<'a> ParseStatementOptions<'a> {
@@ -1547,9 +1653,8 @@ pub(crate) mod prefill {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum JSXTransformType {
-    #[default]
     None,
     React,
 }
@@ -1584,7 +1689,7 @@ pub struct MacroState<'a> {
 impl<'a> MacroState<'a> {
     pub(crate) fn init() -> MacroState<'a> {
         MacroState {
-            refs: MacroRefs::default(),
+            refs: MacroRefs::new(),
         }
     }
 }
@@ -1629,8 +1734,8 @@ impl Jest {
     ];
 }
 
-impl Default for Jest {
-    fn default() -> Self {
+impl Jest {
+    pub fn new() -> Self {
         Self {
             test: Ref::NONE,
             it: Ref::NONE,
@@ -1681,8 +1786,8 @@ pub struct DeferredArrowArgErrors {
     pub(crate) invalid_expr_yield: bun_ast::Range,
 }
 
-impl Default for DeferredArrowArgErrors {
-    fn default() -> Self {
+impl DeferredArrowArgErrors {
+    pub fn new() -> Self {
         Self {
             invalid_expr_await: bun_ast::Range::NONE,
             invalid_expr_yield: bun_ast::Range::NONE,
@@ -1761,9 +1866,8 @@ pub fn new_lazy_export_ast_impl<'bump>(
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WrapMode {
-    #[default]
     None,
     BunCommonjs,
 }
@@ -1867,8 +1971,8 @@ pub struct ReactRefresh<'a> {
     _phantom: core::marker::PhantomData<&'a ()>,
 }
 
-impl<'a> Default for ReactRefresh<'a> {
-    fn default() -> Self {
+impl<'a> ReactRefresh<'a> {
+    pub fn new() -> Self {
         Self {
             register_used: false,
             signature_used: false,
@@ -1996,9 +2100,18 @@ pub(crate) fn float_to_int32(f: f64) -> i32 {
     if f < 0.0 { 0i32.wrapping_sub(int) } else { int }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct ParseBindingOptions {
     /// This will prevent parsing of destructuring patterns, as using statement
     /// is only allowed to be `using name, name2, name3`, nothing special.
     pub(crate) is_using_statement: bool,
+}
+
+impl ParseBindingOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            is_using_statement: false,
+        }
+    }
 }

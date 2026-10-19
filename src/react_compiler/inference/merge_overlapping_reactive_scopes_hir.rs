@@ -112,9 +112,12 @@ fn collect_scope_info(func: &HirFunction, env: &Environment) -> ScopeInfo {
         if range.start != range.end && seen_scopes.insert(scope_id) {
             scope_starts_map
                 .entry(range.start)
-                .or_default()
+                .or_insert_with(Vec::new)
                 .push(scope_id);
-            scope_ends_map.entry(range.end).or_default().push(scope_id);
+            scope_ends_map
+                .entry(range.end)
+                .or_insert_with(Vec::new)
+                .push(scope_id);
         }
     };
 
@@ -300,7 +303,7 @@ pub(crate) fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env:
     let mut scope_info = collect_scope_info(func, env);
 
     // Save place_scopes before moving scope_info
-    let place_scopes = std::mem::take(&mut scope_info.place_scopes);
+    let place_scopes = std::mem::replace(&mut scope_info.place_scopes, IdMap::init());
 
     // Find overlapping scopes
     let mut joined_scopes = get_overlapping_reactive_scopes(func, env, scope_info);

@@ -80,26 +80,45 @@ const PULL_STATUS_DATA: f64 = 1.0;
 const PULL_STATUS_BLOCKED: f64 = 2.0;
 const PULL_STATUS_ERROR: f64 = -1.0;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PendingEnd {
-    #[default]
     None,
     Fin,
     Trailers,
 }
 
-#[derive(Default)]
 pub(super) struct Outbound {
     pub data: VecDeque<u8>,
     pub end: PendingEnd,
     pub started: bool,
 }
 
-#[derive(Default)]
+impl Outbound {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            data: std::collections::VecDeque::new(),
+            end: PendingEnd::None,
+            started: false,
+        }
+    }
+}
+
 pub(super) struct Inbound {
     pub chunks: VecDeque<Vec<u8>>,
     pub ended: bool,
     pub errored: bool,
+}
+
+impl Inbound {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            chunks: std::collections::VecDeque::new(),
+            ended: false,
+            errored: false,
+        }
+    }
 }
 
 /// `#[repr(C)]` so `vtable` is at offset 0 — the C shim reads it via
@@ -147,8 +166,8 @@ impl QuicStream {
             this_value: JsCell::new(JsRef::empty()),
             state: Cell::new(null_mut()),
             stats: Cell::new(null_mut()),
-            outbound: JsCell::new(Outbound::default()),
-            inbound: JsCell::new(Inbound::default()),
+            outbound: JsCell::new(Outbound::new()),
+            inbound: JsCell::new(Inbound::new()),
             wakeup: JsCell::new(None),
             peer_stop_sending_code: Cell::new(None),
             wrote_to_lsquic: Cell::new(false),

@@ -12,11 +12,20 @@ use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
-#[derive(Default)]
 pub struct SavedSourceMap {
     /// Only accessed between [`Self::lock`] and [`Self::unlock`].
     map: HashTable,
     mutex: Mutex,
+}
+
+impl SavedSourceMap {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            map: HashTable::init(),
+            mutex: Mutex::init(),
+        }
+    }
 }
 
 impl SavedSourceMap {
@@ -266,7 +275,7 @@ impl SavedSourceMap {
         // This mapping entry is only valid while the mutex is locked
         let Some(mapping) = self.map.get_mut(&h) else {
             self.unlock();
-            return SourceMap::ParseUrl::default();
+            return SourceMap::ParseUrl::new();
         };
 
         let tagged = Value::from(Some(*mapping));
@@ -286,7 +295,7 @@ impl SavedSourceMap {
             self.unlock();
             return SourceMap::ParseUrl {
                 map: Some(result),
-                ..Default::default()
+                ..SourceMap::ParseUrl::new()
             };
         } else if tag == Value::case::<ParsedSourceMap>() {
             let parsed = tagged.as_unchecked::<ParsedSourceMap>();
@@ -299,7 +308,7 @@ impl SavedSourceMap {
             self.unlock();
             return SourceMap::ParseUrl {
                 map: Some(result),
-                ..Default::default()
+                ..SourceMap::ParseUrl::new()
             };
         } else if let Some(provider) = tagged.get::<AnySourceProvider>() {
             // Copy the erased pair out while the lock is held: once unlocked,
@@ -313,7 +322,9 @@ impl SavedSourceMap {
             // The provider FFI handle is kept alive by its owner (JSC / the
             // registrar), which unregisters it before freeing; we did not
             // hold a ref.
-            if let Some(parse) = provider.get_source_map(path, Default::default(), hint) {
+            if let Some(parse) =
+                provider.get_source_map(path, bun_sourcemap::SourceMapLoadHint::None, hint)
+            {
                 if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
                     // Leak one strong ref into the table; `put_value` releases
@@ -336,14 +347,14 @@ impl SavedSourceMap {
             // Store path for a user note.
             missing_source_map_note_info::record(path);
             self.unlock();
-            return SourceMap::ParseUrl::default();
+            return SourceMap::ParseUrl::new();
         } else {
             if cfg!(debug_assertions) {
                 panic!("Corrupt pointer tag");
             }
             self.unlock();
 
-            return SourceMap::ParseUrl::default();
+            return SourceMap::ParseUrl::new();
         }
     }
 

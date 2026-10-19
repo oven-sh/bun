@@ -21,10 +21,20 @@ impl Drop for Dir {
 }
 
 /// Options for `Dir::make_open_path`.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct OpenDirOptions {
     pub iterate: bool,
     pub no_follow: bool,
+}
+
+impl OpenDirOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            iterate: false,
+            no_follow: false,
+        }
+    }
 }
 
 impl Dir {
@@ -327,11 +337,21 @@ fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
 
 /// File-creation flags — subset used by `create_file_z` callers
 /// (e.g. the package-manager repository/directories code).
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct CreateFlags {
     pub truncate: bool,
     /// Open for reading as well as writing (defaults to false).
     pub read: bool,
+}
+
+impl CreateFlags {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            truncate: false,
+            read: false,
+        }
+    }
 }
 
 impl Dir {
@@ -412,7 +432,7 @@ impl Dir {
                 WindowsOpenDirOptions {
                     iterable: opts.iterate,
                     no_follow: opts.no_follow,
-                    ..Default::default()
+                    ..WindowsOpenDirOptions::new()
                 },
             )
             .map(Dir::from_fd)
@@ -447,7 +467,7 @@ impl FdDirExt for Fd {
     }
     #[inline]
     fn make_open_path(self, sub_path: &[u8]) -> Maybe<Dir> {
-        Dir::borrow(&self).make_open_path(sub_path, OpenDirOptions::default())
+        Dir::borrow(&self).make_open_path(sub_path, OpenDirOptions::new())
     }
     #[inline]
     fn from_std_dir(dir: &Dir) -> Fd {

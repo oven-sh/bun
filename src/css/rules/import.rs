@@ -11,7 +11,6 @@ use bun_ast::ImportRecord;
 /// Layer slot used in both `ImportConditions.layer` and `ImportRule.layer`.
 /// The two uses are layout-identical, so a single type serves both.
 #[repr(C)]
-#[derive(Default)]
 pub struct Layer {
     /// PERF: null pointer optimizaiton, nullable
     pub v: Option<LayerName>,
@@ -37,7 +36,6 @@ impl Layer {
 /// The fields of this struct need to match the fields of ImportRule
 /// because we cast between them
 #[repr(C)]
-#[derive(Default)]
 pub struct ImportConditions {
     /// An optional cascade layer name, or `None` for an anonymous layer.
     pub layer: Option<Layer>,
@@ -47,6 +45,17 @@ pub struct ImportConditions {
 
     /// A media query.
     pub media: MediaList,
+}
+
+impl ImportConditions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            layer: None,
+            supports: None,
+            media: MediaList::new(),
+        }
+    }
 }
 
 impl ImportConditions {
@@ -132,13 +141,13 @@ pub struct ImportRule {
     pub loc: Location,
 }
 
-impl Default for ImportRule {
-    fn default() -> Self {
+impl ImportRule {
+    pub fn new() -> Self {
         Self {
             url: b"",
             layer: None,
             supports: None,
-            media: MediaList::default(),
+            media: MediaList::new(),
             import_record_idx: u32::MAX,
             loc: Location::dummy(),
         }
@@ -150,7 +159,7 @@ impl ImportRule {
         Self {
             url,
             import_record_idx,
-            ..Default::default()
+            ..Self::new()
         }
     }
 

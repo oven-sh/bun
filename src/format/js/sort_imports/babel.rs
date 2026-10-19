@@ -27,10 +27,17 @@ pub(super) struct Comment {
 }
 
 /// `leadingComments`, `innerComments` or `trailingComments`: a range of [`Model::lists`].
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub(super) struct List {
     start: u32,
     len: u32,
+}
+
+impl List {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self { start: 0, len: 0 }
+    }
 }
 
 impl List {
@@ -48,17 +55,35 @@ pub(super) enum Which {
 }
 
 /// `loc.start.line` and `loc.end.line`
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) struct Lines {
     pub(super) start: i32,
     pub(super) end: i32,
 }
 
-#[derive(Copy, Clone, Default, Debug)]
+impl Lines {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self { start: 0, end: 0 }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
 pub(super) struct Attached {
     pub(super) leading: List,
     pub(super) inner: List,
     pub(super) trailing: List,
+}
+
+impl Attached {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            leading: List::new(),
+            inner: List::new(),
+            trailing: List::new(),
+        }
+    }
 }
 
 impl Attached {
@@ -242,7 +267,7 @@ impl<'a> Model<'a> {
             orders: Vec::with_capacity(64),
             deep: Vec::new(),
             has_comments_in_imports: false,
-            empty: Attached::default(),
+            empty: Attached::new(),
             first_statement: None,
             is_contiguous: true,
             rest_start: 0,
@@ -270,7 +295,7 @@ impl<'a> Model<'a> {
                 rest_start = skip_whitespace(self.text, span.end as usize) as u32;
             }
             match token.kind() {
-                TokenKind::Shebang => self.interpreter = Some((span, Attached::default())),
+                TokenKind::Shebang => self.interpreter = Some((span, Attached::new())),
                 kind => self.comments.push(Comment {
                     span,
                     is_block: kind == TokenKind::Block,
@@ -411,7 +436,7 @@ impl<'a> Model<'a> {
                 span.start + text.len() as u32,
             );
         }
-        import.spec_span().unwrap_or_default()
+        import.spec_span().unwrap_or_else(Span::init)
     }
 
     fn attached_mut(&mut self, node: Node) -> Option<&mut Attached> {
@@ -438,17 +463,17 @@ impl<'a> Model<'a> {
         match node {
             Node::Interpreter => self
                 .interpreter
-                .map_or_else(List::default, |it| it.1.get(which)),
+                .map_or_else(List::new, |it| it.1.get(which)),
             Node::Directive(index) => self.directives[index as usize].comments.get(which),
             Node::Import(index) => self.declarations[index as usize].comments.get(which),
             Node::Specifier(index) => self.specifiers[index as usize].comments.get(which),
             Node::Empty => self.empty.get(which),
-            Node::NewLine | Node::NewLineLiteral => List::default(),
+            Node::NewLine | Node::NewLineLiteral => List::new(),
             _ => self
                 .deep
                 .iter()
                 .find(|it| it.0 == node && it.1 == which)
-                .map_or_else(List::default, |it| it.2),
+                .map_or_else(List::new, |it| it.2),
         }
     }
 
@@ -525,7 +550,7 @@ impl<'a> Model<'a> {
             );
             let between = group
                 .map(|group| self.new_list(group.first..group.after))
-                .unwrap_or_default();
+                .unwrap_or_else(List::new);
             if let Some(previous) = previous.take() {
                 self.attach(previous, Which::Trailing, between);
             }
@@ -543,7 +568,7 @@ impl<'a> Model<'a> {
                     self.directives.push(Directive {
                         span,
                         literal: expression.span(),
-                        comments: Attached::default(),
+                        comments: Attached::new(),
                     });
                     self.attach(Node::Directive(index), Which::Leading, between);
                     while let Some(group) = self.next_group_before(&mut cursor, span.end) {
@@ -592,7 +617,7 @@ impl<'a> Model<'a> {
             imported,
             local,
             span,
-            comments: Attached::default(),
+            comments: Attached::new(),
         });
     }
 
@@ -636,7 +661,7 @@ impl<'a> Model<'a> {
             has_attributes: import
                 .attributes()
                 .is_some_and(|it| !it.entries().is_empty()),
-            comments: Attached::default(),
+            comments: Attached::new(),
         });
         while let Some(group) = self.next_group_before(cursor, span.end) {
             self.attach_in_declaration(index, group);
@@ -771,7 +796,7 @@ impl<'a> Model<'a> {
     pub(super) fn lines(&self, node: Node) -> Option<Lines> {
         match node {
             Node::Import(index) => self.declarations[index as usize].lines,
-            Node::Empty => Some(Lines::default()),
+            Node::Empty => Some(Lines::new()),
             _ => self.span(node).map(|span| self.lines_of(span)),
         }
     }

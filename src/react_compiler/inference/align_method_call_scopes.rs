@@ -29,7 +29,8 @@ pub(crate) fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environ
     }
 
     // Maps an identifier to the scope it should be assigned to (or None to remove scope)
-    let mut scope_mapping: HashMap<IdentifierId, Option<ScopeId>> = HashMap::default();
+    let mut scope_mapping: HashMap<IdentifierId, Option<ScopeId>> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     let mut merged_scopes = DisjointSet::<ScopeId>::new();
 
     // Phase 1: Walk instructions and collect scope relationships
@@ -81,7 +82,7 @@ pub(crate) fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environ
     // Use a HashMap to accumulate min/max across all scopes mapping to the same root,
     // matching TS behavior where root.range is updated in-place during iteration.
     let mut range_updates: HashMap<ScopeId, (EvaluationOrder, EvaluationOrder)> =
-        HashMap::default();
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
 
     merged_scopes.for_each(|scope_id, root_id| {
         if scope_id == root_id {

@@ -81,7 +81,7 @@ impl Matcher {
                     relative,
                     MinimatchOptions {
                         dot,
-                        ..MinimatchOptions::default()
+                        ..MinimatchOptions::new()
                     },
                 ))
             }
@@ -502,7 +502,7 @@ pub(crate) fn list_as_eslint_8(
 ) -> Result<Vec<Listed>, Vec<u8>> {
     let options = crate::cli::Options {
         ext: Some(extensions.iter().map(|it| it.to_vec()).collect()),
-        ..Default::default()
+        ..crate::cli::Options::new()
     };
     let loader = Loader::of_eslint_8(linter, &options, environment, js_plugins);
     let patterns: Vec<Vec<u8>> = patterns.iter().map(|it| it.to_vec()).collect();

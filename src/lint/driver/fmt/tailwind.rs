@@ -109,12 +109,21 @@ pub(crate) fn version_in(package: &Json) -> Option<[u64; 3]> {
 }
 
 /// The classes in files for which the same Tailwind is asked, each as [`key_of`] has it.
-#[derive(Default)]
 struct Group {
     /// The ranks are among all of them.
     known: FxHashMap<Vec<u8>, Rank>,
     /// Asked for, and not known.
     missing: Vec<Vec<u8>>,
+}
+
+impl Group {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            known: FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            missing: Vec::new(),
+        }
+    }
 }
 
 /// `class` as the script reads it, and names it in its answer: the question is JSON, where what is not UTF-8 is U+FFFD.
@@ -128,7 +137,6 @@ fn key_of(class: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-#[derive(Default)]
 struct Known {
     /// For a package of another name than `tailwindcss`, that is behind the directory, and a NUL.
     by_directory: FxHashMap<Vec<u8>, Option<Found>>,
@@ -139,10 +147,30 @@ struct Known {
     of_other_version: Option<Vec<u8>>,
 }
 
+impl Known {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            by_directory: FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            groups: FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            not_installed: None,
+            of_other_version: None,
+        }
+    }
+}
+
 /// What a run knows about the order of classes.
-#[derive(Default)]
 pub(crate) struct Classes {
     known: Guarded<Known>,
+}
+
+impl Classes {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            known: Guarded::init(Known::new()),
+        }
+    }
 }
 
 /// [`Classes`], for the files of a directory.
@@ -178,7 +206,7 @@ impl Orders for OfGroup {
             }
         };
         if !known.groups.contains_key(which) {
-            known.groups.insert(which.clone(), Group::default());
+            known.groups.insert(which.clone(), Group::new());
         }
         let group = known.groups.get_mut(which)?;
         let (mut ranks, mut is_known) = (Vec::new(), true);
@@ -217,7 +245,7 @@ impl Known {
                 }
                 continue;
             }
-            let group = self.groups.entry(which).or_default();
+            let group = self.groups.entry(which).or_insert_with(Group::new);
             group.missing.clear();
             group.known.clear();
             for (class, rank) in

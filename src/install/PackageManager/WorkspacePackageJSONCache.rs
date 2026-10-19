@@ -73,8 +73,8 @@ pub struct GetJSONOptions {
     pub guess_indentation: bool,
 }
 
-impl Default for GetJSONOptions {
-    fn default() -> Self {
+impl GetJSONOptions {
+    pub fn new() -> Self {
         Self {
             init_reset_store: true,
             guess_indentation: false,
@@ -98,9 +98,15 @@ impl<'a> GetResult<'a> {
     }
 }
 
-#[derive(Default)]
 pub struct WorkspacePackageJSONCache {
     pub map: Map,
+}
+
+impl WorkspacePackageJSONCache {
+    #[inline]
+    pub fn new() -> Self {
+        Self { map: Map::init() }
+    }
 }
 
 impl WorkspacePackageJSONCache {
@@ -126,7 +132,7 @@ impl WorkspacePackageJSONCache {
         self.get_or_insert(
             log,
             abs_package_json_path,
-            GetJSONOptions::default(),
+            GetJSONOptions::new(),
             Some(contents),
         )
         .unwrap()
@@ -179,7 +185,7 @@ impl WorkspacePackageJSONCache {
         // cyclebreak; `bun_sys` cannot name `Source`).
         let source = match unwritten {
             Some(contents) => Source::init_path_string(key.as_bytes(), contents),
-            None => match bun_ast::to_source(&key, Default::default()) {
+            None => match bun_ast::to_source(&key, bun_ast::ToSourceOptions::new()) {
                 Ok(s) => s,
                 Err(err) => {
                     return GetResult::ReadErr(err.into());

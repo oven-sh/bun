@@ -93,12 +93,21 @@ pub struct Graph<'a> {
     pub(crate) has_any_secondary_paths: bool,
 }
 
-#[derive(Default)]
 pub struct HtmlImports {
     /// Source index of the server file doing the import
     pub(crate) server_source_indices: Vec<IndexInt>,
     /// Source index of the HTML file being imported
     pub(crate) html_source_indices: Vec<IndexInt>,
+}
+
+impl HtmlImports {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            server_source_indices: Vec::new(),
+            html_source_indices: Vec::new(),
+        }
+    }
 }
 
 pub struct InputFile {
@@ -114,17 +123,17 @@ pub struct InputFile {
     pub flags: InputFileFlags,
 }
 
-impl Default for InputFile {
-    fn default() -> Self {
+impl InputFile {
+    pub fn new() -> Self {
         Self {
-            source: bun_ast::Source::default(),
+            source: bun_ast::Source::new(),
             secondary_path: AstAlloc::vec(),
-            loader: options::Loader::default(),
-            side_effects: SideEffects::default(),
+            loader: options::Loader::File,
+            side_effects: SideEffects::HasSideEffects,
             additional_files: AstAlloc::vec(),
             unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
             content_hash_for_additional_file: 0,
-            flags: InputFileFlags::default(),
+            flags: InputFileFlags::empty(),
         }
     }
 }
@@ -146,7 +155,7 @@ bun_collections::multi_array_columns! {
 }
 
 bitflags::bitflags! {
-    #[derive(Default, Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct InputFileFlags: u8 {
         /// Set when a barrel-eligible file has `export * from` this file.
         const IS_EXPORT_STAR_TARGET = 1 << 1;
@@ -163,16 +172,16 @@ impl<'a> Graph<'a> {
             pool: bun_ptr::BackRef::dangling(),
             heap,
             entry_points: Vec::new(),
-            entry_point_original_names: IndexStringMap::default(),
-            input_files: MultiArrayList::default(),
-            ast: MultiArrayList::default(),
+            entry_point_original_names: IndexStringMap::new(),
+            input_files: MultiArrayList::new(),
+            ast: MultiArrayList::new(),
             pending_items: 0,
             deferred_pending: 0,
             defer_epoch: 0,
             cancelled: false,
             build_graphs: EnumMap::default(),
-            server_component_boundaries: server_component_boundary::List::default(),
-            html_imports: HtmlImports::default(),
+            server_component_boundaries: server_component_boundary::List::new(),
+            html_imports: HtmlImports::new(),
             estimated_file_loader_count: 0,
             css_file_count: 0,
             additional_output_files: Vec::new(),

@@ -42,7 +42,7 @@ fn parse_platform_flag<T: Npm::NegatableEnum>(
     if values.is_empty() {
         return None;
     }
-    let mut negatable = Npm::Negatable::<T>::default();
+    let mut negatable = Npm::Negatable::<T>::new();
     for &value in values {
         match value {
             b"*" => negatable.had_wildcard = true,
@@ -727,7 +727,6 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
 // which itself lives for the program duration). They are never freed. Mapped to `&'static [u8]`
 // per PORTING.md (no `deinit`, never `allocator.free`d). An explicit lifetime would only
 // become necessary if `clap::Args` ever becomes scoped.
-#[derive(Default)]
 pub struct CommandLineArguments {
     pub cache_dir: Option<&'static [u8]>,
     pub lockfile: &'static [u8],
@@ -845,6 +844,92 @@ pub struct CommandLineArguments {
     pub(crate) no_env_file: bool,
 }
 
+impl CommandLineArguments {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            cache_dir: None,
+            lockfile: &[],
+            global: false,
+            config: None,
+            network_concurrency: None,
+            backend: None,
+            analyze: false,
+            only_missing: false,
+            add_catalog: None,
+            positionals: &[],
+            yarn: false,
+            production: false,
+            frozen_lockfile: false,
+            no_save: false,
+            dry_run: false,
+            check: false,
+            force: false,
+            no_cache: false,
+            log_level: Options::LogLevel::Default,
+            no_progress: false,
+            no_verify: false,
+            offline: false,
+            prefer_offline: false,
+            ignore_scripts: false,
+            trusted: false,
+            no_summary: false,
+            latest: false,
+            interactive: false,
+            json_output: false,
+            recursive: false,
+            filters: &[],
+            update_groups: UpdateGroups::new(),
+            pack_destination: &[],
+            pack_filename: &[],
+            pack_gzip_level: None,
+            dependency_group: Options::DependencyGroup::DEPENDENCIES,
+            names_group: false,
+            omit: None,
+            exact: false,
+            concurrent_scripts: None,
+            patch: PatchOpts::Nothing,
+            registry: &[],
+            publish_config: Options::PublishConfig::new(),
+            tolerate_republish: false,
+            ca: &[],
+            ca_file_name: &[],
+            save_text_lockfile: None,
+            lockfile_only: false,
+            node_linker: None,
+            minimum_release_age_ms: None,
+            minimum_release_age_excludes: &[],
+            no_git_tag_version: false,
+            allow_same_version: false,
+            preid: &[],
+            message: None,
+            top_only: false,
+            depth: None,
+            all: false,
+            trusted_only: false,
+            dev_only: false,
+            long: false,
+            diff_args: Vec::new(),
+            diff_name_only: false,
+            diff_raw: false,
+            no_project_ok: false,
+            diff_unminify: false,
+            diff_minify: false,
+            diff_ignore_space: false,
+            diff_stat: false,
+            diff_context: None,
+            cache_max_age_days: None,
+            audit_level: None,
+            audit_ignore_list: &[],
+            cpu: None,
+            os: None,
+            libc: None,
+            env_files: &[],
+            no_env_file: false,
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum AuditLevel {
@@ -874,24 +959,32 @@ impl AuditLevel {
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub enum PatchOpts {
-    #[default]
     Nothing,
     Patch,
-    Commit {
-        patches_dir: &'static [u8],
-    },
+    Commit { patches_dir: &'static [u8] },
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct Omit {
     pub(crate) dev: bool,
     pub(crate) optional: bool,
     pub(crate) peer: bool,
 }
 
-#[derive(Default, Copy, Clone, PartialEq, Eq)]
+impl Omit {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            dev: false,
+            optional: false,
+            peer: false,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct UpdateGroups {
     pub dev: bool,
     pub prod: bool,
@@ -899,8 +992,19 @@ pub struct UpdateGroups {
 }
 
 impl UpdateGroups {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            dev: false,
+            prod: false,
+            no_optional: false,
+        }
+    }
+}
+
+impl UpdateGroups {
     pub fn is_default(self) -> bool {
-        self == UpdateGroups::default()
+        self == UpdateGroups::new()
     }
 }
 
@@ -1384,7 +1488,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             })
             .collect();
 
-        let mut diag = clap::Diagnostic::default();
+        let mut diag = clap::Diagnostic::new();
 
         // `args` must stay alive for the program duration —
         // `cli` stores slices into it. Park the parsed `Args` in a process-global
@@ -1401,7 +1505,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 stop_after_positional_at: 0,
                 short_aliases: REWRITES.get_or_init(|| rewrites),
                 unknown_long_flags_are_errors: true,
-                ..Default::default()
+                ..clap::ParseOptions::new()
             },
         ) {
             Ok(a) => {
@@ -1437,7 +1541,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Global::exit(0);
         }
 
-        let mut cli = CommandLineArguments::default();
+        let mut cli = CommandLineArguments::new();
         cli.positionals = args.positionals();
         cli.yarn = args.flag(b"--yarn");
         cli.production = args.flag(b"--production") || args.flag(b"--prod");
@@ -1519,7 +1623,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         let omit_values = args.options(b"--omit");
 
         if !omit_values.is_empty() {
-            let mut omit = Omit::default();
+            let mut omit = Omit::new();
             for omit_value in omit_values {
                 if *omit_value == *b"dev" {
                     omit.dev = true;

@@ -119,10 +119,9 @@ pub enum Error {
 }
 
 #[repr(i32)] // c_int == i32 on all Bun targets
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     /// Output will be run in memory
-    #[default]
     Memory = TCC_OUTPUT_MEMORY as _,
     /// Executable file
     Exe = TCC_OUTPUT_EXE as _,

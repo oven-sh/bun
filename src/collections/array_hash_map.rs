@@ -61,7 +61,7 @@ pub trait ArrayHashAdapter<Q: ?Sized, K> {
 }
 
 /// Default context: driven through `Hash` + `Eq`.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct AutoContext;
 
 impl Stateless for AutoContext {
@@ -87,7 +87,7 @@ impl<K: Hash + Eq + ?Sized> ArrayHashContext<K> for AutoContext {
 }
 
 /// Byte-slice keys hashed with wyhash.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct StringContext;
 
 impl Stateless for StringContext {
@@ -107,7 +107,7 @@ impl ArrayHashContext<[u8]> for StringContext {
 
 /// ASCII-lowercased wyhash + ASCII-case-insensitive equality. Used for
 /// env-var maps on Windows.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct CaseInsensitiveAsciiStringContext;
 
 impl Stateless for CaseInsensitiveAsciiStringContext {
@@ -350,7 +350,7 @@ impl<A: Allocator + Stateless> MapAllocator for A {}
 /// its `Drop` never runs (the AST `MultiArrayList` slab-only-drop pattern,
 /// e.g. `BundledAst` columns), nothing — columns, key boxes, index header,
 /// *or* index buckets — is stranded on the global heap.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct IndexAlloc<A>(A);
 
 // SAFETY: 1:1 forward to `A: core::alloc::Allocator`; the polyfill trait's
@@ -416,12 +416,6 @@ pub struct ArrayHashMap<K, V, C = AutoContext, A: MapAllocator = Global> {
     // e.g. `bundler::options::DEFAULT_LOADERS_BUN`).
     #[cfg(debug_assertions)]
     pointer_stability: core::sync::atomic::AtomicBool,
-}
-
-impl<K, V, C: Stateless, A: MapAllocator> Default for ArrayHashMap<K, V, C, A> {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl<K: Clone, V: Clone, C: Stateless, A: MapAllocator> ArrayHashMap<K, V, C, A> {
@@ -1256,8 +1250,8 @@ pub struct StringArrayHashMap<V, C = StringContext, A: MapAllocator = Global> {
 pub type CaseInsensitiveAsciiStringArrayHashMap<V> =
     StringArrayHashMap<V, CaseInsensitiveAsciiStringContext>;
 
-impl<V, C: Stateless, A: MapAllocator> Default for StringArrayHashMap<V, C, A> {
-    fn default() -> Self {
+impl<V, C: Stateless, A: MapAllocator> StringArrayHashMap<V, C, A> {
+    pub fn init() -> Self {
         Self {
             inner: ArrayHashMap::new(),
             ctx: C::INSTANCE,
@@ -1290,11 +1284,11 @@ impl<V, C, A: MapAllocator> DerefMut for StringArrayHashMap<V, C, A> {
 
 impl<V, C: ArrayHashContext<[u8]>, A: MapAllocator> StringArrayHashMap<V, C, A> {
     pub fn new() -> Self {
-        Self::default()
+        Self::init()
     }
 
     pub fn with_capacity(n: usize) -> Self {
-        let mut m = Self::default();
+        let mut m = Self::init();
         m.reserve(n);
         m
     }
@@ -1648,8 +1642,8 @@ impl<A: Allocator + Stateless> From<&'static [u8]> for StringHashMapKey<A> {
     }
 }
 
-impl<V, A: Allocator + HashbrownAllocator + Stateless> Default for StringHashMap<V, A> {
-    fn default() -> Self {
+impl<V, A: Allocator + HashbrownAllocator + Stateless> StringHashMap<V, A> {
+    pub fn init() -> Self {
         Self {
             inner: hashbrown::HashMap::with_hasher_in(bun_wyhash::BuildHasher, A::INSTANCE),
         }
@@ -1691,7 +1685,7 @@ fn owned_key<A: Allocator + Stateless>(key: &[u8]) -> StringHashMapKey<A> {
 
 impl<V, A: Allocator + HashbrownAllocator + Stateless> StringHashMap<V, A> {
     pub fn new() -> Self {
-        Self::default()
+        Self::init()
     }
 
     #[inline]
@@ -1893,21 +1887,29 @@ pub mod string_hash_map {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun.StringSet` — insertion-ordered set of owned byte-string keys.
-#[derive(Default)]
 pub struct StringSet {
     pub map: StringArrayHashMap<()>,
 }
 
 impl StringSet {
     #[inline]
+    pub fn empty() -> Self {
+        Self {
+            map: StringArrayHashMap::init(),
+        }
+    }
+}
+
+impl StringSet {
+    #[inline]
     pub fn new() -> Self {
-        Self::default()
+        Self::empty()
     }
 
     /// Alias for `new()` (the global allocator is implicit).
     #[inline]
     pub fn init() -> Self {
-        Self::default()
+        Self::empty()
     }
 
     pub fn clone(&self) -> Result<Self, AllocError> {
@@ -1935,7 +1937,7 @@ impl StringSet {
     /// was already present.
     pub fn insert(&mut self, key: &[u8]) -> Result<(), AllocError> {
         // get_or_put already boxes `key` on miss.
-        let _ = self.map.get_or_put(key)?;
+        let _ = self.map.get_or_put(key, || ())?;
         Ok(())
     }
 
@@ -2007,7 +2009,7 @@ mod index_tests {
             assert_eq!(m.get(&k), Some(&i));
         }
         // get_or_put on an existing key after the index was dropped+rebuilt.
-        let gop = m.get_or_put(2654435761).unwrap();
+        let gop = m.get_or_put(2654435761, || 0).unwrap();
         assert!(gop.found_existing);
         assert_eq!(*gop.value_ptr, 1);
     }
@@ -2053,7 +2055,7 @@ mod index_tests {
 
     static COUNTING_ALLOCS: AtomicUsize = AtomicUsize::new(0);
 
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     struct CountingAlloc;
 
     impl Stateless for CountingAlloc {
@@ -2102,13 +2104,13 @@ mod index_tests {
         // Hits via every safe owning entry point must not box the key again.
         m.put(b"aa", 10).unwrap();
         m.put_assume_capacity(b"bb", 20);
-        assert!(m.get_or_put(b"aa").unwrap().found_existing);
+        assert!(m.get_or_put(b"aa", || 0).unwrap().found_existing);
         assert_eq!(*m.get_or_put_value(b"bb", 0).unwrap(), 20);
         let after_hit = COUNTING_ALLOCS.load(Ordering::Relaxed);
         assert_eq!(after_hit, after_miss, "hits must not allocate a key Box");
 
         // A fresh key via get_or_put boxes exactly once.
-        let g = m.get_or_put(b"cc").unwrap();
+        let g = m.get_or_put(b"cc", || 0).unwrap();
         assert!(!g.found_existing);
         *g.value_ptr = 30;
         assert_eq!(COUNTING_ALLOCS.load(Ordering::Relaxed), after_hit + 1);

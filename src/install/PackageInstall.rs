@@ -50,7 +50,6 @@ pub struct Patch {
     pub(crate) contents_hash: u64,
 }
 
-#[derive(Default)]
 pub struct Summary {
     pub(crate) fail: u32,
     pub(crate) success: u32,
@@ -71,13 +70,38 @@ pub struct Summary {
     pub(crate) offline_misses: OfflineMisses,
 }
 
+impl Summary {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            fail: 0,
+            success: 0,
+            skipped: 0,
+            successfully_installed: None,
+            packages_with_blocked_scripts: ArrayHashMap::new(),
+            old_modules: None,
+            places: Vec::new(),
+            offline_misses: OfflineMisses::new(),
+        }
+    }
+}
+
 /// `--offline` only, one entry per folder. `report_offline_misses` judges them.
-#[derive(Default)]
 pub(crate) struct OfflineMisses {
     /// Neither installed nor in the cache.
     pub(crate) missing: Vec<PackageID>,
     /// Already installed.
     pub(crate) in_place: Vec<PackageID>,
+}
+
+impl OfflineMisses {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            missing: Vec::new(),
+            in_place: Vec::new(),
+        }
+    }
 }
 
 impl OfflineMisses {
@@ -761,7 +785,7 @@ fn lay_link(
             }
             sys::File::open(&real, sys::O::RDONLY | sys::O::CLOEXEC, 0)
                 .and_then(|from| {
-                    let to = dest.create_file_z(name, Default::default())?;
+                    let to = dest.create_file_z(name, bun_sys::CreateFlags::new())?;
                     let _ = sys::fchmod(to.handle(), target.st_mode as sys::Mode);
                     sys::copy_file(from.handle(), to.handle())
                 })
@@ -896,7 +920,7 @@ impl HardLinkWindowsInstallTask {
             basename: basename.len() as u16, // @truncate
             task: WorkPoolTask {
                 callback: Self::run_from_thread_pool,
-                node: ThreadPoolNode::default(),
+                node: ThreadPoolNode::new(),
             },
             err: None,
         }))
@@ -954,7 +978,10 @@ impl HardLinkWindowsInstallTask {
                     bun_output::scoped_log!(
                         install,
                         "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
-                        bun_core::fmt::fmt_path_u16(&dest[..dest_len], Default::default())
+                        bun_core::fmt::fmt_path_u16(
+                            &dest[..dest_len],
+                            crate::bun_output::fmt::PathFormatOptions::new()
+                        )
                     );
                 }
                 // SAFETY: FFI — dest is a valid NUL-terminated u16 buffer.
@@ -980,8 +1007,8 @@ impl HardLinkWindowsInstallTask {
             bun_core::run_once! {{
                 bun_core::warn!(
                     "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
-                    bun_core::fmt::fmt_os_path(src, Default::default()),
-                    bun_core::fmt::fmt_os_path(&dest[..dest_len], Default::default()),
+                    bun_core::fmt::fmt_os_path(src, crate::bun_output::fmt::PathFormatOptions::new()),
+                    bun_core::fmt::fmt_os_path(&dest[..dest_len], crate::bun_output::fmt::PathFormatOptions::new()),
                 );
             }}
         }
@@ -1164,7 +1191,7 @@ impl<'a> PackageInstall<'a> {
     fn verify_patch_hash(&mut self, patch: Patch, root_node_modules_dir: &Dir) -> bool {
         // hash from the .patch file, to be checked against bun tag
         let patchfile_contents_hash = patch.contents_hash;
-        let mut buf: BuntagHashBuf = BuntagHashBuf::default();
+        let mut buf: BuntagHashBuf = [0; 26];
         let bunhashtag = buntaghashbuf_make(&mut buf, patchfile_contents_hash);
 
         let patch_tag_path = path::resolve_path::join_z::<path::platform::Posix>(&[
@@ -1707,7 +1734,7 @@ impl PackageFiles<'_> {
             write!(
                 file,
                 "{}",
-                bun_core::fmt::fmt_os_path(path, Default::default())
+                bun_core::fmt::fmt_os_path(path, crate::bun_output::fmt::PathFormatOptions::new())
             )
             .expect("infallible: in-memory write");
             err
@@ -1720,7 +1747,7 @@ impl PackageFiles<'_> {
             walker: &mut Walker,
             failed_file: &mut Vec<u8>,
         ) -> crate::Result<()> {
-            let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
+            let mut copy_file_state = bun_sys::copy_file::CopyFileState::empty();
 
             while let Some(entry) = walker.next()? {
                 if entry.kind != EntryKind::File {
@@ -2049,7 +2076,7 @@ impl PackageFiles<'_> {
 
         #[cfg(windows)]
         let result = walk_install_dir_windows(&mut state, &mut |dest, src, _| {
-            let link = || sys::symlink_w(dest, src, Default::default());
+            let link = || sys::symlink_w(dest, src, bun_sys::WindowsSymlinkOptions::new());
             match link() {
                 Err(err) if err.get_errno() == sys::E::EEXIST => {
                     let _ = sys::unlink_w(dest);
@@ -2142,7 +2169,7 @@ impl<'a> PackageInstall<'a> {
             absolute_path: absolute_path.to_vec().into_boxed_slice(),
             task: WorkPoolTask {
                 callback: UninstallTask::run,
-                node: ThreadPoolNode::default(),
+                node: ThreadPoolNode::new(),
             },
         }));
         let pm = crate::package_manager::get();
@@ -2333,7 +2360,7 @@ impl<'a> PackageInstall<'a> {
                     match bun_sys::MakePath::make_open_path(
                         destination_dir,
                         dir,
-                        OpenDirOptions::default(),
+                        OpenDirOptions::new(),
                     ) {
                         Ok(d) => d,
                         Err(err) => {

@@ -13,10 +13,20 @@ use jsc::bun_string_jsc;
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct Buffered {
     pub(crate) buf: [u8; 3],
     pub(crate) len: u8,
+}
+
+impl Buffered {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            buf: [0; 3],
+            len: 0,
+        }
+    }
 }
 
 impl Buffered {
@@ -61,10 +71,10 @@ pub(crate) struct TextDecoder {
     pub(crate) encoding: EncodingLabel,
 }
 
-impl Default for TextDecoder {
-    fn default() -> Self {
+impl TextDecoder {
+    pub(crate) fn init() -> Self {
         Self {
-            buffered: Cell::new(Buffered::default()),
+            buffered: Cell::new(Buffered::new()),
             lead_byte: Cell::new(None),
             lead_surrogate: Cell::new(None),
             bom_seen: Cell::new(false),
@@ -368,7 +378,7 @@ impl TextDecoder {
                 let buffered = self.buffered.get();
                 let joined: &[u8] = if buffered.len > 0 {
                     joined_owned = [buffered.slice(), buffer_slice].concat().into_boxed_slice();
-                    self.buffered.set(Buffered::default());
+                    self.buffered.set(Buffered::new());
                     &joined_owned
                 } else {
                     buffer_slice
@@ -562,7 +572,7 @@ impl TextDecoder {
     ) -> JsResult<*mut TextDecoder> {
         let [encoding_value, options_value] = callframe.arguments_as_array::<2>();
 
-        let mut decoder = TextDecoder::default();
+        let mut decoder = TextDecoder::init();
 
         if encoding_value.is_string() {
             let str = encoding_value.to_utf8(global_this)?;
@@ -694,7 +704,7 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
         fatal,
         ignore_bom,
         encoding,
-        ..TextDecoder::default()
+        ..TextDecoder::init()
     }))
 }
 

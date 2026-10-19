@@ -31,7 +31,6 @@ pub(crate) struct S3ListObjectsContents {
     owner: Option<ObjectOwner>,
 }
 
-#[derive(Default)]
 pub(crate) struct S3ListObjectsV2Result {
     pub name: Option<Box<[u8]>>,
     pub(crate) prefix: Option<Box<[u8]>>,

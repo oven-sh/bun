@@ -5,12 +5,22 @@ use std::borrow::Cow;
 type Text = Box<[u8]>;
 
 /// Disallow certain properties on certain objects.
-#[derive(Default)]
 pub struct NoRestrictedProperties {
     /// By the name of the object, then by the name of the property.
     restricted_properties: FxHashMap<Text, FxHashMap<Text, Restriction>>,
     globally_restricted_objects: FxHashMap<Text, Restriction>,
     globally_restricted_properties: FxHashMap<Text, Restriction>,
+}
+
+impl NoRestrictedProperties {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            restricted_properties: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            globally_restricted_objects: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            globally_restricted_properties: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 struct Restriction {
@@ -264,7 +274,7 @@ impl Rule for NoRestrictedProperties {
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
-        let mut rule = NoRestrictedProperties::default();
+        let mut rule = NoRestrictedProperties::new();
         for option in options.all() {
             let option = Object::of(Some(option));
             let restriction = |allowed: &str| Restriction {
@@ -280,7 +290,7 @@ impl Rule for NoRestrictedProperties {
                     rule.globally_restricted_objects.insert(object.as_bytes().into(), restriction("allowProperties"));
                 }
                 (Some(object), Some(property)) => {
-                    let properties = rule.restricted_properties.entry(object.as_bytes().into()).or_default();
+                    let properties = rule.restricted_properties.entry(object.as_bytes().into()).or_insert_with(|| rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher));
                     properties.insert(property.as_bytes().into(), Restriction {
                         allowed: None,
                         message: option.str("message").unwrap_or_default().as_bytes().into(),

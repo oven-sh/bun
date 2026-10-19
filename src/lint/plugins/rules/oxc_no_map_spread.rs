@@ -21,10 +21,18 @@ const USE_OBJECT_ASSIGN: Message = Message::new(
 
 const MAP_FN_NAMES: [&str; 2] = ["map", "flatMap"];
 
-#[derive(Default)]
 pub struct State<'a> {
     /// Where the last reference ends that reads a variable.
     last_reads: IdMap<Symbol<'a>, u32>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            last_reads: IdMap::init(),
+        }
+    }
 }
 
 impl Rule for NoMapSpread {
@@ -38,7 +46,7 @@ impl Rule for NoMapSpread {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions_any(&MAP_FN_NAMES).then(State::default)
+        file.mentions_any(&MAP_FN_NAMES).then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -146,7 +154,7 @@ fn spread_to_object_assign<'a>(properties: List<'a, Prop<'a>>) -> Vec<u8> {
             codegen.code.extend_from_slice(b", ");
         }
     }
-    let mut codegen = Codegen::default();
+    let mut codegen = Codegen::new();
     codegen.code.extend_from_slice(b"Object.assign(");
     let mut curr_obj_properties: SmallVec<[Prop<'a>; 8]> = SmallVec::new();
     // After the last property there is nothing to spread.
@@ -194,10 +202,19 @@ enum Task<'a> {
 }
 
 /// What is found in a declaration, or in what is returned.
-#[derive(Default)]
 struct Group<'a> {
     declarator: Option<VarDecl<'a>>,
     found: SmallVec<[Found<'a>; 2]>,
+}
+
+impl<'a> Group<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            declarator: None,
+            found: SmallVec::new(),
+        }
+    }
 }
 
 /// The call, each `...` of `spread`, and what is returned if `spread` is not in it.
@@ -285,7 +302,7 @@ impl<'a> SpreadFinder<'a> {
     /// The literals with a spread that `returned` can be.
     fn spreads_in(&mut self, returned: Expr<'a>) -> Option<Found<'a>> {
         let mut tasks: SmallVec<[Task<'a>; 8]> = smallvec![Task::End, Task::Expr(returned)];
-        let mut groups: SmallVec<[Group<'a>; 2]> = smallvec![Group::default()];
+        let mut groups: SmallVec<[Group<'a>; 2]> = smallvec![Group::new()];
         while let (Some(task), Some(group)) = (tasks.pop(), groups.last_mut()) {
             match task {
                 Task::Expr(e) => {
@@ -340,7 +357,7 @@ impl<'a> SpreadFinder<'a> {
                     _ => {}
                 },
                 Task::End => {
-                    let (declarator, found) = (group.declarator, std::mem::take(&mut group.found));
+                    let (declarator, found) = (group.declarator, std::mem::replace(&mut group.found, smallvec::SmallVec::new()));
                     let found = if found.len() > 1 {
                         self.lists.push(found.into_vec());
                         Some(Found::Many(self.lists.len() - 1))

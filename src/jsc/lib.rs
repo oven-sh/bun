@@ -108,7 +108,6 @@ pub mod exception_list {
         pub text: Box<[u8]>,
     }
 
-    #[derive(Default)]
     pub struct StackTrace {
         pub source_lines: Vec<SourceLine>,
         pub frames: Vec<StackFrame>,
@@ -484,7 +483,7 @@ pub mod process_auto_killer;
 pub mod script_execution_context;
 
 /// Flags for `JSCInitialize` in ZigGlobalObject.cpp. JSC is set up once per process: the first call's flags win.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct InitializeOptions {
     /// JSC `evalMode`: keeps completion values, for `bun --print` and the REPL.
     pub eval_mode: bool,
@@ -492,6 +491,17 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
+}
+
+impl InitializeOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            eval_mode: false,
+            one_shot: false,
+            short_lived_globals: false,
+        }
+    }
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -801,8 +811,8 @@ pub struct IntegerRange {
     pub max: i128,
     pub field_name: &'static [u8],
 }
-impl Default for IntegerRange {
-    fn default() -> Self {
+impl IntegerRange {
+    pub fn new() -> Self {
         Self {
             min: i128::from(MIN_SAFE_INTEGER),
             max: i128::from(MAX_SAFE_INTEGER),
@@ -865,13 +875,6 @@ pub mod resolved_source_tag {
                 "ResolvedSourceTag::from_name: unknown builtin specifier {:?}",
                 bstr::BStr::new(name),
             );
-            Self::Javascript
-        }
-    }
-
-    impl Default for ResolvedSourceTag {
-        #[inline]
-        fn default() -> Self {
             Self::Javascript
         }
     }
@@ -1047,7 +1050,7 @@ pub type RangeErrorOptions<'a> = bun_core::fmt::OutOfRangeOptions<'a>;
 
 /// Broken-down calendar date/time exchanged with C++.
 #[repr(C)]
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct GregorianDateTime {
     pub year: i32,
     pub month: i32,
@@ -1058,12 +1061,38 @@ pub struct GregorianDateTime {
     pub weekday: i32,
 }
 
+impl GregorianDateTime {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            year: 0,
+            month: 0,
+            day: 0,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            weekday: 0,
+        }
+    }
+}
+
 /// Options for `JSGlobalObject::validate_object`.
-#[derive(Default, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct ValidateObjectOpts {
     pub(crate) allow_array: bool,
     pub(crate) allow_function: bool,
     pub(crate) nullable: bool,
+}
+
+impl ValidateObjectOpts {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            allow_array: false,
+            allow_function: false,
+            nullable: false,
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1400,7 +1429,7 @@ impl LogJsc for bun_ast::Log {
                 // JSValues alive until `create_aggregate_error` stores them;
                 // a heap `Vec` is invisible to the scan, so a GC triggered by
                 // a later `msg_to_js` could sweep the earlier wrappers.
-                let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
+                let mut errors_stack: [JSValue; 256] = [JSValue::new(); 256];
                 for (i, msg) in msgs[0..count].iter().enumerate() {
                     errors_stack[i] = msg_to_js(msg, global)?;
                 }
@@ -1517,9 +1546,15 @@ pub trait JsFinalizeRefCounted {
 impl<T: bun_ptr::AnyRefCounted> JsFinalizeRefCounted for T {}
 
 /// Track whether an object should keep the event loop alive
-#[derive(Default)]
 pub struct Ref {
     pub has: bool,
+}
+
+impl Ref {
+    #[inline]
+    pub fn new() -> Self {
+        Self { has: false }
+    }
 }
 
 impl Ref {

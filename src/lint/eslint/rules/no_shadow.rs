@@ -692,8 +692,8 @@ impl Checker {
         let mut known = Known {
             global_augmentations,
             without_body: None,
-            only_types: IdMap::default(),
-            namespaces_of_types: IdMap::default(),
+            only_types: IdMap::init(),
+            namespaces_of_types: IdMap::init(),
         };
         // By the last bits of the number of a name: the outermost of the scopes around the one that is looked at that declare
         // such a name. The scopes come in the order they start, so what is not around one is around none that follows. A

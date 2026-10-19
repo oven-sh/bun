@@ -55,9 +55,9 @@ impl<T> core::hash::Hash for NewId<T> {
         self.0.hash(state);
     }
 }
-impl<T> Default for NewId<T> {
+impl<T> NewId<T> {
     // Pick the sentinel so accidental use trips the debug_assert in `get()`.
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self::INVALID
     }
 }
@@ -188,8 +188,8 @@ impl<T: Clone> Clone for OrderedArraySet<T> {
     }
 }
 
-impl<T> Default for OrderedArraySet<T> {
-    fn default() -> Self {
+impl<T> OrderedArraySet<T> {
+    pub fn new() -> Self {
         Self::EMPTY
     }
 }
@@ -604,8 +604,8 @@ pub mod node {
         }
     }
 
-    impl Default for Node {
-        fn default() -> Self {
+    impl Node {
+        pub fn new() -> Self {
             Self {
                 dep_id: INVALID_DEPENDENCY_ID,
                 pkg_id: 0,

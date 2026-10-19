@@ -26,8 +26,15 @@ use table::{KINDS, RULES};
 use visited::{Place, Places};
 
 /// Kinds of node of oxc: a bit for each place in [`KINDS`].
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Kinds([u64; 3]);
+
+impl Kinds {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self([0; 3])
+    }
+}
 
 impl Kinds {
     #[inline]
@@ -63,7 +70,7 @@ impl Kinds {
 
 /// With what oxlint calls a rule: the kinds of node, and what follows from them for the nodes here, so that one look at most
 /// nodes tells whether the rule is called with them.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct Called {
     kinds: Kinds,
     /// A bit for each `ExprTag` that is of one of the kinds wherever it is.
@@ -77,6 +84,21 @@ pub(crate) struct Called {
     unaries: u32,
     /// It is called with a part of a node here: it takes more than a look.
     is_odd: bool,
+}
+
+impl Called {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            kinds: Kinds::new(),
+            exprs: 0,
+            exprs_without_jsx: 0,
+            stmts: 0,
+            binaries: 0,
+            unaries: 0,
+            is_odd: false,
+        }
+    }
 }
 
 /// What oxlint does with a rule.
@@ -99,7 +121,7 @@ impl Ran {
         Ran {
             when,
             number,
-            kinds: Called::default(),
+            kinds: Called::new(),
             once: Once::ByStart,
             is_port: false,
         }
@@ -111,7 +133,7 @@ pub(crate) fn of(rule: &Meta) -> Ran {
     let found = TABLE.rules.binary_search_by_key(&key, |it| it.key);
     let (when, number, kinds) = match found.ok().and_then(|at| TABLE.rules.get(at)) {
         Some(it) => (it.when, it.number, visited::called(it.kinds)),
-        None => (Entering, u16::MAX, Called::default()),
+        None => (Entering, u16::MAX, Called::new()),
     };
     Ran {
         when,
@@ -187,7 +209,7 @@ static TABLE: LazyLock<Table> = LazyLock::new(|| {
     let rank = |plugin: Plugin| RULES.iter().position(|it| it.0 == plugin.in_oxlint());
     let mut all = Vec::new();
     for (plugin, when, words) in RULES {
-        let mut kinds = Kinds::default();
+        let mut kinds = Kinds::new();
         for word in strings::split(words.as_bytes(), b" ") {
             if !word.first().is_some_and(u8::is_ascii_digit) {
                 all.push((rank(*plugin), word, *plugin, *when, kinds));
@@ -195,7 +217,7 @@ static TABLE: LazyLock<Table> = LazyLock::new(|| {
             }
             let number =
                 |digits: &[u8]| digits.iter().fold(0, |it, digit| it * 10 + (digit - b'0'));
-            kinds = Kinds::default();
+            kinds = Kinds::new();
             strings::split(word, b",").for_each(|it| kinds.insert(number(it)));
         }
     }
@@ -450,7 +472,7 @@ pub(crate) fn in_run_order<'a, 'r>(
             else {
                 continue;
             };
-            let kinds = ran(it.rule).map_or_else(Kinds::default, |it| it.kinds.kinds);
+            let kinds = ran(it.rule).map_or_else(Kinds::new, |it| it.kinds.kinds);
             place.0 = places.search(it.rule, &kinds, label, near);
             late.push((u64::from(place.0.span.start) << 32) | u64::from(at));
         }

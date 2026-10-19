@@ -30,7 +30,6 @@ pub struct Checker {
     are_private_names_public: bool,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The functions that have to use `this`.
     methods: Vec<Func<'a>>,
@@ -43,6 +42,19 @@ pub struct State<'a> {
     /// The function of a class member that a `this` in a node belongs to. `None`: it belongs to
     /// something else.
     owners_of_this: AncestorMemo<'a, Option<Func<'a>>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            methods: Vec::new(),
+            is_using_this: Vec::new(),
+            others: Vec::new(),
+            uses_this: IdSet::init(),
+            owners_of_this: AncestorMemo::new(),
+        }
+    }
 }
 
 impl<'a> State<'a> {
@@ -306,7 +318,7 @@ impl Rule for ClassMethodsUseThis {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        file.has_classes().then(State::default)
+        file.has_classes().then(State::new)
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {

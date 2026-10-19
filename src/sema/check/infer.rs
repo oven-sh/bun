@@ -37,7 +37,7 @@ const PRIORITY_IMPLIES_COMBINATION: u32 =
     PRIORITY_RETURN | PRIORITY_MAPPED_CONSTRAINT | PRIORITY_LITERAL_KEYOF;
 
 /// `InferenceInfo`
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(super) struct Candidate {
     pub covariant: SmallVec<[TypeId; 4]>,
     /// Type argument nesting depth at which each of `covariant` was found. The deepest come first.
@@ -54,6 +54,22 @@ pub(super) struct Candidate {
     /// changes (`clearCachedInferences`). While it is in progress: the type before the constraint
     /// of the parameter is applied.
     inferred: std::cell::Cell<Option<TypeId>>,
+}
+
+impl Candidate {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            covariant: SmallVec::new(),
+            depths: SmallVec::new(),
+            contravariant: SmallVec::new(),
+            priority: 0,
+            top_level: false,
+            fixed: None,
+            implied_arity: None,
+            inferred: core::cell::Cell::new(None),
+        }
+    }
 }
 
 /// `InferenceContext` and `InferenceState` in one.
@@ -112,7 +128,7 @@ impl Inference {
             .map(|_| Candidate {
                 priority: PRIORITY_MAX as u32,
                 top_level: true,
-                ..Default::default()
+                ..Candidate::new()
             })
             .collect();
         Inference {
@@ -124,7 +140,7 @@ impl Inference {
             priority: 0,
             inference_priority: PRIORITY_MAX,
             visited: SmallVec::new(),
-            visited_index: FxHashMap::default(),
+            visited_index: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             source_stack: SmallVec::new(),
             target_stack: SmallVec::new(),
             expanding: 0,
@@ -755,7 +771,7 @@ impl<'p, 's> Checker<'p, 's> {
             // time changes nothing: the candidates are a set, `invoke_once` returns the priority
             // it has stored, and `matched`, `circularity` and the priority only accumulate.
             let has_many_pairs = sources.len() >= 4 && targets.len() >= 4;
-            let mut inferred_to = crate::util::FxHashSet::default();
+            let mut inferred_to = crate::util::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
             // By source: `None` if what is inferred from it depends on more than the branches.
             let mut source_aliases: SmallVec<[Option<Option<Sym>>; 8]> = SmallVec::new();
             // First to the targets that are not naked type parameters, tracking the sources from
@@ -1127,7 +1143,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut shape = Shape::new_in(self.arena);
         // `members[name] = literalProp`: a string enum member can have the value of a member of
         // another enum or of a string literal. The last one replaces the others.
-        let mut index_of_name = crate::util::FxHashMap::default();
+        let mut index_of_name = crate::util::FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for t in self.sorted_parts(ty) {
             let Some(value) = self.string_literal_value(t) else {
                 continue;
@@ -3089,7 +3105,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut signatures: SmallVec<[SigId; 4]> = SmallVec::new();
         // The first few are searched linearly.
         let mut seen: SmallVec<[TypeId; 16]> = SmallVec::new();
-        let mut seen_later = crate::util::FxHashSet::default();
+        let mut seen_later = crate::util::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         while let Some(ty) = left.pop() {
             if found(ty) {
                 return true;

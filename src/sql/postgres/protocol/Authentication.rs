@@ -19,10 +19,20 @@ pub enum Authentication {
     Unknown,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct SASLMechanisms {
     pub scram_sha_256: bool,
     pub scram_sha_256_plus: bool,
+}
+
+impl SASLMechanisms {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            scram_sha_256: false,
+            scram_sha_256_plus: false,
+        }
+    }
 }
 
 pub struct SASLContinue {
@@ -117,7 +127,7 @@ impl Authentication {
                 }
                 // A NUL-terminated name per mechanism, then one more NUL.
                 let names = reader.bytes((message_length - 8) as usize)?;
-                let mut mechanisms = SASLMechanisms::default();
+                let mut mechanisms = SASLMechanisms::new();
                 for name in bun_core::split(names.slice(), b"\0") {
                     match name {
                         b"SCRAM-SHA-256" => mechanisms.scram_sha_256 = true,

@@ -30,7 +30,7 @@ pub enum Flavor {
 }
 
 /// A range of the text, in bytes. Nothing in a comment is at 0, so `0..0` says that there is none.
-#[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Range {
     pub start: u32,
     pub end: u32,
@@ -88,10 +88,19 @@ pub struct Comment {
 }
 
 /// The JSDoc comments of a text, in order, and their tags, in order.
-#[derive(Default)]
 pub struct Outline {
     pub comments: Vec<Comment>,
     tags: Vec<Tag>,
+}
+
+impl Outline {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            comments: Vec::new(),
+            tags: Vec::new(),
+        }
+    }
 }
 
 /// `isJSDocLikeText`, of a comment that is closed: `/**` and not `/**/`, with `*/` behind the `/**`.
@@ -111,7 +120,7 @@ impl Outline {
         flavor: Flavor,
         is_stack_low: &dyn Fn() -> bool,
     ) -> Outline {
-        let mut outline = Outline::default();
+        let mut outline = Outline::new();
         for &comment in comments {
             outline.push(text, (comment.pos, comment.end), flavor, is_stack_low);
         }
@@ -1393,7 +1402,7 @@ impl<'a, 's> Reader<'a, 's> {
         self.skip_whitespace_or_asterisk();
         let (name, is_bracketed) = self.parse_bracket_name_in_property_and_param_tag(target);
         let mut ty = TagType::None;
-        let mut comment: Box<[u8]> = Box::default();
+        let mut comment: Box<[u8]> = Box::new([]);
         // Otherwise the caller rewinds. jsdoc.go reads on, and tries each tag that follows as a child of this one.
         if parent.is_none_or(|parent| is_property_of(&name, parent)) {
             let indent_text = self.skip_whitespace_or_asterisk();
@@ -1431,7 +1440,7 @@ impl<'a, 's> Reader<'a, 's> {
     /// What `parse_tag_comments` has collected, after `removeLeadingNewlines` and `removeTrailingWhitespace`.
     fn comment_of_nested_tag(&self) -> Box<[u8]> {
         if !self.saves_comment_text {
-            return Box::default();
+            return Box::new([]);
         }
         let text = self.comment_text.trim_ascii_end();
         let newlines = text
@@ -2098,7 +2107,7 @@ impl<'a, 's> Reader<'a, 's> {
         name.push(self.parse_identifier_name());
         while self.scanner.token == JSDocToken::Dot {
             name.push(match self.next_token() {
-                JSDocToken::PrivateIdentifier => Cow::default(),
+                JSDocToken::PrivateIdentifier => Cow::Owned(Vec::new()),
                 _ => self.parse_identifier_name(),
             });
         }
@@ -2118,7 +2127,7 @@ impl<'a, 's> Reader<'a, 's> {
             && super::errors_declaration_emit::is_reserved_word(&self.token_value())
         {
             self.error_at_token(1359, &[self.token_text()]);
-            return Cow::default();
+            return Cow::Owned(Vec::new());
         }
         self.parse_identifier_name()
     }
@@ -2133,7 +2142,7 @@ impl<'a, 's> Reader<'a, 's> {
                 }
                 _ => self.error_at_token(1003, &[]),
             }
-            return Cow::default();
+            return Cow::Owned(Vec::new());
         }
         let text = self.token_value();
         self.next_token();

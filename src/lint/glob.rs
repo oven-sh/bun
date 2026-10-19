@@ -112,7 +112,7 @@ fn segment_ends(pattern: &[u8]) -> Vec<usize> {
 }
 
 /// The minimatch options that the supported plugins can pass.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct MinimatchOptions {
     pub dot: bool,
     pub nocomment: bool,
@@ -123,6 +123,22 @@ pub struct MinimatchOptions {
     pub noext: bool,
     /// minimatch 3 trims the pattern, and on Windows it reads `\` in a pattern as a separator. Later versions do neither.
     pub is_version_3: bool,
+}
+
+impl MinimatchOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            dot: false,
+            nocomment: false,
+            nonegate: false,
+            flip_negate: false,
+            match_base: false,
+            nocase: false,
+            noext: false,
+            is_version_3: false,
+        }
+    }
 }
 
 /// `new Minimatch(pattern, options)`
@@ -198,7 +214,7 @@ impl Minimatch {
             pattern,
             MinimatchOptions {
                 is_version_3,
-                ..MinimatchOptions::default()
+                ..MinimatchOptions::new()
             },
         )
     }

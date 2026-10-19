@@ -23,13 +23,9 @@ pub(crate) struct Assigns {
     pub ctx: AssignCtx,
 }
 
-#[derive(Default)]
 pub(crate) enum AssignsState {
-    #[default]
     Idle,
-    Expanding {
-        idx: u32,
-    },
+    Expanding { idx: u32 },
     Done,
 }
 

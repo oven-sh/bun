@@ -838,7 +838,6 @@ pub struct Run<'u> {
 /// variances.
 pub type CarriedVariances = Vec<(u32, SymbolId, Atom, Box<[u8]>)>;
 
-#[derive(Default)]
 struct SharedCheck {
     state: Guarded<CheckState>,
     has_changed: bun_threading::Condvar,
@@ -848,9 +847,20 @@ struct SharedCheck {
     carried: std::sync::OnceLock<CarriedVariances>,
 }
 
-#[derive(Default, Copy, Clone, PartialEq)]
+impl SharedCheck {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            state: Guarded::init(CheckState::Unseen),
+            has_changed: bun_threading::Condvar::init(),
+            blocked: core::sync::atomic::AtomicUsize::new(0),
+            carried: std::sync::OnceLock::new(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq)]
 enum CheckState {
-    #[default]
     Unseen,
     /// One program has had this key. It ran the check for itself only.
     SeenOnce,
@@ -906,14 +916,14 @@ impl<'u> Run<'u> {
         Run {
             session,
             atoms: Interner::in_common(session),
-            parsed: ShardedMap::default(),
+            parsed: ShardedMap::new(),
             provided,
             only_declaration_files: false,
             parses: AtomicUsize::new(0),
             bytes: AtomicUsize::new(0),
             origins: AtomicUsize::new(1),
-            shared_checks: ShardedMap::default(),
-            descriptions: ShardedMap::default(),
+            shared_checks: ShardedMap::new(),
+            descriptions: ShardedMap::new(),
             numbers: AtomicUsize::new(0),
         }
     }
@@ -947,7 +957,7 @@ impl<'u> Run<'u> {
     pub fn claim_or_wait(&self, key: Vec<u8>) -> SharedVerdict<'_> {
         let check = match self.shared_checks.get_ref(&key) {
             Some(check) => check,
-            None => self.shared_checks.insert_ref(key, SharedCheck::default()),
+            None => self.shared_checks.insert_ref(key, SharedCheck::new()),
         };
         let mut state = check.state.lock();
         if *state == CheckState::Running {
@@ -1116,7 +1126,6 @@ struct SubTask {
 }
 
 /// What `Files::load` knows about the files it has found, besides the files themselves.
-#[derive(Default)]
 struct Found<'s> {
     /// By `FileId`.
     files: Vec<FoundFile<'s>>,
@@ -1124,6 +1133,17 @@ struct Found<'s> {
     by_package_id: FxHashMap<Vec<u8>, u32>,
     /// `packageIdToSourceFile`: the copy of a package file that `collectFiles` came to first.
     kept: Vec<Option<FileId>>,
+}
+
+impl<'s> Found<'s> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            files: Vec::new(),
+            by_package_id: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            kept: Vec::new(),
+        }
+    }
 }
 
 impl Found<'_> {
@@ -1146,12 +1166,21 @@ impl Found<'_> {
 /// `packageJsonInfoCache`, as far as `traceResolution` shows it: a lookup of a `package.json` that
 /// is not the first is logged as such. The cache fills in the order in which the tasks run, which
 /// is not the order in which `collectFiles` logs.
-#[derive(Default)]
 struct PackageJsonInfoCache {
     /// By `tspath.Path`.
     cached: FxHashSet<Vec<u8>>,
     /// The directories that `GetPackageScopeForPath` has started from or passed.
     with_scope: FxHashSet<Vec<u8>>,
+}
+
+impl PackageJsonInfoCache {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            cached: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            with_scope: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl PackageJsonInfoCache {
@@ -1237,7 +1266,7 @@ pub struct RefusedMerge<'s> {
 }
 
 /// `AliasSymbolLinks`
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct AliasSymbolLinks {
     /// `getMergedSymbol` of the result of `getTargetOfAliasDeclaration`, which may itself be an
     /// alias. `Checker::resolve_alias` continues from it to the value: `getTypeOfAlias` has the
@@ -1255,6 +1284,19 @@ pub struct AliasSymbolLinks {
     /// The stack ended while the alias was in progress, where Go's grows. It `is_circular`, as it
     /// may be, and its file is reported as not fully checked in place of 2303.
     pub ran_out_of_stack: bool,
+}
+
+impl AliasSymbolLinks {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            immediate_target: None,
+            alias_target: None,
+            type_only_declaration: None,
+            is_circular: false,
+            ran_out_of_stack: false,
+        }
+    }
 }
 
 /// A run of `getResolvedSymbol` that finds nothing, for the first identifier of an expression that
@@ -1557,7 +1599,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         let mut visit = ExportsVisit {
             arena,
             visited_symbols: Vec::new(),
-            non_type_only_names: FxHashSet::default(),
+            non_type_only_names: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             type_only_export_star_map: map_in(arena),
             export_collisions: Vec::new(),
         };
@@ -1623,7 +1665,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         let mut symbols = SymbolMap::from_iter_in(self.each_export_in_table(symbol), visit.arena);
         let mut nested_symbols = SymbolMap::new_in(visit.arena);
         // `ExportCollisionTable`: the `export *` that exported the name first.
-        let mut lookup_table: FxHashMap<Atom, (FileId, StmtId)> = FxHashMap::default();
+        let mut lookup_table: FxHashMap<Atom, (FileId, StmtId)> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for node in self.export_stars_of(symbol) {
             let StmtKind::ExportStar {
                 spec,
@@ -2403,7 +2446,7 @@ impl<'s> Resolve<'s> for Linked<'_, 's> {
     fn alias_links(&self, sym: Sym) -> AliasSymbolLinks {
         let links = self.alias_symbol_links.get(&sym);
         debug_assert!(links.is_some() || !self.flags(sym).contains(SymFlags::ALIAS));
-        links.unwrap_or_default()
+        links.unwrap_or_else(AliasSymbolLinks::new)
     }
 
     fn symbol_flags_of_alias(&self, sym: Sym) -> SymFlags {
@@ -2472,13 +2515,25 @@ struct AliasResolver<'a, 's> {
 
 /// The write buffer of a task of the link step. It is dropped at the barrier after the step. What
 /// is published from it is in the arena of the thread that ran the task.
-#[derive(Default)]
 struct Resolved<'s> {
     alias_links: FxHashMap<Sym, AliasSymbolLinks>,
     symbol_flags: FxHashMap<Sym, SymFlags>,
     module_links: FxHashMap<Sym, ModuleSymbolLinks<'s>>,
     decls: Vec<(Sym, &'s [(FileId, Decl)])>,
     failed_lookups: Vec<FailedLookup<'s>>,
+}
+
+impl<'s> Resolved<'s> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            alias_links: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            symbol_flags: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            module_links: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            decls: Vec::new(),
+            failed_lookups: Vec::new(),
+        }
+    }
 }
 
 impl<'s> std::ops::Deref for AliasResolver<'_, 's> {
@@ -2784,7 +2839,7 @@ fn trace_path_for_lib_file(
     let Err(at) = resolutions.binary_search_by(|known| known.0.cmp(&key)) else {
         return;
     };
-    let tracer = Tracer::default();
+    let tracer = Tracer::new();
     resolver.resolve_module_name_traced(&name, &from, ResolutionMode::Require, Some(&tracer));
     let mut trace = tracer.into_traces();
     cache.get_package_json_infos(host, &mut trace);
@@ -2919,13 +2974,7 @@ pub fn libs_referenced_by(host: &dyn Host, path: &[u8]) -> Vec<Vec<u8>> {
     };
     let session = Session::new();
     let atoms = Interner::new_in(&session);
-    let hir = host.parse(
-        session.arena(),
-        path,
-        &text,
-        &atoms,
-        ParseOptions::default(),
-    );
+    let hir = host.parse(session.arena(), path, &text, &atoms, ParseOptions::new());
     let libs = (hir.references.iter()).filter(|it| it.0 == ReferenceKind::Lib);
     libs.map(|it| crate::resolve::lib_name(atoms.bytes(it.1)))
         .collect()
@@ -3700,7 +3749,7 @@ impl Included<'_, '_> {
     fn matched_file_spec(&self, path: &[u8]) -> Option<&[u8]> {
         let is_case_sensitive = self.host.is_case_sensitive();
         let by_path = self.file_spec_by_path.get_or_init(|| {
-            let mut by_path = FxHashMap::default();
+            let mut by_path = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for (text, path) in &self.options.file_specs {
                 let first = by_path.entry(to_path(path, is_case_sensitive));
                 first.or_insert(&text[..]);
@@ -4363,7 +4412,7 @@ fn output_path_errors(
     if options.suppress_output_path_check {
         return (errors, common);
     }
-    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     let mut verify = |output: Vec<u8>| {
         if by_path.contains(&output) {
             let problem = Problem::new(5055, &[&displayed_path(&output)], Place::Nowhere);
@@ -4525,8 +4574,9 @@ impl<'s> Files<'s> {
             is_case_sensitive,
         };
         // `parseTaskData.tasks`: the tasks by file name, where a file can have several.
-        let mut by_name: FxHashMap<&'s [u8], FileId> = FxHashMap::default();
-        let mut all_found = Found::default();
+        let mut by_name: FxHashMap<&'s [u8], FileId> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+        let mut all_found = Found::new();
         let mut modules: Vec<Option<Box<Module>>> = Vec::new();
         // `parseTaskData.lowestDepth`, indexed by `FoundFile::first`: the lowest number of steps
         // into packages (`increaseDepth`) that a task for the file has run at.
@@ -4618,7 +4668,7 @@ impl<'s> Files<'s> {
         // `collectFiles`, `seen[data]`: of the tasks for one path only the first is walked, and
         // the `processingDiagnostics` of the others are dropped.
         // By path: thousands of entries of `files` can be missing.
-        let mut walked: FxHashSet<Vec<u8>> = FxHashSet::default();
+        let mut walked: FxHashSet<Vec<u8>> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         without_file
             .retain(|(visit, _)| walked.insert(to_path(&visit.name, is_case_sensitive).into()));
         let roots_end = starts.len();
@@ -4652,7 +4702,7 @@ impl<'s> Files<'s> {
             depths[task.idx()] = 0;
             automatic_task = Some(task);
         }
-        let automatic_tracer = options.trace_resolution.then(Tracer::default);
+        let automatic_tracer = options.trace_resolution.then(Tracer::new);
         // `subTasks` of that task.
         let mut automatic: Vec<SubTask> = Vec::new();
         for name in &directives {
@@ -4703,10 +4753,11 @@ impl<'s> Files<'s> {
             .map(|task| (task, 0))
             .collect();
         // `subTasks` of the tasks that are loaded and have not started them.
-        let mut not_started: FxHashMap<FileId, Vec<SubTask>> = FxHashMap::default();
+        let mut not_started: FxHashMap<FileId, Vec<SubTask>> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         // `subTasks` of one file. Reused for the next.
         let mut sub_tasks: Vec<SubTask> = Vec::new();
-        let mut package_json_info_cache = PackageJsonInfoCache::default();
+        let mut package_json_info_cache = PackageJsonInfoCache::new();
         // `pathForLibFileResolutions`. The libraries of the options are resolved while `rootTasks`
         // is made.
         let mut lib_resolutions: Vec<(Vec<u8>, Vec<DiagAndArgs>)> = Vec::new();
@@ -4733,7 +4784,10 @@ impl<'s> Files<'s> {
             .collect();
         let (mut ahead, mut parses): (FxHashMap<&[u8], Box<Loaded>>, Vec<Option<Parse>>) =
             match seeds.is_empty() {
-                true => Default::default(),
+                true => (
+                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                    Vec::new(),
+                ),
                 false => Self::load_ahead(session, run, host, &resolver, options, &atoms, seeds),
             };
         files_are_found(resolving.allocated_bytes());
@@ -5190,7 +5244,8 @@ impl<'s> Files<'s> {
             }
         }
         // A name of the source that each declaration file is read in place of.
-        let mut redirected_from: FxHashMap<FileId, Atom> = FxHashMap::default();
+        let mut redirected_from: FxHashMap<FileId, Atom> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for (&start, &root) in starts[libs_end..roots_end].iter().zip(&root_of_start) {
             let root = &roots[root as usize];
             if options.parse_file_redirect(root).is_some() {
@@ -5265,7 +5320,8 @@ impl<'s> Files<'s> {
         }
         let mut redirect_targets: ArenaHashMap<'s, FileId, &'s [&'s [u8]]> = map_in(arena);
         if !kept.is_empty() {
-            let mut duplicates: FxHashMap<FileId, Vec<&'s [u8]>> = FxHashMap::default();
+            let mut duplicates: FxHashMap<FileId, Vec<&'s [u8]>> =
+                FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for &(path, id) in &package_copies {
                 duplicates.entry(id).or_default().push(path);
             }
@@ -5274,7 +5330,8 @@ impl<'s> Files<'s> {
                 redirect_targets.insert(id, slice_in(&paths, arena));
             }
         }
-        let mut package_jsons: FxHashMap<&'s [u8], Json> = FxHashMap::default();
+        let mut package_jsons: FxHashMap<&'s [u8], Json> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut previous_scope = Atom::NONE;
         for module in modules.iter().flatten() {
             let path: &'s [u8] = module.file_name();
@@ -5391,7 +5448,8 @@ impl<'s> Files<'s> {
         let mut alike: Vec<Vec<(&[u8], FileId)>> = Vec::new();
         let no_file = FileId(modules.len() as u32);
         // Two of them have one path and are spelled differently.
-        let mut spelled: FxHashMap<Cow<'_, [u8]>, &[u8]> = FxHashMap::default();
+        let mut spelled: FxHashMap<Cow<'_, [u8]>, &[u8]> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut is_respelled = false;
         for &name in &missing_roots {
             let first = spelled.entry(to_path(name, is_case_sensitive));
@@ -5411,14 +5469,14 @@ impl<'s> Files<'s> {
                 let missing = missing_roots.iter().map(|&name| (name, no_file));
                 kept.chain(package_copies.iter().copied()).chain(missing)
             };
-            let mut hashes: FxHashSet<u64> = FxHashSet::default();
+            let mut hashes: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
             hashes.reserve(modules.len());
             let repeated: FxHashSet<u64> = (names().map(|it| hash(it.0)))
                 .filter(|&hash| !hashes.insert(hash))
                 .collect();
             if !repeated.is_empty() {
                 let mut by_lower_case: FxHashMap<Vec<u8>, Vec<(&[u8], FileId)>> =
-                    FxHashMap::default();
+                    FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
                 for (name, file) in names().filter(|it| repeated.contains(&hash(it.0))) {
                     let names = by_lower_case.entry(to_file_name_lower_case(name));
                     names.or_default().push((name, file));
@@ -5438,9 +5496,9 @@ impl<'s> Files<'s> {
             libs_end,
             roots_end,
             root_of_start: &root_of_start,
-            explained_in_diagnostics: Default::default(),
-            top_elements_in_configuration: Default::default(),
-            file_spec_by_path: Default::default(),
+            explained_in_diagnostics: core::cell::RefCell::new(Vec::new()),
+            top_elements_in_configuration: core::cell::OnceCell::new(),
+            file_spec_by_path: core::cell::OnceCell::new(),
         };
         // None of their reasons is a reference in a file.
         let explained = included.explain_tasks_without_file(&without_file);
@@ -5657,8 +5715,8 @@ impl<'s> Files<'s> {
                 .collect(),
             ready: Vec::new(),
             in_progress: 0,
-            done: FxHashMap::default(),
-            by_package_id: FxHashMap::default(),
+            done: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            by_package_id: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             slots: Vec::new(),
         });
         let has_changed = bun_threading::Condvar::new();
@@ -5868,7 +5926,10 @@ impl<'s> Files<'s> {
         }
         let mut state = shared.lock();
         let (done, slots) = (
-            std::mem::take(&mut state.done),
+            std::mem::replace(
+                &mut state.done,
+                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ),
             std::mem::take(&mut state.slots),
         );
         let parse_of = |slot: Option<Slot<'s, 'r>>| match slot {
@@ -6079,7 +6140,7 @@ impl<'s> Files<'s> {
         // Only a file that can contain JSX tags, according to its file name, imports their runtime.
         let runtime = runtime.filter(|_| crate::resolve::is_jsx_file_name(path));
         // Each entry of `moduleNames` is resolved, also one that repeats another.
-        let (types_tracer, tracer) = (Tracer::default(), Tracer::default());
+        let (types_tracer, tracer) = (Tracer::new(), Tracer::new());
         if of_program.trace_resolution {
             let trace = |name: &[u8], mode: ResolutionMode| {
                 if !name.is_empty() {
@@ -6863,7 +6924,7 @@ impl<'s> Files<'s> {
         for &alias in &self.circular_at_merge {
             let links = AliasSymbolLinks {
                 is_circular: true,
-                ..AliasSymbolLinks::default()
+                ..AliasSymbolLinks::new()
             };
             self.alias_symbol_links.insert_ref(alias, links);
         }
@@ -8429,13 +8490,13 @@ impl<'s> Files<'s> {
         for tasks in &steps {
             let resolved: Vec<Guarded<Resolved>> = tasks
                 .iter()
-                .map(|_| Guarded::new(Resolved::default()))
+                .map(|_| Guarded::new(Resolved::new()))
                 .collect();
             host.parallel(tasks.len(), &|at| {
                 *resolved[at].lock() = self.resolve_files(&tasks[at]);
             });
             for resolved in &resolved {
-                let mut resolved = std::mem::take(&mut *resolved.lock());
+                let mut resolved = std::mem::replace(&mut *resolved.lock(), Resolved::new());
                 let links = resolved.module_links.iter();
                 nested.extend(links.filter(is_nested).map(|it| *it.0));
                 failed_lookups.append(&mut resolved.failed_lookups);
@@ -8459,7 +8520,7 @@ impl<'s> Files<'s> {
     /// symbol: the order determines where a cycle is entered. Then, with nothing in progress,
     /// everything else.
     fn resolve_files(&self, files: &[FileId]) -> Resolved<'s> {
-        let resolver = AliasResolver::new(self, Some(Resolved::default()));
+        let resolver = AliasResolver::new(self, Some(Resolved::new()));
         let arena = resolver.arena();
         let files = files.iter();
         let symbols = |&file: &FileId| {
@@ -8504,7 +8565,7 @@ impl<'s> Files<'s> {
         let mut resolved = resolver
             .buffer
             .map(|it| it.into_inner())
-            .unwrap_or_default();
+            .unwrap_or_else(Resolved::new);
         resolved.decls = decls;
         resolved
     }
@@ -8906,13 +8967,17 @@ impl<'a, 's> AliasResolver<'a, 's> {
     fn new(files: &'a Files<'s>, buffer: Option<Resolved<'s>>) -> AliasResolver<'a, 's> {
         AliasResolver {
             files,
-            in_flight: Default::default(),
-            out_of_stack: Default::default(),
-            cycles: Default::default(),
+            in_flight: core::cell::RefCell::new(Vec::new()),
+            out_of_stack: core::cell::Cell::new(0),
+            cycles: core::cell::Cell::new(0),
             buffer: buffer.map(std::cell::RefCell::new),
-            arena: Default::default(),
-            members_resolved: Default::default(),
-            resolved_symbols: Default::default(),
+            arena: core::cell::OnceCell::new(),
+            members_resolved: core::cell::RefCell::new(rustc_hash::FxHashSet::with_hasher(
+                rustc_hash::FxBuildHasher,
+            )),
+            resolved_symbols: core::cell::RefCell::new(rustc_hash::FxHashSet::with_hasher(
+                rustc_hash::FxBuildHasher,
+            )),
         }
     }
 }
@@ -8951,9 +9016,9 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
         };
         if !is_pushed {
             self.cycles.set(self.cycles.get() + 1);
-            return AliasSymbolLinks::default();
+            return AliasSymbolLinks::new();
         }
-        let mut links = AliasSymbolLinks::default();
+        let mut links = AliasSymbolLinks::new();
         if let Some((file, decl)) = self.declaration_of_alias_symbol(sym) {
             let type_only = &mut links.type_only_declaration;
             let target = self.target_of_alias_declaration(sym, file, decl, type_only);

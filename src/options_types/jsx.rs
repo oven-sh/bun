@@ -16,10 +16,9 @@ use std::borrow::Cow;
 /// when an `api.Jsx` arrives with `runtime == _none`. `#[default]` is
 /// `Automatic`.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Runtime {
     _None,
-    #[default]
     Automatic,
     Classic,
 }
@@ -136,9 +135,9 @@ pub struct ImportSource {
     pub production: Cow<'static, [u8]>,
 }
 
-impl Default for ImportSource {
+impl ImportSource {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         ImportSource {
             development: Cow::Borrowed(defaults::IMPORT_SOURCE_DEV),
             production: Cow::Borrowed(defaults::IMPORT_SOURCE),
@@ -174,14 +173,14 @@ pub struct Pragma {
     pub side_effects: bool,
 }
 
-impl Default for Pragma {
+impl Pragma {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Pragma {
             factory: MemberList::Static(defaults::FACTORY),
             fragment: MemberList::Static(defaults::FRAGMENT),
             runtime: Runtime::Automatic,
-            import_source: ImportSource::default(),
+            import_source: ImportSource::new(),
             classic_import_source: Cow::Borrowed(b"react"),
             package_name: Cow::Borrowed(b"react"),
             development: true,
@@ -267,7 +266,7 @@ impl Pragma {
     }
 
     pub fn from_api(jsx: api::Jsx) -> Pragma {
-        let mut pragma = Pragma::default();
+        let mut pragma = Pragma::new();
 
         if let Some(fragment) =
             Self::member_list_to_components_if_different(&pragma.fragment, &jsx.fragment)

@@ -13,13 +13,23 @@ pub struct PreferDefaultExport {
 const SINGLE: Message = Message::new("", "Prefer default export on a file with single export.");
 const ANY: Message = Message::new("", "Prefer default export to be present on every file that has export.");
 
-#[derive(Default)]
 pub struct Seen {
     /// There is a default export, an `export *` or an export of a type.
     is_exempt: bool,
     count: u32,
     /// upstream's `namedExportNode`: what is reported.
     last: Option<Span>,
+}
+
+impl Seen {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            is_exempt: false,
+            count: 0,
+            last: None,
+        }
+    }
 }
 
 impl Seen {
@@ -33,7 +43,7 @@ impl Seen {
     /// What oxlint goes by: its module record, which has the top level alone, with an entry for each name.
     fn in_record<'a>(file: &'a File<'a>, is_for_any: bool) -> Seen {
         if export_default(file).is_some() {
-            return Seen { is_exempt: true, ..Seen::default() };
+            return Seen { is_exempt: true, ..Seen::new() };
         }
         let record = ModuleRecord::new(file);
         let (indirect, local) = (&record.indirect_export_entries, &record.local_export_entries);
@@ -108,7 +118,7 @@ impl Rule for PreferDefaultExport {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Seen> {
-        Some(Seen::default())
+        Some(Seen::new())
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

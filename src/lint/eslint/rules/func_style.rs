@@ -22,7 +22,6 @@ enum Style {
 const EXPRESSION: Message = Message::new("expression", "Expected a function expression.");
 const DECLARATION: Message = Message::new("declaration", "Expected a function declaration.");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The arrow functions that should be declarations, unless they use `this` or `super`, each
     /// with its declarator.
@@ -33,6 +32,18 @@ pub struct State<'a> {
     /// The overload signatures of the file, once a function declaration asks: what has the list of
     /// statements it is in, its name, and whether it is exported.
     overloads: Option<FxHashSet<(Node<'a>, Name<'a>, bool)>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            candidates: Vec::new(),
+            with_this_or_super: IdSet::init(),
+            functions: AncestorMemo::new(),
+            overloads: None,
+        }
+    }
 }
 
 /// What has the list of statements that `statement` is in. All clauses of a `switch` are one list.
@@ -180,7 +191,7 @@ impl Rule for FuncStyle {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

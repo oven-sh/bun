@@ -44,7 +44,6 @@ struct Found {
     rank: u64,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// Where in [`EsSyntax::known`] the range of versions of the file is.
     known: usize,
@@ -61,6 +60,23 @@ pub struct State<'a> {
     /// The function around something, and the one that is not an arrow function.
     function_around: AncestorMemo<'a, ()>,
     function_with_this_around: AncestorMemo<'a, Func<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            known: 0,
+            own: None,
+            found: core::cell::RefCell::new(Vec::new()),
+            is_at_the_end: core::cell::Cell::new(false),
+            methods: smallvec::SmallVec::new(),
+            types: core::cell::RefCell::new(ExpressionTypes::new()),
+            var_declarators: IdMap::init(),
+            function_around: AncestorMemo::new(),
+            function_with_this_around: AncestorMemo::new(),
+        }
+    }
 }
 
 type Context<'a> = Cx<'a, EsSyntax>;
@@ -247,7 +263,7 @@ impl Rule for EsSyntax {
         EsSyntax {
             version: version_range(options.get(0)).map(|it| it.raw),
             ignores: options.object(0).strings("ignores").iter().map(|it| it.as_bytes().into()).collect(),
-            known: Default::default(),
+            known: core::array::from_fn(|_| std::sync::OnceLock::new()),
         }
     }
 
@@ -360,7 +376,7 @@ impl Rule for EsSyntax {
             known,
             own,
             methods,
-            ..State::default()
+            ..State::new()
         })
     }
 
@@ -661,13 +677,24 @@ impl Rule for EsSyntax {
 }
 
 /// What the rules about the patterns of regular expressions look for.
-#[derive(Default)]
 struct Pattern {
     has_lookbehind: bool,
     has_named_group: bool,
     has_property_escape: bool,
     /// For each year from 2019: `\p{..}` with what that year has added.
     has_property_of_year: [bool; 5],
+}
+
+impl Pattern {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            has_lookbehind: false,
+            has_named_group: false,
+            has_property_escape: false,
+            has_property_of_year: [false; 5],
+        }
+    }
 }
 
 impl Handler for Pattern {
@@ -1085,8 +1112,8 @@ impl EsSyntax {
             unicode: flags.is_some_and(|it| strings::contains_char(it, b'u')),
             unicode_sets: false,
         };
-        let mut found = Pattern::default();
-        if regex::validate_pattern(pattern, mode, regex::Options::default(), &mut found).is_err() {
+        let mut found = Pattern::new();
+        if regex::validate_pattern(pattern, mode, regex::Options::new(), &mut found).is_err() {
             return;
         }
         let years = [

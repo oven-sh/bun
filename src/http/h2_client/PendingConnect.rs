@@ -11,7 +11,6 @@ use crate::NewHTTPContext;
 use crate::PeerVerification;
 use crate::ssl_config::SSLConfig;
 
-#[derive(Default)]
 pub struct PendingConnect {
     pub(crate) hostname: Box<[u8]>,
     pub(crate) port: u16,
@@ -25,6 +24,20 @@ pub struct PendingConnect {
     pub(crate) pool_id: u64,
     // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
     pub(crate) waiters: Vec<NonNull<HTTPClient<'static>>>,
+}
+
+impl PendingConnect {
+    #[inline]
+    pub fn init() -> Self {
+        Self {
+            hostname: Box::new([]),
+            port: 0,
+            ssl_config: None,
+            verification: PeerVerification::None,
+            pool_id: 0,
+            waiters: Vec::new(),
+        }
+    }
 }
 
 impl PendingConnect {

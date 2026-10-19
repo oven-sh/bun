@@ -94,7 +94,8 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         }) = &mut instruction.value
         {
             // Check if this is a mixed destructuring (some declared, some not)
-            let mut reassigned: HashSet<IdentifierId> = HashSet::default();
+            let mut reassigned: HashSet<IdentifierId> =
+                HashSet::with_hasher(rustc_hash::FxBuildHasher);
             let mut has_declaration = false;
 
             for place in visitors::pattern_operands(&lvalue.pattern) {

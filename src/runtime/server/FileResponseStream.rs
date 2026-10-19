@@ -72,8 +72,8 @@ struct Sendfile {
     reason = "only derivable where the linux/android-gated fields are absent; `Fd` has no \
               `Default` impl, so `#[derive(Default)]` would not compile on linux/android"
 )]
-impl Default for Sendfile {
-    fn default() -> Self {
+impl Sendfile {
+    fn new() -> Self {
         Self {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             socket_fd: Fd::INVALID,
@@ -86,7 +86,7 @@ impl Default for Sendfile {
 }
 
 bitflags::bitflags! {
-    #[derive(Default, Copy, Clone)]
+    #[derive(Copy, Clone)]
     #[repr(transparent)]
     struct State: u8 {
         const RESPONSE_DONE = 1 << 0;
@@ -179,8 +179,8 @@ impl FileResponseStream {
                     Mode::Reader
                 }),
                 reader: JsCell::new(BufferedReader::init::<FileResponseStream>()),
-                sendfile: JsCell::new(Sendfile::default()),
-                state: Cell::new(State::default()),
+                sendfile: JsCell::new(Sendfile::new()),
+                state: Cell::new(State::empty()),
             }));
         // SAFETY: `this` is the live allocation above; the guard's ref defers
         // any free until after `this_ref` is dead at the end of this frame.

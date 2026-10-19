@@ -81,7 +81,7 @@ fn duplicate_key(
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
     for (key, value) in props(expr) {
         if let Some(key) = scalar_text(source, key)
-            && seen.get_or_put(key)?.found_existing
+            && seen.get_or_put(key, || ())?.found_existing
         {
             return Ok(Some(key));
         }
@@ -180,8 +180,8 @@ fn strip_npm_protocol(spec: &[u8]) -> &[u8] {
 
 /// `os=darwin & cpu=arm64`, `(os=linux | os=win32) & cpu=x64`, `... & libc=glibc`
 fn parse_conditions(cond: &[u8]) -> (npm::OperatingSystem, npm::Architecture, npm::Libc) {
-    let mut os = npm::Negatable::<npm::OperatingSystem>::default();
-    let mut cpu = npm::Negatable::<npm::Architecture>::default();
+    let mut os = npm::Negatable::<npm::OperatingSystem>::new();
+    let mut cpu = npm::Negatable::<npm::Architecture>::new();
     let mut libc: Option<npm::Negatable<npm::Libc>> = None;
     for alt in strings::split_any(cond, b"&|") {
         let alt: &[u8] = strings::trim(alt, b" ()\t");
@@ -190,7 +190,8 @@ fn parse_conditions(cond: &[u8]) -> (npm::OperatingSystem, npm::Architecture, np
         } else if let Some(v) = alt.strip_prefix(b"cpu=") {
             cpu.apply(v);
         } else if let Some(v) = alt.strip_prefix(b"libc=") {
-            libc.get_or_insert_default().apply(v);
+            libc.get_or_insert_with(bun_install_types::Negatable::new)
+                .apply(v);
         }
     }
     let libc = libc.map_or(npm::Libc::NONE, |libc| libc.combine());
@@ -217,7 +218,6 @@ fn patched_dependency_key(
 
 type Ranges = Vec<(Box<[u8]>, Box<[u8]>)>;
 
-#[derive(Default)]
 struct YarnRc {
     /// catalog group ("" for the default `catalog:`) -> name -> range
     catalogs: StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>,
@@ -229,6 +229,19 @@ struct YarnRc {
     extensions: Vec<PackageExtension>,
     /// `enableTransparentWorkspaces`: unless false, a range that a workspace's version satisfies is that workspace.
     transparent_workspaces: Option<bool>,
+}
+
+impl YarnRc {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            catalogs: StringArrayHashMap::init(),
+            registry: None,
+            scope_registries: StringArrayHashMap::init(),
+            extensions: Vec::new(),
+            transparent_workspaces: None,
+        }
+    }
 }
 
 /// A boolean setting as yarn reads it from the environment or a quoted value.
@@ -261,7 +274,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
     let mut out = YarnRc {
         registry: env(b"YARN_NPM_REGISTRY_SERVER").map(Box::from),
         transparent_workspaces: env(b"YARN_ENABLE_TRANSPARENT_WORKSPACES").and_then(yarn_bool),
-        ..Default::default()
+        ..YarnRc::new()
     };
     let rc_name = env(b"YARN_RC_FILENAME").unwrap_or(b".yarnrc.yml");
     let home = bun_core::env_var::HOME
@@ -360,7 +373,7 @@ fn read_yarnrc_file(
             if !obj.is_object() {
                 return Ok(());
             }
-            let entry = out.catalogs.get_or_put(group)?;
+            let entry = out.catalogs.get_or_put(group, StringArrayHashMap::init)?;
             if !entry.found_existing {
                 *entry.value_ptr = StringArrayHashMap::new();
             }
@@ -381,7 +394,7 @@ fn read_yarnrc_file(
         }
     }
 
-    for (key, value) in props(&root.get(b"packageExtensions").unwrap_or_default()) {
+    for (key, value) in props(&root.get(b"packageExtensions").unwrap_or(Expr::EMPTY)) {
         let Some(key) = scalar_text(&data, key) else {
             continue;
         };
@@ -389,7 +402,7 @@ fn read_yarnrc_file(
             continue;
         }
         let ranges_of = |group: &[u8]| -> Ranges {
-            props(&value.get(group).unwrap_or_default())
+            props(&value.get(group).unwrap_or(Expr::EMPTY))
                 .filter_map(|(name, range)| {
                     let (name, range) = (scalar_text(&data, name)?, scalar_text(&data, range)?);
                     Some((Box::from(name), Box::from(range)))
@@ -422,7 +435,7 @@ fn read_yarnrc_file(
     if out.registry.is_none() {
         out.registry = registry_of(&root);
     }
-    for (scope, value) in props(&root.get(b"npmScopes").unwrap_or_default()) {
+    for (scope, value) in props(&root.get(b"npmScopes").unwrap_or(Expr::EMPTY)) {
         if let (Some(scope), Some(url)) = (as_str(scope), registry_of(value))
             && !out.scope_registries.contains(scope)
         {
@@ -550,11 +563,20 @@ fn add_rewrite(rewrites: &mut Rewrites, name: &[u8], spec: &[u8], new_spec: &[u8
 }
 
 /// Yarn's descriptor range of a manifest dependency, where bun reads another one.
-#[derive(Default)]
 struct OriginalSpecs {
     by_dependency: bun_collections::HashMap<DependencyID, Box<[u8]>>,
     /// In several groups with different ranges: yarn installs one of them for the name, bun reads each.
     in_several_groups: Vec<DependencyID>,
+}
+
+impl OriginalSpecs {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            by_dependency: bun_collections::HashMap::init(),
+            in_several_groups: Vec::new(),
+        }
+    }
 }
 
 struct Workspace {
@@ -658,7 +680,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 name: dep_name.value,
                 name_hash: dep_name.hash,
                 version: parsed,
-                behavior: Behavior::default(),
+                behavior: Behavior::empty(),
             };
             let group_str = sbuf!(this).append(group)?;
             let buf = this.buffers.string_bytes.as_slice();
@@ -667,7 +689,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 arg_buf: buf,
                 existing_buf: buf,
             };
-            let entry = map.get_or_put_adapted(&dep_name.value, &ctx)?;
+            let entry = map
+                .get_or_put_adapted(&dep_name.value, &ctx, || (String::new(), Dependency::new()))?;
             *entry.key_ptr = dep_name.value;
             *entry.value_ptr = dep;
         }
@@ -733,7 +756,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             if desc.is_empty() {
                 continue;
             }
-            let e = descriptor_to_entry.get_or_put(desc)?;
+            let e = descriptor_to_entry.get_or_put(desc, || 0)?;
             if e.found_existing {
                 bail!(
                     log,
@@ -756,7 +779,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     // -- 2. root + workspaces from disk ---------------------------------------
     let mut root_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
     let _ = root_json_path.append(b"package.json"); // capacity error is non-actionable
-    let root_json = package_json(manager, log, root_json_path.slice(), Default::default())?;
+    let root_json = package_json(manager, log, root_json_path.slice(), GetJsonOptions::new())?;
     // `process_names_array` resolves globs relative to the source's directory.
     let (root_manifest, root_source) = (root_json.root, root_json.source.clone());
     let mut workspace_map = WorkspaceMap::init();
@@ -791,7 +814,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
 
     // In file order: (parent, `name[@range]`, target). Yarn skips what it cannot parse.
     let mut resolutions: Vec<(Option<Parent>, &[u8], &[u8])> = Vec::new();
-    for (k, v) in props(&root_manifest.get(b"resolutions").unwrap_or_default()) {
+    for (k, v) in props(&root_manifest.get(b"resolutions").unwrap_or(Expr::EMPTY)) {
         if let (Some(k), Some(v)) = (as_str(k), as_str(v))
             && let Some((parent, pattern)) = resolution_key_parts(k)
         {
@@ -818,7 +841,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     };
 
     let mut root_rewrites: Rewrites = Vec::new();
-    let mut original_specs = OriginalSpecs::default();
+    let mut original_specs = OriginalSpecs::new();
     // bun gets a patch through `patchedDependencies` and the pinned range as the override
     for (_, pattern, target) in &resolutions {
         let name = Dependency::split_name_and_maybe_version(pattern).0;
@@ -828,7 +851,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     }
 
     {
-        let mut pkg = lockfile::Package::default();
+        let mut pkg = lockfile::Package::new();
         if let Some(name) = get_str(&root_manifest, b"name") {
             pkg.name_hash = string_hash(name);
             pkg.name = sbuf!(this).append_with_hash(name, pkg.name_hash)?;
@@ -857,13 +880,13 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     for ws in workspaces.iter_mut() {
         let mut json_path = bun_paths::AutoAbsPath::init_top_level_dir();
         let _ = json_path.join(&[&ws.path, b"package.json"]); // bounded input
-        let manifest = package_json(manager, log, json_path.slice(), Default::default())?.root;
+        let manifest = package_json(manager, log, json_path.slice(), GetJsonOptions::new())?.root;
         let name_hash = string_hash(&ws.name);
         let mut pkg = lockfile::Package {
             name: sbuf!(this).append_with_hash(&ws.name, name_hash)?,
             name_hash,
             resolution: Resolution::init(TaggedValue::Workspace(sbuf!(this).append(&ws.path)?)),
-            ..Default::default()
+            ..lockfile::Package::new()
         };
         append_manifest_dependencies(
             this,
@@ -974,7 +997,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             name: sbuf!(this).append_with_hash(name, name_hash)?,
             name_hash,
             resolution,
-            ..Default::default()
+            ..lockfile::Package::new()
         };
         let extended = extensions_of(&yarnrc, &descriptor_to_entry, data, name, &entry_expr);
         let added =
@@ -997,7 +1020,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     // A patch can wrap another patch: repeated until every chain reached a package.
     let mut patched: Vec<(Vec<u8>, Vec<u8>)> = Vec::new(); // ("name@version", patch path)
     let mut stacked: Vec<(Vec<u8>, usize, Vec<u8>)> = Vec::new(); // ("name@version", files, the first)
-    let mut patched_packages: bun_collections::HashMap<PackageID, ()> = Default::default();
+    let mut patched_packages: bun_collections::HashMap<PackageID, ()> =
+        bun_collections::HashMap::init();
     let mut pending: Vec<usize> = (0..entries.len())
         .filter(|&i| entries[i].kind == EntryKind::Patch)
         .collect();
@@ -1441,7 +1465,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     // After the `patch:` values were rewritten: the next install must not see them as changed.
     let keep_store = GetJsonOptions {
         init_reset_store: false,
-        ..Default::default()
+        ..GetJsonOptions::new()
     };
     if let Ok(root_json) = package_json(manager, log, root_json_path.slice(), keep_store) {
         let (source, json) = (root_json.source.clone(), root_json.root);
@@ -1455,7 +1479,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile: this,
         migrated: lockfile::Migrated::Yarn,
-        serializer_result: Default::default(),
+        serializer_result: crate::lockfile_real::bun_lockb::SerializerLoadResult::new(),
         format: lockfile::Format::Text,
     }))
 }
@@ -1566,13 +1590,13 @@ fn git_resolution(
     // `resolved` is the checked-out commit; a branch or tag is left for the install to resolve.
     let is_sha = commit.len() == 40 && commit.iter().all(u8::is_ascii_hexdigit);
     Ok(Resolution::init(TaggedValue::Git(Repository {
-        owner: String::default(),
+        owner: String::new(),
         repo,
         committish: sbuf!(this).append(commit)?,
         resolved: if is_sha {
             sbuf!(this).append(commit)?
         } else {
-            String::default()
+            String::new()
         },
         package_name: sbuf!(this).append(name)?,
     })))
@@ -1660,14 +1684,13 @@ fn resolution_target_entry(
 
 /// Names under `dependenciesMeta` / `peerDependenciesMeta` with `optional: true`.
 pub(crate) fn optional_names(source: &[u8], entry: &Expr, meta_key: &[u8]) -> Vec<&'static [u8]> {
-    props(&entry.get(meta_key).unwrap_or_default())
+    props(&entry.get(meta_key).unwrap_or(Expr::EMPTY))
         .filter(|(_, v)| v.get(b"optional").and_then(|e| e.as_bool()) == Some(true))
         .filter_map(|(k, _)| scalar_text(source, k))
         .collect()
 }
 
 /// What `packageExtensions` add to one entry.
-#[derive(Default)]
 struct Extended<'a> {
     dependencies: Vec<(&'a [u8], &'a [u8])>,
     peer_dependencies: Vec<(&'a [u8], &'a [u8])>,
@@ -1675,6 +1698,19 @@ struct Extended<'a> {
     /// From yarn's own list. Nothing in package.json stands for these: they are kept as the package's own.
     builtin_dependencies: Vec<(&'a [u8], &'a [u8])>,
     builtin_optional_peers: Vec<&'a [u8]>,
+}
+
+impl<'a> Extended<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            dependencies: Vec::new(),
+            peer_dependencies: Vec::new(),
+            optional_peers: Vec::new(),
+            builtin_dependencies: Vec::new(),
+            builtin_optional_peers: Vec::new(),
+        }
+    }
 }
 
 /// Returns the rows that are there because of `extended`.
@@ -1711,7 +1747,7 @@ fn append_entry_dependencies(
             &optional_peers,
         ),
     ] {
-        for (k, v) in props(&entry.get(group).unwrap_or_default()) {
+        for (k, v) in props(&entry.get(group).unwrap_or(Expr::EMPTY)) {
             let (Some(name), Some(spec)) = (scalar_text(source, k), scalar_text(source, v)) else {
                 bail!(
                     log,
@@ -1783,7 +1819,7 @@ fn extensions_of<'a>(
     name: &[u8],
     entry: &Expr,
 ) -> Extended<'a> {
-    let mut extended = Extended::default();
+    let mut extended = Extended::new();
     let Some(version) = entry.get(b"version").and_then(|v| scalar_text(source, &v)) else {
         return extended;
     };
@@ -1872,7 +1908,7 @@ fn append_manifest_dependencies(
         (b"optionalDependencies".as_slice(), Behavior::OPTIONAL),
         (b"peerDependencies".as_slice(), Behavior::PEER),
     ] {
-        for (k, v) in props(&manifest.get(group).unwrap_or_default()) {
+        for (k, v) in props(&manifest.get(group).unwrap_or(Expr::EMPTY)) {
             let Some(name) = as_str(k) else { continue };
             let mut spec = as_str(v).unwrap_or(b"");
             if being_added(name, spec) {
@@ -1885,7 +1921,7 @@ fn append_manifest_dependencies(
                     behavior.insert(Behavior::OPTIONAL);
                 }
             } else {
-                let e = seen.get_or_put(name)?;
+                let e = seen.get_or_put(name, || 0)?;
                 if e.found_existing {
                     // As in `Package::parse`: in the root, optional replaces the first; any other is its own edge.
                     if is_root && behavior.is_optional() {
@@ -2013,7 +2049,7 @@ fn append_dependency(
         Some(&mut *log),
         None,
     )
-    .unwrap_or_default();
+    .unwrap_or_else(bun_install_types::DependencyVersion::new);
     version.literal = spec;
     this.buffers.dependencies.push(Dependency {
         name: name.value,
@@ -2045,14 +2081,14 @@ fn object_expr_from<'a>(entries: &mut dyn Iterator<Item = (&'a [u8], Expr)>) -> 
             bun_ast::G::Property {
                 key: Some(string_expr(key)),
                 value: Some(value),
-                ..Default::default()
+                ..bun_ast::G::Property::new()
             },
         );
     }
     Expr::init(
         E::Object {
             properties,
-            ..Default::default()
+            ..E::Object::new()
         },
         bun_ast::Loc::EMPTY,
     )

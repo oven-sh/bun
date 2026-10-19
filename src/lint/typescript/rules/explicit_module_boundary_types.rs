@@ -953,7 +953,7 @@ impl Rule for ExplicitModuleBoundaryTypes {
                 target: None,
                 around: Vec::new(),
                 in_setter: false,
-                overloaded: IdSet::default(),
+                overloaded: IdSet::init(),
             };
             return exports
                 .into_iter()
@@ -964,8 +964,8 @@ impl Rule for ExplicitModuleBoundaryTypes {
         let mut checker = Checker {
             rule: self,
             cx,
-            visited: FxHashSet::default(),
-            followed: IdSet::default(),
+            visited: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            followed: IdSet::init(),
             pending: Vec::new(),
             checked: Vec::new(),
             returns_known_until: 0,

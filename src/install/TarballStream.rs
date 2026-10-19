@@ -231,7 +231,7 @@ impl TarballStream {
             tarball.resolution.tag == ResolutionTag::Github && resolved_github_dirname.is_empty();
         let hasher = integrity::Streaming::init(
             &if tarball.skip_verify {
-                Integrity::default()
+                Integrity::new()
             } else {
                 tarball.integrity
             },
@@ -254,7 +254,7 @@ impl TarballStream {
             archive: None,
             phase: Phase::WantHeader,
             out: None,
-            write_strategy: lib::WriteStrategy::default(),
+            write_strategy: lib::WriteStrategy::new(),
             dest: None,
             tmpname: ZBox::from_bytes(b""),
             hasher,
@@ -269,7 +269,7 @@ impl TarballStream {
             fail_detail: Vec::new(),
             invalid_name: false,
             drain_task: thread_pool::Task {
-                node: thread_pool::Node::default(),
+                node: thread_pool::Node::new(),
                 callback: drain_callback,
             },
             extract_task,
@@ -714,7 +714,7 @@ impl TarballStream {
             bun_sys::make_path::make_open_path(
                 Dir::borrow(&tarball.temp_dir),
                 self.tmpname.as_bytes(),
-                Default::default(),
+                bun_sys::OpenDirOptions::new(),
             )?
             .into_raw(),
         );
@@ -810,7 +810,10 @@ impl TarballStream {
         if rest.len() >= norm_buf.len() {
             bun_core::warn!(
                 "Skipping entry with a path longer than the maximum path length: {}\n",
-                bun_fmt::EscapeControlChars(bun_fmt::fmt_os_path(rest, Default::default())),
+                bun_fmt::EscapeControlChars(bun_fmt::fmt_os_path(
+                    rest,
+                    crate::bun_output::fmt::PathFormatOptions::new()
+                )),
             );
             self.phase = Phase::WantData;
             self.out = None;
@@ -920,7 +923,7 @@ impl TarballStream {
             // safe and matches the `defer buffer.deinit()` in the buffered
             // `.extract` arm of `Task.callback`.
             // SAFETY: see comment above; network_task is live until published below.
-            (*network).response_buffer = Default::default();
+            (*network).response_buffer = crate::bun_output::MutableString::new();
 
             // The HTTP thread delivered its final chunk before `closed` was
             // set, so `http_err` is stable without the lock.
@@ -1017,7 +1020,7 @@ impl TarballStream {
         unsafe {
             let tarball = &(&(*task).request.extract).tarball;
             (*task).data = TaskData {
-                extract: ManuallyDrop::new(Default::default()),
+                extract: ManuallyDrop::new(super::ExtractData::new()),
             };
             (*task).err = None;
 
@@ -1134,7 +1137,10 @@ impl TarballStream {
                 bun_core::pretty_errorln!(
                     "[{}] Streamed {} tarball → {} entries<r>",
                     bun_fmt::for_terminal(bstr::BStr::new(name)),
-                    bun_fmt::size(self.bytes_received, Default::default()),
+                    bun_fmt::size(
+                        self.bytes_received,
+                        crate::bun_output::fmt::SizeFormatterOptions::new()
+                    ),
                     self.entry_count,
                 );
                 Output::flush();

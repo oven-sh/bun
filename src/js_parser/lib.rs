@@ -54,12 +54,6 @@ pub mod Macro {
         /// Spec `default_macro_js_value` = `JSValue.zero`.
         pub const ZERO: Self = MacroJSCtx(0);
     }
-    impl Default for MacroJSCtx {
-        #[inline]
-        fn default() -> Self {
-            Self::ZERO
-        }
-    }
 
     /// Lower-tier handle for `js_parser_jsc::Macro::MacroContext`.
     ///
@@ -79,15 +73,6 @@ pub mod Macro {
         /// (resolver/env/macros/remap/bump). Allocated by `init` and leaked
         /// (process lifetime); `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
-    }
-    impl Default for MacroContext {
-        #[inline]
-        fn default() -> Self {
-            Self {
-                javascript_object: MacroJSCtx::ZERO,
-                data: core::ptr::null_mut(),
-            }
-        }
     }
     unsafe extern "Rust" {
         /// Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`. `transpiler`
@@ -288,8 +273,15 @@ pub mod defines {
     /// `can_be_removed_if_unused`, `call_can_be_unwrapped_if_unused`
     /// (`E.CallUnwrap`, 2 bits), `method_call_must_be_replaced_with_undefined`.
     #[repr(transparent)]
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct Flags(u8);
+
+    impl Flags {
+        #[inline]
+        pub fn init() -> Self {
+            Self(0)
+        }
+    }
 
     impl Flags {
         const VALUELESS_SHIFT: u8 = 3;
@@ -378,12 +370,12 @@ pub mod defines {
     // process-lifetime, and `DefineData` is read-only after init.
     unsafe impl Sync for DefineData {}
 
-    impl Default for DefineData {
-        fn default() -> Self {
+    impl DefineData {
+        pub fn new() -> Self {
             Self {
                 value: ExprData::EMissing(E::Missing),
                 original_name: None,
-                flags: Flags::default(),
+                flags: Flags::init(),
             }
         }
     }
@@ -398,8 +390,8 @@ pub mod defines {
         pub call_can_be_unwrapped_if_unused: E::CallUnwrap,
         pub method_call_must_be_replaced_with_undefined: bool,
     }
-    impl<'a> Default for Options<'a> {
-        fn default() -> Self {
+    impl<'a> Options<'a> {
+        pub fn new() -> Self {
             Self {
                 original_name: None,
                 value: ExprData::EMissing(E::Missing),
@@ -453,22 +445,22 @@ pub mod defines {
         }
 
         pub fn init_boolean(value: bool) -> DefineData {
-            let mut flags = Flags::default();
+            let mut flags = Flags::init();
             flags.set_can_be_removed_if_unused(true);
             DefineData {
                 value: ExprData::EBoolean(E::Boolean { value }),
                 flags,
-                ..Default::default()
+                ..DefineData::new()
             }
         }
 
         pub fn init_static_string(str: &'static E::EString) -> DefineData {
-            let mut flags = Flags::default();
+            let mut flags = Flags::init();
             flags.set_can_be_removed_if_unused(true);
             DefineData {
                 value: ExprData::EString(StoreRef::from_static(str)),
                 flags,
-                ..Default::default()
+                ..DefineData::new()
             }
         }
 
@@ -489,7 +481,6 @@ pub mod defines {
         }
     }
 
-    #[derive(Default)]
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
@@ -502,11 +493,24 @@ pub mod defines {
         pub user_hash: Option<u64>,
     }
 
+    impl Define {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                identifiers: StringHashMap::init(),
+                dots: StringHashMap::init(),
+                dots_filter: DotFilter::new(),
+                drop_debugger: false,
+                user_hash: None,
+            }
+        }
+    }
+
     #[derive(Clone)]
     pub struct DotFilter([u64; 64]);
 
-    impl Default for DotFilter {
-        fn default() -> Self {
+    impl DotFilter {
+        pub fn new() -> Self {
             DotFilter([0; 64])
         }
     }
@@ -666,7 +670,7 @@ pub mod renamer {
         module_scope: &Scope,
         symbols: &mut [Symbol],
     ) -> SlotCounts {
-        let mut slot_counts = SlotCounts::default();
+        let mut slot_counts = SlotCounts::new();
         let mut sorted_members: Vec<u32> = Vec::new();
 
         // Temporarily set the nested scope slots of top-level symbols to valid so
@@ -688,7 +692,7 @@ pub mod renamer {
                 &mut sorted_members,
                 child,
                 symbols,
-                SlotCounts::default(),
+                SlotCounts::new(),
             ));
         }
 

@@ -496,8 +496,8 @@ fn empty_masks_ptr() -> *mut usize {
     unsafe { EMPTY_MASKS_DATA.get().cast::<usize>().add(1) }
 }
 
-impl Default for DynamicBitSetUnmanaged {
-    fn default() -> Self {
+impl DynamicBitSetUnmanaged {
+    pub fn new() -> Self {
         Self {
             bit_length: 0,
             masks: empty_masks_ptr(),
@@ -564,7 +564,7 @@ impl DynamicBitSetUnmanaged {
     /// If bit_length is not zero, deinit must eventually be called.
     #[inline(never)]
     pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
-        let mut this = Self::default();
+        let mut this = Self::new();
         this.resize(bit_length, false)?;
         Ok(this)
     }
@@ -671,7 +671,7 @@ impl DynamicBitSetUnmanaged {
 
     /// Creates a duplicate of this bit set, using the new allocator.
     pub fn clone(&self) -> Result<Self, AllocError> {
-        let mut copy = Self::default();
+        let mut copy = Self::new();
         copy.resize(self.bit_length, false)?;
         copy.masks_slice_mut().copy_from_slice(self.masks_slice());
         Ok(copy)
@@ -1205,10 +1205,18 @@ impl Drop for AutoBitSet {
 /// A bit set with runtime-known size, backed by an allocated slice
 /// of usize.  Thin wrapper around DynamicBitSetUnmanaged which keeps
 /// track of the allocator instance.
-#[derive(Default)]
 pub struct DynamicBitSet {
     /// The number of valid items in this bit set
     pub unmanaged: DynamicBitSetUnmanaged,
+}
+
+impl DynamicBitSet {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            unmanaged: DynamicBitSetUnmanaged::new(),
+        }
+    }
 }
 
 impl DynamicBitSet {

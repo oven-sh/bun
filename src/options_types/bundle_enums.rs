@@ -68,7 +68,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-#[derive(Default)]
 pub struct WindowsOptions {
     pub hide_console: bool,
     pub icon: Option<Box<[u8]>>,
@@ -77,6 +76,21 @@ pub struct WindowsOptions {
     pub version: Option<Box<[u8]>>,
     pub description: Option<Box<[u8]>>,
     pub copyright: Option<Box<[u8]>>,
+}
+
+impl WindowsOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            hide_console: false,
+            icon: None,
+            title: None,
+            publisher: None,
+            version: None,
+            description: None,
+            copyright: None,
+        }
+    }
 }
 
 #[repr(u8)]
@@ -92,9 +106,8 @@ pub enum BundlePackage {
 /// `Unspecified`, tsconfig.json drives the choice between "react-jsx" and
 /// "react-jsx-dev-runtime".
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ForceNodeEnv {
-    #[default]
     Unspecified,
     Development,
     Production,
@@ -102,9 +115,8 @@ pub enum ForceNodeEnv {
 
 /// package.json `"type"` field.
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ModuleType {
-    #[default]
     Unknown,
     Cjs,
     Esm,

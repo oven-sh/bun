@@ -26,9 +26,9 @@ pub enum RequestedExports {
     Partial(StringArrayHashMap<()>),
 }
 
-impl Default for RequestedExports {
-    fn default() -> Self {
-        RequestedExports::Partial(StringArrayHashMap::default())
+impl RequestedExports {
+    pub fn new() -> Self {
+        RequestedExports::Partial(StringArrayHashMap::init())
     }
 }
 
@@ -43,7 +43,7 @@ impl RequestedExports {
         }
         let slot = &mut map[i];
         let found = slot.is_some();
-        (found, slot.get_or_insert_with(Self::default))
+        (found, slot.get_or_insert_with(Self::new))
     }
 
     #[inline]
@@ -167,7 +167,7 @@ fn apply_barrel_optimization_impl(
 
     // Build the set of needed import_record_indices from already-requested
     // export names. Export * records are always needed.
-    let mut needed_records: ArrayHashMap<u32, ()> = ArrayHashMap::default();
+    let mut needed_records: ArrayHashMap<u32, ()> = ArrayHashMap::new();
 
     for record_idx in ast.export_star_import_records.iter() {
         needed_records.put(*record_idx, ())?;
@@ -214,7 +214,7 @@ fn apply_barrel_optimization_impl(
     // import records that share a path with any needed record.
     if dev_handle.is_some() {
         // Collect paths of needed records.
-        let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::default();
+        let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::init();
 
         for rec_idx in needed_records.keys() {
             if (*rec_idx as usize) < ast.import_records.len() {
@@ -376,7 +376,10 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
         &mut this.graph.ast.items_import_records_mut()[idx],
         bun_alloc::ArenaVec::new_in(heap),
     );
-    let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
+    let source = core::mem::replace(
+        &mut this.graph.input_files.items_source_mut()[idx],
+        bun_ast::Source::new(),
+    );
     let source_path: &'static [u8] = source.path.text;
 
     let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
@@ -399,7 +402,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
             loader,
             target,
             only_records: Some(un_deferred),
-            ..Default::default()
+            ..PatchImportRecordsCtx::new()
         },
     );
 
@@ -488,7 +491,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // its index, so the direct path lookup below fails for those entries.
     // Build a fallback: raw specifier → surviving record's resolved path
     // text, using non-unused records in this file. See #28886.
-    let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::default();
+    let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::init();
     if dev_handle.is_some() {
         for ir_probe in file_import_records.as_slice() {
             if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)
@@ -787,7 +790,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                         }
                     }
                     RequestedExports::Partial(p) => {
-                        let alias_gop = p.get_or_put(item_alias)?;
+                        let alias_gop = p.get_or_put(item_alias, || ())?;
                         if found && alias_gop.found_existing {
                             qi += 1;
                             continue;

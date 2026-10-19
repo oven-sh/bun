@@ -69,9 +69,15 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
 }
 
 /// Everything that is allocated to format a style sheet. It is reused for the next one.
-#[derive(Default)]
 pub struct Scratch {
     memo: Memo,
+}
+
+impl Scratch {
+    #[inline]
+    pub fn new() -> Self {
+        Self { memo: Memo::new() }
+    }
 }
 
 /// Prettier's `replaceQuotesInInlineComments`: the inline comments in which quotes and asterisks are to
@@ -338,9 +344,11 @@ fn parse_and_print<'o>(
             extra: &tree.extra,
             syntax: parser,
             is_oxfmt: options.flavor.is_oxfmt(),
-            refusal: Default::default(),
+            refusal: crate::syntax_error::Refusal::new(),
             stack: Stack::for_tree(),
-            convertible_sets: Default::default(),
+            convertible_sets: core::cell::RefCell::new(rustc_hash::FxHashMap::with_hasher(
+                rustc_hash::FxBuildHasher,
+            )),
         },
         single_quote: matches!(options.quote_style, QuoteStyle::Single),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
@@ -357,7 +365,7 @@ fn parse_and_print<'o>(
         memo,
         is_memoizable: false,
     };
-    printer.print_root(&tree, &mut parse::Parsed::default());
+    printer.print_root(&tree, &mut parse::Parsed::new());
     if printer.context.stack.ran_out() {
         return Err(FormatError::NestedTooDeeply);
     }
@@ -373,7 +381,7 @@ pub(crate) fn document(
     parser: Parser,
     options: &FormatOptions,
 ) -> Result<Doc<'static>, FormatError> {
-    let mut memo = Memo::default();
+    let mut memo = Memo::new();
     let sink = parse_and_print(text, parser, options, Sink::to_document(), &mut memo)?;
     doc::text_to_doc(sink.into_document()?)
 }

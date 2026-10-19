@@ -110,7 +110,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Only allow omitting the body if we're parsing TypeScript class
                 allow_missing_body_for_type_script: Self::IS_TYPESCRIPT_ENABLED && opts.is_class,
-                ..Default::default()
+                ..FnOrArrowDataParse::new()
             },
         )?;
 
@@ -234,7 +234,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             key: Some(*key),
             value: Some(value),
             ts_metadata: TsMetadata::MFunction,
-            ..Default::default()
+            ..G::Property::new()
         }))
     }
 
@@ -502,11 +502,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 is_return_disallowed: true,
                                 allow_super_property: true,
                                 allow_await: AwaitOrYield::ForbidAll,
-                                ..Default::default()
+                                ..FnOrArrowDataParse::new()
                             };
 
                             let _ = p.push_scope_for_parse_pass(ScopeKind::ClassStaticInit, loc)?;
-                            let mut _parse_opts = ParseStatementOptions::default();
+                            let mut _parse_opts = ParseStatementOptions::new();
                             let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _parse_opts)?;
 
                             p.pop_scope();
@@ -525,7 +525,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Ok(Some(G::Property {
                                 kind: PropertyKind::ClassStaticBlock,
                                 class_static_block: Some(js_ast::StoreRef::from_bump(block)),
-                                ..Default::default()
+                                ..G::Property::new()
                             }));
                         }
                     }
@@ -593,7 +593,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             value: Some(value),
                             initializer,
                             flags: flags::Property::WasShorthand.into(),
-                            ..Default::default()
+                            ..G::Property::new()
                         }));
                     }
                 }
@@ -639,7 +639,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (p.lexer.token != T::TOpenParen || has_definite_assignment_assertion_operator)
             {
                 let mut initializer: Option<Expr> = None;
-                let mut ts_metadata = TsMetadata::default();
+                let mut ts_metadata = TsMetadata::MNone;
 
                 // Forbid the names "constructor" and "prototype" in some cases
                 if !is_computed {
@@ -742,7 +742,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     key: Some(key),
                     initializer,
                     ts_metadata,
-                    ..Default::default()
+                    ..G::Property::new()
                 }));
             }
 
@@ -785,9 +785,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 key: Some(key),
                 value: Some(Expr {
                     data: js_ast::ExprData::EMissing(E::Missing {}),
-                    loc: bun_ast::Loc::default(),
+                    loc: bun_ast::Loc::new(),
                 }),
-                ..Default::default()
+                ..G::Property::new()
             };
 
             // `errors` is Option<&mut _>; reborrow via as_deref_mut so the caller's binding stays usable

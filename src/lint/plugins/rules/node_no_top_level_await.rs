@@ -22,7 +22,7 @@ impl Rule for NoTopLevelAwait {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (!(self.ignore_bin && file.text().starts_with(b"#!")) && !is_script(file)).then(AncestorMemo::default)
+        (!(self.ignore_bin && file.text().starts_with(b"#!")) && !is_script(file)).then(AncestorMemo::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

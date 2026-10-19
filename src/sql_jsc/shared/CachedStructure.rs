@@ -9,13 +9,23 @@ use bun_jsc::Weak;
 use bun_ptr::RawSlice;
 use bun_sql::shared::{ColumnIdentifier, Data};
 
-#[derive(Default)]
 pub struct CachedStructure {
     pub(crate) structure: StrongOptional, // Strong.Optional = .empty
     /// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
     pub(crate) fields: Option<Box<[ExternColumnIdentifier]>>,
     /// `result.statement`, kept alive only by the results that hold it.
     description: Weak<()>,
+}
+
+impl CachedStructure {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            structure: StrongOptional::new(),
+            fields: None,
+            description: Weak::new(),
+        }
+    }
 }
 
 impl CachedStructure {
@@ -36,7 +46,7 @@ impl CachedStructure {
     }
 
     pub(crate) fn clear_description(&mut self) {
-        self.description = Weak::default();
+        self.description = Weak::new();
     }
 
     pub(crate) fn set(
@@ -103,7 +113,7 @@ impl CachedStructure {
                 continue;
             }
 
-            let mut out = ExternColumnIdentifier::default();
+            let mut out = ExternColumnIdentifier::new();
             match name_or_index {
                 ColumnIdentifier::Name(name) => {
                     out.value.name =
@@ -150,8 +160,8 @@ impl CachedStructure {
 /// runs: nothing would share the object, so it is made when somebody reads it.
 pub(crate) struct Undescribed<T>(Vec<Option<T>>);
 
-impl<T> Default for Undescribed<T> {
-    fn default() -> Self {
+impl<T> Undescribed<T> {
+    pub(crate) fn new() -> Self {
         Self(Vec::new())
     }
 }

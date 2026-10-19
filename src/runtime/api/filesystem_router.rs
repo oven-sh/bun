@@ -254,7 +254,7 @@ impl FileSystemRouter {
                     .collect()
             },
             asset_prefix_path: Box::from(asset_prefix_slice.slice()),
-            ..Default::default()
+            ..RouteConfig::new()
         })
         .expect("unreachable");
 
@@ -485,7 +485,7 @@ impl FileSystemRouter {
             dir: cfg_dir,
             extensions: cfg_extensions,
             asset_prefix_path: cfg_asset_prefix_path,
-            ..Default::default()
+            ..RouteConfig::new()
         })
         .expect("unreachable");
         {
@@ -589,7 +589,7 @@ impl FileSystemRouter {
                 )));
             }
         };
-        let mut params = route_param::List::default();
+        let mut params = Vec::new();
         // `defer params.deinit(allocator)` → Drop
         // SAFETY: R-2 — short-lived `&mut Router` for the route lookup;
         // `match_page_with_allocator` is pure (no JS re-entry), and the returned
@@ -815,7 +815,7 @@ impl MatchedRoute {
             // `pathname_backing`; dropping it (and `params_list_holder`) here releases the
             // borrowed bytes BEFORE `route_holder`'s slices would dangle on Box drop.
             this.pathname_backing = Utf8Bytes::EMPTY;
-            *this.params_list_holder.get_mut() = route_param::List::default();
+            *this.params_list_holder.get_mut() = Vec::new();
         }
 
         if let Some(p) = this.origin.take() {
@@ -901,7 +901,7 @@ impl MatchedRoute {
         let origin_url = if let Some(ref origin) = this.origin {
             URL::parse(origin.leak())
         } else {
-            URL::default()
+            URL::new()
         };
         bun_object::get_public_path_with_asset_prefix(
             this.route().file_path,

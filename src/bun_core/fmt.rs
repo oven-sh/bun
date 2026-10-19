@@ -448,8 +448,8 @@ pub struct JSONFormatterUTF8Options {
     pub quote: bool,
 }
 
-impl Default for JSONFormatterUTF8Options {
-    fn default() -> Self {
+impl JSONFormatterUTF8Options {
+    pub fn new() -> Self {
         Self { quote: true }
     }
 }
@@ -691,8 +691,8 @@ pub struct PathFormatOptions {
     pub escape_backslashes: bool,
 }
 
-impl Default for PathFormatOptions {
-    fn default() -> Self {
+impl PathFormatOptions {
+    pub fn new() -> Self {
         Self {
             path_sep: PathSep::Any,
             escape_backslashes: false,
@@ -1109,12 +1109,23 @@ pub fn parse_seconds(s: &[u8]) -> Option<f64> {
 }
 
 /// The digits of a binary, octal or hexadecimal integer, rounded to the nearest `f64` once, in [`Self::to_f64`].
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct RadixInteger {
     /// As many of the leading digits as fit.
     leading: u64,
     dropped_bits: u32,
     is_inexact: bool,
+}
+
+impl RadixInteger {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            leading: 0,
+            dropped_bits: 0,
+            is_inexact: false,
+        }
+    }
 }
 
 impl RadixInteger {
@@ -1139,7 +1150,7 @@ impl RadixInteger {
 /// The integer whose digits, of `bits` bits each, are `digits`, as the nearest `f64`. `None` if there
 /// is no digit, or a byte that is none in that radix.
 fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
-    let mut integer = RadixInteger::default();
+    let mut integer = RadixInteger::new();
     for &c in digits {
         integer.push_digit(bits, char::from(c).to_digit(1 << bits)?);
     }
@@ -1287,16 +1298,6 @@ pub struct URLFormatter<'a> {
     pub port: Option<u16>,
 }
 
-impl Default for URLFormatter<'_> {
-    fn default() -> Self {
-        Self {
-            proto: URLProto::Http,
-            hostname: None,
-            port: None,
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum URLProto {
     Http,
@@ -1407,7 +1408,7 @@ impl Display for FormatValidIdentifier<'_> {
         use crate::string::lexer as js_lexer;
 
         let mut iterator = strings::CodepointIterator::init(self.name);
-        let mut cursor = strings::Cursor::default();
+        let mut cursor = strings::Cursor::new();
 
         let mut has_needed_gap = false;
         let mut needs_gap;
@@ -1441,7 +1442,7 @@ impl Display for FormatValidIdentifier<'_> {
             }
             let slice = &self.name[start_i..];
             iterator = strings::CodepointIterator::init(slice);
-            cursor = strings::Cursor::default();
+            cursor = strings::Cursor::new();
 
             while iterator.next(&mut cursor) {
                 if js_lexer::is_identifier_continue(cursor.c as u32) {
@@ -1695,8 +1696,8 @@ pub struct HighlighterOptions {
     pub redact_sensitive_information: bool,
 }
 
-impl Default for HighlighterOptions {
-    fn default() -> Self {
+impl HighlighterOptions {
+    pub fn new() -> Self {
         Self {
             enable_colors: false,
             check_for_unhighlighted_write: true,
@@ -2741,8 +2742,8 @@ pub struct SizeFormatterOptions {
     pub space_between_number_and_unit: bool,
 }
 
-impl Default for SizeFormatterOptions {
-    fn default() -> Self {
+impl SizeFormatterOptions {
+    pub fn new() -> Self {
         Self {
             space_between_number_and_unit: true,
         }
@@ -2807,7 +2808,7 @@ pub fn size(bytes: usize, opts: SizeFormatterOptions) -> SizeFormatter {
 pub fn bytes(n: usize) -> SizeFormatter {
     SizeFormatter {
         value: n,
-        opts: SizeFormatterOptions::default(),
+        opts: SizeFormatterOptions::new(),
     }
 }
 
@@ -3198,7 +3199,7 @@ pub fn trimmed_precision<const PRECISION: usize>(
 // Duration formatting
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct FormatDurationData {
     ns: u64,
     negative: bool,
@@ -3767,8 +3768,8 @@ pub struct OutOfRangeOptions<'a> {
     pub msg: &'a [u8],
 }
 
-impl Default for OutOfRangeOptions<'_> {
-    fn default() -> Self {
+impl OutOfRangeOptions<'_> {
+    pub fn new() -> Self {
         Self {
             min: i64::MAX,
             max: i64::MAX,

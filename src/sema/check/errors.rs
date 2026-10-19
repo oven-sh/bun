@@ -248,7 +248,8 @@ impl Checker<'_, '_> {
             let syntactic = std::mem::take(&mut self.reported);
             let mut declaration = Vec::new();
             if matches!(self.expected, Requested::Declaration | Requested::All) {
-                self.emit_resolver_links = Default::default();
+                self.emit_resolver_links =
+                    crate::check::errors_declaration_emit::EmitResolverLinks::new();
                 declaration = self.get_declaration_diagnostics(file);
             }
             self.is_type_checked = true;
@@ -267,7 +268,7 @@ impl Checker<'_, '_> {
             let diagnostic = &hir.jsdoc_param_errors[index as usize].1;
             self.add_diagnostic(Reported::from_hir(file, diagnostic));
         }
-        self.emit_resolver_links = Default::default();
+        self.emit_resolver_links = crate::check::errors_declaration_emit::EmitResolverLinks::new();
         if self.emits_first() {
             let from = self.reported.len();
             self.is_emitting = true;
@@ -337,7 +338,7 @@ impl Checker<'_, '_> {
         let declaration = self.get_declaration_diagnostics(file);
         self.set_symbol_ids_emitting(was_emitting);
         self.is_type_checked = true;
-        let mut directives = Directives::default();
+        let mut directives = Directives::new();
         let semantic = semantic.into_iter();
         let mut semantic: Vec<Reported> =
             (semantic.filter_map(|d| self.settled(d, &mut directives))).collect();
@@ -494,7 +495,7 @@ impl Checker<'_, '_> {
             if written.kind == SpecifierKind::ImportType {
                 let site = SpecifierSite {
                     is_ambient,
-                    ..Default::default()
+                    ..SpecifierSite::new()
                 };
                 self.resolve_external_module(file, written, site);
             }
@@ -523,7 +524,7 @@ impl Checker<'_, '_> {
                 let site = SpecifierSite {
                     is_emittable: true,
                     is_ambient,
-                    ..Default::default()
+                    ..SpecifierSite::new()
                 };
                 self.resolve_external_module(file, written, site);
             }
@@ -578,7 +579,7 @@ impl Checker<'_, '_> {
             kind: SpecifierKind::RequireCall,
             mode: self.require_resolution_mode(file, spec),
         };
-        self.resolve_external_module(file, written, SpecifierSite::default())
+        self.resolve_external_module(file, written, SpecifierSite::new())
     }
 
     /// The same for the module that the variable declaration or the binding element with the name

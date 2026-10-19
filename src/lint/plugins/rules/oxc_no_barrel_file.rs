@@ -62,7 +62,7 @@ impl Rule for NoBarrelFile {
             }
         }
         if total > self.threshold {
-            cx.report(counts.first().map(|it| it.0).unwrap_or_default(), NO_BARREL_FILE)
+            cx.report(counts.first().map(|it| it.0).unwrap_or_else(Span::init), NO_BARREL_FILE)
                 .data("total", total)
                 .data("threshold", self.threshold)
                 .labels_with(|labels| {
@@ -91,7 +91,7 @@ fn count_loaded_modules(modules: &dyn Modules, module: ModuleId) -> Option<u32> 
     if modules.imports(module).is_empty() {
         return None;
     }
-    let (mut traversed, mut pending) = (FxHashSet::default(), vec![module]);
+    let (mut traversed, mut pending) = (FxHashSet::with_hasher(rustc_hash::FxBuildHasher), vec![module]);
     while let Some(module) = pending.pop() {
         pending.extend(modules.imports(module).iter().map(|it| it.module).filter(|it| traversed.insert(*it)));
     }

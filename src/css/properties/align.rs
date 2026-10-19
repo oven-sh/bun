@@ -935,7 +935,6 @@ pub(crate) struct ContentPositionInner {
 // AlignHandler
 // ──────────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct AlignHandler {
     pub(crate) align_content: Option<(AlignContent, VendorPrefix)>,
     pub(crate) flex_line_pack: Option<(FlexLinePack, VendorPrefix)>,
@@ -952,6 +951,29 @@ pub struct AlignHandler {
     pub(crate) row_gap: Option<GapValue>,
     pub(crate) column_gap: Option<GapValue>,
     pub(crate) has_any: bool,
+}
+
+impl AlignHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            align_content: None,
+            flex_line_pack: None,
+            justify_content: None,
+            box_pack: None,
+            flex_pack: None,
+            align_self: None,
+            flex_item_align: None,
+            justify_self: None,
+            align_items: None,
+            box_align: None,
+            flex_align: None,
+            justify_items: None,
+            row_gap: None,
+            column_gap: None,
+            has_any: false,
+        }
+    }
 }
 
 // ─── helper macros ───

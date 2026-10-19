@@ -319,9 +319,9 @@ impl<K: Copy + Into<u32>, V, A: MapAllocator> IdMap<K, V, A> {
     }
 }
 
-impl<K, V, A: MapAllocator> Default for IdMap<K, V, A> {
+impl<K, V, A: MapAllocator> IdMap<K, V, A> {
     #[inline]
-    fn default() -> Self {
+    pub fn init() -> Self {
         Self::new()
     }
 }
@@ -482,9 +482,9 @@ impl<K: Copy + From<u32>> IdBitSet<K> {
     }
 }
 
-impl<K> Default for IdBitSet<K> {
+impl<K> IdBitSet<K> {
     #[inline]
-    fn default() -> Self {
+    pub fn init() -> Self {
         Self::new()
     }
 }

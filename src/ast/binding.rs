@@ -13,10 +13,20 @@ use crate::{e as E, g as G};
 /// so downstream crates can `use crate::binding::Data`.
 pub use crate::b::B as Data;
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct Binding {
     pub loc: crate::Loc,
     pub data: B,
+}
+
+impl Binding {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            loc: crate::Loc::new(),
+            data: B::new(),
+        }
+    }
 }
 
 #[repr(u8)]
@@ -195,7 +205,7 @@ impl Binding {
                     E::Array {
                         items: ExprNodeList::from_bump_vec(exprs),
                         is_single_line: b.is_single_line,
-                        ..Default::default()
+                        ..E::Array::new()
                     },
                     loc,
                 )
@@ -216,14 +226,14 @@ impl Binding {
                         },
                         value: Some(Self::to_expr_inner(&item.value, ctx, wrapper)),
                         initializer: item.default_value,
-                        ..Default::default()
+                        ..G::Property::new()
                     });
                 }
                 Expr::init(
                     E::Object {
                         properties: G::PropertyList::from_bump_vec(properties),
                         is_single_line: b.is_single_line,
-                        ..Default::default()
+                        ..E::Object::new()
                     },
                     loc,
                 )

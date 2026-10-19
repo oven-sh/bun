@@ -127,7 +127,7 @@ impl NoUnderscoreDangle {
             return;
         }
         // A name that is bound twice is one variable, which goes by its first binding.
-        let mut seen: FxHashSet<Name<'a>> = FxHashSet::default();
+        let mut seen: FxHashSet<Name<'a>> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         pat.for_each_binding(&mut |binding| {
             let Some(name) = binding.as_ident() else {
                 return;

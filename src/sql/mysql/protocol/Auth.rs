@@ -115,16 +115,19 @@ pub mod caching_sha2_password {
         }
     }
 
-    impl Default for FastAuthStatus {
-        fn default() -> Self {
-            Self::SUCCESS
-        }
-    }
-
-    #[derive(Default)]
     pub struct Response {
         pub status: FastAuthStatus,
         pub(crate) data: Data,
+    }
+
+    impl Response {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                status: FastAuthStatus::SUCCESS,
+                data: Data::Empty,
+            }
+        }
     }
 
     impl Response {
@@ -267,9 +270,15 @@ pub mod caching_sha2_password {
         }
     }
 
-    #[derive(Default)]
     pub struct PublicKeyResponse {
         pub data: Data,
+    }
+
+    impl PublicKeyResponse {
+        #[inline]
+        pub fn new() -> Self {
+            Self { data: Data::Empty }
+        }
     }
 
     impl PublicKeyResponse {

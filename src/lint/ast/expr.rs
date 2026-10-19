@@ -312,7 +312,7 @@ impl<'a> Expr<'a> {
     pub fn span(self) -> Span {
         let file = self.file;
         let Some(raw) = self.try_raw() else {
-            return Span::default();
+            return Span::init();
         };
         const fn kind(tag: ExprTag) -> u64 {
             1 << tag as u8
@@ -394,7 +394,7 @@ impl<'a> Expr<'a> {
                 Span::new(start, end)
             }
             Some(raw) => Span::new(raw.pos, raw.end),
-            None => Span::default(),
+            None => Span::init(),
         }
     }
 

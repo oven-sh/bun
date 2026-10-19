@@ -139,10 +139,19 @@ fn is_exported(variable: Variable) -> bool {
 }
 
 /// The variables that are named somewhere, each once.
-#[derive(Default)]
 struct Named<'a> {
     seen: SymbolSet,
     all: Vec<Symbol<'a>>,
+}
+
+impl<'a> Named<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            seen: SymbolSet::new(),
+            all: Vec::new(),
+        }
+    }
 }
 
 impl<'a> Named<'a> {
@@ -234,7 +243,7 @@ fn oxlint_may_be_unused_after_all<'a>(
     updates: &[Expr<'a>],
 ) -> Vec<Symbol<'a>> {
     let changed_by_logical_assignments = || {
-        let mut named = Named::default();
+        let mut named = Named::new();
         for e in file.exprs_of_kind(ExprTag::Assign) {
             if let Some(Some(BinOp::And | BinOp::Or | BinOp::Nullish)) = e.assign_op()
                 && let Some((_, target, _)) = e.as_assign()
@@ -306,7 +315,7 @@ fn can_be_hidden_by_type_parameter(def: Declaration) -> bool {
 /// enum or an import: `type C<A> = A.B<A>`. These are the variables that are used in those ways.
 fn oxlint_used_beside_infer<'a>(file: &'a File<'a>) -> SymbolSet {
     let is_qualified = |it: Reference| matches!(it.node(), Node::Type(ty) if matches!(ty.kind(), TypeKind::Ref { name, .. } if name.len() > 1));
-    let mut used = SymbolSet::default();
+    let mut used = SymbolSet::new();
     for symbol in file.symbols() {
         let Some(Declaration::TypeParam(param)) = symbol.declarations().next() else {
             continue;
@@ -367,7 +376,7 @@ fn oxlint_is_read_for_a_type<'a>(file: &'a File<'a>, reference: Reference<'a>) -
     let is_ambient = |class: Class<'a>| {
         file.is_declaration_file()
             || class.flags().contains(Flags::AMBIENT)
-            || AmbientAncestors::default().has_ambient_typescript_ancestor(Node::Class(class))
+            || AmbientAncestors::new().has_ambient_typescript_ancestor(Node::Class(class))
     };
     let owner = Node::Expr(name)
         .ancestors()
@@ -509,7 +518,6 @@ fn oxlint_relevant_parent<'a>(node: Node<'a>, walks: &mut OxlintWalks<'a>) -> Op
 
 /// What the walks up from the references of a file have found, for those that start far below: the operands of
 /// `a = a + a + ..` and of `a(), b(), ..`.
-#[derive(Default)]
 struct OxlintWalks<'a> {
     /// The outermost of the `a, b` that a node is or is the left operand of.
     sequences: AncestorMemo<'a, Node<'a>>,
@@ -525,6 +533,21 @@ struct OxlintWalks<'a> {
     logical: AncestorMemo<'a, Node<'a>>,
     /// What is given to the variable that is looked at.
     values: Option<SmallVec<[Span; 2]>>,
+}
+
+impl<'a> OxlintWalks<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            sequences: AncestorMemo::new(),
+            statements: AncestorMemo::new(),
+            loops: AncestorMemo::new(),
+            looked_at: AncestorMemo::new(),
+            operations: AncestorMemo::new(),
+            logical: AncestorMemo::new(),
+            values: None,
+        }
+    }
 }
 
 /// Whether `oxlint_is_self_reassignment` does nothing with `node`.
@@ -2039,18 +2062,18 @@ impl NoUnusedVars {
         let file = cx.file();
         // It sets `variable.eslintUsed`, as upstream's does, for the rules that end after this one.
         let analysis = match self.base.report_used_ignore_pattern {
-            true => collect_variables(file, UsedMarks::default()),
-            false => collect_unused_variables(file, UsedMarks::default()),
+            true => collect_variables(file, UsedMarks::new()),
+            false => collect_unused_variables(file, UsedMarks::new()),
         };
 
-        let mut reported = SymbolSet::default();
+        let mut reported = SymbolSet::new();
         let used_variables = analysis.used_variables();
         // What is unused for oxlint only.
         let candidates = match file.language().is_oxlint {
             true => oxlint_may_be_unused_after_all(file, &cx.state.commas, &cx.state.updates),
             false => Vec::new(),
         };
-        let walks = RefCell::default();
+        let walks = core::cell::RefCell::new(OxlintWalks::new());
         let is_added = |it: &Variable<'a>| {
             !analysis.is_unused(it.symbol())
                 && !analysis.is_eslint_used(*it)
@@ -2062,7 +2085,7 @@ impl NoUnusedVars {
             .map(Variable::new)
             .filter(is_added)
             .collect();
-        let mut unused_for_oxlint = SymbolSet::default();
+        let mut unused_for_oxlint = SymbolSet::new();
         for variable in &added {
             unused_for_oxlint.insert(variable.symbol());
         }
@@ -2187,7 +2210,7 @@ impl Rule for NoUnusedVars {
         }
         Some(State {
             is_definition_file,
-            declared: AncestorMemo::default(),
+            declared: AncestorMemo::new(),
             commas: Vec::new(),
             updates: Vec::new(),
         })

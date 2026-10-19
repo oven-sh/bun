@@ -197,7 +197,7 @@ impl WorkPool {
 
         let task_ = Box::into_raw(Box::new(TaskType::<C> {
             task: Task {
-                node: crate::thread_pool::Node::default(),
+                node: crate::thread_pool::Node::new(),
                 callback: callback::<C>,
             },
             context,

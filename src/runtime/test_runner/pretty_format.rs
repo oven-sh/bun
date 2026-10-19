@@ -85,7 +85,6 @@ impl EventType {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct JestPrettyFormat {}
 
 #[repr(u32)]
@@ -95,7 +94,7 @@ pub(crate) enum MessageLevel {
     Debug = 3,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct FormatOptions {
     pub(crate) enable_colors: bool,
     pub(crate) add_newline: bool,
@@ -271,8 +270,14 @@ pub(crate) mod visited {
     // newtype with `Deref`/`DerefMut` keeps every call site (`.clear()`,
     // `.get_or_put()`, `.remove()`, `mem::take`) unchanged.
     #[repr(transparent)]
-    #[derive(Default)]
     pub(crate) struct Map(pub(crate) HashMap<JSValue, ()>);
+
+    impl Map {
+        #[inline]
+        pub(crate) fn new() -> Self {
+            Self(HashMap::init())
+        }
+    }
 
     impl core::ops::Deref for Map {
         type Target = HashMap<JSValue, ()>;
@@ -292,7 +297,7 @@ pub(crate) mod visited {
     // `reset` clears retaining capacity (handled by callers via `.clear()`).
     impl bun_collections::pool::ObjectPoolType for Map {
         const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
-            Some(|| Ok(Map::default()));
+            Some(|| Ok(Map::new()));
         #[inline]
         fn reset(&mut self) {
             self.0.clear();
@@ -324,7 +329,7 @@ impl<'a> Formatter<'a> {
     pub(crate) fn new(global: &'a JSGlobalObject) -> Self {
         Self {
             remaining_values: &[],
-            map: visited::Map::default(),
+            map: visited::Map::new(),
             map_node: None,
             global_this: global,
             indent: 0,
@@ -365,7 +370,7 @@ impl Drop for Formatter<'_> {
             // `Map`.
             unsafe {
                 let data = node.as_mut().data.assume_init_mut();
-                *data = core::mem::take(&mut self.map);
+                *data = core::mem::replace(&mut self.map, crate::test_runner::pretty_format::visited::Map::new());
                 data.clear();
                 visited::Pool::release(node.as_ptr());
             }
@@ -433,8 +438,8 @@ pub(crate) struct TagResult {
     pub cell: JSType,
 }
 
-impl Default for TagResult {
-    fn default() -> Self {
+impl TagResult {
+    pub(crate) fn new() -> Self {
         Self { tag: Tag::Undefined, cell: JSType::Cell }
     }
 }
@@ -442,22 +447,22 @@ impl Default for TagResult {
 impl Tag {
     pub(crate) fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
         if value.is_empty() || value == JSValue::UNDEFINED {
-            return Ok(TagResult { tag: Tag::Undefined, ..Default::default() });
+            return Ok(TagResult { tag: Tag::Undefined, ..TagResult::new() });
         }
         if value == JSValue::NULL {
-            return Ok(TagResult { tag: Tag::Null, ..Default::default() });
+            return Ok(TagResult { tag: Tag::Null, ..TagResult::new() });
         }
 
         if value.is_int32() {
-            return Ok(TagResult { tag: Tag::Integer, ..Default::default() });
+            return Ok(TagResult { tag: Tag::Integer, ..TagResult::new() });
         } else if value.is_number() {
-            return Ok(TagResult { tag: Tag::Double, ..Default::default() });
+            return Ok(TagResult { tag: Tag::Double, ..TagResult::new() });
         } else if value.is_boolean() {
-            return Ok(TagResult { tag: Tag::Boolean, ..Default::default() });
+            return Ok(TagResult { tag: Tag::Boolean, ..TagResult::new() });
         }
 
         if !value.is_cell() {
-            return Ok(TagResult { tag: Tag::NativeCode, ..Default::default() });
+            return Ok(TagResult { tag: Tag::NativeCode, ..TagResult::new() });
         }
 
         let js_type = value.js_type();
@@ -1068,11 +1073,11 @@ impl<'a> Formatter<'a> {
                 unsafe {
                     let data = (*node.as_ptr()).data.assume_init_mut();
                     data.clear();
-                    self.map = core::mem::take(data);
+                    self.map = core::mem::replace(data, crate::test_runner::pretty_format::visited::Map::new());
                 }
             }
 
-            let entry = self.map.get_or_put(value).expect("unreachable");
+            let entry = self.map.get_or_put(value, || ()).expect("unreachable");
             if entry.found_existing {
                 writer.write_all(
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><cyan>[Circular]<r>").as_bytes(),

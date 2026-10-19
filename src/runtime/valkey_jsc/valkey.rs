@@ -55,8 +55,8 @@ pub(crate) struct ConnectionFlags {
     pub(crate) connection_promise_returns_client: bool,
 }
 
-impl Default for ConnectionFlags {
-    fn default() -> Self {
+impl ConnectionFlags {
+    pub(crate) fn new() -> Self {
         Self {
             is_manually_closed: false,
             is_selecting_db_internal: false,
@@ -118,9 +118,7 @@ impl Protocol {
     }
 }
 
-#[derive(Default)]
 pub(crate) enum TLS {
-    #[default]
     None,
     Enabled,
     Custom(Box<crate::server::server_config::SSLConfig>),
@@ -166,8 +164,8 @@ pub(crate) struct Options {
     pub(crate) tls: TLS,
 }
 
-impl Default for Options {
-    fn default() -> Self {
+impl Options {
+    pub(crate) fn new() -> Self {
         Self {
             idle_timeout_ms: 0,
             connection_timeout_ms: 10000,
@@ -1250,7 +1248,7 @@ impl ValkeyClient {
             let hello_cmd = Command {
                 command: b"HELLO",
                 args: Args::Raw(hello_args),
-                meta: command::Meta::default(),
+                meta: command::Meta::SUPPORTS_AUTO_PIPELINING,
             };
 
             hello_cmd.write(&mut WriteBufWriter(&mut self.write_buffer))
@@ -1268,7 +1266,7 @@ impl ValkeyClient {
             let select_cmd = Command {
                 command: b"SELECT",
                 args: Args::Raw(&[db_str]),
-                meta: command::Meta::default(),
+                meta: command::Meta::SUPPORTS_AUTO_PIPELINING,
             };
             if let Err(_err) = select_cmd.write(self.writer()) {
                 self.fail(b"Failed to write SELECT command", RedisError::OutOfMemory)?;

@@ -53,8 +53,14 @@ impl Hardlinker {
         if crate::PackageManager::verbose_install() {
             bun_core::pretty_errorln!(
                 "Hardlinking {} to {}",
-                bun_core::fmt::fmt_os_path(self.src.slice(), Default::default()),
-                bun_core::fmt::fmt_os_path(self.dest.slice(), Default::default()),
+                bun_core::fmt::fmt_os_path(
+                    self.src.slice(),
+                    crate::bun_output::fmt::PathFormatOptions::new()
+                ),
+                bun_core::fmt::fmt_os_path(
+                    self.dest.slice(),
+                    crate::bun_output::fmt::PathFormatOptions::new()
+                ),
             );
             bun_core::output::flush();
         }
@@ -152,12 +158,13 @@ impl Hardlinker {
                                             "Hardlinking {} to a path that already exists: {}",
                                             bun_core::fmt::fmt_os_path(
                                                 self.src.slice(),
-                                                Default::default()
+                                                crate::bun_output::fmt::PathFormatOptions::new()
                                             ),
                                             bun_core::fmt::EscapeControlChars(
                                                 bun_core::fmt::fmt_os_path(
                                                     destfile_path.as_slice(),
-                                                    Default::default()
+                                                    crate::bun_output::fmt::PathFormatOptions::new(
+                                                    )
                                                 )
                                             ),
                                         );
@@ -177,12 +184,13 @@ impl Hardlinker {
                                             "Hardlinking {} to a path that doesn't exist: {}",
                                             bun_core::fmt::fmt_os_path(
                                                 self.src.slice(),
-                                                Default::default()
+                                                crate::bun_output::fmt::PathFormatOptions::new()
                                             ),
                                             bun_core::fmt::EscapeControlChars(
                                                 bun_core::fmt::fmt_os_path(
                                                     destfile_path.as_slice(),
-                                                    Default::default()
+                                                    crate::bun_output::fmt::PathFormatOptions::new(
+                                                    )
                                                 )
                                             ),
                                         );

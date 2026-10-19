@@ -17,8 +17,8 @@ pub struct Block {
     pub close_brace_loc: crate::Loc, // = crate::Loc::EMPTY
 }
 
-impl Default for Block {
-    fn default() -> Self {
+impl Block {
+    pub fn new() -> Self {
         Self {
             stmts: StmtNodeList::EMPTY,
             close_brace_loc: crate::Loc::EMPTY,
@@ -26,7 +26,6 @@ impl Default for Block {
     }
 }
 
-#[derive(Default)]
 pub struct SExpr {
     pub value: ExprNodeIndex,
 
@@ -34,6 +33,16 @@ pub struct SExpr {
     /// not affect tree shaking. For example, calling a function from the runtime
     /// that doesn't have externally-visible side effects.
     pub does_not_affect_tree_shaking: bool, // = false
+}
+
+impl SExpr {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            value: ExprNodeIndex::EMPTY,
+            does_not_affect_tree_shaking: false,
+        }
+    }
 }
 
 pub struct Comment {
@@ -44,14 +53,30 @@ pub struct Directive {
     pub value: StoreStr, // arena-owned
 }
 
-#[derive(Default)]
 pub struct ExportClause {
     pub items: StoreSlice<ClauseItem>, // arena-owned
     pub is_single_line: bool,
 }
 
-#[derive(Clone, Copy, Default)]
+impl ExportClause {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            items: StoreSlice::EMPTY,
+            is_single_line: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct Empty {}
+
+impl Empty {
+    #[inline]
+    pub fn new() -> Self {
+        Self {}
+    }
+}
 
 pub struct ExportStar {
     pub namespace_ref: Ref,
@@ -70,11 +95,25 @@ pub struct Label {
 }
 
 /// This is a stand-in for a TypeScript type declaration
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct TypeScript {}
 
-#[derive(Clone, Copy, Default)]
+impl TypeScript {
+    #[inline]
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct Debugger {}
+
+impl Debugger {
+    #[inline]
+    pub fn new() -> Self {
+        Self {}
+    }
+}
 
 pub struct ExportFrom {
     pub items: StoreSlice<ClauseItem>, // arena-owned
@@ -119,7 +158,6 @@ pub struct Function {
     pub func: G::Fn,
 }
 
-#[derive(Default)]
 pub struct Class {
     pub class: G::Class,
     pub is_export: bool, // = false
@@ -214,8 +252,8 @@ pub struct Import {
     pub phase_defer: bool, // = false
 }
 
-impl Default for Import {
-    fn default() -> Self {
+impl Import {
+    pub fn new() -> Self {
         Self {
             namespace_ref: Ref::NONE,
             default_name: None,
@@ -228,7 +266,6 @@ impl Default for Import {
     }
 }
 
-#[derive(Default)]
 pub struct Return {
     pub value: Option<ExprNodeIndex>, // = None
 }
@@ -244,10 +281,10 @@ pub struct Local {
     pub origin: LocalOrigin,
 }
 
-impl Default for Local {
-    fn default() -> Self {
+impl Local {
+    pub fn new() -> Self {
         Self {
-            kind: Kind::default(),
+            kind: Kind::KVar,
             decls: bun_alloc::AstAlloc::vec(),
             is_export: false,
             origin: LocalOrigin::Normal,
@@ -270,9 +307,8 @@ impl Local {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LocalOrigin {
-    #[default]
     Normal,
     /// From TS `import x = ...`; dropped if unused (matches tsc).
     TsImportEquals,
@@ -291,9 +327,8 @@ impl LocalOrigin {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Kind {
-    #[default]
     #[strum(serialize = "k_var")]
     KVar,
     #[strum(serialize = "k_let")]
@@ -312,12 +347,10 @@ impl Kind {
     }
 }
 
-#[derive(Default)]
 pub struct Break {
     pub label: Option<LocRef>, // = None
 }
 
-#[derive(Default)]
 pub struct Continue {
     pub label: Option<LocRef>, // = None
 }

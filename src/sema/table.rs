@@ -407,7 +407,7 @@ impl Policy for FileLocal {
 }
 
 /// The memory usage of a table, for `--timing`. Computing it reads every cell.
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Footprint {
     /// Bytes requested from the allocator: cells, map entries, and stored values, excluding the
     /// memory they point to.
@@ -422,12 +422,24 @@ pub struct Footprint {
 }
 
 impl Footprint {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            allocated: 0,
+            touched: 0,
+            entries: 0,
+            kept: 0,
+        }
+    }
+}
+
+impl Footprint {
     const PAGE: usize = 16 << 10;
 
     fn of_cells<C: Cell>(cells: &[C]) -> Footprint {
         let mut all = Footprint {
             allocated: size_of_val(cells),
-            ..Footprint::default()
+            ..Footprint::new()
         };
         for page in cells.chunks(Footprint::PAGE / size_of::<C>()) {
             let entries = (page.iter().filter(|cell| cell.load() != Integer::ZERO)).count();
@@ -590,8 +602,8 @@ pub struct ById<I, V: Packed, P: Policy = Frozen, A: Alloc = Global> {
     key: PhantomData<fn(I, P)>,
 }
 
-impl<I: Id, V: Packed, P: Policy, A: Alloc + Stateless> Default for ById<I, V, P, A> {
-    fn default() -> Self {
+impl<I: Id, V: Packed, P: Policy, A: Alloc + Stateless> ById<I, V, P, A> {
+    pub fn new() -> Self {
         Self::new_in(A::INSTANCE)
     }
 }
@@ -607,7 +619,7 @@ impl<I: Id, V: Packed, P: Policy, A: Alloc> ById<I, V, P, A> {
 
     pub fn footprint(&self) -> Footprint {
         let chunks = self.cells.allocated().map(Footprint::of_cells);
-        chunks.fold(Footprint::default(), Footprint::plus)
+        chunks.fold(Footprint::new(), Footprint::plus)
     }
 
     pub(crate) fn set_slot(&mut self, slot: SlotNumber) {
@@ -623,8 +635,8 @@ pub struct ByIdIndirect<I, T, P: Policy = Frozen, A: Alloc = Global> {
     holding: Holding<T>,
 }
 
-impl<I: Id, T, P: Policy, A: Alloc + Stateless> Default for ByIdIndirect<I, T, P, A> {
-    fn default() -> Self {
+impl<I: Id, T, P: Policy, A: Alloc + Stateless> ByIdIndirect<I, T, P, A> {
+    pub fn new() -> Self {
         Self::new_in(A::INSTANCE)
     }
 }
@@ -635,7 +647,7 @@ impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
             handles: ById::new_in(alloc.clone()),
             kept: AppendVec::new_in(alloc),
             in_task: Slot::NONE,
-            holding: Holding::default(),
+            holding: Holding::new(),
         }
     }
 }
@@ -684,8 +696,8 @@ impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc> ByKey<K, V, P, A> {
     }
 }
 
-impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc + Stateless> Default for ByKey<K, V, P, A> {
-    fn default() -> Self {
+impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc + Stateless> ByKey<K, V, P, A> {
+    pub fn new() -> Self {
         Self::new_in(A::INSTANCE)
     }
 }
@@ -1490,8 +1502,8 @@ struct Holding<T> {
     holds: Option<(u32, fn(&mut T) -> &mut Handle)>,
 }
 
-impl<T> Default for Holding<T> {
-    fn default() -> Self {
+impl<T> Holding<T> {
+    fn new() -> Self {
         Holding {
             is_held: false,
             holds: None,
@@ -1600,7 +1612,7 @@ impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, A: Alloc> Publish<'s>
         finishing: &mut Finishing<'_, '_>,
     ) -> Option<Entries<'s>> {
         let table = (&self.handles, &self.in_task);
-        finish_indirect(table, &Holding::<T>::default(), buffer, finishing)
+        finish_indirect(table, &Holding::<T>::new(), buffer, finishing)
     }
 
     fn follow(&self, entries: &mut Entries<'s>, link: &Link) {
@@ -1614,7 +1626,7 @@ impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, A: Alloc> Publish<'s>
         handles: &mut [Vec<Handle>],
         applied: &mut Applied<'_>,
     ) {
-        let holding = Holding::default();
+        let holding = Holding::new();
         apply_indirect(
             (&self.handles, &self.in_task),
             &self.kept,

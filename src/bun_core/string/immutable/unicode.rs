@@ -214,8 +214,8 @@ pub struct UTF16Replacement {
     pub(crate) is_lead: bool,
 }
 
-impl Default for UTF16Replacement {
-    fn default() -> Self {
+impl UTF16Replacement {
+    pub fn new() -> Self {
         Self {
             code_point: unicode_replacement,
             len: 0,
@@ -253,13 +253,13 @@ fn convert_utf8_bytes_into_utf16_with_length(
                     len: 1,
                     fail: true,
                     can_buffer: remaining_len < 2,
-                    ..Default::default()
+                    ..UTF16Replacement::new()
                 };
             }
             UTF16Replacement {
                 len,
                 code_point: (u32::from(sequence[0]) << 6) + u32::from(sequence[1]) - 0x00003080,
-                ..Default::default()
+                ..UTF16Replacement::new()
             }
         }
         3 => {
@@ -272,7 +272,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                             len: 1,
                             fail: true,
                             can_buffer: remaining_len < 2,
-                            ..Default::default()
+                            ..UTF16Replacement::new()
                         };
                     }
                 }
@@ -282,7 +282,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                             len: 1,
                             fail: true,
                             can_buffer: remaining_len < 2,
-                            ..Default::default()
+                            ..UTF16Replacement::new()
                         };
                     }
                 }
@@ -292,7 +292,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                             len: 1,
                             fail: true,
                             can_buffer: remaining_len < 2,
-                            ..Default::default()
+                            ..UTF16Replacement::new()
                         };
                     }
                 }
@@ -302,7 +302,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                     len: 2,
                     fail: true,
                     can_buffer: remaining_len < 3,
-                    ..Default::default()
+                    ..UTF16Replacement::new()
                 };
             }
             UTF16Replacement {
@@ -311,7 +311,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                     + (u32::from(sequence[1]) << 6)
                     + u32::from(sequence[2]))
                     - 0x000E2080,
-                ..Default::default()
+                ..UTF16Replacement::new()
             }
         }
         4 => {
@@ -322,7 +322,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                             len: 1,
                             fail: true,
                             can_buffer: remaining_len < 2,
-                            ..Default::default()
+                            ..UTF16Replacement::new()
                         };
                     }
                 }
@@ -332,7 +332,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                             len: 1,
                             fail: true,
                             can_buffer: remaining_len < 2,
-                            ..Default::default()
+                            ..UTF16Replacement::new()
                         };
                     }
                 }
@@ -343,7 +343,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                         len: 1,
                         fail: true,
                         can_buffer: false,
-                        ..Default::default()
+                        ..UTF16Replacement::new()
                     };
                 }
                 _ => {
@@ -352,7 +352,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                             len: 1,
                             fail: true,
                             can_buffer: remaining_len < 2,
-                            ..Default::default()
+                            ..UTF16Replacement::new()
                         };
                     }
                 }
@@ -363,7 +363,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                     len: 2,
                     fail: true,
                     can_buffer: remaining_len < 3,
-                    ..Default::default()
+                    ..UTF16Replacement::new()
                 };
             }
             if sequence[3] < 0x80 || sequence[3] > 0xBF {
@@ -371,7 +371,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                     len: 3,
                     fail: true,
                     can_buffer: remaining_len < 4,
-                    ..Default::default()
+                    ..UTF16Replacement::new()
                 };
             }
             UTF16Replacement {
@@ -381,7 +381,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
                     + (u32::from(sequence[2]) << 6)
                     + u32::from(sequence[3]))
                     - 0x03C82080,
-                ..Default::default()
+                ..UTF16Replacement::new()
             }
         }
         // invalid unicode sequence
@@ -389,7 +389,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
         _ => UTF16Replacement {
             len: 1,
             fail: true,
-            ..Default::default()
+            ..UTF16Replacement::new()
         },
     }
 }
@@ -416,7 +416,7 @@ pub fn utf8_codepoint_with_fffd(bytes: &[u8]) -> UTF16Replacement {
         return UTF16Replacement {
             code_point: u32::from(lead),
             len: 1,
-            ..Default::default()
+            ..UTF16Replacement::new()
         };
     }
     let r = convert_utf8_bytes_into_utf16(bytes);
@@ -813,7 +813,7 @@ fn utf16_codepoint_with_fffd_and_first_input_char(char: u16, input: &[u16]) -> U
             return UTF16Replacement {
                 len: 1,
                 is_lead: true,
-                ..Default::default()
+                ..UTF16Replacement::new()
             };
         }
         // error.DanglingSurrogateHalf;
@@ -824,14 +824,14 @@ fn utf16_codepoint_with_fffd_and_first_input_char(char: u16, input: &[u16]) -> U
                 len: 1,
                 code_point: unicode_replacement,
                 is_lead: true,
-                ..Default::default()
+                ..UTF16Replacement::new()
             };
         }
         // return error.ExpectedSecondSurrogateHalf;
         UTF16Replacement {
             len: 2,
             code_point: u16_get_supplementary(char, c1),
-            ..Default::default()
+            ..UTF16Replacement::new()
         }
     } else if u16_is_trail(char) {
         // return error.UnexpectedSecondSurrogateHalf;
@@ -839,13 +839,13 @@ fn utf16_codepoint_with_fffd_and_first_input_char(char: u16, input: &[u16]) -> U
             fail: true,
             len: 1,
             code_point: unicode_replacement,
-            ..Default::default()
+            ..UTF16Replacement::new()
         }
     } else {
         UTF16Replacement {
             code_point: char as u32,
             len: 1,
-            ..Default::default()
+            ..UTF16Replacement::new()
         }
     }
 }
@@ -858,7 +858,7 @@ pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
         if input.len() == 1 {
             return UTF16Replacement {
                 len: 1,
-                ..Default::default()
+                ..UTF16Replacement::new()
             };
         }
         // Falls through with len=2 even when input[1] is not a trail
@@ -866,19 +866,19 @@ pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
         UTF16Replacement {
             len: 2,
             code_point: u16_get_supplementary(c0, input[1]),
-            ..Default::default()
+            ..UTF16Replacement::new()
         }
     } else if u16_is_trail(c0) {
         // return error.UnexpectedSecondSurrogateHalf;
         UTF16Replacement {
             len: 1,
-            ..Default::default()
+            ..UTF16Replacement::new()
         }
     } else {
         UTF16Replacement {
             code_point: c0 as u32,
             len: 1,
-            ..Default::default()
+            ..UTF16Replacement::new()
         }
     }
 }

@@ -48,12 +48,22 @@ impl<'a> StaticallyNamed<'a> for IdentifierLike<'a> {
 }
 
 /// `getJsDocDeprecation` of what has been asked about in the file: the same few symbols are used over and over.
-#[derive(Default)]
 pub struct Deprecations<'a> {
     /// For tsgolint, which asks each declaration itself: a member does not inherit the tag of what it implements or overrides.
     is_nothing_inherited: bool,
     of_symbols: IdMap<TsSymbol<'a>, Option<&'a [u8]>>,
     of_signatures: IdMap<Signature<'a>, Option<&'a [u8]>>,
+}
+
+impl<'a> Deprecations<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            is_nothing_inherited: false,
+            of_symbols: IdMap::init(),
+            of_signatures: IdMap::init(),
+        }
+    }
 }
 
 impl<'a> Deprecations<'a> {
@@ -724,7 +734,7 @@ impl Rule for NoDeprecated {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Deprecations<'a>> {
         let is_oxlint = file.language().is_oxlint;
-        Some(Deprecations { is_nothing_inherited: is_oxlint, ..Deprecations::default() })
+        Some(Deprecations { is_nothing_inherited: is_oxlint, ..Deprecations::new() })
     }
 
     /// For tsgolint the name of a parameter, of a `catch` clause, of `namespace A.B {}` and of an abstract member is a

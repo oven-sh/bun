@@ -42,7 +42,7 @@ impl Rule for NoWebpackLoaderSyntax {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let is_oxlint = file.language().is_oxlint;
-        let mut memo = AncestorMemo::default();
+        let mut memo = AncestorMemo::new();
         for visited in self.0.visit(file) {
             if !strings::contains_char(visited.specifier, b'!') {
                 continue;

@@ -22,11 +22,20 @@ use crate::stack::Stack;
 use crate::syntax_error::{BeforeNormalizing, Message, SyntaxError};
 
 /// Everything that is allocated to format a text and can be used again for the next one.
-#[derive(Default)]
 pub struct Scratch {
     document: crate::Scratch,
     /// See [`Scratch::unformatted`].
     unformatted: Vec<Unformatted>,
+}
+
+impl Scratch {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            document: crate::Scratch::new(),
+            unformatted: Vec::new(),
+        }
+    }
 }
 
 /// What is in a `<script>` or a `<style>` cannot be parsed, and has stayed as it is.
@@ -166,7 +175,7 @@ pub fn format(
         let error = SyntaxError(Message::NeedsEmbeddedFormatting, 0);
         return Err(FormatError::SyntaxErrorAt(error));
     }
-    let (stack, unformatted) = (Stack::new(), Default::default());
+    let (stack, unformatted) = (Stack::new(), core::cell::RefCell::new(Vec::new()));
     let how = code::How {
         options: &host,
         is_typescript,
@@ -259,7 +268,7 @@ pub fn has_same_content(
         insert_pragma: false,
         ..options.clone()
     };
-    let (mut scratch, mut formatted) = (Scratch::default(), Vec::new());
+    let (mut scratch, mut formatted) = (Scratch::new(), Vec::new());
     format(
         b"",
         &before,

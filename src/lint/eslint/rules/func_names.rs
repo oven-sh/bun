@@ -130,7 +130,7 @@ impl Rule for FuncNames {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<GuessedNames<'a>> {
-        Some(GuessedNames::default())
+        Some(GuessedNames::new())
     }
 
     #[inline]

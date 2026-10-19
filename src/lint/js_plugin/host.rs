@@ -85,7 +85,7 @@ impl From<Vec<u8>> for Failure {
 pub type ParseAgain<'p> = dyn Fn(&mut dyn for<'f> FnMut(&'f File<'f>)) + Sync + 'p;
 
 /// The JavaScript that a run has loaded, in all realms together.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub struct Loading {
     pub realms: u32,
     /// Files. One that two realms load counts twice.
@@ -100,6 +100,21 @@ pub struct Loading {
     pub linted_by_eslint: u64,
     /// [`Engine::sizes`]
     pub sizes: (usize, usize),
+}
+
+impl Loading {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            realms: 0,
+            modules: 0,
+            bytes: 0,
+            milliseconds: 0.0,
+            need_the_configuration: Vec::new(),
+            linted_by_eslint: 0,
+            sizes: (0, 0),
+        }
+    }
 }
 
 impl Loading {
@@ -121,7 +136,6 @@ struct Loaded {
     plugin: Arc<Plugin>,
 }
 
-#[derive(Default)]
 struct State {
     plugins: Vec<Loaded>,
     rules: u32,
@@ -132,6 +146,20 @@ struct State {
     loading: Loading,
     /// [`Host::rules_that_asked_for_types`]
     asked_for_types: Vec<Arc<Rule>>,
+}
+
+impl State {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            plugins: Vec::new(),
+            rules: 0,
+            selectors: Vec::new(),
+            selector_numbers: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            loading: Loading::new(),
+            asked_for_types: Vec::new(),
+        }
+    }
 }
 
 /// What `getParserServices` of `@typescript-eslint/utils` throws starts so, in all its versions.
@@ -215,7 +243,7 @@ impl<'e> Host<'e> {
             cwd: cwd.to_vec(),
             measures: false,
             has_been_asked_for_types: AtomicBool::new(false),
-            state: Guarded::new(State::default()),
+            state: Guarded::new(State::new()),
         }
     }
 
@@ -306,7 +334,7 @@ impl<'e> Host<'e> {
         let (heavy, light) = (0..count).partition(|&it| is_heavy(it));
         let each = Each {
             lists: [heavy, light],
-            next: Default::default(),
+            next: core::array::from_fn(|_| core::sync::atomic::AtomicUsize::new(0)),
             work,
         };
         // Without a realm each fails, and says why.

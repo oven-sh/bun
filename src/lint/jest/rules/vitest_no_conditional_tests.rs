@@ -28,7 +28,7 @@ impl<const RUNNER: u8> Rule for NoConditionalTests<RUNNER> {
 
 fn run_once(ctx: &Ctx) {
     // The innermost `if` around something.
-    let mut if_statements = AncestorMemo::default();
+    let mut if_statements = AncestorMemo::new();
     let kinds = [JestFnKind::General(JestGeneralFnKind::Describe), JestFnKind::General(JestGeneralFnKind::Test)];
     for possible_jest_node in jest::iter_possible_jest_call_node(ctx.file, ctx.runner) {
         if jest::is_type_of_jest_fn_call(ctx.file, possible_jest_node, &kinds)

@@ -10,7 +10,6 @@ use bun_core::strings;
 /// When data arrives, we only scan the NEW bytes.
 /// When we consume a message, we just advance `head` instead of copying.
 /// Compaction only happens when head exceeds a threshold.
-#[derive(Default)]
 pub(crate) struct JSONLineBuffer {
     pub(crate) data: Vec<u8>,
     /// Offset into data where unconsumed content starts.
@@ -19,6 +18,18 @@ pub(crate) struct JSONLineBuffer {
     pub(crate) newline_pos: Option<u32>,
     /// How far we've scanned for newlines relative to head.
     pub(crate) scanned_pos: u32,
+}
+
+impl JSONLineBuffer {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            data: Vec::new(),
+            head: 0,
+            newline_pos: None,
+            scanned_pos: 0,
+        }
+    }
 }
 
 /// Return type of [`JSONLineBuffer::next`]: a complete message slice plus its newline offset.
@@ -104,7 +115,7 @@ impl JSONLineBuffer {
         if self.head as usize >= self.data.len() {
             // Free memory if capacity exceeds threshold, otherwise just reset
             if self.data.capacity() as u32 >= Self::COMPACTION_THRESHOLD {
-                self.data = Vec::<u8>::default();
+                self.data = Vec::<u8>::new();
             } else {
                 self.data.clear();
             }

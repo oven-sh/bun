@@ -97,9 +97,17 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
 }
 
 /// Everything that is allocated to format a text and can be used again for the next one.
-#[derive(Default)]
 pub struct Scratch {
     document: crate::Scratch,
+}
+
+impl Scratch {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            document: crate::Scratch::new(),
+        }
+    }
 }
 
 /// What the functions of Prettier get as `options`.
@@ -208,7 +216,7 @@ pub fn has_same_content(
         tailwind: None,
         ..options.clone()
     };
-    let (mut scratch, mut formatted) = (Scratch::default(), Vec::new());
+    let (mut scratch, mut formatted) = (Scratch::new(), Vec::new());
     format(b"", before, parser, &plain, &mut scratch, &mut formatted).is_ok()
         && keeps_content(before, &formatted, parser, &plain)
 }
@@ -239,7 +247,7 @@ pub(crate) fn options_of_host(options: &FormatOptions, parser: Parser) -> Format
 /// `None`: it is the same.
 fn with_sorted_scripts(text: &[u8], how: &SortImports, parse: js::Parse<'_>) -> Option<Vec<u8>> {
     let (content, front_matter_len) = without_front_matter(text);
-    let mut tree = ast::Tree::default();
+    let mut tree = ast::Tree::new();
     parse::parse(&content, front_matter_len, Parser::Vue, &mut tree).ok()?;
     let (mut sorted_text, mut from) = (Vec::new(), 0);
     // `descriptor.script`, `descriptor.scriptSetup`
@@ -280,7 +288,7 @@ pub fn syntax_error(text: &[u8], parser: Parser) -> Option<(Vec<u8>, u32)> {
     let original = text.strip_prefix(BOM).unwrap_or(text);
     let text = bun_core::strings::crlf_as_lf(original);
     let (content, front_matter_len) = without_front_matter(&text);
-    let mut tree = ast::Tree::default();
+    let mut tree = ast::Tree::new();
     let Err(parse::ParseError::Syntax(error)) =
         parse::parse(&content, front_matter_len, parser, &mut tree)
     else {
@@ -302,13 +310,7 @@ pub fn syntax_error(text: &[u8], parser: Parser) -> Option<(Vec<u8>, u32)> {
 /// Whether `text`, in which every line break is `\n`, has no syntax error.
 pub(crate) fn can_be_parsed(text: &[u8], parser: Parser) -> bool {
     let (content, front_matter_len) = without_front_matter(text);
-    parse::parse(
-        &content,
-        front_matter_len,
-        parser,
-        &mut ast::Tree::default(),
-    )
-    .is_ok()
+    parse::parse(&content, front_matter_len, parser, &mut ast::Tree::new()).is_ok()
 }
 
 /// What is known once a document is written.
@@ -360,7 +362,7 @@ fn write_document_with_cursor(
     f: &mut Formatter<'_>,
 ) -> Result<Written, FormatError> {
     let (content, front_matter_len) = without_front_matter(text);
-    let mut tree = ast::Tree::default();
+    let mut tree = ast::Tree::new();
     parse::parse(&content, front_matter_len, parser, &mut tree).map_err(|error| match error {
         parse::ParseError::Syntax(_) => FormatError::SyntaxError,
         parse::ParseError::NestedTooDeeply => FormatError::NestedTooDeeply,
@@ -390,7 +392,7 @@ fn write_document_with_cursor(
         has_typescript_script: None,
         has_tsx_script: None,
         cursor,
-        css_scratch: Default::default(),
+        css_scratch: crate::css::Scratch::new(),
     };
     printer.print_root(!is_embedded);
     let is_nested_too_deeply = printer.is_nested_too_deeply;
@@ -437,7 +439,7 @@ fn format_angular_expression(
     let mut is_written = false;
     let document = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
         let mut printer = printer::Printer {
-            tree: &ast::Tree::default(),
+            tree: &ast::Tree::new(),
             options: &Options {
                 parser: Parser::Angular,
                 original_text: &text,
@@ -453,11 +455,11 @@ fn format_angular_expression(
             has_typescript_script: None,
             has_tsx_script: None,
             cursor: Cursor::Nowhere,
-            css_scratch: Default::default(),
+            css_scratch: crate::css::Scratch::new(),
         };
         let in_html = InHtml {
             root,
-            ..InHtml::default()
+            ..InHtml::new()
         };
         is_written = printer.write_angular_expression(&text, in_html, js::Hug::Bare);
         printer.out.finish();

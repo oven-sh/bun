@@ -407,7 +407,10 @@ pub(crate) mod valid_expect_in_promise {
         else {
             return;
         };
-        let (mut pending_promises, mut return_found) = (PendingPromises::default(), false);
+        let (mut pending_promises, mut return_found) = (
+            PendingPromises::with_hasher(rustc_hash::FxBuildHasher),
+            false,
+        );
         process_statements(statements, &mut pending_promises, &mut return_found, ctx);
         for span in utils::sort::in_order_of(pending_promises.values(), |it| it.start) {
             ctx.report(*span, EXPECT_IN_UNHANDLED_PROMISE);
@@ -547,7 +550,6 @@ pub(crate) mod valid_expect_in_promise {
         }
     }
 
-    #[derive(Default)]
     struct PromiseExpectScanner<'a> {
         /// In a callback of a promise chain.
         in_promise_chain: bool,
@@ -563,8 +565,22 @@ pub(crate) mod valid_expect_in_promise {
     }
 
     impl<'a> PromiseExpectScanner<'a> {
+        #[inline]
+        fn new() -> Self {
+            Self {
+                in_promise_chain: false,
+                in_await: false,
+                found_expect_in_promise: false,
+                resolved_names: SmallVec::new(),
+                saved: Vec::new(),
+                skipped: None,
+            }
+        }
+    }
+
+    impl<'a> PromiseExpectScanner<'a> {
         fn scan(node: Node<'a>) -> Self {
-            let mut scanner = PromiseExpectScanner::default();
+            let mut scanner = PromiseExpectScanner::new();
             walk_node(node, &mut scanner);
             scanner
         }
@@ -866,9 +882,9 @@ pub(crate) mod expect_expect {
                 first_name_only: look_at_first_name_only(assert_function_matchers),
                 has_assertion: None,
                 pending: Vec::new(),
-                known: FxHashMap::default(),
+                known: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
                 unknown: Vec::new(),
-                positions: FxHashMap::default(),
+                positions: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
                 open: Vec::new(),
             }
         }
@@ -1117,13 +1133,23 @@ pub(crate) mod no_standalone_expect {
     }
 
     /// What has been found out on long ways up, for the next that comes the same way.
-    #[derive(Default)]
     struct Places<'a> {
         functions: EnclosingFunctions<'a>,
         /// Whether a function is in a place for `expect`.
         functions_in_place: IdMap<Func<'a>, bool>,
         /// `is_var_declarator_or_test_block` of an array, an object or a call.
         blocks: IdMap<Expr<'a>, bool>,
+    }
+
+    impl<'a> Places<'a> {
+        #[inline]
+        fn new() -> Self {
+            Self {
+                functions: EnclosingFunctions::new(),
+                functions_in_place: IdMap::init(),
+                blocks: IdMap::init(),
+            }
+        }
     }
 
     impl NoStandaloneExpectConfig {
@@ -1135,7 +1161,7 @@ pub(crate) mod no_standalone_expect {
         }
 
         pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>) {
-            let mut places = Places::default();
+            let mut places = Places::new();
             for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node)
                 else {
@@ -1356,9 +1382,9 @@ pub(crate) mod no_conditional_expect {
         let file = ctx.file;
         // The first of all stops, the end of the way, and whether something is in a test.
         let (mut stops, mut ends, mut tests) = (
-            AncestorMemo::default(),
-            AncestorMemo::default(),
-            AncestorMemo::default(),
+            AncestorMemo::new(),
+            AncestorMemo::new(),
+            AncestorMemo::new(),
         );
         for possible_jest_node in iter_possible_jest_call_node(file, ctx.runner) {
             let Some(jest_fn_call) = parse_expect_jest_fn_call(file, possible_jest_node) else {
@@ -1413,9 +1439,10 @@ pub(crate) mod max_expects {
     }
 
     pub(crate) fn run_once<'a>(max: u32, ctx: &Ctx<'a, '_>) {
-        let (mut scopes, mut functions) = (Scopes::default(), AncestorMemo::default());
+        let (mut scopes, mut functions) = (Scopes::new(), AncestorMemo::new());
         // Number of `expect` calls per scope (a block is a scope). For `bun:test`, per test with its blocks and callbacks.
-        let mut count_map: FxHashMap<Option<Node<'a>>, u32> = FxHashMap::default();
+        let mut count_map: FxHashMap<Option<Node<'a>>, u32> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             let Some(ident) = jest_node
                 .node

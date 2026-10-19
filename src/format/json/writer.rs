@@ -34,10 +34,19 @@ struct Frame {
 }
 
 /// What is allocated to write a document.
-#[derive(Default)]
 pub(super) struct Frames {
     frames: Vec<Frame>,
     line_start: Vec<u8>,
+}
+
+impl Frames {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            frames: Vec::new(),
+            line_start: Vec::new(),
+        }
+    }
 }
 
 struct Writer<'t, 'o> {

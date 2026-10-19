@@ -183,7 +183,7 @@ mod draft {
         pub fn init(source: &'a Source, env: &'a DotEnvLoader) -> Parser<'a> {
             Parser {
                 src: source.contents.as_ref(),
-                out: Expr::init(E::Object::default(), Loc::EMPTY),
+                out: Expr::init(E::Object::new(), Loc::EMPTY),
                 source,
                 env,
             }
@@ -369,12 +369,12 @@ mod draft {
                 if is_array {
                     if let Some(val) = E::Object::get(&head, key) {
                         if !matches!(val.data, ExprData::EArray(_)) {
-                            let mut arr = E::Array::default();
+                            let mut arr = E::Array::new();
                             arr.push(bump, val)?;
                             head.put(bump, key, Expr::init(arr, Loc::EMPTY))?;
                         }
                     } else {
-                        head.put(bump, key, Expr::init(E::Array::default(), Loc::EMPTY))?;
+                        head.put(bump, key, Expr::init(E::Array::new(), Loc::EMPTY))?;
                     }
                 }
 
@@ -1273,7 +1273,7 @@ mod draft {
         // npm's `opts[k]` truthiness test, after the collapse: a later `username=` clears an earlier one.
         let truthy =
             |opt| Some(&lookup(configs, key, opt)?.value).filter(|value| !value.is_empty());
-        let mut credentials = NpmRegistry::default();
+        let mut credentials = NpmRegistry::new();
         if let Some(token) = truthy(ConfigOpt::_AuthToken) {
             credentials.token.clone_from(token);
         } else if let Some(auth) = truthy(ConfigOpt::_Auth) {
@@ -1352,7 +1352,7 @@ mod draft {
                         source: Some(&sources[item.source_idx as usize]),
                         loc: item.loc,
                         redact_sensitive_information: true,
-                        ..Default::default()
+                        ..bun_ast::AddErrorOptions::new()
                     },
                 );
             }
@@ -1369,7 +1369,7 @@ mod draft {
         let mut configs: Vec<ConfigItem> = Vec::new();
         parse_npmrc_into(install, env, log, source, 0, &mut configs)?;
         let sources = std::slice::from_ref(source);
-        resolve_url_auth(install, &BunInstall::default(), &configs, sources, log);
+        resolve_url_auth(install, &BunInstall::new(), &configs, sources, log);
         Ok(())
     }
 
@@ -1523,7 +1523,10 @@ mod draft {
             }
         }
 
-        let mut registry_map = install.scoped.take().unwrap_or_default();
+        let mut registry_map = install
+            .scoped
+            .take()
+            .unwrap_or_else(bun_options_types::schema::api::NpmRegistryMap::new);
 
         let out_obj = parser
             .out
@@ -1644,7 +1647,7 @@ mod draft {
                         loc: pattern_expr.loc,
                         redact_sensitive_information: true,
                         source: Some(source),
-                        ..Default::default()
+                        ..bun_ast::AddErrorOptions::new()
                     },
                 );
                 return Err(FromExprError::UnexpectedExpr);

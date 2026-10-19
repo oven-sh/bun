@@ -290,7 +290,7 @@ impl Curly {
     fn report_all<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut checks = std::mem::take(&mut cx.state);
         utils::sort::sort_unstable_by_key(&mut checks, |it| it.body.span().start);
-        let mut chains = AncestorMemo::default();
+        let mut chains = AncestorMemo::new();
         for check in &checks {
             self.report(check, &mut chains, cx);
         }

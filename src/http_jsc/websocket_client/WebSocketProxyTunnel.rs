@@ -190,7 +190,7 @@ impl WebSocketProxyTunnel {
             connected_websocket: Cell::new(None),
             wrapper: OnceCell::new(),
             socket: Cell::new(socket),
-            write_buffer: JsCell::new(StreamBuffer::default()),
+            write_buffer: JsCell::new(StreamBuffer::new()),
             sni_hostname: Some(Box::<[u8]>::from(bun_http::strip_ipv6_brackets(
                 sni_hostname,
             ))),

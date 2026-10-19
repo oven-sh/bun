@@ -46,7 +46,7 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
             bytea: [ptr as usize, written],
         },
         free_value: 1,
-        ..Default::default()
+        ..SQLDataCell::new()
     })
 }
 
@@ -421,7 +421,7 @@ fn from_binary(tag: types::Tag, bytes: &[u8]) -> Result<SQLDataCell> {
             value: Value {
                 bytea: [bytes.as_ptr() as usize, bytes.len()],
             },
-            ..Default::default()
+            ..SQLDataCell::new()
         }),
         T::text | T::varchar | T::bpchar | T::name | T::char => Ok(SQLDataCell::string(bytes)),
         T::json => Ok(SQLDataCell::json(bytes)),

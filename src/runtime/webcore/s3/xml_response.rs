@@ -46,7 +46,7 @@ impl<'a> Node<'a> {
     /// children.
     pub(crate) fn text(self) -> Option<Box<[u8]>> {
         match self.children {
-            [] => Some(Box::default()),
+            [] => Some(Box::new([])),
             [only] => only.as_str().map(Box::from),
             // Character data interrupted by comments / PIs.
             runs => {
@@ -97,7 +97,7 @@ pub(crate) fn parse<R>(body: &[u8], read: impl FnOnce(Node<'_>) -> R) -> Option<
     if body.is_empty() || body.len() > i32::MAX as usize {
         return None;
     }
-    let arena = bun_alloc::Arena::default();
+    let arena = bun_alloc::Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
     let mut log = bun_ast::Log::init();

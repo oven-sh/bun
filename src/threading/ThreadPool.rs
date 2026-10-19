@@ -42,7 +42,6 @@ fn stats_enabled() -> bool {
     *CELL.get_or_init(|| bun_core::getenv_z(bun_core::zstr!("BUN_THREADPOOL_STATS")).is_some())
 }
 
-#[derive(Default)]
 struct PoolStats {
     /// Sum of nanoseconds workers spent inside `wait()` (idle/searching).
     idle_ns: AtomicU64,
@@ -58,6 +57,19 @@ struct PoolStats {
     /// serial work" (busy_ns ≪ wall × workers, but busy_ns ≈ wall × N for
     /// some N) from "wake-chain too slow".
     last_dump_ns: AtomicU64,
+}
+
+impl PoolStats {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            idle_ns: core::sync::atomic::AtomicU64::new(0),
+            busy_ns: core::sync::atomic::AtomicU64::new(0),
+            tasks: core::sync::atomic::AtomicU64::new(0),
+            sleeps: core::sync::atomic::AtomicU64::new(0),
+            last_dump_ns: core::sync::atomic::AtomicU64::new(0),
+        }
+    }
 }
 
 // `Sync` shadows `core::marker::Sync` within this module;
@@ -212,8 +224,8 @@ pub struct Config {
     pub max_threads: u32,
 }
 
-impl Default for Config {
-    fn default() -> Self {
+impl Config {
+    pub fn new() -> Self {
         Config {
             stack_size: DEFAULT_THREAD_STACK_SIZE,
             max_threads: 0,
@@ -230,16 +242,16 @@ impl ThreadPool {
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
             sync: AtomicSync::new(Sync::zero()),
-            idle_event: Event::default(),
-            join_event: Event::default(),
-            run_queue: node::Queue::default(),
+            idle_event: Event::new(),
+            join_event: Event::new(),
+            run_queue: node::Queue::new(),
             threads: AtomicPtr::new(ptr::null_mut()),
             stats: PoolStats {
                 // Seed wall-clock origin so the first `dump_stats` window is
                 // measured from pool creation. Skip the syscall when stats are
                 // disabled (the field is otherwise dead).
                 last_dump_ns: AtomicU64::new(if stats_enabled() { now_ns() } else { 0 }),
-                ..PoolStats::default()
+                ..PoolStats::new()
             },
         }
     }
@@ -356,7 +368,7 @@ impl CountedTask {
     pub fn new(run: unsafe fn(*mut Task), group: &WaitGroup) -> Self {
         Self {
             task: Task {
-                node: Node::default(),
+                node: Node::new(),
                 callback: Self::run_and_finish,
             },
             run,
@@ -386,19 +398,19 @@ impl CountedTask {
 // invariant.
 unsafe impl Send for Task {}
 
-impl Default for Task {
+impl Task {
     /// Placeholder for fields where the callback is installed later
     /// (e.g. by [`crate::work_pool::WorkPool::schedule_owned`]). The
     /// `unreachable` callback panics if scheduled un-initialized.
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         // Body has no unsafe op; a safe fn item coerces to the `callback`
         // field's unsafe-fn-pointer type, so the keyword adds nothing here.
         fn unreachable_cb(_: *mut Task) {
             unreachable!("ThreadPool.Task scheduled with default() callback");
         }
         Task {
-            node: Node::default(),
+            node: Node::new(),
             callback: unreachable_cb,
         }
     }
@@ -424,11 +436,22 @@ impl Task {
 }
 
 /// An unordered collection of Tasks which can be submitted for scheduling as a group.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Batch {
     pub len: usize,
     pub(crate) head: Option<NonNull<Task>>,
     pub(crate) tail: Option<NonNull<Task>>,
+}
+
+impl Batch {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            len: 0,
+            head: None,
+            tail: None,
+        }
+    }
 }
 
 impl Batch {
@@ -630,7 +653,7 @@ impl ThreadPool {
 
         let group = WaitGroup::init_with_count(values.len());
         let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(values.len());
-        let mut batch = Batch::default();
+        let mut batch = Batch::new();
         let mut offset = values.len();
 
         for _ in 0..values.len() {
@@ -1245,10 +1268,10 @@ impl Thread {
         let mut self_ = Thread {
             next: ptr::null_mut(),
             target: ptr::null_mut(),
-            join_event: Event::default(),
-            run_queue: node::Queue::default(),
-            idle_queue: node::Queue::default(),
-            run_buffer: node::Buffer::default(),
+            join_event: Event::new(),
+            run_queue: node::Queue::new(),
+            idle_queue: node::Queue::new(),
+            run_buffer: node::Buffer::new(),
             thread_pool,
         };
         let self_ptr: *mut Thread = &raw mut self_;
@@ -1403,8 +1426,8 @@ struct Event {
     state: AtomicU32,
 }
 
-impl Default for Event {
-    fn default() -> Self {
+impl Event {
+    fn new() -> Self {
         Event {
             state: AtomicU32::new(Self::EMPTY),
         }
@@ -1572,9 +1595,17 @@ impl Event {
 
 /// Linked list intrusive memory node and lock-free data structures to operate with it
 #[repr(C)]
-#[derive(Default)]
 pub struct Node {
     pub next: *mut Node,
+}
+
+impl Node {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            next: core::ptr::null_mut(),
+        }
+    }
 }
 
 pub mod node {
@@ -1614,8 +1645,8 @@ pub mod node {
     // `IS_CONSUMING` exclusion described above, so moving the queue is sound.
     unsafe impl Send for Queue {}
 
-    impl Default for Queue {
-        fn default() -> Self {
+    impl Queue {
+        pub(crate) fn new() -> Self {
             Queue {
                 stack: AtomicUsize::new(0),
                 cache: core::cell::Cell::new(ptr::null_mut()),
@@ -1801,8 +1832,8 @@ pub mod node {
         assert::<Buffer>();
     };
 
-    impl Default for Buffer {
-        fn default() -> Self {
+    impl Buffer {
+        pub(crate) fn new() -> Self {
             Buffer {
                 head: AtomicU32::new(0),
                 tail: AtomicU32::new(0),

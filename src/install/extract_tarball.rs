@@ -79,7 +79,7 @@ impl ExtractTarball {
                     compute()
                 }
             }
-            _ => Integrity::default(),
+            _ => Integrity::new(),
         }
     }
 }
@@ -271,7 +271,7 @@ impl ExtractTarball {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,
                 tmpname.as_bytes(),
-                Default::default(),
+                bun_sys::OpenDirOptions::new(),
             ) {
                 Ok(d) => d,
                 Err(err) => {
@@ -350,7 +350,10 @@ impl ExtractTarball {
                     "[{}] Extract {}<r> ({} tgz file)",
                     bun_fmt::for_terminal(bstr::BStr::new(name)),
                     bun_fmt::s(tmpname.as_bytes()),
-                    bun_core::fmt::size(tgz_bytes.len(), Default::default()),
+                    bun_core::fmt::size(
+                        tgz_bytes.len(),
+                        crate::bun_output::fmt::SizeFormatterOptions::new()
+                    ),
                 );
             }
 
@@ -390,7 +393,7 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             log: PackageManager::verbose_install(),
                             skip_symlinks: true,
-                            ..Default::default()
+                            ..ExtractOptions::new()
                         },
                     )?;
 
@@ -438,7 +441,7 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             npm: true,
                             log: PackageManager::verbose_install(),
-                            ..Default::default()
+                            ..ExtractOptions::new()
                         },
                     )?;
                 }
@@ -529,7 +532,7 @@ impl ExtractTarball {
                     let unchecked = self.skip_verify && self.integrity.tag.is_supported();
                     // `.bun-tag` does not claim a hash that `--no-verify` left unchecked.
                     let tag = if unchecked {
-                        Integrity::default()
+                        Integrity::new()
                     } else {
                         *integrity
                     };
@@ -689,7 +692,7 @@ impl ExtractTarball {
                 return Ok(ExtractData {
                     url: url.into(),
                     resolved: resolved.into(),
-                    ..Default::default()
+                    ..ExtractData::new()
                 });
             }
             let json_path: &[u8] = if needs_json {
@@ -733,7 +736,7 @@ impl ExtractTarball {
                     path: ret_json_path.into(),
                     buf: json_buf.unwrap_or_default(),
                 }),
-                ..Default::default()
+                ..ExtractData::new()
             })
         })
     }

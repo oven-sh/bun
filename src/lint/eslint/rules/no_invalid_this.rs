@@ -23,13 +23,23 @@ fn is_value_of_accessor(func: Func<'_>) -> bool {
 }
 
 /// What is known about the `this` of a file.
-#[derive(Default)]
 pub struct Known<'a> {
     /// Whether a `this` at a node is something else than `undefined`.
     at: AncestorMemo<'a, bool>,
     /// The same directly in a function that is not a method.
     in_function: IdMap<Func<'a>, bool>,
     bindings: ast_utils::ThisBindingMemo<'a>,
+}
+
+impl<'a> Known<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            at: AncestorMemo::new(),
+            in_function: IdMap::init(),
+            bindings: ast_utils::ThisBindingMemo::new(),
+        }
+    }
 }
 
 /// Whether the `this` that is `e` is something else than `undefined`.
@@ -88,7 +98,7 @@ impl Rule for NoInvalidThis {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Known<'a>> {
-        Some(Known::default())
+        Some(Known::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

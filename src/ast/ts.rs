@@ -150,9 +150,8 @@ impl Data {
 // Data-only; the parser-state predicates that depend on `P` stay in
 // `bun_js_parser::typescript`.
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub enum Metadata {
-    #[default]
     MNone,
 
     MNever,

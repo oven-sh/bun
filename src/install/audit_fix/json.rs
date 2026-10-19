@@ -202,6 +202,9 @@ fn s(out: &mut Vec<u8>, bytes: &[u8]) {
     let _ = write!(
         out,
         "{}",
-        bun_core::fmt::format_json_string_utf8(bytes, Default::default())
+        bun_core::fmt::format_json_string_utf8(
+            bytes,
+            crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+        )
     );
 }

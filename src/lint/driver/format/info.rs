@@ -10,10 +10,17 @@ use bun_lint::rule::Plugin;
 use bun_lint::source::LineStarts;
 
 /// A line, and a column in bytes, both from 1.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(super) struct Position {
     pub(super) line: usize,
     pub(super) column: usize,
+}
+
+impl Position {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self { line: 0, column: 0 }
+    }
 }
 
 /// The positions of a problem without a place are 0. oxlint prints no message for it either, and calls it a warning: here it
@@ -151,13 +158,14 @@ impl<'r> Source<'r> {
 
     #[cold]
     fn start_by_offset(&self, message: &LintMessage) -> Position {
-        (self.span(message)).map_or_else(Default::default, |it| self.position(it.0))
+        (self.span(message)).map_or_else(Position::new, |it| self.position(it.0))
     }
 
     pub(super) fn info<'s>(&'s self, message: &'s LintMessage) -> Info<'s> {
-        let (start, end) = self.span(message).map_or_else(Default::default, |it| {
-            (self.position(it.0), self.position(it.1))
-        });
+        let (start, end) = self.span(message).map_or_else(
+            || (Position::new(), Position::new()),
+            |it| (self.position(it.0), self.position(it.1)),
+        );
         Info {
             start,
             end,

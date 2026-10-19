@@ -309,7 +309,7 @@ impl<'a> MergeTransform<'a> {
                                     scope_id: next_scope_id,
                                     from: i,
                                     to: i + 1,
-                                    lvalues: HashSet::default(),
+                                    lvalues: HashSet::with_hasher(rustc_hash::FxBuildHasher),
                                 });
                             }
                         }
@@ -320,7 +320,7 @@ impl<'a> MergeTransform<'a> {
                                 scope_id: next_scope_id,
                                 from: i,
                                 to: i + 1,
-                                lvalues: HashSet::default(),
+                                lvalues: HashSet::with_hasher(rustc_hash::FxBuildHasher),
                             });
                         }
                     }

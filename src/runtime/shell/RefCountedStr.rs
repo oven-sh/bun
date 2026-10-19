@@ -59,6 +59,6 @@ impl RefCountedStr {
     fn free_str(&mut self) {
         // Dropping the old `Box<[u8]>` returns its allocation; an empty box
         // owns no heap storage so the `len == 0` early-out is preserved.
-        self.data = Box::default();
+        self.data = Box::new([]);
     }
 }

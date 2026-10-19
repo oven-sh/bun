@@ -21,10 +21,19 @@ pub mod entry_point {
     use bun_collections::MultiArrayList;
     use bun_core::RawSlice;
 
-    #[derive(Default)]
     pub struct EntryPoint {
         pub output_path: RawSlice<u8>,
         pub source_index: crate::IndexInt,
+    }
+
+    impl EntryPoint {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                output_path: RawSlice::EMPTY,
+                source_index: 0,
+            }
+        }
     }
 
     pub type List = MultiArrayList<EntryPoint>;
@@ -41,9 +50,8 @@ pub mod entry_point {
     }
 
     #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum Kind {
-        #[default]
         None,
         UserSpecified,
         DynamicImport,
@@ -75,11 +83,11 @@ pub mod js_meta {
         pub(crate) re_exports: AstVec<Dependency>,
         pub(crate) data: ImportTracker,
     }
-    impl Default for ImportData {
-        fn default() -> Self {
+    impl ImportData {
+        pub fn new() -> Self {
             Self {
                 re_exports: AstAlloc::vec(),
-                data: ImportTracker::default(),
+                data: ImportTracker::new(),
             }
         }
     }
@@ -89,11 +97,11 @@ pub mod js_meta {
         pub(crate) potentially_ambiguous_export_star_refs: AstVec<ImportData>,
         pub(crate) data: ImportTracker,
     }
-    impl Default for ExportData {
-        fn default() -> Self {
+    impl ExportData {
+        pub fn new() -> Self {
             Self {
                 potentially_ambiguous_export_star_refs: AstAlloc::vec(),
-                data: ImportTracker::default(),
+                data: ImportTracker::new(),
             }
         }
     }
@@ -108,9 +116,7 @@ pub mod js_meta {
     /// static imports, tracked `import()` / `require()` reads. `None` until an
     /// importer is seen; `All` once any importer can see the whole namespace
     /// (sticky). Keys borrow parser-arena strings; nothing is copied.
-    #[derive(Default)]
     pub enum DynamicImportReferencedAliases {
-        #[default]
         None,
         Partial(ArrayHashMap<&'static [u8], (), AutoContext, AstAlloc>),
         All,
@@ -123,8 +129,7 @@ pub mod js_meta {
             match self {
                 Self::All => {}
                 Self::None => {
-                    let mut set =
-                        ArrayHashMap::<&'static [u8], (), AutoContext, AstAlloc>::default();
+                    let mut set = ArrayHashMap::<&'static [u8], (), AutoContext, AstAlloc>::new();
                     bun_core::handle_oom(set.put(alias, ()));
                     *self = Self::Partial(set);
                 }
@@ -133,7 +138,7 @@ pub mod js_meta {
         }
         pub fn merge_partial(&mut self, aliases: &[bun_ast::StoreStr]) {
             if aliases.is_empty() && matches!(self, Self::None) {
-                *self = Self::Partial(Default::default());
+                *self = Self::Partial(ArrayHashMap::new());
             }
             for a in aliases {
                 self.insert(a.slice());
@@ -142,7 +147,7 @@ pub mod js_meta {
     }
     pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct Flags {
         pub(crate) is_async_or_has_async_dependency: bool,
         pub(crate) needs_exports_variable: bool,
@@ -151,6 +156,21 @@ pub mod js_meta {
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
         pub(crate) wrap: WrapKind,
+    }
+
+    impl Flags {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                is_async_or_has_async_dependency: false,
+                needs_exports_variable: false,
+                force_include_exports_for_entry_point: false,
+                needs_export_symbol_from_runtime: false,
+                did_wrap_dependencies: false,
+                needs_synthetic_default_export: false,
+                wrap: WrapKind::None,
+            }
+        }
     }
     pub use crate::WrapKind as Wrap;
 
@@ -170,20 +190,20 @@ pub mod js_meta {
         pub flags: Flags,
     }
 
-    impl Default for JSMeta {
-        fn default() -> Self {
+    impl JSMeta {
+        pub fn new() -> Self {
             Self {
-                probably_typescript_type: ProbablyTypescriptType::default(),
-                imports_to_bind: RefImportData::default(),
-                resolved_exports: ResolvedExports::default(),
-                resolved_export_star: ExportData::default(),
+                probably_typescript_type: ProbablyTypescriptType::new(),
+                imports_to_bind: RefImportData::new(),
+                resolved_exports: ResolvedExports::init(),
+                resolved_export_star: ExportData::new(),
                 sorted_and_filtered_export_aliases: AstAlloc::vec(),
-                top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::default(),
+                top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::new(),
                 cjs_export_copies: AstAlloc::vec(),
-                wrapper_part_index: Index::default(),
-                dynamic_import_referenced_aliases: DynamicImportReferencedAliases::default(),
+                wrapper_part_index: Index::INVALID,
+                dynamic_import_referenced_aliases: DynamicImportReferencedAliases::None,
                 lifted_setter_param: Ref::NONE,
-                flags: Flags::default(),
+                flags: Flags::new(),
             }
         }
     }
@@ -300,25 +320,25 @@ impl<'a> LinkerGraph<'a> {
     }
 }
 
-impl Default for LinkerGraph<'_> {
-    fn default() -> Self {
+impl LinkerGraph<'_> {
+    pub fn new() -> Self {
         LinkerGraph {
-            files: FileList::default(),
-            files_live: BitSet::default(),
+            files: FileList::new(),
+            files_live: BitSet::new(),
             parts_live: Vec::new(),
-            entry_points: entry_point::List::default(),
-            symbols: symbol::Map::default(),
+            entry_points: entry_point::List::new(),
+            symbols: symbol::Map::new(),
             // Note: `bump` is a backref assigned in `init`/`LinkerContext::load`;
             // dangling sentinel (never read before assignment).
             bump: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
             code_splitting: false,
-            ast: MultiArrayList::default(),
-            meta: MultiArrayList::default(),
+            ast: MultiArrayList::new(),
+            meta: MultiArrayList::new(),
             reachable_files: Vec::new(),
             stable_source_indices: Vec::new(),
-            is_scb_bitset: BitSet::default(),
-            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
-            import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),
+            is_scb_bitset: BitSet::new(),
+            ts_enums: bun_ast::ast_result::TsEnumsMap::new(),
+            import_member_bindings: bun_ast::ast_result::ImportMemberBindings::new(),
         }
     }
 }
@@ -363,7 +383,7 @@ pub(crate) fn generate_new_symbol(
         // arena-owned slice whose lifetime is erased;
         // caller guarantees it outlives the symbol table.
         original_name: bun_ast::StoreStr::new(original_name),
-        ..Default::default()
+        ..Symbol::new()
     });
 
     module_scopes[source_index as usize].generated.push(ref_);
@@ -458,7 +478,9 @@ pub(crate) fn generate_symbol_import_and_use(
     // Mark this symbol as used by this part
     {
         let part: &mut Part = &mut parts[source_index as usize].as_mut_slice()[part_index as usize];
-        let uses_entry = part.symbol_uses.get_or_put(ref_)?;
+        let uses_entry = part
+            .symbol_uses
+            .get_or_put(ref_, bun_ast::symbol::Use::new)?;
         if !uses_entry.found_existing {
             *uses_entry.value_ptr = symbol::Use::unscoped(use_count);
         } else {
@@ -485,9 +507,9 @@ pub(crate) fn generate_symbol_import_and_use(
                 data: ImportTracker {
                     source_index: source_index_to_import_from,
                     import_ref: ref_,
-                    ..Default::default()
+                    ..ImportTracker::new()
                 },
-                ..Default::default()
+                ..js_meta::ImportToBind::new()
             },
         )?;
     }
@@ -730,7 +752,7 @@ impl<'a> LinkerGraph<'a> {
             let ast_len = self.ast.len();
             debug_assert!(ast_len <= import_records_len);
             for _ in 0..ast_len {
-                self.meta.append_assume_capacity(JSMeta::default());
+                self.meta.append_assume_capacity(JSMeta::new());
             }
 
             if scb.list.len() > 0 {
@@ -791,7 +813,7 @@ impl<'a> LinkerGraph<'a> {
                     }
                 }
             } else {
-                self.is_scb_bitset = BitSet::default();
+                self.is_scb_bitset = BitSet::new();
             }
         }
 
@@ -861,7 +883,7 @@ impl<'a> LinkerGraph<'a> {
             .zip(dest_resolved_exports.iter_mut())
             .enumerate()
         {
-            let mut resolved = ResolvedExports::default();
+            let mut resolved = ResolvedExports::init();
             resolved
                 .ensure_total_capacity(src.count())
                 .expect("unreachable");
@@ -875,7 +897,7 @@ impl<'a> LinkerGraph<'a> {
                             name_loc: value.alias_loc,
                             source_index: Index::source(source_index as u32),
                         },
-                        ..Default::default()
+                        ..js_meta::ResolvedExport::new()
                     },
                 );
             }
@@ -1015,8 +1037,8 @@ pub struct File {
     pub quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
 }
 
-impl Default for File {
-    fn default() -> Self {
+impl File {
+    pub fn new() -> Self {
         Self {
             // Note: empty static-arm bitset; load() overwrites before any read.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),

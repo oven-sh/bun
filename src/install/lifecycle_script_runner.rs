@@ -428,7 +428,7 @@ impl<'a> InstallCtx<'a> {
 // `io_heap::Intrusive` takes the comparator via `HeapContext::less` on the
 // `Context` type, so `sort_by_started_at` is provided via a trait impl on a
 // ZST `StartedAtCtx`.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct StartedAtCtx;
 pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, StartedAtCtx>;
 
@@ -724,14 +724,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 #[cfg(windows)]
                 windows: bun_spawn::WindowsOptions {
                     loop_: bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop),
-                    ..Default::default()
+                    ..bun_spawn::WindowsOptions::new()
                 },
 
                 stream: false,
                 // The kernel kills the child when bun dies, so no script outlives the install.
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 linux_pdeathsig: Some(bun_sys::SignalCode::SIGKILL.0),
-                ..Default::default()
+                ..SpawnOptions::new()
             };
 
             (*this).remaining_fds = 0;
@@ -1215,7 +1215,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             has_called_process_exit: false,
             has_incremented_alive_count: false,
             started_at: 0,
-            heap: io_heap::IntrusiveField::default(),
+            heap: io_heap::IntrusiveField::new(),
         });
 
         // `new` returned a freshly boxed non-null ptr; we hold the only

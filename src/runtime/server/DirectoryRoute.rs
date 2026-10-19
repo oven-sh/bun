@@ -22,10 +22,19 @@ bun_output::declare_scope!(DirectoryRoute, hidden);
 /// `wyhash(subpath) % N` direct-mapped StatHash cache; collisions overwrite.
 const STAT_CACHE_SLOTS: usize = 256;
 
-#[derive(Default)]
 struct StatCacheEntry {
     path: Vec<u8>,
     stat_hash: StatHash,
+}
+
+impl StatCacheEntry {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            path: Vec::new(),
+            stat_hash: StatHash::new(),
+        }
+    }
 }
 
 #[derive(bun_ptr::CellRefCounted)]
@@ -82,7 +91,7 @@ impl DirectoryRoute {
         };
         let mut stat_cache = Vec::with_capacity(slots);
         for _ in 0..slots {
-            stat_cache.push(Cell::new(StatCacheEntry::default()));
+            stat_cache.push(Cell::new(StatCacheEntry::new()));
         }
 
         Ok(RefPtr::new(DirectoryRoute {
@@ -316,7 +325,7 @@ impl DirectoryRoute {
     fn stat_cache_lookup(&self, rel: &[u8], stat: &bun_sys::Stat) -> (u64, [u8; 32], usize) {
         let mut buf = [0u8; 32];
         if self.stat_cache.is_empty() {
-            let mut sh = StatHash::default();
+            let mut sh = StatHash::new();
             sh.hash(stat, rel);
             let len = sh.last_modified().map(|s| {
                 buf[..s.len()].copy_from_slice(s);
@@ -325,12 +334,12 @@ impl DirectoryRoute {
             return (sh.last_modified_u64, buf, len.unwrap_or(0));
         }
         let slot = &self.stat_cache[(bun_wyhash::hash(rel) as usize) % self.stat_cache.len()];
-        let mut entry = slot.replace(StatCacheEntry::default());
+        let mut entry = slot.replace(StatCacheEntry::new());
         if entry.path.as_slice() != rel {
             let old_cap = entry.path.capacity();
             entry.path.clear();
             entry.path.extend_from_slice(rel);
-            entry.stat_hash = StatHash::default();
+            entry.stat_hash = StatHash::new();
             self.stat_cache_path_bytes
                 .set(self.stat_cache_path_bytes.get() + entry.path.capacity() - old_cap);
         }

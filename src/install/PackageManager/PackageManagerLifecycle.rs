@@ -414,7 +414,7 @@ impl PackageManager {
         &mut self,
     ) -> ArrayHashMap<PackageID, ()> {
         // find all packages originating from --trust packages from cli
-        let mut set: ArrayHashMap<PackageID, ()> = ArrayHashMap::default();
+        let mut set: ArrayHashMap<PackageID, ()> = ArrayHashMap::new();
         if self.options.do_.trust_dependencies_from_args() && self.lockfile.packages.len() > 0 {
             let root_id = self
                 .root_package_id
@@ -549,7 +549,7 @@ fn add_package_to_set(
     lockfile: &Lockfile,
     package_id: PackageID,
 ) {
-    if handle_oom(set.get_or_put(package_id)).found_existing {
+    if handle_oom(set.get_or_put(package_id, || ())).found_existing {
         return;
     }
     let mut visited = vec![false; lockfile.packages.len()];
@@ -572,7 +572,7 @@ fn add_package_to_set(
                 lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name),
                 &lockfile.packages.items_resolution()[dep_package_id as usize],
             ) {
-                let _ = handle_oom(set.get_or_put(dep_package_id));
+                let _ = handle_oom(set.get_or_put(dep_package_id, || ()));
             }
         }
     }

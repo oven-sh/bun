@@ -366,10 +366,10 @@ pub struct SizeHandler<S: SizeHandlerSpec> {
     _spec: core::marker::PhantomData<S>,
 }
 
-impl<S: SizeHandlerSpec> Default for SizeHandler<S> {
-    fn default() -> Self {
+impl<S: SizeHandlerSpec> SizeHandler<S> {
+    pub fn new() -> Self {
         Self {
-            inner: SizeHandlerImpl::default(),
+            inner: SizeHandlerImpl::new(),
             _spec: core::marker::PhantomData,
         }
     }
@@ -396,7 +396,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
     }
 }
 
-#[derive(Default)]
 struct SizeHandlerImpl {
     top: Option<LengthPercentageOrAuto>,
     bottom: Option<LengthPercentageOrAuto>,
@@ -408,6 +407,24 @@ struct SizeHandlerImpl {
     inline_end: Option<Property>,
     has_any: bool,
     category: PropertyCategory,
+}
+
+impl SizeHandlerImpl {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            top: None,
+            bottom: None,
+            left: None,
+            right: None,
+            block_start: None,
+            block_end: None,
+            inline_start: None,
+            inline_end: None,
+            has_any: false,
+            category: PropertyCategory::Physical,
+        }
+    }
 }
 
 // `context.arena` was dropped from PropertyHandlerContext; the

@@ -18,10 +18,10 @@ pub(crate) struct ObjectURLRegistry {
     map: Guarded<HashMap<[u8; 16], Box<Entry>>>,
 }
 
-impl Default for ObjectURLRegistry {
-    fn default() -> Self {
+impl ObjectURLRegistry {
+    pub(crate) fn new() -> Self {
         Self {
-            map: Guarded::init(HashMap::default()),
+            map: Guarded::init(HashMap::init()),
         }
     }
 }
@@ -65,7 +65,7 @@ impl ObjectURLRegistry {
 
     pub(crate) fn singleton() -> &'static ObjectURLRegistry {
         static REGISTRY: OnceLock<ObjectURLRegistry> = OnceLock::new();
-        REGISTRY.get_or_init(ObjectURLRegistry::default)
+        REGISTRY.get_or_init(ObjectURLRegistry::new)
     }
 
     pub(crate) fn resolve_and_dupe(

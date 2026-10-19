@@ -63,7 +63,7 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
     // Track all function expressions that are assigned to a temporary
     let mut functions: IdMap<IdentifierId, FunctionId> = IdMap::new();
     // Functions that are inlined (by identifier id of the callee)
-    let mut inlined_functions: IdBitSet<IdentifierId> = IdBitSet::default();
+    let mut inlined_functions: IdBitSet<IdentifierId> = IdBitSet::init();
 
     // Iterate the *existing* blocks from the outer component to find IIFEs
     // and inline them. During iteration we will modify `func` (by inlining the CFG

@@ -148,8 +148,8 @@ pub struct DirInfo {
     pub(crate) flags: Flags,
 }
 
-impl Default for DirInfo {
-    fn default() -> Self {
+impl DirInfo {
+    pub fn new() -> Self {
         Self {
             parent: NOT_FOUND,
             enclosing_browser_scope: NOT_FOUND,
@@ -159,7 +159,7 @@ impl Default for DirInfo {
             package_json_for_module_type: None,
             package_json_for_dependencies: None,
             abs_path: b"",
-            entries: Index::default(),
+            entries: Index::init(),
             package_json: None,
             tsconfig_json: None,
             abs_real_path: b"",
@@ -379,7 +379,7 @@ pub(crate) unsafe fn slot_ptr_at(index: Index) -> Option<*mut DirInfo> {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub struct Flags: u8 {
         /// This directory is a node_modules directory
         const IsNodeModules     = 1 << 0;

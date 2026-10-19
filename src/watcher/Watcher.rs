@@ -189,14 +189,14 @@ impl Watcher {
         }
 
         let this = Box::new(Watcher {
-            watchlist: WatchList::default(),
-            mutex: Mutex::default(),
+            watchlist: WatchList::new(),
+            mutex: Mutex::init(),
             cwd: top_level_dir,
             ctx: ctx.cast::<()>(),
             on_file_update: on_file_update_wrapped::<T>,
             on_error: on_error_wrapped::<T>,
             platform: Platform::new(top_level_dir)?,
-            watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
+            watch_events: vec![WatchEvent::new(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
             watchloop_handle: bun_core::AtomicCell::new(false),
             thread: None,
@@ -967,12 +967,24 @@ impl Watcher {
 
 // ─── WatchEvent ───────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct WatchEvent {
     pub index: WatchItemIndex,
     pub op: Op,
     pub(crate) name_off: u8,
     pub(crate) name_len: u8,
+}
+
+impl WatchEvent {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            index: 0,
+            op: Op::empty(),
+            name_off: 0,
+            name_len: 0,
+        }
+    }
 }
 
 impl WatchEvent {
@@ -995,7 +1007,7 @@ impl WatchEvent {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct Op: u8 {
         const DELETE   = 1 << 0;
         const METADATA = 1 << 1;

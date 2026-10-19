@@ -201,10 +201,9 @@ impl ExecutionSequence {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr, strum::FromRepr)]
+#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::FromRepr)]
 #[repr(u8)]
 pub enum Result {
-    #[default]
     Pending,
     Pass,
     Skip,
@@ -277,8 +276,8 @@ bun_core::impl_field_parent! { Execution => BunTest.execution; fn mut bun_test; 
 impl Execution {
     pub(crate) fn init() -> Execution {
         Execution {
-            groups: Box::default(),
-            sequences: Box::default(),
+            groups: Box::new([]),
+            sequences: Box::new([]),
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
             on_stack_entry_data: core::cell::Cell::new(None),

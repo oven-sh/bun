@@ -20,9 +20,17 @@ pub struct AncestorMemo<'a, T> {
 
 /// The nodes that walks have passed far from where they began, each with the index of the answer. It knows nothing of
 /// what the answers are, so that it is compiled once and not for each question.
-#[derive(Default)]
 struct Far<'a> {
     known: FxHashMap<Node<'a>, u32>,
+}
+
+impl<'a> Far<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            known: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl<'a> Far<'a> {
@@ -51,11 +59,11 @@ impl<'a> Far<'a> {
     }
 }
 
-impl<T> Default for AncestorMemo<'_, T> {
+impl<T> AncestorMemo<'_, T> {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         AncestorMemo {
-            far: Far::default(),
+            far: Far::new(),
             answers: Vec::new(),
         }
     }

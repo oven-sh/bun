@@ -252,7 +252,7 @@ impl<I: Iterator<Item = E>, E> FormatSeparatedIter<I, E> {
             inner,
             separator,
             next: None,
-            options: FormatSeparatedOptions::default(),
+            options: FormatSeparatedOptions::new(),
         }
     }
 
@@ -286,8 +286,18 @@ impl<I: Iterator<Item = E>, E> Iterator for FormatSeparatedIter<I, E> {
     }
 }
 
-#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct FormatSeparatedOptions {
     trailing_separator: TrailingSeparator,
     group_id: Option<GroupId>,
+}
+
+impl FormatSeparatedOptions {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            trailing_separator: TrailingSeparator::Allowed,
+            group_id: None,
+        }
+    }
 }

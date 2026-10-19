@@ -114,7 +114,7 @@ impl HmrTopic {
 
 bitflags::bitflags! {
     // bitflags! requires explicit power-of-two values; field names match enum variants.
-    #[derive(Default, Copy, Clone)]
+    #[derive(Copy, Clone)]
     pub struct HmrTopicBits: u8 {
         const HOT_UPDATE = 1 << 0;
         const ERRORS = 1 << 1;

@@ -43,7 +43,8 @@ pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
     // Any use of the hook return other than the expected destructuring pattern
     // prevents inlining (we delete from inlined_state if we see the identifier used
     // as an operand elsewhere).
-    let mut inlined_state: HashMap<IdentifierId, InlinedStateReplacement> = HashMap::default();
+    let mut inlined_state: HashMap<IdentifierId, InlinedStateReplacement> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
 
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {

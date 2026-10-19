@@ -26,11 +26,20 @@ pub(super) struct ErrorChain {
 pub(super) type Chain = Option<Rc<ErrorChain>>;
 
 /// `errorState`
-#[derive(Default)]
 pub(super) struct ErrorState {
     pub(super) chain: Chain,
     /// The number of `relatedInfo` entries.
     related: usize,
+}
+
+impl ErrorState {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            chain: None,
+            related: 0,
+        }
+    }
 }
 
 impl Relater {
@@ -558,7 +567,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // `getTupleElementLabel`
         let index = pos - param_count;
-        let element_flags = flags.get(index).copied().unwrap_or_default();
+        let element_flags = flags.get(index).copied().unwrap_or_else(ElemFlags::empty);
         if element_flags.label().is_some() {
             return element_flags.label();
         }
@@ -783,7 +792,7 @@ impl<'p, 's> Checker<'p, 's> {
             // checks the type arguments of the heritage clause first. So this is taken for a recursive query.
             let is_repeated = was_resolving && self.are_base_types_resolved_by_check(target);
             let bases = if is_repeated {
-                List::default()
+                List::new()
             } else {
                 self.base_types(target)
             };

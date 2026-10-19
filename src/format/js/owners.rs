@@ -36,7 +36,6 @@ struct OwnerEntry {
     groups: u32,
 }
 
-#[derive(Default)]
 pub(crate) struct Owners {
     /// Grouped by owner and placement, and in source order within a group.
     comment_ids: Vec<u32>,
@@ -51,13 +50,40 @@ pub(crate) struct Owners {
     relocated_owner_starts: Vec<u32>,
 }
 
+impl Owners {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self {
+            comment_ids: Vec::new(),
+            groups: Vec::new(),
+            nodes: Vec::new(),
+            names: Vec::new(),
+            cast_parens: Vec::new(),
+            owner_bitset: Vec::new(),
+            relocated_owner_starts: Vec::new(),
+        }
+    }
+}
+
 /// The ids of the comments attached to one node.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct OwnedIds<'a> {
     pub(crate) leading: &'a [u32],
     pub(crate) trailing: &'a [u32],
     pub(crate) dangling: &'a [u32],
     pub(crate) is_ignored: bool,
+}
+
+impl<'a> OwnedIds<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            leading: &[],
+            trailing: &[],
+            dangling: &[],
+            is_ignored: false,
+        }
+    }
 }
 
 fn sort_key(owner: Owner<'_>, placement: u8) -> u64 {
@@ -99,7 +125,7 @@ impl Owners {
             comment_ids: Vec::with_capacity(attached.attachments.len()),
             owner_bitset: vec![0; file.node_count() as usize / 64 + 1],
             relocated_owner_starts: attached.relocated_owner_starts,
-            ..Owners::default()
+            ..Owners::init()
         };
         let mut previous_key = u64::MAX;
         for (sort_key, index) in sort_keys {
@@ -152,7 +178,7 @@ impl Owners {
     }
 
     fn lookup(&self, entries: &[OwnerEntry], id: u32, kind: u8) -> OwnedIds<'_> {
-        let mut owned = OwnedIds::default();
+        let mut owned = OwnedIds::new();
         let Ok(at) = entries.binary_search_by_key(&id, |entry| entry.id) else {
             return owned;
         };
@@ -186,7 +212,7 @@ impl Owners {
         let raw = node.raw();
         match self.is_owner(raw) {
             true => self.lookup(&self.nodes, raw.index(), node.kind() as u8),
-            false => OwnedIds::default(),
+            false => OwnedIds::new(),
         }
     }
 
@@ -201,7 +227,7 @@ impl Owners {
     #[inline]
     pub(crate) fn of_name(&self, start: u32) -> OwnedIds<'_> {
         match self.names.is_empty() {
-            true => OwnedIds::default(),
+            true => OwnedIds::new(),
             false => self.lookup(&self.names, start, 0),
         }
     }
@@ -209,7 +235,7 @@ impl Owners {
     #[inline]
     pub(crate) fn of_cast_parens(&self, open: u32) -> OwnedIds<'_> {
         match self.cast_parens.is_empty() {
-            true => OwnedIds::default(),
+            true => OwnedIds::new(),
             false => self.lookup(&self.cast_parens, open, 0),
         }
     }

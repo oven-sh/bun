@@ -25,7 +25,7 @@ pub(crate) fn assert_scope_instructions_within_scopes(
     env: &Environment,
 ) -> Result<(), CompilerDiagnostic> {
     // Pass 1: Collect all scope IDs
-    let mut existing_scopes: HashSet<ScopeId> = HashSet::default();
+    let mut existing_scopes: HashSet<ScopeId> = HashSet::with_hasher(rustc_hash::FxBuildHasher);
     let find_visitor = FindAllScopesVisitor { env };
     visit_reactive_function(func, &find_visitor, &mut existing_scopes);
 
@@ -33,7 +33,7 @@ pub(crate) fn assert_scope_instructions_within_scopes(
     let check_visitor = CheckInstructionsAgainstScopesVisitor { env };
     let mut check_state = CheckState {
         existing_scopes,
-        active_scopes: HashSet::default(),
+        active_scopes: HashSet::with_hasher(rustc_hash::FxBuildHasher),
         error: None,
     };
     visit_reactive_function(func, &check_visitor, &mut check_state);

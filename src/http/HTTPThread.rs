@@ -149,7 +149,7 @@ impl HttpThread {
                 pending_sockets: crate::http_context::LazyPool::new(),
                 pending_unix_sockets: crate::http_context::LazyPool::new(),
                 park_seq: 0,
-                group: uws::SocketGroup::default(),
+                group: uws::SocketGroup::new(),
                 secure: None,
                 active_h2_sessions: Vec::new(),
                 pending_h2_connects: Vec::new(),
@@ -160,7 +160,7 @@ impl HttpThread {
                 pending_sockets: crate::http_context::LazyPool::new(),
                 pending_unix_sockets: crate::http_context::LazyPool::new(),
                 park_seq: 0,
-                group: uws::SocketGroup::default(),
+                group: uws::SocketGroup::new(),
                 secure: None,
                 active_h2_sessions: Vec::new(),
                 pending_h2_connects: Vec::new(),
@@ -272,8 +272,8 @@ pub struct InitOpts {
 // only read there; no shared mutable state crosses the thread boundary.
 unsafe impl Send for InitOpts {}
 
-impl Default for InitOpts {
-    fn default() -> Self {
+impl InitOpts {
+    pub fn new() -> Self {
         Self {
             ca: Vec::new(),
             abs_ca_file_name: b"",
@@ -448,7 +448,7 @@ impl HttpThread {
                     pending_sockets: crate::http_context::LazyPool::new(),
                     pending_unix_sockets: crate::http_context::LazyPool::new(),
                     park_seq: 0,
-                    group: uws::SocketGroup::default(),
+                    group: uws::SocketGroup::new(),
                     secure: None,
                     active_h2_sessions: Vec::new(),
                     pending_h2_connects: Vec::new(),
@@ -1049,7 +1049,10 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.proxy_authorization));
                 client.close_proxy_tunnel(false);
                 drop(core::mem::take(&mut client.custom_ssl_ctx));
-                drop(core::mem::take(&mut client.state));
+                drop(core::mem::replace(
+                    &mut client.state,
+                    super::InternalState::new(),
+                ));
                 if let Some(f) = release.release_at_shutdown {
                     f(release.ctx);
                 }

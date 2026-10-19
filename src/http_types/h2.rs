@@ -118,7 +118,7 @@ pub fn u32_from_bytes(src: &[u8]) -> u32 {
 /// `(reserved << 31) | uint31`, which matches
 /// `from_bytes`/`encode_into` and the on-wire `StreamPriority.stream_identifier`.
 #[repr(transparent)]
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct UInt31WithReserved(u32);
 
 impl UInt31WithReserved {
@@ -140,7 +140,7 @@ impl UInt31WithReserved {
 
 /// 5-byte PRIORITY payload: BE stream identifier + weight.
 #[repr(C, packed)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct StreamPriority {
     pub(crate) stream_identifier: u32,
     pub(crate) weight: u8,
@@ -163,16 +163,6 @@ pub struct FrameHeader {
     pub flags: u8,
     pub stream_identifier: u32,
 }
-impl Default for FrameHeader {
-    fn default() -> Self {
-        Self {
-            length: 0,
-            type_: FrameType::HTTP_FRAME_SETTINGS as u8,
-            flags: 0,
-            stream_identifier: 0,
-        }
-    }
-}
 impl FrameHeader {
     pub const BYTE_SIZE: usize = 9;
 
@@ -190,10 +180,17 @@ impl FrameHeader {
 
 /// 6-byte SETTINGS entry: BE u16 type + BE u32 value.
 #[repr(C, packed)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct SettingsPayloadUnit {
     pub type_: u16,
     pub value: u32,
+}
+
+impl SettingsPayloadUnit {
+    #[inline]
+    pub fn new() -> Self {
+        Self { type_: 0, value: 0 }
+    }
 }
 // SAFETY: `#[repr(C, packed)]` with `u16 + u32` fields — no padding, no
 // niches, every 6-byte pattern is a valid value.

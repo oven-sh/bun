@@ -228,15 +228,15 @@ pub type AppendVec<T, A = Global> = Stable<T, AtomicU32, A>;
 /// For one thread. It can be emptied and used again.
 pub type LocalVec<T, A = Global> = Stable<T, Cell<u32>, A>;
 
-impl<T, L: Length> Default for Stable<T, L, Global> {
-    fn default() -> Self {
+impl<T, L: Length> Stable<T, L, Global> {
+    pub fn init() -> Self {
         Self::new_in(Global)
     }
 }
 
 impl<T, L: Length> Stable<T, L, Global> {
     pub fn new() -> Self {
-        Self::default()
+        Self::init()
     }
 }
 
@@ -358,8 +358,8 @@ pub struct Cells<C, A: Allocator + Clone = Global> {
     chunks: Chunks<C, FIRST_CELLS_BITS, A>,
 }
 
-impl<C: Zeroed + Sync> Default for Cells<C, Global> {
-    fn default() -> Self {
+impl<C: Zeroed + Sync> Cells<C, Global> {
+    pub fn new() -> Self {
         Self::new_in(Global)
     }
 }
@@ -425,8 +425,8 @@ pub struct Newest<C, A: Allocator + Clone = Global> {
     owns: Owns<C>,
 }
 
-impl<C: Zeroed> Default for Newest<C, Global> {
-    fn default() -> Self {
+impl<C: Zeroed> Newest<C, Global> {
+    pub fn new() -> Self {
         Self::new_in(Global)
     }
 }
@@ -752,7 +752,7 @@ mod tests {
 
     #[test]
     fn cells_start_at_zero_and_exist_once_written() {
-        let cells = Cells::<AtomicU64>::default();
+        let cells = Cells::<AtomicU64>::new();
         assert!(cells.existing(0).is_none());
         assert!(cells.existing(u32::MAX).is_none());
         assert!(cells.existing(1 << 30).is_none());
@@ -770,7 +770,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn a_cell_beyond_the_range_is_refused() {
-        Cells::<AtomicU32>::default().cell(u32::MAX);
+        Cells::<AtomicU32>::new().cell(u32::MAX);
     }
 
     #[test]
@@ -778,7 +778,7 @@ mod tests {
         const THREADS: u32 = 4;
         const ROUNDS: u32 = if cfg!(miri) { 2 } else { 200 };
         for _ in 0..ROUNDS {
-            let cells = Cells::<AtomicU32>::default();
+            let cells = Cells::<AtomicU32>::new();
             let start = Barrier::new(THREADS as usize);
             std::thread::scope(|scope| {
                 for thread in 0..THREADS {
@@ -819,7 +819,7 @@ mod tests {
     #[test]
     fn readers_see_a_filled_table_while_one_thread_replaces_it() {
         const TABLES: u64 = if cfg!(miri) { 40 } else { 2_000 };
-        let newest = Newest::<AtomicU64>::default();
+        let newest = Newest::<AtomicU64>::new();
         assert!(newest.get(Ordering::Acquire).is_empty());
         std::thread::scope(|scope| {
             for _ in 0..3 {

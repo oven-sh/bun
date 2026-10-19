@@ -4355,8 +4355,14 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         // Results computed under one mode are not valid under another.
         let found_outside = (
-            std::mem::take(&mut self.rechecked_exprs),
-            std::mem::take(&mut self.rechecked_members),
+            std::mem::replace(
+                &mut self.rechecked_exprs,
+                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ),
+            std::mem::replace(
+                &mut self.rechecked_members,
+                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ),
         );
         let outer = self.begin_recheck();
         let ty = self.check_expression_ex(file, e, check_mode);
@@ -4912,7 +4918,7 @@ impl<'p, 's> Checker<'p, 's> {
         shape.props.reserve_exact(props.len());
         // The names of `shape.props`, of a literal with many members.
         let has_many = props.len() > 16;
-        let mut names = crate::util::FxHashSet::<Atom>::default();
+        let mut names = crate::util::FxHashSet::<Atom>::with_hasher(rustc_hash::FxBuildHasher);
         if has_many {
             names.reserve(props.len());
         }

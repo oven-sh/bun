@@ -16,11 +16,20 @@ const PREFER_ARROW_CALLBACK: Message =
 /// can have its value.
 type Values<'a> = AncestorMemo<'a, Node<'a>>;
 
-#[derive(Default)]
 pub struct State<'a> {
     values: Values<'a>,
     /// Where the `this`, the `super` and the `new.target` of the file start, in order, from the first time it is asked for.
     keywords: Option<Vec<u32>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            values: Values::new(),
+            keywords: None,
+        }
+    }
 }
 
 impl<'a> State<'a> {
@@ -85,7 +94,7 @@ fn is_callback_with_lexical_this<'a>(function: Expr<'a>, values: &mut Values<'a>
 
 /// oxlint's `ScopeScanner`: it looks at the body alone, and at nothing of a class in it.
 fn own_keywords_as_oxlint(func: Func) -> OwnKeywords {
-    let mut found = OwnKeywords::default();
+    let mut found = OwnKeywords::new();
     let mut pending: Vec<Node> = func.body_statements().into_iter().flatten().map(Node::Stmt).collect();
     while let Some(node) = pending.pop() {
         match node {
@@ -126,7 +135,7 @@ fn simple_name(param: Param<'_>) -> Option<Name<'_>> {
 
 /// ESLint's `hasDuplicateParams`.
 fn has_duplicate_params(func: Func) -> bool {
-    let mut names = FxHashSet::default();
+    let mut names = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     let mut has_duplicate = false;
     for param in func.params() {
         match simple_name(param) {
@@ -229,7 +238,7 @@ impl Rule for PreferArrowCallback {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -250,7 +259,7 @@ impl Rule for PreferArrowCallback {
         };
         let file = cx.file();
         let own = match cx.state.has_keyword_in(file, e.span()) {
-            false => OwnKeywords::default(),
+            false => OwnKeywords::new(),
             true if is_oxlint => own_keywords_as_oxlint(func),
             true => own_keywords(func, false),
         };

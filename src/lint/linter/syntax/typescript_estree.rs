@@ -145,7 +145,7 @@ impl<'a> Checks<'a> {
                 at,
                 end: 0,
                 message: message.into(),
-                ..SyntaxError::default()
+                ..SyntaxError::new()
             });
         }
     }

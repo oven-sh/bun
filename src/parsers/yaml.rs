@@ -69,7 +69,7 @@ impl YAML {
                 Ok(Expr::init(
                     E::Array {
                         items,
-                        ..Default::default()
+                        ..E::Array::new()
                     },
                     Loc::EMPTY,
                 ))
@@ -1621,7 +1621,7 @@ impl NodeTag {
             | NodeTag::Unknown(_) => Expr::init(E::Null {}, loc),
 
             // non-specific tags become seq, map, or str
-            NodeTag::NonSpecific | NodeTag::Str => Expr::init(E::String::default(), loc),
+            NodeTag::NonSpecific | NodeTag::Str => Expr::init(E::String::new(), loc),
         }
     }
 }
@@ -2246,11 +2246,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             context: ContextStack::init(),
             block_indents: IndentStack::init(),
             explicit_document_start_line: None,
-            anchors: StringHashMap::default(),
+            anchors: StringHashMap::init(),
             open_collections: Vec::new(),
             cyclic_aliases,
             has_cyclic_alias: false,
-            tag_handles: StringHashMap::default(),
+            tag_handles: StringHashMap::init(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
             least_stack_left: usize::MAX,
@@ -2269,7 +2269,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub(crate) fn parse(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
         self.scan(ScanOptions {
             first_scan: true,
-            ..Default::default()
+            ..ScanOptions::new()
         })?;
         self.parse_stream()
     }
@@ -2447,20 +2447,20 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 has_yaml_directive = true;
             }
             has_directives = true;
-            self.scan(ScanOptions::default())?;
+            self.scan(ScanOptions::new())?;
         }
 
         self.explicit_document_start_line = None;
 
         if matches!(self.token.data, TokenData::DocumentStart) {
             self.explicit_document_start_line = Some(self.token.line);
-            self.scan(ScanOptions::default())?;
+            self.scan(ScanOptions::new())?;
         } else if has_directives {
             // if there's directives they must end with '---'
             return Err(Self::unexpected_token());
         }
 
-        let root = self.parse_node(ParseNodeOptions::default())?;
+        let root = self.parse_node(ParseNodeOptions::new())?;
 
         debug_assert!(self.open_collections.is_empty());
 
@@ -2472,12 +2472,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             TokenData::DocumentStart => {}
             TokenData::DocumentEnd => {
                 let mut document_end_line = self.token.line;
-                self.scan(ScanOptions::default())?;
+                self.scan(ScanOptions::new())?;
 
                 // consume all bare documents
                 while matches!(self.token.data, TokenData::DocumentEnd) {
                     document_end_line = self.token.line;
-                    self.scan(ScanOptions::default())?;
+                    self.scan(ScanOptions::new())?;
                 }
 
                 if self.token.line == document_end_line
@@ -2525,7 +2525,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // The post-`?` scan stays in the enclosing flow-in context so a
         // `:`-prefixed plain scalar (`[? :b]`) tokenizes as ns-plain-first
         // per [126], not as `c-ns-flow-map-separate-value`.
-        self.scan(ScanOptions::default())?;
+        self.scan(ScanOptions::new())?;
 
         if matches!(
             self.token.data,
@@ -2569,7 +2569,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             };
             self.scan(ScanOptions {
                 tag,
-                ..Default::default()
+                ..ScanOptions::new()
             })?;
             if matches!(
                 self.token.data,
@@ -2587,7 +2587,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             explicit_mapping_key: true,
             scanned_tag,
             scanned_anchor,
-            ..Default::default()
+            ..ParseNodeOptions::new()
         });
         self.context.unset(Context::FlowKey);
         k
@@ -2611,14 +2611,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // (including `?` paths). The post-`]` scan happens AFTER `FlowIn` is
         // popped, so only the loop body lives inside the closure.
         let result: Result<(), ParseError> = (|| {
-            self.scan(ScanOptions::default())?;
+            self.scan(ScanOptions::new())?;
             while !matches!(self.token.data, TokenData::SequenceEnd) {
                 let item = if matches!(self.token.data, TokenData::MappingKey) {
                     // [150] ns-flow-pair ::= '?' s-separate ns-flow-map-explicit-entry
                     let pair_start = self.token.start;
                     let key = self.parse_flow_explicit_key()?;
                     let value = if matches!(self.token.data, TokenData::MappingValue) {
-                        self.scan(ScanOptions::default())?;
+                        self.scan(ScanOptions::new())?;
                         if matches!(
                             self.token.data,
                             TokenData::CollectEntry | TokenData::SequenceEnd
@@ -2632,7 +2632,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             // trailing `: …` as a nested mapping.
                             self.parse_node(ParseNodeOptions {
                                 current_mapping_indent: Some(self.token.indent),
-                                ..Default::default()
+                                ..ParseNodeOptions::new()
                             })?
                         }
                     } else {
@@ -2643,14 +2643,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     Expr::init(
                         E::Object {
                             properties: props.move_list(),
-                            ..Default::default()
+                            ..E::Object::new()
                         },
                         pair_start.loc(),
                     )
                 } else {
                     self.parse_node(ParseNodeOptions {
                         flow_pair_allowed: true,
-                        ..Default::default()
+                        ..ParseNodeOptions::new()
                     })?
                 };
                 seq.push(item);
@@ -2663,7 +2663,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     return Err(Self::unexpected_token());
                 }
 
-                self.scan(ScanOptions::default())?;
+                self.scan(ScanOptions::new())?;
             }
 
             Ok(())
@@ -2672,11 +2672,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.context.unset(Context::FlowIn);
         result?;
 
-        self.scan(ScanOptions::default())?;
+        self.scan(ScanOptions::new())?;
 
         Ok(E::Array {
             items: seq,
-            ..Default::default()
+            ..E::Array::new()
         })
     }
 
@@ -2698,7 +2698,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // (including `?` paths). The post-`}` scan happens AFTER `FlowIn` is
         // popped, so only the loop body lives inside the closure.
         let result: Result<(), ParseError> = (|| {
-            self.scan(ScanOptions::default())?;
+            self.scan(ScanOptions::new())?;
 
             while !matches!(self.token.data, TokenData::MappingEnd) {
                 // [142] `? …` and bare `:` are handled here so the key parse
@@ -2711,7 +2711,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     Expr::init(E::Null {}, self.token.start.loc())
                 } else {
                     self.context.set(Context::FlowKey)?;
-                    let k = self.parse_node(ParseNodeOptions::default());
+                    let k = self.parse_node(ParseNodeOptions::new());
                     self.context.unset(Context::FlowKey);
                     k?
                 };
@@ -2722,10 +2722,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         props.append(G::Property {
                             key: Some(key),
                             value: Some(value),
-                            ..Default::default()
+                            ..G::Property::new()
                         })?;
 
-                        self.scan(ScanOptions::default())?;
+                        self.scan(ScanOptions::new())?;
                         continue;
                     }
                     TokenData::MappingEnd => {
@@ -2733,7 +2733,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         props.append(G::Property {
                             key: Some(key),
                             value: Some(value),
-                            ..Default::default()
+                            ..G::Property::new()
                         })?;
                         continue;
                     }
@@ -2743,7 +2743,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                 }
 
-                self.scan(ScanOptions::default())?;
+                self.scan(ScanOptions::new())?;
 
                 if matches!(
                     self.token.data,
@@ -2753,7 +2753,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     props.append(G::Property {
                         key: Some(key),
                         value: Some(value),
-                        ..Default::default()
+                        ..G::Property::new()
                     })?;
                 } else {
                     // [147] the value is ns-flow-node; threading the value's
@@ -2763,7 +2763,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // mapping (`{a: b: c}`).
                     let value = self.parse_node(ParseNodeOptions {
                         current_mapping_indent: Some(self.token.indent),
-                        ..Default::default()
+                        ..ParseNodeOptions::new()
                     })?;
                     self.append_entry(&mut props, key, value)?;
                 }
@@ -2771,7 +2771,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 // [140] ns-s-flow-map-entries: after an entry, only `,` or `}`.
                 match self.token.data {
                     TokenData::CollectEntry => {
-                        self.scan(ScanOptions::default())?;
+                        self.scan(ScanOptions::new())?;
                     }
                     TokenData::MappingEnd => {}
                     _ => return Err(Self::unexpected_token()),
@@ -2784,11 +2784,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.context.unset(Context::FlowIn);
         result?;
 
-        self.scan(ScanOptions::default())?;
+        self.scan(ScanOptions::new())?;
 
         Ok(E::Object {
             properties: props.move_list(),
-            ..Default::default()
+            ..E::Object::new()
         })
     }
 
@@ -2842,7 +2842,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 self.scan(ScanOptions {
                     additional_parent_indent: Some(sequence_indent.add(1)),
-                    ..Default::default()
+                    ..ScanOptions::new()
                 })?;
 
                 let item = self.parse_block_indented(
@@ -2857,7 +2857,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             Ok(E::Array {
                 items: seq,
-                ..Default::default()
+                ..E::Array::new()
             })
         })();
 
@@ -2877,7 +2877,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let key: Result<Expr, ParseError> = (|| {
             self.scan(ScanOptions {
                 additional_parent_indent: Some(mapping_indent.add(1)),
-                ..Default::default()
+                ..ScanOptions::new()
             })?;
 
             self.parse_block_indented(
@@ -2986,7 +2986,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         };
                         self.scan(ScanOptions {
                             additional_parent_indent: parent_indent,
-                            ..Default::default()
+                            ..ScanOptions::new()
                         })?;
 
                         break 'value self.parse_block_indented(
@@ -3008,7 +3008,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             if self.context.get() == Context::FlowIn {
                 return Ok(E::Object {
                     properties: props.move_list(),
-                    ..Default::default()
+                    ..E::Object::new()
                 });
             }
 
@@ -3034,7 +3034,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     let key = self.parse_node(ParseNodeOptions {
                         current_mapping_indent: Some(mapping_indent),
-                        ..Default::default()
+                        ..ParseNodeOptions::new()
                     })?;
 
                     match self.token.data {
@@ -3044,7 +3044,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 props.append(G::Property {
                                     key: Some(key),
                                     value: Some(value),
-                                    ..Default::default()
+                                    ..G::Property::new()
                                 })?;
                                 continue;
                             }
@@ -3060,7 +3060,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                     props.append(G::Property {
                                         key: Some(key),
                                         value: Some(value),
-                                        ..Default::default()
+                                        ..G::Property::new()
                                     })?;
                                     continue;
                                 }
@@ -3085,7 +3085,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 props.append(G::Property {
                                     key: Some(key),
                                     value: Some(value),
-                                    ..Default::default()
+                                    ..G::Property::new()
                                 })?;
                                 continue;
                             }
@@ -3117,7 +3117,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             };
                             self.scan(ScanOptions {
                                 additional_parent_indent: parent_indent,
-                                ..Default::default()
+                                ..ScanOptions::new()
                             })?;
 
                             self.parse_block_indented(
@@ -3142,7 +3142,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             Ok(E::Object {
                 properties: props.move_list(),
-                ..Default::default()
+                ..E::Object::new()
             })
         })();
 
@@ -3169,7 +3169,7 @@ impl MappingProps {
     pub(crate) fn init() -> Self {
         Self {
             list: bun_alloc::AstAlloc::vec(),
-            merge_index: bun_collections::HashMap::default(),
+            merge_index: bun_collections::HashMap::init(),
             merge_indexed: 0,
         }
     }
@@ -3194,7 +3194,7 @@ impl MappingProps {
             let key = self.list[idx].key.as_ref().unwrap();
             let hash = yaml_merge_key_expr_hash(key);
             self.merge_index
-                .get_or_put(hash)?
+                .get_or_put(hash, Vec::new)?
                 .value_ptr
                 .push(idx as u32);
             self.merge_indexed += 1;
@@ -3219,10 +3219,10 @@ impl MappingProps {
                 kind: merge_prop.kind,
                 flags: merge_prop.flags,
                 initializer: merge_prop.initializer,
-                ..Default::default()
+                ..G::Property::new()
             });
             self.merge_index
-                .get_or_put(merge_hash)?
+                .get_or_put(merge_hash, Vec::new)?
                 .value_ptr
                 .push((self.list.len() - 1) as u32);
             self.merge_indexed = self.list.len();
@@ -3276,7 +3276,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(props.append(G::Property {
             key: Some(key),
             value: Some(value),
-            ..Default::default()
+            ..G::Property::new()
         })?)
     }
 
@@ -3340,7 +3340,7 @@ trait CollectionData: Sized {
 
 impl CollectionData for E::Array {
     fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>) {
-        let slot = ast::expr::Store::append(E::Array::default());
+        let slot = ast::expr::Store::append(E::Array::new());
         (
             Expr {
                 loc,
@@ -3353,7 +3353,7 @@ impl CollectionData for E::Array {
 
 impl CollectionData for E::Object {
     fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>) {
-        let slot = ast::expr::Store::append(E::Object::default());
+        let slot = ast::expr::Store::append(E::Object::new());
         (
             Expr {
                 loc,
@@ -3491,8 +3491,8 @@ struct NodeProperties<Enc: Encoding> {
     pub(crate) has_mapping_tag: Option<Token<Enc>>,
 }
 
-impl<Enc: Encoding> Default for NodeProperties<Enc> {
-    fn default() -> Self {
+impl<Enc: Encoding> NodeProperties<Enc> {
+    fn new() -> Self {
         Self {
             has_anchor: None,
             has_tag: None,
@@ -3636,8 +3636,8 @@ struct ParseNodeOptions<Enc: Encoding> {
     pub(crate) scanned_anchor: Option<PendingAnchor>,
 }
 
-impl<Enc: Encoding> Default for ParseNodeOptions<Enc> {
-    fn default() -> Self {
+impl<Enc: Encoding> ParseNodeOptions<Enc> {
+    fn new() -> Self {
         Self {
             current_mapping_indent: None,
             explicit_mapping_key: false,
@@ -3664,8 +3664,8 @@ pub struct ScanOptions {
     pub(crate) outside_context: bool,
 }
 
-impl Default for ScanOptions {
-    fn default() -> Self {
+impl ScanOptions {
+    pub fn new() -> Self {
         Self {
             additional_parent_indent: None,
             tag: NodeTag::None,
@@ -3775,7 +3775,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // recorded it for this token's leading whitespace,
                         // and the re-scan (in_indent_position=false) won't
                         // re-detect it since pos is already past the tab.
-                        self.scan(ScanOptions::default())?;
+                        self.scan(ScanOptions::new())?;
                     }
                     return self.props_to_e_node(&value_tag, value_anchor, indicator_start.loc());
                 }
@@ -3822,7 +3822,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         explicit_mapping_key: kind == BlockIndentedKind::MapExplicitKey,
                         scanned_tag: value_tag,
                         scanned_anchor: value_anchor,
-                        ..Default::default()
+                        ..ParseNodeOptions::new()
                     });
                 }
             }
@@ -3837,7 +3837,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             };
             self.scan(ScanOptions {
                 tag,
-                ..Default::default()
+                ..ScanOptions::new()
             })?;
         }
     }
@@ -3881,7 +3881,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // collection it is still inside of.
         let mut on_path = self
             .has_cyclic_alias
-            .then(bun_collections::HashMap::<usize, ()>::default);
+            .then(bun_collections::HashMap::<usize, ()>::init);
         let mut stack: Vec<Visit> = vec![Visit::Enter(root)];
         while let Some(visit) = stack.pop() {
             let node = match visit {
@@ -3941,7 +3941,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.least_stack_left = self.least_stack_left.min(stack_left);
 
         // c-ns-properties
-        let mut node_props: NodeProperties<Enc> = NodeProperties::default();
+        let mut node_props: NodeProperties<Enc> = NodeProperties::new();
 
         if let Some(tag) = opts.scanned_tag {
             node_props.set_tag(tag)?;
@@ -3963,7 +3963,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     node_props.set_anchor(self.pending_anchor(name, stack_left))?;
                     self.scan(ScanOptions {
                         tag: node_props.tag(),
-                        ..Default::default()
+                        ..ScanOptions::new()
                     })?;
                     continue;
                 }
@@ -3973,7 +3973,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     node_props.set_tag(self.token.clone())?;
                     self.scan(ScanOptions {
                         tag,
-                        ..Default::default()
+                        ..ScanOptions::new()
                     })?;
                     continue;
                 }
@@ -4008,7 +4008,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // update position from the anchor node to the alias node.
                     copy.loc = alias_start.loc();
 
-                    self.scan(ScanOptions::default())?;
+                    self.scan(ScanOptions::new())?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
                         if self.token.indent.is_less_than(alias_indent)
@@ -4320,7 +4320,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let r = self.scan(ScanOptions {
                         tag: node_props.tag(),
                         outside_context: true,
-                        ..Default::default()
+                        ..ScanOptions::new()
                     });
                     self.unset_json_key(json_key);
                     r?;

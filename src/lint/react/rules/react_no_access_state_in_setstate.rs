@@ -75,10 +75,19 @@ impl<'a> Around<'a> {
 }
 
 /// Where the first arguments of the calls of `this.setState` start, and where they end, each in order.
-#[derive(Default)]
 struct FirstArguments {
     starts: Vec<u32>,
     ends: Vec<u32>,
+}
+
+impl FirstArguments {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            starts: Vec::new(),
+            ends: Vec::new(),
+        }
+    }
 }
 
 impl FirstArguments {
@@ -163,7 +172,7 @@ impl Rule for NoAccessStateInSetstate {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let (mut states, mut patterns) = (Vec::new(), Vec::new());
-        let mut first_arguments = FirstArguments::default();
+        let mut first_arguments = FirstArguments::new();
         for this in file.exprs_of_kind(ExprTag::This) {
             match this.parent() {
                 Node::Expr(member) if member.object() == Some(this) => match get_property_name(Node::Expr(member)) {
@@ -193,7 +202,7 @@ impl Rule for NoAccessStateInSetstate {
         sort::sort_unstable(&mut first_arguments.ends);
         let pragmas = Pragmas::new(file);
         let (mut events, mut vars) = (Vec::new(), Vec::new());
-        let mut around = AncestorMemo::default();
+        let mut around = AncestorMemo::new();
         // The scopes say what is in a component: they are asked last.
         for node in states {
             match around.find_with(Node::Expr(node), estree_parent, Around::of) {
@@ -252,8 +261,8 @@ fn follow_methods<'a>(
         |it: &Expr<'a>| it.callee().is_some_and(|callee| callee.tag() == ExprTag::Ident) || is_in_set_state(it);
     events.extend(cx.file().exprs_of_kind(ExprTag::Call).filter(is_asking).map(Event::Call));
     sort::sort_by_key(&mut events, |it| (it.span().start, Reverse(it.span().end)));
-    let mut methods: FxHashMap<Option<&'a [u8]>, Vec<Span>> = FxHashMap::default();
-    let mut method_around = AncestorMemo::default();
+    let mut methods: FxHashMap<Option<&'a [u8]>, Vec<Span>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+    let mut method_around = AncestorMemo::new();
     for event in events {
         let node = match event {
             Event::State(node, method_name) => {
@@ -303,7 +312,7 @@ fn follow_vars<'a>(
             }
         }
     };
-    let mut known = AncestorMemo::default();
+    let mut known = AncestorMemo::new();
     for node in cx.file().exprs_of_kind(ExprTag::Ident) {
         if first_arguments.around(node.span().start) == 0 {
             continue;

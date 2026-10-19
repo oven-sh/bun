@@ -133,7 +133,7 @@ fn dispatch_frame(
             }
             let mut i: usize = 0;
             while i + wire::SettingsPayloadUnit::BYTE_SIZE <= payload.len() {
-                let mut unit = wire::SettingsPayloadUnit::default();
+                let mut unit = wire::SettingsPayloadUnit::new();
                 wire::SettingsPayloadUnit::from::<true>(
                     &mut unit,
                     &payload[i..i + wire::SettingsPayloadUnit::BYTE_SIZE],

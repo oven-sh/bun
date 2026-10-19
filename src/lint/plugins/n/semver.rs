@@ -18,7 +18,7 @@ fn version_of([major, minor, patch]: [u8; 3]) -> Version {
         major: u64::from(major),
         minor: u64::from(minor),
         patch: u64::from(patch),
-        ..Default::default()
+        ..Version::new()
     }
 }
 
@@ -29,13 +29,13 @@ fn gte(version: Version) -> bun_semver::Range {
             op: Op::Gte,
             version,
         },
-        ..Default::default()
+        ..bun_semver::Range::new()
     }
 }
 
 /// `a || b || ..`
 fn any_of(ranges: impl Iterator<Item = bun_semver::Range>) -> Group {
-    let mut group = Group::default();
+    let mut group = Group::new();
     for range in ranges {
         handle_oom(group.or_range(&range));
     }

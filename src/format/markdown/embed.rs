@@ -254,7 +254,7 @@ pub(crate) fn write_template<'a>(
     }
 
     let options = f.options().clone();
-    let mut tree = super::ast::Tree::default();
+    let mut tree = super::ast::Tree::new();
     let mode = super::Mode {
         is_in_template: true,
         is_mdx: false,

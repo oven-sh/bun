@@ -1137,7 +1137,7 @@ fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
                     stmts: leak_stmts(outlined.body),
                 },
                 flags: fn_flags,
-                ..G::Fn::default()
+                ..G::Fn::new()
             },
         },
         Loc::EMPTY,
@@ -1320,7 +1320,7 @@ pub fn maybe_compile_pending(
             stmts: StoreSlice::new_mut(body),
         },
         flags: pending.flags,
-        ..G::Fn::default()
+        ..G::Fn::new()
     };
     let cf = maybe_compile_node(
         state,

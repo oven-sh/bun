@@ -146,7 +146,9 @@ impl<'s> Program<'s> {
     /// have created, the copy of the lowest task is kept. Each task gets its `Link`, through which
     /// `publish` rewrites its keys and values.
     pub fn link(&self, finished: &mut [Finished<'s>], in_parallel: InParallel<'_>) -> LinkCounts {
-        let own = finished.iter_mut().map(|it| std::mem::take(&mut it.own));
+        let own = finished
+            .iter_mut()
+            .map(|it| std::mem::replace(&mut it.own, OwnRecords::new()));
         // For a union whose member order depended on task-local ids. Few steps have one.
         let checker = std::cell::OnceCell::new();
         let (links, counts) =

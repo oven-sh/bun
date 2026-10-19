@@ -12,12 +12,21 @@ pub struct NoReturnWrap {
 const RESOLVE: Message = Message::new("", "Avoid wrapping return values in Promise.resolve");
 const REJECT: Message = Message::new("", "Expected throw instead of Promise.reject");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The function that something is in.
     functions: AncestorMemo<'a, Func<'a>>,
     /// Whether something is in a call of a method of a promise.
     promises: AncestorMemo<'a, ()>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            functions: AncestorMemo::new(),
+            promises: AncestorMemo::new(),
+        }
+    }
 }
 
 impl Rule for NoReturnWrap {
@@ -34,7 +43,7 @@ impl Rule for NoReturnWrap {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         (file.mentions("Promise")
             && (file.mentions("resolve") || !self.allow_reject && file.mentions("reject")))
-        .then(State::default)
+        .then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

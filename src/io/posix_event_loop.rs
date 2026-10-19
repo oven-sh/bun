@@ -275,9 +275,8 @@ unsafe extern "Rust" {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum AllocatorType {
-    #[default]
     Js,
     Mini,
     /// The loop `Bun.spawnSync` waits on. Only what that call makes for its own child lives there.

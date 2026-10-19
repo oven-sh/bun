@@ -121,8 +121,15 @@ impl Drop for Instance {
 }
 
 /// Where an [`Instance`] that nobody is using waits, or null.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Place(AtomicPtr<c_void>);
+
+impl Place {
+    #[inline]
+    fn new() -> Self {
+        Self(core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()))
+    }
+}
 
 impl Place {
     /// Whichever thread put it there: nothing in the C++ object belongs to the thread that made it or ran it last.
@@ -153,9 +160,16 @@ impl Drop for Place {
 }
 
 /// Cache lines of its own: threads write to their places all the time.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 #[repr(align(128))]
 struct Apart(Place);
+
+impl Apart {
+    #[inline]
+    fn new() -> Self {
+        Self(Place::new())
+    }
+}
 
 /// How often a thread looks for an [`Instance`] that has come back, if it cannot make one: for four seconds, as long as Yarr itself tries.
 const PATIENCE: u32 = 4096;
@@ -231,7 +245,7 @@ impl Compiled {
     fn take_of_more(&self) -> Option<Taken<'_>> {
         let more = self.more.get_or_init(|| {
             let cores = std::thread::available_parallelism().map_or(0, usize::from);
-            core::iter::repeat_with(Apart::default)
+            core::iter::repeat_with(Apart::new)
                 .take(cores.max(64).next_power_of_two())
                 .collect()
         });

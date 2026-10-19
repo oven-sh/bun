@@ -303,7 +303,11 @@ impl Virtual {
             links: BTreeMap::new(),
             is_case_sensitive,
             mounted,
-            disk: bun_sema_driver::host::Disk::with_already_read(1, Default::default(), b"/"),
+            disk: bun_sema_driver::host::Disk::with_already_read(
+                1,
+                bun_sema::util::FxHashMap::with_hasher(bun_sema::util::FxBuild),
+                b"/",
+            ),
         }
     }
 
@@ -1283,7 +1287,7 @@ fn errors_of_both_programs(pre: Report, mut post: Report) -> Report {
         code: -1i32 as u32,
         category: Category::Error,
         text: text.into_bytes(),
-        args: Box::default(),
+        args: Box::new([]),
         message_chain: Vec::new(),
         source: Vec::new(),
         source_line: 0,
@@ -1390,8 +1394,11 @@ impl Setup<'_> {
                     .map(|rest| format!("{dir}/{}", text(rest))),
             ),
             None => {
-                let disk =
-                    bun_sema_driver::host::Disk::with_already_read(1, Default::default(), b"/");
+                let disk = bun_sema_driver::host::Disk::with_already_read(
+                    1,
+                    bun_sema::util::FxHashMap::with_hasher(bun_sema::util::FxBuild),
+                    b"/",
+                );
                 files_under(&disk, dir, &mut found);
             }
         }
@@ -1808,7 +1815,7 @@ fn run_one(
                 // The tests run side by side, each on one thread. The plan of several threads is the
                 // one with steps, publishing and validation.
                 tasks_on_one_thread: true,
-                ..Default::default()
+                ..bun_sema_driver::PlanOptions::new()
             },
             retains_everything: false,
             script_kinds: &[],
@@ -1822,7 +1829,7 @@ fn run_one(
             after_file,
         };
         let began = std::time::Instant::now();
-        bun_sema_driver::check_project(&host, project, &request, Report::default(), began)
+        bun_sema_driver::check_project(&host, project, &request, Report::new(), began)
     };
     // `compileFilesWithHost`: `preProgram` is only checked. `postProgram` emits first, and the types
     // and the symbols are read from it.

@@ -22,11 +22,22 @@ use bun_sema::atom::Atom;
 use bun_sema::hir::*;
 
 /// A finished node that could be the preceding or the following node of a comment.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Candidate {
     node: NodeOrName,
     start: u32,
     end: u32,
+}
+
+impl Candidate {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            node: NodeOrName::None,
+            start: 0,
+            end: 0,
+        }
+    }
 }
 
 impl Candidate {
@@ -86,10 +97,19 @@ struct PendingComments {
 
 /// The index of the last element of a growing list that meets a condition. Each call only looks at the elements that were added
 /// since the previous call, so that a long run of elements that do not meet the condition is not walked again and again.
-#[derive(Default)]
 struct LastMatch {
     checked_len: usize,
     index: Option<usize>,
+}
+
+impl LastMatch {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            checked_len: 0,
+            index: None,
+        }
+    }
 }
 
 impl LastMatch {
@@ -107,12 +127,11 @@ impl LastMatch {
     #[inline(always)]
     fn truncate(&mut self, len: usize) {
         if self.checked_len > len {
-            *self = LastMatch::default();
+            *self = LastMatch::new();
         }
     }
 }
 
-#[derive(Default)]
 pub(crate) struct CommentTracker {
     /// Sorted by id, which is source order.
     pending: Vec<PendingComments>,
@@ -130,6 +149,22 @@ pub(crate) struct CommentTracker {
     /// A hole in an array literal and the `{}` of `<a>{}</a>` are expressions without a width.
     last_expr_with_width: LastMatch,
     last_non_empty_stmt: LastMatch,
+}
+
+impl CommentTracker {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            pending: Vec::new(),
+            set_aside: Vec::new(),
+            tracked_count: 0,
+            undo_log: Vec::new(),
+            last_name: (0, 0),
+            last_finished: (NodeOrName::None, 0),
+            last_expr_with_width: LastMatch::new(),
+            last_non_empty_stmt: LastMatch::new(),
+        }
+    }
 }
 
 impl CommentTracker {
@@ -220,7 +255,7 @@ impl CommentTracker {
                 true => candidate.node,
                 false => NodeOrName::None,
             };
-            let mut following = Candidate::default();
+            let mut following = Candidate::new();
             for comment in pending.drain(index..after_node).rev() {
                 undo_log.push(comment);
                 if !comment.following.is_none() {
@@ -252,11 +287,22 @@ impl CommentTracker {
 }
 
 /// The part of a [`Checkpoint`] that belongs to the [`CommentTracker`].
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct CommentCheckpoint {
     tracked_count: u32,
     undo_log_len: u32,
     last_name: (u32, u32),
+}
+
+impl CommentCheckpoint {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            tracked_count: 0,
+            undo_log_len: 0,
+            last_name: (0, 0),
+        }
+    }
 }
 
 /// An element of one of the parser's temporary stacks. List elements such as properties and parameters stay on a stack until
@@ -540,7 +586,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn before_node_grows(&mut self) {
         if COMMENTS && self.options.attach_comments {
-            self.add_new_pending_comments(Candidate::default());
+            self.add_new_pending_comments(Candidate::new());
         }
     }
 
@@ -571,8 +617,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 first_id: first_new as u32,
                 count: (self.lx.comments.len() - first_new) as u32,
                 start: first.pos,
-                preceding: Candidate::default(),
-                following: Candidate::default(),
+                preceding: Candidate::new(),
+                following: Candidate::new(),
             });
             self.comments.tracked_count = self.lx.comments.len() as u32;
             return;
@@ -601,7 +647,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             };
         }
         let best_node_before = |comment_start: u32| {
-            let mut best = Candidate::default();
+            let mut best = Candidate::new();
             let consider = |best: &mut Candidate, node: NodeOrName, start: u32, end: u32| {
                 let candidate = Candidate { node, start, end };
                 if start < end
@@ -665,7 +711,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 count: count as u32,
                 start: first.pos,
                 preceding: best_node_before(first.pos),
-                following: Candidate::default(),
+                following: Candidate::new(),
             });
             new_comments = new_comments.get(count..).unwrap_or_default();
             first_id += count as u32;
@@ -750,7 +796,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !COMMENTS || !self.options.attach_comments {
             return;
         }
-        self.add_new_pending_comments(Candidate::default());
+        self.add_new_pending_comments(Candidate::new());
         let mut following = NodeOrName::None;
         for comment in self.comments.pending.drain(..).rev() {
             if !comment.following.is_none() {
@@ -770,7 +816,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn comment_checkpoint(&self) -> CommentCheckpoint {
         if !COMMENTS {
-            return CommentCheckpoint::default();
+            return CommentCheckpoint::new();
         }
         CommentCheckpoint {
             tracked_count: self.comments.tracked_count,

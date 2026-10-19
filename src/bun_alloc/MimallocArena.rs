@@ -88,13 +88,6 @@ unsafe impl Send for MimallocArena {}
 // Cross-thread `deallocate` is permitted (mimalloc `mi_free` is thread-safe).
 unsafe impl Sync for MimallocArena {}
 
-impl Default for MimallocArena {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl MimallocArena {
     #[inline]
     pub fn new() -> Self {

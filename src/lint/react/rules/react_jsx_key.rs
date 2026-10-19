@@ -23,13 +23,25 @@ pub struct JsxKey {
 }
 
 /// The options.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Checks {
     key_must_before_spread: bool,
     warn_on_duplicates: bool,
     fragment_shorthand: bool,
     /// `checkArraysOutsideJSX`, which only `bun lint` has. `false`: an array literal counts only where React renders it as a list.
     arrays_outside_jsx: bool,
+}
+
+impl Checks {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            key_must_before_spread: false,
+            warn_on_duplicates: false,
+            fragment_shorthand: false,
+            arrays_outside_jsx: false,
+        }
+    }
 }
 
 const MISSING_ITER_KEY: Message = Message::new("missingIterKey", "Missing \"key\" prop for element in iterator");
@@ -77,7 +89,6 @@ const BLOCK: u8 = 3;
 const FUNCTION: u8 = 4;
 const ARGUMENT: u8 = 5;
 
-#[derive(Default)]
 pub struct State<'a> {
     in_array_or_iter: AncestorWalk<'a, u8, Option<InsideArrayOrIterator>>,
     within_children_to_array: AncestorMemo<'a, ()>,
@@ -90,6 +101,23 @@ pub struct State<'a> {
     /// The file mentions `key`, `toArray`.
     mentions_key: bool,
     mentions_to_array: bool,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            in_array_or_iter: AncestorWalk::new(),
+            within_children_to_array: AncestorMemo::new(),
+            imports: core::cell::OnceCell::new(),
+            children_to_array_changes: core::cell::OnceCell::new(),
+            pragma: core::cell::OnceCell::new(),
+            checks: Checks::new(),
+            is_oxlint: false,
+            mentions_key: false,
+            mentions_to_array: false,
+        }
+    }
 }
 
 /// What is asked about the imports of a file.
@@ -135,7 +163,7 @@ impl Rule for JsxKey {
             is_oxlint,
             mentions_key: file.mentions("key"),
             mentions_to_array: file.mentions("toArray"),
-            ..State::default()
+            ..State::new()
         })
     }
 
@@ -419,7 +447,7 @@ fn is_to_array(call: Call) -> bool {
 
 impl<'a> Imports<'a> {
     fn new(file: &'a File<'a>) -> Self {
-        let mut from_react = FxHashSet::default();
+        let mut from_react = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for statement in file.stmts_of_kind(StmtTag::Import) {
             if let StmtKind::Import(import) = statement.kind()
                 && import.spec().is("react")
@@ -566,7 +594,7 @@ fn check_duplicate_keys<'a>(elements: &mut dyn Iterator<Item = Expr<'a>>, cx: &C
     if keys.len() < 2 {
         return;
     }
-    let (mut seen_keys, mut repeated) = (FxHashSet::default(), FxHashSet::default());
+    let (mut seen_keys, mut repeated) = (FxHashSet::with_hasher(rustc_hash::FxBuildHasher), FxHashSet::with_hasher(rustc_hash::FxBuildHasher));
     for (key_value, attribute) in &keys {
         if seen_keys.insert(&**key_value) {
             continue;

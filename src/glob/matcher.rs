@@ -83,8 +83,8 @@ impl State {
         State {
             path_index,
             glob_index,
-            wildcard: Wildcard::default(),
-            globstar: Wildcard::default(),
+            wildcard: Wildcard::new(),
+            globstar: Wildcard::new(),
             seen,
             no_class_from: u32::MAX,
             not_group_at: u32::MAX,
@@ -131,11 +131,21 @@ impl State {
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Wildcard {
     // Using u32 rather than usize for these results in 10% faster performance.
     glob_index: u32,
     path_index: u32,
+}
+
+impl Wildcard {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            glob_index: 0,
+            path_index: 0,
+        }
+    }
 }
 
 /// This function checks returns a boolean value if the pathname `path` matches
@@ -196,10 +206,9 @@ pub fn match_on<const WINDOWS: bool>(glob: &[u8], path: &[u8]) -> MatchResult {
 }
 
 /// How wildcards treat path segments that start with `.`.
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Dots {
     /// Like any other segment.
-    #[default]
     Match,
     /// Wildcards don't match the segments `.` and `..`. This is `dot: true` in minimatch and picomatch.
     SkipTraversal,
@@ -1691,8 +1700,8 @@ fn run<const STRICT: bool>(
                                     };
                                     state.glob_index += 3;
                                     state.path_index += start as u32;
-                                    state.wildcard = Wildcard::default();
-                                    state.globstar = Wildcard::default();
+                                    state.wildcard = Wildcard::new();
+                                    state.globstar = Wildcard::new();
                                     continue 'main_loop;
                                 }
                             }
@@ -3361,7 +3370,7 @@ fn take_plain_choice(
 }
 
 /// A group that [`take_fixed_choice`] is in.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Level {
     /// Where its alternatives can start, and where the ones that have been read can end: one bit for each number of bytes.
     starts: u64,
@@ -3371,6 +3380,19 @@ struct Level {
     /// The least and the most that the alternatives which have been read take.
     widths: (u32, u32),
     has_separator: bool,
+}
+
+impl Level {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            starts: 0,
+            ends: 0,
+            before: (0, 0),
+            widths: (0, 0),
+            has_separator: false,
+        }
+    }
 }
 
 /// [`take_plain_choice`] for a group whose alternatives have other tokens that take one character, or groups of such alternatives.
@@ -3391,12 +3413,12 @@ fn take_fixed_choice(
     } = brackets_at(glob, open as usize)?;
     let is_separator = |it: u8| it == b'/' || is_windows && it == b'\\';
     let rest = &path[path_index as usize..];
-    let mut levels = [Level::default(); 4];
+    let mut levels = [Level::new(); 4];
     let mut depth = 0;
     levels[0] = Level {
         starts: 1,
         widths: (u32::MAX, 0),
-        ..Level::default()
+        ..Level::new()
     };
     // `?(a)` has an empty alternative.
     if glob[open as usize] == b'?' {
@@ -3485,7 +3507,7 @@ fn take_fixed_choice(
                 starts: ends,
                 before: widths,
                 widths: (u32::MAX, 0),
-                ..Level::default()
+                ..Level::new()
             };
             widths = (0, 0);
         } else {
@@ -4162,7 +4184,7 @@ fn skip_globstars(glob: &[u8], glob_index: &mut u32) {
 
 /// Sets of nodes of a [`Program`], for 64 nodes each. "Goes on" means: the rest of the pattern, from that node, has to match the
 /// rest of the path. A node that takes something goes on with the next node.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Masks {
     /// Takes the byte of the pattern that it stands for.
     bytes: u64,
@@ -4202,6 +4224,34 @@ struct Masks {
     sequences_before: u32,
     repeats_before: u32,
     listed_before: u32,
+}
+
+impl Masks {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            bytes: 0,
+            escapes: 0,
+            separators: 0,
+            digits: 0,
+            anys: 0,
+            classes: 0,
+            loops: 0,
+            skips: 0,
+            trailing_skips: 0,
+            not_at_end: 0,
+            wildcards: 0,
+            unsettled: 0,
+            nots: 0,
+            sequences: 0,
+            repeats: 0,
+            listed: 0,
+            nots_before: 0,
+            sequences_before: 0,
+            repeats_before: 0,
+            listed_before: 0,
+        }
+    }
 }
 
 /// Some nodes among the 64 nodes number `word`.
@@ -4353,7 +4403,7 @@ impl Reader<'_> {
                 sequences_before: it.sequences_before + it.sequences.count_ones(),
                 repeats_before: it.repeats_before + it.repeats.count_ones(),
                 listed_before: it.listed_before + it.listed.count_ones(),
-                ..Masks::default()
+                ..Masks::new()
             };
             self.word += 1;
         }
@@ -4457,7 +4507,7 @@ impl Program {
         self.implied.extend_from_slice(&[0; 64]);
         let mut to = Reader {
             program: self,
-            masks: Masks::default(),
+            masks: Masks::new(),
             word: 0,
             next_implies: Nodes { word: 0, mask: 0 },
             listed: 0,

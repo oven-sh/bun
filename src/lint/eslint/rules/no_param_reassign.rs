@@ -139,7 +139,7 @@ impl Rule for NoParamReassign {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(AncestorMemo::default())
+        Some(AncestorMemo::new())
     }
 
     fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {

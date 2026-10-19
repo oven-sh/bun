@@ -24,8 +24,8 @@ pub struct CompileTarget {
     pub(crate) libc: Libc,
 }
 
-impl Default for CompileTarget {
-    fn default() -> Self {
+impl CompileTarget {
+    pub fn new() -> Self {
         Self {
             os: Environment::OS,
             arch: Environment::ARCH,
@@ -34,8 +34,8 @@ impl Default for CompileTarget {
                 major: Environment::VERSION.major as _, // @truncate
                 minor: Environment::VERSION.minor as _, // @truncate
                 patch: Environment::VERSION.patch as _, // @truncate
-                tag: Default::default(),
-                _tag_padding: Default::default(),
+                tag: bun_semver::version::Tag::new(),
+                _tag_padding: [0; 0],
             },
             libc: if Environment::IS_MUSL {
                 Libc::Musl
@@ -108,12 +108,12 @@ impl CompileTarget {
     }
 
     pub fn is_default(&self) -> bool {
-        self.eql(&CompileTarget::default())
+        self.eql(&CompileTarget::new())
     }
 
     /// Same os, arch and libc as this bun (a different bun version for this platform still counts).
     pub fn is_host_platform(&self) -> bool {
-        let host = CompileTarget::default();
+        let host = CompileTarget::new();
         self.os == host.os && self.arch == host.arch && self.libc == host.libc
     }
 
@@ -245,7 +245,7 @@ impl CompileTarget {
     }
 
     pub fn try_from(input_: &[u8]) -> Result<CompileTarget, ParseError> {
-        let mut this = CompileTarget::default();
+        let mut this = CompileTarget::new();
         let input = strings::trim(input_, b" \t\r");
         if input.is_empty() {
             return Ok(this);
@@ -297,8 +297,8 @@ impl CompileTarget {
                         major: version.version.major.unwrap(),
                         minor: version.version.minor.unwrap(),
                         patch: version.version.patch.unwrap(),
-                        tag: Default::default(),
-                        _tag_padding: Default::default(),
+                        tag: bun_semver::version::Tag::new(),
+                        _tag_padding: [0; 0],
                     };
                     _found_version = true;
                     continue;

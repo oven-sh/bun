@@ -37,7 +37,7 @@ const REPLACEMENTS: [&str; 2] = ["object", "unknown"];
 
 /// `type Name<Params> = ty` in place of the interface.
 fn replace_interface<'a>(fixer: Fixer<'a>, interface: Interface<'a>, ty: &[u8]) -> Fix {
-    let type_params = interface.type_params().angle_brackets_span().unwrap_or_default();
+    let type_params = interface.type_params().angle_brackets_span().unwrap_or_else(Span::init);
     let text = [
         &b"type "[..],
         fixer.file().slice(interface.name().span()),

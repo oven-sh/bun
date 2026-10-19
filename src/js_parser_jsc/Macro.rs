@@ -138,7 +138,7 @@ impl MacroContext {
             if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
                 import_record_path,
                 bun_ast::Target::Bun,
-                Default::default(),
+                bun_jsc::module_loader::HardcodedModule::Cfg::new(),
             ) {
                 break 'brk replacement.path.as_bytes();
             }
@@ -191,7 +191,10 @@ impl MacroContext {
             &mut specifier_buf_len,
         );
 
-        let macro_entry = self.macros.get_or_put(hash).expect("unreachable");
+        let macro_entry = self
+            .macros
+            .get_or_put(hash, Macro::new)
+            .expect("unreachable");
         if !macro_entry.found_existing {
             *macro_entry.value_ptr = match Macro::init(
                 input_specifier,
@@ -394,8 +397,8 @@ pub struct Macro {
     pub(crate) disabled: bool,
 }
 
-impl Default for Macro {
-    fn default() -> Self {
+impl Macro {
+    pub fn new() -> Self {
         Self::disabled_sentinel()
     }
 }
@@ -440,14 +443,14 @@ impl Macro {
             transform_options.packages = None;
 
             // JSC needs to be initialized if building from CLI
-            jsc::initialize(jsc::InitializeOptions::default());
+            jsc::initialize(jsc::InitializeOptions::new());
 
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
                 transform_options,
                 log: Some(NonNull::from(&mut *log)),
                 env_loader: NonNull::new(env),
                 is_main_thread: false,
-                ..Default::default()
+                ..VirtualMachineInitOptions::new()
             })?;
             (_vm, true)
         };
@@ -576,7 +579,7 @@ impl<'a> Run<'a> {
         let result = vm.run_with_api_lock(|| {
             macro_callback
                 .call(global, JSValue::ZERO, args)
-                .unwrap_or_else(|_| global.try_take_exception().unwrap_or_default())
+                .unwrap_or_else(|_| global.try_take_exception().unwrap_or_else(JSValue::new))
         });
 
         let mut runner = Run {
@@ -586,7 +589,7 @@ impl<'a> Run<'a> {
             bump,
             log,
             source,
-            visited: VisitMap::default(),
+            visited: VisitMap::init(),
             is_top_level: false,
         };
 
@@ -706,7 +709,10 @@ impl<'a> Run<'a> {
             T::Array => {
                 self.is_top_level = false;
 
-                let _entry = self.visited.get_or_put(value).expect("unreachable");
+                let _entry = self
+                    .visited
+                    .get_or_put(value, || Expr::EMPTY)
+                    .expect("unreachable");
                 if _entry.found_existing {
                     return Ok(*_entry.value_ptr);
                 }
@@ -720,7 +726,7 @@ impl<'a> Run<'a> {
                     E::Array {
                         items: bun_alloc::AstAlloc::vec(),
                         was_originally_macro: true,
-                        ..Default::default()
+                        ..E::Array::new()
                     },
                     self.caller.loc,
                 );
@@ -747,7 +753,10 @@ impl<'a> Run<'a> {
             // TODO: optimize this
             T::Object => {
                 self.is_top_level = false;
-                let _entry = self.visited.get_or_put(value).expect("unreachable");
+                let _entry = self
+                    .visited
+                    .get_or_put(value, || Expr::EMPTY)
+                    .expect("unreachable");
                 if _entry.found_existing {
                     return Ok(*_entry.value_ptr);
                 }
@@ -757,7 +766,7 @@ impl<'a> Run<'a> {
                     E::Object {
                         properties: bun_alloc::AstAlloc::vec(),
                         was_originally_macro: true,
-                        ..Default::default()
+                        ..E::Object::new()
                     },
                     self.caller.loc,
                 );
@@ -794,7 +803,7 @@ impl<'a> Run<'a> {
                             flags: E::own_key_property_flags(&key),
                             key: Some(key),
                             value: Some(object_value),
-                            ..Default::default()
+                            ..G::Property::new()
                         },
                     );
                 }
@@ -1127,7 +1136,7 @@ fn expr_from_blob(
         return Ok(Expr::init(
             E::String {
                 data,
-                ..Default::default()
+                ..E::String::new()
             },
             loc,
         ));
@@ -1151,7 +1160,7 @@ fn expr_from_blob(
     Ok(Expr::init(
         E::String {
             data,
-            ..Default::default()
+            ..E::String::new()
         },
         loc,
     ))

@@ -51,7 +51,7 @@ pub type NodeId = u32;
 pub const NONE: NodeId = u32::MAX;
 
 /// A string: a range of the text, or of [`Tree::strings`].
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Str {
     start: u32,
     /// The highest bit says that it is a range of `Tree::strings`, the one below that there is no
@@ -164,7 +164,6 @@ impl Node {
     }
 }
 
-#[derive(Default)]
 pub struct Tree {
     pub(crate) nodes: Vec<Node>,
     pub(crate) strings: Vec<u8>,
@@ -173,6 +172,19 @@ pub struct Tree {
     pub(crate) tokens: Vec<super::preprocess::Token>,
     /// Where each line of the text starts.
     pub(crate) line_starts: Vec<u32>,
+}
+
+impl Tree {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            strings: Vec::new(),
+            aligns: Vec::new(),
+            tokens: Vec::new(),
+            line_starts: Vec::new(),
+        }
+    }
 }
 
 impl Tree {

@@ -95,7 +95,7 @@ pub struct ModuleRecord<'a> {
 pub fn module_request(declaration: Import<'_>) -> NameSpan<'_> {
     NameSpan {
         name: declaration.spec(),
-        span: declaration.spec_span().unwrap_or_default(),
+        span: declaration.spec_span().unwrap_or_else(Span::init),
     }
 }
 
@@ -104,7 +104,8 @@ pub fn requested_modules<'a>(
     file: &'a File<'a>,
 ) -> Vec<(Name<'a>, SmallVec<[RequestedModule; 1]>)> {
     let mut all: Vec<(Name<'a>, SmallVec<[RequestedModule; 1]>)> = Vec::new();
-    let mut positions: FxHashMap<Name<'a>, usize> = FxHashMap::default();
+    let mut positions: FxHashMap<Name<'a>, usize> =
+        FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for stmt in file.body() {
         let (name, is_type) = match stmt.kind() {
             StmtKind::Import(import) => (Some(import.spec()), import.is_type_only()),
@@ -173,10 +174,11 @@ impl<'a> ModuleRecord<'a> {
             local_export_entries: Vec::new(),
             indirect_export_entries: Vec::new(),
             star_export_entries: Vec::new(),
-            exported_bindings: FxHashMap::default(),
+            exported_bindings: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         };
         // The first import of each name.
-        let mut imported: FxHashMap<Name<'a>, ImportEntry<'a>> = FxHashMap::default();
+        let mut imported: FxHashMap<Name<'a>, ImportEntry<'a>> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for entry in record.import_entries.iter().rev() {
             imported.insert(entry.local_name().name(), *entry);
         }
@@ -486,8 +488,14 @@ impl<'m> Loaded<'m> {
 
 /// `exported_bindings_from_star_export()` of the modules that were asked about: the names that each gets by `export * from`, directly
 /// or not.
-#[derive(Default)]
 pub struct StarExports<'m>(FxHashMap<ModuleId, FxHashSet<&'m [u8]>>);
+
+impl<'m> StarExports<'m> {
+    #[inline]
+    pub fn new() -> Self {
+        Self(FxHashMap::with_hasher(rustc_hash::FxBuildHasher))
+    }
+}
 
 impl<'m> StarExports<'m> {
     pub fn contains(&mut self, module: Loaded<'m>, name: &[u8]) -> bool {
@@ -495,8 +503,10 @@ impl<'m> StarExports<'m> {
             return false;
         }
         let names = self.0.entry(module.module).or_insert_with(|| {
-            let (mut names, mut visited) =
-                (FxHashSet::default(), FxHashSet::from_iter([module.module]));
+            let (mut names, mut visited) = (
+                FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+                FxHashSet::from_iter([module.module]),
+            );
             let mut pending = vec![module];
             while let Some(at) = pending.pop() {
                 for remote in at

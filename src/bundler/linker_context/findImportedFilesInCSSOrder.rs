@@ -396,9 +396,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             match &entry.kind {
                 CssImportOrderKind::SourceIndex(idx) => {
                     let idx = *idx;
-                    let gop = handle_oom(source_index_duplicates.get_or_put(idx.get()));
+                    let gop = handle_oom(source_index_duplicates.get_or_put(idx.get(), Vec::new));
                     if !gop.found_existing {
-                        *gop.value_ptr = Vec::<u32>::default();
+                        *gop.value_ptr = Vec::<u32>::new();
                     }
                     for &j in gop.value_ptr.slice() {
                         // SAFETY: j < order.len; see note above.
@@ -424,9 +424,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     gop.value_ptr.push(i);
                 }
                 CssImportOrderKind::ExternalPath(p) => {
-                    let gop = handle_oom(external_path_duplicates.get_or_put(p.text));
+                    let gop = handle_oom(external_path_duplicates.get_or_put(p.text, Vec::new));
                     if !gop.found_existing {
-                        *gop.value_ptr = Vec::<u32>::default();
+                        *gop.value_ptr = Vec::<u32>::new();
                     }
                     for &j in gop.value_ptr.slice() {
                         // SAFETY: j < order.len; see note above.
@@ -957,7 +957,7 @@ fn debug_css_order_impl(
     // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as
     // `bun_js_printer::MangledProps`; no cast needed.
     let local_names: &LocalsResultsMap = &this.mangled_props;
-    let symbols = bun_ast::symbol::Map::init_list(Default::default());
+    let symbols = bun_ast::symbol::Map::init_list(Vec::new());
 
     for (i, entry) in order.slice().iter().enumerate() {
         let conditions_str: std::borrow::Cow<'_, str> = if entry.conditions.len() > 0 {

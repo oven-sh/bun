@@ -10,7 +10,6 @@ pub struct NoEval {
 const UNEXPECTED: Message = Message::new("unexpected", "`eval` can be harmful.");
 
 /// What is known about the `this` of a file.
-#[derive(Default)]
 pub struct Known<'a> {
     /// Whether a `this` at a node, in a function or in a field of a class, is the global object.
     at: AncestorMemo<'a, bool>,
@@ -19,6 +18,18 @@ pub struct Known<'a> {
     bindings: ast_utils::ThisBindingMemo<'a>,
     /// Whether oxc takes the file for a module.
     is_module: Option<bool>,
+}
+
+impl<'a> Known<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            at: AncestorMemo::new(),
+            in_function: IdMap::init(),
+            bindings: ast_utils::ThisBindingMemo::new(),
+            is_module: None,
+        }
+    }
 }
 
 /// `e` is a member access of the property `name`.
@@ -176,7 +187,7 @@ impl Rule for NoEval {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("eval").then(Known::default)
+        file.mentions("eval").then(Known::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

@@ -163,7 +163,7 @@ impl Rule for NoRestrictedPaths {
             from: strings_of(it.get(b"from")),
             except: strings_of(it.get(b"except")),
             message: match Object::of(Some(it)).str("message") {
-                None | Some("") => Box::default(),
+                None | Some("") => String::new().into_boxed_str(),
                 Some(message) => [" ", message].concat().into(),
             },
         };

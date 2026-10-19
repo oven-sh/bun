@@ -67,7 +67,7 @@ impl RuleSetting {
         };
         Some(RuleSetting {
             id: id.into(),
-            plugin: Box::default(),
+            plugin: Box::new([]),
             written_for: None,
             severity: severity_of(value.first()?)?,
             options: value[1..].to_vec(),

@@ -433,7 +433,7 @@ pub mod ast {
         /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
         ///
         /// Multiple redirects are not supported yet.
-        #[derive(Clone, Copy, PartialEq, Eq, Default)]
+        #[derive(Clone, Copy, PartialEq, Eq)]
         pub struct RedirectFlags: u8 {
             const STDIN         = 1 << 0;
             const STDOUT        = 1 << 1;
@@ -1370,7 +1370,7 @@ impl<'bump> Parser<'bump> {
             };
             r
         } else {
-            ast::RedirectFlags::default()
+            ast::RedirectFlags::empty()
         };
         let redirect_file: Option<ast::Redirect<'bump>> = 'redirect_file: {
             if has_redirect {
@@ -1896,7 +1896,6 @@ fn join_error_msgs<'bump>(
     buf
 }
 
-#[derive(Default)]
 struct ParsedRedirect<'bump> {
     flags: ast::RedirectFlags,
     redirect: Option<ast::Redirect<'bump>>,
@@ -3048,7 +3047,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     // TODO Arbitrary file descriptor redirect
     fn eat_redirect(&mut self, first: InputChar) -> Option<ast::RedirectFlags> {
-        let mut flags = ast::RedirectFlags::default();
+        let mut flags = ast::RedirectFlags::empty();
         match first.char {
             c if c == u32::from(b'0') => flags |= ast::RedirectFlags::STDIN,
             c if c == u32::from(b'1') => flags |= ast::RedirectFlags::STDOUT,
@@ -3566,7 +3565,7 @@ impl<'a> SrcUnicode<'a> {
     }
 
     fn init(bytes: &'a [u8]) -> Self {
-        let mut cursor = CodepointCursor::default();
+        let mut cursor = CodepointCursor::new();
         Self::advance(bytes, &mut cursor);
         let mut next_cursor = cursor;
         Self::advance(bytes, &mut next_cursor);
@@ -3792,7 +3791,7 @@ pub(crate) fn is_valid_var_name(var_name: &[u8]) -> bool {
         return false;
     }
     let iter = CodepointIterator::init(var_name);
-    let mut cursor = CodepointCursor::default();
+    let mut cursor = CodepointCursor::new();
 
     if !iter.next(&mut cursor) {
         return false;
@@ -3856,7 +3855,7 @@ pub(crate) fn has_eq_sign(str: &[u8]) -> Option<u32> {
 
     // TODO actually i think that this can also use the simd stuff
     let iter = CodepointIterator::init(str);
-    let mut cursor = CodepointCursor::default();
+    let mut cursor = CodepointCursor::new();
     while iter.next(&mut cursor) {
         if cursor.c as u32 == u32::from(b'=') {
             return Some(cursor.i);
@@ -4161,8 +4160,8 @@ pub struct SmolListInlined<T, const INLINED_MAX: usize> {
     pub(crate) len: u32,
 }
 
-impl<T, const INLINED_MAX: usize> Default for SmolListInlined<T, INLINED_MAX> {
-    fn default() -> Self {
+impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
+    pub fn new() -> Self {
         Self {
             // `MaybeUninit::uninit()` is `const fn`; an inline-const array
             // repeat avoids the `assume_init`-on-array-of-MU trick.
@@ -4200,11 +4199,11 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
 
 impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     pub(crate) fn zeroes() -> Self {
-        SmolList::Inlined(SmolListInlined::default())
+        SmolList::Inlined(SmolListInlined::new())
     }
 
     pub(crate) fn init_with(val: T) -> Self {
-        let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
+        let mut inlined = SmolListInlined::<T, INLINED_MAX>::new();
         inlined.items[0].write(val);
         inlined.len = 1;
         SmolList::Inlined(inlined)
@@ -4216,7 +4215,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     {
         debug_assert!(vals.len() <= u32::MAX as usize);
         if vals.len() <= INLINED_MAX {
-            let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
+            let mut inlined = SmolListInlined::<T, INLINED_MAX>::new();
             for (i, v) in vals.iter().enumerate() {
                 inlined.items[i].write(v.clone());
             }

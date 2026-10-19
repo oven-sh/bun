@@ -66,7 +66,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             level,
             ParenExprOpts {
                 is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
-                ..Default::default()
+                ..ParenExprOpts::new()
             },
         )
     }
@@ -263,7 +263,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
             let args = p.arena.alloc_slice_fill_iter([Arg {
                 binding,
-                ..Default::default()
+                ..Arg::new()
             }]);
 
             let _ = p
@@ -272,7 +272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // pop_scope runs before `?` propagates
             let mut fn_or_arrow_data = FnOrArrowDataParse {
                 needs_async_loc: loc,
-                ..Default::default()
+                ..FnOrArrowDataParse::new()
             };
             let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
             p.pop_scope();
@@ -356,7 +356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Unary {
                 op: OpCode::UnVoid,
                 value,
-                flags: UnaryFlags::default(),
+                flags: UnaryFlags::empty(),
             },
             loc,
         ))
@@ -371,7 +371,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::SyntaxError);
         }
 
-        let mut flags = UnaryFlags::default();
+        let mut flags = UnaryFlags::empty();
         if matches!(value.data, ExprData::EIdentifier(_)) {
             flags |= UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER;
         }
@@ -411,7 +411,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let mut flags = UnaryFlags::default();
+        let mut flags = UnaryFlags::empty();
         if matches!(
             value.data,
             ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_)
@@ -441,7 +441,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Unary {
                 op: OpCode::UnPos,
                 value,
-                flags: UnaryFlags::default(),
+                flags: UnaryFlags::empty(),
             },
             loc,
         ))
@@ -460,7 +460,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Unary {
                 op: OpCode::UnNeg,
                 value,
-                flags: UnaryFlags::default(),
+                flags: UnaryFlags::empty(),
             },
             loc,
         ))
@@ -479,7 +479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Unary {
                 op: OpCode::UnCpl,
                 value,
-                flags: UnaryFlags::default(),
+                flags: UnaryFlags::empty(),
             },
             loc,
         ))
@@ -498,7 +498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Unary {
                 op: OpCode::UnNot,
                 value,
-                flags: UnaryFlags::default(),
+                flags: UnaryFlags::empty(),
             },
             loc,
         ))
@@ -512,7 +512,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Unary {
                 op: OpCode::UnPreDec,
                 value,
-                flags: UnaryFlags::default(),
+                flags: UnaryFlags::empty(),
             },
             loc,
         ))
@@ -526,7 +526,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Unary {
                 op: OpCode::UnPreInc,
                 value,
-                flags: UnaryFlags::default(),
+                flags: UnaryFlags::empty(),
             },
             loc,
         ))
@@ -585,7 +585,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             &ParseClassOptions {
                 allow_ts_decorators: Self::IS_TYPESCRIPT_ENABLED
                     || p.options.features.standard_decorators,
-                ..Default::default()
+                ..ParseClassOptions::new()
             },
         )?;
         p.pop_scope();
@@ -656,7 +656,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             &ParseClassOptions {
                 ts_decorators: ts_decorators_slice,
                 allow_ts_decorators: true,
-                ..Default::default()
+                ..ParseClassOptions::new()
             },
         )?;
         p.pop_scope();
@@ -709,7 +709,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 target,
                 args,
                 close_parens_loc,
-                ..Default::default()
+                ..E::New::new()
             },
             loc,
         ))
@@ -720,8 +720,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
         let mut items: smallvec::SmallVec<[Expr; 8]> = smallvec::SmallVec::new();
-        let mut self_errors = DeferredErrors::default();
-        let mut comma_after_spread = bun_ast::Loc::default();
+        let mut self_errors = DeferredErrors::new();
+        let mut comma_after_spread = bun_ast::Loc::new();
 
         // Allow "in" inside arrays
         let old_allow_in = p.allow_in;
@@ -795,7 +795,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 comma_after_spread,
                 is_single_line,
                 close_bracket_loc,
-                ..Default::default()
+                ..E::Array::new()
             },
             loc,
         ))
@@ -807,8 +807,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut is_single_line = !p.lexer.has_newline_before;
         let mut properties: bun_alloc::ArenaVec<'_, G::Property> =
             bun_alloc::ArenaVec::new_in(p.arena);
-        let mut self_errors = DeferredErrors::default();
-        let mut comma_after_spread: bun_ast::Loc = bun_ast::Loc::default();
+        let mut self_errors = DeferredErrors::new();
+        let mut comma_after_spread: bun_ast::Loc = bun_ast::Loc::new();
 
         // Allow "in" inside object literals
         let old_allow_in = p.allow_in;
@@ -822,7 +822,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 properties.push(G::Property {
                     kind: PropertyKind::Spread,
                     value: Some(value),
-                    ..Default::default()
+                    ..G::Property::new()
                 });
 
                 // Commas are not allowed here when destructuring
@@ -831,7 +831,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             } else {
                 // This property may turn out to be a type in TypeScript, which should be ignored
-                let mut property_opts = PropertyOpts::default();
+                let mut property_opts = PropertyOpts::new();
                 if let Some(prop) = p.parse_property(
                     PropertyKind::Normal,
                     &mut property_opts,
@@ -883,7 +883,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 comma_after_spread,
                 is_single_line,
                 close_brace_loc,
-                ..Default::default()
+                ..E::Object::new()
             },
             loc,
         ))
@@ -938,7 +938,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     level,
                     ParenExprOpts {
                         force_arrow_fn: true,
-                        ..Default::default()
+                        ..ParenExprOpts::new()
                     },
                 );
             }
@@ -972,7 +972,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ParenExprOpts {
                             force_arrow_fn: result
                                 == SkipTypeParameterResult::DefinitelyTypeParameters,
-                            ..Default::default()
+                            ..ParenExprOpts::new()
                         },
                     );
                 }

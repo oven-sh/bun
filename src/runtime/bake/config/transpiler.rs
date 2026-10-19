@@ -29,7 +29,7 @@ impl Framework {
             log,
             // `TransformOptions::default()`: every `Option` is `None`, every
             // slice empty, every scalar zero/false.
-            bun_schema::api::TransformOptions::default(),
+            bun_schema::api::TransformOptions::new(),
             None,
         )?);
 
@@ -39,9 +39,9 @@ impl Framework {
         };
         out.options.public_path = match renderer {
             Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
-            Graph::Server | Graph::Ssr => Box::default(),
+            Graph::Server | Graph::Ssr => Box::new([]),
         };
-        out.options.entry_points = Box::default();
+        out.options.entry_points = Box::new([]);
         out.options.log = log;
         out.options.output_format = mode.output_format();
         out.options.out_extensions = bun_collections::StringHashMap::new();
@@ -50,7 +50,7 @@ impl Framework {
 
         // force disable filesystem output, even though bundle_v2
         // is special cased to return before that code is reached.
-        out.options.output_dir = Box::default();
+        out.options.output_dir = Box::new([]);
 
         // framework configuration
         out.options.react_fast_refresh = mode == Mode::Development

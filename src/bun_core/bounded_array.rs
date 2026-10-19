@@ -51,8 +51,8 @@ pub struct BoundedArrayAligned<T, const BUFFER_CAPACITY: usize> {
 // See the `len` field note above; collapsed to `usize`.
 type Length = usize;
 
-impl<T, const BUFFER_CAPACITY: usize> Default for BoundedArrayAligned<T, BUFFER_CAPACITY> {
-    fn default() -> Self {
+impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
+    pub fn new() -> Self {
         Self {
             buffer: [const { MaybeUninit::uninit() }; BUFFER_CAPACITY],
             len: 0,
@@ -73,7 +73,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         if len > BUFFER_CAPACITY {
             return Err(OverflowError::Overflow);
         }
-        let mut s = Self::default();
+        let mut s = Self::new();
         s.len = Length::try_from(len).expect("int cast");
         Ok(s)
     }

@@ -24,8 +24,8 @@ pub(crate) enum ScriptState {
     Normal { idx: usize },
 }
 
-impl Default for ScriptState {
-    fn default() -> Self {
+impl ScriptState {
+    pub(crate) fn new() -> Self {
         ScriptState::Normal { idx: 0 }
     }
 }
@@ -47,7 +47,7 @@ impl Script {
             // borrowck across the `&Interpreter` reborrow.
             node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Script) },
             io,
-            state: ScriptState::default(),
+            state: ScriptState::new(),
         }));
         log!("Script {} init (parent={})", id, parent);
         id

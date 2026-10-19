@@ -157,7 +157,7 @@ impl SourceLocation {
             file: std::borrow::Cow::Borrowed(file),
             line: i32::try_from(self.line).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
-            ..Default::default()
+            ..bun_ast::Location::new()
         }
     }
 
@@ -624,7 +624,7 @@ pub trait QualifiedRuleParser {
     ) -> CssResult<Self::QualifiedRule>;
 }
 
-#[derive(Default, Clone, Copy, crate::DeepClone)]
+#[derive(Clone, Copy, crate::DeepClone)]
 pub struct DefaultAtRule;
 
 /// Same as `AtRuleParser` but modified to provide parser options.
@@ -778,11 +778,11 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             },
             // NOTE: `ImportRecord` deliberately has no `Default` (range/path/kind
             // are required); spell out the remaining defaults explicitly.
-            tag: Default::default(),
+            tag: bun_ast::ImportRecordTag::None,
             loader: None,
-            source_index: Default::default(),
+            source_index: SrcIndex::INVALID,
             original_path: b"",
-            flags: Default::default(),
+            flags: bun_ast::ImportRecordFlags::empty(),
         });
     }
 
@@ -795,7 +795,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         for layer in layers.slice() {
             if this.enclosing_layer.v.len() > 0 {
                 let mut cloned = LayerName {
-                    v: SmallList::default(),
+                    v: SmallList::new(),
                 };
                 // `SmallList` has no public `reserve`, so two `append_slice`
                 // calls each grow once.
@@ -957,7 +957,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
             at_rule_parser,
             rules,
             composes,
-            composes_refs: SmallList::default(),
+            composes_refs: SmallList::new(),
             local_properties,
         }
     }
@@ -1151,7 +1151,10 @@ mod rule_parsers {
         }
         fn record_composes(&mut self, composes: &mut Composes) {
             for ref_ in self.composes_refs.slice() {
-                let entry = self.composes.entry(*ref_).or_default();
+                let entry = self
+                    .composes
+                    .entry(*ref_)
+                    .or_insert_with(ComposesEntry::new);
                 entry.composes.push(composes.deep_clone(self.arena));
             }
         }
@@ -1293,7 +1296,7 @@ mod rule_parsers {
                         supports,
                         layer: layer.map(|v| css_rules::import::Layer { v }),
                         loc,
-                        ..Default::default()
+                        ..ImportRule::new()
                     };
                     AtRuleParserT::on_import_rule(
                         this.at_rule_parser,
@@ -1402,7 +1405,7 @@ mod rule_parsers {
             is_style_rule: bool,
         ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<T::AtRule>)> {
             // TODO: think about memory management in error cases
-            let mut rules = CssRuleList::<T::AtRule>::default();
+            let mut rules = CssRuleList::<T::AtRule>::new();
             let composes_state = if self.is_in_style_rule
                 && matches!(self.composes_state, ComposesState::Allow(_))
             {
@@ -1504,8 +1507,8 @@ mod rule_parsers {
                             bun_alloc::ArenaPtr::new(input.arena()),
                         )),
                         declarations,
-                        vendor_prefix: VendorPrefix::default(),
-                        rules: CssRuleList::default(),
+                        vendor_prefix: VendorPrefix::empty(),
+                        rules: CssRuleList::new(),
                         loc,
                     }),
                 );
@@ -1584,7 +1587,7 @@ mod rule_parsers {
                                         e.kind,
                                         errors_::ParserErrorKind::basic(BasicParseErrorKind::end_of_input)
                                     ) {
-                                        SmallList::default()
+                                        SmallList::new()
                                     } else {
                                         return Err(e);
                                     }
@@ -1865,7 +1868,7 @@ mod rule_parsers {
                             style: StyleRule {
                                 selectors,
                                 declarations,
-                                vendor_prefix: VendorPrefix::default(),
+                                vendor_prefix: VendorPrefix::empty(),
                                 rules,
                                 loc,
                             },
@@ -2057,7 +2060,7 @@ mod rule_parsers {
                                     },
                                     len: i32::try_from(len).expect("int cast"),
                                 },
-                                ..Default::default()
+                                ..PropertyUsage::new()
                             });
                     entry.fill(&usage, custom_properties_slice);
                 }
@@ -2065,7 +2068,7 @@ mod rule_parsers {
 
             this.rules.v.push(CssRule::Style(StyleRule {
                 selectors,
-                vendor_prefix: VendorPrefix::default(),
+                vendor_prefix: VendorPrefix::empty(),
                 declarations,
                 rules,
                 loc,
@@ -2122,13 +2125,22 @@ pub struct ToCssResult {
     pub code: Vec<u8>,
 }
 
-#[derive(Default)]
 pub struct MinifyOptions {
     /// Targets to compile the CSS for.
     pub targets: targets::Targets,
     /// A list of known unused symbols, including CSS class names, ids, and
     /// `@keyframe` names. The declarations of these will be removed.
     pub unused_symbols: ArrayHashMap<Box<[u8]>, ()>,
+}
+
+impl MinifyOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            targets: targets::Targets::new(),
+            unused_symbols: ArrayHashMap::new(),
+        }
+    }
 }
 
 pub type BundlerStyleSheet = StyleSheet<BundlerAtRule>;
@@ -2139,7 +2151,6 @@ pub type BundlerSupportsRule = css_rules::supports::SupportsRule<BundlerAtRule>;
 pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
 
 /// Additional data we don't want stored on the stylesheet
-#[derive(Default)]
 pub struct StylesheetExtra {
     /// Used when css modules is enabled
     pub symbols: SymbolList,
@@ -2153,11 +2164,18 @@ pub struct ParserExtra {
 
 /// Reference to a symbol in a stylesheet.
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct CssRef(pub u32);
 
+impl CssRef {
+    #[inline]
+    pub fn init() -> Self {
+        Self(0)
+    }
+}
+
 bitflags::bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct CssRefTag: u8 {
         const CLASS         = 0b00_0001;
         const ID            = 0b00_0010;
@@ -2194,10 +2212,19 @@ impl CssRef {
     }
 }
 
-#[derive(Default)]
 pub struct LocalEntry {
     pub ref_: CssRef,
     pub loc: bun_ast::Loc,
+}
+
+impl LocalEntry {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            ref_: CssRef::init(),
+            loc: bun_ast::Loc::new(),
+        }
+    }
 }
 
 /// If css modules is enabled, this maps locally scoped class names to their
@@ -2212,9 +2239,17 @@ pub type LocalsResultsMap = ast::MangledProps;
 pub type LocalPropertyUsage = ArrayHashMap<bun_ast::Ref, PropertyUsage>;
 pub type ComposesMap = ArrayHashMap<bun_ast::Ref, ComposesEntry>;
 
-#[derive(Default)]
 pub struct ComposesEntry {
     pub composes: Vec<Composes>,
+}
+
+impl ComposesEntry {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            composes: Vec::new(),
+        }
+    }
 }
 
 pub struct PropertyUsage {
@@ -2223,12 +2258,12 @@ pub struct PropertyUsage {
     pub range: bun_ast::Range,
 }
 
-impl Default for PropertyUsage {
-    fn default() -> Self {
+impl PropertyUsage {
+    pub fn new() -> Self {
         Self {
             bitset: PropertyBitset::init_empty(),
-            custom_properties: Box::default(),
-            range: bun_ast::Range::default(),
+            custom_properties: Box::new([]),
+            range: bun_ast::Range::new(),
         }
     }
 }
@@ -2321,17 +2356,17 @@ pub struct StyleSheet<AtRule> {
 impl<AtRule> StyleSheet<AtRule> {
     pub fn empty() -> Self {
         Self {
-            rules: CssRuleList::default(),
+            rules: CssRuleList::new(),
             sources: Vec::new(),
             source_map_urls: Vec::new(),
             license_comments: Vec::new(),
             filename: b"",
             css_modules: None,
-            flags: ParserFlags::default(),
+            flags: ParserFlags::empty(),
             layer_names: Vec::new(),
-            local_scope: LocalScope::default(),
-            local_properties: LocalPropertyUsage::default(),
-            composes: ComposesMap::default(),
+            local_scope: LocalScope::init(),
+            local_properties: LocalPropertyUsage::new(),
+            composes: ComposesMap::new(),
         }
     }
 }
@@ -2369,7 +2404,7 @@ mod stylesheet_impl {
                     .targets
                     .should_compile_same(compat::Feature::CustomMediaQueries)
             {
-                let mut custom_media = ArrayHashMap::default();
+                let mut custom_media = ArrayHashMap::new();
                 for rule in self.rules.v.iter() {
                     if let CssRule::CustomMedia(cm) = rule {
                         let key: Box<[u8]> = cm.name.v().into();
@@ -2402,7 +2437,7 @@ mod stylesheet_impl {
                 debug_assert!(minify_ctx.err.is_some());
                 let e = minify_ctx.err.take().unwrap_or_else(|| MinifyError {
                     kind: MinifyErrorKind::unknown,
-                    loc: crate::Location::default(),
+                    loc: crate::Location::new(),
                 });
                 let filename: &[u8] = self
                     .sources
@@ -2469,7 +2504,7 @@ mod stylesheet_impl {
             }
 
             if let Some(config) = &self.css_modules {
-                let mut references = CssModuleReferences::default();
+                let mut references = CssModuleReferences::new();
                 let references_ptr: *mut CssModuleReferences<'_> = &raw mut references;
                 // SAFETY: `'bump`-erasure — `Printer<'a>` stores `CssModule<'a>` which
                 // holds `&'a mut CssModuleReferences<'a>`; tying the borrow to `'a`
@@ -2539,7 +2574,7 @@ mod stylesheet_impl {
                 import_records: core::ptr::null_mut(),
                 layer_names: Vec::new(),
                 anon_layer_count: 0,
-                enclosing_layer: LayerName::default(),
+                enclosing_layer: LayerName::new(),
             };
             StyleSheet::<DefaultAtRule>::parse_with(
                 arena,
@@ -2567,13 +2602,13 @@ mod stylesheet_impl {
             // returned `StyleSheet`.
             // TODO(refactor): re-thread the lifetime through `CssRuleList<'bump, R>`
             // and drop the `'static` bound on `arena`.
-            let mut composes = ComposesMap::default();
+            let mut composes = ComposesMap::new();
             let mut parser_extra = ParserExtra {
-                local_scope: LocalScope::default(),
-                symbols: SymbolList::default(),
+                local_scope: LocalScope::init(),
+                symbols: Vec::new(),
                 source_index,
             };
-            let mut local_properties = LocalPropertyUsage::default();
+            let mut local_properties = LocalPropertyUsage::new();
 
             let mut input = ParserInput::new(code, arena);
             let mut parser = Parser::new(
@@ -2606,7 +2641,7 @@ mod stylesheet_impl {
             }
             parser.reset(&state);
 
-            let mut rules = CssRuleList::<AtRule>::default();
+            let mut rules = CssRuleList::<AtRule>::new();
             let mut rule_parser = TopLevelRuleParser::new(
                 arena,
                 &options,
@@ -2670,8 +2705,8 @@ mod stylesheet_impl {
             // `StyleAttribute` vs `Parser<'a>` here; `arena: &'static Bump`
             // matches the crate-wide erasure (see `parse_with`).
             let mut parser_extra = ParserExtra {
-                local_scope: LocalScope::default(),
-                symbols: SymbolList::default(),
+                local_scope: LocalScope::init(),
+                symbols: Vec::new(),
                 source_index,
             };
             let mut input = ParserInput::new(code, arena);
@@ -2707,7 +2742,7 @@ mod stylesheet_impl {
             //   "Source maps are not supported for style attributes"
             // );
 
-            let symbols = bun_ast::symbol::Map::init_list(Default::default());
+            let symbols = bun_ast::symbol::Map::init_list(Vec::new());
             let mut dest: Vec<u8> = Vec::new();
             let mut printer = Printer::new(
                 arena,
@@ -2749,7 +2784,7 @@ mod stylesheet_impl {
                 import_records: import_records_ptr.as_ptr(),
                 layer_names: Vec::new(),
                 anon_layer_count: 0,
-                enclosing_layer: LayerName::default(),
+                enclosing_layer: LayerName::new(),
             };
             Self::parse_with(
                 arena,
@@ -2951,7 +2986,7 @@ impl<'a> ParserOptions<'a> {
             source_index: 0,
             error_recovery: false,
             logger: log.map(core::ptr::NonNull::from),
-            flags: ParserFlags::default(),
+            flags: ParserFlags::empty(),
             _lt: core::marker::PhantomData,
         }
     }
@@ -2959,7 +2994,7 @@ impl<'a> ParserOptions<'a> {
 
 bitflags::bitflags! {
     /// Parser feature flags to enable.
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct ParserFlags: u8 {
         /// Whether to enable the [CSS nesting](https://www.w3.org/TR/css-nesting-1/) draft syntax.
         const NESTING = 0b001;
@@ -2979,7 +3014,7 @@ pub enum ParseUntilErrorBehavior {
 // ───────────────────────────── Parser ─────────────────────────────
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct ParserOpts: u8 {
         const CSS_MODULES = 0b1;
     }
@@ -3034,7 +3069,9 @@ impl<'a> Parser<'a> {
 
         // Borrowed probe so a repeated class/id name doesn't box a fresh key
         // per selector; `StringArrayHashMap::get_or_put` boxes on miss only.
-        let gop = local_scope.get_or_put(name).expect("unreachable");
+        let gop = local_scope
+            .get_or_put(name, LocalEntry::new)
+            .expect("unreachable");
         let entry = gop.value_ptr;
         if gop.found_existing {
             let prev_tag = entry.ref_.tag();
@@ -3047,7 +3084,7 @@ impl<'a> Parser<'a> {
             symbols.push(bun_ast::Symbol {
                 kind: bun_ast::SymbolKind::LocalCss,
                 original_name: name_static.into(),
-                ..Default::default()
+                ..bun_ast::Symbol::new()
             });
             *entry = LocalEntry {
                 ref_: CssRef::new(inner_index, tag),
@@ -3084,11 +3121,11 @@ impl<'a> Parser<'a> {
                     // TODO: technically this is not correct because the url could be escaped
                     len: i32::try_from(url.len()).expect("int cast"),
                 },
-                tag: Default::default(),
+                tag: bun_ast::ImportRecordTag::None,
                 loader: None,
-                source_index: Default::default(),
+                source_index: SrcIndex::INVALID,
                 original_path: b"",
-                flags: Default::default(),
+                flags: bun_ast::ImportRecordFlags::empty(),
             });
             Ok(idx)
         } else {
@@ -3740,7 +3777,7 @@ impl<'a> Parser<'a> {
 bitflags::bitflags! {
     /// A set of characters, to be used with the `Parser::parse_until*`
     /// methods. The union of two sets can be obtained with `|`.
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct Delimiters: u8 {
         /// `{` opening curly bracket
         const CURLY_BRACKET        = 0b0000_0001;
@@ -4021,7 +4058,7 @@ pub mod nth {
     fn parse_number_saturate(string: &[u8]) -> Maybe<i32, ()> {
         let arena = Bump::new();
         let mut input = ParserInput::new(string, &arena);
-        let mut parser = Parser::new(&mut input, None, ParserOpts::default(), None);
+        let mut parser = Parser::new(&mut input, None, ParserOpts::empty(), None);
         let tok = match parser.next_including_whitespace_and_comments() {
             Ok(v) => v,
             Err(_) => return Err(()),
@@ -5940,12 +5977,12 @@ pub mod parse_utility {
         parse_one: fn(&mut Parser) -> CssResult<T>,
     ) -> CssResult<T> {
         // I hope this is okay
-        let mut import_records = Vec::<ImportRecord>::default();
+        let mut import_records = Vec::<ImportRecord>::new();
         let mut i = ParserInput::new(input, arena);
         let mut parser = Parser::new(
             &mut i,
             Some(core::ptr::NonNull::from(&mut import_records)),
-            ParserOpts::default(),
+            ParserOpts::empty(),
             None,
         );
         let result = parse_one(&mut parser)?;

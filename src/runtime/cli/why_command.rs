@@ -289,17 +289,20 @@ Explain why a package is installed
 
         let mut target_versions: Vec<VersionInfo> = Vec::new();
 
-        let mut all_dependents: HashMap<PackageID, Vec<DependentInfo>> = HashMap::default();
+        let mut all_dependents: HashMap<PackageID, Vec<DependentInfo>> = HashMap::init();
 
         // A peer edge leads to the copy each placement of its owner resolves, whichever one the resolver bound it to.
-        let mut peer_targets: HashMap<DependencyID, Vec<PackageID>> = HashMap::default();
+        let mut peer_targets: HashMap<DependencyID, Vec<PackageID>> = HashMap::init();
         let served_peers = if linker == NodeLinker::Isolated {
             bun_install::isolated_install::served_peers(&*pm, lockfile)?
         } else {
             bun_install::lockfile::tree::served_peers(lockfile)
         };
         for (dep_id, pkg_id) in served_peers {
-            peer_targets.entry(dep_id).or_default().push(pkg_id);
+            peer_targets
+                .entry(dep_id)
+                .or_insert_with(Vec::new)
+                .push(pkg_id);
         }
 
         let glob = GlobPattern::init(package_pattern);
@@ -367,7 +370,7 @@ Explain why a package is installed
                     let target_name = pkg_names[target_id as usize].slice(string_bytes);
                     all_dependents
                         .entry(target_id)
-                        .or_default()
+                        .or_insert_with(Vec::new)
                         .push(DependentInfo {
                             name: Box::<[u8]>::from(dependent_name),
                             version: dep_pkg_version.clone(),
@@ -445,8 +448,8 @@ Explain why a package is installed
                     let mut ctx_data = TreeContext {
                         all_dependents: &all_dependents,
                         max_depth,
-                        path_tracker: HashMap::default(),
-                        expanded: HashMap::default(),
+                        path_tracker: HashMap::init(),
+                        expanded: HashMap::init(),
                     };
                     ctx_data.path_tracker.insert(target_version.pkg_id, false);
 

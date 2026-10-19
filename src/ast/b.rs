@@ -41,8 +41,8 @@ pub enum B {
     BMissing(Missing),
 }
 
-impl Default for B {
-    fn default() -> Self {
+impl B {
+    pub fn new() -> Self {
         B::BMissing(Missing {})
     }
 }
@@ -87,7 +87,7 @@ pub struct Array {
 // No `impl Default` on purpose: only `has_spread`/`is_single_line` have
 // sensible defaults; `items` does not, so every constructor must supply it.
 
-#[derive(Default, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct Missing {}
 
 // Ergonomic slice accessors so P-helpers can `for item in arr.items()`.

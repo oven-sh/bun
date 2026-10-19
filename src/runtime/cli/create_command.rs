@@ -150,13 +150,13 @@ impl CreateOptions {
             clap::param!("--open                         On finish, start bun & open in-browser"),
             clap::param!("<POS>...                       "),
         ];
-        let mut diag = clap::Diagnostic::default();
+        let mut diag = clap::Diagnostic::new();
 
         let args = match clap::parse::<clap::Help>(
             PARAMS,
             clap::ParseOptions {
                 diagnostic: Some(&mut diag),
-                ..Default::default()
+                ..clap::ParseOptions::new()
             },
         ) {
             Ok(a) => a,
@@ -343,9 +343,9 @@ impl CreateCommand {
     ) -> crate::Result<()> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: false,
-            ..Default::default()
+            ..Global::AllocatorConfiguration::new()
         });
-        HTTP::http_thread::init(&Default::default());
+        HTTP::http_thread::init(&bun_http::http_thread::InitOpts::new());
 
         let mut create_options = CreateOptions::parse()?;
         let positionals = &create_options.positionals;
@@ -377,7 +377,7 @@ impl CreateCommand {
 
         let mut progress = Progress {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
-            ..Default::default()
+            ..Progress::new()
         };
         let verb = if example_tag == ExampleTag::JslikeFile {
             "Analyzing"
@@ -398,7 +398,7 @@ impl CreateCommand {
 
         let _refresh_on_exit = RefreshOnDrop(&raw mut progress);
 
-        let mut package_json_contents: MutableString = MutableString::default();
+        let mut package_json_contents: MutableString = MutableString::new();
         let mut package_json_file: Option<bun_sys::File> = None;
 
         // What the destination already holds is the user's, not the template's.
@@ -532,7 +532,7 @@ impl CreateCommand {
 
                 let mut archive_context = archiver::Context {
                     pluckers,
-                    overwrite_list: bun_collections::StringArrayHashMap::<()>::default(),
+                    overwrite_list: bun_collections::StringArrayHashMap::<()>::init(),
                 };
 
                 {
@@ -583,7 +583,7 @@ impl CreateCommand {
                     &mut (),
                     archiver::ExtractOptions {
                         depth_to_skip: 1,
-                        ..Default::default()
+                        ..archiver::ExtractOptions::new()
                     },
                 )?;
 
@@ -1022,7 +1022,7 @@ impl CreateCommand {
                     JSPrinter::PrintJsonOptions {
                         mangled_props: None,
                         indent: indentation,
-                        ..Default::default()
+                        ..JSPrinter::PrintJsonOptions::new()
                     },
                 ) {
                     bun_core::pretty_errorln!("package.json failed to write due to error {}", err,);
@@ -1113,9 +1113,9 @@ impl CreateCommand {
                     loop_: bun_event_loop::EventLoopHandle::init_mini(
                         bun_event_loop::MiniEventLoop::init_global(None, None),
                     ),
-                    ..Default::default()
+                    ..spawn_sync::WindowsOptions::new()
                 },
-                ..Default::default()
+                ..spawn_sync::Options::new()
             });
 
             Output::print_errorln("");
@@ -1228,9 +1228,9 @@ impl CreateCommand {
                         loop_: bun_event_loop::EventLoopHandle::init_mini(
                             bun_event_loop::MiniEventLoop::init_global(None, None),
                         ),
-                        ..Default::default()
+                        ..spawn_sync::WindowsOptions::new()
                     },
-                    ..Default::default()
+                    ..spawn_sync::Options::new()
                 })?;
             }
         }
@@ -1420,7 +1420,10 @@ fn file_copier_copy(
                             "failed to copy file {}",
                             format_args!(
                                 "{}",
-                                bun_core::fmt::fmt_os_path(entry.path, Default::default())
+                                bun_core::fmt::fmt_os_path(
+                                    entry.path,
+                                    bun_core::fmt::PathFormatOptions::new()
+                                )
                             ),
                         );
                         node_.end();
@@ -1492,7 +1495,10 @@ fn exit_copy_failed(
     Output::err(
         err,
         "failed to copy file {}",
-        format_args!("{}", bun_core::fmt::fmt_os_path(path, Default::default())),
+        format_args!(
+            "{}",
+            bun_core::fmt::fmt_os_path(path, bun_core::fmt::PathFormatOptions::new())
+        ),
     );
     Global::crash();
 }
@@ -1687,7 +1693,8 @@ impl Example {
             &url_buf[..written]
         });
 
-        let mut header_entries: bun_http::headers::EntryList = Default::default();
+        let mut header_entries: bun_http::headers::EntryList =
+            bun_collections::MultiArrayList::new();
         let mut headers_buf: &[u8] = b"";
 
         if let Some(access_token) = env_loader
@@ -1818,7 +1825,7 @@ impl Example {
                 HTTP::Method::GET,
                 // SAFETY: single-threaded CLI access to static URL_ (set just above)
                 unsafe { (*URL_.get()).clone() }.unwrap(),
-                Default::default(),
+                bun_collections::MultiArrayList::new(),
                 b"",
                 b"",
                 http_proxy,
@@ -1899,7 +1906,7 @@ impl Example {
         *async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             parsed_tarball_url,
-            Default::default(),
+            bun_collections::MultiArrayList::new(),
             b"",
             b"",
             http_proxy,
@@ -1944,7 +1951,7 @@ impl Example {
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             url,
-            Default::default(),
+            bun_collections::MultiArrayList::new(),
             b"",
             b"",
             http_proxy,
@@ -2052,7 +2059,7 @@ impl CreateListExamplesCommand {
 
         let mut progress = Progress {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
-            ..Default::default()
+            ..Progress::new()
         };
         // A raw pointer, so that `progress.refresh()` can borrow `progress` again.
         let node: *mut ProgressNode = progress.start(b"Fetching manifest", 0);
@@ -2123,9 +2130,9 @@ impl GitHandler {
                     #[cfg(windows)]
                     windows: spawn_sync::WindowsOptions {
                         loop_: win_loop,
-                        ..Default::default()
+                        ..spawn_sync::WindowsOptions::new()
                     },
-                    ..Default::default()
+                    ..spawn_sync::Options::new()
                 })??)
             };
 

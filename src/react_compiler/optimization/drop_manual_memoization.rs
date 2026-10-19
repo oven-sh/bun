@@ -104,9 +104,9 @@ pub(crate) fn drop_manual_memoization(
         return Ok(());
     }
     let mut sidemap = IdentifierSidemap {
-        functions: IdBitSet::default(),
+        functions: IdBitSet::init(),
         manual_memos: IdMap::new(),
-        react: IdBitSet::default(),
+        react: IdBitSet::init(),
         maybe_deps: IdMap::new(),
         maybe_deps_lists: IdMap::new(),
         optionals,
@@ -670,7 +670,7 @@ fn extract_manual_memoization_args(
 fn find_optional_places(func: &HirFunction) -> Result<IdBitSet<IdentifierId>, CompilerDiagnostic> {
     use crate::hir::Terminal;
 
-    let mut optionals = IdBitSet::default();
+    let mut optionals = IdBitSet::init();
     for block in func.body.blocks.values() {
         if let Terminal::Optional {
             optional: true,

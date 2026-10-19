@@ -59,9 +59,15 @@ pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 /// Minimal length-prefixed binary codec. Frames build into a reusable buffer
 /// then flush in a single write so partial reads on the other side never see a
 /// torn header.
-#[derive(Default)]
 pub(crate) struct Frame {
     buf: Vec<u8>,
+}
+
+impl Frame {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { buf: Vec::new() }
+    }
 }
 
 impl Frame {

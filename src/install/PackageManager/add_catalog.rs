@@ -34,7 +34,6 @@ type ExprDisabler = bun_ast::expr::Disabler;
 
 type RootEntry = (Box<[u8]>, Box<[u8]>);
 
-#[derive(Default)]
 pub(crate) struct State {
     enabled: bool,
     auto_use: Vec<PackageNameHash>,
@@ -42,6 +41,19 @@ pub(crate) struct State {
     /// (name, text) of every entry the flag's catalog had before this command; filled by prepare() in --catalog mode.
     root_entries: Vec<RootEntry>,
     members: Vec<WorkspaceTarget>,
+}
+
+impl State {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            enabled: false,
+            auto_use: Vec::new(),
+            adds: Vec::new(),
+            root_entries: Vec::new(),
+            members: Vec::new(),
+        }
+    }
 }
 
 struct Add {
@@ -212,7 +224,7 @@ fn object_property(
         }
     }
     let arena = create?;
-    let created = Expr::allocate(arena, E::Object::default(), Loc::EMPTY);
+    let created = Expr::allocate(arena, E::Object::new(), Loc::EMPTY);
     match existing {
         Some(q) => obj.properties.slice_mut()[q.i as usize].value = Some(created),
         None => obj.append_property(estring(arena, key), created),

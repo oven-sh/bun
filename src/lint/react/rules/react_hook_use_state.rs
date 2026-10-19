@@ -24,7 +24,6 @@ const FOLLOW_NAMING_CONVENTION: Message =
     Message::new("", "useState call does not follow the [thing, setThing] naming convention");
 
 /// What `Components.detect` collects of the `import .. from "react"`. It has what is above the node that it is at.
-#[derive(Default)]
 pub struct ReactImports<'a> {
     /// Where they start, in the order of the source.
     starts: SmallVec<[u32; 2]>,
@@ -37,6 +36,21 @@ pub struct ReactImports<'a> {
     /// `reactHookImportNames`, by the local name.
     hooks: FxHashMap<Name<'a>, ImportSpec<'a>>,
     first_references: FxHashMap<Asked<'a>, Option<Reference<'a>>>,
+}
+
+impl<'a> ReactImports<'a> {
+    #[inline]
+    pub fn init() -> Self {
+        Self {
+            starts: SmallVec::new(),
+            default: None,
+            named: None,
+            use_state: None,
+            use_memo: None,
+            hooks: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            first_references: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 /// The first reference in `scope` to `react`, or without it to a hook, with that many imports above.
@@ -71,7 +85,7 @@ impl Rule for HookUseState {
         }
         // oxlint goes by the names, whatever is imported.
         if file.language().is_oxlint {
-            return Some(ReactImports::default());
+            return Some(ReactImports::init());
         }
         let imports = ReactImports::new(file);
         (!imports.starts.is_empty()).then_some(imports)
@@ -158,7 +172,7 @@ impl<'a> ReactImports<'a> {
         });
         let mut react: SmallVec<[Import<'a>; 2]> = react.collect();
         utils::sort::sort_unstable_by_key(&mut react, |it| it.span().start);
-        let mut all = ReactImports::default();
+        let mut all = ReactImports::init();
         for import in react {
             all.starts.push(import.span().start);
             all.default = all.default.or_else(|| import.default());

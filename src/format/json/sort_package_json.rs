@@ -28,7 +28,7 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SortPackageJson {
     /// oxfmt's `sortScripts`: also sort `scripts`, `betterScripts` and `wireit` by name.
     pub sort_scripts: bool,
@@ -36,13 +36,33 @@ pub struct SortPackageJson {
     pub plugin: Option<Arc<Plugin>>,
 }
 
+impl SortPackageJson {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            sort_scripts: false,
+            plugin: None,
+        }
+    }
+}
+
 /// The settings of `prettier-plugin-packagejson`.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Plugin {
     /// `packageSortOrder`: these keys come before all others.
     pub first: Vec<Vec<u8>>,
     /// The working directory has `yarn.lock`, `.yarn/`, `.yarnrc.yml`, `pnpm-lock.yaml` or `pnpm-workspace.yaml`.
     pub has_files_of_yarn_or_pnpm: bool,
+}
+
+impl Plugin {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            first: Vec::new(),
+            has_files_of_yarn_or_pnpm: false,
+        }
+    }
 }
 
 /// What to do with the value of a key.
@@ -219,7 +239,7 @@ fn sort_keys(members: &mut [Member<'_>], first: &[&str], context: &Context<'_>) 
 
 /// `context.first`, then the known keys, then the others by name, with those that start with `_` last.
 fn sort_fields(members: &mut [Member<'_>], context: &Context<'_>) {
-    let mut ranks: FxHashMap<&[u8], usize> = FxHashMap::default();
+    let mut ranks: FxHashMap<&[u8], usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     let first = context.first.iter().map(|it| &it[..]);
     let known = context.fields.iter().map(|it| it.0.as_bytes());
     for (rank, name) in first.chain(known).enumerate() {
@@ -235,7 +255,6 @@ fn sort_fields(members: &mut [Member<'_>], context: &Context<'_>) {
 }
 
 /// Where the children of some containers go.
-#[derive(Default)]
 struct Plan {
     /// By the index of a container: its elements, or the names of its members, in their new order.
     orders: FxHashMap<u32, Vec<u32>>,
@@ -244,9 +263,19 @@ struct Plan {
 }
 
 impl Plan {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            orders: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            removed: Vec::new(),
+        }
+    }
+}
+
+impl Plan {
     /// Applies `over` to the value at `index`. Nested values wait in a list, so deep nesting costs heap and not stack.
     fn make(index: u32, over: Over, context: &Context<'_>) -> Plan {
-        let mut plan = Plan::default();
+        let mut plan = Plan::new();
         let mut pending = vec![(index, over)];
         while let Some((index, over)) = pending.pop() {
             match context.document.kind(index) {
@@ -277,7 +306,7 @@ impl Plan {
                     return;
                 };
                 let count = strings.len();
-                let mut seen = FxHashSet::default();
+                let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
                 strings.retain(|(string, element)| {
                     let is_first = seen.insert(string.clone());
                     if !is_first {

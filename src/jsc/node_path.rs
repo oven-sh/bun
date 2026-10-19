@@ -24,9 +24,9 @@ pub enum PathLike<'a> {
     Utf8(Utf8Bytes<'a>),
 }
 
-impl Default for PathLike<'_> {
+impl PathLike<'_> {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         PathLike::Utf8(Utf8Bytes::EMPTY)
     }
 }
@@ -105,9 +105,9 @@ pub enum PathOrFileDescriptor<'a> {
     Path(PathLike<'a>),
 }
 
-impl Default for PathOrFileDescriptor<'_> {
+impl PathOrFileDescriptor<'_> {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self::Fd(Fd::INVALID)
     }
 }

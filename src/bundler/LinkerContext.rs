@@ -152,11 +152,11 @@ unsafe impl<'a> Send for LinkerContext<'a> {}
 // SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for LinkerContext<'a> {}
 
-impl<'a> Default for LinkerContext<'a> {
-    fn default() -> Self {
+impl<'a> LinkerContext<'a> {
+    pub fn new() -> Self {
         Self {
             parse_graph: core::ptr::null_mut(),
-            graph: Default::default(),
+            graph: LinkerGraph::new(),
             log: core::ptr::null_mut(),
             resolver: None,
             cycle_detector: Vec::new(),
@@ -166,17 +166,17 @@ impl<'a> Default for LinkerContext<'a> {
             promise_all_runtime_ref: Ref::NONE,
             preload_runtime_ref: Ref::NONE,
             chunks_runtime_ref: Ref::NONE,
-            options: Default::default(),
+            options: LinkerOptions::new(),
             r#loop: None,
-            unique_key_buf: Box::default(),
-            unique_key_prefix: Box::default(),
-            source_maps: Default::default(),
+            unique_key_buf: Box::new([]),
+            unique_key_prefix: Box::new([]),
+            source_maps: SourceMapData::new(),
             pending_task_count: AtomicU32::new(0),
             has_any_css_locals: AtomicU32::new(0),
             dev_server: None,
             framework: None,
-            mangled_props: Default::default(),
-            cross_chunk_names: Default::default(),
+            mangled_props: ArrayHashMap::new(),
+            cross_chunk_names: HashMap::init(),
             renamer_rows: None,
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
@@ -660,11 +660,11 @@ impl<'a> LinkerContext<'a> {
         // Note: `SourceMapDataTask` is not `Clone` (embeds an intrusive
         // `ThreadPoolLib::Task` node); build via iterator instead of `vec![x;n]`.
         self.source_maps.line_offset_tasks = (0..reachable.len())
-            .map(|_| SourceMapDataTask::default())
+            .map(|_| SourceMapDataTask::new())
             .collect::<Vec<_>>()
             .into_boxed_slice();
         self.source_maps.quoted_contents_tasks = (0..reachable.len())
-            .map(|_| SourceMapDataTask::default())
+            .map(|_| SourceMapDataTask::new())
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
@@ -680,8 +680,8 @@ impl<'a> LinkerContext<'a> {
                     .cast_mut(),
             )
         });
-        let mut batch = ThreadPoolLib::Batch::default();
-        let mut second_batch = ThreadPoolLib::Batch::default();
+        let mut batch = ThreadPoolLib::Batch::new();
+        let mut second_batch = ThreadPoolLib::Batch::new();
         debug_assert_eq!(reachable.len(), self.source_maps.line_offset_tasks.len());
         debug_assert_eq!(
             reachable.len(),
@@ -696,7 +696,7 @@ impl<'a> LinkerContext<'a> {
                 ctx,
                 source_index: source_index.get(),
                 thread_task: ThreadPoolLib::Task {
-                    node: ThreadPoolLib::Node::default(),
+                    node: ThreadPoolLib::Node::new(),
                     callback: SourceMapDataTask::run_line_offset,
                 },
             };
@@ -704,7 +704,7 @@ impl<'a> LinkerContext<'a> {
                 ctx,
                 source_index: source_index.get(),
                 thread_task: ThreadPoolLib::Task {
-                    node: ThreadPoolLib::Node::default(),
+                    node: ThreadPoolLib::Node::new(),
                     callback: SourceMapDataTask::run_quoted_source_contents,
                 },
             };
@@ -1218,7 +1218,7 @@ impl<'a> LinkerContext<'a> {
     ) -> Result<SourceMapPieces, BunError> {
         let _trace = bun::perf::trace("Bundler.generateSourceMapForChunk");
 
-        let mut j = StringJoiner::default();
+        let mut j = StringJoiner::new();
 
         let sources = self.parse_graph().input_files.items_source();
         let quoted_source_map_contents = self.graph.files.items_quoted_source_contents();
@@ -1262,7 +1262,7 @@ impl<'a> LinkerContext<'a> {
 
             let mut next_mapping_source_index: i32 = 1;
             for &index in &source_indices[1..] {
-                let gop = source_id_map.get_or_put(index)?;
+                let gop = source_id_map.get_or_put(index, || 0)?;
                 if gop.found_existing {
                     continue;
                 }
@@ -1310,7 +1310,7 @@ impl<'a> LinkerContext<'a> {
         j.push_static(b"\n  ],\n  \"mappings\": \"");
 
         let mapping_start = j.len;
-        let mut prev_end_state = SourceMapState::default();
+        let mut prev_end_state = SourceMapState::new();
         let mut prev_column_offset: i32 = 0;
         let source_map_chunks = results.items_source_map_chunk();
         let offsets = results.items_generated_offset();
@@ -1329,7 +1329,7 @@ impl<'a> LinkerContext<'a> {
                 source_index: mapping_source_index,
                 generated_line: offset.lines.zero_based(),
                 generated_column: offset.columns.zero_based(),
-                ..Default::default()
+                ..SourceMapState::new()
             };
 
             if offset.lines.zero_based() == 0 {
@@ -1472,8 +1472,8 @@ impl LinkerOptions {
     }
 }
 
-impl Default for LinkerOptions {
-    fn default() -> Self {
+impl LinkerOptions {
+    pub fn new() -> Self {
         Self {
             generate_bytecode_cache: false,
             generate_internal_module_bytecode: false,
@@ -1514,13 +1514,24 @@ pub enum LinkerOptionsMode {
     Bundle,
 }
 
-#[derive(Default)]
 pub struct SourceMapData {
     pub(crate) line_offset_wait_group: WaitGroup,
     pub(crate) line_offset_tasks: Box<[SourceMapDataTask]>,
 
     pub(crate) quoted_contents_wait_group: WaitGroup,
     pub(crate) quoted_contents_tasks: Box<[SourceMapDataTask]>,
+}
+
+impl SourceMapData {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            line_offset_wait_group: WaitGroup::new(),
+            line_offset_tasks: Box::new([]),
+            quoted_contents_wait_group: WaitGroup::new(),
+            quoted_contents_tasks: Box::new([]),
+        }
+    }
 }
 
 pub struct SourceMapDataTask {
@@ -1538,13 +1549,13 @@ pub struct SourceMapDataTask {
 // CONCURRENCY note), so moving the task to a worker thread is sound.
 unsafe impl Send for SourceMapDataTask {}
 
-impl Default for SourceMapDataTask {
-    fn default() -> Self {
+impl SourceMapDataTask {
+    pub fn new() -> Self {
         Self {
             ctx: None,
             source_index: 0,
             thread_task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
+                node: ThreadPoolLib::Node::new(),
                 callback: Self::run_line_offset,
             },
         }
@@ -1768,7 +1779,7 @@ pub(crate) type ImportMemberResolutions =
 
 // Clone: bitwise OK — `alias` borrows from the AST arena (non-owning); all
 // other fields are POD.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct MatchImport {
     alias: bun_ast::StoreStr, // string borrowed from AST arena
     kind: MatchImportKind,
@@ -1780,10 +1791,25 @@ pub struct MatchImport {
     r#ref: Ref,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+impl MatchImport {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            alias: bun_ast::StoreStr::EMPTY,
+            kind: MatchImportKind::Ignore,
+            namespace_ref: Ref::NONE,
+            source_index: 0,
+            name_loc: Loc::new(),
+            other_source_index: 0,
+            other_name_loc: Loc::new(),
+            r#ref: Ref::NONE,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MatchImportKind {
     /// The import is either external or undefined
-    #[default]
     Ignore,
     /// "sourceIndex" and "ref" are in use
     Normal,
@@ -1923,7 +1949,7 @@ impl<'a> LinkerContext<'a> {
     pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &Bump) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
-        let mut hasher = ContentHasher::default();
+        let mut hasher = ContentHasher::new();
 
         // Mix the file names and part ranges of all of the files in this chunk into
         // the hash. Objects that appear identical but that live in separate files or
@@ -2166,7 +2192,7 @@ impl<'a> LinkerContext<'a> {
                                         Some(source),
                                         parent_result_tla_keyword,
                                     ),
-                                    ..Default::default()
+                                    ..Data::new()
                                 });
                                 break;
                             }
@@ -2174,7 +2200,7 @@ impl<'a> LinkerContext<'a> {
                             if !Index::is_valid(Index::init(parent_tla_check.parent)) {
                                 notes.push(Data {
                                     text: b"unexpected invalid index"[..].into(),
-                                    ..Default::default()
+                                    ..Data::new()
                                 });
                                 break;
                             }
@@ -2204,7 +2230,7 @@ impl<'a> LinkerContext<'a> {
                                             as usize]
                                         .range,
                                 ),
-                                ..Default::default()
+                                ..Data::new()
                             });
                         }
 
@@ -2269,12 +2295,12 @@ impl<'a> LinkerContext<'a> {
                             value: Some(Expr::init(
                                 E::RequireString {
                                     import_record_index,
-                                    ..Default::default()
+                                    ..E::RequireString::new()
                                 },
                                 loc,
                             )),
                         }]),
-                        ..Default::default()
+                        ..S::Local::new()
                     },
                     record.range.loc,
                 ))
@@ -2314,12 +2340,12 @@ impl<'a> LinkerContext<'a> {
                                 value: Some(Expr::init(
                                     E::RequireString {
                                         import_record_index,
-                                        ..Default::default()
+                                        ..E::RequireString::new()
                                     },
                                     loc,
                                 )),
                             }]),
-                            ..Default::default()
+                            ..S::Local::new()
                         },
                         loc,
                     ))?;
@@ -2346,7 +2372,7 @@ impl<'a> LinkerContext<'a> {
                 let init_call = Expr::init(
                     E::Call {
                         target: Expr::init_identifier(wrapper_ref, loc),
-                        ..Default::default()
+                        ..E::Call::new()
                     },
                     loc,
                 );
@@ -2383,7 +2409,7 @@ impl<'a> LinkerContext<'a> {
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part {
             stmts: bun_ast::StoreSlice::new_mut(out_stmts),
-            ..Default::default()
+            ..Part::new()
         }];
 
         // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
@@ -2417,7 +2443,7 @@ impl<'a> LinkerContext<'a> {
         let print_options = js_printer::Options {
             bundling: true,
             // TODO: IIFE
-            indent: Default::default(),
+            indent: bun_ast::Indentation::new(),
             commonjs_named_exports: Some(&ast.commonjs_named_exports),
             commonjs_named_exports_ref: ast.exports_ref,
             commonjs_module_ref: if ast.flags.contains(AstFlags::USES_MODULE_REF) {
@@ -2474,7 +2500,7 @@ impl<'a> LinkerContext<'a> {
             },
             mangled_props: Some(mangled_props),
             module_info,
-            ..Default::default()
+            ..js_printer::Options::new()
         };
 
         writer.buffer.reset();
@@ -2600,7 +2626,7 @@ impl<'a> LinkerContext<'a> {
                             break 'follow r#ref;
                         };
 
-                        let entry = local_css_names.get_or_put(r#ref).expect("OOM");
+                        let entry = local_css_names.get_or_put(r#ref, || ()).expect("OOM");
                         if entry.found_existing {
                             continue;
                         }
@@ -2659,7 +2685,7 @@ impl<'a> LinkerContext<'a> {
         let mut own: Vec<u64> = Vec::with_capacity(n);
         let mut edges: Vec<Vec<u32>> = Vec::with_capacity(n);
         for chunk in chunks {
-            let mut hash = ContentHasher::default();
+            let mut hash = ContentHasher::new();
             let mut out: Vec<u32> = chunk
                 .cross_chunk_imports
                 .slice()
@@ -2741,7 +2767,7 @@ impl<'a> LinkerContext<'a> {
             .iter()
             .enumerate()
             .map(|(i, bits)| {
-                let mut hash = ContentHasher::default();
+                let mut hash = ContentHasher::new();
                 hash.write(&own[i].to_ne_bytes());
                 let mut iter = bits.iterator::<true, true>();
                 while let Some(j) = iter.next() {
@@ -2766,7 +2792,7 @@ impl<'a> LinkerContext<'a> {
                 break;
             }
             for i in 0..n {
-                let mut hash = ContentHasher::default();
+                let mut hash = ContentHasher::new();
                 let mut any = false;
                 let mut iter = reach[i].iterator::<true, true>();
                 while let Some(j) = iter.next() {
@@ -3468,7 +3494,7 @@ impl<'a> LinkerContext<'a> {
                     } else {
                         DependencyList::new_in(bun_alloc::AstAlloc)
                     };
-                let mut symbol_uses = PartSymbolUseMap::default();
+                let mut symbol_uses = PartSymbolUseMap::new();
                 symbol_uses
                     .put(wrapper_ref, SymbolUse::unscoped(1))
                     .expect("OOM");
@@ -3497,7 +3523,7 @@ impl<'a> LinkerContext<'a> {
                             ])
                             .expect("unreachable"),
                             dependencies,
-                            ..Default::default()
+                            ..Part::new()
                         },
                     )
                     .expect("unreachable");
@@ -3586,7 +3612,7 @@ impl<'a> LinkerContext<'a> {
                     });
                 }
 
-                let mut symbol_uses = PartSymbolUseMap::default();
+                let mut symbol_uses = PartSymbolUseMap::new();
                 symbol_uses
                     .put(wrapper_ref, SymbolUse::unscoped(1))
                     .expect("OOM");
@@ -3602,7 +3628,7 @@ impl<'a> LinkerContext<'a> {
                             }])
                             .expect("unreachable"),
                             dependencies,
-                            ..Default::default()
+                            ..Part::new()
                         },
                     )
                     .expect("unreachable");
@@ -3665,9 +3691,9 @@ impl<'a> LinkerContext<'a> {
                         // TODO: investigate if this is a bug
                         // It implies there are imports being added without being resolved
                         return ImportTrackerIterator {
-                            value: Default::default(),
+                            value: ImportTracker::new(),
                             status: ImportTrackerStatus::External,
-                            ..Default::default()
+                            ..ImportTrackerIterator::new()
                         };
                     }
                 };
@@ -3677,18 +3703,18 @@ impl<'a> LinkerContext<'a> {
                     &import_records[named_import.import_record_index as usize];
                 if !record.source_index.is_valid() {
                     return ImportTrackerIterator {
-                        value: Default::default(),
+                        value: ImportTracker::new(),
                         status: ImportTrackerStatus::External,
-                        ..Default::default()
+                        ..ImportTrackerIterator::new()
                     };
                 }
 
                 // Barrel optimization: deferred import records point to empty ASTs
                 if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
                     return ImportTrackerIterator {
-                        value: Default::default(),
+                        value: ImportTracker::new(),
                         status: ImportTrackerStatus::External,
-                        ..Default::default()
+                        ..ImportTrackerIterator::new()
                     };
                 }
                 (
@@ -3711,10 +3737,10 @@ impl<'a> LinkerContext<'a> {
             return ImportTrackerIterator {
                 value: ImportTracker {
                     source_index: crate::Index::init(other_source_index),
-                    ..Default::default()
+                    ..ImportTracker::new()
                 },
                 status: ImportTrackerStatus::Disabled,
-                ..Default::default()
+                ..ImportTrackerIterator::new()
             };
         }
 
@@ -3736,10 +3762,10 @@ impl<'a> LinkerContext<'a> {
                 value: ImportTracker {
                     source_index: crate::Index::init(other_source_index),
                     import_ref: Ref::NONE,
-                    ..Default::default()
+                    ..ImportTracker::new()
                 },
                 status: ImportTrackerStatus::CjsWithoutExports,
-                ..Default::default()
+                ..ImportTrackerIterator::new()
             };
         }
         let other_kind = exports_kind[other_id as usize];
@@ -3749,10 +3775,10 @@ impl<'a> LinkerContext<'a> {
                 value: ImportTracker {
                     source_index: crate::Index::init(other_source_index),
                     import_ref: Ref::NONE,
-                    ..Default::default()
+                    ..ImportTracker::new()
                 },
                 status: ImportTrackerStatus::Cjs,
-                ..Default::default()
+                ..ImportTrackerIterator::new()
             };
         }
 
@@ -3786,7 +3812,7 @@ impl<'a> LinkerContext<'a> {
                         .potentially_ambiguous_export_star_refs
                         .slice(),
                 ),
-                ..Default::default()
+                ..ImportTrackerIterator::new()
             };
         }
 
@@ -3803,7 +3829,7 @@ impl<'a> LinkerContext<'a> {
                             .potentially_ambiguous_export_star_refs
                             .slice(),
                     ),
-                    ..Default::default()
+                    ..ImportTrackerIterator::new()
                 };
             }
         }
@@ -3843,14 +3869,14 @@ impl<'a> LinkerContext<'a> {
                 value: ImportTracker {
                     source_index: crate::Index::init(other_source_index),
                     import_ref: self.graph.ast.items_exports_ref()[other_id as usize],
-                    ..Default::default()
+                    ..ImportTracker::new()
                 },
                 status: if is_commonjs_to_esm {
                     ImportTrackerStatus::DynamicFallbackInteropDefault
                 } else {
                     ImportTrackerStatus::DynamicFallback
                 },
-                ..Default::default()
+                ..ImportTrackerIterator::new()
             };
         }
 
@@ -3858,19 +3884,19 @@ impl<'a> LinkerContext<'a> {
         let other_loader = self.parse_graph().input_files.items_loader()[other_id as usize];
         if is_exported && other_loader.is_typescript() {
             return ImportTrackerIterator {
-                value: Default::default(),
+                value: ImportTracker::new(),
                 status: ImportTrackerStatus::ProbablyTypescriptType,
-                ..Default::default()
+                ..ImportTrackerIterator::new()
             };
         }
 
         ImportTrackerIterator {
             value: ImportTracker {
                 source_index: crate::Index::init(other_source_index),
-                ..Default::default()
+                ..ImportTracker::new()
             },
             status: ImportTrackerStatus::NoMatch,
-            ..Default::default()
+            ..ImportTrackerIterator::new()
         }
     }
 
@@ -3902,7 +3928,7 @@ impl<'a> LinkerContext<'a> {
 
         let mut tracker = init_tracker;
         let mut ambiguous_results: Vec<MatchImport> = Vec::new();
-        let mut result: MatchImport = MatchImport::default();
+        let mut result: MatchImport = MatchImport::new();
         // `export default X` with `X` an import: keep following `X`, but only
         // keep that answer if it ends at a module namespace (whose identity is
         // fixed, so the default's snapshot of it is the live value). Otherwise
@@ -3923,7 +3949,7 @@ impl<'a> LinkerContext<'a> {
                 if import_tracker_eq(&tracker, prev_tracker) {
                     result = MatchImport {
                         kind: MatchImportKind::Cycle,
-                        ..Default::default()
+                        ..MatchImport::new()
                     };
                     break 'loop_;
                 }
@@ -3993,7 +4019,7 @@ impl<'a> LinkerContext<'a> {
                                 kind: MatchImportKind::Namespace,
                                 namespace_ref: named_import.namespace_ref,
                                 alias: named_import.alias.expect("infallible: alias present"),
-                                ..Default::default()
+                                ..MatchImport::new()
                             };
                         }
                     }
@@ -4059,7 +4085,7 @@ impl<'a> LinkerContext<'a> {
                                 kind: MatchImportKind::Namespace,
                                 namespace_ref: next_tracker.import_ref,
                                 alias: named_import.alias.expect("infallible: alias present"),
-                                ..Default::default()
+                                ..MatchImport::new()
                             };
                         }
                     }
@@ -4103,7 +4129,7 @@ impl<'a> LinkerContext<'a> {
                             && bun_resolve_builtins::Alias::has(
                                 next_source.path.pretty,
                                 Target::Bun,
-                                bun_resolve_builtins::Cfg::default(),
+                                bun_resolve_builtins::Cfg::new(),
                             )
                         {
                             self.log_disjoint().add_range_warning_fmt_with_note(
@@ -4159,7 +4185,7 @@ impl<'a> LinkerContext<'a> {
                     // import star statements (i.e. "import * as ns from 'path'")
                     result = MatchImport {
                         kind: MatchImportKind::ProbablyTypescriptType,
-                        ..Default::default()
+                        ..MatchImport::new()
                     };
                 }
                 ImportTrackerStatus::Found => {
@@ -4180,7 +4206,7 @@ impl<'a> LinkerContext<'a> {
                                 source_index: ambiguous_tracker.data.source_index.get(),
                                 r#ref: ambiguous_tracker.data.import_ref,
                                 name_loc: ambiguous_tracker.data.name_loc,
-                                ..Default::default()
+                                ..MatchImport::new()
                             });
                         }
                     }
@@ -4195,7 +4221,7 @@ impl<'a> LinkerContext<'a> {
                         source_index: next_tracker.source_index.get(),
                         r#ref: next_tracker.import_ref,
                         name_loc: next_tracker.name_loc,
-                        ..Default::default()
+                        ..MatchImport::new()
                     };
 
                     // Depend on the statement(s) that declared this import symbol in the
@@ -4267,13 +4293,13 @@ impl<'a> LinkerContext<'a> {
                         name_loc: result.name_loc,
                         other_source_index: ambig.source_index,
                         other_name_loc: ambig.name_loc,
-                        ..Default::default()
+                        ..MatchImport::new()
                     };
                 }
 
                 return MatchImport {
                     kind: MatchImportKind::Ambiguous,
-                    ..Default::default()
+                    ..MatchImport::new()
                 };
             }
         }
@@ -4558,7 +4584,7 @@ impl<'a> LinkerContext<'a> {
         });
 
         // Items of `ns.name()` left unbound, each with its `ns`.
-        let mut method_call_items: HashMap<Ref, Ref> = HashMap::default();
+        let mut method_call_items: HashMap<Ref, Ref> = HashMap::init();
         for &i in &order {
             let i = i as usize;
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
@@ -4581,7 +4607,7 @@ impl<'a> LinkerContext<'a> {
                 ImportTracker {
                     source_index: crate::Index::init(source_index),
                     import_ref,
-                    ..Default::default()
+                    ..ImportTracker::new()
                 },
                 &mut re_exports,
             );
@@ -4608,7 +4634,7 @@ impl<'a> LinkerContext<'a> {
                         Some(bun_alloc::ast_box(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
-                            ..Default::default()
+                            ..G::NamespaceAlias::new()
                         }));
                 }
                 MatchImportKind::Cycle => {
@@ -4694,7 +4720,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 for &(namespace_ref, count) in &namespace_uses {
                     part.symbol_uses
-                        .get_or_put_value(namespace_ref, Default::default())
+                        .get_or_put_value(namespace_ref, SymbolUse::new())
                         .expect("OOM")
                         .value_ptr
                         .merge(SymbolUse::unscoped(count));
@@ -4802,7 +4828,7 @@ impl<'a> LinkerContext<'a> {
             let result = self.match_import_with_export_inner(
                 ImportTracker {
                     source_index: crate::Index::init(access.target_source),
-                    ..Default::default()
+                    ..ImportTracker::new()
                 },
                 Some(key),
                 &mut re_exports,
@@ -4869,7 +4895,7 @@ impl<'a> LinkerContext<'a> {
                 // `name` points into `resolved_exports` keys, which outlive printing.
                 self.graph
                     .import_member_bindings
-                    .get_or_put_value(base, Default::default())
+                    .get_or_put_value(base, bun_collections::StringHashMap::init())
                     .expect("OOM")
                     .value_ptr
                     .put_static_key(name.slice(), resolved.r#ref)
@@ -4885,7 +4911,7 @@ impl<'a> LinkerContext<'a> {
                     let uses = part.import_symbol_property_uses.as_mut().unwrap();
                     let _ = uses.get_ptr_mut(&base).unwrap().remove(name.slice());
                     part.symbol_uses
-                        .get_or_put_value(resolved.r#ref, Default::default())
+                        .get_or_put_value(resolved.r#ref, SymbolUse::new())
                         .expect("OOM")
                         .value_ptr
                         .merge(SymbolUse::unscoped(count));
@@ -4900,9 +4926,9 @@ impl<'a> LinkerContext<'a> {
                                 data: ImportTracker {
                                     source_index: crate::Index::init(resolved.source_index),
                                     import_ref: resolved.r#ref,
-                                    ..Default::default()
+                                    ..ImportTracker::new()
                                 },
-                                ..Default::default()
+                                ..crate::ImportData::new()
                             },
                         )
                         .expect("OOM");
@@ -4941,7 +4967,7 @@ impl<'a> LinkerContext<'a> {
                     data: ImportTracker {
                         source_index: crate::Index::init(result.source_index),
                         import_ref: result.r#ref,
-                        ..Default::default()
+                        ..ImportTracker::new()
                     },
                 },
             )
@@ -4954,7 +4980,7 @@ impl<'a> LinkerContext<'a> {
                 .namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
                 namespace_ref: result.namespace_ref,
                 alias: result.alias,
-                ..Default::default()
+                ..G::NamespaceAlias::new()
             }));
         }
     }
@@ -4994,7 +5020,7 @@ impl<'a> LinkerContext<'a> {
                     is_top_level: true,
                 }])?,
                 can_be_removed_if_unused: true,
-                ..Default::default()
+                ..Part::new()
             },
         )?;
 
@@ -5019,9 +5045,9 @@ impl<'a> LinkerContext<'a> {
                 data: ImportTracker {
                     source_index: crate::Index::init(source_index),
                     import_ref: r#ref,
-                    ..Default::default()
+                    ..ImportTracker::new()
                 },
-                ..Default::default()
+                ..crate::ExportData::new()
             },
         )?;
         Ok((r#ref, part_index))
@@ -5043,7 +5069,9 @@ impl<'a> LinkerContext<'a> {
             // 2. require()
             // 3. require.resolve()
             // 4. externals
-            return Ok(crate::chunk::IntermediateOutput::Joiner(core::mem::take(j)));
+            return Ok(crate::chunk::IntermediateOutput::Joiner(
+                core::mem::replace(j, StringJoiner::new()),
+            ));
         }
 
         let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
@@ -5210,7 +5238,7 @@ impl InsideWrapperPrefix {
             Stmt::alloc(
                 S::SExpr {
                     value: call_expr,
-                    ..Default::default()
+                    ..S::SExpr::new()
                 },
                 call_expr.loc,
             ),
@@ -5231,7 +5259,7 @@ impl InsideWrapperPrefix {
                 Stmt::alloc(
                     S::SExpr {
                         value: Expr::init(E::Await { value: call_expr }, Loc::EMPTY),
-                        ..Default::default()
+                        ..S::SExpr::new()
                     },
                     Loc::EMPTY,
                 ),
@@ -5278,7 +5306,7 @@ impl InsideWrapperPrefix {
             let promise_all = Expr::init(
                 E::Identifier {
                     ref_: promise_all_ref,
-                    ..Default::default()
+                    ..E::Identifier::new()
                 },
                 Loc::EMPTY,
             );
@@ -5290,7 +5318,7 @@ impl InsideWrapperPrefix {
             args.append_assume_capacity(Expr::init(
                 E::Array {
                     items,
-                    ..Default::default()
+                    ..E::Array::new()
                 },
                 Loc::EMPTY,
             ));
@@ -5299,7 +5327,7 @@ impl InsideWrapperPrefix {
                 E::Call {
                     target: promise_all,
                     args,
-                    ..Default::default()
+                    ..E::Call::new()
                 },
                 Loc::EMPTY,
             );
@@ -5313,7 +5341,7 @@ impl InsideWrapperPrefix {
                         },
                         Loc::EMPTY,
                     ),
-                    ..Default::default()
+                    ..S::SExpr::new()
                 },
                 Loc::EMPTY,
             );

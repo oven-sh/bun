@@ -94,7 +94,7 @@ fn misplaced_suspensions<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Vec<Sy
             at: it.start,
             end: 0,
             message: message.to_vec(),
-            ..SyntaxError::default()
+            ..SyntaxError::new()
         };
         error.stage(Stage::Parser).help(Cow::Borrowed(help))
     };

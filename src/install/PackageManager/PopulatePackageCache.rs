@@ -14,11 +14,21 @@ use crate::network_task::ForTarballError;
 use crate::resolution::Tag as ResolutionTag;
 use crate::{DependencyID, PackageID, PreinstallState, TaskCallbackContext, invalid_dependency_id};
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Summary {
     /// Packages extracted by this process, including the resolve phase's prefetches.
     pub fetched: u32,
     pub already_cached: u32,
+}
+
+impl Summary {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            fetched: 0,
+            already_cached: 0,
+        }
+    }
 }
 
 /// Failures are reported like `bun install`'s: in `manager.log` and `any_failed_to_install`.
@@ -48,7 +58,7 @@ pub fn fetch(
     let root_package_json_path = ZBox::from_bytes(root_package_json_path());
     install_with_manager(manager, ctx, &root_package_json_path, original_cwd)?;
     if manager.any_failed_to_install {
-        return Ok(Summary::default());
+        return Ok(Summary::new());
     }
     download_pinned_packages(manager, None, count_only)
 }
@@ -88,7 +98,7 @@ pub(crate) fn download_pinned_packages(
         index
     };
 
-    let mut summary = Summary::default();
+    let mut summary = Summary::new();
 
     for (i, &dep_id) in dep_ids.iter().enumerate() {
         // Nothing in the lockfile depends on this package.

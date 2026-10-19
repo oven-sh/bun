@@ -16,13 +16,10 @@ pub(crate) struct CondExpr {
     pub args: Vec<Vec<u8>>,
 }
 
-#[derive(Default, strum::IntoStaticStr)]
+#[derive(strum::IntoStaticStr)]
 pub enum CondExprState {
-    #[default]
     Idle,
-    ExpandingArgs {
-        idx: u32,
-    },
+    ExpandingArgs { idx: u32 },
     WaitingStat,
     WaitingWriteErr,
 }
@@ -268,7 +265,7 @@ impl CondExpr {
                 cond: this,
                 // Placeholder — always overwritten by `run_from_thread_pool`
                 // before the main thread reads it.
-                stat: Err(Default::default()),
+                stat: Err(bun_sys::Error::init()),
                 path,
                 cwd_fd,
             },

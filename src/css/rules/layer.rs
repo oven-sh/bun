@@ -9,13 +9,21 @@ use crate::{PrintErr, Printer, SmallList};
 
 /// A CSS cascade layer name. Stored as a list of segments because dot
 /// notation (`a.b.c`) creates sublayers.
-#[derive(Default)]
 pub struct LayerName {
     // TODO: arena lifetime — segments borrow the parser arena. Thread
     // `'bump` once `CssRuleList` re-gains its arena lifetime; until then
     // segments are laundered through `&'static [u8]` like every other CSS
     // slice in this crate.
     pub v: SmallList<&'static [u8], 1>,
+}
+
+impl LayerName {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            v: SmallList::new(),
+        }
+    }
 }
 
 // Trait `Clone` (not just inherent `deep_clone`) so the bundler's
@@ -61,7 +69,7 @@ impl LayerName {
     }
 
     pub fn parse(input: &mut css::css_parser::Parser<'_>) -> css::css_parser::CssResult<LayerName> {
-        let mut parts: SmallList<&'static [u8], 1> = SmallList::default();
+        let mut parts: SmallList<&'static [u8], 1> = SmallList::new();
         let ident = input.expect_ident_cloned()?;
         parts.append(ident);
 
@@ -181,7 +189,7 @@ pub struct LayerStatementRule {
 impl LayerStatementRule {
     pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         // `css.implementDeepClone` field-walk.
-        let mut names = SmallList::<LayerName, 1>::default();
+        let mut names = SmallList::<LayerName, 1>::new();
         for n in self.names.slice() {
             names.append(n.deep_clone(bump));
         }

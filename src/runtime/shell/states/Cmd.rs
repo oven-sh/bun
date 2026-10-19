@@ -29,25 +29,18 @@ pub(crate) struct Cmd {
     pub(crate) exit_code: Option<ExitCode>,
 }
 
-#[derive(Default, strum::IntoStaticStr)]
+#[derive(strum::IntoStaticStr)]
 pub enum CmdState {
-    #[default]
     Idle,
     ExpandingAssigns,
-    ExpandingArgs {
-        idx: u32,
-    },
-    ExpandingRedirect {
-        idx: u32,
-    },
+    ExpandingArgs { idx: u32 },
+    ExpandingRedirect { idx: u32 },
     Exec,
     WaitingWriteErr,
     Done,
 }
 
-#[derive(Default)]
 pub(crate) enum Exec {
-    #[default]
     None,
     Builtin(Box<Builtin>),
     Subproc(Box<SubprocExec>),
@@ -82,16 +75,13 @@ pub(crate) struct SubprocExec {
 /// if that fd was *not* piped (e.g. inherited / fd-backed), so it never gates
 /// completion. `Some(state)` means it was piped and must reach `Closed` before
 /// [`Cmd::has_finished`] returns true.
-#[derive(Default)]
 pub(crate) struct BufferedIoClosed {
     pub(crate) stdin: Option<bool>,
     pub(crate) stdout: Option<BufferedIoState>,
     pub(crate) stderr: Option<BufferedIoState>,
 }
 
-#[derive(Default)]
 pub(crate) enum BufferedIoState {
-    #[default]
     Open,
     Closed(Vec<u8>),
 }
@@ -178,7 +168,7 @@ impl BufferedIoClosed {
         let Readable::Pipe(pipe) = readable else {
             // Not a pipe: nothing to capture. Mark closed with an empty
             // buffer so `all_closed()` is satisfied.
-            *state = BufferedIoState::Closed(Vec::<u8>::default());
+            *state = BufferedIoState::Closed(Vec::<u8>::new());
             return;
         };
         // If the shell state is piped (inside a cmd substitution) aggregate
@@ -540,7 +530,7 @@ impl Cmd {
         interp.as_cmd_mut(this).args[0] = resolved;
 
         // Convert shell IO → subprocess stdio.
-        let mut shellio = ShellIO::default();
+        let mut shellio = ShellIO::new();
         interp
             .as_cmd(this)
             .io
@@ -915,7 +905,7 @@ impl Cmd {
                 // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
                 CowFd::deref(fd);
             }
-            core::mem::take(&mut me.exec)
+            core::mem::replace(&mut me.exec, Exec::None)
         };
         // `me`'s borrow ended above: the teardown below re-enters this Cmd
         // via stdin `on_stdin_writer_close` → `buffered_input_close` (a no-op once

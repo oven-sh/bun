@@ -50,10 +50,18 @@ fn generic_type_param_index_where_props_are_present(name: &[u8]) -> Option<usize
 
 /// `genericReactTypesImport` and `localToImportedMap`: what the imports of `react` that the walk
 /// has got to call the module and its generic types.
-#[derive(Default)]
 pub(crate) struct ReactTypeImports<'a> {
     /// By the local name. `Some`: the name in `react`.
     locals: FxHashMap<&'a [u8], Option<&'a [u8]>>,
+}
+
+impl<'a> ReactTypeImports<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            locals: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl<'a> ReactTypeImports<'a> {
@@ -137,7 +145,7 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
         let is_new = value.is_none_or(|it| self.on_the_way.insert(it));
         self.has_given_up |= !is_new || !bun_core::StackCheck::init().is_safe_to_recurse();
         if self.has_given_up {
-            return DeclaredPropType::default();
+            return DeclaredPropType::new();
         }
         let built = self.build_declaration_types(value, parent_name);
         if let Some(it) = value {
@@ -159,7 +167,7 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
             .and_then(Expr::object)
             .and_then(Expr::as_ident);
         if object_of_callee.is_some_and(|it| self.has_custom_validator(it)) {
-            return DeclaredPropType::default();
+            return DeclaredPropType::new();
         }
 
         let ident_node_resolved = self.resolve_value_for_identifier_node(&mut value);
@@ -176,19 +184,19 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
             .filter(|it| !it.is_chain_root())
             .and_then(Expr::as_call)
         else {
-            return DeclaredPropType::default();
+            return DeclaredPropType::new();
         };
         let callee = call.callee();
         let call_name = get_property_name(Node::Expr(callee)).filter(|_| !callee.is_chain_root());
         let (Some(call_name), Some(argument)) = (call_name, call.args().first()) else {
-            return DeclaredPropType::default();
+            return DeclaredPropType::new();
         };
         match call_name {
             b"shape" | b"exact" => {
                 let ExprKind::Object(properties) = argument.kind() else {
-                    return DeclaredPropType::default();
+                    return DeclaredPropType::new();
                 };
-                let mut children = DeclaredPropTypes::default();
+                let mut children = DeclaredPropTypes::new();
                 for prop_node in properties {
                     // A spread has no `value`.
                     let is_spread = prop_node.kind() == PropKind::Spread;
@@ -214,7 +222,7 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
                 DeclaredPropType {
                     kind: Some(kind),
                     children: Children::Named(children),
-                    ..DeclaredPropType::default()
+                    ..DeclaredPropType::new()
                 }
             }
             b"arrayOf" | b"objectOf" => {
@@ -226,12 +234,12 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
                     node: Some(Node::Expr(argument)),
                     ..built
                 };
-                let mut children = DeclaredPropTypes::default();
+                let mut children = DeclaredPropTypes::new();
                 children.insert(Cow::Borrowed(ANY_KEY), child);
                 DeclaredPropType {
                     kind: Some(PropTypeKind::Object),
                     children: Children::Named(children),
-                    ..DeclaredPropType::default()
+                    ..DeclaredPropType::new()
                 }
             }
             b"oneOfType" => match argument.kind() {
@@ -242,12 +250,12 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
                     DeclaredPropType {
                         kind: Some(PropTypeKind::Union),
                         children: Children::Union(children.collect()),
-                        ..DeclaredPropType::default()
+                        ..DeclaredPropType::new()
                     }
                 }
-                _ => DeclaredPropType::default(),
+                _ => DeclaredPropType::new(),
             },
-            _ => DeclaredPropType::default(),
+            _ => DeclaredPropType::new(),
         }
     }
 }
@@ -574,7 +582,7 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
             full_name: Some(Cow::Borrowed(name)),
             name: Some(Cow::Borrowed(name)),
             is_required: Some(false),
-            ..DeclaredPropType::default()
+            ..DeclaredPropType::new()
         };
         self.declared_prop_types.insert(Cow::Borrowed(name), types);
     }
@@ -602,7 +610,7 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
                 name: key.clone(),
                 node: Some(Node::Member(ts_interface_body)),
                 is_required: Some(!ts_interface_body.flags().contains(Flags::OPTIONAL)),
-                ..DeclaredPropType::default()
+                ..DeclaredPropType::new()
             };
             self.declared_prop_types
                 .insert(key.unwrap_or(Cow::Borrowed(UNDEFINED)), types);
@@ -628,7 +636,7 @@ pub(crate) fn declare_prop_types_for_ts_type_annotation<'a>(
     let mut annotation = DeclarePropTypesForTsTypeAnnotation {
         declared_prop_types,
         found_declared_properties_list: Vec::new(),
-        reference_name_map: FxHashSet::default(),
+        reference_name_map: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
         should_ignore_prop_types: false,
         should_specify_optional_children_props: false,
         should_specify_class_name_prop: false,

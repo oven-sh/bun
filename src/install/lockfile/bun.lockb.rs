@@ -253,7 +253,7 @@ pub(crate) fn save(
         stream.write_all(&HAS_SCOPED_OVERRIDES_TAG.to_ne_bytes())?;
 
         let scoped = &this.overrides.scoped;
-        let no_parent = Dependency::default();
+        let no_parent = Dependency::new();
         let parents = scoped
             .iter()
             .map(|rule| rule.parent.as_ref().unwrap_or(&no_parent));
@@ -264,7 +264,7 @@ pub(crate) fn save(
                 name: rule.dep.name,
                 name_hash: rule.dep.name_hash,
                 version: rule.target_range.clone(),
-                behavior: Behavior::default(),
+                behavior: Behavior::empty(),
             })
             .collect();
         write_dependencies(&mut stream, ranges.iter())?;
@@ -287,10 +287,19 @@ pub(crate) fn save(
     Ok(())
 }
 
-#[derive(Default)]
 pub struct SerializerLoadResult {
     pub packages_need_update: bool,
     pub(crate) migrated_from_lockb_v2: bool,
+}
+
+impl SerializerLoadResult {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            packages_need_update: false,
+            migrated_from_lockb_v2: false,
+        }
+    }
 }
 
 /// Consumes the next 8 bytes if they are `tag`: a section older versions neither write nor read.
@@ -329,7 +338,7 @@ pub(crate) fn load(
     log: &mut Log,
     manager: Option<&PackageManager>,
 ) -> Result<SerializerLoadResult, Error> {
-    let mut res = SerializerLoadResult::default();
+    let mut res = SerializerLoadResult::new();
     let mut header_buf_: [u8; HEADER_BYTES.len()] = [0; HEADER_BYTES.len()];
     let n = stream.read_all(&mut header_buf_)?;
     let header_buf = &header_buf_[..n];
@@ -420,17 +429,17 @@ pub(crate) fn load(
             if remaining_in_buffer > 8 && next_num == HAS_TRUSTED_DEPENDENCIES_TAG {
                 let trusted_dependencies_hashes: Vec<u32> = buffers::read_array(stream)?;
 
-                let td = lockfile.trusted_dependencies.insert(Default::default());
+                let td = lockfile.trusted_dependencies.insert(ArrayHashMap::new());
                 td.ensure_total_capacity(trusted_dependencies_hashes.len())?;
                 // The binary lockfile only stores the truncated hashes, not the
                 // names they were computed from. The empty value is the
                 // "name unknown, hash-only match" sentinel.
                 for &hash in &trusted_dependencies_hashes {
-                    td.put_assume_capacity(hash, Box::<[u8]>::default());
+                    td.put_assume_capacity(hash, Box::new([]));
                 }
             } else if next_num == HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG {
                 // trusted dependencies exists in package.json but is an empty array.
-                lockfile.trusted_dependencies = Some(Default::default());
+                lockfile.trusted_dependencies = Some(ArrayHashMap::new());
             } else {
                 stream.pos -= 8;
             }
@@ -484,7 +493,7 @@ pub(crate) fn load(
     }
 
     if next_section_is(stream, total_buffer_size, HAS_CATALOGS_TAG)? {
-        lockfile.catalogs = Default::default();
+        lockfile.catalogs = super::CatalogMap::new();
 
         let default_dep_names: Vec<SemverString> = buffers::read_array(stream)?;
 
@@ -582,8 +591,8 @@ pub(crate) fn load(
     }
 
     lockfile.scratch = Scratch::init();
-    lockfile.package_index = PackageIndex::Map::default();
-    lockfile.string_pool = StringPool::default();
+    lockfile.package_index = PackageIndex::Map::init();
+    lockfile.string_pool = StringPool::new();
     lockfile
         .package_index
         .ensure_total_capacity(lockfile.packages.len())?;

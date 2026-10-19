@@ -111,10 +111,20 @@ impl<'a> Destructured<'a> {
 }
 
 /// What upstream's `sfcParams` answers while a function is the first in its queue.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct SfcParams<'a> {
     props_name: Option<Name<'a>>,
     context_name: Option<Name<'a>>,
+}
+
+impl<'a> SfcParams<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            props_name: None,
+            context_name: None,
+        }
+    }
 }
 
 pub struct State<'a> {
@@ -130,7 +140,7 @@ impl<'a> State<'a> {
     /// Makes a candidate of each `x.a` where `sfcParams` can answer `x`. Whether there is one.
     fn add_sfc_usages(&mut self, file: &'a File<'a>) -> bool {
         let is_any_related = RELATED.iter().any(|&bit| file.mentions_bit(bit));
-        let mut names_of_params = FxHashSet::default();
+        let mut names_of_params = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for func in file.funcs().filter(|it| ast_utils::is_function_with_body(*it)) {
             let node = Node::Func(func);
             let names = func.params_with_this().take(2).filter_map(|it| EvaluatedParam::of(it).name());
@@ -196,7 +206,7 @@ impl Rule for DestructuringAssignment {
             components: Components::new(file),
             candidates: Vec::new(),
             sfc_params: Vec::new(),
-            class_properties: AncestorMemo::default(),
+            class_properties: AncestorMemo::new(),
         })
     }
 
@@ -235,7 +245,7 @@ impl Rule for DestructuringAssignment {
         if cx.state.candidates.is_empty() {
             return;
         }
-        let mut queue = Queue::default();
+        let mut queue = Queue::new();
         for node in std::mem::take(&mut cx.state.candidates) {
             queue.push(At::enter(node), 0, node);
         }
@@ -276,7 +286,7 @@ impl DestructuringAssignment {
             return;
         }
         // The first in the queue that has a name is asked.
-        let around = cx.state.sfc_params.last().copied().unwrap_or_default();
+        let around = cx.state.sfc_params.last().copied().unwrap_or_else(SfcParams::new);
         let mut names = func.params_with_this().map(|it| EvaluatedParam::of(it).name());
         cx.state.sfc_params.push(SfcParams {
             props_name: names.next().flatten().or(around.props_name),

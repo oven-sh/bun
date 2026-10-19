@@ -77,7 +77,6 @@ pub trait Host: Sync {
 }
 
 /// What is on the command line after the path of the bundle.
-#[derive(Default)]
 pub struct Flags<'a> {
     /// `--suite=upstream`, `--suite=more`, `--suite=reviews`: only the tests of upstream, only the
     /// others, only those in this directory of `more`.
@@ -451,11 +450,22 @@ fn run_case(
     ))
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Tally {
     pub passed: usize,
     pub failed: usize,
     pub skipped: usize,
+}
+
+impl Tally {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+        }
+    }
 }
 
 /// A failure at length.
@@ -587,7 +597,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
                     id,
                     entry,
                     json,
-                    tally: Tally::default(),
+                    tally: Tally::new(),
                 }),
                 None => output_line!("{id}: the fixture cannot be read"),
             }
@@ -629,7 +639,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
         chosen.iter().map(|_| OnceLock::new()).collect();
     let counts = Counts {
         fails_on_order: flags.in_order,
-        ..Counts::default()
+        ..Counts::new()
     };
     host.for_each(flags.threads, chosen.len(), &|at| {
         let at = order[at];
@@ -656,7 +666,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
             Some(Err(())) | None => tally.skipped += 1,
         }
     }
-    let (mut total, mut perfect) = (Tally::default(), 0);
+    let (mut total, mut perfect) = (Tally::new(), 0);
     for (fixture, failures) in fixtures.iter().zip(&failures) {
         let (id, tally) = (&fixture.id, fixture.tally);
         perfect += usize::from(tally.failed == 0);

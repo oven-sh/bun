@@ -33,7 +33,6 @@ const DEFAULT_MSG_FUNC: Message = Message::new(
 const JSX_NO_CONSTRUCTED_CONTEXT_VALUES: Message =
     Message::new("", "The Context `value` prop should not be constructed.");
 
-#[derive(Default)]
 pub struct State<'a> {
     inside_component: AncestorMemo<'a, ()>,
     /// 1 for a variable that is made anew each time the function that declares it runs.
@@ -42,6 +41,18 @@ pub struct State<'a> {
     ends: IdMap<Symbol<'a>, Option<End<'a>>>,
     /// What upstream reports if the element is in a component.
     constructions: Vec<Construction<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            inside_component: AncestorMemo::new(),
+            constructed_variables: FlagsOfVariables::new(),
+            ends: IdMap::init(),
+            constructions: Vec::new(),
+        }
+    }
 }
 
 /// What upstream's `isConstruction` returns.
@@ -116,7 +127,7 @@ impl Rule for JsxNoConstructedContextValues {
             && (!file.language().is_oxlint || is_jsx(file))
             && file.mentions("value")
             && file.mentions_any(&["Provider", "createContext"]))
-        .then(State::default)
+        .then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

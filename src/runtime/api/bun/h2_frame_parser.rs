@@ -95,9 +95,8 @@ const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1
 /// `Tls`/`Tcp` are kept alive by the `RefPtr<H2FrameParser>` stored in the
 /// socket's `native_callback` slot, `*Writeonly` by the ref [`NativeSocket`]
 /// holds on them.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 enum BunSocket {
-    #[default]
     None,
     Tls(bun_ptr::BackRef<TLSSocket>),
     TlsWriteonly(bun_ptr::BackRef<TLSSocket>),
@@ -109,8 +108,14 @@ enum BunSocket {
 /// installs the parser as the socket's native callback (`Tls`/`Tcp`) or, when
 /// that slot is taken, takes a ref on the socket (`*Writeonly`); `detach` /
 /// `Drop` undo whichever one it was. Readers take a [`BunSocket`] snapshot.
-#[derive(Default)]
 struct NativeSocket(Cell<BunSocket>);
+
+impl NativeSocket {
+    #[inline]
+    fn new() -> Self {
+        Self(core::cell::Cell::new(BunSocket::None))
+    }
+}
 
 impl NativeSocket {
     #[inline]
@@ -262,9 +267,8 @@ const SETTING_BIT_ENABLE_CONNECT_PROTOCOL: u8 = 1 << 6;
 /// MAX_CUSTOM_SETTINGS custom entries, 6 bytes each.
 const MAX_SETTINGS_PAYLOAD_SIZE: usize = (7 + MAX_CUSTOM_SETTINGS) * 6;
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PaddingStrategy {
-    #[default]
     None,
     Aligned,
     Max,
@@ -324,7 +328,7 @@ impl ErrorCode {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct UInt31WithReserved(u32);
 
 impl UInt31WithReserved {
@@ -360,7 +364,7 @@ impl UInt31WithReserved {
 
 // packed struct(u40): streamIdentifier: u32, weight: u8
 #[repr(C, packed)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct StreamPriority {
     stream_identifier: u32,
     weight: u8,
@@ -433,8 +437,8 @@ pub(crate) struct FullSettingsPayload {
     max_header_list_size: u32,
     enable_connect_protocol: u32,
 }
-impl Default for FullSettingsPayload {
-    fn default() -> Self {
+impl FullSettingsPayload {
+    pub(crate) fn new() -> Self {
         Self {
             header_table_size: 4096,
             enable_push: 1,
@@ -937,7 +941,7 @@ impl Drop for DispatchGuard<'_> {
 /// sits at a point where another frame may legally begin: between frames, and not inside a
 /// header block (HEADERS / PUSH_PROMISE without END_HEADERS up to the CONTINUATION that carries
 /// it, RFC 9113 §4.3). See `write_to_js_transport`.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct TxFrameTracker {
     /// Payload bytes still owed on the current frame.
     remaining: u32,
@@ -946,6 +950,18 @@ struct TxFrameTracker {
     header_len: u8,
     /// A HEADERS/PUSH_PROMISE/CONTINUATION without END_HEADERS went out; the block is open.
     header_block_open: bool,
+}
+
+impl TxFrameTracker {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            remaining: 0,
+            header: [0; FrameHeader::BYTE_SIZE],
+            header_len: 0,
+            header_block_open: false,
+        }
+    }
 }
 
 impl TxFrameTracker {
@@ -1379,11 +1395,21 @@ bun_jsc::impl_abort_handle_owner!(
     }
 );
 
-#[derive(Default)]
 struct PendingQueue {
     data: Vec<PendingFrame>,
     front: usize,
     len: usize,
+}
+
+impl PendingQueue {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            data: Vec::new(),
+            front: 0,
+            len: 0,
+        }
+    }
 }
 
 impl PendingQueue {
@@ -1413,7 +1439,7 @@ impl PendingQueue {
             bun_output::scoped_log!(H2FrameParser, "PendingQueue.dequeue null");
             return None;
         }
-        let value = core::mem::take(&mut self.data[self.front]);
+        let value = core::mem::replace(&mut self.data[self.front], PendingFrame::new());
         self.len -= 1;
         if self.len == 0 {
             self.front = 0;
@@ -1432,13 +1458,25 @@ impl PendingQueue {
 
 // PendingQueue::deinit handled by Drop on Vec<PendingFrame>
 
-#[derive(Default)]
 struct PendingFrame {
     end_stream: bool,         // end_stream flag
     len: u32,                 // actually payload size
     offset: u32,              // offset into the buffer (if partial flush due to flow control)
     buffer: Vec<u8>,          // allocated buffer if len > 0
     callback: StrongOptional, // JSCallback for done
+}
+
+impl PendingFrame {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            end_stream: false,
+            len: 0,
+            offset: 0,
+            buffer: Vec::new(),
+            callback: StrongOptional::new(),
+        }
+    }
 }
 
 impl PendingFrame {
@@ -1851,7 +1889,7 @@ impl Stream {
             remote_used_window_size: 0,
             signal: None,
             reading_paused: false,
-            data_frame_queue: PendingQueue::default(),
+            data_frame_queue: PendingQueue::new(),
         }
     }
 
@@ -1920,7 +1958,7 @@ impl Stream {
         // socket's ref and free `client` between iterations. Not during
         // finalize: refcount is already 0 and a ref/deref would re-destroy.
         let _keepalive = (!FINALIZING).then(|| client.keepalive());
-        let mut queue = core::mem::take(&mut self.data_frame_queue);
+        let mut queue = core::mem::replace(&mut self.data_frame_queue, PendingQueue::new());
         while let Some(item) = queue.dequeue() {
             let frame = item;
             let len = frame.slice().len();
@@ -2523,7 +2561,7 @@ impl H2FrameParser {
         bytes: &[u8],
     ) -> (usize, usize) {
         let offset = self.write_buffer_offset.replace(0);
-        let mut pending = self.write_buffer.take();
+        let mut pending = self.write_buffer.replace(Vec::new());
         let _ = pending.write(bytes);
         let result: i32 = socket.write_maybe_corked(&pending[offset..]);
         self.restore_unwritten_pending(pending, offset, bytes.len(), result)
@@ -4475,7 +4513,7 @@ impl H2FrameParser {
                     bun_jsc::JSPropertyIteratorOptions {
                         skip_empty_name: false,
                         include_value: true,
-                        ..Default::default()
+                        ..bun_jsc::JSPropertyIteratorOptions::init()
                     },
                 )?;
 
@@ -4713,7 +4751,10 @@ impl H2FrameParser {
             JSValue::js_number(this.last_stream_id.get() as f64),
         );
 
-        let settings = this.remote_settings.get().unwrap_or_default();
+        let settings = this
+            .remote_settings
+            .get()
+            .unwrap_or_else(FullSettingsPayload::new);
         let remote_iws = settings.initial_window_size;
         let local_iws = this.local_settings.get().initial_window_size;
         let local_hts = this.local_settings.get().header_table_size;
@@ -5643,7 +5684,7 @@ impl H2FrameParser {
             bun_jsc::JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,
-                ..Default::default()
+                ..bun_jsc::JSPropertyIteratorOptions::init()
             },
         )?;
 
@@ -6118,7 +6159,7 @@ impl H2FrameParser {
                 bun_jsc::JSPropertyIteratorOptions {
                     skip_empty_name: false,
                     include_value: true,
-                    ..Default::default()
+                    ..bun_jsc::JSPropertyIteratorOptions::init()
                 },
             )?;
             while let Some((header_name, js_value)) = iter.next()? {
@@ -6709,7 +6750,7 @@ impl H2FrameParser {
                 bun_jsc::JSPropertyIteratorOptions {
                     skip_empty_name: false,
                     include_value: true,
-                    ..Default::default()
+                    ..bun_jsc::JSPropertyIteratorOptions::init()
                 },
             )?;
 
@@ -7494,15 +7535,15 @@ impl H2FrameParser {
             handlers: JsCell::new(handlers),
             global_this: GlobalRef::from(global_object),
             strong_this: JsCell::new(JsRef::empty()),
-            native_socket: NativeSocket::default(),
-            local_settings: Cell::new(FullSettingsPayload::default()),
+            native_socket: NativeSocket::new(),
+            local_settings: Cell::new(FullSettingsPayload::new()),
             explicit_settings: Cell::new(0),
             custom_settings: JsCell::new(Vec::new()),
             wire_custom_settings: JsCell::new(Vec::new()),
             remote_custom_settings_filter: JsCell::new(Vec::new()),
             remote_custom_settings: JsCell::new(Vec::new()),
             enforced_max_header_list_size: Cell::new(
-                FullSettingsPayload::default().max_header_list_size,
+                FullSettingsPayload::new().max_header_list_size,
             ),
             remote_settings: Cell::new(None),
             window_size: Cell::new(DEFAULT_WINDOW_SIZE),
@@ -7535,10 +7576,10 @@ impl H2FrameParser {
             last_peer_stream_id: Cell::new(0),
             is_server: Cell::new(false),
             left_exception: Cell::new(false),
-            write_buffer: JsCell::new(Vec::<u8>::default()),
+            write_buffer: JsCell::new(Vec::<u8>::new()),
             write_buffer_offset: Cell::new(0),
             outbound_queue_size: Cell::new(0),
-            streams: JsCell::new(BunHashMap::default()),
+            streams: JsCell::new(BunHashMap::init()),
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
@@ -7547,13 +7588,13 @@ impl H2FrameParser {
             frames_sent_legacy: Cell::new(0),
             engine_frames_received: Cell::new(0),
             engine_frames_sent: Cell::new(0),
-            tx_tracker: Cell::new(TxFrameTracker::default()),
-            auto_flusher: JsCell::new(AutoFlusher::default()),
+            tx_tracker: Cell::new(TxFrameTracker::new()),
+            auto_flusher: JsCell::new(AutoFlusher::new()),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),
             rewrite_tail: JsCell::new(Vec::new()),
             rewrite_pending_push: Cell::new(0),
-            sctx: JsCell::new(BunHashMap::default()),
+            sctx: JsCell::new(BunHashMap::init()),
             hdr_block: JsCell::new(Vec::new()),
             hdr_meta: JsCell::new(Vec::new()),
         };
@@ -7786,7 +7827,7 @@ impl H2FrameParser {
         // Free the allocation, not just the length: detach() is reachable from JS without a
         // following `deinit`, so the capacity must be released here.
         self.write_buffer.with_mut(|wb| wb.clear_and_free());
-        self.tx_tracker.set(TxFrameTracker::default());
+        self.tx_tracker.set(TxFrameTracker::new());
         // Drop every per-stream JS context root; the parser is detaching.
         self.sctx.with_mut(|m| m.clear());
         self.write_buffer_offset.set(0);
@@ -7835,7 +7876,7 @@ impl Drop for H2FrameParser {
         self.detach();
         // Note: take the map out first so `self` is free for
         // `free_resources(self)` while we walk the entries.
-        let streams = self.streams.replace(BunHashMap::default());
+        let streams = self.streams.replace(BunHashMap::init());
         for (_, item) in streams.iter() {
             let stream = *item;
             // SAFETY: stream is *mut Stream from self.streams; this is final teardown, freed exactly once via heap::take
@@ -7855,7 +7896,7 @@ impl H2FrameParser {
         if VirtualMachine::get().is_shutting_down() {
             // Free the streams first: `free_resources` releases the refs their signals hold.
             // The map is emptied so a later `Drop` won't double-free.
-            let streams = self.streams.replace(BunHashMap::default());
+            let streams = self.streams.replace(BunHashMap::init());
             for (_, item) in streams.iter() {
                 let stream = *item;
                 // SAFETY: map has been emptied; each entry is freed exactly once.

@@ -53,9 +53,9 @@ impl XxHash64Streaming {
     }
 }
 
-impl Default for XxHash64Streaming {
+impl XxHash64Streaming {
     #[inline]
-    fn default() -> Self {
+    pub fn init() -> Self {
         Self::new(0)
     }
 }

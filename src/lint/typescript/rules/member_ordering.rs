@@ -344,7 +344,7 @@ fn get_member_name<'a>(member: Member<'a>) -> Cow<'a, [u8]> {
         MemberKind::Property | MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
             return match member.key() {
                 Some(key) => get_member_raw_name(key, member.file()),
-                None => Cow::default(),
+                None => Cow::Owned(Vec::new()),
             };
         }
         MemberKind::Constructor => b"constructor",
@@ -411,11 +411,20 @@ fn collect_immediate_this_property_names(initializer: Expr<'_>) -> SmallVec<[Cow
 }
 
 /// The names of the members with an initializer among those that a member would have to be moved before.
-#[derive(Default)]
 struct EarlierMembers<'a> {
     names: FxHashSet<Cow<'a, [u8]>>,
     /// The positions of the members that `names` is about.
     range: std::ops::Range<usize>,
+}
+
+impl<'a> EarlierMembers<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            names: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            range: 0..0,
+        }
+    }
 }
 
 impl<'a> EarlierMembers<'a> {
@@ -628,9 +637,9 @@ impl<'a> Validation<'_, 'a> {
     }
 
     fn check_alpha_sort(&self, members: &[Member<'a>], order: Order) {
-        let mut previous_name: Cow<'a, [u8]> = Cow::default();
+        let mut previous_name: Cow<'a, [u8]> = Cow::Owned(Vec::new());
         let mut previous_index = 0;
-        let mut earlier = EarlierMembers::default();
+        let mut earlier = EarlierMembers::new();
         for (index, &member) in members.iter().enumerate() {
             let name = get_member_name(member);
             if name.is_empty() {

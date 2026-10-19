@@ -3,7 +3,6 @@ use bun_core::StringBuilder;
 
 use crate::headers::{Entry, EntryList, api};
 
-#[derive(Default)]
 pub struct HeaderBuilder {
     pub content: StringBuilder,
     pub header_count: u64,
@@ -11,8 +10,19 @@ pub struct HeaderBuilder {
 }
 
 impl HeaderBuilder {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            content: StringBuilder::new(),
+            header_count: 0,
+            entries: EntryList::new(),
+        }
+    }
+}
+
+impl HeaderBuilder {
     pub fn from_pairs(pairs: &[(&[u8], &[u8])]) -> Result<Self, AllocError> {
-        let mut headers = Self::default();
+        let mut headers = Self::new();
         for &(name, value) in pairs {
             headers.count(name, value);
         }

@@ -114,12 +114,22 @@ fn state_parameter(function: Func<'_>) -> Option<Option<Name<'_>>> {
     function.params_with_this().nth(1).filter(|_| gets_the_state).map(name_of_param)
 }
 
-#[derive(Default)]
 struct ClassInfo<'a> {
     /// Each with the `getName` of its key.
     state_fields: Vec<(Prop<'a>, Cow<'a, [u8]>)>,
     used_state_fields: FxHashSet<Cow<'a, [u8]>>,
     aliases: Option<FxHashSet<Name<'a>>>,
+}
+
+impl<'a> ClassInfo<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            state_fields: Vec::new(),
+            used_state_fields: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            aliases: None,
+        }
+    }
 }
 
 /// Upstream's listeners. It has one `classInfo` and no stack: what is in a component can replace it or end it.
@@ -308,7 +318,7 @@ impl<'a> Walk<'a> {
                 }
             }
             ExprKind::Object(_) if name.is_some_and(|it| it == b"state") => self.add_state_fields(unwrapped_value),
-            ExprKind::Fn(function) if function.is_arrow() => self.set_aliases(Some(FxHashSet::default())),
+            ExprKind::Fn(function) if function.is_arrow() => self.set_aliases(Some(FxHashSet::with_hasher(rustc_hash::FxBuildHasher))),
             _ => {}
         }
     }
@@ -351,7 +361,7 @@ impl<'a> Walk<'a> {
                 self.add_state_fields(argument);
             }
         } else {
-            self.set_aliases(Some(FxHashSet::default()));
+            self.set_aliases(Some(FxHashSet::with_hasher(rustc_hash::FxBuildHasher)));
         }
     }
 
@@ -420,7 +430,7 @@ impl<'a> Visitor<'a> for Walk<'a> {
         match node {
             Node::Class(class) => {
                 if is_es6_component(class, &self.pragmas) {
-                    self.class_info = Some(ClassInfo::default());
+                    self.class_info = Some(ClassInfo::new());
                 }
             }
             Node::Func(function) => {
@@ -431,7 +441,7 @@ impl<'a> Visitor<'a> for Walk<'a> {
             }
             Node::Expr(e) if e.tag() == ExprTag::Object => {
                 if self.is_es5_component(e) {
-                    self.class_info = Some(ClassInfo::default());
+                    self.class_info = Some(ClassInfo::new());
                 }
             }
             _ if self.class_info.is_none() => {}
@@ -445,7 +455,7 @@ impl<'a> Visitor<'a> for Walk<'a> {
             Node::Member(member) if ast_utils::is_property_definition(member) => self.property_definition(member),
             Node::Member(_) => {
                 if estree_type_name(node) == "MethodDefinition" {
-                    self.set_aliases(Some(FxHashSet::default()));
+                    self.set_aliases(Some(FxHashSet::with_hasher(rustc_hash::FxBuildHasher)));
                 }
             }
             Node::VarDecl(declarator) => {
@@ -525,7 +535,7 @@ impl Rule for NoUnusedState {
             pragmas,
             class_info: None,
             state_parameters: Vec::new(),
-            enclosing_functions: AncestorMemo::default(),
+            enclosing_functions: AncestorMemo::new(),
             unused: Vec::new(),
         };
         let mut walked_to = 0;

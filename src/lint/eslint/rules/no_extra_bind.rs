@@ -7,11 +7,21 @@ pub struct NoExtraBind;
 const UNEXPECTED: Message = Message::new("unexpected", "The function binding is unnecessary.");
 
 /// What a function would mean differently if it were an arrow function.
-#[derive(Default)]
 pub(crate) struct OwnKeywords {
     pub(crate) this: bool,
     pub(crate) has_super: bool,
     pub(crate) new_target: bool,
+}
+
+impl OwnKeywords {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            this: false,
+            has_super: false,
+            new_target: false,
+        }
+    }
 }
 
 impl OwnKeywords {
@@ -38,7 +48,7 @@ fn is_property_definition(member: Member) -> bool {
 /// arrow functions. `class_scopes`: nor those in the initializers of fields and in the static blocks
 /// of classes.
 pub(crate) fn own_keywords(func: Func, class_scopes: bool) -> OwnKeywords {
-    let mut found = OwnKeywords::default();
+    let mut found = OwnKeywords::new();
     let mut pending = Node::Func(func).children();
     while let Some(node) = pending.pop() {
         match node {

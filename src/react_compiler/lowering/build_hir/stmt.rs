@@ -116,7 +116,7 @@ fn lower_block_statement_inner(
     // unrelated instructions (e.g. a preceding hook call), which causes the
     // resulting scope to be flattened.
     // A statement is walked once, for all the decls that are not before it.
-    let mut refs = ForwardRefs::default();
+    let mut refs = ForwardRefs::new();
     for &(decl_i, target, _, kind) in &decls {
         refs.last_decl.insert(target, decl_i);
         refs.has_functions |= kind == InstructionKind::HoistedFunction;
@@ -146,7 +146,7 @@ fn lower_block_statement_inner(
         let mut k = 0;
         while k < decls.len() {
             let (decl_i, target, loc, kind) = decls[k];
-            let seen = refs.seen.get(&target).copied().unwrap_or_default();
+            let seen = refs.seen.get(&target).copied().unwrap_or_else(SeenRef::new);
             let seen = match decl_i.cmp(&i) {
                 std::cmp::Ordering::Greater => seen.elsewhere.max(seen.in_pattern),
                 // Self-reference: only the initializer expressions of this
@@ -245,20 +245,40 @@ fn catch_param_referenced_in_nested_fn(builder: &HirBuilder, target: Ref, body: 
 }
 
 /// How one statement refers to a binding. `Some(true)`: inside a function in that statement.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct SeenRef {
     /// In the patterns of a declaration: a default value, a computed key.
     in_pattern: Option<bool>,
     elsewhere: Option<bool>,
 }
 
+impl SeenRef {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            in_pattern: None,
+            elsewhere: None,
+        }
+    }
+}
+
 /// What one statement of a block refers to, of the block's own bindings that are not declared before it.
-#[derive(Default)]
 struct ForwardRefs {
     /// The index of the statement that declares it.
     last_decl: HashMap<Ref, usize>,
     has_functions: bool,
     seen: HashMap<Ref, SeenRef>,
+}
+
+impl ForwardRefs {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            last_decl: HashMap::with_hasher(rustc_hash::FxBuildHasher),
+            has_functions: false,
+            seen: HashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl ForwardRefs {
@@ -275,7 +295,7 @@ impl ForwardRefs {
         }
         let target = builder.resolve_ref(r);
         if self.last_decl.get(&target).is_some_and(|&decl| decl >= at) {
-            let seen = self.seen.entry(target).or_default();
+            let seen = self.seen.entry(target).or_insert_with(SeenRef::new);
             let seen = match in_pattern {
                 true => &mut seen.in_pattern,
                 false => &mut seen.elsewhere,

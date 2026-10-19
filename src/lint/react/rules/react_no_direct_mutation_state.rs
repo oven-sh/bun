@@ -23,7 +23,6 @@ const IN_CONSTRUCTOR: u8 = 1 << 0;
 const IN_CALL_EXPRESSION: u8 = 1 << 1;
 const IN_COMPONENT: u8 = 1 << 2;
 
-#[derive(Default)]
 pub struct State<'a> {
     /// What something is in, up to the innermost class.
     around: AncestorWalk<'a, u8, u8>,
@@ -31,13 +30,34 @@ pub struct State<'a> {
     mutations: Vec<Expr<'a>>,
 }
 
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            around: AncestorWalk::new(),
+            mutations: Vec::new(),
+        }
+    }
+}
+
 /// What upstream keeps in a component.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Component {
     in_constructor: bool,
     in_call_expression: bool,
     /// Which list of `mutations`: two components can have one.
     mutations: Option<usize>,
+}
+
+impl Component {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            in_constructor: false,
+            in_call_expression: false,
+            mutations: None,
+        }
+    }
 }
 
 impl Rule for NoDirectMutationState {
@@ -61,7 +81,7 @@ impl Rule for NoDirectMutationState {
         let is_candidate = (file.mentions("state") || (!is_oxlint && file.mentions("#state")))
             && file.has_exprs([ExprTag::This])
             && if is_oxlint { is_jsx(file) } else { Components::may_have_any(file) };
-        is_candidate.then(State::default)
+        is_candidate.then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -131,7 +151,7 @@ fn should_ignore_component<'a>(e: Expr<'a>, cx: &mut Cx<'a, NoDirectMutationStat
 /// `false`, and nothing is reported: `inCallExpression` is asked for, which only a walk `with_calls` knows.
 fn walk<'a>(mutations: &[Expr<'a>], with_calls: bool, cx: &Cx<'a, NoDirectMutationState>) -> bool {
     let file = cx.file();
-    let mut queue = Queue::default();
+    let mut queue = Queue::new();
     for &e in mutations {
         queue.push(At::enter(Node::Expr(e)), 0, Node::Expr(e));
     }
@@ -147,7 +167,7 @@ fn walk<'a>(mutations: &[Expr<'a>], with_calls: bool, cx: &Cx<'a, NoDirectMutati
     }
 
     let mut components = Components::new(file);
-    let mut known: FxHashMap<ComponentId, Component> = FxHashMap::default();
+    let mut known: FxHashMap<ComponentId, Component> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     let mut lists: Vec<Vec<Span>> = Vec::new();
     while let Some(event) = queue.pop_until(At::END) {
         components.advance(event.at);
@@ -156,7 +176,7 @@ fn walk<'a>(mutations: &[Expr<'a>], with_calls: bool, cx: &Cx<'a, NoDirectMutati
             Node::Expr(e) if e.tag() != ExprTag::Call => e,
             node => {
                 if let Some(id) = components.set(node) {
-                    let component = known.entry(id).or_default();
+                    let component = known.entry(id).or_insert_with(Component::new);
                     match node {
                         Node::Member(_) => component.in_constructor = is_entered,
                         _ => component.in_call_expression = is_entered,
@@ -166,7 +186,7 @@ fn walk<'a>(mutations: &[Expr<'a>], with_calls: bool, cx: &Cx<'a, NoDirectMutati
             }
         };
         let parent = components.get_parent_component(event.node).and_then(|it| components.get(it));
-        let Some(component) = parent.map(|id| known.get(&id).copied().unwrap_or_default()) else {
+        let Some(component) = parent.map(|id| known.get(&id).copied().unwrap_or_else(Component::new)) else {
             continue;
         };
         if component.in_constructor && !with_calls {
@@ -189,7 +209,7 @@ fn walk<'a>(mutations: &[Expr<'a>], with_calls: bool, cx: &Cx<'a, NoDirectMutati
             list.extend(mutation.map(Expr::span));
         }
         if let Some(id) = components.set(event.node) {
-            known.entry(id).or_default().mutations = Some(list);
+            known.entry(id).or_insert_with(Component::new).mutations = Some(list);
         }
     }
 

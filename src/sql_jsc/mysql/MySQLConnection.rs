@@ -92,38 +92,38 @@ pub struct MySQLConnection {
     flags: ConnectionFlags,
 }
 
-impl Default for MySQLConnection {
-    fn default() -> Self {
+impl MySQLConnection {
+    pub fn new() -> Self {
         Self {
             socket: Socket::SocketTcp(uws::SocketTCP::detached()),
             status: ConnectionState::Connecting,
-            write_buffer: OffsetByteList::default(),
-            read_buffer: OffsetByteList::default(),
+            write_buffer: OffsetByteList::new(),
+            read_buffer: OffsetByteList::new(),
             last_message_start: 0,
             sequence_id: 0,
             in_reply: false,
             queue: MySQLRequestQueue::init(),
-            statements: StatementCache::default(),
-            server_version: Vec::<u8>::default(),
+            statements: StatementCache::new(),
+            server_version: Vec::<u8>::new(),
             connection_id: 0,
             capabilities: Capabilities::default(),
             mariadb_capabilities: MariaDBCapabilities::default(),
-            character_set: CharacterSet::default(),
-            status_flags: StatusFlags::default(),
+            character_set: CharacterSet::new(),
+            status_flags: StatusFlags::new(),
             auth_plugin: None,
             auth_switch_count: 0,
             full_auth_requested: false,
             auth_data: [0; Auth::NONCE_LENGTH],
-            database: Box::default(),
-            user: Box::default(),
-            password: Box::default(),
+            database: Box::new([]),
+            user: Box::new([]),
+            password: Box::new([]),
             secure: None,
-            tls_config: SSLConfig::default(),
+            tls_config: SSLConfig::new(),
             tls_status: TLSStatus::None,
             ssl_mode: SSLMode::Disable,
             allow_public_key_retrieval: false,
             unix_socket: false,
-            flags: ConnectionFlags::default(),
+            flags: ConnectionFlags::empty(),
         }
     }
 }
@@ -163,7 +163,7 @@ impl MySQLConnection {
             } else {
                 TLSStatus::None
             },
-            ..Default::default()
+            ..Self::new()
         }
     }
 
@@ -277,7 +277,7 @@ impl MySQLConnection {
     }
 
     pub(crate) fn discard_write_buffer(&mut self) {
-        self.write_buffer = OffsetByteList::default();
+        self.write_buffer = OffsetByteList::new();
     }
 
     pub(crate) fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
@@ -555,7 +555,7 @@ impl MySQLConnection {
         if reader.peek().first() == Some(&PacketType::ERROR.0) {
             return self.handle_unasked(reader);
         }
-        let mut handshake = HandshakeV10::default();
+        let mut handshake = HandshakeV10::new();
         handshake.decode_internal(reader)?;
         self.server_version = handshake
             .server_version
@@ -572,7 +572,7 @@ impl MySQLConnection {
             .intersect(handshake.mariadb_capability_flags);
 
         // Override with utf8mb4 instead of using server's default
-        self.character_set = CharacterSet::default();
+        self.character_set = CharacterSet::new();
         self.status_flags = handshake.status_flags;
 
         bun_core::scoped_log!(
@@ -603,7 +603,7 @@ impl MySQLConnection {
                 capability_flags: self.capabilities,
                 mariadb_capability_flags: self.mariadb_capabilities,
                 max_packet_size: 0, // 16777216,
-                character_set: CharacterSet::default(),
+                character_set: CharacterSet::new(),
                 // bun always send connection attributes
                 has_connection_attributes: true,
             };
@@ -653,7 +653,7 @@ impl MySQLConnection {
         &mut self,
         reader: PacketReader<'_>,
     ) -> Result<(), AnyMySQLError> {
-        let mut response = Auth::caching_sha2_password::PublicKeyResponse::default();
+        let mut response = Auth::caching_sha2_password::PublicKeyResponse::new();
         response.decode(reader)?;
         // revert back to authenticating since we received the public key
         self.set_status(ConnectionState::Authenticating);
@@ -689,7 +689,7 @@ impl MySQLConnection {
 
         match first_byte {
             x if x == PacketType::OK.0 => {
-                let mut ok = OKPacket::default();
+                let mut ok = OKPacket::new();
                 ok.decode_internal(reader)?;
 
                 self.status_flags = ok.status_flags;
@@ -697,7 +697,7 @@ impl MySQLConnection {
             }
 
             x if x == PacketType::ERROR.0 => {
-                let mut err = ErrorPacket::default();
+                let mut err = ErrorPacket::new();
                 err.decode_internal(reader)?;
 
                 self.js_connection_ref().on_error_packet(None, &err);
@@ -714,7 +714,7 @@ impl MySQLConnection {
                                 return self.handle_handshake_decode_public_key(reader);
                             }
 
-                            let mut response = Auth::caching_sha2_password::Response::default();
+                            let mut response = Auth::caching_sha2_password::Response::new();
                             response.decode(reader)?;
 
                             match response.status {
@@ -758,7 +758,7 @@ impl MySQLConnection {
             }
 
             PacketType::AUTH_SWITCH => {
-                let mut auth_switch = AuthSwitchRequest::default();
+                let mut auth_switch = AuthSwitchRequest::new();
                 auth_switch.decode_internal(reader)?;
 
                 let auth_method = self.auth_plugin_named(auth_switch.plugin_name.slice())?;
@@ -810,7 +810,7 @@ impl MySQLConnection {
 
         match first_byte {
             x if x == PacketType::OK.0 => {
-                let mut ok = OKPacket::default();
+                let mut ok = OKPacket::new();
                 ok.decode_internal(reader)?;
 
                 self.set_status(ConnectionState::Connected);
@@ -820,7 +820,7 @@ impl MySQLConnection {
                 Ok(())
             }
             x if x == PacketType::ERROR.0 => {
-                let mut err = ErrorPacket::default();
+                let mut err = ErrorPacket::new();
                 err.decode_internal(reader)?;
 
                 self.js_connection_ref().on_error_packet(None, &err);
@@ -853,7 +853,7 @@ impl MySQLConnection {
     fn handle_unasked(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         // The ERR that says why the server drops the connection (KILL, wait_timeout).
         if reader.peek().first() == Some(&PacketType::ERROR.0) {
-            let mut err = ErrorPacket::default();
+            let mut err = ErrorPacket::new();
             err.decode_internal(reader)?;
             self.js_connection_ref().on_error_packet(None, &err);
             return Err(AnyMySQLError::ConnectionClosed);
@@ -881,7 +881,7 @@ impl MySQLConnection {
             capability_flags: self.capabilities,
             mariadb_capability_flags: self.mariadb_capabilities,
             max_packet_size: 0, // 16777216,
-            character_set: CharacterSet::default(),
+            character_set: CharacterSet::new(),
             username: Data::Temporary(bun_ptr::RawSlice::new(&self.user)),
             database: Data::Temporary(bun_ptr::RawSlice::new(&self.database)),
             auth_plugin_name: Data::Temporary(bun_ptr::RawSlice::new(
@@ -889,7 +889,7 @@ impl MySQLConnection {
             )),
             auth_response,
             sequence_id: self.sequence_id,
-            connect_attrs: Default::default(),
+            connect_attrs: bun_collections::StringHashMap::init(),
         };
 
         // Add some basic connect attributes like mysql2
@@ -1116,7 +1116,7 @@ impl MySQLConnection {
                 && payload_length < PacketHeader::MAX_PAYLOAD_LENGTH
                 && PacketType(first_byte) == PacketType::EOF
             {
-                let mut eof = EOFPacket::default();
+                let mut eof = EOFPacket::new();
                 eof.decode_internal(reader)?;
                 if Self::check_if_prepared_statement_is_done(statement) {
                     self.on_statement_prepared(request);
@@ -1125,13 +1125,13 @@ impl MySQLConnection {
             }
             let extended_type_info = self.mariadb_capabilities.MARIADB_CLIENT_EXTENDED_TYPE_INFO;
             if (statement.params_received as usize) < statement.params.len() {
-                let mut column = ColumnDefinition41::default();
+                let mut column = ColumnDefinition41::new();
                 column.decode(&mut reader, extended_type_info)?;
                 statement.params[statement.params_received as usize] = column.column_type;
                 statement.params_received += 1;
             } else if (statement.columns_received as usize) < statement.columns.len() {
                 // Only counted: every execution brings the definitions again.
-                ColumnDefinition41::default().decode(&mut reader, extended_type_info)?;
+                ColumnDefinition41::new().decode(&mut reader, extended_type_info)?;
                 statement.columns_received += 1;
             }
             // In CLIENT_DEPRECATE_EOF mode, there are no trailing EOF packets, so
@@ -1148,7 +1148,7 @@ impl MySQLConnection {
 
         match PacketType(first_byte) {
             PacketType::OK => {
-                let mut ok = StmtPrepareOKPacket::default();
+                let mut ok = StmtPrepareOKPacket::new();
                 ok.decode(reader)?;
 
                 statement.statement_id = ok.statement_id;
@@ -1162,7 +1162,7 @@ impl MySQLConnection {
 
                 if ok.num_columns > 0 {
                     statement.columns = (0..ok.num_columns as usize)
-                        .map(|_| ColumnDefinition41::default())
+                        .map(|_| ColumnDefinition41::new())
                         .collect();
                     statement.columns_received = 0;
                 }
@@ -1174,7 +1174,7 @@ impl MySQLConnection {
 
             PacketType::ERROR => {
                 debug!("handlePreparedStatement ERROR");
-                let mut err = ErrorPacket::default();
+                let mut err = ErrorPacket::new();
                 err.decode_internal(reader)?;
                 // The cache holds handles the server has. The next use of the text prepares again.
                 self.statements.remove(statement);
@@ -1261,10 +1261,10 @@ impl MySQLConnection {
         // re-entrant `deref()` cannot free it.
         let _request_guard = request.ref_guard();
         let request: &JSMySQLQuery = request.get();
-        let mut ok = OKPacket::default();
+        let mut ok = OKPacket::new();
         match PacketType(first_byte) {
             PacketType::ERROR => {
-                let mut err = ErrorPacket::default();
+                let mut err = ErrorPacket::new();
                 err.decode_internal(reader)?;
                 if let Some(statement) = request.get_statement() {
                     statement.reset();
@@ -1299,7 +1299,7 @@ impl MySQLConnection {
                         return Err(AnyMySQLError::UnexpectedPacket);
                     }
 
-                    let mut header = ResultSetHeader::default();
+                    let mut header = ResultSetHeader::new();
                     header.decode_internal(reader)?;
                     if header.field_count == 0 {
                         // Can't be 0
@@ -1332,11 +1332,12 @@ impl MySQLConnection {
                         columns
                             .try_reserve_exact(field_count)
                             .map_err(|_| AnyMySQLError::OutOfMemory)?;
-                        columns.resize_with(field_count, ColumnDefinition41::default);
+                        columns.resize_with(field_count, ColumnDefinition41::new);
                         statement.columns = columns;
                         statement.columns_received = 0;
-                        statement.cached_structure = Default::default();
-                        statement.fields_flags = Default::default();
+                        statement.cached_structure =
+                            crate::shared::cached_structure::CachedStructure::new();
+                        statement.fields_flags = crate::shared::sql_data_cell::Flags::empty();
                     }
                     statement
                         .execution_flags
@@ -1357,8 +1358,9 @@ impl MySQLConnection {
                         Changed::Nothing => {}
                         Changed::Description => statement.cached_structure.clear_description(),
                         Changed::Name => {
-                            statement.cached_structure = Default::default();
-                            statement.fields_flags = Default::default();
+                            statement.cached_structure =
+                                crate::shared::cached_structure::CachedStructure::new();
+                            statement.fields_flags = crate::shared::sql_data_cell::Flags::empty();
                             statement
                                 .execution_flags
                                 .insert(mysql_statement::ExecutionFlags::NEEDS_DUPLICATE_CHECK);
@@ -1388,7 +1390,7 @@ impl MySQLConnection {
                                 .contains(mysql_statement::ExecutionFlags::COLUMNS_EOF_RECEIVED)
                             {
                                 // Intermediate EOF between column definitions and row data - skip it
-                                let mut eof = EOFPacket::default();
+                                let mut eof = EOFPacket::new();
                                 eof.decode_internal(reader)?;
                                 statement
                                     .execution_flags
@@ -1396,7 +1398,7 @@ impl MySQLConnection {
                                 return Ok(());
                             }
                             // Final EOF after all row data - terminates the result set
-                            let mut eof = EOFPacket::default();
+                            let mut eof = EOFPacket::new();
                             eof.decode_internal(reader)?;
                             self.handle_result_set_ok(request, eof.status_flags, 0, 0);
                             return Ok(());

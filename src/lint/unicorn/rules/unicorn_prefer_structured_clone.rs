@@ -15,7 +15,7 @@ const SWITCH_TO_STRUCTURED_CLONE: Message = Message::new("", "Switch to `structu
 
 fn report<'a>(e: Expr<'a>, first_argument: Expr<'a>, cx: &Cx<'a, PreferStructuredClone>) {
     cx.report(e, PREFER_STRUCTURED_CLONE).suggest(SWITCH_TO_STRUCTURED_CLONE, |fixer| {
-        let mut codegen = Codegen::default();
+        let mut codegen = Codegen::new();
         codegen.code.extend_from_slice(b"structuredClone(");
         codegen.print_expression(first_argument);
         codegen.code.push(b')');

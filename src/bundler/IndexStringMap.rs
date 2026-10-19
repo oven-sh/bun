@@ -3,9 +3,17 @@ use bun_collections::ArrayHashMap;
 /// The underlying integer repr of `Index`.
 pub(crate) use crate::IndexInt;
 
-#[derive(Default)]
 pub struct IndexStringMap {
     map: ArrayHashMap<IndexInt, Box<[u8]>>,
+}
+
+impl IndexStringMap {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            map: ArrayHashMap::new(),
+        }
+    }
 }
 
 impl IndexStringMap {

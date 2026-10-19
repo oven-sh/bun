@@ -65,7 +65,7 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             e => Some(Err(sys::Error {
                 errno: (e as u16),
                 syscall,
-                ..Default::default()
+                ..sys::Error::init()
             })),
         }
     }
@@ -77,7 +77,7 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
                 errno: (e as u16),
                 syscall,
                 fd,
-                ..Default::default()
+                ..sys::Error::init()
             })),
         }
     }
@@ -93,7 +93,7 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
                 errno: (e as u16),
                 syscall,
                 path: path.as_ref().into(),
-                ..Default::default()
+                ..sys::Error::init()
             })),
         }
     }
@@ -111,7 +111,7 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
                 syscall,
                 path: path.as_ref().into(),
                 dest: dest.as_ref().into(),
-                ..Default::default()
+                ..sys::Error::init()
             })),
         }
     }
@@ -191,7 +191,7 @@ use bun_sys_jsc::ErrorJsc as _;
 #[inline]
 fn work_pool_task(callback: unsafe fn(*mut WorkPoolTask)) -> WorkPoolTask {
     WorkPoolTask {
-        node: bun_threading::thread_pool::Node::default(),
+        node: bun_threading::thread_pool::Node::new(),
         callback,
     }
 }
@@ -323,7 +323,7 @@ fn abort_err() -> sys::Error {
     sys::Error {
         errno: E::EINTR as _,
         syscall: sys::Tag::access,
-        ..Default::default()
+        ..sys::Error::init()
     }
 }
 
@@ -597,14 +597,14 @@ mod _async_tasks {
 
             #[allow(clippy::boxed_local)]
             fn run_owned(self: Box<Self>) {
-                let mut node_fs = NodeFS::default();
+                let mut node_fs = NodeFS::new();
                 // SAFETY: the scheduling caller keeps `path` alive until `completion`
                 // runs (it points into caller-owned state, not this box).
                 let path = unsafe { &*self.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
                     path: PathLike::borrowed(path),
                     recursive: true,
-                    ..Default::default()
+                    ..args::Mkdir::new()
                 });
                 match result {
                     Err(err) => {
@@ -674,10 +674,10 @@ mod _async_tasks {
                 // below) before any read on the JS thread. `Maybe<R>` is
                 // `Result<R, sys::Error>` and may be niche-optimised for arbitrary
                 // `R`; never construct an all-zero `Result` value.
-                result: Err(sys::Error::default()),
+                result: Err(sys::Error::init()),
                 global_object: bun_ptr::BackRef::new(cx.global()),
                 req: bun_core::ffi::zeroed(),
-                r#ref: KeepAlive::default(),
+                r#ref: KeepAlive::new(),
                 tracker: AsyncTaskTracker::init(vm),
                 context: cx.context().id(),
             });
@@ -904,7 +904,7 @@ mod _async_tasks {
             scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
             // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
             let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
-            let mut node_fs = NodeFS::default();
+            let mut node_fs = NodeFS::new();
             // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
             // `this: &mut Self` is live, re-deriving through the raw `req` would create a
             // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
@@ -922,7 +922,7 @@ mod _async_tasks {
             scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
             // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
             let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
-            let mut node_fs = NodeFS::default();
+            let mut node_fs = NodeFS::new();
             // `req` aliases `this.req`; once `this: &mut Self` is live, re-deriving `&mut *req`
             // would overlap it (Stacked-Borrows UB). Go through `this.req` instead — disjoint-field
             // borrow alongside `&this.args` / `this.result =`. Hoist the result read so it isn't
@@ -943,7 +943,7 @@ mod _async_tasks {
             let (result, completion, global_ref, tracker) = unsafe {
                 let task = &mut *this;
                 (
-                    core::mem::replace(&mut task.result, Err(sys::Error::default())),
+                    core::mem::replace(&mut task.result, Err(sys::Error::init())),
                     core::mem::replace(
                         &mut task.completion,
                         FsCompletion::Promise(JSPromiseStrong::empty()),
@@ -975,7 +975,7 @@ mod _async_tasks {
             // reclaim ownership (paired with the Box::leak in create()).
             let mut task = unsafe { bun_core::heap::take(this) };
             // A result nobody took (the request's context stopped: released unrun).
-            if let Ok(result) = core::mem::replace(&mut task.result, Err(sys::Error::default())) {
+            if let Ok(result) = core::mem::replace(&mut task.result, Err(sys::Error::init())) {
                 result.discard();
             }
             // `bun_sys::Error` frees its path on Drop.
@@ -1232,7 +1232,7 @@ mod _async_tasks {
     impl<R: FsReturn, A, const F: NodeFSFunctionEnum> Drop for AsyncFSTask<R, A, F> {
         /// A job whose context stopped is dropped with its result untaken.
         fn drop(&mut self) {
-            if let Ok(result) = core::mem::replace(&mut self.result, Err(sys::Error::default())) {
+            if let Ok(result) = core::mem::replace(&mut self.result, Err(sys::Error::init())) {
                 result.discard();
             }
         }
@@ -1371,7 +1371,7 @@ mod _async_tasks {
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            let mut node_fs = NodeFS::default();
+            let mut node_fs = NodeFS::new();
             this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
             Some(done)
         }
@@ -1386,7 +1386,7 @@ mod _async_tasks {
 
             let success = this.result.is_ok();
             let completion = &js.completion;
-            let converted = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
+            let converted = match core::mem::replace(&mut this.result, Err(sys::Error::init())) {
                 Err(err) => completion.error_to_js(global_object, &err),
                 Ok(res) => FsReturn::fs_to_js(res, global_object),
             };
@@ -1440,7 +1440,7 @@ mod _async_tasks {
                     args,
                     // Sentinel — overwritten by `run` before any read. `Maybe<R>`
                     // may be niche-optimised; never construct an all-zero `Result`.
-                    result: Err(sys::Error::default()),
+                    result: Err(sys::Error::init()),
                 },
                 AsyncFSJs {
                     completion,
@@ -1547,7 +1547,7 @@ mod _async_tasks {
                 path_buf,
                 src_len,
                 dest_len,
-                task: WorkPoolTask::default(),
+                task: WorkPoolTask::new(),
             });
         }
 
@@ -1575,7 +1575,7 @@ mod _async_tasks {
             let parent = cp_task.get();
 
             // TODO: error strings on node_fs will die
-            let mut node_fs = NodeFS::default();
+            let mut node_fs = NodeFS::new();
 
             let args = &parent.args;
             let result = node_fs.copy_single_file_sync(
@@ -1680,7 +1680,7 @@ mod _async_tasks {
             shelltask: *mut ShellCpTask,
         ) -> *mut Self {
             Self::schedule_new(
-                JSPromiseStrong::default(),
+                JSPromiseStrong::new(),
                 cp_args,
                 evtloop,
                 poster,
@@ -1711,7 +1711,7 @@ mod _async_tasks {
                 evtloop,
                 poster: core::cell::Cell::new(Some(poster)),
                 task: work_pool_task(Self::work_pool_callback),
-                r#ref: KeepAlive::default(),
+                r#ref: KeepAlive::new(),
                 tracker,
                 subtask_count: AtomicUsize::new(1),
                 // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
@@ -1732,7 +1732,7 @@ mod _async_tasks {
             // may spawn subtasks that hold `&Self` to the same allocation while
             // this call is still on the stack, so we must not form `&mut Self` here.
             let this = unsafe { Self::from_task_ptr(task) };
-            let mut node_fs = NodeFS::default();
+            let mut node_fs = NodeFS::new();
             Self::cp_async(&mut node_fs, this);
         }
 
@@ -1819,8 +1819,8 @@ mod _async_tasks {
                 // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
                 // `Ok(())` placeholder.
                 let result = core::mem::replace(self.result.get_mut(), Ok(()));
-                let src = core::mem::take(&mut self.args.src);
-                let dest = core::mem::take(&mut self.args.dest);
+                let src = core::mem::replace(&mut self.args.src, PathLike::new());
+                let dest = core::mem::replace(&mut self.args.dest, PathLike::new());
                 let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
                 // SAFETY: shelltask is non-null in the IS_SHELL specialization and
                 // outlives this task; `cp_on_finish` enqueues it concurrently.
@@ -1911,7 +1911,7 @@ mod _async_tasks {
                 errno: E::ENAMETOOLONG as _,
                 syscall: sys::Tag::copyfile,
                 path: path.slice().into(),
-                ..Default::default()
+                ..sys::Error::init()
             };
             let src = match args.src.os_path(&mut src_buf) {
                 Ok(p) => p,
@@ -1937,7 +1937,7 @@ mod _async_tasks {
                         errno: SystemErrno::ENOENT as _,
                         syscall: sys::Tag::copyfile,
                         path: nodefs.os_path_into_sync_error_buf(src).into(),
-                        ..Default::default()
+                        ..sys::Error::init()
                     }));
                     return;
                 }
@@ -2026,7 +2026,7 @@ mod _async_tasks {
                     errno: E::EISDIR as _,
                     syscall: sys::Tag::copyfile,
                     path: nodefs.os_path_into_sync_error_buf(src).into(),
-                    ..Default::default()
+                    ..sys::Error::init()
                 }));
                 return;
             }
@@ -2178,7 +2178,7 @@ mod _async_tasks {
                         path: nodefs
                             .os_path_into_sync_error_buf(&src_buf[..src_dir_len as usize])
                             .into(),
-                        ..Default::default()
+                        ..sys::Error::init()
                     }));
                     return false;
                 }
@@ -2439,7 +2439,7 @@ mod _async_tasks {
                     bun_ptr::ParentRef::from_raw_mut(core::ptr::from_mut(self))
                 },
                 basename: basename_owned,
-                task: WorkPoolTask::default(),
+                task: WorkPoolTask::new(),
             });
         }
 
@@ -2483,10 +2483,10 @@ mod _async_tasks {
                     root_path,
                     result_list,
                     result_list_count: AtomicUsize::new(0),
-                    result_list_queue: UnboundedQueue::default(),
+                    result_list_queue: UnboundedQueue::new(),
                     root_fd: FD::INVALID,
                     pending_err: None,
-                    pending_err_mutex: bun_threading::Mutex::default(),
+                    pending_err_mutex: bun_threading::Mutex::init(),
                 },
                 AsyncFSJs {
                     completion,
@@ -2760,7 +2760,6 @@ pub(crate) mod args {
         }
     }
 
-    #[derive(Default)]
     pub(crate) struct Truncate<'a> {
         /// Passing a file descriptor is deprecated and may result in an error being thrown in the future.
         pub path: PathOrFileDescriptor<'a>,
@@ -3479,10 +3478,10 @@ pub(crate) mod args {
     impl Mkdir<'_> {
         pub(crate) const DEFAULT_MODE: Mode = 0o777;
     }
-    impl Default for Mkdir<'_> {
-        fn default() -> Self {
+    impl Mkdir<'_> {
+        pub(crate) fn new() -> Self {
             Self {
-                path: PathLike::default(),
+                path: PathLike::new(),
                 recursive: false,
                 mode: Self::DEFAULT_MODE,
                 always_return_none: false,
@@ -3722,11 +3721,11 @@ pub(crate) mod args {
         pub(crate) position: Option<ReadPosition>,
         pub(crate) encoding: Encoding,
     }
-    impl Default for Write<'_> {
-        fn default() -> Self {
+    impl Write<'_> {
+        pub(crate) fn new() -> Self {
             Self {
                 fd: FD::INVALID,
-                buffer: StringOrBuffer::default(),
+                buffer: StringOrBuffer::EMPTY,
                 offset: 0,
                 length: u64::MAX,
                 position: None,
@@ -3774,7 +3773,7 @@ pub(crate) mod args {
                 fd,
                 buffer,
                 encoding,
-                ..Default::default()
+                ..Write::new()
             };
             arguments.eat();
             'parse: {
@@ -3806,7 +3805,7 @@ pub(crate) mod args {
                                 bun_jsc::RangeErrorOptions {
                                     field_name: b"offset",
                                     max: max_offset,
-                                    ..Default::default()
+                                    ..bun_jsc::RangeErrorOptions::new()
                                 },
                             ));
                         }
@@ -3826,7 +3825,7 @@ pub(crate) mod args {
                                     field_name: b"length",
                                     min: 0,
                                     max: max_len,
-                                    ..Default::default()
+                                    ..bun_jsc::RangeErrorOptions::new()
                                 },
                             ));
                         }
@@ -4001,7 +4000,7 @@ pub(crate) mod args {
                     bun_jsc::RangeErrorOptions {
                         field_name: b"length",
                         msg: b"an integer",
-                        ..Default::default()
+                        ..bun_jsc::RangeErrorOptions::new()
                     },
                 ));
             }
@@ -4014,7 +4013,7 @@ pub(crate) mod args {
                     bun_jsc::RangeErrorOptions {
                         field_name: b"length",
                         max: buf_len as i64,
-                        ..Default::default()
+                        ..bun_jsc::RangeErrorOptions::new()
                     },
                 ));
             }
@@ -4028,7 +4027,7 @@ pub(crate) mod args {
                     bun_jsc::RangeErrorOptions {
                         field_name: b"length",
                         max: (buf_len as u64).saturating_sub(offset) as i64,
-                        ..Default::default()
+                        ..bun_jsc::RangeErrorOptions::new()
                     },
                 ));
             }
@@ -4038,7 +4037,7 @@ pub(crate) mod args {
                     bun_jsc::RangeErrorOptions {
                         field_name: b"length",
                         min: 0,
-                        ..Default::default()
+                        ..bun_jsc::RangeErrorOptions::new()
                     },
                 ));
             }
@@ -4073,7 +4072,7 @@ pub(crate) mod args {
                             field_name: b"position",
                             min: -1,
                             max: max_position,
-                            ..Default::default()
+                            ..bun_jsc::RangeErrorOptions::new()
                         },
                     ));
                 }
@@ -4117,10 +4116,10 @@ pub(crate) mod args {
         pub(crate) flag: FileSystemFlags,
         pub(crate) signal: Option<AbortSignalRef>,
     }
-    impl Default for ReadFile<'_> {
-        fn default() -> Self {
+    impl ReadFile<'_> {
+        pub(crate) fn new() -> Self {
             Self {
-                path: PathOrFileDescriptor::default(),
+                path: PathOrFileDescriptor::new(),
                 encoding: Encoding::Utf8,
                 offset: 0,
                 max_size: None,
@@ -4187,7 +4186,7 @@ pub(crate) mod args {
                 flag,
                 limit_size_for_javascript: true,
                 signal: abort_signal,
-                ..Default::default()
+                ..ReadFile::new()
             })
         }
     }
@@ -4393,7 +4392,7 @@ pub(crate) mod args {
         }
     }
 
-    #[derive(Copy, Clone, Default)]
+    #[derive(Copy, Clone)]
     pub(crate) struct CpFlags {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
@@ -4641,8 +4640,8 @@ pub(crate) struct NodeFS {
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
 }
 
-impl Default for NodeFS {
-    fn default() -> Self {
+impl NodeFS {
+    pub(crate) fn new() -> Self {
         Self {
             sync_error_buf: bun_paths::path_buffer_pool::get(),
             vm: None,
@@ -4918,7 +4917,7 @@ impl NodeFS {
                 syscall: sys::Tag::copyfile,
                 path: args.src.slice().into(),
                 dest: args.dest.slice().into(),
-                ..Default::default()
+                ..sys::Error::init()
             }),
         }
     }
@@ -4954,7 +4953,7 @@ impl NodeFS {
                     return Err(sys::Error {
                         errno: SystemErrno::ENOTSUP as _,
                         syscall: sys::Tag::copyfile,
-                        ..Default::default()
+                        ..sys::Error::init()
                     });
                 }
 
@@ -5157,7 +5156,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: SystemErrno::ENOTSUP as _,
                     syscall: sys::Tag::copyfile,
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
 
@@ -5322,7 +5321,7 @@ impl NodeFS {
                         errno: E::ENAMETOOLONG as _,
                         syscall: sys::Tag::copyfile,
                         path: path.slice().into(),
-                        ..Default::default()
+                        ..sys::Error::init()
                     });
                 }
             }
@@ -5628,7 +5627,7 @@ impl NodeFS {
                 errno: E::ENOENT as _,
                 syscall: sys::Tag::mkdir,
                 path: b"".as_slice().into(),
-                ..Default::default()
+                ..sys::Error::init()
             });
         }
         if args.recursive {
@@ -5664,7 +5663,7 @@ impl NodeFS {
                     errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::mkdir,
                     path: args.path.slice().into(),
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
         };
@@ -5711,7 +5710,7 @@ impl NodeFS {
                             path: self
                                 .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
                                 .into(),
-                            ..Default::default()
+                            ..sys::Error::init()
                         }),
                         // if is a directory, OK. otherwise failure
                         Ok(result) => {
@@ -5724,7 +5723,7 @@ impl NodeFS {
                                     path: self
                                         .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
                                         .into(),
-                                    ..Default::default()
+                                    ..sys::Error::init()
                                 })
                             }
                         }
@@ -5811,7 +5810,7 @@ impl NodeFS {
                                                     without_nt_prefix(&(&path[..])[..len as usize]),
                                                 )
                                                 .into(),
-                                                ..Default::default()
+                                                ..sys::Error::init()
                                             });
                                         }
                                     }
@@ -5933,7 +5932,7 @@ impl NodeFS {
                 errno: SystemErrno::EINVAL as _,
                 syscall: sys::Tag::mkdtemp,
                 path: [b'X'; 5].into(),
-                ..Default::default()
+                ..sys::Error::init()
             });
         }
         let len = prefix_slice.len().min(prefix_buf.len().saturating_sub(7));
@@ -5983,7 +5982,7 @@ impl NodeFS {
                 errno: errno as _,
                 syscall: sys::Tag::mkdtemp,
                 path: prefix_buf[..len + 6].into(),
-                ..Default::default()
+                ..sys::Error::init()
             })
         }
     }
@@ -6062,7 +6061,7 @@ impl NodeFS {
                 errno: err.errno,
                 fd: args.fd,
                 syscall: sys::Tag::read,
-                ..Default::default()
+                ..sys::Error::init()
             }),
             Ok(amt) => Ok(ret::Read {
                 bytes_read: amt as u64,
@@ -6191,7 +6190,7 @@ impl NodeFS {
                 errno: err.errno,
                 fd: args.fd,
                 syscall: sys::Tag::write,
-                ..Default::default()
+                ..sys::Error::init()
             }),
             Ok(amt) => Ok(ret::Write {
                 bytes_written: amt as u64,
@@ -6332,7 +6331,7 @@ impl NodeFS {
                 syscall: sys::Tag::scandir,
                 errno: err.errno,
                 path: args.path.slice().into(),
-                ..Default::default()
+                ..sys::Error::init()
             }),
             Ok(result) => Ok(result),
         }
@@ -6478,7 +6477,7 @@ impl NodeFS {
             sys::WindowsOpenDirOptions {
                 no_follow: true,
                 iterable: true,
-                ..Default::default()
+                ..sys::WindowsOpenDirOptions::new()
             },
         );
         let fd = match open_res {
@@ -6867,7 +6866,7 @@ impl NodeFS {
             path.as_bytes(),
             sys::WindowsOpenDirOptions {
                 iterable: true,
-                ..Default::default()
+                ..sys::WindowsOpenDirOptions::new()
             },
         );
         let fd = match open_res {
@@ -7060,7 +7059,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: E::EMFILE as _,
                     syscall: sys::Tag::open,
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
         };
@@ -7316,7 +7315,7 @@ impl NodeFS {
                 Encoding::Buffer => Ok(ret::ReadFileWithOptions::Buffer(Buffer::EMPTY)),
                 _ => {
                     if string_type == ReadFileStringType::Default {
-                        Ok(ret::ReadFileWithOptions::String(Box::<[u8]>::default()))
+                        Ok(ret::ReadFileWithOptions::String(Box::new([])))
                     } else {
                         Ok(ret::ReadFileWithOptions::NullTerminated(
                             bun_core::ZBox::from_vec_with_nul(vec![0u8]),
@@ -7540,7 +7539,7 @@ impl NodeFS {
                 errno: err.errno,
                 syscall: sys::Tag::lstat,
                 path: args.path.slice().into(),
-                ..Default::default()
+                ..sys::Error::init()
             }),
         }
     }
@@ -7552,7 +7551,7 @@ impl NodeFS {
                 errno: err.errno,
                 syscall: sys::Tag::realpath,
                 path: args.path.slice().into(),
-                ..Default::default()
+                ..sys::Error::init()
             }),
         }
     }
@@ -7590,7 +7589,7 @@ impl NodeFS {
                     errno: E::ENOENT as _,
                     syscall: sys::Tag::realpath,
                     path: args.path.slice().into(),
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
             let buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
@@ -7623,7 +7622,7 @@ impl NodeFS {
                             errno: E::ENAMETOOLONG as _,
                             syscall: sys::Tag::realpath,
                             path: args.path.slice().into(),
-                            ..Default::default()
+                            ..sys::Error::init()
                         });
                     }
                     paths::resolve_path::z(resolved, inbuf)
@@ -7936,7 +7935,7 @@ impl NodeFS {
                     errno: e.errno,
                     path: path.slice().into(),
                     syscall: sys::Tag::truncate,
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             };
             let _close = scopeguard::guard(fd, |fd| fd.close());
@@ -8017,7 +8016,7 @@ impl NodeFS {
                         message: BunString::from_bytes(&buf[..]),
                         code: BunString::static_(err.name()),
                         path: BunString::from_bytes(path.as_slice()),
-                        ..Default::default()
+                        ..bun_jsc::SystemError::new()
                     }
                     .to_error_instance(&global_this),
                 );
@@ -8107,7 +8106,7 @@ impl NodeFS {
             errno: E::ENAMETOOLONG as _,
             syscall: sys::Tag::copyfile,
             path: path.slice().into(),
-            ..Default::default()
+            ..sys::Error::init()
         };
         let src_len = match args.src.os_path(&mut src_buf) {
             Ok(p) => p.len(),
@@ -8173,7 +8172,7 @@ impl NodeFS {
                     errno: SystemErrno::ENOENT as _,
                     syscall: sys::Tag::copyfile,
                     path: self.os_path_into_sync_error_buf(src.as_slice()).into(),
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
             if attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY == 0
@@ -8233,7 +8232,7 @@ impl NodeFS {
                 errno: E::EISDIR as _,
                 syscall: sys::Tag::copyfile,
                 path: self.os_path_into_sync_error_buf(&src_buf[..sd]).into(),
-                ..Default::default()
+                ..sys::Error::init()
             });
         }
 
@@ -8307,7 +8306,7 @@ impl NodeFS {
                     errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::copyfile,
                     path: self.os_path_into_sync_error_buf(&src_buf[..sd]).into(),
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
 
@@ -8434,7 +8433,7 @@ impl NodeFS {
                 errno: E::ENAMETOOLONG as _,
                 syscall: sys::Tag::symlink,
                 path: self.sync_error_buf[..src.len()].into(),
-                ..Default::default()
+                ..sys::Error::init()
             });
         };
         let resolved_len = resolved.len();
@@ -8499,7 +8498,7 @@ impl NodeFS {
                     errno: SystemErrno::ENOTSUP as _,
                     path: self.sync_error_buf[..src.len()].into(),
                     syscall: sys::Tag::copyfile,
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
 
@@ -8620,7 +8619,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: SystemErrno::ENOTSUP as _,
                     syscall: sys::Tag::copyfile,
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
 
@@ -8895,7 +8894,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: SystemErrno::ENOSYS as _,
                     syscall: sys::Tag::copyfile,
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
             let stat_ = match reuse_stat {
@@ -9042,7 +9041,7 @@ impl NodeFS {
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
                         path: PathLike::borrowed(&bytes[..len]),
                         recursive: true,
-                        ..Default::default()
+                        ..args::Mkdir::new()
                     });
                     mkdir_result?;
                     if let Ok(result) = Syscall::open(dest, flags, mode) {
@@ -9510,7 +9509,7 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
         .mkdir_recursive(&args::Mkdir {
             path: PathLike::borrowed(path_bytes),
             recursive: true,
-            ..Default::default()
+            ..args::Mkdir::new()
         })
         .is_ok()
 }

@@ -97,8 +97,8 @@ pub struct Found {
     count: Cell<usize>,
 }
 
-impl Default for Found {
-    fn default() -> Self {
+impl Found {
+    pub fn new() -> Self {
         Found {
             places: RefCell::new(Places::new_in(Global)),
             count: Cell::new(0),
@@ -137,11 +137,11 @@ pub struct Hashed<K, V> {
     found: Found,
 }
 
-impl<K, V> Default for Hashed<K, V> {
-    fn default() -> Self {
+impl<K, V> Hashed<K, V> {
+    pub fn new() -> Self {
         Hashed {
             entries: Vec::new(),
-            found: Found::default(),
+            found: Found::new(),
         }
     }
 }
@@ -325,7 +325,7 @@ impl<K: Eq + Send, V: Send> InTask for HashedInTask<K, V> {
     where
         Self: 's,
     {
-        Hashed::default()
+        Hashed::new()
     }
 }
 
@@ -388,7 +388,7 @@ impl<'s> Half<'s> {
             ordinal: 0,
             may_be_hashed: false,
             earlier: Vec::new(),
-            sparse: Hashed::default(),
+            sparse: Hashed::new(),
             typed: None,
         }
     }
@@ -754,7 +754,7 @@ impl FileLocalTables {
         assert!(slot != u32::MAX, "a table without a slot: `number_tables`");
         (self.tables).resize_with(slot as usize + 1, || FileLocalTable {
             cells: Vec::new(),
-            sparse: Hashed::default(),
+            sparse: Hashed::new(),
         });
     }
 

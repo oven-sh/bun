@@ -27,12 +27,6 @@ pub struct Expr {
     pub data: Data,
 }
 
-impl Default for Expr {
-    fn default() -> Self {
-        Self::EMPTY
-    }
-}
-
 impl Expr {
     pub const EMPTY: Expr = Expr {
         data: Data::EMissing(E::Missing {}),
@@ -168,7 +162,7 @@ impl Expr {
             E::JsonValue::String(s) => Expr::init(
                 E::String {
                     data: *s,
-                    ..Default::default()
+                    ..E::String::new()
                 },
                 loc,
             ),
@@ -396,12 +390,12 @@ impl Expr {
                 key: Some(Expr::init(
                     E::String {
                         data: Str::new(name),
-                        ..Default::default()
+                        ..E::String::new()
                     },
                     Loc::EMPTY,
                 )),
                 value: Some(value),
-                ..Default::default()
+                ..G::Property::new()
             },
         );
         Ok(())
@@ -430,7 +424,7 @@ impl Expr {
                 prop.value = Some(Expr::init(
                     E::String {
                         data: Str::new(value),
-                        ..Default::default()
+                        ..E::String::new()
                     },
                     Loc::EMPTY,
                 ));
@@ -444,18 +438,18 @@ impl Expr {
                 key: Some(Expr::init(
                     E::String {
                         data: Str::new(name),
-                        ..Default::default()
+                        ..E::String::new()
                     },
                     Loc::EMPTY,
                 )),
                 value: Some(Expr::init(
                     E::String {
                         data: Str::new(value),
-                        ..Default::default()
+                        ..E::String::new()
                     },
                     Loc::EMPTY,
                 )),
-                ..Default::default()
+                ..G::Property::new()
             },
         );
         Ok(())
@@ -1249,7 +1243,7 @@ impl Expr {
             Expr::init(
                 E::String {
                     data: s.into(),
-                    ..Default::default()
+                    ..E::String::new()
                 },
                 expr.loc,
             )
@@ -1766,14 +1760,14 @@ impl Data {
                         )?),
                         kind: G::PropertyKind::Normal,
                         initializer: None,
-                        ..Default::default()
+                        ..G::Property::new()
                     });
                 }
                 let item = bump.alloc(E::Object {
                     properties,
                     is_single_line: el.is_single_line,
                     close_brace_loc: el.close_brace_loc,
-                    ..Default::default()
+                    ..E::Object::new()
                 });
                 Ok(Data::EObject(StoreRef::from_bump(item)))
             }
@@ -1791,7 +1785,7 @@ impl Data {
                     items,
                     is_single_line: el.is_single_line,
                     close_bracket_loc: el.close_bracket_loc,
-                    ..Default::default()
+                    ..E::Array::new()
                 });
                 Ok(Data::EArray(StoreRef::from_bump(item)))
             }

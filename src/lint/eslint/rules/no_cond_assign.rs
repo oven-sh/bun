@@ -136,7 +136,7 @@ impl Rule for NoCondAssign {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(AncestorMemo::default())
+        Some(AncestorMemo::new())
     }
 
     #[inline]

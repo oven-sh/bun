@@ -5022,9 +5022,3 @@ impl Property {
 // `declaration::placeholder_property()` (the moved-out slot
 // sentinel in `DeclarationBlock::minify`) is
 // `Property::All(CSSWideKeyword::RevertLayer)`.
-impl Default for Property {
-    #[inline]
-    fn default() -> Self {
-        Property::All(CSSWideKeyword::RevertLayer)
-    }
-}

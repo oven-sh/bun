@@ -10,7 +10,6 @@ pub struct ClassLiteralPropertyStyle {
     prefers_getters: bool,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// What a constructor assigns to a property of `this`, with the class whose body the assignment
     /// is in.
@@ -20,6 +19,18 @@ pub struct State<'a> {
     /// What is around something: the function, and the class whose body it is in.
     functions: AncestorMemo<'a, Func<'a>>,
     class_bodies: AncestorMemo<'a, Class<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            excluded: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            properties: Vec::new(),
+            functions: AncestorMemo::new(),
+            class_bodies: AncestorMemo::new(),
+        }
+    }
 }
 
 /// The name of a setter.
@@ -164,7 +175,7 @@ impl ClassLiteralPropertyStyle {
 
     /// `"getters"`
     fn check_properties<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let State { excluded, properties, .. } = std::mem::take(&mut cx.state);
+        let State { excluded, properties, .. } = std::mem::replace(&mut cx.state, State::new());
         for member in properties {
             let (Node::Class(class), Some(key), Some(value)) = (member.parent(), member.key(), member.init()) else {
                 continue;
@@ -213,7 +224,7 @@ impl Rule for ClassLiteralPropertyStyle {
         if !file.has_classes() {
             return None;
         }
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {

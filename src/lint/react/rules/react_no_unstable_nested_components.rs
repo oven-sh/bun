@@ -122,20 +122,20 @@ impl Rule for NoUnstableNestedComponents {
         });
         let upstream = (!is_oxlint).then(|| Upstream {
             detected: Detected::new(file),
-            queue: Queue::default(),
+            queue: Queue::new(),
             has_related: file.mentions_any(&RELATED),
             has_wrapper_functions: has_wrapper_functions(file),
         });
         Some(State {
             components,
             upstream,
-            in_jsx_attribute_expression: AncestorMemo::default(),
-            inside_create_element_props_object: AncestorMemo::default(),
-            nearest_create_element_call: AncestorMemo::default(),
-            nearest_object: AncestorMemo::default(),
-            nearest_jsx_attribute_name: AncestorMemo::default(),
-            nearest_call: AncestorMemo::default(),
-            in_component: AncestorMemo::default(),
+            in_jsx_attribute_expression: AncestorMemo::new(),
+            inside_create_element_props_object: AncestorMemo::new(),
+            nearest_create_element_call: AncestorMemo::new(),
+            nearest_object: AncestorMemo::new(),
+            nearest_jsx_attribute_name: AncestorMemo::new(),
+            nearest_call: AncestorMemo::new(),
+            in_component: AncestorMemo::new(),
         })
     }
 

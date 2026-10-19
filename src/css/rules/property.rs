@@ -119,12 +119,10 @@ impl PropertyRule {
             SyntaxString::Universal => {
                 if let Some(val) = p.initial_value {
                     let mut i = ParserInput::new(val, bump);
-                    let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
+                    let mut p2 = css::Parser::new(&mut i, None, ParserOpts::empty(), None);
 
                     if p2.is_exhausted() {
-                        Some(ParsedComponent::TokenList(TokenList {
-                            v: Default::default(),
-                        }))
+                        Some(ParsedComponent::TokenList(TokenList { v: Vec::new() }))
                     } else {
                         Some(syntax.parse_value(&mut p2)?)
                     }
@@ -137,7 +135,7 @@ impl PropertyRule {
                     return Err(input.new_custom_error(ParserError::at_rule_body_invalid));
                 };
                 let mut i = ParserInput::new(val, bump);
-                let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
+                let mut p2 = css::Parser::new(&mut i, None, ParserOpts::empty(), None);
                 Some(syntax.parse_value(&mut p2)?)
             }
         };

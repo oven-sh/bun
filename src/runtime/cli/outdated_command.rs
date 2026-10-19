@@ -183,7 +183,7 @@ impl OutdatedCommand {
             if declared.dependency(item).version.tag == dependency::Tag::Catalog {
                 catalog_map
                     .entry(catalog_key(item))
-                    .or_default()
+                    .or_insert_with(Vec::new)
                     .push(item.workspace_pkg_id);
             } else {
                 result.push(GroupedOutdatedInfo {

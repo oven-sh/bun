@@ -70,11 +70,20 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) windows_job: Option<*mut c_void>,
 }
 
-#[derive(Default)]
 pub(crate) struct FileTestRecords {
     /// `TestDone` payloads past the formatted line; see `runner::decode_test_case`.
     pub(crate) tests: Vec<Box<[u8]>>,
     pub(crate) elapsed_ns: u64,
+}
+
+impl FileTestRecords {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            tests: Vec::new(),
+            elapsed_ns: 0,
+        }
+    }
 }
 
 /// Consecutive pre-`.ready` exits a worker slot tolerates before the slot
@@ -236,7 +245,7 @@ impl<'a> Coordinator<'a> {
         let w = &mut self.workers[self.spawned_count as usize];
         // A prior failed start()'s errdefer leaves ipc.done = true; reset so a
         // retry on the same slot starts with a fresh channel.
-        w.ipc = Default::default();
+        w.ipc = crate::cli::test::parallel::channel::Channel::new();
         // Intrusive backref (raw ptr).
         // Built via from_mut so the stored `*const` carries write provenance:
         // WorkerPipe::on_read_chunk later mutates the Worker through cast_mut().
@@ -535,8 +544,10 @@ impl<'a> Coordinator<'a> {
                 // fd 3 is writable from test JS, so a frame that doesn't
                 // decode is dropped rather than trusted.
                 if let Some(report) = wire::decode(rd.str()) {
-                    let merged =
-                        bun_core::handle_oom(self.coverage_files.get_or_put(&report.source_url));
+                    let merged = bun_core::handle_oom(self.coverage_files.get_or_put(
+                        &report.source_url,
+                        bun_sourcemap_jsc::code_coverage::MergedReport::new,
+                    ));
                     bun_core::handle_oom(merged.value_ptr.add(&report));
                 }
             }
@@ -695,7 +706,7 @@ impl<'a> Coordinator<'a> {
         if can_respawn {
             // SAFETY: fresh derivation — `has_undispatched_files` read the slots.
             let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
-            w.ipc = Default::default();
+            w.ipc = crate::cli::test::parallel::channel::Channel::new();
             // from_mut: keep write provenance on the stored backref (see spawn_worker).
             let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
             w.out = WorkerPipe::new(w_ptr);
@@ -720,7 +731,7 @@ impl<'a> Coordinator<'a> {
             // drops the old values now (pipe FDs, capture buffer).
             // SAFETY: fresh derivation — `abort_queued_files` may retag the slots.
             let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
-            w.ipc = Default::default();
+            w.ipc = crate::cli::test::parallel::channel::Channel::new();
             w.out = WorkerPipe::new(core::ptr::null());
             w.err = WorkerPipe::new(core::ptr::null());
             let _ = core::mem::take(&mut w.captured);

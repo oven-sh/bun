@@ -34,7 +34,7 @@ pub struct ImportRecord {
 }
 
 bitflags::bitflags! {
-    #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub struct Flags: u32 {
         /// require() / await import() / require.resolve() inside the try or
         /// catch body of a try/catch, or import('x').catch(..) / .then(_, ..):
@@ -113,10 +113,9 @@ bitflags::bitflags! {
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Tag {
     /// A normal import to a user's source file
-    #[default]
     None,
     /// An import to 'bun'
     Bun,

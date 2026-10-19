@@ -318,7 +318,7 @@ pub(crate) mod prefer_mock_return_shorthand {
         utils::sort::sort_unstable_by_key(&mut mocks, |it| {
             std::cmp::Reverse(it.return_expression.span().start)
         });
-        let mut visitor = ReturnedExpressionVisitor::default();
+        let mut visitor = ReturnedExpressionVisitor::new();
         for Mock {
             property_span,
             new_property_name,
@@ -391,7 +391,7 @@ pub(crate) mod prefer_mock_return_shorthand {
     }
 
     /// What there is in an expression that is returned.
-    #[derive(Copy, Clone, Default)]
+    #[derive(Copy, Clone)]
     struct Returned {
         /// A call, a `new`, a tagged template or an `import()`.
         contains_call_like_expression: bool,
@@ -400,7 +400,17 @@ pub(crate) mod prefer_mock_return_shorthand {
         has_this_expression: bool,
     }
 
-    #[derive(Default)]
+    impl Returned {
+        #[inline]
+        fn new() -> Self {
+            Self {
+                contains_call_like_expression: false,
+                has_mutable_reference: false,
+                has_this_expression: false,
+            }
+        }
+    }
+
     struct ReturnedExpressionVisitor<'a> {
         /// Of the expressions that have been visited.
         known: IdMap<Expr<'a>, Returned>,
@@ -408,6 +418,17 @@ pub(crate) mod prefer_mock_return_shorthand {
         mutable: IdMap<Symbol<'a>, bool>,
         /// Each with its `this_binding_depth`: in how many functions, values of properties of classes and static blocks it is.
         pending: Vec<(Node<'a>, i32)>,
+    }
+
+    impl<'a> ReturnedExpressionVisitor<'a> {
+        #[inline]
+        fn new() -> Self {
+            Self {
+                known: IdMap::init(),
+                mutable: IdMap::init(),
+                pending: Vec::new(),
+            }
+        }
     }
 
     /// What `node` adds to `this_binding_depth`.
@@ -428,7 +449,7 @@ pub(crate) mod prefer_mock_return_shorthand {
 
     impl<'a> ReturnedExpressionVisitor<'a> {
         fn visit(&mut self, return_expression: Expr<'a>) -> Returned {
-            let mut found = Returned::default();
+            let mut found = Returned::new();
             self.pending.push((
                 Node::Expr(return_expression),
                 this_binding(Node::Expr(return_expression)),

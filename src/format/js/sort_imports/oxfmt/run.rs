@@ -57,7 +57,7 @@ struct Written<'a> {
 
 impl<'a> Written<'a> {
     fn new(statement: Stmt<'a>, import: Import<'a>, f: &Formatter<'a>) -> Self {
-        let source = import.spec_span().unwrap_or_default();
+        let source = import.spec_span().unwrap_or_else(Span::init);
         let mut written = Written {
             import,
             source: f.file().slice(source),

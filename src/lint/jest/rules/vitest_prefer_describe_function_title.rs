@@ -33,7 +33,7 @@ impl<const RUNNER: u8> Rule for PreferDescribeFunctionTitle<RUNNER> {
 
 /// What is imported, and whether as more than a type.
 fn imported_names<'a>(file: &'a File<'a>) -> FxHashMap<Name<'a>, bool> {
-    let mut imported_names: FxHashMap<Name, bool> = FxHashMap::default();
+    let mut imported_names: FxHashMap<Name, bool> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for entry in import_entries(file) {
         *imported_names.entry(entry.local_name().name()).or_default() |= !entry.is_type();
     }

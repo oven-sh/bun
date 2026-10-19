@@ -26,7 +26,7 @@ type ReferenceMap<'a> = FxHashMap<u32, Resolved<'a>>;
 
 /// The references in `scope`, which is that of a function, without those in nested functions.
 fn create_reference_map<'a>(scope: Scope<'a>) -> ReferenceMap<'a> {
-    let mut map = ReferenceMap::default();
+    let mut map = ReferenceMap::with_hasher(rustc_hash::FxBuildHasher);
     let mut scopes: SmallVec<[Scope<'a>; 8]> = SmallVec::new();
     scopes.push(scope);
     while let Some(scope) = scopes.pop() {
@@ -144,10 +144,19 @@ fn is_local_variable_without_escape(variable: Variable, is_member_access: bool) 
         .all(|reference| reference.scope().variable_scope() == function_scope)
 }
 
-#[derive(Default)]
 struct SegmentInfo<'a> {
     outdated_read_variables: FxHashSet<Variable<'a>>,
     fresh_read_variables: FxHashSet<Variable<'a>>,
+}
+
+impl<'a> SegmentInfo<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            outdated_read_variables: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            fresh_read_variables: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 struct Frame<'a> {
@@ -156,7 +165,6 @@ struct Frame<'a> {
     reference_map: Option<ReferenceMap<'a>>,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     stack: Vec<Frame<'a>>,
     /// For the reachable segments of async functions and generators.
@@ -167,6 +175,19 @@ pub struct State<'a> {
     assignment_references: IdMap<Expr<'a>, SmallVec<[Resolved<'a>; 1]>>,
     /// Where the `await` and the `yield` expressions of the file start, in ascending order.
     pauses: Option<Vec<u32>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            stack: Vec::new(),
+            segment_info: IdMap::init(),
+            segments_after_chain: None,
+            assignment_references: IdMap::init(),
+            pauses: None,
+        }
+    }
 }
 
 impl<'a> State<'a> {
@@ -317,7 +338,7 @@ impl RequireAtomicUpdates {
         {
             return;
         }
-        let mut info = SegmentInfo::default();
+        let mut info = SegmentInfo::new();
         for prev_segment in segment.prev_segments() {
             if let Some(prev) = state.segment_info.get(prev_segment) {
                 info.outdated_read_variables
@@ -450,7 +471,7 @@ impl Rule for RequireAtomicUpdates {
         if !file.has_exprs([ExprTag::Await, ExprTag::Yield]) {
             return None;
         }
-        Some(State::default())
+        Some(State::new())
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

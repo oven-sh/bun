@@ -188,7 +188,7 @@ pub trait Host: Sync {
     }
 }
 
-#[derive(Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ModuleKind {
     CommonJs,
     Amd,
@@ -196,7 +196,6 @@ pub enum ModuleKind {
     System,
     Es2015,
     Es2020,
-    #[default]
     Es2022,
     EsNext,
     Node16,
@@ -254,10 +253,9 @@ bun_core::comptime_string_map! {
 }
 
 /// `core.ScriptTarget`. Ordered: a later target includes everything an earlier one has.
-#[derive(Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ScriptTarget {
     /// `target` is not specified.
-    #[default]
     None,
     ES5,
     ES2015,
@@ -295,9 +293,8 @@ bun_core::comptime_string_map! {
     };
 }
 
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum JsxEmit {
-    #[default]
     None,
     Preserve,
     ReactNative,
@@ -318,11 +315,10 @@ bun_core::comptime_string_map! {
 }
 
 /// `core.ModuleDetectionKind`: what makes a file that is not a declaration file a module.
-#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleDetection {
     /// An `import`, an `export` or `import.meta`; a JSX tag that imports its factory; the format
     /// implied by its file name or its package.
-    #[default]
     Auto,
     /// An `import`, an `export` or `import.meta`.
     Legacy,
@@ -584,12 +580,22 @@ pub struct ProjectFile {
 
 /// The files of the projects of a build that another one references. Each program has it: a list of its own of all the
 /// files of what it references would be made again for each.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct ProjectFiles {
     /// By `tspath.Path`.
     pub sources: FxHashMap<Vec<u8>, Vec<ProjectFile>>,
     /// By the `tspath.Path` of `OutputDts`: the keys of `sources`.
     pub outputs: FxHashMap<Vec<u8>, Vec<Vec<u8>>>,
+}
+
+impl ProjectFiles {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            sources: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            outputs: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 /// `core.ScriptKind`, of source code.
@@ -635,7 +641,7 @@ impl ScriptKind {
 
 /// Whose reading of the syntax a file is parsed with, where parsers differ. The default is that of
 /// `tsc` for a file of a program.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Dialect {
     /// TypeScript 5's parser, which typescript-estree runs on, where the native one differs.
     pub typescript_5: bool,
@@ -660,6 +666,21 @@ pub struct Dialect {
     /// With `oxc`: the parser says whether a name may be declared twice in a scope (`rare::MAY_REDECLARE`). It is for a caller
     /// that would make the scopes of the file for nothing else.
     pub oxc_names: bool,
+}
+
+impl Dialect {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            typescript_5: false,
+            ecmascript: false,
+            babel: false,
+            script: false,
+            flow: false,
+            oxc: false,
+            oxc_names: false,
+        }
+    }
 }
 
 impl Dialect {
@@ -728,7 +749,7 @@ pub fn is_javascript_file(host: &dyn Host, path: &[u8]) -> bool {
 /// All that parsing and binding a file read of the options of its program. Two programs in which it is the same have
 /// the same HIR and the same side tables for a file. It is made in one place, [`Options::for_parsing`], and what parses
 /// or binds is not given the options themselves.
-#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ParseOptions {
     pub experimental_decorators: bool,
     pub module_detection: ModuleDetection,
@@ -740,7 +761,20 @@ pub struct ParseOptions {
     pub bind: crate::bind::BindOptions,
 }
 
-#[derive(Default, Clone, Debug)]
+impl ParseOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            experimental_decorators: false,
+            module_detection: ModuleDetection::Auto,
+            jsx_imports_its_factory: false,
+            keeps_the_text_of_libraries: false,
+            bind: crate::bind::BindOptions::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Options {
     /// The directory of `tsconfig.json`. Absolute, no trailing slash.
     pub base_dir: Vec<u8>,
@@ -978,6 +1012,130 @@ pub struct Options {
 }
 
 impl Options {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            base_dir: Vec::new(),
+            paths: std::sync::Arc::new(Vec::new()),
+            paths_base_dir: Vec::new(),
+            skip_lib_check: false,
+            skip_default_lib_check: false,
+            no_check: false,
+            drops_unreferenced: false,
+            captures_suggestions: false,
+            emits_first: false,
+            current_directory: Vec::new(),
+            lib_dir: Vec::new(),
+            libs: Vec::new(),
+            no_lib: false,
+            lib_replacement: false,
+            trace_resolution: false,
+            types: None,
+            type_roots: None,
+            no_resolve: false,
+            imports_of_sources_add_no_file: false,
+            custom_conditions: Vec::new(),
+            resolve_package_json_exports: false,
+            resolve_package_json_imports: false,
+            root_dirs: Vec::new(),
+            module_suffixes: Vec::new(),
+            preserve_symlinks: false,
+            no_unchecked_indexed_access: false,
+            no_property_access_from_index_signature: false,
+            strict_builtin_iterator_return: false,
+            exact_optional_property_types: false,
+            experimental_decorators: false,
+            strict_null_checks: false,
+            no_implicit_any: false,
+            specifies_no_implicit_any: false,
+            strict_function_types: false,
+            strict_bind_call_apply: false,
+            use_unknown_in_catch_variables: false,
+            strict_property_initialization: false,
+            no_implicit_this: false,
+            allow_unreachable_code: None,
+            allow_unused_labels: None,
+            no_implicit_returns: false,
+            no_implicit_override: false,
+            no_fallthrough_cases_in_switch: false,
+            no_unused_locals: false,
+            no_unused_parameters: false,
+            resolve_json_module: false,
+            no_unchecked_side_effect_imports: false,
+            retains_duplicate_packages: false,
+            force_consistent_casing_in_file_names: None,
+            specifies_lib: false,
+            allow_js: false,
+            max_node_module_js_depth: 0,
+            check_js: None,
+            errors: Vec::new(),
+            problems: Vec::new(),
+            has_config_file: false,
+            suppress_output_path_check: false,
+            out_dir: Vec::new(),
+            root_dir: Vec::new(),
+            declaration_dir: Vec::new(),
+            referenced_outputs: Vec::new(),
+            project_files: None,
+            referenced_projects: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            use_case_sensitive_file_names: false,
+            referenced_options: Vec::new(),
+            writes_declaration_files: false,
+            config_path: Vec::new(),
+            own_roots: None,
+            file_specs: Vec::new(),
+            include_specs: Vec::new(),
+            is_default_include_spec: false,
+            no_emit: false,
+            emit_declaration_only: false,
+            composite: false,
+            writes_source_maps: false,
+            writes_declaration_maps: false,
+            specifies_source_or_map_root: false,
+            target: ScriptTarget::None,
+            module: ModuleKind::Es2022,
+            resolves_like_node: false,
+            resolves_like_node16: false,
+            specifies_module_resolution: false,
+            base_url: Vec::new(),
+            is_classic: false,
+            forbids_self_name_references: false,
+            forbids_synthetic_default_imports: false,
+            module_detection: ModuleDetection::Auto,
+            files: Vec::new(),
+            jsx_import_source: Vec::new(),
+            jsx_runtime: Vec::new(),
+            jsx: JsxEmit::None,
+            use_define_for_class_fields: false,
+            emit_standard_class_fields: false,
+            isolated_modules: false,
+            isolated_modules_reported: false,
+            preserve_const_enums: false,
+            verbatim_module_syntax: false,
+            allow_importing_ts_extensions: false,
+            rewrite_relative_import_extensions: false,
+            allow_umd_global_access: false,
+            erasable_syntax_only: false,
+            isolated_declarations: false,
+            emits_declarations: false,
+            no_emit_on_error: false,
+            remove_comments: false,
+            is_incremental: false,
+            is_build: false,
+            build_info_file_name: Vec::new(),
+            no_error_truncation: false,
+            emit_decorator_metadata: false,
+            strips_internal_declarations: false,
+            import_helpers: false,
+            allow_arbitrary_extensions: false,
+            jsx_factory: Vec::new(),
+            jsx_fragment_factory: Vec::new(),
+            react_namespace: Vec::new(),
+        }
+    }
+}
+
+impl Options {
     pub fn for_parsing(&self) -> ParseOptions {
         // `GetEmitScriptTarget`: an unspecified target means the latest.
         let is_before =
@@ -1095,7 +1253,7 @@ impl Options {
     pub fn from_compiler_options(base_dir: &[u8], compiler: &Json) -> Options {
         let mut options = Options {
             base_dir: base_dir.to_vec(),
-            ..Default::default()
+            ..Options::new()
         };
         let specified = |name: &[u8]| compiler.get(name).and_then(Json::as_bool);
         let flag = |name: &[u8]| specified(name).unwrap_or(false);
@@ -1875,9 +2033,17 @@ pub struct DiagAndArgs {
 }
 
 /// `tracer`: what `traceResolution` logs during one resolution.
-#[derive(Default)]
 pub struct Tracer {
     traces: RefCell<Vec<DiagAndArgs>>,
+}
+
+impl Tracer {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            traces: core::cell::RefCell::new(Vec::new()),
+        }
+    }
 }
 
 /// `args ...any` of `tracer.write`.
@@ -1906,7 +2072,6 @@ impl Tracer {
 
 /// What a lookup has found besides the path: the fields of `resolutionState` and of `resolved` that
 /// are written during the search.
-#[derive(Default)]
 struct Outcome<'a> {
     /// `resolved.resolvedUsingTsExtension`. Starts as false and is set where a file is found. The search returns the first file it
     /// finds, so the cell is set at most once.
@@ -1934,6 +2099,23 @@ struct Outcome<'a> {
     /// Targets of `imports` name one another without an end that the stack has room for.
     /// typescript-go dies of that. Here the search is over, and has found nothing.
     is_out_of_stack: Cell<bool>,
+}
+
+impl<'a> Outcome<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            using_ts_extension: core::cell::Cell::new(false),
+            arbitrary_extension: core::cell::Cell::new(false),
+            found_package: core::cell::Cell::new(false),
+            is_external: core::cell::Cell::new(false),
+            is_blocked: core::cell::Cell::new(false),
+            require_extensions: &[],
+            package_id: core::cell::RefCell::new(None),
+            has_original_path: core::cell::Cell::new(false),
+            is_out_of_stack: core::cell::Cell::new(false),
+        }
+    }
 }
 
 /// `resolutionState`: the parameters of a lookup.
@@ -2144,10 +2326,12 @@ impl<K: std::hash::Hash + Eq, V> Memo<K, V> {
     fn new(is_small: bool) -> Memo<K, V> {
         match is_small {
             true => Memo::Small(Box::new(SmallMemo {
-                places: Default::default(),
+                places: bun_threading::guarded::GuardedBy::init(
+                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                ),
                 values: AppendVec::new(),
             })),
-            false => Memo::Sharded(ShardedMap::default()),
+            false => Memo::Sharded(ShardedMap::new()),
         }
     }
 
@@ -2527,7 +2711,7 @@ impl<'h> Resolver<'h> {
         let redirected = options
             .referenced_options
             .iter()
-            .map(|_| Default::default());
+            .map(|_| std::sync::OnceLock::new());
         Resolver {
             session,
             host,
@@ -2632,7 +2816,7 @@ impl<'h> Resolver<'h> {
         module_name: &[u8],
         containing_directory: &[u8],
     ) -> Option<(Option<Vec<u8>>, Vec<u8>)> {
-        let outcome = Outcome::default();
+        let outcome = Outcome::new();
         let look = Look {
             resolve_package_directory_only: true,
             ..self.look(ResolutionMode::Require, true, &outcome)
@@ -2659,7 +2843,7 @@ impl<'h> Resolver<'h> {
         emitted: impl Iterator<Item = &'a [u8]>,
     ) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut known_symlinks = KnownSymlinks {
-            directories: FxHashSet::default(),
+            directories: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             directories_by_realpath: Vec::new(),
             is_case_sensitive: self.host.is_case_sensitive(),
         };
@@ -2781,7 +2965,7 @@ impl<'h> Resolver<'h> {
             Package {
                 name_and_version: kept(b"name").zip(kept(b"version")),
                 json,
-                peer_dependencies: Default::default(),
+                peer_dependencies: std::sync::OnceLock::new(),
             }
         });
         self.caches
@@ -2851,7 +3035,7 @@ impl<'h> Resolver<'h> {
         {
             return known;
         }
-        let outcome = Outcome::default();
+        let outcome = Outcome::new();
         let look = self.look(mode, true, &outcome);
         let look = Look { tracer, ..look };
         look.trace(6086, &[Arg::Bytes(spec), Arg::Path(from)]);
@@ -2986,7 +3170,7 @@ impl<'h> Resolver<'h> {
             return Some((path, None));
         }
         look.trace(6277, &[]);
-        let outcome = Outcome::default();
+        let outcome = Outcome::new();
         let without_exports = Look {
             ignores_exports: true,
             outcome: &outcome,
@@ -3045,7 +3229,7 @@ impl<'h> Resolver<'h> {
     ) -> Option<(Vec<u8>, Option<usize>)> {
         let outcome = Outcome {
             require_extensions: how.extensions,
-            ..Outcome::default()
+            ..Outcome::new()
         };
         let look = Look {
             esm: false,
@@ -3391,7 +3575,7 @@ impl<'h> Resolver<'h> {
     ) -> Option<(Vec<u8>, bool, Option<PackageId<'h>>)> {
         let from_dir = dirname::<Posix>(from);
         // `ResolvedTypeReferenceDirective` has no `ResolvedUsingTsExtension`.
-        let outcome = Outcome::default();
+        let outcome = Outcome::new();
         let look = self.look(mode, false, &outcome);
         let look = Look { tracer, ..look };
         // `GetEffectiveTypeRoots`
@@ -4665,10 +4849,10 @@ pub fn resolve_config(
         resolves_like_node: true,
         resolve_package_json_exports: true,
         resolve_package_json_imports: true,
-        ..Default::default()
+        ..Options::new()
     };
     let resolver = Resolver::with_tables(session, host, &options, true);
-    let outcome = Outcome::default();
+    let outcome = Outcome::new();
     let look = Look {
         typescript: false,
         declarations: false,

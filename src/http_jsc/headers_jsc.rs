@@ -29,7 +29,7 @@ pub fn from_fetch_headers(
         unsafe { (*h).count(&mut header_count, &mut buf_len) };
     }
     let mut headers = Headers {
-        entries: EntryList::default(),
+        entries: EntryList::new(),
         buf: Vec::new(),
     };
     let buf_len_before_content_type = buf_len;

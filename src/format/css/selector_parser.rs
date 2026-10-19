@@ -195,11 +195,21 @@ impl SelectorNode {
 }
 
 /// The selectors that have been parsed, and what it takes to parse the next one.
-#[derive(Default)]
 pub(crate) struct Selectors {
     text: Vec<u8>,
     nodes: Vec<SelectorNode>,
     tokens: Vec<Token>,
+}
+
+impl Selectors {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            text: Vec::new(),
+            nodes: Vec::new(),
+            tokens: Vec::new(),
+        }
+    }
 }
 
 struct Parser<'t> {

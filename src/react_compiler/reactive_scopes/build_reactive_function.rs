@@ -125,10 +125,10 @@ impl<'a> Context<'a> {
         Self {
             ir,
             next_schedule_id: 0,
-            emitted: HashSet::default(),
-            scope_fallthroughs: HashSet::default(),
-            scheduled: HashSet::default(),
-            catch_handlers: HashSet::default(),
+            emitted: HashSet::with_hasher(rustc_hash::FxBuildHasher),
+            scope_fallthroughs: HashSet::with_hasher(rustc_hash::FxBuildHasher),
+            scheduled: HashSet::with_hasher(rustc_hash::FxBuildHasher),
+            catch_handlers: HashSet::with_hasher(rustc_hash::FxBuildHasher),
             control_flow_stack: Vec::new(),
         }
     }

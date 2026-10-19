@@ -23,7 +23,6 @@ use bun_core::Output;
 // TODO: swap to `bun_core::StringBuilder` once `clone_with_builder` is
 // reshaped to use `append_raw` (canonical's `append` borrows `&mut self`, which
 // breaks the `'static` slice pass-through this stub fakes).
-#[derive(Default)]
 pub struct StringBuilder;
 impl StringBuilder {
     pub fn count(&mut self, s: &[u8]) {
@@ -34,9 +33,7 @@ impl StringBuilder {
 
 // Discriminants are wire-stable for serialization.
 #[repr(u8)]
-#[derive(
-    Clone, Copy, PartialEq, Eq, Hash, Debug, Default, enum_map::Enum, strum::IntoStaticStr,
-)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, enum_map::Enum, strum::IntoStaticStr)]
 pub enum ImportKind {
     /// An entry point provided to `bun run` or `bun`
     #[strum(serialize = "entry_point_run")]
@@ -45,7 +42,6 @@ pub enum ImportKind {
     #[strum(serialize = "entry_point_build")]
     EntryPointBuild = 1,
     /// An ES6 import or re-export statement
-    #[default]
     #[strum(serialize = "stmt")]
     Stmt = 2,
     /// A call to "require()"
@@ -364,12 +360,6 @@ impl Ref {
     }
 }
 
-impl Default for Ref {
-    fn default() -> Self {
-        Ref::NONE
-    }
-}
-
 // Identity excludes the user-bit lane (bits 28..31). For every Ref produced by
 // `pack()` those bits are 0, so this is bit-identical to `#[derive(...)]` on
 // the raw u64 — the mask only matters for `E::Identifier.ref_` & friends where
@@ -585,8 +575,8 @@ pub struct Loc {
     pub start: i32,
 }
 
-impl Default for Loc {
-    fn default() -> Self {
+impl Loc {
+    pub fn new() -> Self {
         Loc { start: -1 }
     }
 }
@@ -679,8 +669,8 @@ impl Clone for Location {
     }
 }
 
-impl Default for Location {
-    fn default() -> Self {
+impl Location {
+    pub fn new() -> Self {
         Location {
             file: Cow::Borrowed(b""),
             namespace: Cow::Borrowed(b"file"),
@@ -880,8 +870,8 @@ pub struct Data {
     pub location: Option<Location>,
 }
 
-impl Default for Data {
-    fn default() -> Self {
+impl Data {
+    pub fn new() -> Self {
         Data {
             text: Cow::Borrowed(b""),
             location: None,
@@ -1030,7 +1020,7 @@ impl Data {
                                 bun_core::fmt::HighlighterOptions {
                                     enable_colors: ENABLE_ANSI_COLORS,
                                     redact_sensitive_information,
-                                    ..Default::default()
+                                    ..bun_core::fmt::HighlighterOptions::new()
                                 },
                             )
                         )?;
@@ -1057,7 +1047,7 @@ impl Data {
                             bun_core::fmt::HighlighterOptions {
                                 enable_colors: ENABLE_ANSI_COLORS,
                                 redact_sensitive_information,
-                                ..Default::default()
+                                ..bun_core::fmt::HighlighterOptions::new()
                             },
                         )
                     )?;
@@ -1194,13 +1184,13 @@ pub struct Msg {
     pub redact_sensitive_information: bool,
 }
 
-impl Default for Msg {
-    fn default() -> Self {
+impl Msg {
+    pub fn new() -> Self {
         Msg {
             kind: Kind::Err,
-            data: Data::default(),
+            data: Data::new(),
             metadata: Metadata::Build,
-            notes: Box::default(),
+            notes: Box::new([]),
             redact_sensitive_information: false,
         }
     }
@@ -1256,7 +1246,7 @@ impl Msg {
                     break 'brk notes[0..self.notes.len()].to_vec().into_boxed_slice();
                 }
             } else {
-                Box::default()
+                Box::new([])
             },
             redact_sensitive_information: self.redact_sensitive_information,
         }
@@ -1329,8 +1319,8 @@ pub struct Range {
     pub len: i32,
 }
 
-impl Default for Range {
-    fn default() -> Self {
+impl Range {
+    pub fn new() -> Self {
         Range {
             loc: Loc::EMPTY,
             len: 0,
@@ -1354,7 +1344,7 @@ pub(crate) fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
     let end = text.len() as u32;
 
     let iter = bun_core::strings::CodepointIterator::init(text);
-    let mut cursor = bun_core::strings::Cursor::default();
+    let mut cursor = bun_core::strings::Cursor::new();
     if !iter.next(&mut cursor) {
         return r;
     }
@@ -1467,8 +1457,8 @@ pub struct Log {
     pub line_column_tracker: Option<Box<LineColumnTracker>>,
 }
 
-impl Default for Log {
-    fn default() -> Self {
+impl Log {
+    pub fn empty() -> Self {
         Log {
             warnings: 0,
             errors: 0,
@@ -1560,7 +1550,8 @@ impl Log {
             Location::init_or_null_tracked(
                 source,
                 r,
-                self.line_column_tracker.get_or_insert_default(),
+                self.line_column_tracker
+                    .get_or_insert_with(|| Box::new(LineColumnTracker::new())),
             )
         } else {
             Location::init_or_null(source, r)
@@ -1603,7 +1594,7 @@ impl Log {
         Log {
             msgs: Vec::new(),
             level,
-            ..Default::default()
+            ..Log::empty()
         }
     }
 
@@ -1624,10 +1615,10 @@ impl Log {
             source,
             Range {
                 loc: l,
-                ..Default::default()
+                ..Range::new()
             },
             text,
-            Box::default(),
+            Box::new([]),
             false,
         )
     }
@@ -1649,7 +1640,7 @@ impl Log {
             }
 
             string_builder.allocate();
-            let mut notes_buf = vec![Data::default(); notes_count];
+            let mut notes_buf = vec![Data::new(); notes_count];
             let mut note_i: usize = 0;
 
             // Index instead of zipping `self.msgs` with the tail of
@@ -1721,7 +1712,7 @@ impl Log {
             data,
             notes,
             redact_sensitive_information,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -1768,7 +1759,7 @@ impl Log {
                 import_kind,
                 err,
             }),
-            ..Default::default()
+            ..Msg::new()
         };
 
         self.add_msg(msg)
@@ -1822,7 +1813,7 @@ impl Log {
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -1834,7 +1825,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), false)
+        self.add_formatted_msg(Kind::Err, source, r, text, Box::new([]), false)
     }
 
     #[inline]
@@ -1862,10 +1853,10 @@ impl Log {
             source.into(),
             Range {
                 loc: l,
-                ..Default::default()
+                ..Range::new()
             },
             text,
-            Box::default(),
+            Box::new([]),
             false,
         )
     }
@@ -1882,7 +1873,7 @@ impl Log {
                 len: opts.len,
             },
             text,
-            Box::default(),
+            Box::new([]),
             opts.redact_sensitive_information,
         )
     }
@@ -1911,7 +1902,7 @@ impl Log {
             kind: Kind::Err,
             data,
             notes,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -1927,7 +1918,7 @@ impl Log {
         self.add_msg(Msg {
             kind: Kind::Warn,
             data,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -1942,10 +1933,10 @@ impl Log {
             source,
             Range {
                 loc: l,
-                ..Default::default()
+                ..Range::new()
             },
             text,
-            Box::default(),
+            Box::new([]),
             false,
         )
     }
@@ -1963,7 +1954,7 @@ impl Log {
         }
         let range = Range { loc, len: 1 };
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::default(), false);
+        self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::new([]), false);
         if let Some(location) = self.msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
             location.line_text = None;
         }
@@ -1977,7 +1968,7 @@ impl Log {
         col: u32,
         args: fmt::Arguments<'_>,
     ) {
-        self.add_warning_fmt_line_col_with_notes(filepath, line, col, args, Box::default())
+        self.add_warning_fmt_line_col_with_notes(filepath, line, col, args, Box::new([]))
     }
 
     #[cold]
@@ -2004,7 +1995,7 @@ impl Log {
                 file: Cow::Borrowed(filepath),
                 line: i32::try_from(line).expect("int cast"),
                 column: i32::try_from(col).expect("int cast"),
-                ..Default::default()
+                ..Location::new()
             }),
         }
         .clone_line_text(self.clone_line_text);
@@ -2013,7 +2004,7 @@ impl Log {
             kind: Kind::Warn,
             data,
             notes,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -2028,7 +2019,7 @@ impl Log {
             return;
         }
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), false)
+        self.add_formatted_msg(Kind::Warn, source, r, text, Box::new([]), false)
     }
 
     #[cold]
@@ -2053,7 +2044,7 @@ impl Log {
             kind: Kind::Warn,
             data,
             notes,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -2091,7 +2082,7 @@ impl Log {
             kind: Kind::Err,
             data,
             notes,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -2105,14 +2096,14 @@ impl Log {
             source,
             Range {
                 loc: l,
-                ..Default::default()
+                ..Range::new()
             },
             text,
         );
         self.add_msg(Msg {
             kind: Kind::Warn,
             data,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -2133,7 +2124,7 @@ impl Log {
             source,
             Range {
                 loc: l,
-                ..Default::default()
+                ..Range::new()
             },
             alloc_print(note_args),
         )]);
@@ -2143,7 +2134,7 @@ impl Log {
             kind: Kind::Warn,
             data,
             notes,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -2156,7 +2147,7 @@ impl Log {
         self.add_msg(Msg {
             kind: Kind::Debug,
             data,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -2185,7 +2176,7 @@ impl Log {
             kind: Kind::Err,
             data,
             notes,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -2207,14 +2198,14 @@ impl Log {
             _source,
             Range {
                 loc,
-                ..Default::default()
+                ..Range::new()
             },
             text,
         );
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -2234,7 +2225,7 @@ impl Log {
             kind: Kind::Err,
             data,
             redact_sensitive_information: opts.redact_sensitive_information,
-            ..Default::default()
+            ..Msg::new()
         })
     }
 
@@ -2325,12 +2316,24 @@ impl Log {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct AddErrorOptions<'a> {
     pub source: Option<&'a Source>,
     pub loc: Loc,
     pub len: i32,
     pub redact_sensitive_information: bool,
+}
+
+impl<'a> AddErrorOptions<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            source: None,
+            loc: Loc::new(),
+            len: 0,
+            redact_sensitive_information: false,
+        }
+    }
 }
 
 /// Downstream-compat alias: some callers (`bunfig.rs`, `PnpmMatcher.rs`) spell
@@ -2463,10 +2466,10 @@ pub struct Source {
     pub index: Index,
 }
 
-impl Default for Source {
-    fn default() -> Self {
+impl Source {
+    pub fn new() -> Self {
         Source {
-            path: bun_paths::fs::Path::default(),
+            path: bun_paths::fs::Path::new(),
             contents: Cow::Borrowed(b""),
             contents_is_recycled: false,
             identifier_name: Cow::Borrowed(b""),
@@ -2494,8 +2497,8 @@ struct ErrorPositionState {
     prev_code_point: i32,
 }
 
-impl Default for ErrorPositionState {
-    fn default() -> Self {
+impl ErrorPositionState {
+    fn new() -> Self {
         ErrorPositionState {
             line_start: 0,
             line_count: 1,
@@ -2513,7 +2516,7 @@ impl ErrorPositionState {
     fn advance(&mut self, contents: &[u8], from: usize, to: usize) -> bool {
         use bun_core::strings::{CodepointIterator, Cursor};
         let iter_ = CodepointIterator::init(&contents[from..to]);
-        let mut iter = Cursor::default();
+        let mut iter = Cursor::new();
         let mut crossed_line_break = false;
 
         while iter_.next(&mut iter) {
@@ -2573,7 +2576,7 @@ impl ErrorPositionState {
 fn scan_line_end(contents: &[u8], offset: usize) -> usize {
     use bun_core::strings::{CodepointIterator, Cursor};
     let iter_ = CodepointIterator::init(&contents[offset..]);
-    let mut iter = Cursor::default();
+    let mut iter = Cursor::new();
 
     while iter_.next(&mut iter) {
         match iter.c {
@@ -2601,7 +2604,6 @@ fn clamp_error_offset(contents: &[u8], offset_loc: Loc) -> usize {
 /// diagnostics for the same source at non-decreasing offsets resume the
 /// previous scan, so N diagnostics cost O(file size + N) in total. Results
 /// are identical to `Source::init_error_position`.
-#[derive(Default)]
 pub struct LineColumnTracker {
     /// Identity of the tracked source (`contents` and `path.text` pointers +
     /// lengths, stored as `usize` so the tracker stays `Send`). A diagnostic
@@ -2613,11 +2615,35 @@ pub struct LineColumnTracker {
     cursors: [ScanCursor; 4],
 }
 
-#[derive(Clone, Copy, Default)]
+impl LineColumnTracker {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            contents_ptr: 0,
+            contents_len: 0,
+            path_ptr: 0,
+            path_len: 0,
+            cursors: core::array::from_fn(|_| ScanCursor::new()),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 struct ScanCursor {
     offset: usize,
     state: ErrorPositionState,
     line_end: Option<usize>,
+}
+
+impl ScanCursor {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            offset: 0,
+            state: ErrorPositionState::new(),
+            line_end: None,
+        }
+    }
 }
 
 impl LineColumnTracker {
@@ -2634,7 +2660,7 @@ impl LineColumnTracker {
             contents_len: source.contents.len(),
             path_ptr: source.path.text.as_ptr() as usize,
             path_len: source.path.text.len(),
-            ..Default::default()
+            ..LineColumnTracker::new()
         };
     }
 
@@ -2733,7 +2759,7 @@ impl Source {
         Source {
             path,
             contents: Cow::Borrowed(b""),
-            ..Default::default()
+            ..Source::new()
         }
     }
 
@@ -2742,7 +2768,7 @@ impl Source {
             path: file.path,
             contents: Cow::Borrowed(file.contents),
             contents_is_recycled: true,
-            ..Default::default()
+            ..Source::new()
         };
         source.path.namespace = b"file";
         Ok(source)
@@ -2753,7 +2779,7 @@ impl Source {
         Source {
             path,
             contents: Cow::Borrowed(contents.into_str()),
-            ..Default::default()
+            ..Source::new()
         }
     }
 
@@ -2764,7 +2790,7 @@ impl Source {
         Source {
             path,
             contents: Cow::Owned(contents),
-            ..Default::default()
+            ..Source::new()
         }
     }
 
@@ -2783,7 +2809,7 @@ impl Source {
 
         Range {
             loc,
-            ..Default::default()
+            ..Range::new()
         }
     }
 
@@ -2826,7 +2852,7 @@ impl Source {
         let contents: &[u8] = &self.contents;
         let offset = clamp_error_offset(contents, offset_loc);
 
-        let mut state = ErrorPositionState::default();
+        let mut state = ErrorPositionState::new();
         state.advance(contents, 0, offset);
 
         // Scan to the end of the line (or end of file if this is the last line)
@@ -2845,7 +2871,7 @@ impl Source {
     ) -> Option<usize> {
         use bun_core::strings::{CodepointIterator, Cursor};
         let iter_ = CodepointIterator::init(source_contents);
-        let mut iter = Cursor::default();
+        let mut iter = Cursor::new();
 
         let mut line_count: u64 = start_line;
         let mut column_number: u64 = start_col;
@@ -2907,9 +2933,16 @@ fn range_data_text(source: Option<&Source>, r: Range, text: Cow<'static, [u8]>) 
 // so the file→Source conversions live here as free fns.
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct ToSourceOptions {
     pub convert_bom: bool,
+}
+
+impl ToSourceOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self { convert_bom: false }
+    }
 }
 
 /// Read `path` (rooted at cwd) into memory and wrap it in a `Source`.
@@ -3082,8 +3115,8 @@ pub struct Indentation {
     pub character: IndentationCharacter,
 }
 
-impl Default for Indentation {
-    fn default() -> Self {
+impl Indentation {
+    pub fn new() -> Self {
         Self {
             scalar: 2,
             count: 0,
@@ -3439,7 +3472,7 @@ mod line_column_tracker_tests {
 
         // Non-decreasing offsets (the parser/lexer pattern): every result must
         // match a from-scratch scan.
-        let mut tracker = LineColumnTracker::default();
+        let mut tracker = LineColumnTracker::new();
         for offset in 0..len.max(1) {
             let loc = usize2loc(offset);
             let expected = source.init_error_position(loc);
@@ -3462,7 +3495,7 @@ mod line_column_tracker_tests {
         }
 
         // Repeated, backwards, and strided offsets against a reused tracker.
-        let mut tracker = LineColumnTracker::default();
+        let mut tracker = LineColumnTracker::new();
         let mut offsets: Vec<usize> = (0..len.max(1)).step_by(3).collect();
         offsets.extend((0..len.max(1)).rev().step_by(7));
         offsets.extend([0, len.max(1) - 1, 0, len / 2, len / 2]);
@@ -3532,7 +3565,7 @@ mod line_column_tracker_tests {
             }
         }
 
-        let mut tracker = LineColumnTracker::default();
+        let mut tracker = LineColumnTracker::new();
         for offset in offsets {
             let loc = usize2loc(offset);
             let expected = source.init_error_position(loc);
@@ -3563,7 +3596,7 @@ mod line_column_tracker_tests {
             b"a totally different\r\nsecond source\r\nwith more lines\r\n" as &[u8],
         );
 
-        let mut tracker = LineColumnTracker::default();
+        let mut tracker = LineColumnTracker::new();
         for (source, offset) in [
             (&a, 8usize),
             (&b, 30),

@@ -116,7 +116,7 @@ pub fn install_with_manager(
     let (config_version, changed_config_version) = load_result.choose_config_version();
     manager.options.config_version = Some(config_version);
 
-    let mut root = lockfile::Package::default();
+    let mut root = lockfile::Package::new();
     let mut needs_new_lockfile = !matches!(load_result, lockfile::LoadResult::Ok { .. })
         || (load_result.ok().lockfile.buffers.dependencies.is_empty()
             && !manager.update_requests.is_empty());
@@ -139,7 +139,7 @@ pub fn install_with_manager(
 
     let bare_update =
         manager.subcommand == Subcommand::Update && manager.update_requests.is_empty();
-    let mut transitive = TransitiveUpdate::default();
+    let mut transitive = TransitiveUpdate::new();
     // Reachability must be walked before the differ invalidates the root rows it is about to re-enqueue.
     if manager.to_update
         && matches!(load_result, lockfile::LoadResult::Ok { .. })
@@ -151,8 +151,8 @@ pub fn install_with_manager(
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
-    let mut direct_deps_before = DirectDependencies::default();
-    manager.progress = Default::default();
+    let mut direct_deps_before = DirectDependencies::new();
+    manager.progress = super::Progress::new();
 
     match &load_result {
         lockfile::LoadResult::Err(cause) => report_lockfile_load_error(manager, cause, log_level)?,
@@ -177,8 +177,8 @@ pub fn install_with_manager(
                     break 'differ;
                 }
 
-                let mut lockfile = Lockfile::default();
-                let mut maybe_root = lockfile::Package::default();
+                let mut lockfile = Lockfile::new();
+                let mut maybe_root = lockfile::Package::new();
 
                 let source_copy = root_package_json_source(manager, root_package_json_path, true)?;
 
@@ -290,7 +290,10 @@ pub fn install_with_manager(
                 for key in lockfile.self_contained_workspaces.keys() {
                     manager.lockfile.self_contained_workspaces.put(*key, ())?;
                 }
-                manager.lockfile.linked_members = core::mem::take(&mut lockfile.linked_members);
+                manager.lockfile.linked_members = core::mem::replace(
+                    &mut lockfile.linked_members,
+                    crate::lockfile_real::LinkedMembers::new(),
+                );
                 // Nor does the lockfile's record of `trustedDependencies` decide.
                 manager.lockfile.trusted_dependencies = lockfile.trusted_dependencies.take();
                 if manager.subcommand == Subcommand::Dedupe {
@@ -417,7 +420,7 @@ pub fn install_with_manager(
                     debug_assert_eq!(lf.dependencies.len(), off as usize);
                     debug_assert_eq!(lf.resolutions.len(), off as usize);
                     bun_core::vec::extend_from_fn(lf.dependencies, len as usize, |_| {
-                        Dependency::default()
+                        Dependency::new()
                     });
                     bun_core::vec::extend_from_fn(lf.resolutions, len as usize, |_| {
                         invalid_package_id
@@ -481,7 +484,7 @@ pub fn install_with_manager(
                                     // `PatchedDep` has private padding/hash fields,
                                     // so the `..Default::default()` struct-update form is rejected
                                     // outside its module. Build via `default()` + field stores.
-                                    let mut new = crate::lockfile_real::PatchedDep::default();
+                                    let mut new = crate::lockfile_real::PatchedDep::new();
                                     new.path = builder.append::<SemverString>(
                                         value.path.slice(&lockfile.buffers.string_bytes),
                                     );
@@ -517,7 +520,7 @@ pub fn install_with_manager(
                     let invalidates_rows = (manager.summary.overrides_changed
                         && !all_name_hashes.is_empty())
                         || manager.summary.catalogs_changed;
-                    let mut pinned_rows = DynamicBitSet::default();
+                    let mut pinned_rows = DynamicBitSet::new();
                     if bare_update {
                         transitive = TransitiveUpdate::plan(manager, &direct_deps_before)?;
                         pinned_rows = transitive.enqueue(manager)?;
@@ -565,7 +568,7 @@ pub fn install_with_manager(
                     }
 
                     if manager.summary.update > 0 {
-                        root.scripts = Default::default();
+                        root.scripts = crate::lockfile_real::package::scripts::Scripts::new();
                     }
                 }
             }
@@ -574,7 +577,7 @@ pub fn install_with_manager(
     }
 
     let named_update = manager.to_update && !manager.update_requests.is_empty();
-    let mut named = NamedUpdates::default();
+    let mut named = NamedUpdates::new();
     if !needs_new_lockfile {
         if named_update {
             named = enqueue_named_updates(
@@ -633,7 +636,7 @@ pub fn install_with_manager(
         && reresolve_links_to_dropped_workspaces(manager)
         && (manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0)
     {
-        resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::default())?;
+        resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::new())?;
     }
 
     // `--depth 0`: a transitive edge that shared the old package with a moved entry stays.
@@ -902,7 +905,7 @@ pub fn install_with_manager(
     let mut removes_collapsed_copies = false;
     let mut install_summary: PackageInstallSummary = 'install_summary: {
         if !manager.options.do_.install_packages() {
-            break 'install_summary PackageInstallSummary::default();
+            break 'install_summary PackageInstallSummary::new();
         }
 
         super::patch_package::remove_stale_folder(manager);
@@ -1509,7 +1512,7 @@ fn warn_unsupported_platform(
                 manager,
                 lockfile,
                 resolutions,
-                &mut Default::default(),
+                &mut crate::lockfile_real::reachable::Linked::new(),
             )
     });
     let importers = (install_root_dependencies.then_some(0).into_iter())
@@ -1628,9 +1631,12 @@ fn overrides_field(
 ) -> lockfile::override_map::Field {
     use lockfile::override_map::Field;
     let log = manager.log_mut();
-    let WorkspacePackageJsonCacheResult::Entry(entry) = manager
-        .workspace_package_json_cache
-        .get_with_path(log, root_package_json_path.as_bytes(), Default::default())
+    let WorkspacePackageJsonCacheResult::Entry(entry) =
+        manager.workspace_package_json_cache.get_with_path(
+            log,
+            root_package_json_path.as_bytes(),
+            super::super::GetJsonOptions::new(),
+        )
     else {
         return Field::Overrides;
     };
@@ -1776,12 +1782,21 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
     any
 }
 
-#[derive(Default)]
 struct NamedUpdates {
     /// Invalidated rows paired with the package they resolved to, for redirect_moved_edges.
     moved: Vec<(DependencyID, PackageID)>,
     /// `--latest` only: every in-scope row naming a requested package, for refresh_children_of_named.
     latest_rows: Vec<DependencyID>,
+}
+
+impl NamedUpdates {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            moved: Vec::new(),
+            latest_rows: Vec::new(),
+        }
+    }
 }
 
 /// bun update <name>…: every in-scope row resolving to <name> (see update_scope) re-resolves within its own range; rows the differ re-enqueued are left to it, peers with a provider and bundled rows only follow via redirect_moved_edges.
@@ -1799,7 +1814,7 @@ fn enqueue_named_updates(
     let requests = manager.update_requests.len();
     let mut matched = DynamicBitSet::init_empty(requests).unwrap_or_oom();
     let mut matched_elsewhere = DynamicBitSet::init_empty(requests).unwrap_or_oom();
-    let mut named = NamedUpdates::default();
+    let mut named = NamedUpdates::new();
     let mut peer_rows: Vec<DependencyID> = Vec::new();
     let dependencies_len = manager.lockfile.buffers.dependencies.len();
     for dependency_i in 0..dependencies_len {
@@ -2040,7 +2055,9 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
                 if dep.version.tag == DependencyVersionTag::DistTag && !update_to_latest {
                     continue;
                 }
-                let entry = updating_packages.get_or_put(name).unwrap_or_oom();
+                let entry = updating_packages
+                    .get_or_put(name, super::PackageUpdateInfo::new)
+                    .unwrap_or_oom();
                 if !entry.found_existing {
                     entry.value_ptr.original_version_literal =
                         Box::from(dep.version.literal.slice(&lockfile.buffers.string_bytes));
@@ -2076,7 +2093,7 @@ fn root_package_json_source(
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
         manager.log_mut(),
         root_package_json_path.as_bytes(),
-        Default::default(),
+        super::super::GetJsonOptions::new(),
     ) {
         WorkspacePackageJsonCacheResult::Entry(entry) => {
             // An empty package.json is refused only next to a lockfile, whose pinned versions
@@ -2121,7 +2138,7 @@ fn create_new_lockfile_and_enqueue(
     root_package_json_path: &ZStr,
     log_level: Options::LogLevel,
 ) -> crate::Result<lockfile::Package> {
-    let mut root = lockfile::Package::default();
+    let mut root = lockfile::Package::new();
 
     // `init_empty()` resets `text_lockfile_version` to the current version. When
     // we're recreating the lockfile from an existing text `bun.lock` (e.g. it
@@ -2517,7 +2534,7 @@ fn reresolve_rows_outside_overrides(
     enqueue_peer_rows(manager, &peer_rows, &mut moved)?;
     manager.drain_dependency_list();
     if manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0 {
-        resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default())?;
+        resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::new())?;
     }
     if manager.log_mut().has_errors() {
         manager.crash();
@@ -2730,7 +2747,7 @@ fn write_yarn_lock_with_progress(
         }
         manager.progress.refresh();
         manager.progress.root.end();
-        manager.progress = Default::default();
+        manager.progress = super::Progress::new();
     }
     Ok(())
 }

@@ -37,7 +37,7 @@ impl Rule for NoUselessUndefined {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         Some(State {
             undefined: file.find_name("undefined")?,
-            return_types: AncestorMemo::default(),
+            return_types: AncestorMemo::new(),
             first_optional_parameters: IdMap::new(),
         })
     }

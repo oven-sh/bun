@@ -122,7 +122,7 @@ impl<'a> SourceTokens<'a> {
             bump,
             stack_check: StackCheck::init(),
             token: Token {
-                loc: Loc::default(),
+                loc: Loc::new(),
                 data: TokenData::Eof,
             },
             as_written: true,
@@ -362,7 +362,7 @@ impl<'a> JSON5Parser<'a> {
             bump,
             stack_check: StackCheck::init(),
             token: Token {
-                loc: Loc::default(),
+                loc: Loc::new(),
                 data: TokenData::Eof,
             },
             as_written: false,
@@ -702,7 +702,7 @@ impl<'a> JSON5Parser<'a> {
                 flags: E::own_key_property_flags(&key),
                 key: Some(key),
                 value: Some(value),
-                ..Default::default()
+                ..G::Property::new()
             });
 
             match self.token.data {
@@ -723,7 +723,7 @@ impl<'a> JSON5Parser<'a> {
         Ok(Expr::init(
             E::Object {
                 properties: G::PropertyList::move_from_list(properties),
-                ..Default::default()
+                ..E::Object::new()
             },
             loc,
         ))
@@ -782,7 +782,7 @@ impl<'a> JSON5Parser<'a> {
         Ok(Expr::init(
             E::Array {
                 items: bun_ast::ExprNodeList::move_from_list(items),
-                ..Default::default()
+                ..E::Array::new()
             },
             loc,
         ))

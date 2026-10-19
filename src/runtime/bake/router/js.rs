@@ -44,7 +44,7 @@ impl JSFrameworkRouter {
                 "parseRoutePattern",
                 __jsc_host_parse_route_pattern,
                 1,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         obj.put(global, b"FrameworkRouter", Self::get_constructor(global));
@@ -99,7 +99,7 @@ impl JSFrameworkRouter {
             client_file: None,
             server_file: OpaqueFileId::init(0),
             server_file_string: StrongOptional::empty(),
-            ..Default::default()
+            ..Type::new()
         }]);
 
         let mut jsfr = Box::new(JSFrameworkRouter {
@@ -152,7 +152,7 @@ impl JSFrameworkRouter {
         let path = path_value.to_utf8(global)?;
 
         let mut params_out = MatchedParams {
-            params: BoundedArray::default(),
+            params: BoundedArray::new(),
         };
         if let Some(index) = self.router.match_slow(path.slice(), &mut params_out) {
             let obj = JSValue::create_empty_object(global, 2);

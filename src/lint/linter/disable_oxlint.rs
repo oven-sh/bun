@@ -188,7 +188,8 @@ fn ranges<'a>(
     let text = file.text();
     let (mut ranges, mut unused_enables) = (Vec::new(), Vec::new());
     let mut all: Option<Open<'a>> = None;
-    let mut by_name: FxHashMap<&'a [u8], Open<'a>> = FxHashMap::default();
+    let mut by_name: FxHashMap<&'a [u8], Open<'a>> =
+        FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for comment in comments {
         let content = content_of(text, comment.span);
         let prefix: Prefix = file.slice(comment.label_span).get(..6).unwrap_or_default();

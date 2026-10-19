@@ -30,21 +30,39 @@ use bun_lint::ast::File;
 use bun_react_compiler::Categories;
 use std::cell::{Cell, OnceCell};
 
-#[derive(Default)]
 struct PerFlavor {
     wanted: Cell<Categories>,
     /// And what was wanted when the compiler ran.
     findings: OnceCell<(Vec<Finding>, Categories)>,
 }
 
-#[derive(Default)]
+impl PerFlavor {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            wanted: core::cell::Cell::new(Categories::new()),
+            findings: core::cell::OnceCell::new(),
+        }
+    }
+}
+
 struct PerFile {
     oxlint: PerFlavor,
     eslint: PerFlavor,
 }
 
+impl PerFile {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            oxlint: PerFlavor::new(),
+            eslint: PerFlavor::new(),
+        }
+    }
+}
+
 fn per_flavor<'a>(file: &'a File<'a>, flavor: Flavor) -> Option<&'a PerFlavor> {
-    let per_file = file.extension(PerFile::default)?;
+    let per_file = file.extension(PerFile::new)?;
     Some(match flavor {
         Flavor::Oxlint => &per_file.oxlint,
         Flavor::Eslint => &per_file.eslint,

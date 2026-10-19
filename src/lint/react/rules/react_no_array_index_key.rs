@@ -16,12 +16,21 @@ pub struct NoArrayIndexKey;
 const NO_ARRAY_INDEX: Message = Message::new("noArrayIndex", "Do not use Array index in keys");
 const NO_ARRAY_INDEX_KEY: Message = Message::new("", "Usage of Array index in keys is not allowed");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// `None`: nobody has asked yet. oxlint knows none.
     pragma: Option<&'a [u8]>,
     /// The attributes and the properties that are named `key` and whose value can be made of an index.
     keys: Vec<Prop<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            pragma: None,
+            keys: Vec::new(),
+        }
+    }
 }
 
 impl<'a> State<'a> {
@@ -61,7 +70,7 @@ impl Rule for NoArrayIndexKey {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        (file.mentions("key") && (file.has_exprs([ExprTag::Jsx]) || may_call_what_makes_elements(file))).then(State::default)
+        (file.mentions("key") && (file.has_exprs([ExprTag::Jsx]) || may_call_what_makes_elements(file))).then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -123,7 +132,7 @@ impl Rule for NoArrayIndexKey {
         utils::sort::sort_by_key(&mut calls, |it| (it.span.start, Reverse(it.span.end)));
         utils::sort::sort_by_key(&mut keys, |it| it.span().start);
         let mut calls = calls.into_iter().peekable();
-        let mut open = Open::default();
+        let mut open = Open::new();
         for key in keys {
             let Some(value) = key.value() else {
                 continue;
@@ -216,12 +225,21 @@ fn is_using_react_children(callee: Expr<'_>, method: Name<'_>, pragma: &[u8]) ->
 }
 
 /// upstream's `indexParamNames`
-#[derive(Default)]
 struct Open<'a> {
     /// The calls around where it is, the innermost last.
     calls: Vec<IteratorCall<'a>>,
     /// How many of them have an index of a name.
     names: FxHashMap<Name<'a>, u32>,
+}
+
+impl<'a> Open<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            calls: Vec::new(),
+            names: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl<'a> Open<'a> {

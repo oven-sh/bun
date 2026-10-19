@@ -170,7 +170,7 @@ jsc::impl_abort_handle_owner!(Terminal, abort_handle, |this, _cause| {
 });
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct Flags: u8 {
         const CLOSED         = 1 << 0;
         const FINALIZED      = 1 << 1;
@@ -208,8 +208,8 @@ pub(crate) struct Options {
     pub(crate) drain_callback: Option<JSValue>,
 }
 
-impl Default for Options {
-    fn default() -> Self {
+impl Options {
+    pub(crate) fn new() -> Self {
         Self {
             cols: 80,
             rows: 24,
@@ -254,7 +254,7 @@ impl Options {
         global_object: &JSGlobalObject,
         js_options: JSValue,
     ) -> JsResult<Options> {
-        let mut options = Options::default();
+        let mut options = Options::new();
 
         if let Some(n) = js_options.get_optional_i32(global_object, b"cols")? {
             if n > 0 && n <= 65535 {
@@ -443,7 +443,7 @@ impl Terminal {
                 global_object.bun_vm().as_mut().event_loop().cast(),
             ),
             global_this: bun_ptr::BackRef::new(global_object),
-            writer: JsCell::new(IOWriter::default()),
+            writer: JsCell::new(IOWriter::new()),
             reader: JsCell::new(IOReader::init::<Terminal>()),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),

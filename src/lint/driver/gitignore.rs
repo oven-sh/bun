@@ -213,7 +213,7 @@ pub(crate) fn are_all_in_repositories<'p>(
     mut searched: impl Iterator<Item = &'p [u8]>,
     mut named: impl Iterator<Item = &'p [u8]>,
 ) -> bool {
-    let mut known: FxHashSet<&[u8]> = FxHashSet::default();
+    let mut known: FxHashSet<&[u8]> = FxHashSet::with_hasher(bun_sema::util::FxBuild);
     let mut is_in_one = |directory: &'p [u8]| {
         let root = paths::ancestors(directory).find(|it| known.contains(it) || is_root(it));
         let shortest = root.map_or(usize::MAX, <[u8]>::len);
@@ -227,7 +227,7 @@ pub(crate) fn are_all_in_repositories<'p>(
 }
 
 /// `.gitignore` and `info/exclude` for a search like those of oxlint and oxfmt, as the crate `ignore` reads them.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct OfGit {
     ignores: Chain,
     /// `info/exclude`. Every `.gitignore` comes first.
@@ -236,6 +236,18 @@ pub(crate) struct OfGit {
     stops_at_roots: bool,
     /// `info/exclude` is found as the crate does: [`common_directory`].
     is_for_oxc: bool,
+}
+
+impl OfGit {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            ignores: None,
+            excludes: None,
+            stops_at_roots: false,
+            is_for_oxc: false,
+        }
+    }
 }
 
 impl OfGit {
@@ -267,7 +279,7 @@ impl OfGit {
         let mut files = Self {
             stops_at_roots,
             is_for_oxc,
-            ..Self::default()
+            ..Self::new()
         };
         for (index, directory) in directories.iter().enumerate().rev() {
             let can_be_root = nearest.is_some_and(|nearest| nearest <= index);
@@ -319,10 +331,20 @@ impl OfGit {
 
 /// The files that a search of `bun lint` asks, in the order of the crate `ignore`, with which oxlint walks: wherever they are,
 /// those with the name that it is given come before those of Git.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct Files {
     pub(crate) named: Chain,
     of_git: OfGit,
+}
+
+impl Files {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            named: None,
+            of_git: OfGit::new(),
+        }
+    }
 }
 
 impl Files {

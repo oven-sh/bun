@@ -30,7 +30,7 @@ impl Rule for AnchorAmbiguousText {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(Texts::default())
+        Some(Texts::with_hasher(rustc_hash::FxBuildHasher))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -71,11 +71,21 @@ fn get_accessible_text<'a>(file: &'a File<'a>, jsx_el: Jsx<'a>) -> AccessibleTex
 }
 
 /// `normalize_str` of pieces of text with a blank between them: in lower case, without punctuation, one blank for any whitespace.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Normalized {
     text: String,
     /// Whether a piece had more than whitespace.
     has_text: bool,
+}
+
+impl Normalized {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            text: String::new(),
+            has_text: false,
+        }
+    }
 }
 
 impl Normalized {
@@ -116,7 +126,7 @@ impl AnchorAmbiguousText {
         let longest = self.words.iter().map(String::len).max().unwrap_or(0);
         let normalized = match get_accessible_text(file, anchor) {
             AccessibleText::Of(text) => {
-                let mut normalized = Normalized::default();
+                let mut normalized = Normalized::new();
                 normalized.push(text);
                 Some(normalized)
             }
@@ -140,7 +150,7 @@ fn text_of_children<'a>(file: &'a File<'a>, anchor: Jsx<'a>, longest: usize, tex
     // The elements that are being read, each in the one before: the key of an anchor, the children that are still to be read, and
     // the text of those that are read.
     let mut open = SmallVec::<[_; 4]>::new();
-    open.push((key, children(file, anchor), Normalized::default()));
+    open.push((key, children(file, anchor), Normalized::new()));
     loop {
         let (_, siblings, text) = open.last_mut()?;
         let mut is_too_long = false;
@@ -153,7 +163,7 @@ fn text_of_children<'a>(file: &'a File<'a>, anchor: Jsx<'a>, longest: usize, tex
                     match key.and_then(|it| texts.get(&it)) {
                         Some(Some(known)) => text.append(known),
                         Some(None) => is_too_long = true,
-                        None => open.push((key, children(file, child_el), Normalized::default())),
+                        None => open.push((key, children(file, child_el), Normalized::new())),
                     }
                 }
                 AccessibleText::None => {}

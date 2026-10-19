@@ -59,11 +59,11 @@ impl PerThread {
     /// Empty placeholder used in `build_command` before `build_with_vm` fills it.
     pub(super) fn placeholder(vm: *mut VirtualMachine) -> PerThread {
         PerThread {
-            entry_points: EntryPointMap::default(),
+            entry_points: EntryPointMap::new(),
             bundled_outputs: Vec::new(),
             module_keys: Vec::new(),
-            module_map: StringArrayHashMap::default(),
-            source_maps: StringArrayHashMap::default(),
+            module_map: StringArrayHashMap::init(),
+            source_maps: StringArrayHashMap::init(),
             // SAFETY: `vm` is the live per-thread VM from `init_bake` (non-null,
             // write provenance); outlives `PerThread`.
             vm: unsafe { bun_ptr::BackRef::from_raw_mut(vm) },

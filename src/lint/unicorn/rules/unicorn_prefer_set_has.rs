@@ -28,11 +28,20 @@ const ARRAY_METHODS_RETURNS_ARRAY: [&str; 15] = [
     "with",
 ];
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The names under which the module exports something, once that is asked.
     exported_bindings: Option<FxHashSet<Name<'a>>>,
     nearest_loop_or_function: AncestorMemo<'a, Node<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            exported_bindings: None,
+            nearest_loop_or_function: AncestorMemo::new(),
+        }
+    }
 }
 
 impl Rule for PreferSetHas {
@@ -45,7 +54,7 @@ impl Rule for PreferSetHas {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        file.find_name("includes").map(|_| State::default())
+        file.find_name("includes").map(|_| State::new())
     }
 
     fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
@@ -96,7 +105,7 @@ fn includes_of_call<'a>(reference: Reference<'a>, name: Name<'a>) -> Option<Iden
 
 /// The names of `ModuleRecord::exported_bindings`.
 fn exported_bindings<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
-    let mut names = FxHashSet::default();
+    let mut names = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     for stmt in file.body() {
         match stmt.kind() {
             StmtKind::ExportNamed(export) => names.extend(export.items().iter().map(|it| it.exported().name())),

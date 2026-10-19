@@ -57,7 +57,7 @@ impl ManifestBindings {
                 // emits this `JSHostFn`-ABI shim.
                 __jsc_host_js_parse_manifest,
                 2,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         obj
@@ -104,7 +104,7 @@ fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         }
     };
 
-    let mut scope = npm::registry::Scope::default();
+    let mut scope = npm::registry::Scope::new();
     scope.set_url(Box::from(registry.slice()));
 
     let maybe_package_manifest =

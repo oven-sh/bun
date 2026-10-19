@@ -120,7 +120,13 @@ pub(crate) fn to_js(global_object: &JSGlobalObject) -> JSValue {
         object.put(
             global_object,
             name.as_bytes(),
-            JSFunction::create(global_object, name, func, 1, Default::default()),
+            JSFunction::create(
+                global_object,
+                name,
+                func,
+                1,
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
+            ),
         );
     }
 

@@ -74,14 +74,14 @@ impl ConnectionCtorArgs {
         };
 
         let tls_object = arguments[6];
-        let mut tls_config = SSLConfig::default();
+        let mut tls_config = SSLConfig::new();
         let mut secure: Option<OwnedSslCtx> = None;
         if ssl_mode != SSLMode::Disable {
             tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
-                SSLConfig::default()
+                SSLConfig::new()
             } else if tls_object.is_object() {
                 match SSLConfig::from_js(global_object, tls_object) {
-                    Ok(opt) => opt.unwrap_or_default(),
+                    Ok(opt) => opt.unwrap_or_else(SSLConfig::new),
                     Err(_) => return Ok(None),
                 }
             } else {

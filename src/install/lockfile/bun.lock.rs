@@ -288,13 +288,13 @@ impl Stringifier {
 
         // Written out in iteration order, which the hash and the reserved capacity decide.
         let mut found_trusted_dependencies: HashMap<u64, String, WrittenOrderContext> =
-            HashMap::default();
+            HashMap::init();
         if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
             found_trusted_dependencies.reserve(trusted_dependencies.count());
         }
 
         let mut found_patched_dependencies: HashMap<u64, (Box<[u8]>, String), WrittenOrderContext> =
-            HashMap::default();
+            HashMap::init();
         found_patched_dependencies.reserve(lockfile.patched_dependencies.count());
 
         let mut optional_peers_buf: Vec<String> = Vec::new();
@@ -380,7 +380,7 @@ impl Stringifier {
                     writer,
                     indent,
                     0,
-                    String::default(),
+                    String::new(),
                     pkg_names,
                     pkg_name_hashes,
                     pkg_bins,
@@ -538,9 +538,9 @@ impl Stringifier {
                         "{}: {},",
                         bun_core::fmt::format_json_string_utf8(
                             name_and_version,
-                            Default::default()
+                            crate::bun_output::fmt::JSONFormatterUTF8Options::new()
                         ),
-                        patch_path.fmt_json(buf, Default::default()),
+                        patch_path.fmt_json(buf, JsonOpts::new()),
                     )?;
                 }
 
@@ -602,7 +602,7 @@ impl Stringifier {
                     writeln!(
                         writer,
                         "{}: {{",
-                        catalog_name.fmt_json(buf, Default::default())
+                        catalog_name.fmt_json(buf, JsonOpts::new())
                     )?;
                     *indent += 1;
 
@@ -881,11 +881,7 @@ impl Stringifier {
 
                             write_info!();
 
-                            write!(
-                                writer,
-                                ", {}",
-                                repo.resolved.fmt_json(buf, Default::default())
-                            )?;
+                            write!(writer, ", {}", repo.resolved.fmt_json(buf, JsonOpts::new()))?;
                             if pkg_meta.integrity.tag.is_supported() {
                                 write!(writer, ", \"{}\"]", pkg_meta.integrity)?;
                             } else {
@@ -920,8 +916,8 @@ impl Stringifier {
             writeln!(
                 writer,
                 "{}: {},",
-                dep.name.fmt_json(buf, Default::default()),
-                dep.version.literal.fmt_json(buf, Default::default()),
+                dep.name.fmt_json(buf, JsonOpts::new()),
+                dep.version.literal.fmt_json(buf, JsonOpts::new()),
             )?;
         }
         Ok(())
@@ -980,10 +976,13 @@ impl Stringifier {
                 write!(
                     writer,
                     "{}: {}",
-                    bun_core::fmt::format_json_string_utf8(dep.name.slice(buf), Default::default()),
+                    bun_core::fmt::format_json_string_utf8(
+                        dep.name.slice(buf),
+                        crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+                    ),
                     bun_core::fmt::format_json_string_utf8(
                         dep.version.literal.slice(buf),
-                        Default::default()
+                        crate::bun_output::fmt::JSONFormatterUTF8Options::new()
                     ),
                 )?;
 
@@ -1021,7 +1020,10 @@ impl Stringifier {
                     writer,
                     "{}{}{}",
                     if i != 0 { " " } else { "" },
-                    bun_core::fmt::format_json_string_utf8(name.slice(buf), Default::default()),
+                    bun_core::fmt::format_json_string_utf8(
+                        name.slice(buf),
+                        crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+                    ),
                     if i != names.len() - 1 { "," } else { "" },
                 )?;
             }
@@ -1124,7 +1126,10 @@ impl Stringifier {
                 write!(
                     writer,
                     "\"name\": {}",
-                    bun_core::fmt::format_json_string_utf8(root_name, Default::default()),
+                    bun_core::fmt::format_json_string_utf8(
+                        root_name,
+                        crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+                    ),
                 )?;
 
                 // TODO(dylan-conway) should we save version?
@@ -1134,7 +1139,10 @@ impl Stringifier {
             write!(
                 writer,
                 "{}: {{",
-                bun_core::fmt::format_json_string_utf8(res.slice(buf), Default::default()),
+                bun_core::fmt::format_json_string_utf8(
+                    res.slice(buf),
+                    crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+                ),
             )?;
             writer.write_byte(b'\n')?;
             Self::inc_indent(writer, indent)?;
@@ -1143,7 +1151,7 @@ impl Stringifier {
                 "\"name\": {}",
                 bun_core::fmt::format_json_string_utf8(
                     pkg_names[pkg_id as usize].slice(buf),
-                    Default::default()
+                    crate::bun_output::fmt::JSONFormatterUTF8Options::new()
                 ),
             )?;
 
@@ -1223,8 +1231,14 @@ impl Stringifier {
                 write!(
                     writer,
                     "{}: {}",
-                    bun_core::fmt::format_json_string_utf8(name, Default::default()),
-                    bun_core::fmt::format_json_string_utf8(version, Default::default()),
+                    bun_core::fmt::format_json_string_utf8(
+                        name,
+                        crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+                    ),
+                    bun_core::fmt::format_json_string_utf8(
+                        version,
+                        crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+                    ),
                 )?;
             }
 
@@ -1252,7 +1266,10 @@ impl Stringifier {
                 writeln!(
                     writer,
                     "{},",
-                    bun_core::fmt::format_json_string_utf8(name.slice(buf), Default::default()),
+                    bun_core::fmt::format_json_string_utf8(
+                        name.slice(buf),
+                        crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+                    ),
                 )?;
             }
             Self::dec_indent(writer, indent)?;
@@ -1300,9 +1317,9 @@ impl Stringifier {
             "{}: {},",
             bun_core::fmt::format_json_string_utf8(
                 Self::override_selector_key(key_buf, name, range),
-                Default::default()
+                crate::bun_output::fmt::JSONFormatterUTF8Options::new()
             ),
-            value.fmt_json(buf, Default::default()),
+            value.fmt_json(buf, JsonOpts::new()),
         )?;
         Ok(())
     }
@@ -1396,7 +1413,7 @@ impl Stringifier {
                 "{}: {{",
                 bun_core::fmt::format_json_string_utf8(
                     Self::override_selector_key(&mut key_buf, group.name, group.literal),
-                    Default::default()
+                    crate::bun_output::fmt::JSONFormatterUTF8Options::new()
                 ),
             )?;
 
@@ -1422,11 +1439,7 @@ impl Stringifier {
             };
             if let Some(value) = dot {
                 Self::write_indent(writer, indent + 1)?;
-                writeln!(
-                    writer,
-                    "\".\": {},",
-                    value.fmt_json(buf, Default::default())
-                )?;
+                writeln!(writer, "\".\": {},", value.fmt_json(buf, JsonOpts::new()))?;
             }
 
             while let Some(rule) = scoped.get(g) {
@@ -1541,7 +1554,7 @@ enum RowEvidence {
 impl<T> PkgMap<T> {
     fn init() -> Self {
         Self {
-            map: StringHashMap::default(),
+            map: StringHashMap::init(),
         }
     }
 
@@ -1694,7 +1707,7 @@ fn parse_integrity(
         loc,
         b"Unsupported or malformed integrity hash; ignoring",
     );
-    Ok(Integrity::default())
+    Ok(Integrity::new())
 }
 
 fn parse_bin(info: &Expr, lockfile: &mut BinaryLockfile) -> Result<Bin, ParseError> {
@@ -1707,7 +1720,7 @@ fn parse_bin(info: &Expr, lockfile: &mut BinaryLockfile) -> Result<Bin, ParseErr
     } else if let Some(bin_dir) = info.get(b"binDir") {
         Bin::parse_append_from_directories(&bin_dir, &mut sbuf!(lockfile))?
     } else {
-        Bin::default()
+        Bin::empty()
     })
 }
 
@@ -1763,6 +1776,7 @@ fn parse_catalog(
                 arg_buf: string_buf.bytes.as_slice(),
                 existing_buf: string_buf.bytes.as_slice(),
             },
+            || (String::new(), Dependency::new()),
         )?;
 
         if entry.found_existing {
@@ -1775,7 +1789,7 @@ fn parse_catalog(
             name: dep_name,
             name_hash: dep_name_hash,
             version,
-            ..Default::default()
+            ..Dependency::new()
         };
     }
     Ok(())
@@ -1825,7 +1839,7 @@ pub(crate) fn parse_into_binary_lockfile(
             Some(source),
             bun_ast::Range {
                 loc: at_value(lockfile_version_expr.loc),
-                ..Default::default()
+                ..bun_ast::Range::new()
             },
             Box::new([bun_ast::range_data(
                 None,
@@ -1857,7 +1871,7 @@ pub(crate) fn parse_into_binary_lockfile(
     }
 
     if let Some(trusted_dependencies_expr) = root.get(b"trustedDependencies") {
-        let mut trusted_dependencies = TrustedDependenciesSet::default();
+        let mut trusted_dependencies = TrustedDependenciesSet::new();
         if !trusted_dependencies_expr.is_array() {
             fail!(
                 InvalidTrustedDependenciesSet,
@@ -1906,7 +1920,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 key_hash,
                 PatchedDep {
                     path: sbuf!(lockfile).append(path_str)?,
-                    ..Default::default()
+                    ..PatchedDep::new()
                 },
             );
         }
@@ -2178,7 +2192,7 @@ pub(crate) fn parse_into_binary_lockfile(
         }
     }
 
-    let mut optional_peers_buf: HashMap<u64, ()> = HashMap::default();
+    let mut optional_peers_buf: HashMap<u64, ()> = HashMap::init();
     let mut unresolved_rows: Vec<DependencyID> = Vec::new();
 
     let mut bundled_pkgs = PkgPathSet::init();
@@ -2221,7 +2235,7 @@ pub(crate) fn parse_into_binary_lockfile(
             true,
         )?;
 
-        let mut root_pkg = Package::default();
+        let mut root_pkg = Package::new();
 
         if let Some(name) = maybe_name {
             let name_hash = StringBuilder::string_hash(name);
@@ -2255,7 +2269,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
                     sbuf!(lockfile).append(row.key.slice())?,
                 )),
-                ..Default::default()
+                ..Package::new()
             };
 
             let name_expr = value.get(b"name").unwrap();
@@ -2464,7 +2478,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
             if lockfile_version != Version::V0 {
                 if res.tag == ResolutionTag::Workspace {
-                    let entry = pkg_map.map.get_or_put(pkg_path)?;
+                    let entry = pkg_map.map.get_or_put(pkg_path, || 0)?;
                     if entry.found_existing {
                         // this workspace package is already in the package map, because
                         // it was added as a workspaceOnly package earlier
@@ -2523,7 +2537,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 }
             }
 
-            let mut pkg = Package::default();
+            let mut pkg = Package::new();
 
             // dependencies, os, cpu, libc
             'workspace_and_not_v0: {
@@ -2727,7 +2741,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 lockfile.packages.items_bin_mut()[0] = pkg.bin;
             }
 
-            let entry = pkg_map.map.get_or_put(pkg_path)?;
+            let entry = pkg_map.map.get_or_put(pkg_path, || 0)?;
             // Each workspace was registered under its name above. A root dependency of the same
             // name replaces it at that key, unless that dependency is a folder.
             if entry.found_existing
@@ -2903,7 +2917,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
         // then each package dependency
         let mut bound_by: Vec<RowEvidence> = vec![RowEvidence::Unbound; dependencies.len()];
-        let mut root_dep_names: HashMap<u64, ()> = HashMap::default();
+        let mut root_dep_names: HashMap<u64, ()> = HashMap::init();
         for root_dep in pkg_deps[0].get(dependencies) {
             root_dep_names.insert(root_dep.name_hash, ());
         }
@@ -3349,7 +3363,7 @@ fn parse_append_dependencies(
                             b"Invalid dependency version"
                         ),
                     },
-                    ..Default::default()
+                    ..Dependency::new()
                 };
                 if !catalogs_apply {
                     CatalogMap::strip_reference(&mut dep);
@@ -3403,7 +3417,7 @@ fn parse_append_dependencies(
                     value: DependencyVersionValue {
                         workspace: sbuf!(lockfile).append(row.key.slice())?,
                     },
-                    literal: String::default(),
+                    literal: String::new(),
                 },
             };
 

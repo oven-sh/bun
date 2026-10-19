@@ -13,7 +13,6 @@ pub use crate::resolved_source_tag::ResolvedSourceTag as Tag;
 /// `~ErrorableResolvedSource` once written into a C++ out-param. Consumers
 /// (`Zig::SourceProvider::create`) take the fields they keep by transfer.
 #[repr(C)]
-#[derive(Default)]
 pub struct ResolvedSource {
     pub source_code: BunString,
     pub source_url: BunString,
@@ -48,6 +47,27 @@ pub struct ResolvedSource {
     pub origin_path: BunString,
 }
 
+impl ResolvedSource {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            source_code: BunString::EMPTY,
+            source_url: BunString::EMPTY,
+            is_commonjs_module: false,
+            source_code_hash: 0,
+            cjs_custom_extension_index: JSValue::new(),
+            jsvalue_for_export: JSValue::new(),
+            tag: Tag::Javascript,
+            already_bundled: false,
+            is_prelinked_module: false,
+            is_static: false,
+            bytecode_cache: Bytecode::new(),
+            module_info: None,
+            origin_path: BunString::EMPTY,
+        }
+    }
+}
+
 /// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; uint32_t entry_offset; }`
 /// (headers-handwritten.h flattens these into `ResolvedSource`; keep the two in step).
 /// When `owned`, `ptr` is a `heap::into_raw(Box<[u8]>)` freed on drop (or by
@@ -65,8 +85,8 @@ pub struct Bytecode {
     entry_offset: u32,
 }
 
-impl Default for Bytecode {
-    fn default() -> Self {
+impl Bytecode {
+    pub fn new() -> Self {
         Self {
             ptr: core::ptr::null_mut(),
             len: 0,
@@ -87,7 +107,7 @@ impl Bytecode {
     /// `&[u8]`: in the executable's section, JavaScriptCore patches what it decoded from, on any thread.
     pub fn persistent_at(payload: *const [u8], entry_offset: u32) -> Self {
         if payload.is_empty() {
-            return Self::default();
+            return Self::new();
         }
         Self {
             ptr: payload.cast::<u8>().cast_mut(),
@@ -99,7 +119,7 @@ impl Bytecode {
     }
     pub fn owned(bytes: Box<[u8]>) -> Self {
         if bytes.is_empty() {
-            return Self::default();
+            return Self::new();
         }
         let len = bytes.len();
         Self {

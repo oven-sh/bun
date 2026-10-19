@@ -48,7 +48,6 @@ fn has_asi_problem(token: Option<Token<'_>>) -> bool {
 }
 
 /// Where things are that few fixes ask for.
-#[derive(Default)]
 pub struct State<'a> {
     /// The start of the initializer of each `for`, in source order, with the greatest end of this
     /// one and those before it.
@@ -57,6 +56,17 @@ pub struct State<'a> {
     in_operators: OnceCell<Vec<u32>>,
     /// The object literals, in source order.
     objects: OnceCell<Vec<Expr<'a>>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            for_loop_initializers: core::cell::OnceCell::new(),
+            in_operators: core::cell::OnceCell::new(),
+            objects: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 impl<'a> State<'a> {
@@ -373,7 +383,7 @@ impl Rule for ArrowBodyStyle {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     #[inline]

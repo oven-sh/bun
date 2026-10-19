@@ -29,8 +29,8 @@ pub struct NameOfSymbol {
     /// Currently not used
     pub has_property_key_comment: bool,
 }
-impl Default for NameOfSymbol {
-    fn default() -> Self {
+impl NameOfSymbol {
+    pub fn new() -> Self {
         Self {
             ref_: Ref::NONE,
             has_property_key_comment: false,
@@ -46,8 +46,8 @@ pub struct Array {
     pub was_originally_macro: bool,
     pub close_bracket_loc: crate::Loc,
 }
-impl Default for Array {
-    fn default() -> Self {
+impl Array {
+    pub fn new() -> Self {
         Self {
             items: bun_alloc::AstAlloc::vec(),
             comma_after_spread: crate::Loc::EMPTY,
@@ -135,7 +135,7 @@ pub struct Unary {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     #[repr(transparent)]
     pub struct UnaryFlags: u8 {
         /// The expression "typeof (0, x)" must not become "typeof x" if "x"
@@ -188,20 +188,20 @@ pub struct Boolean {
     pub value: bool,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Null;
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Undefined;
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Missing;
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct This;
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Super;
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct ImportMeta;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct ImportMetaMain {
     /// If true, print `!import.meta.main` (or `require.main != module`).
     pub inverted: bool,
@@ -222,8 +222,8 @@ pub struct New {
 
     pub close_parens_loc: crate::Loc,
 }
-impl Default for New {
-    fn default() -> Self {
+impl New {
+    pub fn new() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
             args: bun_alloc::AstAlloc::vec(),
@@ -274,8 +274,8 @@ pub struct Call {
     /// Used when printing to generate the source prop on the fly
     pub was_jsx_element: bool,
 }
-impl Default for Call {
-    fn default() -> Self {
+impl Call {
+    pub fn new() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
             args: bun_alloc::AstAlloc::vec(),
@@ -288,9 +288,8 @@ impl Default for Call {
     }
 }
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CallUnwrap {
-    #[default]
     Never,
     IfUnused,
     IfUnusedAndToStringSafe,
@@ -320,8 +319,8 @@ pub struct Dot {
     /// (`LinkerGraph::import_member_bindings`).
     pub is_import_property_use: bool,
 }
-impl Default for Dot {
-    fn default() -> Self {
+impl Dot {
+    pub fn new() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
             name: Str::EMPTY,
@@ -367,8 +366,8 @@ impl Arrow {
         has_react_hooks_suppression: false,
     };
 }
-impl Default for Arrow {
-    fn default() -> Self {
+impl Arrow {
+    pub fn new() -> Self {
         Self {
             args: crate::StoreSlice::EMPTY,
             body: G::FnBody {
@@ -406,9 +405,9 @@ pub struct Function {
 pub struct Identifier {
     pub ref_: Ref,
 }
-impl Default for Identifier {
+impl Identifier {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self { ref_: Ref::NONE }
     }
 }
@@ -501,9 +500,9 @@ impl Identifier {
 pub struct ImportIdentifier {
     pub ref_: Ref,
 }
-impl Default for ImportIdentifier {
+impl ImportIdentifier {
     #[inline]
-    fn default() -> Self {
+    pub fn init() -> Self {
         Self { ref_: Ref::NONE }
     }
 }
@@ -539,9 +538,9 @@ impl ImportIdentifier {
 pub struct CommonJSExportIdentifier {
     pub ref_: Ref,
 }
-impl Default for CommonJSExportIdentifier {
+impl CommonJSExportIdentifier {
     #[inline]
-    fn default() -> Self {
+    pub fn init() -> Self {
         Self { ref_: Ref::NONE }
     }
 }
@@ -632,14 +631,14 @@ pub struct JSXElement {
 
     pub close_tag_loc: crate::Loc,
 }
-impl Default for JSXElement {
-    fn default() -> Self {
+impl JSXElement {
+    pub fn new() -> Self {
         Self {
             tag: None,
             properties: bun_alloc::AstAlloc::vec(),
             children: bun_alloc::AstAlloc::vec(),
             key_prop_index: -1,
-            flags: crate::flags::JSXElementBitset::default(),
+            flags: crate::flags::JSXElementBitset::empty(),
             close_tag_loc: crate::Loc::EMPTY,
         }
     }
@@ -1282,8 +1281,8 @@ pub struct Object {
 
     pub close_brace_loc: crate::Loc,
 }
-impl Default for Object {
-    fn default() -> Self {
+impl Object {
+    pub fn new() -> Self {
         Self {
             properties: bun_alloc::AstAlloc::vec(),
             comma_after_spread: crate::Loc::EMPTY,
@@ -1405,7 +1404,7 @@ impl Object {
                     flags: own_key_property_flags(&key),
                     key: Some(key),
                     value: Some(expr),
-                    ..G::Property::default()
+                    ..G::Property::new()
                 },
             );
         }
@@ -1452,7 +1451,7 @@ impl Object {
         }
 
         if let Some(next) = rope.next_ref() {
-            let obj = Expr::init(Object::default(), rope.head.loc);
+            let obj = Expr::init(Object::new(), rope.head.loc);
             let out = match obj.data {
                 crate::expr::Data::EObject(mut o) => o.get_or_put_object(next, _bump)?,
                 _ => unreachable!(),
@@ -1463,20 +1462,20 @@ impl Object {
                     key: Some(rope.head),
                     value: Some(obj),
                     flags: own_key_property_flags(&rope.head),
-                    ..G::Property::default()
+                    ..G::Property::new()
                 },
             );
             return Ok(out);
         }
 
-        let out = Expr::init(Object::default(), rope.head.loc);
+        let out = Expr::init(Object::new(), rope.head.loc);
         VecExt::append(
             &mut self.properties,
             G::Property {
                 key: Some(rope.head),
                 value: Some(out),
                 flags: own_key_property_flags(&rope.head),
-                ..G::Property::default()
+                ..G::Property::new()
             },
         );
         Ok(out)
@@ -1507,7 +1506,7 @@ impl Object {
                 flags: own_key_property_flags(&key),
                 key: Some(key),
                 value: Some(value),
-                ..G::Property::default()
+                ..G::Property::new()
             },
         );
     }
@@ -1629,8 +1628,8 @@ impl core::ops::Deref for Flattened<'_> {
     }
 }
 
-impl Default for EString {
-    fn default() -> Self {
+impl EString {
+    pub fn new() -> Self {
         Self {
             data: Str::EMPTY,
             prefer_template: false,
@@ -1694,7 +1693,7 @@ impl EString {
     pub fn init(data: &[u8]) -> Self {
         Self {
             data: Str::new(data),
-            ..Default::default()
+            ..Self::new()
         }
     }
 
@@ -1704,7 +1703,7 @@ impl EString {
         Self {
             data: Str::new(data),
             toml_datetime: Some(kind),
-            ..Default::default()
+            ..Self::new()
         }
     }
     /// Construct from a UTF-16 slice (arena-owned). The `data` slice's `.len()`
@@ -1722,7 +1721,7 @@ impl EString {
         Self {
             data: Str::new(bytes),
             is_utf16: true,
-            ..Default::default()
+            ..Self::new()
         }
     }
     /// E.String containing non-ascii characters may not fully work.
@@ -2108,12 +2107,18 @@ impl Template {
         debug_assert!(matches!(self.head, TemplateContents::Cooked(_)));
 
         if self.parts().is_empty() {
-            return Expr::init(core::mem::take(self.head.cooked_mut()), loc);
+            return Expr::init(
+                core::mem::replace(self.head.cooked_mut(), EString::new()),
+                loc,
+            );
         }
 
         let mut parts =
             bun_alloc::ArenaVec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
-        let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
+        let mut head = Expr::init(
+            core::mem::replace(self.head.cooked_mut(), EString::new()),
+            loc,
+        );
         for part_src in self.parts() {
             // Field-wise copy (TemplatePart is not `Copy` only
             // because `EString` does not derive it; all fields are structurally `Copy`).
@@ -2193,10 +2198,13 @@ impl Template {
                             .e_string_mut()
                             .expect("infallible: variant checked")
                             .push(
-                                Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
-                                    .data
-                                    .e_string_mut()
-                                    .unwrap(),
+                                Expr::init(
+                                    core::mem::replace(part.tail.cooked_mut(), EString::new()),
+                                    part.tail_loc,
+                                )
+                                .data
+                                .e_string_mut()
+                                .unwrap(),
                             );
                     }
 
@@ -2231,10 +2239,13 @@ impl Template {
 
                         if part.tail.cooked().len() > 0 {
                             prev_part.tail.cooked_mut().push(
-                                Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
-                                    .data
-                                    .e_string_mut()
-                                    .unwrap(),
+                                Expr::init(
+                                    core::mem::replace(part.tail.cooked_mut(), EString::new()),
+                                    part.tail_loc,
+                                )
+                                .data
+                                .e_string_mut()
+                                .unwrap(),
                             );
                         }
                     } else {
@@ -2306,7 +2317,6 @@ pub struct Await {
     pub value: ExprNodeIndex,
 }
 
-#[derive(Default)]
 pub struct Yield {
     pub value: Option<ExprNodeIndex>,
     pub is_star: bool,
@@ -2331,8 +2341,8 @@ pub struct RequireString {
     /// Set when `unwrap_commonjs_to_esm` turned this `require()` into an import.
     pub unwrapped_id: UnwrappedRequireIndexOptional,
 }
-impl Default for RequireString {
-    fn default() -> Self {
+impl RequireString {
+    pub fn new() -> Self {
         Self {
             import_record_index: 0,
             unwrapped_id: UnwrappedRequireIndexOptional::NONE,

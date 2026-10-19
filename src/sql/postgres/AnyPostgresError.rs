@@ -76,8 +76,8 @@ pub struct PostgresErrorOptions<'a> {
     pub routine: Option<&'a [u8]>,
 }
 
-impl Default for PostgresErrorOptions<'_> {
-    fn default() -> Self {
+impl PostgresErrorOptions<'_> {
+    pub fn new() -> Self {
         Self {
             code: b"",
             errno: None,

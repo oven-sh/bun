@@ -269,11 +269,20 @@ struct PerFile {
 }
 
 /// What depends on whose tests count.
-#[derive(Default)]
 struct Seen {
     /// [`tests_as_written`]
     tests_as_written: OnceCell<Vec<Span>>,
     possible_jest_nodes: OnceCell<PossibleJestNodes>,
+}
+
+impl Seen {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            tests_as_written: core::cell::OnceCell::new(),
+            possible_jest_nodes: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 /// Whose tables a call is checked with.
@@ -284,13 +293,23 @@ struct Frameworks {
     is_bun: bool,
 }
 
-#[derive(Default)]
 struct PossibleJestNodes {
     /// The names under which something is imported from Jest or Vitest, or from `bun:test`.
     originals: Vec<Box<[u8]>>,
     calls: Vec<PossibleCall>,
     /// [`Scopes::of`] each of `calls`, once a rule asks.
     scopes: OnceCell<Vec<ScopeMaker>>,
+}
+
+impl PossibleJestNodes {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            originals: Vec::new(),
+            calls: Vec::new(),
+            scopes: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 /// What makes a scope, by its number.
@@ -361,7 +380,7 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
             is_vitest: imports(is_vitest_import_source),
             is_bun: file.mentions_bit(const { mention_bit(BUN_TEST) }) && imports_bun_test(file),
             named_like_jest: OnceCell::new(),
-            seen: Default::default(),
+            seen: core::array::from_fn(|_| Seen::new()),
         }
     })
 }
@@ -519,7 +538,7 @@ pub(crate) fn iter_possible_jest_call_node_with_scope<'a>(
 ) -> impl Iterator<Item = (PossibleJestNode<'a>, Option<Node<'a>>)> {
     let scopes = possible_jest_nodes(file, runner).map_or(&[][..], |found| {
         found.scopes.get_or_init(|| {
-            let mut scopes = Scopes::default();
+            let mut scopes = Scopes::new();
             let calls = found.calls.iter().map(|it| Expr::from_raw(file, it.id));
             calls
                 .map(|it| match scopes.of(Node::Expr(it)) {
@@ -562,7 +581,7 @@ fn collect_possible_jest_call_node<'a>(
     per_file: &PerFile,
     runner: Runner,
 ) -> PossibleJestNodes {
-    let mut found = PossibleJestNodes::default();
+    let mut found = PossibleJestNodes::new();
     let frameworks = per_file.frameworks(runner);
     let imports_tests = frameworks.is_bun || mentions_any(file, &SOURCE_BITS);
     for (import_index, entry) in import_entries(file)
@@ -1602,8 +1621,14 @@ pub(crate) fn mentions_jest_method(file: &File) -> bool {
 }
 
 /// `node.enclosing_function()`, asked of many nodes. A static block is not a function.
-#[derive(Default)]
 pub(crate) struct EnclosingFunctions<'a>(AncestorMemo<'a, Func<'a>>);
+
+impl<'a> EnclosingFunctions<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(AncestorMemo::new())
+    }
+}
 
 impl<'a> EnclosingFunctions<'a> {
     pub(crate) fn of(&mut self, node: Node<'a>) -> Option<Func<'a>> {
@@ -1746,17 +1771,23 @@ impl<'a> AstKind<'a> {
                 e.parens().nth(inner as usize).unwrap_or_else(|| e.span())
             }
             AstKind::Stmt(statement) => statement.span(),
-            AstKind::FunctionBody(func) => func.body_span().unwrap_or_default(),
+            AstKind::FunctionBody(func) => func.body_span().unwrap_or_else(Span::init),
             AstKind::Function(func) => func.span_from_params(),
-            AstKind::Program => Span::default(),
+            AstKind::Program => Span::init(),
             AstKind::Other(node) => node.span(),
         }
     }
 }
 
 /// `node.scope_id()`, asked of many nodes: what makes the innermost scope of `oxc_semantic` around a node. `None` is the file.
-#[derive(Default)]
 pub(crate) struct Scopes<'a>(AncestorMemo<'a, Node<'a>>);
+
+impl<'a> Scopes<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(AncestorMemo::new())
+    }
+}
 
 impl<'a> Scopes<'a> {
     pub(crate) fn of(&mut self, node: Node<'a>) -> Option<Node<'a>> {
@@ -1771,7 +1802,7 @@ pub(crate) fn max_of(options: &Options) -> u32 {
 
 /// `fixer.codegen().print_expression(e)`
 pub(crate) fn print_expression(out: &mut Vec<u8>, e: Expr) {
-    let mut codegen = Codegen::default();
+    let mut codegen = Codegen::new();
     bun_lint_oxlint::codegen::print_expression(&mut codegen, e);
     out.append(&mut codegen.code);
 }

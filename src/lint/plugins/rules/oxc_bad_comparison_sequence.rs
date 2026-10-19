@@ -20,14 +20,14 @@ impl Rule for BadComparisonSequence {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(AncestorMemo::default())
+        Some(AncestorMemo::new())
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(comparison_result) = bad_comparison_sequence(e)
             && cx.state.find(Node::Expr(e), has_no_bad_comparison_in_parent) == Some(true)
         {
-            let compared_against = e.right().map(Expr::outer_span).unwrap_or_default();
+            let compared_against = e.right().map(Expr::outer_span).unwrap_or_else(Span::init);
             cx.report(comparison_result, BAD_COMPARISON_SEQUENCE)
                 .first_label("This comparison expression produces a boolean")
                 .label(compared_against, "That boolean is then compared with this operand");

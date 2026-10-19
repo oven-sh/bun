@@ -68,13 +68,13 @@ pub struct FetchRequestBodySink {
     pub done: bool,
 }
 
-impl Default for FetchRequestBodySink {
-    fn default() -> Self {
+impl FetchRequestBodySink {
+    pub fn new() -> Self {
         Self {
             task: None,
-            source: SourceHandle::default(),
+            source: SourceHandle::None,
             high_water_mark: 16384,
-            pending: WritablePending::default(),
+            pending: WritablePending::new(),
             pending_bytes: 0,
             ended: false,
             done: false,

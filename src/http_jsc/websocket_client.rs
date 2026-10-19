@@ -277,7 +277,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub(crate) fn clear_data(&self) {
         log!("clearData");
-        let mut poll_ref = self.poll_ref.take();
+        let mut poll_ref = self.poll_ref.replace(KeepAlive::new());
         poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
         self.poll_ref.set(poll_ref);
         self.clear_receive_buffers(true);
@@ -1393,7 +1393,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         let ctx = Self::vm_loop_ctx(&self.global_this);
-        let mut poll_ref = self.poll_ref.take();
+        let mut poll_ref = self.poll_ref.replace(KeepAlive::new());
         if keep_alive {
             poll_ref.r#ref(ctx);
         } else {
@@ -1630,7 +1630,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         bun_core::handle_oom(ws.send_buffer.borrow_mut().ensure_total_capacity(2048));
         bun_core::handle_oom(ws.receive_buffer.borrow_mut().ensure_total_capacity(2048));
         {
-            let mut poll_ref = ws.poll_ref.take();
+            let mut poll_ref = ws.poll_ref.replace(KeepAlive::new());
             poll_ref.r#ref(Self::vm_loop_ctx(global_this));
             ws.poll_ref.set(poll_ref);
         }

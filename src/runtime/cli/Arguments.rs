@@ -817,7 +817,7 @@ pub(crate) fn disallow_code_generation_from_strings_as_compiled(embedded: &[&bun
 /// param table, and the per-`cmd` blocks below are guarded by
 /// `if matches!(cmd, …)`.
 pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
-    let mut diag = clap::Diagnostic::default();
+    let mut diag = clap::Diagnostic::new();
     let table = tag_table(cmd);
 
     let args = match clap::parse_with_table::<clap::Help>(
@@ -834,7 +834,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
                 _ => &[],
             },
-            ..Default::default()
+            ..clap::ParseOptions::new()
         },
     ) {
         Ok(a) => a,
@@ -1304,24 +1304,24 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         if let Some(inspect_flag) = args.option(b"--inspect") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
-                Debugger::Enable(Default::default())
+                Debugger::Enable(DebuggerEnable::new())
             } else {
                 Debugger::Enable(DebuggerEnable {
                     path_or_port: Box::<[u8]>::from(inspect_flag),
-                    ..Default::default()
+                    ..DebuggerEnable::new()
                 })
             };
         } else if let Some(inspect_flag) = args.option(b"--inspect-wait") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(DebuggerEnable {
                     wait_for_connection: true,
-                    ..Default::default()
+                    ..DebuggerEnable::new()
                 })
             } else {
                 Debugger::Enable(DebuggerEnable {
                     path_or_port: Box::<[u8]>::from(inspect_flag),
                     wait_for_connection: true,
-                    ..Default::default()
+                    ..DebuggerEnable::new()
                 })
             };
         } else if let Some(inspect_flag) = args.option(b"--inspect-brk") {
@@ -1329,14 +1329,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 Debugger::Enable(DebuggerEnable {
                     wait_for_connection: true,
                     set_breakpoint_on_first_line: true,
-                    ..Default::default()
+                    ..DebuggerEnable::new()
                 })
             } else {
                 Debugger::Enable(DebuggerEnable {
                     path_or_port: Box::<[u8]>::from(inspect_flag),
                     wait_for_connection: true,
                     set_breakpoint_on_first_line: true,
-                    ..Default::default()
+                    ..DebuggerEnable::new()
                 })
             };
         }

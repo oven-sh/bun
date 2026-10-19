@@ -334,8 +334,8 @@ pub(crate) struct UDPSocketConfig {
     pub(crate) shared_fd: bool,
 }
 
-impl Default for UDPSocketConfig {
-    fn default() -> Self {
+impl UDPSocketConfig {
+    pub(crate) fn new() -> Self {
         Self {
             hostname: BunString::EMPTY,
             connect: None,
@@ -417,7 +417,7 @@ impl UDPSocketConfig {
             flags,
             fd,
             shared_fd,
-            ..Default::default()
+            ..Self::new()
         };
 
         if let Some(socket) = options.get_truthy(global_this, "socket")? {
@@ -600,7 +600,7 @@ impl UDPSocket {
 
         let this_ptr = Self::new(Self {
             socket: Cell::new(None),
-            config: JsCell::new(UDPSocketConfig::default()),
+            config: JsCell::new(UDPSocketConfig::new()),
             global_this: BackRef::new(cx.global()),
             loop_: uws::Loop::get(),
             this_value: JsCell::new(JsRef::empty()),
@@ -770,7 +770,7 @@ impl UDPSocket {
                     code: BunString::static_(code),
                     message,
                     syscall: BunString::static_(syscall),
-                    ..Default::default()
+                    ..SystemError::new()
                 };
                 let error_value = sys_err.to_error_instance(cx.global());
                 if !is_fd {
@@ -840,7 +840,7 @@ impl UDPSocket {
         } else {
             this_value_
         };
-        let callback = js::on_error_get_cached(this_value).unwrap_or_default();
+        let callback = js::on_error_get_cached(this_value).unwrap_or_else(JSValue::new);
         let global_this = self.global_this.get();
         let vm = global_this.bun_vm().as_mut();
 

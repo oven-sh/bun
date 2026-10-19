@@ -631,18 +631,6 @@ pub mod fs {
         pub filename: &'a [u8],
     }
 
-    impl<'a> Default for PathName<'a> {
-        #[inline]
-        fn default() -> Self {
-            Self {
-                base: b"",
-                dir: b"",
-                ext: b"",
-                filename: b"",
-            }
-        }
-    }
-
     impl<'a> PathName<'a> {
         /// Returns the extension of `path` including the leading `.`, or `""`
         /// for extensionless / dotfile basenames.
@@ -801,9 +789,9 @@ pub mod fs {
 
     const _: () = assert!(core::mem::size_of::<Path<'static>>() <= 56);
 
-    impl<'a> Default for Path<'a> {
+    impl<'a> Path<'a> {
         #[inline]
-        fn default() -> Self {
+        pub fn new() -> Self {
             Self {
                 pretty: b"",
                 text: b"",

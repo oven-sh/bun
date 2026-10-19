@@ -1402,10 +1402,18 @@ pub fn is_logical_identity(mut e: Expr<'_>, operator: BinOp) -> bool {
 
 /// What [`is_constant_in`] has found out about the links of long chains of binary operators, for a rule that asks about each
 /// link of a chain: `a && b`, `a && b && c`, ..
-#[derive(Default)]
 pub struct Constants {
     /// By the expression and `in_boolean_position`.
     known: FxHashMap<(hir::ExprId, bool), Constant>,
+}
+
+impl Constants {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            known: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -1425,7 +1433,7 @@ pub fn is_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
 
 fn may_be_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
     match e.tag() {
-        ExprTag::Binary => is_constant_in(e, in_boolean_position, &mut Constants::default()),
+        ExprTag::Binary => is_constant_in(e, in_boolean_position, &mut Constants::new()),
         _ => is_constant_unless_binary(e, in_boolean_position),
     }
 }
@@ -2034,7 +2042,6 @@ fn has_jsdoc_this_tag<'a>(
 
 /// What [`is_default_this_binding`] passes on its ways up from a function. The functions that are operands of one chain of
 /// operators, or are returned in one chain of `else if`, all go up that chain.
-#[derive(Default)]
 pub struct ThisBindingMemo<'a> {
     /// Where the JSDoc comment of a function expression is looked for, if that is before something around it.
     documented_at: AncestorMemo<'a, Option<u32>>,
@@ -2042,6 +2049,17 @@ pub struct ThisBindingMemo<'a> {
     outermost_operand: AncestorMemo<'a, Expr<'a>>,
     /// [`get_upper_function`]
     upper_function: AncestorMemo<'a, Func<'a>>,
+}
+
+impl<'a> ThisBindingMemo<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            documented_at: AncestorMemo::new(),
+            outermost_operand: AncestorMemo::new(),
+            upper_function: AncestorMemo::new(),
+        }
+    }
 }
 
 /// [`is_default_this_binding`] for a rule that asks about many functions of a file, with one `memo` for all of them.

@@ -15,11 +15,20 @@ const EXPORT_MESSAGE: Message = Message::new("", "Expected \"export\" or \"expor
 const IMPORT_MESSAGE: Message = Message::new("", "Expected \"import\" instead of \"require()\"");
 const OXLINT: Message = Message::new("", "Expected {{name}} instead of {{actual}}");
 
-#[derive(Default)]
 pub struct State<'a> {
     root_scope: AncestorMemo<'a, ()>,
     /// That something is in an `if`, a `try`, a `? :` or an operand of `&&`, `||` or `??`.
     conditional: AncestorMemo<'a, ()>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            root_scope: AncestorMemo::new(),
+            conditional: AncestorMemo::new(),
+        }
+    }
 }
 
 impl Rule for NoCommonjs {
@@ -57,7 +66,7 @@ impl Rule for NoCommonjs {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

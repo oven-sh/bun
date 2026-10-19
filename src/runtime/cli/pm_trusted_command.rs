@@ -583,7 +583,7 @@ impl TrustCommand {
             // SAFETY: `pm_raw` singleton.
             unsafe {
                 (*pm_raw).progress.root.end();
-                (*pm_raw).progress = Progress::Progress::default();
+                (*pm_raw).progress = Progress::Progress::new();
                 (*pm_raw).scripts_node = None;
             }
         }
@@ -622,7 +622,7 @@ impl TrustCommand {
         let mut total_skipped_packages: usize = 0;
         let mut total_deferred_packages: usize = 0;
         // The lockfile records whose scripts ran: an install runs those of a name it does not record.
-        let mut ran = recorded.unwrap_or_default();
+        let mut ran = recorded.unwrap_or_else(ArrayHashMap::new);
 
         Output::print(format_args!("\n"));
 
@@ -679,7 +679,7 @@ impl TrustCommand {
             &package_json_source,
             bun_js_printer::PrintJsonOptions {
                 mangled_props: None,
-                ..Default::default()
+                ..bun_js_printer::PrintJsonOptions::new()
             },
         ) {
             Output::err_generic("failed to print package.json: {s}", (err.name(),));

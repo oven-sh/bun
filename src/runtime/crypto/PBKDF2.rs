@@ -82,7 +82,7 @@ impl PBKDF2 {
                 bun_jsc::RangeErrorOptions {
                     field_name: b"keylen",
                     msg: b"an integer",
-                    ..Default::default()
+                    ..bun_jsc::RangeErrorOptions::new()
                 },
             ));
         }
@@ -94,7 +94,7 @@ impl PBKDF2 {
                     field_name: b"keylen",
                     min: 0,
                     max: i32::MAX as i64,
-                    ..Default::default()
+                    ..bun_jsc::RangeErrorOptions::new()
                 },
             ));
         }
@@ -118,7 +118,7 @@ impl PBKDF2 {
                 bun_jsc::RangeErrorOptions {
                     field_name: b"iterations",
                     msg: b"an integer",
-                    ..Default::default()
+                    ..bun_jsc::RangeErrorOptions::new()
                 },
             ));
         }
@@ -130,7 +130,7 @@ impl PBKDF2 {
                     field_name: b"iterations",
                     min: 1,
                     max: i32::MAX as i64,
-                    ..Default::default()
+                    ..bun_jsc::RangeErrorOptions::new()
                 },
             ));
         }
@@ -167,8 +167,8 @@ impl PBKDF2 {
         };
 
         let mut out = PBKDF2 {
-            password: StringOrBuffer::default(),
-            salt: StringOrBuffer::default(),
+            password: StringOrBuffer::EMPTY,
+            salt: StringOrBuffer::EMPTY,
             iteration_count: u32::try_from(iteration_count).expect("int cast"),
             length: keylen,
             algorithm,

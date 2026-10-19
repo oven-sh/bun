@@ -124,7 +124,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             S::Local {
                                 kind,
                                 decls,
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             stmt.loc,
                         ));
@@ -139,7 +139,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             inner_stmts.push(self.s(
                                 S::SExpr {
                                     value: assign_expr,
-                                    ..Default::default()
+                                    ..S::SExpr::new()
                                 },
                                 stmt.loc,
                             ));
@@ -163,7 +163,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                         name_loc.loc,
                                     ),
                                 ),
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             stmt.loc,
                         ));
@@ -181,14 +181,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                 target: this_expr,
                                 name: name_str.into(),
                                 name_loc: name_loc.loc,
-                                ..Default::default()
+                                ..E::Dot::new()
                             },
                             stmt.loc,
                         );
                         let func_id = self.new_expr(
                             E::Identifier {
                                 ref_: name_ref,
-                                ..Default::default()
+                                ..E::Identifier::new()
                             },
                             name_loc.loc,
                         );
@@ -203,7 +203,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         inner_stmts.push(self.s(
                             S::SExpr {
                                 value: assign,
-                                ..Default::default()
+                                ..S::SExpr::new()
                             },
                             stmt.loc,
                         ));
@@ -228,7 +228,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                         name_loc.loc,
                                     ),
                                 ),
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             stmt.loc,
                         ));
@@ -236,12 +236,13 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         // Convert class declaration to assignment: ClassName = class ClassName {}
                         // G::Class is non-Copy (owns a Vec); the original
                         // S::Class store entry is dead after this rewrite, so move it out.
-                        let class_value = core::mem::take(&mut class.class);
+                        let class_value =
+                            core::mem::replace(&mut class.class, bun_ast::e::Class::new());
                         let class_expr = self.new_expr(class_value, stmt.loc);
                         let class_id = self.new_expr(
                             E::Identifier {
                                 ref_: name_ref,
-                                ..Default::default()
+                                ..E::Identifier::new()
                             },
                             name_loc.loc,
                         );
@@ -256,7 +257,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         inner_stmts.push(self.s(
                             S::SExpr {
                                 value: assign,
-                                ..Default::default()
+                                ..S::SExpr::new()
                             },
                             stmt.loc,
                         ));
@@ -277,7 +278,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     let str_expr = self.new_expr(
                         E::String {
                             data: path_str.into(),
-                            ..Default::default()
+                            ..E::String::new()
                         },
                         stmt.loc,
                     );
@@ -310,14 +311,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                         stmt.loc,
                                     ),
                                 ),
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             stmt.loc,
                         ));
                         let left = self.new_expr(
                             E::Identifier {
                                 ref_: import_data.namespace_ref,
-                                ..Default::default()
+                                ..E::Identifier::new()
                             },
                             stmt.loc,
                         );
@@ -332,7 +333,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         inner_stmts.push(self.s(
                             S::SExpr {
                                 value: assign,
-                                ..Default::default()
+                                ..S::SExpr::new()
                             },
                             stmt.loc,
                         ));
@@ -351,7 +352,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                         default_name.loc,
                                     ),
                                 ),
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             stmt.loc,
                         ));
@@ -371,7 +372,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             let ns_ref_expr = self.new_expr(
                                 E::Identifier {
                                     ref_: import_data.namespace_ref,
-                                    ..Default::default()
+                                    ..E::Identifier::new()
                                 },
                                 stmt.loc,
                             );
@@ -380,14 +381,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                     target: ns_ref_expr,
                                     name: b"default".into(),
                                     name_loc: stmt.loc,
-                                    ..Default::default()
+                                    ..E::Dot::new()
                                 },
                                 stmt.loc,
                             );
                             let left = self.new_expr(
                                 E::Identifier {
                                     ref_: default_ref,
-                                    ..Default::default()
+                                    ..E::Identifier::new()
                                 },
                                 default_name.loc,
                             );
@@ -402,7 +403,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             inner_stmts.push(self.s(
                                 S::SExpr {
                                     value: assign,
-                                    ..Default::default()
+                                    ..S::SExpr::new()
                                 },
                                 stmt.loc,
                             ));
@@ -412,14 +413,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                     target: await_expr,
                                     name: b"default".into(),
                                     name_loc: stmt.loc,
-                                    ..Default::default()
+                                    ..E::Dot::new()
                                 },
                                 stmt.loc,
                             );
                             let left = self.new_expr(
                                 E::Identifier {
                                     ref_: default_ref,
-                                    ..Default::default()
+                                    ..E::Identifier::new()
                                 },
                                 default_name.loc,
                             );
@@ -434,7 +435,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             inner_stmts.push(self.s(
                                 S::SExpr {
                                     value: assign,
-                                    ..Default::default()
+                                    ..S::SExpr::new()
                                 },
                                 stmt.loc,
                             ));
@@ -455,7 +456,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         inner_stmts.push(self.s(
                             S::SExpr {
                                 value: await_expr,
-                                ..Default::default()
+                                ..S::SExpr::new()
                             },
                             stmt.loc,
                         ));
@@ -467,14 +468,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     let str_expr = self.new_expr(
                         E::String {
                             data: value_str.into(),
-                            ..Default::default()
+                            ..E::String::new()
                         },
                         stmt.loc,
                     );
                     inner_stmts.push(self.s(
                         S::SExpr {
                             value: str_expr,
-                            ..Default::default()
+                            ..S::SExpr::new()
                         },
                         stmt.loc,
                     ));
@@ -497,7 +498,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     stmts: bun_ast::StoreSlice::new_mut(inner_slice),
                 },
                 is_async,
-                ..Default::default()
+                ..E::Arrow::new()
             },
             bun_ast::Loc::EMPTY,
         );
@@ -506,7 +507,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             E::Call {
                 target: arrow,
                 args: bun_alloc::AstAlloc::vec(),
-                ..Default::default()
+                ..E::Call::new()
             },
             bun_ast::Loc::EMPTY,
         );
@@ -520,7 +521,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         final_stmts.push(self.s(
             S::SExpr {
                 value: iife,
-                ..Default::default()
+                ..S::SExpr::new()
             },
             bun_ast::Loc::EMPTY,
         ));
@@ -532,7 +533,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         if parts.is_empty() {
             parts.push(js_ast::Part {
                 stmts: bun_ast::StoreSlice::new_mut(final_slice),
-                ..Default::default()
+                ..js_ast::Part::new()
             });
         } else {
             parts[0].stmts = bun_ast::StoreSlice::new_mut(final_slice);
@@ -571,14 +572,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         loc,
                     ),
                 ),
-                ..Default::default()
+                ..S::Local::new()
             },
             loc,
         ));
         let left = self.new_expr(
             E::Identifier {
                 ref_: import_data.namespace_ref,
-                ..Default::default()
+                ..E::Identifier::new()
             },
             loc,
         );
@@ -593,7 +594,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         inner_stmts.push(self.s(
             S::SExpr {
                 value: ns_assign,
-                ..Default::default()
+                ..S::SExpr::new()
             },
             loc,
         ));
@@ -608,14 +609,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         bump,
                         Binding::alloc(bump, B::Identifier { r#ref: item_ref }, item.name.loc),
                     ),
-                    ..Default::default()
+                    ..S::Local::new()
                 },
                 loc,
             ));
             let ns_ref_expr = self.new_expr(
                 E::Identifier {
                     ref_: import_data.namespace_ref,
-                    ..Default::default()
+                    ..E::Identifier::new()
                 },
                 loc,
             );
@@ -626,14 +627,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     target: ns_ref_expr,
                     name: alias_str.into(),
                     name_loc: item.name.loc,
-                    ..Default::default()
+                    ..E::Dot::new()
                 },
                 loc,
             );
             let left = self.new_expr(
                 E::Identifier {
                     ref_: item_ref,
-                    ..Default::default()
+                    ..E::Identifier::new()
                 },
                 item.name.loc,
             );
@@ -648,7 +649,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             inner_stmts.push(self.s(
                 S::SExpr {
                     value: item_assign,
-                    ..Default::default()
+                    ..S::SExpr::new()
                 },
                 loc,
             ));
@@ -725,30 +726,30 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             key: Some(self.new_expr(
                 E::String {
                     data: b"__proto__".into(),
-                    ..Default::default()
+                    ..E::String::new()
                 },
                 expr.loc,
             )),
             value: Some(self.new_expr(E::Null {}, expr.loc)),
-            ..Default::default()
+            ..G::Property::new()
         });
         // value: expr - the actual result value
         properties.push(G::Property {
             key: Some(self.new_expr(
                 E::String {
                     data: b"value".into(),
-                    ..Default::default()
+                    ..E::String::new()
                 },
                 expr.loc,
             )),
             value: Some(expr),
-            ..Default::default()
+            ..G::Property::new()
         });
         let prop_list = G::PropertyList::from_bump_vec(properties);
         self.new_expr(
             E::Object {
                 properties: prop_list,
-                ..Default::default()
+                ..E::Object::new()
             },
             expr.loc,
         )
@@ -766,7 +767,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 let left = self.new_expr(
                     E::Identifier {
                         ref_: ident.r#ref,
-                        ..Default::default()
+                        ..E::Identifier::new()
                     },
                     binding.loc,
                 );
@@ -817,7 +818,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             B::B::BIdentifier(ident) => self.new_expr(
                 E::Identifier {
                     ref_: ident.r#ref,
-                    ..Default::default()
+                    ..E::Identifier::new()
                 },
                 binding.loc,
             ),
@@ -848,7 +849,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     E::Array {
                         items: item_list,
                         is_single_line: arr.is_single_line,
-                        ..Default::default()
+                        ..E::Array::new()
                     },
                     binding.loc,
                 )
@@ -869,7 +870,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         },
                         value: Some(self.repl_convert_binding_to_expr(prop.value, bump)),
                         initializer: prop.default_value,
-                        ..Default::default()
+                        ..G::Property::new()
                     });
                 }
                 let prop_list = G::PropertyList::from_bump_vec(properties);
@@ -877,7 +878,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     E::Object {
                         properties: prop_list,
                         is_single_line: obj.is_single_line,
-                        ..Default::default()
+                        ..E::Object::new()
                     },
                     binding.loc,
                 )

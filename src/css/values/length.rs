@@ -31,8 +31,8 @@ impl LengthOrNumber {
     }
 }
 
-impl Default for LengthOrNumber {
-    fn default() -> Self {
+impl LengthOrNumber {
+    pub fn new() -> Self {
         Self::Number(0.0)
     }
 }

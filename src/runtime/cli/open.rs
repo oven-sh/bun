@@ -162,7 +162,7 @@ impl Editor {
         line: Option<&[u8]>,
         column: Option<&[u8]>,
     ) -> crate::Result<()> {
-        let mut spawned = Box::new(SpawnedEditorContext::default());
+        let mut spawned = Box::new(SpawnedEditorContext::new());
 
         let mut cursor = std::io::Cursor::new(&mut spawned.file_path_buf[..]);
         // Note: `args_buf` entries borrow both static strings and `file_path_buf`
@@ -375,8 +375,8 @@ pub(super) struct SpawnedEditorContext {
     pub argc: usize,
 }
 
-impl Default for SpawnedEditorContext {
-    fn default() -> Self {
+impl SpawnedEditorContext {
+    pub(super) fn new() -> Self {
         Self {
             file_path_buf: [0; 1024 + MAX_PATH_BYTES],
             buf: [(core::ptr::null(), 0); 10],
@@ -424,9 +424,9 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
                 None, None,
             )),
-            ..Default::default()
+            ..crate::api::bun::process::WindowsOptions::new()
         },
-        ..Default::default()
+        ..sync::Options::new()
     });
 }
 
@@ -440,8 +440,8 @@ pub(crate) struct EditorContext {
     pub path: &'static [u8],
 }
 
-impl Default for EditorContext {
-    fn default() -> Self {
+impl EditorContext {
+    pub(crate) fn new() -> Self {
         Self {
             editor: None,
             name: b"",

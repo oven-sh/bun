@@ -33,11 +33,19 @@ use core::sync::atomic::Ordering;
 #[cfg(not(any(windows, target_vendor = "apple")))]
 use crate::Futex;
 
-#[derive(Default)]
 pub struct Mutex {
     // `pub(crate)` so `Condition` can reach `srwlock` / `locking_thread` for
     // `SleepConditionVariableSRW`.
     pub(crate) impl_: Impl,
+}
+
+impl Mutex {
+    #[inline]
+    pub fn init() -> Self {
+        Self {
+            impl_: Impl::init(),
+        }
+    }
 }
 
 impl Mutex {
@@ -160,11 +168,21 @@ fn current_thread_id() -> ThreadId {
 }
 
 #[cfg(debug_assertions)]
-#[derive(Default)]
 pub(crate) struct DebugImpl {
     /// 0 means it's not locked.
     pub(crate) locking_thread: AtomicU64,
     pub(crate) impl_: ReleaseImpl,
+}
+
+#[cfg(debug_assertions)]
+impl DebugImpl {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self {
+            locking_thread: core::sync::atomic::AtomicU64::new(0),
+            impl_: ReleaseImpl::init(),
+        }
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -211,7 +229,6 @@ impl DebugImpl {
 /// SRWLOCK on windows is almost always faster than Futex solution.
 /// It also implements an efficient Condition with requeue support for us.
 #[cfg(windows)]
-#[derive(Default)]
 pub struct WindowsImpl {
     pub(crate) srwlock: core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>,
 }
@@ -270,7 +287,6 @@ impl WindowsImpl {
 
 /// os_unfair_lock on darwin supports priority inheritance and is generally faster than Futex solutions.
 #[cfg(target_vendor = "apple")]
-#[derive(Default)]
 pub struct DarwinImpl {
     oul: core::cell::UnsafeCell<OsUnfairLock>,
 }
@@ -285,7 +301,6 @@ unsafe impl Send for DarwinImpl {}
 
 #[cfg(target_vendor = "apple")]
 #[repr(C)]
-#[derive(Default)]
 pub(crate) struct OsUnfairLock {
     _opaque: u32,
 }
@@ -331,9 +346,18 @@ impl DarwinImpl {
 }
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
-#[derive(Default)]
 pub struct FutexImpl {
     state: AtomicU32,
+}
+
+#[cfg(not(any(windows, target_vendor = "apple")))]
+impl FutexImpl {
+    #[inline]
+    pub fn init() -> Self {
+        Self {
+            state: core::sync::atomic::AtomicU32::new(0),
+        }
+    }
 }
 
 #[cfg(not(any(windows, target_vendor = "apple")))]

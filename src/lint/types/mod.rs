@@ -168,7 +168,7 @@ absent! {
     NodeData => NodeData::None,
     FileId => FileId(u32::MAX),
     Vec<u8> => Vec::new(),
-    CompilerOptions => CompilerOptions::default(),
+    CompilerOptions => CompilerOptions::new(),
     Structure<'_> => Structure::Other,
     SymbolInfo<'_> => SymbolInfo {
         name: b"",
@@ -414,7 +414,7 @@ impl<'a> Types<'a> {
             .types
             .as_ref()
             .map(|checker| checker.options)
-            .unwrap_or_default()
+            .unwrap_or_else(CompilerOptions::new)
     }
 
     /// `program.getCurrentDirectory()`

@@ -10,10 +10,10 @@ pub(crate) struct StatementCache<S: AnyRefCounted> {
     clock: u64,
 }
 
-impl<S: AnyRefCounted> Default for StatementCache<S> {
-    fn default() -> Self {
+impl<S: AnyRefCounted> StatementCache<S> {
+    pub(crate) fn new() -> Self {
         Self {
-            statements: StringHashMap::default(),
+            statements: StringHashMap::init(),
             len: 0,
             clock: 0,
         }
@@ -36,7 +36,7 @@ impl<S: AnyRefCounted + CellRefCounted> StatementCache<S> {
         self.len += 1;
         self.clock += 1;
         self.statements
-            .get_or_put(query)
+            .get_or_put(query, Vec::new)
             .unwrap_or_oom()
             .value_ptr
             .push((statement, self.clock));

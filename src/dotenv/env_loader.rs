@@ -74,10 +74,9 @@ impl DirEntryProbe for DirEntryKeys {
 /// Canonical definition; re-exported as
 /// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
 #[repr(u32)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[allow(non_camel_case_types)]
 pub enum DotEnvBehavior {
-    #[default]
     _none = 0,
     disable = 1,
     prefix = 2,
@@ -125,7 +124,7 @@ impl DotEnvBehavior {
 /// this T2 crate names no `bun_s3_signing` types — see PORTING.md §Dispatch (cold-path,
 /// upward dep). The high-tier caller constructs the real refcounted `S3Credentials` from
 /// this POD at the call site.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct S3Credentials {
     pub access_key_id: Box<[u8]>,
     pub secret_access_key: Box<[u8]>,
@@ -272,7 +271,7 @@ impl Loader {
                 .map(Box::from)
                 .unwrap_or_default();
 
-            let mut endpoint: Box<[u8]> = Box::default();
+            let mut endpoint: Box<[u8]> = Box::new([]);
             let mut insecure_http = false;
             if let Some(parsed) = self
                 .get(b"S3_ENDPOINT")
@@ -1215,7 +1214,7 @@ impl<'a> Parser<'a> {
             let value = self.parse_value::<IS_PROCESS>()?;
             // reshaped for borrowck — value borrows self.value_buffer; copy before map mut.
             let value_owned: Box<[u8]> = Box::from(value);
-            let entry = map.map.get_or_put(key)?;
+            let entry = map.map.get_or_put(key, HashTableValue::new)?;
             if entry.found_existing {
                 if entry.index < count {
                     // Allow keys defined later in the same file to override keys defined earlier
@@ -1269,11 +1268,20 @@ impl<'a> Parser<'a> {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct HashTableValue {
     // `Box<[u8]>` is owned-by-default, trading some copies for uniform
     // ownership.
     pub value: Box<[u8]>,
+}
+
+impl HashTableValue {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            value: Box::new([]),
+        }
+    }
 }
 
 // On Windows, environment variables are case-insensitive. So we use a case-insensitive hash map.
@@ -1365,7 +1373,7 @@ impl Map {
     #[inline]
     pub(crate) fn init() -> Map {
         Map {
-            map: HashTable::default(),
+            map: HashTable::init(),
         }
     }
 
@@ -1402,7 +1410,7 @@ impl Map {
 
     #[inline]
     pub fn put_alloc_key_and_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        let gop = self.map.get_or_put(key)?;
+        let gop = self.map.get_or_put(key, HashTableValue::new)?;
         *gop.value_ptr = HashTableValue {
             value: Box::from(value),
         };
@@ -1425,7 +1433,7 @@ impl Map {
         &mut self,
         key: &[u8],
     ) -> Result<GetOrPutResult<'_, Box<[u8]>, HashTableValue>, AllocError> {
-        self.map.get_or_put(key)
+        self.map.get_or_put(key, HashTableValue::new)
     }
 
     #[inline]

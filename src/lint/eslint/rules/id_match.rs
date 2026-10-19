@@ -27,7 +27,6 @@ const NOT_MATCH_PRIVATE: Message = Message::new(
     "Identifier '#{{name}}' does not match the pattern '{{pattern}}'.",
 );
 
-#[derive(Default)]
 pub struct State<'a> {
     /// Whether each name that has been seen fails to match.
     is_invalid: ByName<bool>,
@@ -37,6 +36,18 @@ pub struct State<'a> {
     unresolved: Option<Vec<Reference<'a>>>,
     /// What is in an object pattern.
     object_patterns: AncestorMemo<'a, ()>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            is_invalid: ByName::new(),
+            reported: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            unresolved: None,
+            object_patterns: AncestorMemo::new(),
+        }
+    }
 }
 
 /// ESLint's `isInsideObjectPattern`.
@@ -630,7 +641,7 @@ impl Rule for IdMatch {
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
         // The default takes every name: none is empty, and none has a line break in it.
-        (self.regex.is_some() && self.pattern != "^.+$").then(State::default)
+        (self.regex.is_some() && self.pattern != "^.+$").then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

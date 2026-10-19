@@ -85,13 +85,22 @@ fn place_of_method(callee: Expr, array_method_name: &str) -> Option<Span> {
     }
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The outermost of the `&&`, `||`, `??` and `?:` that an expression is an operand of, or itself,
     /// and the parent of that.
     around_choices: AncestorMemo<'a, (Node<'a>, Node<'a>)>,
     /// ESLint's `getUpperFunction`.
     functions: AncestorMemo<'a, Func<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            around_choices: AncestorMemo::new(),
+            functions: AncestorMemo::new(),
+        }
+    }
 }
 
 /// The name of the method of arrays that the function expression `func` is the callback of, and what is called.
@@ -325,7 +334,7 @@ impl Rule for ArrayCallbackReturn {
         if !file.has_exprs([ExprTag::Call]) {
             return None;
         }
-        Some(State::default())
+        Some(State::new())
     }
 
     #[inline]

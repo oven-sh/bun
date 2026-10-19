@@ -240,7 +240,7 @@ mod posix {
             let poll = FilePoll::init(
                 ctx,
                 fd,
-                Default::default(),
+                enumset::EnumSet::empty(),
                 Owner::new(
                     poll_tag::MEMORY_PRESSURE,
                     NonNull::<()>::dangling().as_ptr(),

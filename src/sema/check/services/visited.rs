@@ -77,7 +77,8 @@ impl Checker<'_, '_> {
         &self,
         file: FileId,
     ) -> FxHashMap<Decl, SymbolId> {
-        let mut symbols: FxHashMap<Decl, SymbolId> = FxHashMap::default();
+        let mut symbols: FxHashMap<Decl, SymbolId> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for (index, symbol) in self.bound(file).symbols.iter().enumerate() {
             // `cloneSymbol` copies the declarations, whose `Symbol` is still the one the binder
             // created.

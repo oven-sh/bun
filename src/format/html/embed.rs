@@ -193,7 +193,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             // For the blocks of code in Markdown.
             sort_imports: self.options.format.sort_imports.clone(),
             jsdoc: self.options.format.jsdoc,
-            ..js::options_in_html(self.options.format, InHtml::default())
+            ..js::options_in_html(self.options.format, InHtml::new())
         })
     }
 
@@ -234,7 +234,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     ) -> bool {
         let in_html = InHtml {
             root: HtmlRoot::Program,
-            ..InHtml::default()
+            ..InHtml::new()
         };
         let program = |syntax: Syntax, printer: &mut Self| {
             let flavor = printer.options.script_flavor;
@@ -248,7 +248,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         {
             // Nothing in a style sheet depends on what is around it but the width that is left, which is known in a
             // file of HTML.
-            let mut scratch = std::mem::take(&mut self.css_scratch);
+            let mut scratch = std::mem::replace(&mut self.css_scratch, crate::css::Scratch::new());
             let is_written = self.write_printed_text(false, |options, out| {
                 let options = FormatOptions {
                     in_html,
@@ -278,7 +278,13 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             // To these parsers, a text with nothing in it is a syntax error.
             return !strings::trim_js_whitespace(code).is_empty()
                 && self.write_printed_text(false, |options, out| {
-                    crate::json::format(code, parser, options, &mut Default::default(), out)
+                    crate::json::format(
+                        code,
+                        parser,
+                        options,
+                        &mut crate::json::Scratch::new(),
+                        out,
+                    )
                 });
         }
         if let Some(parser) = Parser::from_name(parser) {
@@ -293,16 +299,21 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             },
             b"typescript" => program(Syntax::TypeScript, self),
             b"yaml" => self.write_printed_text(false, |options, out| {
-                crate::yaml::format(code, options, &mut Default::default(), out)
+                crate::yaml::format(code, options, &mut crate::yaml::Scratch::new(), out)
             }),
             b"markdown" => self.write_printed_text(true, |options, out| {
-                crate::markdown::format(code, options, &mut Default::default(), out)
+                crate::markdown::format(code, options, &mut crate::markdown::Scratch::new(), out)
             }),
             b"graphql" => self.write_printed_text(false, |options, out| {
-                crate::graphql::format(code, options, &mut Default::default(), out)
+                crate::graphql::format(code, options, &mut crate::graphql::Scratch::new(), out)
             }),
             b"glimmer" => self.write_printed_text(false, |options, out| {
-                crate::handlebars::format(code, options, &mut Default::default(), out)
+                crate::handlebars::format(
+                    code,
+                    options,
+                    &mut crate::handlebars::Scratch::new(),
+                    out,
+                )
             }),
             _ => false,
         }
@@ -498,7 +509,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 _ => HtmlRoot::JsExpression,
             },
             is_in_interpolation: true,
-            ..InHtml::default()
+            ..InHtml::new()
         };
         let attempt = self.out.start_attempt();
         self.out.start_indent();
@@ -611,7 +622,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                         root: HtmlRoot::Program,
                         is_in_attribute: true,
                         is_inline_event_handler: true,
-                        ..InHtml::default()
+                        ..InHtml::new()
                     };
                     return self.print_attribute_with(attr, |printer| {
                         printer.out.foreign(|f| {
@@ -719,7 +730,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let in_html = InHtml {
             root: HtmlRoot::Program,
             is_style_attribute: true,
-            ..InHtml::default()
+            ..InHtml::new()
         };
         let options = js::options_in_html(self.options.format, in_html);
         let Ok(document) = crate::css::document(value, crate::css::Parser::Css, &options) else {

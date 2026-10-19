@@ -215,11 +215,11 @@ pub(crate) struct FFI {
     pub shared_state: Cell<Option<NonNull<TCC::State>>>,
 }
 
-impl Default for FFI {
-    fn default() -> Self {
+impl FFI {
+    pub(crate) fn new() -> Self {
         Self {
             dylib: JsCell::new(None),
-            functions: JsCell::new(StringArrayHashMap::default()),
+            functions: JsCell::new(StringArrayHashMap::init()),
             closed: Cell::new(false),
             shared_state: Cell::new(None),
         }
@@ -252,15 +252,15 @@ struct CompileC {
     deferred_errors: Vec<Box<[u8]>>,
 }
 
-impl Default for CompileC {
-    fn default() -> Self {
+impl CompileC {
+    fn new() -> Self {
         Self {
             source: Source::File(ZBox::from_bytes(b"")),
             current_file_for_errors: ZBox::from_bytes(b""),
-            libraries: StringArray::default(),
-            library_dirs: StringArray::default(),
-            include_dirs: StringArray::default(),
-            symbols: SymbolsMap::default(),
+            libraries: StringArray::new(),
+            library_dirs: StringArray::new(),
+            include_dirs: StringArray::new(),
+            symbols: SymbolsMap::new(),
             define: Vec::new(),
             flags: ZBox::from_bytes(b""),
             deferred_errors: Vec::new(),
@@ -891,16 +891,30 @@ impl CompileC {
 
 // ─── SymbolsMap ─────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 struct SymbolsMap {
     map: StringArrayHashMap<Function>,
 }
 
+impl SymbolsMap {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            map: StringArrayHashMap::init(),
+        }
+    }
+}
+
 // ─── StringArray ────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 struct StringArray {
     items: Vec<ZBox>,
+}
+
+impl StringArray {
+    #[inline]
+    fn new() -> Self {
+        Self { items: Vec::new() }
+    }
 }
 
 impl Drop for StringArray {
@@ -947,7 +961,7 @@ impl StringArray {
         property: &'static str,
     ) -> JsResult<StringArray> {
         if value.is_undefined() {
-            return Ok(StringArray::default());
+            return Ok(StringArray::new());
         }
         if !value.is_string() {
             return Err(global_this.throw_invalid_argument_type_value(
@@ -958,7 +972,7 @@ impl StringArray {
         }
         let str = value.to_bun_string(global_this)?;
         if str.is_empty() {
-            return Ok(StringArray::default());
+            return Ok(StringArray::new());
         }
         let items: Vec<ZBox> = vec![str.to_owned_slice_z()];
         Ok(StringArray { items })
@@ -1010,7 +1024,7 @@ impl FFI {
 
         let object = arguments[0];
 
-        let mut compile_c = CompileC::default();
+        let mut compile_c = CompileC::new();
 
         let symbols_object: JSValue = object
             .get_own(global_this, &bun_core::String::borrow_utf8(b"symbols"))?
@@ -1231,7 +1245,10 @@ impl FFI {
         let lib = Box::new(FFI {
             dylib: JsCell::new(None),
             shared_state: Cell::new(scopeguard::ScopeGuard::into_inner(_tcc_guard).take()),
-            functions: JsCell::new(core::mem::take(&mut compile_c.symbols.map)),
+            functions: JsCell::new(core::mem::replace(
+                &mut compile_c.symbols.map,
+                StringArrayHashMap::init(),
+            )),
             closed: Cell::new(false),
         });
 
@@ -1266,7 +1283,7 @@ impl FFI {
             return Ok(global_this.to_invalid_arguments(format_args!("Expected callback function")));
         }
 
-        let mut function = Function::default();
+        let mut function = Function::new();
         let func = &mut function;
 
         if let Some(val) = generate_symbol_for_function(global_this, interface, func)? {
@@ -1337,7 +1354,7 @@ impl FFI {
             return Ok(global.to_invalid_arguments(format_args!("Expected an object")));
         }
 
-        let mut function = Function::default();
+        let mut function = Function::new();
         if let Some(val) = generate_symbol_for_function(global, object, &mut function)? {
             return Ok(val);
         }
@@ -1365,7 +1382,7 @@ impl FFI {
             return Ok(invalid_options_arg(global));
         };
 
-        let mut symbols = StringArrayHashMap::<Function>::default();
+        let mut symbols = StringArrayHashMap::<Function>::init();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object` keeps it alive.
         let obj = unsafe { &*obj };
         if let Some(val) = generate_symbols(global, &mut symbols, obj)? {
@@ -1456,7 +1473,7 @@ impl FFI {
             return Ok(global.to_invalid_arguments(format_args!("Invalid library name")));
         }
 
-        let mut symbols = StringArrayHashMap::<Function>::default();
+        let mut symbols = StringArrayHashMap::<Function>::init();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
         if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
             // an error while validating symbols
@@ -1490,7 +1507,7 @@ impl FFI {
                                 code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
                                 message: bun_core::String::clone_utf8(&msg),
                                 syscall: bun_core::String::clone_utf8(b"dlopen"),
-                                ..Default::default()
+                                ..SystemError::new()
                             };
                             return Ok(system_error.to_error_instance(global));
                         }
@@ -1506,7 +1523,7 @@ impl FFI {
         let obj = JSValue::create_empty_object(global, size);
         let _obj_guard = obj.protected();
 
-        let lib_ptr: *mut FFI = bun_core::heap::into_raw(Box::new(FFI::default()));
+        let lib_ptr: *mut FFI = bun_core::heap::into_raw(Box::new(FFI::new()));
         // SAFETY: `lib_ptr` is the fresh allocation from into_raw above.
         let js_object = unsafe { FFI::to_js_ptr(lib_ptr, global) };
         let _js_object_guard = js_object.protected();
@@ -1590,7 +1607,7 @@ impl FFI {
             return Ok(invalid_options_arg(global));
         };
 
-        let mut symbols = StringArrayHashMap::<Function>::default();
+        let mut symbols = StringArrayHashMap::<Function>::init();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
         if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
             // an error while validating symbols
@@ -1604,7 +1621,7 @@ impl FFI {
         obj.ensure_still_alive();
         let _keep = jsc::EnsureStillAlive(obj);
 
-        let lib_ptr: *mut FFI = bun_core::heap::into_raw(Box::new(FFI::default()));
+        let lib_ptr: *mut FFI = bun_core::heap::into_raw(Box::new(FFI::new()));
         // SAFETY: `lib_ptr` is the fresh allocation from into_raw above.
         let js_object = unsafe { FFI::to_js_ptr(lib_ptr, global) };
         let _js_object_guard = js_object.protected();
@@ -1666,7 +1683,7 @@ impl FFI {
                 .to_invalid_arguments(format_args!("Expected an options object with a \"ptr\"")));
         }
 
-        let mut function = Function::default();
+        let mut function = Function::new();
         if let Some(err) = generate_symbol_for_function(global, options, &mut function)? {
             return Ok(err);
         }
@@ -1805,7 +1822,7 @@ pub(super) fn generate_symbol_for_function(
         ))));
     }
 
-    *function = Function::default();
+    *function = Function::new();
     function.arg_types = abi_types;
     function.return_type = return_type;
     function.threadsafe = threadsafe;
@@ -1856,7 +1873,7 @@ pub(super) fn generate_symbols(
             )));
         }
 
-        let mut function = Function::default();
+        let mut function = Function::new();
         if let Some(val) = generate_symbol_for_function(global, value, &mut function)? {
             return Ok(Some(val));
         }
@@ -1884,11 +1901,11 @@ pub(crate) struct Function {
     // allocator field dropped — global mimalloc
 }
 
-impl Default for Function {
-    fn default() -> Self {
+impl Function {
+    pub(crate) fn new() -> Self {
         Self {
             symbol_from_dynamic_library: None,
-            base_name: ZBox::default(),
+            base_name: ZBox::new(),
             state: None,
             return_type: ABIType::Void,
             arg_types: Vec::new(),
@@ -2046,7 +2063,7 @@ impl Function {
 
         self.step = Step::Compiled(Compiled {
             ptr: symbol.as_ptr().cast::<c_void>(),
-            ..Default::default()
+            ..Compiled::new()
         });
         Ok(())
     }
@@ -2240,8 +2257,8 @@ pub(crate) struct Compiled {
     pub ptr: *mut c_void,
 }
 
-impl Default for Compiled {
-    fn default() -> Self {
+impl Compiled {
+    pub(crate) fn new() -> Self {
         Self {
             ptr: core::ptr::null_mut(),
         }
@@ -2358,8 +2375,7 @@ impl CompilerRT {
                 return false;
             }
         }
-        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
-        else {
+        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::new()) else {
             return false;
         };
         for (name, source) in CompilerRtSources::NODE_HEADERS {

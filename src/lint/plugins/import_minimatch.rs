@@ -37,7 +37,7 @@ impl Glob {
         let options = MinimatchOptions {
             match_base: true,
             is_version_3: true,
-            ..MinimatchOptions::default()
+            ..MinimatchOptions::new()
         };
         Glob(Minimatch::with(pattern, options))
     }

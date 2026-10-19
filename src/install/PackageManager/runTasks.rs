@@ -491,7 +491,10 @@ fn run_tasks_erased(
                             let installer: &mut PackageInstaller =
                                 cb.package_installer(extract_ctx);
                             // The hoisted loop runs tasks in the middle of a tree.
-                            let prev_node_modules = core::mem::take(&mut installer.node_modules);
+                            let prev_node_modules = core::mem::replace(
+                                &mut installer.node_modules,
+                                crate::package_installer::NodeModulesFolder::new(),
+                            );
                             let prev_tree_id = installer.current_tree_id;
                             installer.node_modules.path = core::mem::take(&mut ctx.path);
                             installer.node_modules.tree_id = ctx.tree_id;
@@ -674,7 +677,7 @@ fn run_tasks_erased(
                         let wait =
                             retry_timer::retry(manager, task_ptr, task.retried, &task.response);
                         // `notify` keeps the metadata it finds here if the next attempt gets none.
-                        task.response = Default::default();
+                        task.response = bun_http::HTTPClientResult::new();
 
                         if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
@@ -726,7 +729,7 @@ fn run_tasks_erased(
 
                         let failure = ManifestFailure {
                             is_unanswered: true,
-                            ..Default::default()
+                            ..ManifestFailure::new()
                         };
                         if !leave_failure_to_dependencies(
                             cb,
@@ -822,7 +825,7 @@ fn run_tasks_erased(
                     let failure = ManifestFailure {
                         is_missing: response.status_code == 404,
                         is_unanswered: retry,
-                        ..Default::default()
+                        ..ManifestFailure::new()
                     };
                     if !leave_failure_to_dependencies(
                         cb,
@@ -1213,7 +1216,7 @@ fn run_tasks_erased(
                         );
                         let failure = ManifestFailure {
                             spares_optional: false,
-                            ..Default::default()
+                            ..ManifestFailure::new()
                         };
                         leave_failure_to_dependencies(
                             cb,
@@ -1233,7 +1236,7 @@ fn run_tasks_erased(
                 let manifest: npm::PackageManifest = unsafe {
                     let m = core::mem::ManuallyDrop::take(&mut task.data.package_manifest);
                     task.data.package_manifest =
-                        core::mem::ManuallyDrop::new(npm::PackageManifest::default());
+                        core::mem::ManuallyDrop::new(npm::PackageManifest::new());
                     m
                 };
                 let name_hash = manifest.pkg.name.hash;
@@ -1816,19 +1819,26 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
         + manager.patch_calc_hash_batch.len;
 
     manager.increment_pending_tasks(u32::try_from(count).expect("int cast"));
-    manager
-        .thread_pool
-        .schedule(core::mem::take(&mut manager.patch_apply_batch));
-    manager
-        .thread_pool
-        .schedule(core::mem::take(&mut manager.patch_calc_hash_batch));
-    manager
-        .thread_pool
-        .schedule(core::mem::take(&mut manager.task_batch));
-    manager
-        .network_resolve_batch
-        .push(core::mem::take(&mut manager.network_tarball_batch));
-    http::HTTPThread::schedule(core::mem::take(&mut manager.network_resolve_batch));
+    manager.thread_pool.schedule(core::mem::replace(
+        &mut manager.patch_apply_batch,
+        ThreadPoolBatch::new(),
+    ));
+    manager.thread_pool.schedule(core::mem::replace(
+        &mut manager.patch_calc_hash_batch,
+        ThreadPoolBatch::new(),
+    ));
+    manager.thread_pool.schedule(core::mem::replace(
+        &mut manager.task_batch,
+        ThreadPoolBatch::new(),
+    ));
+    manager.network_resolve_batch.push(core::mem::replace(
+        &mut manager.network_tarball_batch,
+        ThreadPoolBatch::new(),
+    ));
+    http::HTTPThread::schedule(core::mem::replace(
+        &mut manager.network_resolve_batch,
+        ThreadPoolBatch::new(),
+    ));
     // Git tasks were counted as pending when they were queued.
     manager.start_git_tasks();
     count
@@ -2251,7 +2261,7 @@ impl PackageManager {
     ) -> bool {
         let gpe = self
             .network_dedupe_map
-            .get_or_put(task_id)
+            .get_or_put(task_id, crate::network_task::DedupeMapEntry::new)
             .expect("unreachable");
 
         // if there's an existing network task that is optional, we want to make it non-optional if this one would be required

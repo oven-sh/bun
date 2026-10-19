@@ -14,7 +14,6 @@ const EXCEED: Message = Message::new(
     "{{name}} has too many statements ({{count}}). Maximum allowed is {{max}}.",
 );
 
-#[derive(Default)]
 pub struct State<'a> {
     /// By the number of a function or a static block: the sum of the lengths of the `BlockStatement`s in it, without its body and
     /// without those of the functions and the static blocks in it.
@@ -27,6 +26,19 @@ pub struct State<'a> {
     exceeding: Vec<(Func<'a>, usize)>,
     /// What is in a function or a static block.
     enclosed: AncestorMemo<'a, ()>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            in_blocks: Vec::new(),
+            around: AncestorMemo::new(),
+            count: 0,
+            exceeding: Vec::new(),
+            enclosed: AncestorMemo::new(),
+        }
+    }
 }
 
 impl MaxStatements {
@@ -76,7 +88,7 @@ impl Rule for MaxStatements {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn stmt<'a>(&self, block: Stmt<'a>, cx: &mut Cx<'a, Self>) {

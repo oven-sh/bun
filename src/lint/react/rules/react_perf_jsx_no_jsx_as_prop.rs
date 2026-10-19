@@ -40,12 +40,21 @@ enum NativeAllowList {
     None,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// For [`is_in_root_scope`].
     in_root_scope: AncestorMemo<'a, ()>,
     /// Where a variable is declared, if that is with a violation.
     declared_with_violation: IdMap<Symbol<'a>, Option<(Span, Option<Span>)>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            in_root_scope: AncestorMemo::new(),
+            declared_with_violation: IdMap::init(),
+        }
+    }
 }
 
 impl<const WHAT: usize> Rule for JsxNoNewAsProp<WHAT> {
@@ -62,7 +71,7 @@ impl<const WHAT: usize> Rule for JsxNoNewAsProp<WHAT> {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

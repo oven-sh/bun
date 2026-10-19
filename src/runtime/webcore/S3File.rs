@@ -208,7 +208,7 @@ pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
         blob::WriteFileOptions {
             mkdirp_if_not_exists: Some(false),
             extra_options: options,
-            ..Default::default()
+            ..blob::WriteFileOptions::new()
         },
     )
 }
@@ -281,7 +281,10 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     )?;
 
     let credentials = if aws_options.changed_credentials {
-        std::mem::take(&mut aws_options.credentials)
+        std::mem::replace(
+            &mut aws_options.credentials,
+            bun_s3_signing::S3Credentials::new(),
+        )
     } else {
         default_credentials.clone()
     };
@@ -297,14 +300,17 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
 ) -> JsResult<Blob> {
     let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
         existing_credentials,
-        Default::default(),
+        bun_s3_signing::MultiPartUploadOptions::new(),
         options,
         None,
         None,
         false,
         global,
     )?;
-    let credentials = std::mem::take(&mut aws_options.credentials);
+    let credentials = std::mem::replace(
+        &mut aws_options.credentials,
+        bun_s3_signing::S3Credentials::new(),
+    );
     let store = blob::Store::init_s3(path, None, credentials).expect("oom");
     finish_s3_blob(global, store, &aws_options, options)
 }
@@ -566,7 +572,7 @@ pub(crate) fn get_presign_url_from(
     let mut credentials_with_options = s3::S3CredentialsWithOptions {
         credentials: (**s3.get_credentials()).clone(),
         request_payer: s3.request_payer,
-        ..Default::default()
+        ..s3::S3CredentialsWithOptions::new()
     };
 
     if let Some(options) = extra_options {

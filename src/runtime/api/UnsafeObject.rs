@@ -64,7 +64,7 @@ pub(crate) fn set_jit_policy(cx: &mut JsScope<'_>, scale: f64) -> JsResult<()> {
             jsc::RangeErrorOptions {
                 field_name: b"scale",
                 msg: b"a finite number >= 1",
-                ..Default::default()
+                ..jsc::RangeErrorOptions::new()
             },
         ));
     }

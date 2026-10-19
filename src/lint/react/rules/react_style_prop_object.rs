@@ -19,12 +19,21 @@ pub struct StylePropObject {
 const STYLE_PROP_NOT_OBJECT: Message = Message::new("stylePropNotObject", "Style prop value must be an object");
 const STYLE_PROP_OBJECT: Message = Message::new("", "`style` prop value must be an object.");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// For oxlint: whether a variable is declared with something that is not an object.
     invalid_variables: IdMap<Symbol<'a>, bool>,
     /// The pragma. oxlint knows none.
     pragma: OnceCell<&'a [u8]>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            invalid_variables: IdMap::init(),
+            pragma: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 impl Rule for StylePropObject {
@@ -52,7 +61,7 @@ impl Rule for StylePropObject {
         if !file.mentions("style") || (file.language().is_oxlint && !is_jsx(file)) {
             return None;
         }
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

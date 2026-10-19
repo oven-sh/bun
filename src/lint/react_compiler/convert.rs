@@ -192,8 +192,8 @@ pub(crate) fn convert<'a>(
         symbols: Vec::with_capacity(32),
         is_outside: Vec::with_capacity(32),
         import_bindings: Vec::new(),
-        by_symbol: FxHashMap::default(),
-        by_name: FxHashMap::default(),
+        by_symbol: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        by_name: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         create_element: Ref::NONE,
         fragment: Ref::NONE,
         recorded: Vec::new(),
@@ -266,7 +266,7 @@ impl<'a> Converter<'a, '_> {
         self.symbols.push(JsSymbol {
             original_name: StoreStr::new(name),
             kind,
-            ..JsSymbol::default()
+            ..JsSymbol::new()
         });
         self.is_outside.push(is_outside);
         Ref::new(index, 0, RefTag::Symbol)
@@ -419,7 +419,7 @@ impl<'a> Converter<'a, '_> {
         Ok(G::Arg {
             binding,
             default,
-            ..G::Arg::default()
+            ..G::Arg::new()
         })
     }
 
@@ -441,7 +441,7 @@ impl<'a> Converter<'a, '_> {
             S::Local {
                 kind: S::Kind::KLet,
                 decls,
-                ..S::Local::default()
+                ..S::Local::new()
             },
             loc,
         ));
@@ -510,7 +510,7 @@ impl<'a> Converter<'a, '_> {
                 args,
                 body,
                 flags,
-                ..G::Fn::default()
+                ..G::Fn::new()
             })
         })
     }
@@ -722,7 +722,7 @@ impl<'a> Converter<'a, '_> {
             return Ok(G::Property {
                 kind: G::PropertyKind::Spread,
                 value: prop.value().map(|it| self.expr(it)).transpose()?,
-                ..G::Property::default()
+                ..G::Property::new()
             });
         }
         // Upstream has the whole of a method where the lowering has its key and its function.
@@ -752,7 +752,7 @@ impl<'a> Converter<'a, '_> {
             flags,
             key,
             value,
-            ..G::Property::default()
+            ..G::Property::new()
         })
     }
 
@@ -785,7 +785,7 @@ impl<'a> Converter<'a, '_> {
                 class_name,
                 extends,
                 properties: leak(properties),
-                ..G::Class::default()
+                ..G::Class::new()
             })
         })
     }
@@ -808,7 +808,7 @@ impl<'a> Converter<'a, '_> {
             return Ok(Some(G::Property {
                 kind: G::PropertyKind::ClassStaticBlock,
                 class_static_block: Some(bun_ast::StoreRef::from_bump(block)),
-                ..G::Property::default()
+                ..G::Property::new()
             }));
         }
         let (key, mut flags) = match member.key() {
@@ -826,7 +826,7 @@ impl<'a> Converter<'a, '_> {
         }
         let mut property = G::Property {
             key,
-            ..G::Property::default()
+            ..G::Property::new()
         };
         match member.func().filter(|func| func.has_body()) {
             Some(func) => {
@@ -941,7 +941,7 @@ impl<'a> Converter<'a, '_> {
                             E::Call {
                                 target: tag,
                                 args: self.exprs(template.exprs())?,
-                                ..E::Call::default()
+                                ..E::Call::new()
                             },
                             loc,
                         )
@@ -955,14 +955,14 @@ impl<'a> Converter<'a, '_> {
             ExprKind::Array(items) => JsExpr::init(
                 E::Array {
                     items: self.exprs(items)?,
-                    ..E::Array::default()
+                    ..E::Array::new()
                 },
                 loc,
             ),
             ExprKind::Object(props) => JsExpr::init(
                 E::Object {
                     properties: self.properties(props)?,
-                    ..E::Object::default()
+                    ..E::Object::new()
                 },
                 loc,
             ),
@@ -986,12 +986,12 @@ impl<'a> Converter<'a, '_> {
                     target,
                     name: StoreStr::new(b"now"),
                     name_loc: target.loc,
-                    ..E::Dot::default()
+                    ..E::Dot::new()
                 };
                 JsExpr::init(
                     E::Call {
                         target: JsExpr::init(now, target.loc),
-                        ..E::Call::default()
+                        ..E::Call::new()
                     },
                     loc,
                 )
@@ -1001,7 +1001,7 @@ impl<'a> Converter<'a, '_> {
                     target: self.expr(call.callee())?,
                     args: self.exprs(call.args())?,
                     optional_chain: Self::chain(call.chain()),
-                    ..E::Call::default()
+                    ..E::Call::new()
                 },
                 loc,
             ),
@@ -1009,7 +1009,7 @@ impl<'a> Converter<'a, '_> {
                 E::New {
                     target: self.expr(call.callee())?,
                     args: self.exprs(call.args())?,
-                    ..E::New::default()
+                    ..E::New::new()
                 },
                 loc,
             ),
@@ -1128,7 +1128,7 @@ impl<'a> Converter<'a, '_> {
                 name: StoreStr::new(name.bytes()),
                 name_loc,
                 optional_chain,
-                ..E::Dot::default()
+                ..E::Dot::new()
             },
             loc,
         ))
@@ -1184,7 +1184,7 @@ impl<'a> Converter<'a, '_> {
                 file: self.file,
                 tag,
                 also_attributes: self.flavor == Flavor::Eslint,
-                places: Default::default(),
+                places: core::array::from_fn(|_| Vec::new()),
             };
             walk_node(Node::Expr(whole), &mut found);
             let duplicate = (FBT_TAGS.into_iter().zip(found.places)).find(|it| it.1.len() > 1);
@@ -1216,7 +1216,7 @@ impl<'a> Converter<'a, '_> {
                 JsExpr::init(
                     E::Object {
                         properties,
-                        ..E::Object::default()
+                        ..E::Object::new()
                     },
                     props_loc,
                 )
@@ -1237,7 +1237,7 @@ impl<'a> Converter<'a, '_> {
                 args,
                 close_paren_loc,
                 was_jsx_element: true,
-                ..E::Call::default()
+                ..E::Call::new()
             },
             loc,
         ))
@@ -1295,7 +1295,7 @@ impl<'a> Converter<'a, '_> {
             S::Local {
                 kind,
                 decls: converted,
-                ..S::Local::default()
+                ..S::Local::new()
             },
             loc,
         ))
@@ -1317,7 +1317,7 @@ impl<'a> Converter<'a, '_> {
             StmtKind::Expr(value) => JsStmt::alloc(
                 S::SExpr {
                     value: self.expr(value)?,
-                    ..S::SExpr::default()
+                    ..S::SExpr::new()
                 },
                 loc,
             ),
@@ -1330,7 +1330,7 @@ impl<'a> Converter<'a, '_> {
             ),
             // What is there for the types alone.
             StmtKind::Fn(_) | StmtKind::Interface(_) | StmtKind::TypeAlias(_) => {
-                JsStmt::alloc(S::TypeScript::default(), loc)
+                JsStmt::alloc(S::TypeScript::new(), loc)
             }
             StmtKind::Class(class) => JsStmt::alloc(
                 S::Class {
@@ -1438,7 +1438,7 @@ impl<'a> Converter<'a, '_> {
             StmtKind::Block(statements) => JsStmt::alloc(
                 S::Block {
                     stmts: self.stmts(statements)?,
-                    ..S::Block::default()
+                    ..S::Block::new()
                 },
                 loc,
             ),
@@ -1560,7 +1560,7 @@ impl<'a> Converter<'a, '_> {
             | StmtKind::ExportStar { .. }
             | StmtKind::ExportDefault(_)
             | StmtKind::ExportAssign(_)
-            | StmtKind::ExportAsNamespace(_) => JsStmt::alloc(S::ExportClause::default(), loc),
+            | StmtKind::ExportAsNamespace(_) => JsStmt::alloc(S::ExportClause::new(), loc),
         })
     }
 }

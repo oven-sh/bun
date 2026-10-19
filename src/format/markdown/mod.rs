@@ -52,9 +52,17 @@ const MDX_JSX: &[u8] = b"\0jsx";
 const MDX_ES_SYNTAX: &[u8] = b"\0es";
 
 /// Everything that is allocated to format a text. It is reused for the next one.
-#[derive(Default)]
 pub struct Scratch {
     tree: ast::Tree,
+}
+
+impl Scratch {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            tree: ast::Tree::new(),
+        }
+    }
 }
 
 /// Fills `tree` with the syntax of `text`, which is a description in a JSDoc comment. Returns the root.
@@ -71,7 +79,7 @@ pub fn identifier_of(label: &[u8]) -> Vec<u8> {
 }
 
 /// The syntax extensions to enable on top of CommonMark.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Extensions {
     /// Tables, strikethrough, footnotes, task lists and autolink literals.
     pub gfm: bool,
@@ -108,7 +116,6 @@ fn front_matter_between(text: &[u8], marker: u8) -> Option<(usize, usize, usize)
 }
 
 /// The text in the form that the parser expects: every line break is `\n` and every NUL is U+FFFD.
-#[derive(Default)]
 struct AsRead {
     bytes: Vec<u8>,
     /// The offset in `bytes` of each replacement that changed the length, and how many more bytes the original text has
@@ -116,6 +123,17 @@ struct AsRead {
     changes: Vec<(u32, i32)>,
     /// The offsets in `bytes` of the U+FFFD that replaced a NUL.
     replaced: Vec<u32>,
+}
+
+impl AsRead {
+    #[inline]
+    fn init() -> Self {
+        Self {
+            bytes: Vec::new(),
+            changes: Vec::new(),
+            replaced: Vec::new(),
+        }
+    }
 }
 
 impl AsRead {
@@ -135,7 +153,7 @@ impl AsRead {
     }
 
     fn new(mut rest: &[u8]) -> AsRead {
-        let mut this = AsRead::default();
+        let mut this = AsRead::init();
         this.bytes.reserve(rest.len());
         while let Some(at) = bun_core::strings::index_of_any(rest, b"\r\0") {
             this.bytes.extend_from_slice(&rest[..at]);
@@ -171,7 +189,7 @@ pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Op
     let is_changed = bun_core::strings::index_of_any(text, b"\r\0").is_some();
     let as_read = match is_changed {
         true => AsRead::new(text),
-        false => AsRead::default(),
+        false => AsRead::init(),
     };
     let read: &[u8] = if is_changed { &as_read.bytes } else { text };
 
@@ -350,9 +368,23 @@ fn format_embedded(
     };
     let mut out = Vec::new();
     let is_done = if let Some(parser) = crate::json::Parser::from_name(parser) {
-        crate::json::format(code, parser, &options, &mut Default::default(), &mut out).is_ok()
+        crate::json::format(
+            code,
+            parser,
+            &options,
+            &mut crate::json::Scratch::new(),
+            &mut out,
+        )
+        .is_ok()
     } else if let Some(parser) = crate::css::Parser::from_name(parser) {
-        crate::css::format(code, parser, &options, &mut Default::default(), &mut out).is_ok()
+        crate::css::format(
+            code,
+            parser,
+            &options,
+            &mut crate::css::Scratch::new(),
+            &mut out,
+        )
+        .is_ok()
     } else if let Some(parser) = crate::html::Parser::from_name(parser) {
         options.embedded_html
             && crate::html::format(
@@ -360,23 +392,32 @@ fn format_embedded(
                 code,
                 parser,
                 &options,
-                &mut Default::default(),
+                &mut crate::html::Scratch::new(),
                 &mut out,
             )
             .is_ok()
     } else {
         match parser {
-            b"graphql" => {
-                crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok()
-            }
-            b"glimmer" => {
-                crate::handlebars::format(code, &options, &mut Default::default(), &mut out).is_ok()
-            }
+            b"graphql" => crate::graphql::format(
+                code,
+                &options,
+                &mut crate::graphql::Scratch::new(),
+                &mut out,
+            )
+            .is_ok(),
+            b"glimmer" => crate::handlebars::format(
+                code,
+                &options,
+                &mut crate::handlebars::Scratch::new(),
+                &mut out,
+            )
+            .is_ok(),
             b"yaml" => {
-                crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok()
+                crate::yaml::format(code, &options, &mut crate::yaml::Scratch::new(), &mut out)
+                    .is_ok()
             }
             b"svelte" => {
-                let scratch = &mut Default::default();
+                let scratch = &mut crate::svelte::Scratch::new();
                 crate::svelte::format(b"", code, &options, None, scratch, &mut out).is_ok()
             }
             b"markdown" | b"mdx" => {
@@ -384,7 +425,7 @@ fn format_embedded(
                     is_in_template,
                     is_mdx: parser == b"mdx",
                 };
-                let scratch = &mut Default::default();
+                let scratch = &mut Scratch::new();
                 format_in(code, &options, scratch, &mut out, mode, format_block).is_ok()
             }
             _ => {
@@ -477,7 +518,7 @@ pub fn format_with(
     out: &mut Vec<u8>,
     format_block: Option<&mut FormatBlock<'_>>,
 ) -> Result<(), FormatError> {
-    format_in(text, options, scratch, out, Mode::default(), format_block)
+    format_in(text, options, scratch, out, Mode::new(), format_block)
 }
 
 /// The same for MDX.
@@ -490,16 +531,26 @@ pub fn format_mdx_with(
 ) -> Result<(), FormatError> {
     let mode = Mode {
         is_mdx: true,
-        ..Mode::default()
+        ..Mode::new()
     };
     format_in(text, options, scratch, out, mode, format_block)
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Mode {
     /// The document is for a template in JavaScript.
     is_in_template: bool,
     is_mdx: bool,
+}
+
+impl Mode {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            is_in_template: false,
+            is_mdx: false,
+        }
+    }
 }
 
 fn format_in(

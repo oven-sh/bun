@@ -120,7 +120,7 @@ const DEPTHS: usize = 256;
 const HOISTED: u32 = 1 << 31;
 
 /// A scope that is open, by its depth.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Level {
     /// 0: none is open at this depth.
     id: u32,
@@ -128,6 +128,17 @@ struct Level {
     log: u32,
     /// `Declared::holds_vars` around it.
     holds_vars: u32,
+}
+
+impl Level {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            id: 0,
+            log: 0,
+            holds_vars: 0,
+        }
+    }
 }
 
 /// Where a speculative parse began.
@@ -139,7 +150,6 @@ pub(crate) struct Mark {
     unopened: u32,
 }
 
-#[derive(Default)]
 pub(crate) struct Declared {
     /// Off unless `Dialect::oxc_names`, and once the answer is "maybe".
     is_on: bool,
@@ -166,6 +176,26 @@ pub(crate) struct Declared {
     carried: Vec<(u32, u16)>,
     /// The parameters of the function whose block comes next.
     parameters: (Span<TypeParamId>, Span<ParamId>),
+}
+
+impl Declared {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            is_on: false,
+            is_javascript: false,
+            unopened: 0,
+            mask: 0,
+            stamp: 0,
+            holds_vars: 0,
+            last: 0,
+            table: Vec::new(),
+            levels: Vec::new(),
+            log: Vec::new(),
+            carried: Vec::new(),
+            parameters: (Span::EMPTY, Span::EMPTY),
+        }
+    }
 }
 
 impl Declared {
@@ -196,7 +226,7 @@ impl Declared {
         // The last file has closed its scopes, unless it was given up.
         if self.levels.len() != DEPTHS || depth_of(self.stamp) != 0 {
             self.levels.clear();
-            self.levels.resize(DEPTHS, Level::default());
+            self.levels.resize(DEPTHS, Level::new());
         }
         self.last += 1;
         self.holds_vars = self.last;
@@ -205,7 +235,7 @@ impl Declared {
             level.id = self.last;
         }
         self.log.clear();
-        self.parameters = Default::default();
+        self.parameters = (Span::EMPTY, Span::EMPTY);
     }
 
     #[inline(always)]
@@ -626,7 +656,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn open_level_of_function(&mut self) {
         self.open_level_for_vars();
-        let (type_parameters, parameters) = std::mem::take(&mut self.declared.parameters);
+        let (type_parameters, parameters) =
+            std::mem::replace(&mut self.declared.parameters, (Span::EMPTY, Span::EMPTY));
         for index in type_parameters.range() {
             if let Some(name) = self.f.type_params.get(index).map(|it| it.name) {
                 self.declare_name(name, Declares::TypeParameter);

@@ -439,7 +439,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             root: HtmlRoot::NgInterpolation,
             is_in_attribute: true,
             is_in_interpolation: true,
-            ..InHtml::default()
+            ..InHtml::new()
         };
         for (index, part) in split_at_interpolations(value).into_iter().enumerate() {
             if index % 2 == 0 {
@@ -511,7 +511,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             let in_html = InHtml {
                 root,
                 is_in_attribute: true,
-                ..InHtml::default()
+                ..InHtml::new()
             };
             return self.print_attribute_with(attr, |printer| {
                 printer.write_angular_expression(value, in_html, Hug::Expression)
@@ -550,7 +550,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
         let in_html = InHtml {
             root: HtmlRoot::NgDirective,
-            ..InHtml::default()
+            ..InHtml::new()
         };
         let attempt = self.out.start_attempt();
         let is_written = self.write_angular_expression(content, in_html, Hug::Expression);
@@ -561,7 +561,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let tree = self.tree;
         let in_html = InHtml {
             root: HtmlRoot::NgBinding,
-            ..InHtml::default()
+            ..InHtml::new()
         };
         let attempt = self.out.start_attempt();
         let is_written = self.write_angular_expression(&tree[id].value, in_html, Hug::Always);

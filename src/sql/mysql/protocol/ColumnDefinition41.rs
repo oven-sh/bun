@@ -21,8 +21,8 @@ pub struct ColumnDefinition41 {
     pub name_or_index: ColumnIdentifier,
 }
 
-impl Default for ColumnDefinition41 {
-    fn default() -> Self {
+impl ColumnDefinition41 {
+    pub fn new() -> Self {
         Self {
             table: Data::empty(),
             name: None,
@@ -37,7 +37,7 @@ impl Default for ColumnDefinition41 {
 }
 
 bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct ColumnFlags: u16 {
         const NOT_NULL         = 1 << 0;
         const PRI_KEY          = 1 << 1;

@@ -98,10 +98,20 @@ pub(crate) struct Lexer<'a> {
 
 /// Where the first `<!--` is that was read as a `<`, outside a script, and the first that nothing but blanks and comments
 /// precedes on its line. For oxc the one starts a comment in all but what is a module by its name, the other is an error there.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct HtmlOpens {
     pub(crate) first: Option<u32>,
     pub(crate) first_on_its_line: Option<u32>,
+}
+
+impl HtmlOpens {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            first: None,
+            first_on_its_line: None,
+        }
+    }
 }
 
 /// What a lookahead restores.
@@ -279,7 +289,7 @@ impl<'a> Lexer<'a> {
             is_typescript_5: false,
             is_babel: false,
             is_oxc: false,
-            html_opens: HtmlOpens::default(),
+            html_opens: HtmlOpens::new(),
             private_names: Vec::new(),
             atoms,
             names,
@@ -2636,7 +2646,7 @@ fn decimal_digits(digits: &[u8], radix: u32) -> Vec<u8> {
 
 /// The value of the digits `digits` of base `radix`, a power of two, rounded once.
 fn number_from_digits(digits: &[u8], radix: u32) -> f64 {
-    let mut integer = bun_core::fmt::RadixInteger::default();
+    let mut integer = bun_core::fmt::RadixInteger::new();
     for digit in digits.iter().filter_map(|&c| char::from(c).to_digit(radix)) {
         integer.push_digit(radix.trailing_zeros(), digit);
     }

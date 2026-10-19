@@ -13,7 +13,7 @@ const SAME_NAMED_FIELD: Message =
 const REPLACE_ASSIGNMENT: Message = Message::new("", "Replace `this` assignment with class field declaration");
 
 fn print(before: &[u8], value: Expr, after: &[u8]) -> Vec<u8> {
-    let mut codegen = Codegen::default();
+    let mut codegen = Codegen::new();
     codegen.code.extend_from_slice(before);
     codegen.print_expression(value);
     codegen.code.extend_from_slice(after);

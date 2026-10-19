@@ -19,10 +19,20 @@ enum Mode {
 }
 
 /// What is asked of the declarations of one kind.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct KindOptions {
     uninitialized: Option<Mode>,
     initialized: Option<Mode>,
+}
+
+impl KindOptions {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            uninitialized: None,
+            initialized: None,
+        }
+    }
 }
 
 const COMBINE_UNINITIALIZED: Message = Message::new(
@@ -96,11 +106,22 @@ impl KindOptions {
 }
 
 /// What has been declared in a scope, as far as it has to be declared together.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Seen {
     initialized: bool,
     uninitialized: bool,
     required: bool,
+}
+
+impl Seen {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            initialized: false,
+            uninitialized: false,
+            required: false,
+        }
+    }
 }
 
 /// Whether ESLint's `startFunction` is called for `node`, or with `of_blocks` its `startBlock` as well.
@@ -153,7 +174,7 @@ impl<'a> Scopes<'a> {
         Scopes {
             of_blocks,
             is_oxlint,
-            around: AncestorMemo::default(),
+            around: AncestorMemo::new(),
             open: Vec::new(),
         }
     }
@@ -175,7 +196,7 @@ impl<'a> Scopes<'a> {
                 self.open.pop();
             }
             if self.open.last().is_none_or(|it| it.0 != number) {
-                self.open.push((number, extent_of(scope), Default::default()));
+                self.open.push((number, extent_of(scope), core::array::from_fn(|_| Seen::new())));
             }
         }
         self.open.last_mut().map(|it| &mut it.2)
@@ -484,7 +505,7 @@ impl Rule for OneVar {
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
-        let mut kinds = [KindOptions::default(); 5];
+        let mut kinds = [KindOptions::new(); 5];
         if options.get(0).is_some_and(|it| it.as_object().is_some()) {
             let of_all = |key: &str| object.has(key).then(|| Mode::of(object.str(key)));
             for (kind, key) in kinds.iter_mut().zip(KEYS) {
@@ -521,7 +542,7 @@ impl Rule for OneVar {
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(declaration) = as_variable_declaration(statement) {
-            self.check_variable_declaration(statement, declaration, &mut Seen::default(), cx);
+            self.check_variable_declaration(statement, declaration, &mut Seen::new(), cx);
         }
     }
 

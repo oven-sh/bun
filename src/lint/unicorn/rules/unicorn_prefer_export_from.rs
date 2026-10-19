@@ -15,10 +15,18 @@ pub struct PreferExportFrom {
 const PREFER_EXPORT_FROM: Message = Message::new("", "Prefer re-exporting directly from the source module.");
 const USE_EXPORT_FROM: Message = Message::new("", "use `export ... from ...;`");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The `export { .. } from` of the file, by the module.
     exports_from: Option<FxHashMap<Name<'a>, SmallVec<[Export<'a>; 1]>>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            exports_from: None,
+        }
+    }
 }
 
 impl Rule for PreferExportFrom {
@@ -31,7 +39,7 @@ impl Rule for PreferExportFrom {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        has_candidates(file).then(State::default)
+        has_candidates(file).then(State::new)
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -362,12 +370,12 @@ fn is_strings_equal_std(s1: &[u8], s2: &[u8]) -> bool {
 fn find_corresponding_export<'a>(import_decl: Import<'a>, cx: &mut Cx<'a, PreferExportFrom>) -> Option<Export<'a>> {
     let file = cx.file();
     let exports_from = cx.state.exports_from.get_or_insert_with(|| {
-        let mut exports_from: FxHashMap<Name<'a>, SmallVec<[Export<'a>; 1]>> = FxHashMap::default();
+        let mut exports_from: FxHashMap<Name<'a>, SmallVec<[Export<'a>; 1]>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for statement in file.body() {
             if let StmtKind::ExportNamed(export_decl) = statement.kind()
                 && let Some(source) = export_decl.spec()
             {
-                exports_from.entry(source).or_default().push(export_decl);
+                exports_from.entry(source).or_insert_with(smallvec::SmallVec::new).push(export_decl);
             }
         }
         exports_from

@@ -6,9 +6,17 @@ use bun_sys::Fd;
 use crate::PackageNameHash;
 use crate::npm;
 
-#[derive(Default)]
 pub struct PackageManifestMap {
     pub(crate) hash_map: ManifestHashMap,
+}
+
+impl PackageManifestMap {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            hash_map: ManifestHashMap::init(),
+        }
+    }
 }
 
 pub enum Value {

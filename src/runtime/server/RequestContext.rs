@@ -99,8 +99,14 @@ pub(crate) enum UpgradeState {
 }
 
 /// The root on the Response being rendered. A plain Blob body is read in the frame that returned it, so it is left unrooted (see `response_weakref`); a file or streaming body is read after that frame, so [`set_rooted`](Self::set_rooted) roots it.
-#[derive(Default)]
 pub(crate) struct ResponseRoot(JsCell<bun_jsc::strong::Optional>);
+
+impl ResponseRoot {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(JsCell::new(bun_jsc::StrongOptional::new()))
+    }
+}
 
 impl ResponseRoot {
     pub(crate) fn set_rooted(&self, value: JSValue, global: &JSGlobalObject) {
@@ -1505,22 +1511,22 @@ where
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),
                 signal: Cell::new(None),
                 cookies: JsCell::new(None),
-                flags: Flags::<DEBUG_MODE>::default(),
+                flags: Flags::<DEBUG_MODE>::new(),
                 upgrade_context: Cell::new(UpgradeState::None),
-                response_root: ResponseRoot::default(),
+                response_root: ResponseRoot::new(),
                 ref_count: Cell::new(1),
                 pin_count: Cell::new(0),
                 response_weakref: JsCell::new(response::WeakRef::EMPTY),
-                blob: JsCell::new(AnyBlob::Blob(Blob::default())),
-                sendfile: Cell::new(SendfileContext::default()),
-                request_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
+                blob: JsCell::new(AnyBlob::Blob(Blob::empty())),
+                sendfile: Cell::new(SendfileContext::new()),
+                request_body_readable_stream_ref: JsCell::new(readable_stream::Strong::Empty),
                 request_body: JsCell::new(None),
                 request_body_buf: JsCell::new(Vec::new()),
                 request_body_content_len: Cell::new(0),
                 request_body_streamed_len: Cell::new(0),
                 sink: Cell::new(None),
                 byte_stream: Cell::new(None),
-                response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
+                response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::Empty),
                 pathname: JsCell::new(BunString::EMPTY),
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
@@ -1928,7 +1934,7 @@ where
                 let base_err = bun_sys::Error {
                     errno: bun_sys::E::EISDIR as _,
                     syscall: bun_sys::Tag::read,
-                    ..Default::default()
+                    ..bun_sys::Error::init()
                 };
                 let err = match &file.pathlike {
                     crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
@@ -2118,8 +2124,9 @@ where
 
         if self.blob.get().needs_to_read_file() {
             if !self.flags.has_sendfile_ctx() {
-                if let AnyBlob::Blob(b) =
-                    self.blob.replace(AnyBlob::InternalBlob(Default::default()))
+                if let AnyBlob::Blob(b) = self
+                    .blob
+                    .replace(AnyBlob::InternalBlob(crate::webcore::blob::Internal::new()))
                 {
                     self.do_sendfile(b);
                 }
@@ -2169,7 +2176,7 @@ where
         stream_log!("aborted while attaching the stream");
         let mut readable_ref = self
             .response_body_readable_stream_ref
-            .replace(readable_stream::Strong::default());
+            .replace(readable_stream::Strong::Empty);
         if let Some(wrapper_ptr) = self.sink.take() {
             // SAFETY: this context is the sink's sole owner until `destroy_sink`
             // below (see the `sink` field); `on_abort` leaves it allocated.
@@ -2209,11 +2216,11 @@ where
         let response_stream_box = Box::new(ResponseStreamJSSink::<SSL_ENABLED> {
             sink: ResponseStream::<SSL_ENABLED> {
                 res: Some(resp),
-                buffer: Vec::<u8>::default(),
+                buffer: Vec::<u8>::new(),
                 on_first_write: Some(Self::handle_first_stream_write_thunk),
                 ctx: Some(this.as_ctx_ptr().cast::<c_void>()),
                 global_this: Some(bun_ptr::BackRef::new(global_this)),
-                ..Default::default()
+                ..ResponseStream::<SSL_ENABLED>::new()
             },
         });
         let response_stream_ptr = bun_core::heap::into_raw_nn(response_stream_box);
@@ -2331,7 +2338,7 @@ where
                         *body_value = Body::Value::Locked(Body::PendingValue {
                             readable: readable_stream::Strong::init(*stream, global_this),
                             global: std::ptr::from_ref(global_this),
-                            ..Default::default()
+                            ..Body::PendingValue::init()
                         });
                         let cell = this.create_promise_cell(global_this);
                         effective_result.then_with_value(
@@ -2346,7 +2353,7 @@ where
                         stream_log!("promise Fulfilled");
                         let mut readable_ref = this
                             .response_body_readable_stream_ref
-                            .replace(readable_stream::Strong::default());
+                            .replace(readable_stream::Strong::Empty);
                         // NOTE: cleanup runs after handle_resolve_stream:
                         // body first, then the deferred cleanup.
                         this.handle_resolve_stream();
@@ -2366,7 +2373,7 @@ where
                         }
                         let mut readable_ref = this
                             .response_body_readable_stream_ref
-                            .replace(readable_stream::Strong::default());
+                            .replace(readable_stream::Strong::Empty);
                         this.handle_reject_stream(global_this, err);
                         crate::dispatch::fold(stream.cancel(global_this));
                         readable_ref.deinit();
@@ -2385,7 +2392,7 @@ where
 
         let mut readable_ref = this
             .response_body_readable_stream_ref
-            .replace(readable_stream::Strong::default());
+            .replace(readable_stream::Strong::Empty);
 
         let is_in_progress = response_stream.sink.has_backpressure
             || !(response_stream.sink.wrote == 0 && response_stream.sink.buffer.len() == 0);
@@ -2508,7 +2515,7 @@ where
         // Nothing feeds our ByteStream from here on; after `req.clone()`/`textStream()` only this ref reaches it.
         let strong = self
             .request_body_readable_stream_ref
-            .replace(readable_stream::Strong::default());
+            .replace(readable_stream::Strong::Empty);
         if let Some(readable) = strong.get() {
             readable.value.ensure_still_alive();
             if let Some(bytes) = readable.ptr.bytes() {
@@ -3221,7 +3228,10 @@ where
                         // we hold the stream alive until we're done with it
                         // NOTE: `Strong` is move-only — take() transfers ownership.
                         this.response_body_readable_stream_ref
-                            .set(core::mem::take(&mut lock.readable));
+                            .set(core::mem::replace(
+                                &mut lock.readable,
+                                crate::webcore::readable_stream::Strong::Empty,
+                            ));
                         break 'brk Some(stream);
                     }
                     if let Some(stream) = owned_readable {
@@ -3244,7 +3254,7 @@ where
                             message: BunString::static_(
                                 "Stream already used, please create a new one",
                             ),
-                            ..Default::default()
+                            ..jsc::SystemError::new()
                         };
                         stream.value.unprotect();
                         let js_err = err.to_error_instance(global_this);
@@ -4176,7 +4186,7 @@ where
                 // of hanging forever.
                 let _strong = this
                     .request_body_readable_stream_ref
-                    .replace(readable_stream::Strong::default());
+                    .replace(readable_stream::Strong::Empty);
 
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
@@ -4240,7 +4250,7 @@ where
                 // released at scope exit via `Drop` on `strong::Optional`.
                 let _strong = this
                     .request_body_readable_stream_ref
-                    .replace(readable_stream::Strong::default());
+                    .replace(readable_stream::Strong::Empty);
                 this.request_body_take_unref();
 
                 readable.value.ensure_still_alive();
@@ -4729,7 +4739,7 @@ where
 // Retained only for `renderMetadata` to compute Content-Range / Content-Length
 // for file-blob bodies; the actual fd/socket bookkeeping lives in
 // `FileResponseStream` now.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct SendfileContext {
     pub(crate) remain: BlobSizeType,
     pub offset: BlobSizeType,
@@ -4737,11 +4747,22 @@ pub(crate) struct SendfileContext {
     pub(crate) total: BlobSizeType,
 }
 
+impl SendfileContext {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            remain: 0,
+            offset: 0,
+            total: 0,
+        }
+    }
+}
+
 // All flags are bool (with two debug-conditional ones). We keep all bits in
 // every build and just gate the `is_web_browser_navigation` / `has_finalized`
 // accessors on the const params.
 bitflags::bitflags! {
-    #[derive(Default, Clone, Copy)]
+    #[derive(Clone, Copy)]
     struct FlagsBits: u32 {
         const HAS_MARKED_COMPLETE         = 1 << 0;
         const HAS_MARKED_PENDING          = 1 << 1;
@@ -4769,8 +4790,14 @@ bitflags::bitflags! {
 }
 
 #[repr(transparent)]
-#[derive(Default)]
 pub(crate) struct Flags<const DEBUG_MODE: bool>(Cell<FlagsBits>);
+
+impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(core::cell::Cell::new(FlagsBits::empty()))
+    }
+}
 
 macro_rules! flag_accessor {
     ($get:ident, $set:ident, $bit:ident) => {

@@ -140,13 +140,6 @@ bitflags! {
 
 const _: () = assert!(size_of::<Flags>() == 2);
 
-impl Default for Flags {
-    fn default() -> Self {
-        // is_request_pending defaults to true; all others false.
-        Flags::IS_REQUEST_PENDING
-    }
-}
-
 impl Flags {
     /// Did the user end the request?
     #[inline]
@@ -161,9 +154,8 @@ impl Flags {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BodyReadState {
-    #[default]
     None = 0,
     /// uws still owes this request body chunks.
     Pending = 1,
@@ -388,8 +380,8 @@ struct PendingPinnedWrite {
     pinned_value: JSValue,
 }
 
-impl Default for PendingPinnedWrite {
-    fn default() -> Self {
+impl PendingPinnedWrite {
+    fn new() -> Self {
         Self {
             remaining: ptr::slice_from_raw_parts(ptr::null(), 0),
             pinned_value: JSValue::ZERO,
@@ -947,7 +939,7 @@ impl NodeHTTPResponse {
                     min: 100,
                     max: 999,
                     field_name: b"statusCode",
-                    ..Default::default()
+                    ..jsc::IntegerRange::new()
                 },
             )?
         } else {
@@ -1740,9 +1732,7 @@ impl NodeHTTPResponse {
     /// before the cached-slot clear, so the cell is still GC-rooted when
     /// `dynamicDowncast` touches it.
     fn clear_pending_pinned_write(&self, global_object: &JSGlobalObject, js_this: JSValue) {
-        let p = self
-            .pending_pinned_write
-            .replace(PendingPinnedWrite::default());
+        let p = self.pending_pinned_write.replace(PendingPinnedWrite::new());
         if p.is_some() {
             if p.pinned_value != JSValue::ZERO {
                 p.pinned_value.unpin_array_buffer();
@@ -2156,10 +2146,10 @@ impl NodeHTTPResponse {
                     // `string_or_buffer` owns the bytes (WTFStringImpl ref /
                     // borrowed ArrayBuffer / encoded Vec); move it so it
                     // outlives the write.
-                    drop(
-                        self.pending_pinned_write_owner
-                            .replace(core::mem::take(&mut string_or_buffer)),
-                    );
+                    drop(self.pending_pinned_write_owner.replace(core::mem::replace(
+                        &mut string_or_buffer,
+                        crate::node::types::StringOrBuffer::EMPTY,
+                    )));
                     self.pending_pinned_write.set(PendingPinnedWrite {
                         remaining,
                         pinned_value,
@@ -2708,20 +2698,20 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
             BodyReadState::None
         }),
         flags: Cell::new(if is_current {
-            Flags::default() | Flags::CURRENT
+            Flags::IS_REQUEST_PENDING | Flags::CURRENT
         } else {
-            Flags::default()
+            Flags::IS_REQUEST_PENDING
         }),
-        poll_ref: JsCell::new(jsc::Ref::default()),
-        body_read_ref: JsCell::new(jsc::Ref::default()),
+        poll_ref: JsCell::new(jsc::Ref::new()),
+        body_read_ref: JsCell::new(jsc::Ref::new()),
         promise: JsCell::new(StrongOptional::empty()),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
         raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
-        pending_pinned_write: Cell::new(PendingPinnedWrite::default()),
+        pending_pinned_write: Cell::new(PendingPinnedWrite::new()),
         pending_pinned_write_owner: JsCell::new(crate::node::StringOrBuffer::EMPTY),
-        auto_flusher: JsCell::new(AutoFlusher::default()),
+        auto_flusher: JsCell::new(AutoFlusher::new()),
     }));
 
     // SAFETY: `response` was just allocated and leaked; we hold the only reference.

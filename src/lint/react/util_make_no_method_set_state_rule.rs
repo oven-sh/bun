@@ -29,12 +29,21 @@ pub(crate) fn should_be_noop<'a>(file: &'a File<'a>, method_name: &str) -> bool 
 }
 
 /// What the walks up from the calls of a file have found, for one `name_matches`.
-#[derive(Default)]
 pub(crate) struct Walks<'a> {
     /// The nearest ancestor with the name: its range and its `key.name`.
     methods: AncestorMemo<'a, (Span, &'a [u8])>,
     /// The nearest ancestor that is a function.
     functions: AncestorMemo<'a, Node<'a>>,
+}
+
+impl<'a> Walks<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            methods: AncestorMemo::new(),
+            functions: AncestorMemo::new(),
+        }
+    }
 }
 
 /// `/Function(Expression|Declaration)$/.test(ancestor.type)`

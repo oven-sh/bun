@@ -10,7 +10,7 @@ pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 /// `PackedMap.end_state` — only the two fields the bundler needs to thread
 /// between chunks (generated_column is always 0 because minification is off,
 /// generated_line is recomputed per concatenation).
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct EndState {
     pub(crate) original_line: i32,
     pub(crate) original_column: i32,
@@ -67,10 +67,8 @@ impl PackedMap {
 ///
 /// An SoA split buys nothing for a 2-word payload (and `MultiArrayElement`
 /// cannot be derived for an enum), so callers store `Vec<Shared>`.
-#[derive(Default)]
 pub(crate) enum Shared {
     Some(Rc<PackedMap>),
-    #[default]
     None,
     LineCount(LineCount),
 }

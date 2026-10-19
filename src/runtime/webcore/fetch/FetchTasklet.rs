@@ -204,11 +204,11 @@ pub(crate) enum HTTPRequestBody {
     ReadableStream(ReadableStreamStrong),
 }
 
-impl Default for HTTPRequestBody {
-    fn default() -> Self {
+impl HTTPRequestBody {
+    pub(crate) fn new() -> Self {
         // `Blob` has no `const EMPTY`
         // (non-Copy fields), so use the runtime `Default` instead of a const.
-        HTTPRequestBody::AnyBlob(AnyBlob::Blob(Blob::default()))
+        HTTPRequestBody::AnyBlob(AnyBlob::Blob(Blob::empty()))
     }
 }
 
@@ -263,8 +263,9 @@ impl HTTPRequestBody {
                 // `l.readable` out by value (E0509). `mem::take` leaves a default
                 // readable; `Value::drop` on the residual `Locked` then runs
                 // `readable.deinit()` on that default — a no-op.
-                return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
+                return Ok(HTTPRequestBody::ReadableStream(core::mem::replace(
                     &mut locked.readable,
+                    ReadableStreamStrong::Empty,
                 )));
             }
         }
@@ -274,8 +275,9 @@ impl HTTPRequestBody {
                 if let BodyValue::Locked(l) = &mut body_value {
                     if l.readable.has() {
                         // See note above re: E0509 and `Value::drop`.
-                        return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
+                        return Ok(HTTPRequestBody::ReadableStream(core::mem::replace(
                             &mut l.readable,
+                            ReadableStreamStrong::Empty,
                         )));
                     }
                 }
@@ -506,17 +508,17 @@ impl FetchTasklet {
         // `http.client` borrows `url_proxy_buffer` / `unix_socket_path` / `request_headers`.
         self.http = None;
         if !self.url_proxy_buffer.is_empty() {
-            self.url_proxy_buffer = Box::default();
+            self.url_proxy_buffer = Box::new([]);
         }
 
-        self.unix_socket_path = Box::default();
+        self.unix_socket_path = Box::new([]);
 
         if let Some(certificate) = self.result.certificate_info.take() {
             drop(certificate);
         }
 
         // Drop on assignment runs the cleanup. MultiArrayList has no `clear()`.
-        self.request_headers = Headers::default();
+        self.request_headers = Headers::new();
 
         if let Some(metadata) = self.metadata.take() {
             drop(metadata);
@@ -527,7 +529,7 @@ impl FetchTasklet {
 
         self.clear_stream_handlers();
 
-        self.scheduled_response_buffer = MutableString::default();
+        self.scheduled_response_buffer = MutableString::new();
         // Always detach request_body regardless of type.
         // When request_body is a ReadableStream, startRequestStream() hands
         // the stream off to `assign_to_stream`, so FetchTasklet's reference
@@ -577,7 +579,7 @@ impl FetchTasklet {
             unsafe { (*this).has_schedule_callback.load(Ordering::Acquire) };
         // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
         let ticket = unsafe {
-            (*this).scheduled_response_buffer = MutableString::default();
+            (*this).scheduled_response_buffer = MutableString::new();
             (*this).http_ticket.take()
         }
         .expect(Self::HOLDS_TICKET);
@@ -649,7 +651,7 @@ impl FetchTasklet {
                     jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
                 )),
                 message: BunString::static_("Stream already used, please create a new one"),
-                ..Default::default()
+                ..jsc::SystemError::new()
             };
             let err_instance = err.to_error_instance(&global_this);
             err_instance.ensure_still_alive();
@@ -663,7 +665,7 @@ impl FetchTasklet {
         let sink: &mut FetchRequestBodySink = Box::leak(Box::new(FetchRequestBodySink {
             task: Some(bun_ptr::BackRef::new_mut(self)),
             high_water_mark: 16384,
-            ..Default::default()
+            ..FetchRequestBodySink::new()
         }));
         let sink_handle = SinkHandle::FetchRequestBody(bun_ptr::BackRef::new_mut(sink));
         self.sink = Some(core::ptr::NonNull::from(&mut *sink));
@@ -895,7 +897,7 @@ impl FetchTasklet {
                     }
                 );
 
-                self.scheduled_response_buffer = MutableString::default();
+                self.scheduled_response_buffer = MutableString::new();
 
                 if matches!(old, BodyValue::Locked(_)) {
                     bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
@@ -1648,7 +1650,7 @@ impl FetchTasklet {
             code: BunString::static_(code),
             message,
             path,
-            ..Default::default()
+            ..jsc::SystemError::new()
         };
 
         BodyValueError::SystemTypeError(fetch_error)
@@ -1862,12 +1864,13 @@ impl FetchTasklet {
             return BodyValue::Locked(pending);
         }
 
-        let scheduled_response_buffer = core::mem::take(&mut self.scheduled_response_buffer);
+        let scheduled_response_buffer =
+            core::mem::replace(&mut self.scheduled_response_buffer, MutableString::new());
         let response = BodyValue::InternalBlob(InternalBlob {
             bytes: scheduled_response_buffer.list,
             was_string: false,
         });
-        self.scheduled_response_buffer = MutableString::default();
+        self.scheduled_response_buffer = MutableString::new();
 
         response
     }
@@ -1886,7 +1889,7 @@ impl FetchTasklet {
     /// Content the server frames anyway (a 205 with content) is dropped and the connection
     /// closed. `is_waiting_body` stays false: nothing may reach this body.
     fn null_body_value(&mut self) -> BodyValue {
-        self.scheduled_response_buffer = MutableString::default();
+        self.scheduled_response_buffer = MutableString::new();
         if self.result.has_more {
             self.abandon_response_body();
         }
@@ -1925,7 +1928,7 @@ impl FetchTasklet {
                 headers: Some(unsafe { HeadersRef::adopt(headers) }),
                 status_code,
                 status_text,
-                ..Default::default()
+                ..crate::webcore::response::Init::new()
             },
             Body::new(body),
             url,
@@ -1992,28 +1995,28 @@ impl FetchTasklet {
             // `AsyncHTTP` has no `Default`/zero-init; defer the Box until
             // `AsyncHTTP::init` produces the value.
             http: None,
-            result: HTTPClientResult::default(),
+            result: HTTPClientResult::new(),
             metadata: None,
             http_ticket: None,
             global_this: GlobalRef::from(cx.global()),
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
-            scheduled_response_buffer: MutableString::default(),
-            response: jsc::Weak::default(),
+            scheduled_response_buffer: MutableString::new(),
+            response: jsc::Weak::new(),
             native_response: JsCell::new(None),
-            response_stream: Default::default(),
+            response_stream: crate::webcore::byte_stream::ProducerHold::new(),
             request_headers: fetch_options.headers,
             declared_request_body_len: None,
             request_body_len_written: 0,
             request_body_mismatched: false,
             promise,
-            concurrent_task: ConcurrentTask::default(),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            concurrent_task: ConcurrentTask::init(),
+            poll_ref: JsCell::new(KeepAlive::new()),
             body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
             abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
             context: cx.context().id(),
-            signals: Signals::default(),
+            signals: Signals::new(),
             signal_store: http::signals::Store::unclaimed(),
             has_schedule_callback: AtomicBool::new(false),
             abort_reason: StrongOptional::empty(),
@@ -2177,7 +2180,7 @@ impl FetchTasklet {
             }
             // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
             // thread), so the same raw pointer can be handed to both sides.
-            let buffer = ThreadSafeStreamBuffer::new(ThreadSafeStreamBuffer::default());
+            let buffer = ThreadSafeStreamBuffer::new(ThreadSafeStreamBuffer::init());
             // SAFETY: fresh heap allocation from `ThreadSafeStreamBuffer::new` (heap::alloc);
             // exclusively owned here until shared below.
             unsafe {
@@ -2497,11 +2500,11 @@ impl FetchTasklet {
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
-        http::http_thread::init(&http::http_thread::InitOpts::default());
+        http::http_thread::init(&http::http_thread::InitOpts::new());
         let node = Self::get(cx, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);
-        let mut batch = bun_threading::thread_pool::Batch::default();
+        let mut batch = bun_threading::thread_pool::Batch::new();
         node_ref.http.as_mut().unwrap().schedule(&mut batch);
         node_ref
             .poll_ref
@@ -2600,7 +2603,7 @@ impl FetchTasklet {
 
         if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Abandoned {
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {
-                task_ref.scheduled_response_buffer = MutableString::default();
+                task_ref.scheduled_response_buffer = MutableString::new();
             }
             if success && task_ref.result.has_more {
                 task_ref.mutex.unlock();

@@ -34,10 +34,16 @@ pub use bun_core::write::{IntLe, Write};
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Discards all bytes written to it but tracks how many were written.
-#[derive(Default)]
 pub struct DiscardingWriter {
     /// Total bytes "written" (discarded) so far.
     pub count: usize,
+}
+
+impl DiscardingWriter {
+    #[inline]
+    pub fn init() -> Self {
+        Self { count: 0 }
+    }
 }
 
 impl DiscardingWriter {

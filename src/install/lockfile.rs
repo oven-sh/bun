@@ -209,13 +209,24 @@ pub(crate) struct LinkedMember {
 /// The workspaces that are reached through a symlink, or through a junction on Windows. Real paths
 /// are only compared with other real paths, because on Windows `realpath` can spell the project
 /// root differently than `top_level_dir` does (drive letter, short names).
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct LinkedMembers {
     /// Keyed by the workspace's path relative to the project root, as bun.lock records it.
     members: StringHashMap<LinkedMember>,
     /// Folders that are known not to be symlinks, so that each one is only checked once.
     real_folders: StringHashMap<()>,
     real_root: Box<[u8]>,
+}
+
+impl LinkedMembers {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            members: StringHashMap::init(),
+            real_folders: StringHashMap::init(),
+            real_root: Box::new([]),
+        }
+    }
 }
 
 impl LinkedMembers {
@@ -316,11 +327,11 @@ impl LinkedMembers {
             &mut buf.0,
             &[path],
         ) else {
-            return Box::default();
+            return Box::new([]);
         };
         match sys::realpath(path, &mut *real_buf) {
             Ok(real_path) => real_path.into(),
-            Err(_) => Box::default(),
+            Err(_) => Box::new([]),
         }
     }
 }
@@ -356,7 +367,6 @@ impl<'a> DepSorter<'a> {
 // Scripts
 // ────────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct Scripts {
     pub(crate) preinstall: Vec<Box<[u8]>>,
     pub(crate) install: Vec<Box<[u8]>>,
@@ -364,6 +374,20 @@ pub struct Scripts {
     pub(crate) preprepare: Vec<Box<[u8]>>,
     pub(crate) prepare: Vec<Box<[u8]>>,
     pub(crate) postprepare: Vec<Box<[u8]>>,
+}
+
+impl Scripts {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            preinstall: Vec::new(),
+            install: Vec::new(),
+            postinstall: Vec::new(),
+            preprepare: Vec::new(),
+            prepare: Vec::new(),
+            postprepare: Vec::new(),
+        }
+    }
 }
 
 impl Scripts {
@@ -442,9 +466,8 @@ impl LoadStep {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Migrated {
-    #[default]
     None,
     Npm,
     Yarn,
@@ -701,7 +724,7 @@ impl Lockfile {
 
             return LoadResult::Ok(LoadResultOk {
                 lockfile: self,
-                serializer_result: Serializer::SerializerLoadResult::default(),
+                serializer_result: Serializer::SerializerLoadResult::new(),
                 migrated: Migrated::None,
                 format: lockfile_format,
             });
@@ -719,15 +742,16 @@ impl Lockfile {
         let mut stream = Stream::new(buf);
 
         self.format = FormatVersion::current();
-        self.scripts = Scripts::default();
+        self.scripts = Scripts::new();
         self.trusted_dependencies = None;
-        self.workspace_paths = NameHashMap::default();
-        self.workspace_versions = VersionHashMap::default();
-        self.self_contained_workspaces = ArrayHashMap::default();
-        self.overrides = OverrideMap::default();
-        self.catalogs = CatalogMap::default();
-        self.package_extensions = Default::default();
-        self.patched_dependencies = PatchedDependenciesMap::default();
+        self.workspace_paths = NameHashMap::new();
+        self.workspace_versions = VersionHashMap::new();
+        self.self_contained_workspaces = ArrayHashMap::new();
+        self.overrides = OverrideMap::new();
+        self.catalogs = CatalogMap::new();
+        self.package_extensions =
+            crate::lockfile_real::package_extensions::PackageExtensions::new();
+        self.patched_dependencies = PatchedDependenciesMap::new();
 
         let link_workspace_packages = pm.is_none_or(|pm| pm.options.link_workspace_packages);
         let load_result = match Serializer::load(self, &mut stream, log, pm) {
@@ -753,7 +777,7 @@ impl Lockfile {
             (pkgs.items_resolution().iter()).zip(pkgs.items_dependencies())
         {
             let pkg_dir: SemverString = match pkg_resolution.tag {
-                ResolutionTag::Root => SemverString::default(),
+                ResolutionTag::Root => SemverString::new(),
                 ResolutionTag::Workspace => *pkg_resolution.workspace(),
                 ResolutionTag::Folder => *pkg_resolution.folder(),
                 _ => continue,
@@ -1247,7 +1271,7 @@ impl Lockfile {
         };
 
         let old_trusted_dependencies = old.trusted_dependencies.take();
-        let old_scripts = core::mem::take(&mut old.scripts);
+        let old_scripts = core::mem::replace(&mut old.scripts, Scripts::new());
         // We will only shrink the number of packages here.
         // never grow
 
@@ -1260,7 +1284,7 @@ impl Lockfile {
         let old_preinstall_state = preinstall_state.clone();
         preinstall_state.fill(Install::PreinstallState::Unknown);
 
-        let mut new: Box<Lockfile> = Box::default();
+        let mut new: Box<Lockfile> = Box::new(Lockfile::new());
         new.string_pool
             .ensure_total_capacity(old.string_pool.capacity())?;
         new.package_index
@@ -1675,28 +1699,28 @@ impl Lockfile {
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
-            pending_peers: Default::default(),
+            pending_peers: ArrayHashMap::new(),
             late_bound_peer: false,
             bundle_placed: false,
             walked: DynamicBitSet::init_empty(slice.len())?,
-            served: Default::default(),
-            list: Default::default(),
-            sort_buf: Default::default(),
-            peer_probes: Default::default(),
+            served: Vec::new(),
+            list: bun_collections::MultiArrayList::new(),
+            sort_buf: Vec::new(),
+            peer_probes: crate::lockfile_real::tree::PeerProbes::new(),
             // Most lookups find nothing, and a miss is cheap in a table that is at most half full.
             placed: tree::Placed::with_capacity(slice.len() * 2),
             replaced_row: false,
-            shipped_rows: Default::default(),
+            shipped_rows: BunHashMap::init(),
             in_shipped_folder: false,
-            contested: Default::default(),
-            contested_rows: Default::default(),
+            contested: BunHashMap::init(),
+            contested_rows: BunHashMap::init(),
             kept: None,
             older_layout: layout == tree::Layout::Older,
             places: Vec::new(),
-            linked: Default::default(),
+            linked: crate::lockfile_real::reachable::Linked::new(),
         };
 
-        Tree::default().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;
+        Tree::new().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;
 
         // This goes breadth-first
         while let Some(item) = builder.queue.read_item() {
@@ -1899,7 +1923,7 @@ impl Lockfile {
             let extern_strings_slice = bun_core::vec::grow_fill(
                 extern_strings_list,
                 bin_extern_strings_count as usize,
-                ExternalString::default(),
+                ExternalString::new(),
             );
 
             *pkg_bin = pkg.package.bin.clone_with_buffers(
@@ -1985,7 +2009,7 @@ impl<'a> Printer<'a> {
         // An entry point (`bun bun.lockb`): the resolver FS singleton may not exist yet.
         let _ = FileSystem::init(None)?;
 
-        let mut lockfile = Box::<Lockfile>::default();
+        let mut lockfile = Box::new(Lockfile::new());
 
         // git's textconv hands over `<random>_bun.lockb`. `bun bun.lockb` also prints a bun.lock.
         let load_from_disk = match File::read_from(Fd::cwd(), lockfile_path) {
@@ -2148,9 +2172,9 @@ impl Lockfile {
     }
 }
 
-impl Default for Lockfile {
+impl Lockfile {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self::init_empty_value()
     }
 }
@@ -2267,27 +2291,27 @@ impl Lockfile {
         Lockfile {
             format: FormatVersion::current(),
             text_lockfile_version: bun_lock::Version::current(),
-            packages: Default::default(),
-            buffers: Buffers::default(),
-            package_index: PackageIndexMap::default(),
-            string_pool: StringPool::default(),
+            packages: bun_collections::MultiArrayList::new(),
+            buffers: Buffers::new(),
+            package_index: PackageIndexMap::init(),
+            string_pool: StringPool::new(),
             scratch: Scratch::init(),
-            scripts: Scripts::default(),
+            scripts: Scripts::new(),
             trusted_dependencies: None,
-            workspace_paths: NameHashMap::default(),
-            workspace_versions: VersionHashMap::default(),
-            self_contained_workspaces: ArrayHashMap::default(),
-            linked_members: LinkedMembers::default(),
-            overrides: OverrideMap::default(),
-            catalogs: CatalogMap::default(),
-            package_extensions: Default::default(),
+            workspace_paths: NameHashMap::new(),
+            workspace_versions: VersionHashMap::new(),
+            self_contained_workspaces: ArrayHashMap::new(),
+            linked_members: LinkedMembers::new(),
+            overrides: OverrideMap::new(),
+            catalogs: CatalogMap::new(),
+            package_extensions: crate::lockfile_real::package_extensions::PackageExtensions::new(),
             meta_hash: ZERO_HASH,
-            patched_dependencies: PatchedDependenciesMap::default(),
+            patched_dependencies: PatchedDependenciesMap::new(),
             saved_config_version: None,
             loaded_package_count: 0,
-            held_at_load: DynamicBitSet::default(),
-            exact_pinned: DynamicBitSet::default(),
-            only_bundled: DynamicBitSet::default(),
+            held_at_load: DynamicBitSet::new(),
+            exact_pinned: DynamicBitSet::new(),
+            only_bundled: DynamicBitSet::new(),
         }
     }
 
@@ -2592,7 +2616,9 @@ impl Lockfile {
         &mut self,
         pkg: &mut Package,
     ) -> Result<PackageID, AllocError> {
-        let entry = self.package_index.get_or_put(pkg.name_hash)?;
+        let entry = self
+            .package_index
+            .get_or_put(pkg.name_hash, PackageIndexEntry::new)?;
         let buf = self.buffers.string_bytes.as_slice();
 
         if entry.found_existing {
@@ -2621,7 +2647,9 @@ impl Lockfile {
         id: PackageID,
         name_hash: PackageNameHash,
     ) -> Result<(), AllocError> {
-        let gpe = self.package_index.get_or_put(name_hash)?;
+        let gpe = self
+            .package_index
+            .get_or_put(name_hash, PackageIndexEntry::new)?;
         if gpe.found_existing {
             gpe.value_ptr.insert(
                 id,
@@ -2812,7 +2840,7 @@ impl DependencyQueue {
     fn init() -> DependencyQueue {
         DependencyQueue {
             commanded: Lane::init(),
-            asked_as: BunHashMap::default(),
+            asked_as: BunHashMap::init(),
             found: Lane::init(),
             waits_for: None,
         }
@@ -2910,8 +2938,8 @@ impl Scratch {
     fn init() -> Scratch {
         Scratch {
             dependency_list_queue: DependencyQueue::init(),
-            duplicate_checker_map: DuplicateCheckerMap::default(),
-            unplaced_subtree: DynamicBitSet::default(),
+            duplicate_checker_map: DuplicateCheckerMap::init(),
+            unplaced_subtree: DynamicBitSet::new(),
         }
     }
 }
@@ -3125,11 +3153,11 @@ pub mod package_index {
         }
     }
 
-    impl Default for Entry {
+    impl Entry {
         /// `HashMap::get_or_put` needs a `Default` to fill the value slot before
         /// the caller writes the real `Entry::Id(..)` / `Entry::Ids(..)`.
         #[inline]
-        fn default() -> Self {
+        pub fn new() -> Self {
             Entry::Id(0)
         }
     }
@@ -3379,7 +3407,7 @@ impl Lockfile {
             return Ok(ZERO_HASH);
         }
 
-        let mut string_builder = bun_core::StringBuilder::default();
+        let mut string_builder = bun_core::StringBuilder::new();
         let names: &[SemverString] = &self.packages.items_name()[..packages_len];
         let resolutions: &[Resolution] = &self.packages.items_resolution()[..packages_len];
         let bytes = self.buffers.string_bytes.as_slice();
@@ -3624,7 +3652,7 @@ impl Lockfile {
     pub(crate) fn recorded_default_trust(
         recorded: &TrustedDependenciesSet,
     ) -> Result<TrustedDependenciesSet, AllocError> {
-        let mut trusted = TrustedDependenciesSet::default();
+        let mut trusted = TrustedDependenciesSet::new();
         for (hash, key) in default_trusted_dependencies::entries() {
             // bun.lockb records the hash alone.
             if recorded
@@ -3656,7 +3684,7 @@ impl Lockfile {
                 continue;
             };
             let path = package_json_path.slice();
-            let entry = match manifests.get_with_path(log, path, Default::default()) {
+            let entry = match manifests.get_with_path(log, path, super::GetJsonOptions::new()) {
                 crate::GetJsonResult::Entry(entry) => entry,
                 // An install skips a member that is not on disk, too.
                 crate::GetJsonResult::ReadErr(_) if !relative_dir.is_empty() => {
@@ -3773,10 +3801,10 @@ pub struct PatchedDep {
     __patchfile_hash: u64,
 }
 
-impl Default for PatchedDep {
-    fn default() -> Self {
+impl PatchedDep {
+    pub fn new() -> Self {
         PatchedDep {
-            path: SemverString::default(),
+            path: SemverString::new(),
             _padding: [0; 7],
             patchfile_hash_is_null: true,
             __patchfile_hash: 0,
@@ -3791,7 +3819,7 @@ impl PatchedDep {
     pub(crate) fn with_path(path: SemverString) -> Self {
         Self {
             path,
-            ..Default::default()
+            ..Self::new()
         }
     }
 

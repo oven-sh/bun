@@ -116,7 +116,7 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
     let mut checks = Checks {
         file,
         candidates: None,
-        tops: Tops::default(),
+        tops: Tops::new(),
         first: None,
         all: Vec::new(),
         noticed: 0,
@@ -131,7 +131,7 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
         at: it.1.at,
         end: Diagnostic::NO_LENGTH,
         message: b"Unexpected token".to_vec(),
-        ..SyntaxError::default()
+        ..SyntaxError::new()
     })
 }
 
@@ -157,7 +157,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
     file: &'a File<'a>,
     is_typescript: bool,
 ) -> Vec<SyntaxError> {
-    let tops = std::cell::RefCell::new(Tops::default());
+    let tops = std::cell::RefCell::new(Tops::new());
     // oxc reads the parameters of an arrow function that isn't async in the context around it.
     let is_at_top_level = |node: Node<'a>| {
         let mut inner = node;
@@ -172,7 +172,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
             at,
             end: 0,
             message: message.into(),
-            ..SyntaxError::default()
+            ..SyntaxError::new()
         };
         error.stage(Stage::Parser)
     };
@@ -249,7 +249,7 @@ pub(super) fn refusal_of_babel<'a>(
     let mut checks = Checks {
         file,
         candidates: candidates.as_ref(),
-        tops: Tops::default(),
+        tops: Tops::new(),
         first: None,
         all: Vec::new(),
         noticed: 0,
@@ -266,10 +266,18 @@ pub(super) fn refusal_of_babel<'a>(
 
 /// The way up from a node, as [`Node::ancestors`], without the expressions between an expression and the outermost that it is
 /// part of. `a + b + c + ..` is as deep as it is long, and what is asked about each of a, b, c is which function or class it is in.
-#[derive(Default)]
 struct Tops<'a> {
     /// The outermost expression around those on a long way.
     known: IdMap<Expr<'a>, Expr<'a>>,
+}
+
+impl<'a> Tops<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            known: IdMap::init(),
+        }
+    }
 }
 
 impl<'a> Tops<'a> {
@@ -448,7 +456,7 @@ pub(super) fn first_error<'a>(
     let mut checks = Checks {
         file,
         candidates: None,
-        tops: Tops::default(),
+        tops: Tops::new(),
         first: None,
         all: Vec::new(),
         noticed: 0,
@@ -555,7 +563,7 @@ pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Vec<Synta
             end: 0,
             message: b"`for await` loops are only allowed within async functions and at the top levels of modules"
                 .to_vec(),
-            ..SyntaxError::default()
+            ..SyntaxError::new()
         };
         let help =
             "Either remove this `await` or add the `async` keyword to the enclosing function";
@@ -637,7 +645,7 @@ fn checks_of_oxc<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>)
     Checks {
         file,
         candidates,
-        tops: Tops::default(),
+        tops: Tops::new(),
         first: None,
         all: Vec::new(),
         noticed: 0,
@@ -682,7 +690,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                 at,
                 end,
                 message,
-                ..SyntaxError::default()
+                ..SyntaxError::new()
             });
         }
         let noticed = self.noticed.max(at);
@@ -691,7 +699,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                 at,
                 end,
                 message,
-                ..SyntaxError::default()
+                ..SyntaxError::new()
             };
             self.first = Some((noticed, error));
         }
@@ -1549,7 +1557,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                     .find(|&(i, it)| names[..i].iter().any(|before| before.0 == it.0))
                     .map(|it| it.1),
                 _ => {
-                    let mut seen = FxHashSet::default();
+                    let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
                     names.iter().find(|it| !seen.insert(it.0))
                 }
             };

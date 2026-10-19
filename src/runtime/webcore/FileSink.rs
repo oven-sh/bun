@@ -169,8 +169,8 @@ pub struct Options {
     pub(crate) mkdirp: bool,
 }
 
-impl Default for Options {
-    fn default() -> Self {
+impl Options {
+    pub fn new() -> Self {
         Self {
             input_path: PathOrFileDescriptor::Fd(Fd::INVALID),
             mode: 0o664,
@@ -593,7 +593,7 @@ impl FileSink {
 
     /// The pipe is over: detach the controller cell (it must never outlive this sink attached) and drop the root on it.
     fn release_pipe(&self) {
-        let pipe = self.pipe.replace(streams::PipeCell::default());
+        let pipe = self.pipe.replace(streams::PipeCell::new());
         pipe.clear_slots();
         let (Some(cell), Some(global)) = (pipe.cell(), self.js_global()) else {
             return;
@@ -1092,7 +1092,7 @@ impl FileSink {
         unsafe {
             let _guard = RefPtr::init_ref(this);
             // The root is on the cell being destroyed: dropped here, `Drop` finds no cell to detach.
-            drop((*this).pipe.replace(streams::PipeCell::default()));
+            drop((*this).pipe.replace(streams::PipeCell::new()));
             FileSink::release_refs_stranded_by_shutdown(this);
             if (*this).js_vm().is_some_and(|vm| vm.is_shutting_down())
                 && (*this).pump_promise_ref.replace(false)
@@ -1628,14 +1628,14 @@ impl FileSink {
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         FileSink {
             ref_count: Cell::new(1),
-            writer: JsCell::new(IOWriter::default()),
+            writer: JsCell::new(IOWriter::new()),
             event_loop_handle,
             written: Cell::new(0),
             pending: JsCell::new(streams::WritablePending {
                 result: streams::Writable::Done,
-                ..Default::default()
+                ..streams::WritablePending::new()
             }),
-            source: JsCell::new(streams::SourceHandle::default()),
+            source: JsCell::new(streams::SourceHandle::None),
             done: Cell::new(false),
             started: Cell::new(false),
             must_be_kept_alive_until_eof: Cell::new(false),
@@ -1647,9 +1647,9 @@ impl FileSink {
             is_tty: Cell::new(false),
             is_socket: Cell::new(false),
             fd: Cell::new(fd),
-            auto_flusher: JsCell::new(AutoFlusher::default()),
-            run_pending_later: FlushPendingTask::default(),
-            pipe: JsCell::new(streams::PipeCell::default()),
+            auto_flusher: JsCell::new(AutoFlusher::new()),
+            run_pending_later: FlushPendingTask::new(),
+            pipe: JsCell::new(streams::PipeCell::new()),
             stream_error: JsCell::new(None),
             stream_js_error: Cell::new(false),
             stream_bytes: Cell::new(None),
@@ -1681,9 +1681,17 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
     }
 });
 
-#[derive(Default)]
 pub(crate) struct FlushPendingTask {
     pub(crate) has: Cell<bool>,
+}
+
+impl FlushPendingTask {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            has: core::cell::Cell::new(false),
+        }
+    }
 }
 
 impl bun_event_loop::Taskable for FlushPendingTask {

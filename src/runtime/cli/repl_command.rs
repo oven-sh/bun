@@ -57,7 +57,7 @@ impl ReplCommand {
 
         jsc::initialize(jsc::InitializeOptions {
             eval_mode: true,
-            ..Default::default()
+            ..jsc::InitializeOptions::new()
         });
 
         bun_ast::initialize_store();
@@ -77,14 +77,20 @@ impl ReplCommand {
         // not take a caller-provided allocator in the Rust port; `vm.arena` is
         // set below).
         let vm: *mut VirtualMachine = VirtualMachine::init(jsc::VirtualMachineInitOptions {
-            transform_options: core::mem::take(&mut ctx.args),
-            debugger: core::mem::take(&mut ctx.runtime_options.debugger),
+            transform_options: core::mem::replace(
+                &mut ctx.args,
+                bun_bundler::options::TransformOptions::new(),
+            ),
+            debugger: core::mem::replace(
+                &mut ctx.runtime_options.debugger,
+                bun_options_types::context::Debugger::Unspecified,
+            ),
             log: core::ptr::NonNull::new(ctx.log),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
             eval_mode: true,
             is_main_thread: true,
-            ..Default::default()
+            ..jsc::VirtualMachineInitOptions::new()
         })?;
 
         // SAFETY: vm is a freshly heap-allocated VirtualMachine valid for process lifetime.

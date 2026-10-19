@@ -81,7 +81,7 @@ pub(super) fn format_embedded_language(
     };
     let mut out = Vec::new();
     let css = |parser, out: &mut Vec<u8>| {
-        crate::css::format(code, parser, &options, &mut Default::default(), out)
+        crate::css::format(code, parser, &options, &mut crate::css::Scratch::new(), out)
     };
     match &lang.to_ascii_lowercase()[..] {
         b"css" => css(crate::css::Parser::Css, &mut out),
@@ -91,10 +91,10 @@ pub(super) fn format_embedded_language(
             code,
             crate::json::Parser::Json,
             &options,
-            &mut Default::default(),
+            &mut crate::json::Scratch::new(),
             &mut out,
         ),
-        b"yaml" => crate::yaml::format(code, &options, &mut Default::default(), &mut out),
+        b"yaml" => crate::yaml::format(code, &options, &mut crate::yaml::Scratch::new(), &mut out),
         _ => return None,
     }
     .ok()?;

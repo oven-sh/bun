@@ -213,7 +213,7 @@ impl WriteFile {
             return;
         }
         self.task = WorkPoolTask {
-            node: Default::default(),
+            node: bun_threading::thread_pool::Node::new(),
             callback: Self::do_write_loop_task,
         };
         WorkPool::schedule(&raw mut self.task);
@@ -230,7 +230,7 @@ impl WriteFile {
         this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         this.system_error = Some(err.to_system_error().into());
         this.task = WorkPoolTask {
-            node: Default::default(),
+            node: bun_threading::thread_pool::Node::new(),
             callback: Self::do_write_loop_task,
         };
         WorkPool::schedule(&raw mut this.task);
@@ -297,11 +297,11 @@ impl WriteFile {
             system_error: None,
             errno: None,
             task: WorkPoolTask {
-                node: Default::default(),
+                node: bun_threading::thread_pool::Node::new(),
                 callback: Self::do_write_loop_task,
             },
             io_task: None,
-            io_poll: io::Poll::default(),
+            io_poll: io::Poll::new(),
             io_request: io::Request::new(Self::on_request_writable),
             io_parking: super::IoParking::new(),
             state: AtomicU8::new(ClosingState::Running as u8),
@@ -657,7 +657,7 @@ mod windows_impl {
                 fd: -1,
                 err: None,
                 total_written: 0,
-                poll_ref: KeepAlive::default(),
+                poll_ref: KeepAlive::new(),
                 owned_fd: false,
             });
             // SAFETY: just allocated, sole owner until returned.
@@ -766,7 +766,7 @@ mod windows_impl {
                             sys::Error {
                                 errno: sys::E::NAMETOOLONG as _,
                                 syscall: sys::Tag::open,
-                                ..Default::default()
+                                ..sys::Error::init()
                             },
                         )
                     });
@@ -869,7 +869,7 @@ mod windows_impl {
                             errno: err as _,
                             path,
                             syscall: sys::Tag::open,
-                            ..Default::default()
+                            ..sys::Error::init()
                         },
                     )
                 } {
@@ -921,7 +921,7 @@ mod windows_impl {
                     // this shouldn't happen
                     .unwrap_or(path) as *const [u8],
                 ticket: bun_jsc::virtual_machine::VirtualMachine::get().ticket(),
-                task: Default::default(),
+                task: WorkPoolTask::new(),
             });
         }
 
@@ -1284,7 +1284,7 @@ impl WriteFileWaitFromLockedValueTask {
         let global_ref = this.global_this;
         let global_this = global_ref.get();
         let context = global_this.bun_vm().context_of(this.context);
-        let mut file_blob = core::mem::take(&mut this.file_blob);
+        let mut file_blob = core::mem::replace(&mut this.file_blob, Blob::empty());
         match value {
             body::Value::Error(err_ref) => {
                 let err = err_ref.to_js(global_this);
@@ -1320,7 +1320,7 @@ impl WriteFileWaitFromLockedValueTask {
                     &mut file_blob,
                     &blob::WriteFileOptions {
                         mkdirp_if_not_exists: Some(this.mkdirp_if_not_exists),
-                        ..Default::default()
+                        ..blob::WriteFileOptions::new()
                     },
                 ) {
                     Ok(p) => p,

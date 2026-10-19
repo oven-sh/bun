@@ -88,7 +88,7 @@ impl RelatedGetterSetterPairs {
     /// tsgolint's `checkMembers`: an accessor is checked against the one of the other kind that is
     /// kept under its name, and is kept itself only when there is none.
     fn check_members<'a>(members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
-        let mut accessors = FxHashMap::<Cow<'a, [u8]>, Accessor<'a>>::default();
+        let mut accessors = FxHashMap::<Cow<'a, [u8]>, Accessor<'a>>::with_hasher(rustc_hash::FxBuildHasher);
         for member in members {
             let accessor = if getter_type(member).is_some() {
                 Accessor::Getter(member)
@@ -123,7 +123,7 @@ impl RelatedGetterSetterPairs {
         }
         // The last getter and the last setter of a name are the pair.
         let mut pairs =
-            FxHashMap::<Cow<'a, [u8]>, (Option<Member<'a>>, Option<Param<'a>>)>::default();
+            FxHashMap::<Cow<'a, [u8]>, (Option<Member<'a>>, Option<Param<'a>>)>::with_hasher(rustc_hash::FxBuildHasher);
         for member in members {
             if getter_type(member).is_some() {
                 pairs

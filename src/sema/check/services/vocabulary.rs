@@ -10,7 +10,7 @@ use crate::types::{TypeId, tf};
 bitflags::bitflags! {
     /// `ts.TypeFlags`. The names and the meanings are TypeScript's, the numbers are not those of
     /// TypeScript 5.
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
     pub struct TypeFlags: u32 {
         const ANY = tf::ANY;
         const UNKNOWN = tf::UNKNOWN;
@@ -84,7 +84,7 @@ bitflags::bitflags! {
 
 bitflags::bitflags! {
     /// `ts.ObjectFlags`, those that say what kind of object type a type is.
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
     pub struct ObjectFlags: u32 {
         /// The declared type of a class.
         const CLASS = 1 << 0;
@@ -115,7 +115,7 @@ bitflags::bitflags! {
 
 bitflags::bitflags! {
     /// `ts.SymbolFlags`, with TypeScript's numbers.
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
     pub struct SymbolFlags: u32 {
         const FUNCTION_SCOPED_VARIABLE = 1 << 0;
         const BLOCK_SCOPED_VARIABLE = 1 << 1;
@@ -215,7 +215,7 @@ impl From<SymbolFlags> for SymFlags {
 
 bitflags::bitflags! {
     /// `ts.CheckFlags`, those of a property that the checker has made.
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
     pub struct CheckFlags: u32 {
         /// An instantiation of a declared member.
         const INSTANTIATED = 1 << 0;
@@ -242,7 +242,7 @@ bitflags::bitflags! {
 
 bitflags::bitflags! {
     /// `ts.ModifierFlags`, with TypeScript's numbers.
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
     pub struct ModifierFlags: u32 {
         const PUBLIC = 1 << 0;
         const PRIVATE = 1 << 1;
@@ -293,7 +293,7 @@ impl From<Flags> for ModifierFlags {
 
 bitflags::bitflags! {
     /// `ts.NodeFlags`, those that rules look at.
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
     pub struct NodeFlags: u32 {
         const LET = 1 << 0;
         const CONST = 1 << 1;
@@ -311,7 +311,7 @@ bitflags::bitflags! {
 
 bitflags::bitflags! {
     /// `ts.ElementFlags`: the kind of an element of a tuple type.
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
     pub struct ElementFlags: u8 {
         /// `T`
         const REQUIRED = 1 << 0;
@@ -328,7 +328,7 @@ bitflags::bitflags! {
 
 bitflags::bitflags! {
     /// `ts.TypeFormatFlags`, those that change what `typeToString` prints.
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
     pub struct TypeFormatFlags: u32 {
         const NO_TRUNCATION = 1 << 0;
         /// `Array<T>` for `T[]`.
@@ -657,7 +657,7 @@ pub struct FileInfo<'a> {
 }
 
 /// `ts.CompilerOptions`, as far as rules read them. What `strict` implies is resolved.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CompilerOptions {
     pub strict_null_checks: bool,
     pub strict_function_types: bool,
@@ -685,4 +685,37 @@ pub struct CompilerOptions {
     pub use_case_sensitive_file_names: bool,
     pub target: crate::resolve::ScriptTarget,
     pub module: crate::resolve::ModuleKind,
+}
+
+impl CompilerOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            strict_null_checks: false,
+            strict_function_types: false,
+            strict_bind_call_apply: false,
+            strict_property_initialization: false,
+            no_implicit_any: false,
+            no_implicit_this: false,
+            no_implicit_returns: false,
+            no_implicit_override: false,
+            use_unknown_in_catch_variables: false,
+            no_unchecked_indexed_access: false,
+            no_property_access_from_index_signature: false,
+            no_fallthrough_cases_in_switch: false,
+            exact_optional_property_types: false,
+            isolated_modules: false,
+            isolated_declarations: false,
+            verbatim_module_syntax: false,
+            experimental_decorators: false,
+            emit_decorator_metadata: false,
+            allow_synthetic_default_imports: false,
+            es_module_interop: false,
+            allow_js: false,
+            check_js: false,
+            use_case_sensitive_file_names: false,
+            target: crate::resolve::ScriptTarget::None,
+            module: crate::resolve::ModuleKind::Es2022,
+        }
+    }
 }

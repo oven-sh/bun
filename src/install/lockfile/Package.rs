@@ -176,7 +176,7 @@ pub(crate) fn parse_append_trusted_dependencies(
         ExprData::EArrayJSON(arr) => arr.get().items().len(),
         _ => return Err(invalid_trusted_dependencies(log, source, q.loc)),
     };
-    let trusted = trusted_dependencies.get_or_insert_with(Default::default);
+    let trusted = trusted_dependencies.get_or_insert_with(ArrayHashMap::new);
     trusted.ensure_unused_capacity(count)?;
     if let Some(mut items) = q.expr.as_array() {
         while let Some(item) = items.next() {
@@ -306,7 +306,7 @@ impl ResolverContext for () {
         _builder: &mut StringBuilder<'_>,
         _json: &Expr,
     ) -> crate::Result<ResolutionType<u64>> {
-        Ok(ResolutionType::default())
+        Ok(ResolutionType::new())
     }
 }
 
@@ -365,17 +365,17 @@ bun_collections::multi_array_columns! {
     }
 }
 
-impl<SemverIntType: VersionInt> Default for Package<SemverIntType> {
-    fn default() -> Self {
+impl<SemverIntType: VersionInt> Package<SemverIntType> {
+    pub fn new() -> Self {
         Self {
-            name: String::default(),
+            name: String::new(),
             name_hash: 0,
-            resolution: Resolution::<SemverIntType>::default(),
-            dependencies: DependencySlice::default(),
-            resolutions: PackageIDSlice::default(),
+            resolution: Resolution::<SemverIntType>::new(),
+            dependencies: DependencySlice::empty(),
+            resolutions: PackageIDSlice::empty(),
             meta: Meta::init(),
-            bin: Bin::default(),
-            scripts: Scripts::default(),
+            bin: Bin::empty(),
+            scripts: Scripts::new(),
         }
     }
 }
@@ -458,7 +458,7 @@ impl Package<u64> {
         bun_core::vec::extend_from_fn(
             &mut new.buffers.dependencies,
             old_dependencies.len(),
-            |_| Dependency::default(),
+            |_| Dependency::new(),
         );
         bun_core::vec::extend_from_fn(&mut new.buffers.resolutions, old_dependencies.len(), |_| {
             invalid_package_id
@@ -470,7 +470,7 @@ impl Package<u64> {
         bun_core::vec::grow_fill(
             &mut new.buffers.extern_strings,
             new_extern_string_count,
-            ExternalString::default(),
+            ExternalString::new(),
         );
 
         let id = new.packages.len() as PackageID;
@@ -565,7 +565,7 @@ impl Package<u64> {
     ) -> crate::Result<Self> {
         #[allow(non_snake_case)]
         let FEATURES = features;
-        let mut package = Self::default();
+        let mut package = Self::new();
 
         let package_version = *package_version_ptr;
 
@@ -628,7 +628,7 @@ impl Package<u64> {
         let extern_strings_slice = bun_core::vec::grow_fill(
             extern_strings_list,
             bin_extern_strings_count as usize,
-            ExternalString::default(),
+            ExternalString::new(),
         );
 
         // -- Cloning
@@ -651,7 +651,7 @@ impl Package<u64> {
             bun_core::vec::extend_from_fn(
                 dependencies_list,
                 total_dependencies_count as usize,
-                |_| Dependency::default(),
+                |_| Dependency::new(),
             );
             debug_assert_eq!(dependencies_list.len(), total_len);
             let dependencies = &mut dependencies_list[dep_start..total_len];
@@ -748,7 +748,7 @@ impl Package<u64> {
                             // only, so it is not registered as one of the project's aliases.
                             None,
                         )
-                        .unwrap_or_default(),
+                        .unwrap_or_else(bun_install_types::DependencyVersion::new),
                     };
                     lockfile::CatalogMap::strip_reference(&mut dependency);
 
@@ -866,7 +866,6 @@ impl core::fmt::Display for ChangedDependency {
     }
 }
 
-#[derive(Default)]
 pub struct DiffSummary {
     pub(crate) add: u32,
     pub(crate) remove: u32,
@@ -899,6 +898,30 @@ pub struct DiffSummary {
     /// Indexes, in the new root's dependencies, of the workspaces that a lockfile from Bun 1.4 or
     /// older has no entry for, because the root also depends on a registry version of that name.
     pub(crate) members_left_out: Vec<u32>,
+}
+
+impl DiffSummary {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            add: 0,
+            remove: 0,
+            first_change: None,
+            dropped_rows: Vec::new(),
+            update: 0,
+            script_only_updates: 0,
+            overrides_changed: false,
+            catalogs_changed: false,
+            package_extensions_changed: false,
+            removed_extension_rows: Vec::new(),
+            added_trusted_dependencies: TrustedDependenciesSet::new(),
+            removed_trusted_dependencies: false,
+            patched_dependencies_changed: false,
+            workspace_versions_changed: false,
+            pruned_workspaces: Vec::new(),
+            members_left_out: Vec::new(),
+        }
+    }
 }
 
 impl DiffSummary {
@@ -991,7 +1014,7 @@ impl Diff {
         mut id_mapping: Option<&mut [PackageID]>,
         removed_names: &mut Vec<PackageNameHash>,
     ) -> crate::Result<DiffSummary> {
-        let mut summary = DiffSummary::default();
+        let mut summary = DiffSummary::new();
         let is_root = id_mapping.is_some();
         let frozen = pm.options.enable.frozen_lockfile();
         let keeps_missing_workspaces = lockfile::pruned_workspaces::keeps_missing_workspaces(pm);
@@ -1295,13 +1318,17 @@ impl Diff {
                         break 'update_mapping false;
                     };
 
-                    let mut workspace_pkg = Package::default();
+                    let mut workspace_pkg = Package::new();
 
                     // `parse_with_json` does not touch the storage of the map `source` lives in.
                     let (source_ref, json_root): (bun_ptr::ParentRef<bun_ast::Source>, Expr) =
                         match pm
                             .workspace_package_json_cache
-                            .get_with_path(&mut *log, package_json_path.slice(), Default::default())
+                            .get_with_path(
+                                &mut *log,
+                                package_json_path.slice(),
+                                super::super::GetJsonOptions::new(),
+                            )
                             .unwrap()
                         {
                             Ok(entry) => (bun_ptr::ParentRef::new(&entry.source), entry.root),
@@ -1590,7 +1617,7 @@ impl Diff {
         };
         let source =
             bun_ast::Source::init_path_string(package_json_path.slice(), contents.as_slice());
-        let mut folder_pkg = Package::default();
+        let mut folder_pkg = Package::new();
         // Its messages point into `source`; the resolver reports them when it reads the directory.
         let mut parse_log = bun_ast::Log::init();
         if folder_pkg
@@ -1933,7 +1960,7 @@ impl Package<u64> {
             // declares applies to that dependency only.
             (features.is_main || features.is_workspace).then_some(&mut *pm),
         )
-        .unwrap_or_default();
+        .unwrap_or_else(bun_install_types::DependencyVersion::new);
         let mut workspace_range: Option<semver::query::Group> = None;
         #[allow(non_snake_case)]
         let FEATURES = features;
@@ -2173,7 +2200,7 @@ impl Package<u64> {
                         linked_members.look_at(relative);
                     }
 
-                    let workspace_entry = workspace_paths.get_or_put(name_hash)?;
+                    let workspace_entry = workspace_paths.get_or_put(name_hash, String::new)?;
                     let found_matching_workspace = workspace_entry.found_existing;
 
                     if let Some(ver) = workspace_version {
@@ -2241,7 +2268,7 @@ impl Package<u64> {
             && !group.behavior.is_peer()
             && !group.behavior.is_workspace()
         {
-            let entry = duplicate_checker_map.get_or_put(external_alias.hash)?;
+            let entry = duplicate_checker_map.get_or_put(external_alias.hash, bun_ast::Loc::new)?;
             if entry.found_existing {
                 // duplicate dependencies are allowed in optionalDependencies
                 if group.behavior.is_optional() {
@@ -2272,7 +2299,7 @@ impl Package<u64> {
                             Some(source),
                             source.range_of_string(value_loc_of(source, *entry.value_ptr)),
                         ),
-                        ..Default::default()
+                        ..bun_ast::Data::new()
                     });
 
                     log.add_range_warning_fmt_with_notes(
@@ -2317,7 +2344,7 @@ impl Package<u64> {
         } else {
             install::Origin::Npm
         };
-        self.name = String::default();
+        self.name = String::new();
         self.name_hash = 0;
 
         // -- Count the sizes
@@ -2442,7 +2469,7 @@ impl Package<u64> {
             PackageNameHash,
             &[u8],
             bun_collections::identity_context::U64,
-        > = ArrayHashMap::default();
+        > = ArrayHashMap::new();
 
         if FEATURES.peer_dependencies {
             if let Some(peer_dependencies_meta) = json.as_property(b"peerDependenciesMeta") {
@@ -2766,7 +2793,7 @@ impl Package<u64> {
                                     string_builder.append::<String>(bin_name),
                                     string_builder.append::<String>(value),
                                 ]),
-                                ..Default::default()
+                                ..Bin::empty()
                             };
                         }
                         n => {
@@ -2776,7 +2803,7 @@ impl Package<u64> {
                             let extern_strings = bun_core::vec::grow_fill(
                                 &mut lockfile.buffers.extern_strings,
                                 count,
-                                ExternalString::default(),
+                                ExternalString::new(),
                             );
 
                             let mut i: usize = 0;
@@ -2793,7 +2820,7 @@ impl Package<u64> {
                                     current_len as u32,
                                     extern_strings.len() as u32,
                                 )),
-                                ..Default::default()
+                                ..Bin::empty()
                             };
                         }
                     }
@@ -2807,7 +2834,7 @@ impl Package<u64> {
                             value: bin::Value::init_file(
                                 string_builder.append::<String>(&stri.data),
                             ),
-                            ..Default::default()
+                            ..Bin::empty()
                         };
                         break 'bin;
                     }
@@ -2828,7 +2855,7 @@ impl Package<u64> {
                             self.bin = Bin {
                                 tag: bin::Tag::Dir,
                                 value: bin::Value::init_dir(string_builder.append::<String>(str_)),
-                                ..Default::default()
+                                ..Bin::empty()
                             };
                             break 'bin;
                         }
@@ -2901,7 +2928,7 @@ impl Package<u64> {
                     // workspace names from their package jsons. duplicates not allowed
                     if seen_workspace_names
                         .map
-                        .get_or_put(&entry.name)?
+                        .get_or_put(&entry.name, || ())?
                         .found_existing
                     {
                         // this path does alot of extra work to format the error message
@@ -2944,7 +2971,7 @@ impl Package<u64> {
 
                                     let note_src = match bun_ast::to_source(
                                         &note_abs_path,
-                                        Default::default(),
+                                        bun_ast::ToSourceOptions::new(),
                                     ) {
                                         Ok(s) => s,
                                         Err(_) => bun_ast::Source::init_empty_file(
@@ -2965,7 +2992,7 @@ impl Package<u64> {
                                         )
                                         .as_ref()
                                         .cloned(),
-                                        ..Default::default()
+                                        ..bun_ast::Data::new()
                                     });
                                     i += 1;
                                 }
@@ -2982,10 +3009,11 @@ impl Package<u64> {
                             .as_bytes(),
                         );
 
-                        let src = match bun_ast::to_source(&abs_path, Default::default()) {
-                            Ok(s) => s,
-                            Err(_) => bun_ast::Source::init_empty_file(abs_path.as_bytes()),
-                        };
+                        let src =
+                            match bun_ast::to_source(&abs_path, bun_ast::ToSourceOptions::new()) {
+                                Ok(s) => s,
+                                Err(_) => bun_ast::Source::init_empty_file(abs_path.as_bytes()),
+                            };
 
                         let _ = log.add_range_error_fmt_with_notes(
                             Some(&src),
@@ -3306,7 +3334,6 @@ pub mod serializer {
         Ok(())
     }
 
-    #[derive(Default)]
     pub(crate) struct PackagesLoadResult<SemverIntType: VersionInt> {
         pub list: List<SemverIntType>,
         pub needs_update: bool,
@@ -3333,7 +3360,7 @@ pub mod serializer {
 
         let input_alignment = reader.read_int_le::<u64>()?;
 
-        let mut list = List::<SemverIntType>::default();
+        let mut list = List::<SemverIntType>::new();
 
         // The recorded alignment is that of the MultiArrayList bytes
         // *pointer* itself, i.e. pointer alignment.
@@ -3365,7 +3392,7 @@ pub mod serializer {
         let mut bin_map_end = 0;
         if migrate_from_v2 {
             type OldPackageV2 = Package<u32>;
-            let mut list_for_migrating_from_v2 = <List<u32>>::default();
+            let mut list_for_migrating_from_v2 = <List<u32>>::new();
 
             list_for_migrating_from_v2.ensure_total_capacity(list_len as usize)?;
             // SAFETY: capacity reserved above; `load_fields` writes every column.

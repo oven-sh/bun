@@ -55,7 +55,7 @@ fn plugins_of(json: Option<&Json>) -> Result<Vec<Vec<u8>>, Reason> {
 /// knows nothing of.
 fn command_line(request: &Request, defaults: Option<&Options>) -> Result<Options, Reason> {
     let defaults = defaults.filter(|_| request.like == Like::BunFormat);
-    let mut options = defaults.cloned().unwrap_or_default();
+    let mut options = defaults.cloned().unwrap_or_else(Options::new);
     let file_info = |key: &[u8]| request.file_info_options.and_then(|it| it.get(key));
     // `resolveConfig(file, { editorconfig: true })`, or nothing.
     if !request.uses_configuration {
@@ -229,7 +229,7 @@ impl<'e> ForRules<'e> {
         }
         // A block that a processor has found. The plugin leaves those of a file alone that Prettier formats whole.
         if request.path != path {
-            return match Kind::with_options(path, &FormatOptions::default()) {
+            return match Kind::with_options(path, &FormatOptions::new()) {
                 Some(
                     Kind::Script
                     | Kind::Markdown
@@ -273,7 +273,7 @@ impl<'e> ForRules<'e> {
         {
             resolved.options.tailwind = None;
         }
-        let mut scratch = self.scratches.lock().pop().unwrap_or_default();
+        let mut scratch = self.scratches.lock().pop().unwrap_or_else(Scratches::new);
         let names = Session::new();
         let names = (&Interner::new_in(&names) as &dyn Intern, &names);
         let formatted = format(path, request.text, &resolved, names, &mut scratch, false);

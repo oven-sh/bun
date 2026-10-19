@@ -226,7 +226,7 @@ impl AliasingState {
             nodes: Vec::with_capacity(instructions),
             node_of: ByIdentifier::new(identifiers, 0),
             links: Vec::with_capacity(instructions * 2),
-            long_lists: HashSet::default(),
+            long_lists: HashSet::with_hasher(rustc_hash::FxBuildHasher),
             serials: 0,
             walks: 0,
             queue: Vec::new(),
@@ -708,7 +708,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                 if !seen_blocks.contains(pred) {
                     pending_phis
                         .entry(pred)
-                        .or_default()
+                        .or_insert_with(Vec::new)
                         .push(PendingPhiOperand {
                             from: operand.identifier,
                             into: phi.place.identifier,

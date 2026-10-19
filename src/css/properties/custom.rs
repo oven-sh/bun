@@ -291,9 +291,16 @@ impl<'bump> DeepClone<'bump> for Token {
 pub use css_parser::CssResult as Result;
 
 /// PERF: nullable optimization
-#[derive(Default, CssEql, CssHash, DeepClone)]
+#[derive(CssEql, CssHash, DeepClone)]
 pub struct TokenList {
     pub(crate) v: Vec<TokenOrValue>,
+}
+
+impl TokenList {
+    #[inline]
+    pub fn new() -> Self {
+        Self { v: Vec::new() }
+    }
 }
 
 impl TokenList {
@@ -735,7 +742,7 @@ impl TokenList {
     }
 
     pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
-        let mut tokens = TokenList::default();
+        let mut tokens = TokenList::new();
         tokens.v.reserve_exact(self.v.len());
         for old in self.v.iter() {
             let new = match old {
@@ -761,7 +768,7 @@ impl TokenList {
         let lowest_fallback = fallbacks.lowest();
         fallbacks.remove(lowest_fallback);
 
-        let mut res = css::SmallList::<Fallbacks, 2>::default();
+        let mut res = css::SmallList::<Fallbacks, 2>::new();
         if fallbacks.contains(ColorFallbackKind::P3) {
             res.append((
                 ColorFallbackKind::P3.supports_condition(),

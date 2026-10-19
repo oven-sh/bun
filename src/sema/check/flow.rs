@@ -150,7 +150,6 @@ impl Eq for Reference {}
 /// they are dropped at the end of the task. Those keyed by a node are fields of `Program`. They are
 /// stored with `rewrite`: tsgo assigns the link when the computation ends, overwriting what a
 /// nested computation for the same node has assigned.
-#[derive(Default)]
 pub(super) struct FlowMemo {
     /// See `index_narrowing_subjects`: the file it is for; indexed by symbol, the first flow node
     /// with a test, a `switch` or an assignment that concerns it (empty: the file has no such
@@ -231,22 +230,77 @@ pub(super) struct FlowMemo {
     last_assignment_positions: std::cell::RefCell<FxHashMap<(FileId, SymbolId), u32>>,
 }
 
+impl FlowMemo {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            narrowing_index_file: None,
+            first_narrowing_node: Vec::new(),
+            in_call_statements: Vec::new(),
+            call_statements_by_symbol: Vec::new(),
+            max_antecedent: Vec::new(),
+            min_antecedent: Vec::new(),
+            computed_key_nodes: Vec::new(),
+            union_nodes: Vec::new(),
+            finally_blocks: Vec::new(),
+            declaration_node: Vec::new(),
+            unsettled_call_before: Vec::new(),
+            unsettled_call_on_first_path: Vec::new(),
+            stopping_calls: Vec::new(),
+            type_predicates_in_progress: SmallVec::new(),
+            flow_node_post_super: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            final_array_types: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            settled_calls: Vec::new(),
+            settled_calls_of: None,
+            idle_runs: Vec::new(),
+            tests: Vec::new(),
+            tests_of: None,
+            other_tests: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            assignment_reduced_types: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            narrowed_types: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            equal_types: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            discriminant_types: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            discriminated_types: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            flow_loop_cache: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            flow_loop_cached_at: 0,
+            switch_statement_links: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            context_free_types_in_loops: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            exhaustive_states_computing: SmallVec::new(),
+            order_dependent_assignment_marks: core::cell::RefCell::new(
+                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ),
+            latest_order_dependent_assignment_marks: core::cell::Cell::new(None),
+            last_assignment_positions: core::cell::RefCell::new(
+                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ),
+        }
+    }
+}
+
 /// `FlowLoopKey`, without the reference.
 type FlowLoopKey = (FileId, FlowId, TypeId, TypeId);
 
 /// `SwitchStatementLinks`. tsgo assigns both unconditionally: they keep what the first computation
 /// found, also if that saw the incomplete types of a loop in progress.
-#[derive(Default)]
 struct SwitchStatementLinks {
     exhaustive_state: ExhaustiveState,
     /// `None`: not `switchTypesComputed`.
     switch_types: Option<std::rc::Rc<[TypeId]>>,
 }
 
+impl SwitchStatementLinks {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            exhaustive_state: ExhaustiveState::Unknown,
+            switch_types: None,
+        }
+    }
+}
+
 /// `ExhaustiveState`
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 enum ExhaustiveState {
-    #[default]
     Unknown,
     Computing,
     False,
@@ -343,11 +397,20 @@ impl FlowType {
 }
 
 /// `sharedFlows[sharedFlowStart:]`
-#[derive(Default)]
 struct SharedFlows {
     few: SmallVec<[(FlowId, FlowType); 8]>,
     /// Overflow entries, added once `few` was full.
     many: FxHashMap<FlowId, FlowType>,
+}
+
+impl SharedFlows {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            few: SmallVec::new(),
+            many: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl SharedFlows {
@@ -452,7 +515,7 @@ fn root_key(root: Root) -> u32 {
 }
 
 /// The references a test can narrow.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct About {
     /// 0: the test has not been analyzed.
     state: u32,
@@ -460,6 +523,16 @@ struct About {
     /// the number of its first property plus one, `ALONE` if it has no property, 0 if that is
     /// unknown or irrelevant.
     chains: [(u32, u32); 3],
+}
+
+impl About {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            state: 0,
+            chains: [(0, 0); 3],
+        }
+    }
 }
 
 /// The sink to which `note_test` and `note_chain` report the subjects of a test.
@@ -740,7 +813,7 @@ impl Walk {
                 Crossing::No
             },
             crossed: 0,
-            shared_flows: SharedFlows::default(),
+            shared_flows: SharedFlows::new(),
             reduced: Vec::new(),
             back_edges: 0,
             steps: 0,
@@ -2614,7 +2687,7 @@ impl<'p, 's> Checker<'p, 's> {
             memo.other_tests
                 .get(&(file, flow))
                 .copied()
-                .unwrap_or_default()
+                .unwrap_or_else(About::new)
         };
         if known.state != 0 {
             return known.concerns(reference);
@@ -2626,7 +2699,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn look_into_test(&mut self, file: FileId, flow: FlowId, expr: ExprId) -> About {
         let mut about = About {
             state: About::KNOWN,
-            ..About::default()
+            ..About::new()
         };
         self.note_test(file, expr, 0, &mut about);
         let nodes = self.bound(file).flow.len();
@@ -2635,7 +2708,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.task.file == Some(file) && memo.tests_of != Some(file) {
             memo.tests_of = Some(file);
             memo.tests.clear();
-            memo.tests.resize(nodes, About::default());
+            memo.tests.resize(nodes, About::new());
         }
         if memo.tests_of == Some(file) {
             memo.tests[flow.idx()] = about;
@@ -3243,7 +3316,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let name = self.get_key_property_candidate_name(parts)?;
         // `mapTypesByKeyProperty`
-        let mut constituents = FxHashMap::with_capacity_and_hasher(parts.len(), Default::default());
+        let mut constituents =
+            FxHashMap::with_capacity_and_hasher(parts.len(), rustc_hash::FxBuildHasher);
         let mut count = 0;
         for &m in parts {
             if !(self.is_object_or_instantiable_non_primitive(m) || self.is_intersection(m)) {
@@ -4537,7 +4611,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `UNRESOLVED`: a query was refused, which tsgo does not do.
         if !types.contains(&TypeId::UNRESOLVED) {
             let links = self.flow_memo.switch_statement_links.entry((file, stmt));
-            links.or_default().switch_types = Some(std::rc::Rc::clone(&types));
+            links.or_insert_with(SwitchStatementLinks::new).switch_types =
+                Some(std::rc::Rc::clone(&types));
         }
         types
     }
@@ -6619,7 +6694,7 @@ impl<'p, 's> Checker<'p, 's> {
                     match self.type_at_assignment(walk, flow, target) {
                         AtAssignment::Type(t) => break t,
                         AtAssignment::Antecedent(then) => {
-                            pending.push((then, std::mem::take(&mut shared_flow)));
+                            pending.push((then, std::mem::replace(&mut shared_flow, FlowId::NONE)));
                         }
                         AtAssignment::Unaffected => {}
                     }
@@ -6630,7 +6705,10 @@ impl<'p, 's> Checker<'p, 's> {
                     if self.is_automatic_type(walk.declared)
                         && self.is_mutation_of(&walk.reference, expr)
                     {
-                        pending.push((Pending::Mutation(expr), std::mem::take(&mut shared_flow)));
+                        pending.push((
+                            Pending::Mutation(expr),
+                            std::mem::replace(&mut shared_flow, FlowId::NONE),
+                        ));
                     }
                     flow = before;
                 }
@@ -6644,9 +6722,12 @@ impl<'p, 's> Checker<'p, 's> {
                         || self.is_test_about(&walk.reference, flow, expr)
                     {
                         let then = Pending::Cond(expr, sense);
-                        pending.push((then, std::mem::take(&mut shared_flow)));
+                        pending.push((then, std::mem::replace(&mut shared_flow, FlowId::NONE)));
                     } else if shared_flow.is_some() {
-                        pending.push((Pending::Nothing, std::mem::take(&mut shared_flow)));
+                        pending.push((
+                            Pending::Nothing,
+                            std::mem::replace(&mut shared_flow, FlowId::NONE),
+                        ));
                     } else {
                         passed += 1;
                     }
@@ -6659,7 +6740,7 @@ impl<'p, 's> Checker<'p, 's> {
                     to,
                 } => {
                     let then = Pending::Switch(stmt, from, to);
-                    pending.push((then, std::mem::take(&mut shared_flow)));
+                    pending.push((then, std::mem::replace(&mut shared_flow, FlowId::NONE)));
                     flow = before;
                 }
                 Flow::Call { before, call } => {
@@ -6678,7 +6759,10 @@ impl<'p, 's> Checker<'p, 's> {
                         match self.sig_predicate(sig) {
                             Some(predicate) if predicate.asserts => {
                                 let then = Pending::Assert(call);
-                                pending.push((then, std::mem::take(&mut shared_flow)));
+                                pending.push((
+                                    then,
+                                    std::mem::replace(&mut shared_flow, FlowId::NONE),
+                                ));
                             }
                             _ if self.sig_return(sig).is_never() => {
                                 break TypeId::UNREACHABLE_NEVER;
@@ -6823,7 +6907,10 @@ impl<'p, 's> Checker<'p, 's> {
                         ));
                         let mut restarted = None;
                         for &edge in &edges[1..] {
-                            let cache = std::mem::take(&mut self.flow_type_cache);
+                            let cache = std::mem::replace(
+                                &mut self.flow_type_cache,
+                                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                            );
                             let depth = std::mem::replace(
                                 &mut self.flow_type_cache_depth,
                                 self.stack.len(),
@@ -6868,7 +6955,7 @@ impl<'p, 's> Checker<'p, 's> {
                         self.flow_memo
                             .flow_loop_cache
                             .entry(key)
-                            .or_default()
+                            .or_insert_with(smallvec::SmallVec::new)
                             .push((walk.reference.clone(), result.ty));
                         self.flow_memo.flow_loop_cached_at = self.work;
                     }
@@ -8227,7 +8314,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// With an empty `flowLoopStack` and an empty `flowTypeCache`, as in `checkExpressionCached`.
     pub(super) fn outside_flow_loops<R>(&mut self, compute: impl FnOnce(&mut Self) -> R) -> R {
         let loops = std::mem::take(&mut self.flow_loops);
-        let cache = std::mem::take(&mut self.flow_type_cache);
+        let cache = std::mem::replace(
+            &mut self.flow_type_cache,
+            rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        );
         let depth = std::mem::replace(&mut self.flow_type_cache_depth, self.stack.len());
         let result = compute(self);
         self.flow_type_cache = cache;
@@ -8239,7 +8329,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isExhaustiveSwitchStatement`
     fn is_exhaustive_switch(&mut self, file: FileId, stmt: StmtId) -> bool {
         let links = self.flow_memo.switch_statement_links.entry((file, stmt));
-        let links = links.or_default();
+        let links = links.or_insert_with(SwitchStatementLinks::new);
         match links.exhaustive_state {
             ExhaustiveState::Unknown => links.exhaustive_state = ExhaustiveState::Computing,
             // "Resolve circularity to false"
@@ -8254,7 +8344,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_exhaustive = self.compute_exhaustive_switch_statement(file, stmt);
         self.flow_memo.exhaustive_states_computing.pop();
         let links = self.flow_memo.switch_statement_links.entry((file, stmt));
-        let links = links.or_default();
+        let links = links.or_insert_with(SwitchStatementLinks::new);
         if links.exhaustive_state == ExhaustiveState::Computing {
             links.exhaustive_state = match is_exhaustive {
                 Some(true) => ExhaustiveState::True,

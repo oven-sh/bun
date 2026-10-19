@@ -7,7 +7,6 @@ use bun_alloc::AllocError;
 
 // Node and duplicated-string allocations use the global allocator (mimalloc);
 // there is no per-joiner allocator field.
-#[derive(Default)]
 pub struct StringJoiner<'a> {
     /// Total length of all nodes
     pub len: usize,
@@ -19,6 +18,17 @@ pub struct StringJoiner<'a> {
 
     /// Avoid an extra pass over the list when joining
     pub watcher: Watcher<'a>,
+}
+
+impl<'a> StringJoiner<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            len: 0,
+            nodes: Vec::new(),
+            watcher: Watcher::new(),
+        }
+    }
 }
 
 enum Node<'a> {
@@ -40,11 +50,21 @@ impl Node<'_> {
     }
 }
 
-#[derive(Default)]
 pub struct Watcher<'a> {
     pub input: &'a [u8],
     pub estimated_count: u32,
     pub needs_newline: bool,
+}
+
+impl<'a> Watcher<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            input: &[],
+            estimated_count: 0,
+            needs_newline: false,
+        }
+    }
 }
 
 impl<'a> StringJoiner<'a> {
@@ -134,7 +154,7 @@ impl<'a> StringJoiner<'a> {
     pub fn done(&mut self) -> Result<Box<[u8]>, AllocError> {
         if self.nodes.is_empty() {
             debug_assert!(self.len == 0);
-            return Ok(Box::default());
+            return Ok(Box::new([]));
         }
         let len = self.len;
         self.len = 0;
@@ -158,7 +178,7 @@ impl<'a> StringJoiner<'a> {
             if !end.is_empty() {
                 return Ok(Box::from(end));
             }
-            return Ok(Box::default());
+            return Ok(Box::new([]));
         }
         let len = self.len;
         self.len = 0;
@@ -210,7 +230,7 @@ mod tests {
     fn push_kinds_concatenate_in_insertion_order() {
         let owned: Box<[u8]> = Box::from(b"owned".as_slice());
         let cloned_src = b"cloned".to_vec();
-        let mut j = StringJoiner::default();
+        let mut j = StringJoiner::new();
         j.push(b"borrowed ");
         j.push_static(b"static ");
         j.push_owned(owned);
@@ -223,10 +243,10 @@ mod tests {
 
     #[test]
     fn empty_pushes_are_skipped() {
-        let mut j = StringJoiner::default();
+        let mut j = StringJoiner::new();
         j.push(b"");
         j.push_static(b"");
-        j.push_owned(Box::default());
+        j.push_owned(Box::new([]));
         j.push_cloned(b"");
         assert_eq!(j.len, 0);
         assert_eq!(j.node_slices().count(), 0);
@@ -235,7 +255,7 @@ mod tests {
 
     #[test]
     fn done_with_end_appends_suffix() {
-        let mut j = StringJoiner::default();
+        let mut j = StringJoiner::new();
         assert_eq!(&*j.done_with_end(b"").unwrap(), b"");
         assert_eq!(&*j.done_with_end(b"suffix").unwrap(), b"suffix");
         j.push(b"body");
@@ -244,7 +264,7 @@ mod tests {
 
     #[test]
     fn last_byte_contains_and_node_slices() {
-        let mut j = StringJoiner::default();
+        let mut j = StringJoiner::new();
         assert_eq!(j.last_byte(), 0);
         j.push(b"abc");
         j.push_cloned(b"def");
@@ -257,13 +277,13 @@ mod tests {
 
     #[test]
     fn ensure_newline_at_end_tracks_watcher() {
-        let mut j = StringJoiner::default();
+        let mut j = StringJoiner::new();
         j.push(b"no newline");
         j.ensure_newline_at_end();
         j.ensure_newline_at_end();
         assert_eq!(&*j.done().unwrap(), b"no newline\n");
 
-        let mut j = StringJoiner::default();
+        let mut j = StringJoiner::new();
         j.push(b"has newline\n");
         j.ensure_newline_at_end();
         assert_eq!(&*j.done().unwrap(), b"has newline\n");
@@ -274,9 +294,9 @@ mod tests {
         let mut j = StringJoiner {
             watcher: Watcher {
                 input: b"KEY",
-                ..Default::default()
+                ..Watcher::new()
             },
-            ..Default::default()
+            ..StringJoiner::new()
         };
         j.push(b"prefix KEY suffix");
         j.push(b"no match");
@@ -291,9 +311,9 @@ mod tests {
         let mut j = StringJoiner {
             watcher: Watcher {
                 input: &input,
-                ..Default::default()
+                ..Watcher::new()
             },
-            ..Default::default()
+            ..StringJoiner::new()
         };
         j.push(&borrowed);
         j.push_cloned(b"cloned KEY");

@@ -171,7 +171,8 @@ impl Input<'_, '_> {
     /// `unused`: indices into the directives.
     fn report(&self, unused: &[u32], out: &mut Vec<LintMessage>) {
         let mut groups: Vec<(u32, Vec<u32>)> = Vec::new();
-        let mut group_of_parent: FxHashMap<u32, usize> = FxHashMap::default();
+        let mut group_of_parent: FxHashMap<u32, usize> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for &directive in unused {
             let parent = self.directives[directive as usize].parent;
             let group = *group_of_parent.entry(parent).or_insert_with(|| {
@@ -270,7 +271,7 @@ impl Input<'_, '_> {
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
-            not_numbers: NotNumbers::default(),
+            not_numbers: NotNumbers::new(),
             details: None,
             constant_help: None,
             reported: 0,
@@ -319,9 +320,11 @@ impl Input<'_, '_> {
         // The switches that disable and that no later one has undone, as indices into `switches`, in order: those for all
         // rules, and those for each rule.
         let mut active_for_all: Vec<u32> = Vec::new();
-        let mut active_for: FxHashMap<&RuleId, Vec<u32>> = FxHashMap::default();
+        let mut active_for: FxHashMap<&RuleId, Vec<u32>> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         // For each rule that has been enabled by name: the index of the switch that did it last.
-        let mut enabled_at: FxHashMap<&RuleId, u32> = FxHashMap::default();
+        let mut enabled_at: FxHashMap<&RuleId, u32> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut next = 0;
         for message in messages {
             let place = (message.line as i32, message.column as i32);

@@ -339,7 +339,7 @@ impl PmVersionCommand {
             JSPrinter::PrintJsonOptions {
                 indent: json_result.indentation,
                 mangled_props: None,
-                ..Default::default()
+                ..JSPrinter::PrintJsonOptions::new()
             },
         ) {
             Output::err_generic("Failed to save package.json: {}", (err.name(),));
@@ -580,7 +580,7 @@ impl PmVersionCommand {
             envp: None,
             #[cfg(windows)]
             windows: spawn_windows_options(),
-            ..Default::default()
+            ..SpawnSyncOptions::new()
         })
     }
 
@@ -712,6 +712,6 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
         loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
             None, None,
         )),
-        ..Default::default()
+        ..crate::api::bun::process::WindowsOptions::new()
     }
 }

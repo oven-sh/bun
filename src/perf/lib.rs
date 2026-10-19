@@ -24,7 +24,6 @@ pub enum Ctx {
     Enabled(EnabledImpl),
 }
 
-#[derive(Default)]
 pub struct Disabled;
 
 impl Disabled {

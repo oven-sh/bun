@@ -383,7 +383,7 @@ impl Route {
         let development = server.config().development;
         let vm = global.bun_vm().as_mut();
 
-        let mut config = JSBundlerConfig::default();
+        let mut config = JSBundlerConfig::new();
         // `Config` owns its fields and
         // drops on early-return.
         config.entry_points.insert(&this.bundle.path)?;
@@ -566,7 +566,7 @@ impl Route {
                 for i in 0..output_files.len() {
                     let blob =
                         AnyBlob::Blob(bun_core::handle_oom(output_files[i].to_blob(global_this)));
-                    let mut headers = Headers::default();
+                    let mut headers = Headers::new();
                     let fallback_mime;
                     let content_type: &[u8] = match &blob {
                         AnyBlob::Blob(b) => match b.content_type_or_mime_type() {

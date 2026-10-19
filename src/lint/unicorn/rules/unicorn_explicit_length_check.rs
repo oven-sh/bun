@@ -111,7 +111,7 @@ impl Rule for ExplicitLengthCheck {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(AncestorMemo::default())
+        Some(AncestorMemo::new())
     }
 
     fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {

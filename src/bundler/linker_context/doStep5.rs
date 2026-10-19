@@ -259,7 +259,7 @@ impl LinkerContext<'_> {
         );
 
         // Each part tracks the other parts it depends on within this file
-        let mut local_dependencies: HashMap<u32, u32> = HashMap::default();
+        let mut local_dependencies: HashMap<u32, u32> = HashMap::init();
 
         // Multiple `&mut` into graph SoA are needed here;
         // raw per-row pointers via `split_raw()` so concurrent tasks never
@@ -397,7 +397,7 @@ impl LinkerContext<'_> {
 
                 for &other_part_index in other_parts {
                     let local = local_dependencies
-                        .get_or_put(other_part_index)
+                        .get_or_put(other_part_index, || 0)
                         .expect("unreachable");
                     if !local.found_existing || *local.value_ptr != part_index_u32 {
                         *local.value_ptr = part_index_u32;
@@ -470,7 +470,7 @@ impl LinkerContext<'_> {
             arena,
         );
 
-        let mut ns_export_symbol_uses = PartSymbolUseMap::default();
+        let mut ns_export_symbol_uses = PartSymbolUseMap::new();
         ns_export_symbol_uses
             .ensure_total_capacity(export_aliases.len())
             .expect("OOM");
@@ -537,7 +537,7 @@ impl LinkerContext<'_> {
                         break 'brk Expr::init(
                             E::ImportIdentifier {
                                 ref_: exp_data.import_ref,
-                                ..Default::default()
+                                ..E::ImportIdentifier::init()
                             },
                             loc,
                         );
@@ -547,7 +547,7 @@ impl LinkerContext<'_> {
                 Expr::init(
                     E::Identifier {
                         ref_: exp_data.import_ref,
-                        ..Default::default()
+                        ..E::Identifier::new()
                     },
                     loc,
                 )
@@ -572,11 +572,11 @@ impl LinkerContext<'_> {
                     E::Arrow {
                         prefer_expr: true,
                         body: fn_body,
-                        ..Default::default()
+                        ..E::Arrow::new()
                     },
                     loc,
                 )),
-                ..Default::default()
+                ..G::Property::new()
             });
             if lifted_setter_param.is_valid()
                 && exp_data.source_index.get() == id
@@ -606,7 +606,7 @@ impl LinkerContext<'_> {
                         },
                         loc,
                     ),
-                    ..Default::default()
+                    ..G::Arg::new()
                 });
                 setter_properties.push(G::Property {
                     key: Some(Expr::allocate(
@@ -624,11 +624,11 @@ impl LinkerContext<'_> {
                                 stmts: bun_ast::StoreSlice::new_mut(body),
                                 loc,
                             },
-                            ..Default::default()
+                            ..E::Arrow::new()
                         },
                         loc,
                     )),
-                    ..Default::default()
+                    ..G::Property::new()
                 });
             }
             ns_export_symbol_uses.put_assume_capacity(exp_data.import_ref, SymbolUse::unscoped(1));
@@ -647,7 +647,7 @@ impl LinkerContext<'_> {
             }
         }
 
-        let mut declared_symbols = DeclaredSymbolList::default();
+        let mut declared_symbols = DeclaredSymbolList::new();
         let exports_ref = self.graph.ast.items_exports_ref()[id as usize];
         let all_export_stmts_len = needs_exports_variable as usize
             + (!properties.is_empty()) as usize
@@ -674,9 +674,9 @@ impl LinkerContext<'_> {
                             bun_ast::b::Identifier { r#ref: exports_ref },
                             loc,
                         ),
-                        value: Some(Expr::allocate(arena, E::Object::default(), loc)),
+                        value: Some(Expr::allocate(arena, E::Object::new(), loc)),
                     }]),
-                    ..Default::default()
+                    ..S::Local::new()
                 },
                 loc,
             ));
@@ -709,7 +709,7 @@ impl LinkerContext<'_> {
                 arena,
                 E::Object {
                     properties: G::PropertyList::move_from_list(owned_props),
-                    ..Default::default()
+                    ..E::Object::new()
                 },
                 loc,
             ));
@@ -721,7 +721,7 @@ impl LinkerContext<'_> {
                     arena,
                     E::Object {
                         properties: G::PropertyList::move_from_list(owned_setters),
-                        ..Default::default()
+                        ..E::Object::new()
                     },
                     loc,
                 ));
@@ -740,11 +740,11 @@ impl LinkerContext<'_> {
                         E::Call {
                             target: Expr::init_identifier(export_ref, loc),
                             args: bun_ast::ExprNodeList::from_owned_slice(args.into_boxed_slice()),
-                            ..Default::default()
+                            ..E::Call::new()
                         },
                         loc,
                     ),
-                    ..Default::default()
+                    ..S::SExpr::new()
                 },
                 loc,
             ));
@@ -778,7 +778,7 @@ impl LinkerContext<'_> {
                         name: b"exports".into(),
                         name_loc: Loc::EMPTY,
                         target: Expr::init_identifier(self.unbound_module_ref, Loc::EMPTY),
-                        ..Default::default()
+                        ..E::Dot::new()
                     },
                     Loc::EMPTY,
                 ),
@@ -790,7 +790,7 @@ impl LinkerContext<'_> {
                             exports_ref,
                             Loc::EMPTY,
                         )]),
-                        ..Default::default()
+                        ..E::Call::new()
                     },
                     Loc::EMPTY,
                 ),
@@ -831,7 +831,7 @@ impl LinkerContext<'_> {
                 // Make sure this is trimmed if unused even if tree shaking is disabled
                 force_tree_shaking: true,
 
-                ..Default::default()
+                ..Part::new()
             };
 
             // Pull in the "__export" symbol if it was used

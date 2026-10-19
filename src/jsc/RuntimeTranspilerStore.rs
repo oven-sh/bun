@@ -106,7 +106,7 @@ fn dump_source_string_failiable(
         } else {
             b"/tmp/bun-debug-src/"
         };
-        *holder = Some(Dir::cwd().make_open_path(base_name, OpenDirOptions::default())?);
+        *holder = Some(Dir::cwd().make_open_path(base_name, OpenDirOptions::new())?);
     }
     // `Dir` is `!Copy`; the singleton stays owned by `BUN_DEBUG_HOLDER` for
     // process lifetime — borrow it for the duration of this dump.
@@ -118,7 +118,7 @@ fn dump_source_string_failiable(
         } else {
             b"/".len()
         };
-        let parent = dir.make_open_path(&dir_path[root_len..], OpenDirOptions::default())?;
+        let parent = dir.make_open_path(&dir_path[root_len..], OpenDirOptions::new())?;
 
         let base = bun_paths::basename(specifier);
         let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
@@ -157,7 +157,7 @@ fn dump_source_string_failiable(
             fn json(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
                 bun_core::fmt::format_json_string_utf8(
                     s,
-                    bun_core::fmt::JSONFormatterUTF8Options::default(),
+                    bun_core::fmt::JSONFormatterUTF8Options::new(),
                 )
             }
             // Building the whole document in memory then `write_all` is
@@ -204,8 +204,8 @@ pub struct RuntimeTranspilerStore {
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
 
-impl Default for RuntimeTranspilerStore {
-    fn default() -> Self {
+impl RuntimeTranspilerStore {
+    pub fn new() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
             store: TranspilerJobStore::init(),
@@ -230,7 +230,7 @@ impl RuntimeTranspilerStore {
     pub(crate) fn init() -> RuntimeTranspilerStore {
         // The HiveArrayFallback uses the global mimalloc
         // (PORTING.md §Allocators).
-        Self::default()
+        Self::new()
     }
 
     /// VM teardown (JS thread, heap alive, script forbidden; called on every
@@ -336,7 +336,7 @@ impl RuntimeTranspilerStore {
 
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
-        let mut resolved_source = ResolvedSource::default();
+        let mut resolved_source = ResolvedSource::new();
         if let Some(pkg) = package_json {
             match pkg.module_type {
                 ModuleType::Cjs => {
@@ -371,12 +371,12 @@ impl RuntimeTranspilerStore {
                 } else {
                     StrongOptional::create(module_loader, global_object)
                 },
-                poll_ref: KeepAlive::default(),
+                poll_ref: KeepAlive::new(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 parse_error: None,
                 work_task: WorkPoolTask {
-                    node: Default::default(),
+                    node: bun_threading::thread_pool::Node::new(),
                     callback: TranspilerJob::run_from_worker_thread,
                 },
                 next: unbounded_queue::Link::new(),
@@ -498,7 +498,7 @@ impl TranspilerJob {
     fn reset_for_pool(&mut self) {
         // bun.default_allocator.free(this.path.text) — `path.text` was Box-duplicated in
         // `transpile()`; reconstruct the Box and drop it.
-        let old_path = core::mem::take(&mut self.path);
+        let old_path = core::mem::replace(&mut self.path, bun_resolver::Path::new());
         if !old_path.text.is_empty() {
             // SAFETY: `text` is exactly the `&[u8]` view of the `Box<[u8]>`
             // produced by `heap::into_raw` in `transpile()`; the fat-pointer
@@ -537,13 +537,15 @@ impl TranspilerJob {
         // vtable; resolve it via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
         self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
 
-        let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
+        let referrer = core::mem::replace(&mut self.non_threadsafe_referrer, String::EMPTY);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
         let (specifier, result) = match self.parse_error {
             Some(e) => (String::clone_utf8(self.path.text), Err(e)),
             None => {
-                let mut resolved_source = core::mem::take(&mut self.resolved_source);
-                let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
+                let mut resolved_source =
+                    core::mem::replace(&mut self.resolved_source, ResolvedSource::new());
+                let out =
+                    core::mem::replace(&mut self.non_threadsafe_input_specifier, String::EMPTY);
                 debug_assert!(resolved_source.source_url.is_empty());
                 resolved_source.source_url = out.create_if_different(self.path.text);
                 // A job reads a file: `Bun__transpileFile` gives it no blob and no plugin's text.
@@ -679,7 +681,7 @@ impl TranspilerJob {
         // `*mut CacheEntry` which is unboxed below.
         let mut cache = RuntimeTranspilerCache {
             r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
-            ..Default::default()
+            ..RuntimeTranspilerCache::new()
         };
 
         let mut log = bun_ast::Log::init();
@@ -765,7 +767,7 @@ impl TranspilerJob {
             || !unsafe { (*vm).has_any_macro_remappings }
             || is_node_override
         {
-            MacroRemap::default()
+            MacroRemap::init()
         } else {
             // Note: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
             // has no nested `Clone` impl (the inherent `clone()` requires
@@ -773,7 +775,7 @@ impl TranspilerJob {
             // matching the build-command conversion (transpiler.rs:2616).
             // OOM during the
             // inner `clone()` must abort — never silently drop a remapping.
-            let mut m = MacroRemap::default();
+            let mut m = MacroRemap::init();
             for (k, v) in transpiler.options.macro_remap.iter() {
                 m.insert(k, bun_core::handle_oom(v.clone()));
             }
@@ -828,7 +830,7 @@ impl TranspilerJob {
             experimental_decorators: transpiler.options.experimental_decorators,
             use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
             virtual_source: None,
-            replace_exports: Default::default(),
+            replace_exports: bun_collections::StringArrayHashMap::init(),
             dont_bundle_twice: true,
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
@@ -879,7 +881,7 @@ impl TranspilerJob {
                 let src = fallback_source.write(bun_ast::Source {
                     path: fallback_path,
                     contents: std::borrow::Cow::Borrowed(code),
-                    ..Default::default()
+                    ..bun_ast::Source::new()
                 });
                 // SAFETY: `fallback_source` outlives `parse_options` (declared
                 // earlier in fn scope); raw-ptr borrow avoids tying
@@ -991,18 +993,19 @@ impl TranspilerJob {
             };
 
             self.resolved_source = ResolvedSource {
-                source_code: core::mem::take(&mut entry.output_code),
+                source_code: core::mem::replace(&mut entry.output_code, String::EMPTY),
                 is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
                 module_info,
                 tag: this_tag,
-                ..Default::default()
+                ..ResolvedSource::new()
             };
 
             return;
         }
 
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
-            let already_bundled = core::mem::take(&mut parse_result.already_bundled);
+            let already_bundled =
+                core::mem::replace(&mut parse_result.already_bundled, AlreadyBundled::None);
             let is_commonjs_module = already_bundled.is_common_js();
             let bytecode_cache =
                 crate::resolved_source::Bytecode::owned(already_bundled.into_bytecode());
@@ -1012,7 +1015,7 @@ impl TranspilerJob {
                 bytecode_cache,
                 is_commonjs_module,
                 tag: this_tag,
-                ..Default::default()
+                ..ResolvedSource::new()
             };
             self.resolved_source.source_code.ensure_hash();
             return;
@@ -1178,7 +1181,7 @@ impl TranspilerJob {
                 mi.into_deserialized()
             }),
             tag: this_tag,
-            ..Default::default()
+            ..ResolvedSource::new()
         };
 
         // `arena` and `ast_memory_store` drop here (after `_ast_scope` restores

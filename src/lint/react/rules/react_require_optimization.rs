@@ -60,7 +60,7 @@ impl Rule for RequireOptimization {
 
         // upstream's listeners.
         let pragmas = *components.pragmas();
-        let mut queue = Queue::default();
+        let mut queue = Queue::new();
         let mut mark_scu_as_declared = |node| queue.push(At::enter(node), 0, node);
         for func in file.funcs().filter(|it| ast_utils::is_function_with_body(*it) && is_in_component(it.span())) {
             if !(has_classes && is_function_in_class(func)) {
@@ -100,7 +100,7 @@ impl Rule for RequireOptimization {
 
         // They are called in the order of ESLint's walk: what is a component depends on what comes before.
         let mut walk = Components::new(file);
-        let mut has_scu: FxHashSet<Span> = FxHashSet::default();
+        let mut has_scu: FxHashSet<Span> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         while let Some(event) = queue.pop_until(At::END) {
             walk.advance(event.at);
             has_scu.extend(walk.set(event.node).map(|id| walk.component(id).span()));

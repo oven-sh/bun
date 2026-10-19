@@ -24,10 +24,19 @@ fn plain_destination(text: &[u8]) -> Result<Option<&[u8]>, ()> {
     Ok(is_plain.then_some(destination))
 }
 
-#[derive(Default)]
 pub(crate) struct Seen<'d> {
     definition_identifiers: FxHashSet<&'d [u8]>,
     relevant_nodes: Vec<Node<'d>>,
+}
+
+impl<'d> Seen<'d> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            definition_identifiers: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            relevant_nodes: Vec::new(),
+        }
+    }
 }
 
 impl Rule for NoReferenceLikeUrls {
@@ -50,7 +59,7 @@ impl Listens for NoReferenceLikeUrls {
     type Seen<'d> = Seen<'d>;
 
     fn seen<'d>(&self) -> Self::Seen<'d> {
-        Seen::default()
+        Seen::new()
     }
 
     fn on<'d>(

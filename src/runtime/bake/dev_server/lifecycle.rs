@@ -50,7 +50,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(vm, bun_ptr::BackRef::new(options.vm));
         w!(vm_handle, options.vm.handle());
         w!(server, None);
-        w!(directory_watchers, DirectoryWatchStore::default());
+        w!(directory_watchers, DirectoryWatchStore::new());
         w!(server_fetch_function_callback, jsc::StrongOptional::empty());
         w!(
             server_register_update_callback,
@@ -69,37 +69,37 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             frontend_only,
             options.framework.file_system_router_types.is_empty()
         );
-        w!(client_graph, IncrementalGraph::default());
-        w!(server_graph, IncrementalGraph::default());
-        w!(barrel_files_with_deferrals, Default::default());
-        w!(barrel_needed_exports, Default::default());
+        w!(client_graph, IncrementalGraph::new());
+        w!(server_graph, IncrementalGraph::new());
+        w!(barrel_files_with_deferrals, StringArrayHashMap::init());
+        w!(barrel_needed_exports, StringArrayHashMap::init());
         w!(incremental_result, IncrementalResult::EMPTY);
-        w!(route_lookup, Default::default());
+        w!(route_lookup, ArrayHashMap::new());
         w!(route_bundles, Vec::new());
         w!(html_router, HTMLRouter::empty());
-        w!(active_websocket_connections, Default::default());
+        w!(active_websocket_connections, HashMap::init());
         w!(current_bundle, None);
         w!(
             next_bundle,
             NextBundle {
-                route_queue: Default::default(),
+                route_queue: ArrayHashMap::new(),
                 reload_event: None,
-                requests: deferred_request::List::default(),
+                requests: deferred_request::List::new(),
             }
         );
         w!(inspector_server_id, DebuggerId::init(0)); // TODO paper clover:
         w!(
             assets,
             Assets {
-                path_map: Default::default(),
-                files: Default::default(),
-                refs: Default::default(),
+                path_map: StringArrayHashMap::init(),
+                files: ArrayHashMap::new(),
+                refs: Vec::new(),
                 needs_reindex: false,
             }
         );
         w!(source_maps, SourceMapStore::empty());
         w!(plugin_state, PluginState::Unknown);
-        w!(bundling_failures, Default::default());
+        w!(bundling_failures, ArrayHashMap::new());
         w!(
             assume_perfect_incremental_bundling,
             bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
@@ -126,8 +126,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 root: Box::from(root),
                 types: Box::new([]),
                 routes: Vec::new(),
-                static_routes: Default::default(),
-                dynamic_routes: Default::default(),
+                static_routes: StringArrayHashMap::init(),
+                dynamic_routes: ArrayHashMap::new(),
                 pattern_string_arena: Arena::new(),
             }
         );

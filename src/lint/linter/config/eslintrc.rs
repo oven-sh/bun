@@ -1357,7 +1357,7 @@ impl<'c> Legacy<'_, '_, 'c> {
     ) -> Result<(), ConfigError> {
         if let Some(location) = self.options.rules {
             let locations = &mut self.reader.js_locations;
-            locations.push((Box::default(), location.clone()));
+            locations.push((Box::new([]), location.clone()));
         }
         let mut settings = elements.iter().filter_map(|it| it.settings.as_ref());
         self.reader.has_unknown_resolver = settings.any(super::flat::names_unknown_resolver);
@@ -1546,7 +1546,7 @@ impl<'c> Legacy<'_, '_, 'c> {
             base_path: Some(base_path.to_vec()),
             ignore_lines: Some(IgnoreLines::of_eslint_8(lines)),
             is_global_ignores: true,
-            ..ConfigObject::default()
+            ..ConfigObject::new()
         })
     }
 

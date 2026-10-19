@@ -593,9 +593,9 @@ fn spawn(
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
                 loop_: event_loop,
-                ..Default::default()
+                ..bun_spawn::WindowsOptions::new()
             },
-            ..SpawnOptions::default()
+            ..SpawnOptions::new()
         };
 
         // SAFETY: `argv`/`env` are local null-terminated C-string arrays with

@@ -11,12 +11,22 @@ const BARE_URL: Message = Message::new(
 static HTML_TAG_NAME: LazyLock<Regex> =
     LazyLock::new(|| Regex::literal(r"/^<(?<tagName>[^!>][^/\s>]*)/u"));
 
-#[derive(Default)]
 pub(crate) struct Seen<'d> {
     link_nodes: Vec<Node<'d>>,
     /// The links after an opening tag that hasn't been closed yet.
     temp_link_nodes: Vec<Node<'d>>,
     last_tag_name: Option<Vec<u8>>,
+}
+
+impl<'d> Seen<'d> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            link_nodes: Vec::new(),
+            temp_link_nodes: Vec::new(),
+            last_tag_name: None,
+        }
+    }
 }
 
 impl Rule for NoBareUrls {
@@ -48,7 +58,7 @@ impl Listens for NoBareUrls {
     type Seen<'d> = Seen<'d>;
 
     fn seen<'d>(&self) -> Self::Seen<'d> {
-        Seen::default()
+        Seen::new()
     }
 
     fn on<'d>(

@@ -24,7 +24,6 @@ struct PrivateMember<'a> {
     is_used: bool,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// By class and by name, which includes the `#`.
     members: FxHashMap<(Class<'a>, Name<'a>), PrivateMember<'a>>,
@@ -33,6 +32,17 @@ pub struct State<'a> {
     usages: Vec<(Node<'a>, Name<'a>)>,
     /// For oxlint: every private field and method, with its class and its name.
     declared: Vec<(Class<'a>, Name<'a>, Member<'a>)>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            members: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            usages: Vec::new(),
+            declared: Vec::new(),
+        }
+    }
 }
 
 /// The class whose body `child` is directly in. The heritage and the decorators of a class are not in its body.
@@ -347,10 +357,10 @@ impl NoUnusedPrivateClassMembers {
         self.collect_usages(cx);
         let State {
             declared, usages, ..
-        } = std::mem::take(&mut cx.state);
-        let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::default();
+        } = std::mem::replace(&mut cx.state, State::new());
+        let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::new();
         // What is referred to, and whether it is read.
-        let mut referenced: FxHashMap<(Class<'a>, Name<'a>), bool> = FxHashMap::default();
+        let mut referenced: FxHashMap<(Class<'a>, Name<'a>), bool> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for (usage, name) in usages {
             if let Node::Expr(e) = usage
                 && let Some(class) = classes.find(usage, class_of_member)
@@ -388,7 +398,7 @@ impl Rule for NoUnusedPrivateClassMembers {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        (file.has_classes() && strings::contains_char(file.text(), b'#')).then(State::default)
+        (file.has_classes() && strings::contains_char(file.text(), b'#')).then(State::new)
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
@@ -408,9 +418,9 @@ impl Rule for NoUnusedPrivateClassMembers {
             mut members,
             usages,
             ..
-        } = std::mem::take(&mut cx.state);
+        } = std::mem::replace(&mut cx.state, State::new());
         // The class whose body a node is in.
-        let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::default();
+        let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::new();
         for (usage, name) in usages {
             let mut inner = usage;
             while let Some(class) = classes.find(inner, class_of_member) {

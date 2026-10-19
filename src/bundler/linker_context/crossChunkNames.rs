@@ -135,7 +135,7 @@ pub(crate) fn assign_minified(
     }
     // Every chunk's renamer already reserved the keywords plus its own module
     // scopes' unbound / pinned names; a bundle-wide name avoids all of them.
-    let mut reserved = StringHashMap::<u32>::default();
+    let mut reserved = StringHashMap::<u32>::init();
     let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
     for chunk in chunks.iter() {
         if let ChunkRenamer::Minify(r) = &chunk.renamer {
@@ -152,7 +152,7 @@ pub(crate) fn assign_minified(
 
     // (total count, first-seen order) per binding; most used first. Each
     // chunk contributes the count of the bindings it declares or imports.
-    let mut index_of: bun_collections::HashMap<Ref, u32> = Default::default();
+    let mut index_of: bun_collections::HashMap<Ref, u32> = bun_collections::HashMap::init();
     let mut order: Vec<(u32, u32, Ref, bool)> = Vec::with_capacity(refs.len());
     for (i, &ref_) in refs.iter().enumerate() {
         let capital = c

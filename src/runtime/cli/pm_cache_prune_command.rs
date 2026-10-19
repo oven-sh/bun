@@ -270,7 +270,10 @@ impl PmCachePruneCommand {
                 plural(n),
                 max_age_days,
                 plural(max_age_days as usize),
-                bun_fmt::size(prune.bytes as usize, Default::default())
+                bun_fmt::size(
+                    prune.bytes as usize,
+                    bun_core::fmt::SizeFormatterOptions::new()
+                )
             );
             if prune.failed > 0 {
                 bun_core::pretty!(", <red>{} failed<r>", prune.failed);

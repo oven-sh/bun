@@ -63,7 +63,7 @@ fn add_named_import<'a>(file: &'a File<'a>, id: &str, into: &mut Vec<LintMessage
                     b",I18nManager".to_vec()
                 },
             }),
-            ..LintMessage::default()
+            ..LintMessage::new()
         });
     }
 }
@@ -82,7 +82,7 @@ impl Enabled {
                 .into_iter()
                 .filter(|name| strings::contains(code, name.as_bytes()))
                 .collect(),
-            messages: RefCell::default(),
+            messages: core::cell::RefCell::new(Vec::new()),
         }
     }
 

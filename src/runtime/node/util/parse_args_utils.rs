@@ -1,9 +1,8 @@
 use bun_core::{String, StringView};
 use bun_jsc::JSValue;
 
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum OptionValueType {
-    #[default]
     Boolean,
     String,
 }
@@ -48,8 +47,8 @@ pub(crate) struct OptionDefinition<'a> {
     pub default_value: Option<JSValue>,
 }
 
-impl Default for OptionDefinition<'_> {
-    fn default() -> Self {
+impl OptionDefinition<'_> {
+    pub(crate) fn new() -> Self {
         Self {
             long_name: StringView::EMPTY,
             short_name: String::EMPTY,

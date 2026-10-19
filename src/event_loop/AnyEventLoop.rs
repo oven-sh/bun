@@ -57,11 +57,11 @@ pub enum AnyEventLoop {
     Mini(Box<MiniEventLoop>),
 }
 
-impl Default for AnyEventLoop {
+impl AnyEventLoop {
     /// Stub default for `#[derive(Default)]` containers (e.g. the
     /// `bun_install::PackageManager` stub). Real consumers always overwrite
     /// this via `init()` / `js_current()` before use.
-    fn default() -> Self {
+    pub fn new() -> Self {
         AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
     }
 }
@@ -254,8 +254,8 @@ pub enum EventLoopTask {
 impl EventLoopTask {
     pub fn from_event_loop(loop_: EventLoopHandle) -> EventLoopTask {
         match loop_ {
-            EventLoopHandle::Js { .. } => EventLoopTask::Js(ConcurrentTask::default()),
-            EventLoopHandle::Mini(_) => EventLoopTask::Mini(AnyTaskWithExtraContext::default()),
+            EventLoopHandle::Js { .. } => EventLoopTask::Js(ConcurrentTask::init()),
+            EventLoopHandle::Mini(_) => EventLoopTask::Mini(AnyTaskWithExtraContext::new()),
         }
     }
 }

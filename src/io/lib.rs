@@ -808,7 +808,7 @@ impl IoRequestLoop {
         // *spawning* thread, before the IO thread `claim()`s the cell.
         let loop_ = unsafe { (*LOOP.get_unchecked()).assume_init_mut() };
         *loop_ = IoRequestLoop {
-            pending: RequestQueue::default(),
+            pending: RequestQueue::new(),
             waker: Waker::init().unwrap_or_else(|_| panic!("failed to initialize waker")),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             epoll_fd: Fd::INVALID,
@@ -1444,8 +1444,8 @@ pub struct Poll {
     pub(crate) generation_number: GenerationNumberInt,
 }
 
-impl Default for Poll {
-    fn default() -> Self {
+impl Poll {
+    pub fn new() -> Self {
         Self {
             flags: FlagsSet::empty(),
             #[cfg(all(target_os = "macos", debug_assertions))]
@@ -2051,7 +2051,7 @@ pub mod waker {
             Self {
                 kq: -1,
                 machport: 0,
-                machport_buf: Box::default(),
+                machport_buf: Box::new([]),
             }
         }
 
@@ -2239,7 +2239,7 @@ pub mod closer {
             WorkPool::schedule_owned(Box::new(Closer {
                 fd,
                 task: WorkPoolTask {
-                    node: Default::default(),
+                    node: bun_threading::thread_pool::Node::new(),
                     callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
                 },
             }));

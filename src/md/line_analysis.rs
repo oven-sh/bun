@@ -851,7 +851,7 @@ impl Parser<'_> {
         if off >= self.size {
             return ContainerMarkResult {
                 is_container: false,
-                container: Container::default(),
+                container: Container::new(),
                 off,
             };
         }
@@ -860,7 +860,7 @@ impl Parser<'_> {
         if indent >= self.code_indent_offset {
             return ContainerMarkResult {
                 is_container: false,
-                container: Container::default(),
+                container: Container::new(),
                 off,
             };
         }
@@ -878,7 +878,7 @@ impl Parser<'_> {
                     ch: b'>',
                     mark_indent: indent,
                     contents_indent: indent + 1,
-                    ..Container::default()
+                    ..Container::new()
                 },
                 off: off + 1,
             };
@@ -893,7 +893,7 @@ impl Parser<'_> {
                         ch: b'^',
                         mark_indent: indent,
                         contents_indent: indent + (mark_end - off),
-                        ..Container::default()
+                        ..Container::new()
                     },
                     off: mark_end,
                 };
@@ -920,7 +920,7 @@ impl Parser<'_> {
                         start: fence_len,
                         mark_indent: indent,
                         contents_indent: indent,
-                        ..Container::default()
+                        ..Container::new()
                     },
                     off: name + len as OFF,
                 };
@@ -940,7 +940,7 @@ impl Parser<'_> {
                     ch: c,
                     mark_indent: indent,
                     contents_indent: indent + 1,
-                    ..Container::default()
+                    ..Container::new()
                 },
                 off: off + 1,
             };
@@ -955,7 +955,7 @@ impl Parser<'_> {
                     ch: c,
                     mark_indent: indent,
                     contents_indent: indent + 1,
-                    ..Container::default()
+                    ..Container::new()
                 },
                 off: off + 1,
             };
@@ -982,7 +982,7 @@ impl Parser<'_> {
                             start: num,
                             mark_indent: indent,
                             contents_indent: indent + mark_width,
-                            ..Container::default()
+                            ..Container::new()
                         },
                         off: pos,
                     };
@@ -997,7 +997,7 @@ impl Parser<'_> {
                             start: num,
                             mark_indent: indent,
                             contents_indent: indent + mark_width,
-                            ..Container::default()
+                            ..Container::new()
                         },
                         off: pos,
                     };
@@ -1007,7 +1007,7 @@ impl Parser<'_> {
 
         ContainerMarkResult {
             is_container: false,
-            container: Container::default(),
+            container: Container::new(),
             off,
         }
     }

@@ -123,7 +123,7 @@ impl Snapshots {
         // owned `snapshot_name` (same bytes as the interned key) instead.
         let gop = self
             .counts
-            .get_or_put(&snapshot_name)
+            .get_or_put(&snapshot_name, || 0)
             .map_err(Error::from)?;
         if gop.found_existing {
             *gop.value_ptr += 1;
@@ -201,14 +201,14 @@ impl Snapshots {
                 &name_with_counter,
                 strings::QuoteEscapeFormatFlags {
                     quote_char: b'`',
-                    ..Default::default()
+                    ..strings::QuoteEscapeFormatFlags::new()
                 }
             ),
             strings::format_escapes(
                 target_value,
                 strings::QuoteEscapeFormatFlags {
                     quote_char: b'`',
-                    ..Default::default()
+                    ..strings::QuoteEscapeFormatFlags::new()
                 }
             ),
         )
@@ -367,7 +367,7 @@ impl Snapshots {
         let list = self
             .inline_snapshots_to_write
             .entry(file_id)
-            .or_default();
+            .or_insert_with(Vec::new);
         list.push(value);
         Ok(())
     }

@@ -92,7 +92,7 @@ pub enum Intrinsic {
 }
 
 bitflags::bitflags! {
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
     pub struct ElemFlags: u128 {
         const REQUIRED = 1;
         const OPTIONAL = 2;
@@ -325,8 +325,8 @@ impl<'s> TypeArguments<'s> {
     }
 }
 
-impl Default for TypeArguments<'_> {
-    fn default() -> Self {
+impl TypeArguments<'_> {
+    pub fn new() -> Self {
         TypeArguments::Given(List::empty())
     }
 }
@@ -485,7 +485,7 @@ pub enum TypeData<'s> {
 }
 
 bitflags::bitflags! {
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
     pub struct PropFlags: u32 {
         const OPTIONAL = 1;
         const READONLY = 2;
@@ -716,9 +716,8 @@ pub struct Shape<'s> {
 
 /// Whether a synthesized object type is still the type of an object literal expression, or which
 /// other distinguishing kind it was created as.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Literalness {
-    #[default]
     No,
     Literal,
     /// An object literal with a spread: its other properties are not known.
@@ -996,7 +995,7 @@ pub mod tf {
 bitflags::bitflags! {
     /// The `ObjectFlags` that are derived from a type's constituents, plus four that are specific
     /// to this checker.
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
     pub struct ObjectFlags: u16 {
         /// It references a type parameter, so instantiation may change it. Exact, but for
         /// `Shape::has_no_instantiable_symbol`.
@@ -1043,7 +1042,7 @@ bitflags::bitflags! {
 /// Distinguishes two types with the same constituents: it is part of a type's interning key, as in
 /// `getUnionKey` and `getAliasKey`. `data` does not include it, so a named union is a
 /// `TypeData::Union` of its members like any other.
-#[derive(PartialEq, Eq, Hash, Debug, Default)]
+#[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Provenance<'s> {
     /// `Type.alias`
     pub alias: Option<(Sym, List<'s, TypeId>)>,
@@ -1072,6 +1071,21 @@ pub struct Provenance<'s> {
     pub has_other_instantiation: bool,
 }
 
+impl<'s> Provenance<'s> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            alias: None,
+            origin: UnionOrigin::None,
+            is_enum: false,
+            stored_under: None,
+            is_array_literal: false,
+            is_array_pattern: false,
+            has_other_instantiation: false,
+        }
+    }
+}
+
 /// `getTypeInstantiationKey`, for `ObjectType.instantiations` of a mapped type.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct InstantiationKey {
@@ -1088,9 +1102,8 @@ pub struct InstantiationKey {
     pub nesting: u8,
 }
 
-#[derive(PartialEq, Eq, Hash, Debug, Default)]
+#[derive(PartialEq, Eq, Hash, Debug)]
 pub enum UnionOrigin<'s> {
-    #[default]
     None,
     /// The named unions it was built from, and its remaining members, in the order of
     /// `CompareTypes`.
@@ -1131,7 +1144,7 @@ impl Hash for TypeKey<'_> {
     /// What `#[derive(Hash)]` writes for the `TypeData`: the discriminant, then the fields.
     fn hash<H: Hasher>(&self, state: &mut H) {
         use std::mem::discriminant;
-        let given = discriminant(&TypeArguments::default());
+        let given = discriminant(&TypeArguments::new());
         match *self {
             TypeKey::Data(data) => data.hash(state),
             TypeKey::Union(members) => {
@@ -1145,7 +1158,7 @@ impl Hash for TypeKey<'_> {
             TypeKey::Ref { target, args } => {
                 let empty = TypeData::Ref {
                     target,
-                    args: TypeArguments::default(),
+                    args: TypeArguments::new(),
                 };
                 discriminant(&empty).hash(state);
                 target.hash(state);
@@ -1158,7 +1171,7 @@ impl Hash for TypeKey<'_> {
                 readonly,
             } => {
                 let empty = TypeData::Tuple {
-                    elems: TypeArguments::default(),
+                    elems: TypeArguments::new(),
                     flags: List::empty(),
                     readonly,
                 };
@@ -1555,7 +1568,7 @@ impl<V> Own<V> {
     fn new() -> Self {
         Own {
             records: LocalVec::new(),
-            found: Found::default(),
+            found: Found::new(),
             bound: LocalVec::new(),
             recent: std::cell::OnceCell::new(),
         }
@@ -2641,7 +2654,7 @@ impl<'p, 's> Types<'p, 's> {
 
     /// `intern` for a type that has an alias or an origin.
     pub fn intern_with(&self, data: TypeData<'s>, provenance: Provenance<'s>) -> TypeId {
-        if provenance == Provenance::default() {
+        if provenance == Provenance::new() {
             return self.intern(data);
         }
         self.intern_new((data, Some(ArenaBox::new_in(provenance, self.own.arena))))
@@ -3938,8 +3951,8 @@ impl<V> Taken<V> {
     }
 }
 
-impl<V> Default for Taken<V> {
-    fn default() -> Self {
+impl<V> Taken<V> {
+    fn new() -> Self {
         Taken {
             len: 0,
             records: Vec::new(),
@@ -3951,7 +3964,6 @@ impl<V> Default for Taken<V> {
 }
 
 /// The task-local records that one task publishes. A field of `Finished`.
-#[derive(Default)]
 pub struct OwnRecords<'s> {
     atoms: Taken<List<'s, u8>>,
     components: Taken<List<'s, IndexComponent>>,
@@ -3960,10 +3972,23 @@ pub struct OwnRecords<'s> {
     types: Taken<TypeRecord<'s>>,
 }
 
+impl<'s> OwnRecords<'s> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            atoms: Taken::new(),
+            components: Taken::new(),
+            mappers: Taken::new(),
+            sigs: Taken::new(),
+            types: Taken::new(),
+        }
+    }
+}
+
 fn take<V>(own: &mut Own<V>, marks: &Bits, hashes: &[ContentHash]) -> Taken<V> {
     let mut taken = Taken {
         len: own.records.len() as usize,
-        ..Taken::default()
+        ..Taken::new()
     };
     own.records.drain(|index, record| {
         if marks.has(index as usize) {
@@ -4073,7 +4098,6 @@ impl<'s> OwnStore<'s> {
 
 /// For one task: the published id of each of its task-local records, by index. `u32::MAX`: the
 /// record is not published.
-#[derive(Default)]
 pub struct Link {
     atoms: Box<[u32]>,
     components: Box<[u32]>,
@@ -4082,13 +4106,36 @@ pub struct Link {
     types: Box<[u32]>,
 }
 
+impl Link {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            atoms: Box::new([]),
+            components: Box::new([]),
+            mappers: Box::new([]),
+            sigs: Box::new([]),
+            types: Box::new([]),
+        }
+    }
+}
+
 /// Statistics of one merge step, by kind.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct LinkCounts {
     /// The number of records the tasks of the step publish, before any are merged.
     pub linked: [usize; KINDS.len()],
     /// The number of them that were merged with the record of a lower task.
     pub joined: [usize; KINDS.len()],
+}
+
+impl LinkCounts {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            linked: [0; KINDS.len()],
+            joined: [0; KINDS.len()],
+        }
+    }
 }
 
 impl LinkCounts {
@@ -4108,7 +4155,7 @@ fn number<V: Send + Sync>(
 ) -> Vec<Box<[u32]>> {
     // Nothing that is published references a task-local record of the kind.
     if tasks.iter().all(|task| task.records.is_empty()) {
-        return tasks.iter().map(|_| Box::default()).collect();
+        return tasks.iter().map(|_| Box::new([])).collect();
     }
     let place = |task: usize, position: usize| (task as u64) << 32 | position as u64;
     // GROUP: for each record, the `place` of the first record with the same hash.
@@ -4118,7 +4165,8 @@ fn number<V: Send + Sync>(
     {
         let tasks: &[&mut Taken<V>] = tasks;
         in_parallel(HASH_PARTS, &|part| {
-            let mut first: FxHashMap<ContentHash, u64> = FxHashMap::default();
+            let mut first: FxHashMap<ContentHash, u64> =
+                FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for (t, task) in tasks.iter().enumerate() {
                 let (from, to) = (task.parts[part] as usize, task.parts[part + 1] as usize);
                 for &position in &task.positions[from..to] {
@@ -4164,7 +4212,7 @@ fn number<V: Send + Sync>(
         .collect();
     // LINK
     let mut links: Vec<(usize, &mut Taken<V>, Box<[u32]>)> = (tasks.iter_mut().enumerate())
-        .map(|(t, task)| (t, &mut **task, Box::default()))
+        .map(|(t, task)| (t, &mut **task, Box::new([])))
         .collect();
     for_each_mut(&mut links, in_parallel, &|(t, task, link)| {
         let mut ids = vec![u32::MAX; task.len].into_boxed_slice();
@@ -4312,8 +4360,8 @@ impl<'s> TypeStore<'s> {
         let linked = count(&tasks);
         let all: usize = linked.iter().sum();
         if all == 0 {
-            let links = tasks.iter().map(|_| Link::default()).collect();
-            return (links, LinkCounts::default());
+            let links = tasks.iter().map(|_| Link::new()).collect();
+            return (links, LinkCounts::new());
         }
         // Dispatching a stage to the pool costs more than the stage itself. The ids are the same:
         // no stage depends on which thread runs it.

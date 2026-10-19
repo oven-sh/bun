@@ -371,7 +371,7 @@ impl<V: CalcValue> Calc<V> {
                     i.expect_comma()?;
                     s
                 } else {
-                    RoundingStrategy::default()
+                    RoundingStrategy::Nearest
                 };
 
                 Self::parse_math_fn(
@@ -1253,7 +1253,7 @@ impl<V> MathFunction<V> {
                 interval,
             } => {
                 dest.write_str("round(")?;
-                if *strategy != RoundingStrategy::default() {
+                if *strategy != RoundingStrategy::Nearest {
                     strategy.to_css(dest)?;
                     dest.delim(b',', false)?;
                 }
@@ -1350,10 +1350,9 @@ impl<V> MathFunction<V> {
 
 /// A [rounding strategy](https://www.w3.org/TR/css-values-4/#typedef-rounding-strategy),
 /// as used in the `round()` function.
-#[derive(Copy, Clone, PartialEq, Eq, Default, css::DefineEnumProperty)]
+#[derive(Copy, Clone, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum RoundingStrategy {
     /// Round to the nearest integer.
-    #[default]
     Nearest,
     /// Round up (ceil).
     Up,

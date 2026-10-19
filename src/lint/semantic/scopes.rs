@@ -881,7 +881,7 @@ impl<'f, 'a> Collector<'f, 'a> {
                     .modifiers_of_params
                     .get(p.idx())
                     .copied()
-                    .unwrap_or_default();
+                    .unwrap_or(bun_sema::hir::Span::EMPTY);
                 let decorators_end = hir
                     .modifiers
                     .get(modifiers.range())

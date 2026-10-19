@@ -40,7 +40,7 @@ pub(crate) fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bu
         js_printer::PrintJsonOptions {
             indent: entry.indentation,
             mangled_props: None,
-            ..Default::default()
+            ..js_printer::PrintJsonOptions::new()
         },
     ) {
         bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
@@ -76,7 +76,7 @@ pub(super) fn package_json_entry_or_crash<'a>(
         path,
         GetJSONOptions {
             guess_indentation: true,
-            ..Default::default()
+            ..GetJSONOptions::new()
         },
     ) {
         GetResult::Entry(entry) => return entry,
@@ -319,7 +319,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                     EditOptions {
                         exact_versions: manager.options.enable.exact_versions(),
                         before_install: true,
-                        ..Default::default()
+                        ..EditOptions::new()
                     },
                 )?;
                 // `edit_target` may shrink the slice.
@@ -336,7 +336,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                     EditOptions {
                         exact_versions: true,
                         before_install: true,
-                        ..Default::default()
+                        ..EditOptions::new()
                     },
                 )?;
             }
@@ -386,7 +386,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         super::package_json_write_back::record(
             manager,
             WorkspaceTarget {
-                name: Box::default(),
+                name: Box::new([]),
                 name_hash: manager.workspace_name_hash,
                 package_json_path: original_package_json_path,
             },

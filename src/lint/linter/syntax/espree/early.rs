@@ -449,8 +449,8 @@ impl<'a> Checks<'a, '_> {
             }
             checks.comma_after_rest(end);
         };
-        let mut functions: AncestorMemo<'a, Func<'a>> = AncestorMemo::default();
-        let mut parameters: AncestorMemo<'a, bool> = AncestorMemo::default();
+        let mut functions: AncestorMemo<'a, Func<'a>> = AncestorMemo::new();
+        let mut parameters: AncestorMemo<'a, bool> = AncestorMemo::new();
         for (i, raw) in file
             .hir
             .pat_elems
@@ -1050,7 +1050,7 @@ impl<'a> Checks<'a, '_> {
             } else if let Err(error) = regex::validate_pattern(
                 pattern,
                 regex::Mode::of_flags(flags),
-                regex::Options::default(),
+                regex::Options::new(),
                 &mut regex::Ignore,
             ) {
                 // Where regexpp has other words than acorn.
@@ -1146,7 +1146,7 @@ impl<'a> Checks<'a, '_> {
         let validated = regex::validate_pattern(
             pattern,
             regex::Mode::of_flags(flags),
-            regex::Options::default(),
+            regex::Options::new(),
             &mut regex::Ignore,
         );
         // It takes some of what is refused here.
@@ -1585,7 +1585,7 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         // The private names of a class are collected once: there can be as many of them as there are uses.
-        let mut names_of: IdMap<Class<'a>, FxHashSet<&'a [u8]>> = IdMap::default();
+        let mut names_of: IdMap<Class<'a>, FxHashSet<&'a [u8]>> = IdMap::init();
         let mut is_declared = |tops: &mut Tops<'a>, node: Node<'a>, name: &[u8]| {
             let mut inside = node;
             tops.outward(node).any(|it| {
@@ -1743,10 +1743,11 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         // The private names of the class so far, each with the accessor that another can complete.
-        let mut private: FxHashMap<&'a [u8], Option<(bool, MemberKind)>> = FxHashMap::default();
+        let mut private: FxHashMap<&'a [u8], Option<(bool, MemberKind)>> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         // For oxc: where each is declared first, and whether that is static.
         let mut first_private: FxHashMap<&'a [u8], (crate::span::Span, bool)> =
-            FxHashMap::default();
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         // oxc lets what is only declared be called `prototype`, and be there twice: `declare class A { static prototype: A }`.
         let is_oxc = self.is_oxc;
         let is_only_declared = |flags: Flags| is_oxc && flags.contains(Flags::AMBIENT);
@@ -1754,7 +1755,7 @@ impl<'a> Checks<'a, '_> {
             let is_class_declared = is_only_declared(class.flags());
             let mut has_constructor = false;
             let mut constructors = 0;
-            let mut first_constructor = crate::span::Span::default();
+            let mut first_constructor = crate::span::Span::init();
             private.clear();
             first_private.clear();
             for member in class.members() {

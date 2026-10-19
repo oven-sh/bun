@@ -345,7 +345,6 @@ fn visualize_end_of_line(text: &[u8]) -> Vec<u8> {
     out
 }
 
-#[derive(Default)]
 struct Tally {
     /// The output is that of the snapshot.
     format: Count,
@@ -360,6 +359,21 @@ struct Tally {
 }
 
 impl Tally {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            format: Count::new(),
+            syntax_errors: 0,
+            errors: Count::new(),
+            second_format: Count::new(),
+            crlf: Count::new(),
+            cr: Count::new(),
+            bom: Count::new(),
+        }
+    }
+}
+
+impl Tally {
     fn merge(&mut self, other: &Tally) {
         self.format.merge(other.format);
         self.syntax_errors += other.syntax_errors;
@@ -371,7 +385,7 @@ impl Tally {
     }
 
     fn all(&self) -> Count {
-        let mut all = Count::default();
+        let mut all = Count::new();
         [
             self.format,
             self.errors,
@@ -518,12 +532,12 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 if (index - 1) % flags.every != flags.first % flags.every {
                     continue;
                 }
-                let tally = by_directory.entry(group.clone()).or_default();
+                let tally = by_directory.entry(group.clone()).or_insert_with(Tally::new);
 
                 // `bun fmt` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
                 let mut options = FormatOptions {
                     embedded_html: true,
-                    ..FormatOptions::default()
+                    ..FormatOptions::new()
                 };
                 if let Some(parser) = named_parser {
                     let _ = options.set(b"parser", parser);
@@ -708,13 +722,13 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
     for (directory, tally) in &by_directory {
         by_language
             .entry(strings::split(directory, b"/").next().unwrap_or_default())
-            .or_default()
+            .or_insert_with(Tally::new)
             .merge(tally);
         if flags.table {
             show(directory, tally);
         }
     }
-    let mut everything = Tally::default();
+    let mut everything = Tally::new();
     for (language, tally) in &by_language {
         everything.merge(tally);
         show(language, tally);

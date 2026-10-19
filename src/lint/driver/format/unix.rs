@@ -63,12 +63,21 @@ fn write_end(out: &mut Vec<u8>, message: &LintMessage) {
 }
 
 /// [`write_end`], made once for each rule that is built in and for errors and warnings.
-#[derive(Default)]
 struct Ends {
     /// One after the other.
     text: Vec<u8>,
     /// By where the rule is, plus 1 for an error: from where to where its end is in `text`.
     places: FxHashMap<usize, (u32, u32)>,
+}
+
+impl Ends {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            text: Vec::new(),
+            places: FxHashMap::with_hasher(bun_sema::util::FxBuild),
+        }
+    }
 }
 
 impl Ends {
@@ -97,7 +106,7 @@ impl Ends {
 
 /// With the end of the last line.
 pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    let (mut total, mut ends) = (0, Ends::default());
+    let (mut total, mut ends) = (0, Ends::new());
     for result in results.iter().filter(|it| !it.messages.is_empty()) {
         let source = Source::new(result, meta);
         total += result.messages.len();

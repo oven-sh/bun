@@ -38,7 +38,7 @@ pub fn parse(text: &[u8]) -> Option<Json> {
     if text.is_empty() {
         return None;
     }
-    let mut allocator = ASTMemoryAllocator::default();
+    let mut allocator = ASTMemoryAllocator::init();
     let _scope = allocator.enter();
     let source = Source::init_path_string(b"".as_slice(), text);
     let mut log = Log::init();

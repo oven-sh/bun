@@ -7,7 +7,6 @@ pub struct NoUnsafeFinally;
 
 const UNSAFE_USAGE: Message = Message::new("unsafeUsage", "Unsafe usage of {{nodeType}}.");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The `finally` block that a `return`, a `throw` or a jump to a label leaves first, from a node.
     left: AncestorMemo<'a, Option<Span>>,
@@ -17,6 +16,18 @@ pub struct State<'a> {
     left_by_continue: AncestorMemo<'a, Option<Span>>,
     /// The jumps to a label in a `finally` block, with the label and the block.
     to_labels: Vec<(Stmt<'a>, Name<'a>, Span)>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            left: AncestorMemo::new(),
+            left_by_break: AncestorMemo::new(),
+            left_by_continue: AncestorMemo::new(),
+            to_labels: Vec::new(),
+        }
+    }
 }
 
 /// A step of ESLint's `isInFinallyBlock`, from `at` up to `parent`: the `finally` block that is left, or `None`
@@ -62,7 +73,7 @@ impl Rule for NoUnsafeFinally {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let has_finalizer = |it: Stmt| matches!(it.as_try(), Some((.., Some(_))));
-        file.stmts_of_kind(StmtTag::Try).any(has_finalizer).then(State::default)
+        file.stmts_of_kind(StmtTag::Try).any(has_finalizer).then(State::new)
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -98,7 +109,7 @@ impl Rule for NoUnsafeFinally {
         // One pass through the labeled statements and the jumps, in the order of the source: the labeled statements
         // around the place, the outermost first, and where those of them with each label start.
         let mut around: Vec<(Span, Name<'a>)> = Vec::new();
-        let mut with_label: FxHashMap<Name<'a>, Vec<u32>> = FxHashMap::default();
+        let mut with_label: FxHashMap<Name<'a>, Vec<u32>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut rest = labeled.into_iter().peekable();
         for (jump, name, finalizer) in jumps {
             let at = jump.span().start;

@@ -10,15 +10,22 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use core::ptr::NonNull;
 
-#[derive(Default)]
 pub(crate) struct Mkdir {
     pub(crate) opts: Opts,
     pub(crate) state: State,
 }
 
-#[derive(Default)]
+impl Mkdir {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            opts: Opts::new(),
+            state: State::Idle,
+        }
+    }
+}
+
 pub(crate) enum State {
-    #[default]
     Idle,
     Exec(Exec),
     WaitingWriteErr,
@@ -48,7 +55,7 @@ pub(crate) struct Exec {
 impl Mkdir {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let (args_start, mut opts) = {
-            let mut opts = Opts::default();
+            let mut opts = Opts::new();
             let args = Builtin::of(interp, cmd).args_slice();
             match parse_flags(&mut opts, args) {
                 Ok(Some(rest)) => {
@@ -322,7 +329,7 @@ impl ShellMkdirTask {
             return;
         }
 
-        let mut node_fs = NodeFS::default();
+        let mut node_fs = NodeFS::new();
         let args = fs_args::Mkdir {
             path: PathLike::borrowed(filepath.as_bytes()),
             recursive: this.opts.parents,
@@ -432,13 +439,23 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct Opts {
     /// `-p`, `--parents` — no error if existing, make parent directories as
     /// needed, with their file modes unaffected by any -m option.
     pub(crate) parents: bool,
     /// `-v`, `--verbose` — print a message for each created directory
     pub(crate) verbose: bool,
+}
+
+impl Opts {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            parents: false,
+            verbose: false,
+        }
+    }
 }
 
 impl FlagParser for Opts {

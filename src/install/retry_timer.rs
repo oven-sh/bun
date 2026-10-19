@@ -12,7 +12,6 @@ use crate::package_manager_real::{self, enqueue, package_manager_options::LogLev
 use crate::{NetworkTask, PackageManager};
 
 /// Install thread only. Its tasks are not in `pending_tasks`: `pending_task_count` adds `len()`.
-#[derive(Default)]
 pub(crate) struct RetryQueue {
     waiting: Vec<(Instant, *mut NetworkTask)>,
     /// True once "registry requests failed, retrying" has been printed. It's printed at most once
@@ -21,6 +20,17 @@ pub(crate) struct RetryQueue {
     /// The highest attempt for which a wait that the registry asked for was announced, since the
     /// queue was last empty.
     announced_asked: u16,
+}
+
+impl RetryQueue {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            waiting: Vec::new(),
+            announced: false,
+            announced_asked: 0,
+        }
+    }
 }
 
 impl RetryQueue {

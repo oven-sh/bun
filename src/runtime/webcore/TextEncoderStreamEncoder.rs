@@ -15,13 +15,22 @@ bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 /// Held by `JSTextEncoderStream` as a raw `void*` and driven via the
 /// `extern "C"` fns below; no JS wrapper class. `scratch` is moved out via
 /// `.take()` before any call that could re-enter.
-#[derive(Default)]
 pub(crate) struct TextEncoderStreamEncoder {
     pending_lead_surrogate: Cell<Option<u16>>,
     /// Reusable output buffer for the native-sink path so a
     /// `ByteStream → TextEncoderStream → JSSink` chain allocates nothing per
     /// chunk. Borrowed only after user-JS coercion has run.
     scratch: core::cell::RefCell<Vec<u8>>,
+}
+
+impl TextEncoderStreamEncoder {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            pending_lead_surrogate: core::cell::Cell::new(None),
+            scratch: core::cell::RefCell::new(Vec::new()),
+        }
+    }
 }
 
 impl TextEncoderStreamEncoder {
@@ -222,7 +231,7 @@ impl TextEncoderStreamEncoder {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut TextEncoderStreamEncoder
 {
-    Box::into_raw(Box::new(TextEncoderStreamEncoder::default()))
+    Box::into_raw(Box::new(TextEncoderStreamEncoder::new()))
 }
 
 #[unsafe(no_mangle)]

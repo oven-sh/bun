@@ -128,8 +128,8 @@ fn boxed<E: Copy, const N: usize>(entry: E) -> Box<[E; N]> {
     }
 }
 
-impl Default for Names {
-    fn default() -> Self {
+impl Names {
+    pub(crate) fn new() -> Self {
         let mut known = boxed(([0; 2], u32::MAX, T::Identifier));
         let mut known_long = boxed(NO_LONG);
         let mut known_others = Vec::new();
@@ -168,7 +168,7 @@ impl Default for Names {
         Names {
             short: boxed(NO_SHORT),
             long: boxed(NO_LONG),
-            other: Table::default(),
+            other: Table::new(),
             short_mask: (1 << SHORT_BITS) - 1,
             long_mask: (1 << LONG_BITS) - 1,
             of: 0,
@@ -176,11 +176,11 @@ impl Default for Names {
             spans: KNOWN_SPANS.0.to_vec(),
             cooked: KNOWN_TEXTS.concat(),
             mentioned: [0; MENTIONED_WORDS],
-            known_in_file: Default::default(),
+            known_in_file: [0; 3],
             known,
             known_long,
             known_others,
-            late: Late::default(),
+            late: Late::new(),
         }
     }
 }
@@ -327,7 +327,7 @@ impl Names {
         self.cooked.truncate(KNOWN_SPANS.1);
         self.other.clear();
         self.mentioned = [0; MENTIONED_WORDS];
-        self.known_in_file = Default::default();
+        self.known_in_file = [0; 3];
     }
 
     #[inline(always)]
@@ -681,7 +681,6 @@ impl Names {
 }
 
 /// From the hash of a text to a number, for texts that are kept elsewhere. It grows.
-#[derive(Default)]
 struct Table {
     /// Their number is a power of two, or 0. At most half of them are taken.
     slots: Vec<Slot>,
@@ -690,11 +689,33 @@ struct Table {
     generation: u16,
 }
 
-#[derive(Copy, Clone, Default)]
+impl Table {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            slots: Vec::new(),
+            taken: 0,
+            generation: 0,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
 struct Slot {
     hash: u32,
     number: u32,
     generation: u16,
+}
+
+impl Slot {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            hash: 0,
+            number: 0,
+            generation: 0,
+        }
+    }
 }
 
 impl Table {
@@ -703,7 +724,7 @@ impl Table {
         self.generation = match self.generation.checked_add(1) {
             Some(next) => next,
             None => {
-                self.slots.fill(Slot::default());
+                self.slots.fill(Slot::new());
                 1
             }
         };
@@ -732,7 +753,7 @@ impl Table {
         }
         if (self.taken + 1) * 2 > self.slots.len() {
             let old = std::mem::take(&mut self.slots);
-            self.slots = vec![Slot::default(); (old.len() * 2).max(256)];
+            self.slots = vec![Slot::new(); (old.len() * 2).max(256)];
             let generation = self.generation;
             for slot in old.iter().filter(|it| it.generation == generation) {
                 self.put(*slot);
@@ -758,10 +779,19 @@ impl Table {
 
 /// The texts that are asked about and are not in the file at hand: the names that a rule of a
 /// linter looks for. They stay from file to file, and are entered while others are read.
-#[derive(Default)]
 struct Late {
     numbers: Guarded<Table>,
     texts: Chunk,
+}
+
+impl Late {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            numbers: Guarded::init(Table::new()),
+            texts: Chunk::new(),
+        }
+    }
 }
 
 /// A list that grows while its elements are borrowed. Each chunk has twice the room of the one
@@ -780,8 +810,8 @@ impl Chunk {
     }
 }
 
-impl Default for Chunk {
-    fn default() -> Self {
+impl Chunk {
+    fn new() -> Self {
         Chunk::with_room(64)
     }
 }

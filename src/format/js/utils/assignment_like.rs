@@ -1001,7 +1001,7 @@ pub(crate) fn with_assignment_layout(
     let options = match expression.arrow_function() {
         Some(_) => ExprOptions::Arrow(FormatJsArrowFunctionExpressionOptions {
             assignment_layout: layout,
-            ..FormatJsArrowFunctionExpressionOptions::default()
+            ..FormatJsArrowFunctionExpressionOptions::new()
         }),
         None => ExprOptions::None,
     };

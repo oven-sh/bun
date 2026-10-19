@@ -13,12 +13,21 @@ static LABEL: LazyLock<Regex> = LazyLock::new(|| {
     )
 });
 
-#[derive(Default)]
 pub(crate) struct Seen<'d> {
     /// `allMissingReferences`. A label is set to `None` once a definition for it is found.
     missing: Vec<(Option<&'d [u8]>, (Loc, Loc))>,
     /// For each label, the indices in `missing` of the references that have it.
     by_label: FxHashMap<&'d [u8], Vec<u32>>,
+}
+
+impl<'d> Seen<'d> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            missing: Vec::new(),
+            by_label: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl Rule for NoMissingLabelRefs {
@@ -42,7 +51,7 @@ impl Listens for NoMissingLabelRefs {
     type Seen<'d> = Seen<'d>;
 
     fn seen<'d>(&self) -> Self::Seen<'d> {
-        Seen::default()
+        Seen::new()
     }
 
     fn on<'d>(

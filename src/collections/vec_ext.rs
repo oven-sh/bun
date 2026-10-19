@@ -533,10 +533,19 @@ impl crate::pool::ObjectPoolType for Vec<u8> {
     }
 }
 
-#[derive(Default)]
 pub struct OffsetByteList {
     pub head: u32,
     pub byte_list: Vec<u8>,
+}
+
+impl OffsetByteList {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            head: 0,
+            byte_list: Vec::new(),
+        }
+    }
 }
 
 impl OffsetByteList {
@@ -569,7 +578,7 @@ impl OffsetByteList {
 
     pub fn clear_and_free(&mut self) {
         // Drop on the taken value frees `byte_list`; nothing is reused.
-        drop(core::mem::take(self));
+        drop(core::mem::replace(self, OffsetByteList::new()));
     }
 }
 

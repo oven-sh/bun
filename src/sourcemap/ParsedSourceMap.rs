@@ -60,11 +60,11 @@ impl Drop for ParsedSourceMap {
     }
 }
 
-impl Default for ParsedSourceMap {
-    fn default() -> Self {
+impl ParsedSourceMap {
+    pub fn new() -> Self {
         Self {
             input_line_count: 0,
-            mappings: mapping::List::default(),
+            mappings: mapping::List::new(),
             internal: None,
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
@@ -228,7 +228,7 @@ impl ParsedSourceMap {
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
             input_line_count: internal.input_line_count(),
-            mappings: mapping::List::default(),
+            mappings: mapping::List::new(),
             internal: Some(internal),
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,

@@ -65,7 +65,7 @@ impl Rule for PreferNumberProperties {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         Some(State {
-            nearest_unary: AncestorMemo::default(),
+            nearest_unary: AncestorMemo::new(),
             functions: FUNCTIONS.map(|it| file.name_of(it)),
         })
     }

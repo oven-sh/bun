@@ -58,12 +58,24 @@ pub(crate) struct Context<'a> {
     pub(crate) stats: Stats,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct Stats {
     pub(crate) unpacked_size: usize,
     pub(crate) total_files: usize,
     pub(crate) packed_size: usize,
     pub(crate) bundled_deps: usize,
+}
+
+impl Stats {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            unpacked_size: 0,
+            total_files: 0,
+            packed_size: 0,
+            bundled_deps: 0,
+        }
+    }
 }
 
 impl<'a> Context<'a> {
@@ -183,7 +195,7 @@ impl PackCommand {
             manager,
             command_ctx: ctx,
             bundled_deps: Vec::new(),
-            stats: Stats::default(),
+            stats: Stats::new(),
         };
 
         // just pack the current workspace
@@ -303,15 +315,28 @@ impl PartialEq for PackQueueItem {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct PackQueue {
     heap: std::collections::BinaryHeap<PackQueueItem>,
     seen: StringHashMap<()>,
 }
+
+impl PackQueue {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            heap: std::collections::BinaryHeap::new(),
+            seen: StringHashMap::init(),
+        }
+    }
+}
 impl PackQueue {
     /// A path that is already queued is dropped: no file is packed twice.
     fn add(&mut self, item: PackQueueItem) -> Result<(), AllocError> {
-        if self.seen.get_or_put(item.path.as_bytes())?.found_existing {
+        if self
+            .seen
+            .get_or_put(item.path.as_bytes(), || ())?
+            .found_existing
+        {
             return Ok(());
         }
         self.heap.push(item);
@@ -353,7 +378,7 @@ fn iterate_included_project_tree(
     root_dir: &Dir,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
-    let mut dirs = vec![DirInfo(Dir::from_fd(root_dir.fd), Box::default(), 1)];
+    let mut dirs = vec![DirInfo(Dir::from_fd(root_dir.fd), Box::new([]), 1)];
     let mut included_dirs: Vec<DirInfo> = Vec::new();
 
     // first find included dirs and files
@@ -594,7 +619,6 @@ struct BundledFile {
     edited: Option<Box<[u8]>>,
 }
 
-#[derive(Default)]
 struct Bundle {
     packages: Vec<BundledPackage>,
     /// Maps a `BundledPackage::subpath` to the package's index in `packages`.
@@ -606,6 +630,19 @@ struct Bundle {
     /// The workspace root, or the folder of the package being packed if it is not in a workspace,
     /// with symlinks resolved.
     project_path: Box<[u8]>,
+}
+
+impl Bundle {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            packages: Vec::new(),
+            placed: StringHashMap::init(),
+            pending: Vec::new(),
+            files: Vec::new(),
+            project_path: Box::new([]),
+        }
+    }
 }
 
 impl Bundle {
@@ -688,7 +725,7 @@ fn iterate_bundled_deps(
     root_dir: &Dir,
     log_level: LogLevel,
 ) -> Result<Vec<BundledFile>, AllocError> {
-    let mut bundle = Bundle::default();
+    let mut bundle = Bundle::new();
     if bundled_deps.is_empty() {
         return Ok(bundle.files);
     }
@@ -1400,7 +1437,7 @@ pub(crate) fn published_files(
     bump: &bun_alloc::Arena,
     log_level: LogLevel,
 ) -> Result<(PackQueue, Vec<BinInfo>), AllocError> {
-    let mut pack_queue = PackQueue::default();
+    let mut pack_queue = PackQueue::new();
     let bins = get_package_bins(json_root);
 
     for bin in &bins {
@@ -1431,7 +1468,7 @@ pub(crate) fn published_files(
             &mut pack_queue,
             &bins,
             None,
-            DirInfo(Dir::from_fd(root_dir.fd), Box::default(), 1),
+            DirInfo(Dir::from_fd(root_dir.fd), Box::new([]), 1),
             log_level,
         )?;
         return Ok((pack_queue, bins));
@@ -1487,7 +1524,7 @@ pub(crate) fn package_json_entry<'a>(
         abs_package_json_path.as_bytes(),
         WorkspacePackageJSONCache::GetJSONOptions {
             guess_indentation: true,
-            ..Default::default()
+            ..WorkspacePackageJSONCache::GetJSONOptions::new()
         },
     ) {
         WorkspacePackageJSONCache::GetResult::ReadErr(err) => {
@@ -1520,12 +1557,12 @@ pub(crate) fn drop_shadowed_properties(json: Expr) {
     let ExprData::EObject(mut object) = json.data else {
         return;
     };
-    let mut seen: StringHashMap<()> = StringHashMap::default();
+    let mut seen: StringHashMap<()> = StringHashMap::init();
     // Built from the last property to the first, so that `pop` returns the flags in property order.
     let mut is_last: Vec<bool> = (object.properties.slice().iter().rev())
         .map(|property| {
             let key = property.key.as_ref().and_then(Expr::as_utf8_string_literal);
-            key.is_none_or(|key| !bun_core::handle_oom(seen.get_or_put(key)).found_existing)
+            key.is_none_or(|key| !bun_core::handle_oom(seen.get_or_put(key, || ())).found_existing)
         })
         .collect();
     object.properties.retain(|_| is_last.pop().unwrap_or(true));
@@ -1940,7 +1977,7 @@ pub(crate) fn pack(
     let mut entry = ArchiveEntry::new2(&archive);
 
     {
-        let mut progress = Progress::Progress::default();
+        let mut progress = Progress::Progress::new();
         let mut node: Option<&mut Progress::Node> = None;
         if log_level.show_progress() {
             progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
@@ -2067,7 +2104,7 @@ pub(crate) fn pack(
             workspace_readme,
         )?
     } else {
-        Box::default()
+        Box::new([])
     };
 
     print_archived_files_and_packages(
@@ -2761,7 +2798,7 @@ fn edit_root_package_json(
         };
         dependency.value = Some(Expr::init(
             E::EString::init(replacement),
-            Default::default(),
+            bun_ast::Loc::new(),
         ));
     });
 
@@ -2779,7 +2816,7 @@ fn edit_root_package_json(
         js_printer::PrintJsonOptions {
             indent: indentation,
             mangled_props: None,
-            ..Default::default()
+            ..js_printer::PrintJsonOptions::new()
         },
     ) {
         if err == bun_js_printer::Error::Alloc(bun_alloc::AllocError) {
@@ -3093,16 +3130,17 @@ pub(crate) mod bindings {
 
         let tarball_path = tarball_path_str.to_utf8();
 
-        let tarball_file = match bun_sys::open_file(tarball_path.slice(), Default::default()) {
-            Ok(f) => f,
-            Err(err) => {
-                return Err(global.throw(format_args!(
-                    "failed to open tarball file \"{}\": {}",
-                    bstr::BStr::new(tarball_path.slice()),
-                    crate::Error::from(err).name(),
-                )));
-            }
-        };
+        let tarball_file =
+            match bun_sys::open_file(tarball_path.slice(), bun_sys::OpenFlags::empty()) {
+                Ok(f) => f,
+                Err(err) => {
+                    return Err(global.throw(format_args!(
+                        "failed to open tarball file \"{}\": {}",
+                        bstr::BStr::new(tarball_path.slice()),
+                        crate::Error::from(err).name(),
+                    )));
+                }
+            };
 
         let tarball = match tarball_file.read_to_end() {
             Ok(b) => b,

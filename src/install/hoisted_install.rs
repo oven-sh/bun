@@ -64,7 +64,7 @@ impl Drop for RestoreManager {
         let this = unsafe { &mut *self.manager };
         if self.log_level.show_progress() {
             this.progress.root.end();
-            this.progress = Progress::default();
+            this.progress = Progress::new();
         }
         // The progress-node pointers target stack locals of `install_hoisted_packages`.
         this.scripts_node = None;
@@ -224,7 +224,7 @@ pub(crate) fn install_hoisted_packages(
     let this = unsafe { &mut *mgr_ptr };
 
     let mut download_node: ProgressNode;
-    let mut install_node: ProgressNode = ProgressNode::default();
+    let mut install_node: ProgressNode = ProgressNode::new();
     let mut scripts_node: ProgressNode;
 
     if log_level.show_progress() {
@@ -330,7 +330,7 @@ pub(crate) fn install_hoisted_packages(
     let mut summary = package_install::Summary {
         old_modules,
         places,
-        ..Default::default()
+        ..package_install::Summary::new()
     };
 
     {
@@ -448,12 +448,12 @@ pub(crate) fn install_hoisted_packages(
                     break 'trees trees.into_boxed_slice();
                 },
                 trusted_dependencies_from_update_requests: trusted_deps,
-                seen_bin_links: StringHashMap::<()>::default(),
+                seen_bin_links: StringHashMap::<()>::init(),
                 destination_dir_subpath_buf: bun_paths::PathBuffer::ZEROED,
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
-                unfinished_scripts: Default::default(),
+                unfinished_scripts: std::rc::Rc::new(core::cell::RefCell::new(Vec::new())),
                 copy_trees: {
                     let self_contained = this.lockfile.self_contained_workspace_ids();
                     let mut set = Bitset::init_empty(trees_count)?;
@@ -587,8 +587,10 @@ pub(crate) fn install_hoisted_packages(
         }
         installer.link_bins_after_scripts();
         // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
-        installer.summary.successfully_installed =
-            Some(core::mem::take(&mut installer.successfully_installed));
+        installer.summary.successfully_installed = Some(core::mem::replace(
+            &mut installer.successfully_installed,
+            Bitset::new(),
+        ));
 
         if log_level.show_progress() {
             // See `activate()` note above — reuse the stored `NonNull`'s

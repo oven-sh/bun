@@ -75,8 +75,8 @@ unsafe impl bun_core::ffi::Zeroable for SocketGroup {}
 // SAFETY: all-zero is a valid VTable — every field is `Option<fn>` (None via NPO).
 unsafe impl bun_core::ffi::Zeroable for VTable {}
 
-impl Default for SocketGroup {
-    fn default() -> Self {
+impl SocketGroup {
+    pub fn new() -> Self {
         bun_core::ffi::zeroed()
     }
 }

@@ -7,9 +7,8 @@ use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef}
 use bun_collections::VecExt;
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SideEffects {
-    #[default]
     CouldHaveSideEffects,
     NoSideEffects,
 }
@@ -401,7 +400,7 @@ impl SideEffects {
                     if flags.contains(bun_ast::flags::Property::IsComputed) {
                         // Make sure "ToString" is still evaluated on the key
                         let key_expr = key.unwrap();
-                        let right = p.new_expr(E::String::default(), key_expr.loc);
+                        let right = p.new_expr(E::String::new(), key_expr.loc);
                         let bin = p.new_expr(
                             E::Binary {
                                 op: Op::Code::BinAdd,

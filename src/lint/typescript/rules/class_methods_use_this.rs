@@ -33,7 +33,7 @@ impl Rule for ClassMethodsUseThis {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        file.has_classes().then(State::default)
+        file.has_classes().then(State::new)
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {

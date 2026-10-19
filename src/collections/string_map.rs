@@ -13,7 +13,7 @@ pub struct StringMap {
 impl StringMap {
     pub fn init(dupe_keys: bool) -> Self {
         Self {
-            map: StringArrayHashMap::default(),
+            map: StringArrayHashMap::init(),
             dupe_keys,
         }
     }
@@ -36,7 +36,7 @@ impl StringMap {
     /// Dupe `value`; `key` is duped on miss regardless (`Box<[u8]>` forces a
     /// copy), so the `dupe_keys` flag is kept for API parity only.
     pub fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        let entry = self.map.get_or_put(key)?;
+        let entry = self.map.get_or_put(key, || Box::new([]))?;
         // get_or_put already boxed `key` on miss; duping again here would be
         // the same allocation, so skip it.
         let _ = self.dupe_keys;

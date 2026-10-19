@@ -196,7 +196,10 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
             writeln!(
                 writer,
                 "{}",
-                bun_core::fmt::format_json_string_utf8(&quoted_buf, Default::default()),
+                bun_core::fmt::format_json_string_utf8(
+                    &quoted_buf,
+                    crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+                ),
             )?;
 
             writer.write_all(b"  resolved ")?;
@@ -209,7 +212,10 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
             writeln!(
                 writer,
                 "{}",
-                bun_core::fmt::format_json_string_utf8(&quoted_buf, Default::default()),
+                bun_core::fmt::format_json_string_utf8(
+                    &quoted_buf,
+                    crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+                ),
             )?;
 
             if meta.integrity.tag != integrity::Tag::UNKNOWN {
@@ -246,7 +252,7 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
                             "{}",
                             bun_core::fmt::format_json_string_utf8(
                                 dependency_name,
-                                Default::default()
+                                crate::bun_output::fmt::JSONFormatterUTF8Options::new()
                             ),
                         )?;
                     } else {
@@ -257,7 +263,7 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
                         " {}",
                         bun_core::fmt::format_json_string_utf8(
                             dep.version.literal.slice(string_buf),
-                            Default::default()
+                            crate::bun_output::fmt::JSONFormatterUTF8Options::new()
                         ),
                     )?;
                 }

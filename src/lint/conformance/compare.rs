@@ -83,7 +83,7 @@ impl Reported {
             rule_id: match &message.rule_id {
                 Some(id) if *id == RuleId::Known(entry.meta) => None,
                 Some(id) => Some(id.to_vec().into()),
-                None => Some(BString::default()),
+                None => Some(BString::new(Vec::new())),
             },
             message_id: message.message_id.as_deref().unwrap_or_default().into(),
             message: message.message.clone().into(),
@@ -175,7 +175,6 @@ pub fn expected_messages(case: &Json) -> Vec<Reported> {
 }
 
 /// What is counted beside the cases that fail.
-#[derive(Default)]
 pub struct Counts {
     /// Messages without a help for which oxlint has one.
     pub lacking_help: AtomicUsize,
@@ -183,6 +182,17 @@ pub struct Counts {
     pub in_another_order: AtomicUsize,
     /// `--in-order`: such a case fails.
     pub fails_on_order: bool,
+}
+
+impl Counts {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            lacking_help: core::sync::atomic::AtomicUsize::new(0),
+            in_another_order: core::sync::atomic::AtomicUsize::new(0),
+            fails_on_order: false,
+        }
+    }
 }
 
 /// The order of what starts at the same place depends on the order in which ESLint visits the

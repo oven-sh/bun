@@ -197,7 +197,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         },
         extra_fds: vec![Stdio::Pipe(fds[1])].into_boxed_slice(),
         argv0: Some(exe.as_ptr()),
-        ..SpawnOptions::default()
+        ..SpawnOptions::new()
     };
 
     // SAFETY: `argv`/`env` are local null-terminated C-string arrays with

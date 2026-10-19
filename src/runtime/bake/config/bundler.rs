@@ -8,7 +8,6 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use core::ptr::NonNull;
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
-#[derive(Default)]
 pub(crate) struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
@@ -16,6 +15,18 @@ pub(crate) struct SplitBundlerOptions {
     pub(crate) client: BuildConfigSubset,
     pub(crate) server: BuildConfigSubset,
     pub(crate) ssr: BuildConfigSubset,
+}
+
+impl SplitBundlerOptions {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            plugin: None,
+            client: BuildConfigSubset::new(),
+            server: BuildConfigSubset::new(),
+            ssr: BuildConfigSubset::new(),
+        }
+    }
 }
 
 pub(crate) struct BuildConfigSubset {
@@ -29,8 +40,8 @@ pub(crate) struct BuildConfigSubset {
     pub(crate) minify_whitespace: Option<bool>,
 }
 
-impl Default for BuildConfigSubset {
-    fn default() -> Self {
+impl BuildConfigSubset {
+    pub(crate) fn new() -> Self {
         use bun_options_types::schema::api;
         BuildConfigSubset {
             env: api::DotEnvBehavior::_none,
@@ -141,7 +152,7 @@ impl BuildConfigSubset {
         global: &JSGlobalObject,
         js_options: JSValue,
     ) -> JsResult<BuildConfigSubset> {
-        let mut options = BuildConfigSubset::default();
+        let mut options = BuildConfigSubset::new();
 
         'brk: {
             let Some(val) = js_options.get_optional::<JSValue>(global, "sourcemap")? else {

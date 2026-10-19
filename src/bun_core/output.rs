@@ -1089,7 +1089,6 @@ pub fn flush_guard() -> FlushGuard {
 // ElapsedFormatter
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct ElapsedFormatter {
     pub colors: bool,
     pub duration_ns: u64,

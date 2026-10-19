@@ -302,8 +302,14 @@ pub(crate) fn spawn_sync(
 
 /// The terminal a spawn made for its child, closed unless the spawn gets far enough to `take` it: the user never
 /// received it then.
-#[derive(Default)]
 struct SpawnedTerminal(Option<terminal_body::CreateResult>);
+
+impl SpawnedTerminal {
+    #[inline]
+    fn new() -> Self {
+        Self(None)
+    }
+}
 
 impl Drop for SpawnedTerminal {
     fn drop(&mut self) {
@@ -402,7 +408,7 @@ fn spawn_maybe_sync(
     #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
-    let mut terminal_info = SpawnedTerminal::default();
+    let mut terminal_info = SpawnedTerminal::new();
     let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
 
@@ -419,7 +425,7 @@ fn spawn_maybe_sync(
         let args_type = args.js_type();
         if args_type.is_array() {
             cmd_value = args;
-            args = secondary_args_value.unwrap_or_default();
+            args = secondary_args_value.unwrap_or_else(JSValue::new);
         } else if !args.is_object() {
             return Err(cx
                 .global()
@@ -682,7 +688,7 @@ fn spawn_maybe_sync(
                             min: i128::from(i32::MIN),
                             max: i128::from(i32::MAX),
                             field_name: b"uid",
-                            ..Default::default()
+                            ..bun_sql_jsc::jsc::IntegerRange::new()
                         },
                     )?;
                     uid = Some(uid_int as u32);
@@ -698,7 +704,7 @@ fn spawn_maybe_sync(
                             min: i128::from(i32::MIN),
                             max: i128::from(i32::MAX),
                             field_name: b"gid",
-                            ..Default::default()
+                            ..bun_sql_jsc::jsc::IntegerRange::new()
                         },
                     )?;
                     gid = Some(gid_int as u32);
@@ -741,7 +747,7 @@ fn spawn_maybe_sync(
                                     bun_fmt::OutOfRangeOptions {
                                         field_name: b"timeout",
                                         msg: b"a non-negative integer",
-                                        ..Default::default()
+                                        ..bun_fmt::OutOfRangeOptions::new()
                                     },
                                 ));
                             }
@@ -756,7 +762,7 @@ fn spawn_maybe_sync(
                             bun_sql_jsc::jsc::IntegerRange {
                                 min: 0,
                                 field_name: b"timeout",
-                                ..Default::default()
+                                ..bun_sql_jsc::jsc::IntegerRange::new()
                             },
                         )?;
                         if timeout_int > 0 {
@@ -1084,7 +1090,7 @@ fn spawn_maybe_sync(
         cwd: if user_specified_cwd {
             cwd.to_vec().into_boxed_slice()
         } else {
-            Box::default()
+            Box::new([])
         },
         detached,
         uid,
@@ -1139,7 +1145,7 @@ fn spawn_maybe_sync(
         },
         #[cfg(any(target_os = "linux", target_os = "android"))]
         cgroup_fd: cgroup_dir.as_ref().map(|c| c.dir.handle()),
-        ..Default::default()
+        ..SpawnOptions::new()
     };
 
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
@@ -1294,9 +1300,9 @@ fn spawn_maybe_sync(
                 .or_else(|| terminal_info.0.as_ref().map(|info| info.terminal.as_ptr()))
                 .and_then(NonNull::new),
         ),
-        observable_getters: Default::default(),
-        closed: Default::default(),
-        this_value: Default::default(),
+        observable_getters: core::cell::Cell::new(enumset::EnumSet::empty()),
+        closed: core::cell::Cell::new(enumset::EnumSet::empty()),
+        this_value: JsCell::new(bun_jsc::JsRef::empty()),
         weak_file_sink_stdin_ptr: Cell::new(None),
         abort_handle: bun_jsc::AbortHandle::for_owner::<SubprocessT<'static>>(),
         context: cx.context().id(),
@@ -1399,7 +1405,7 @@ fn spawn_maybe_sync(
             #[cfg(windows)]
             let _ = subprocess.try_kill(SignalCode::SIGKILL);
             subprocess.process_mut().detach();
-            if let Some(ipc_data) = subprocess.ipc_data.take() {
+            if let Some(ipc_data) = subprocess.ipc_data.replace(None) {
                 // Nothing else holds it yet (no socket wired, no task scheduled).
                 ipc_data.detach();
             }
@@ -1524,7 +1530,7 @@ fn spawn_maybe_sync(
             // neutralize the slot up front so `finalizeStreams` can't
             // double-close it (the Box would otherwise drop on reassignment).
             let ipc_pipe: *mut bun_libuv_sys::Pipe = subprocess.stdio_pipes.with_mut(|pipes| {
-                match core::mem::take(&mut pipes[idx]) {
+                match core::mem::replace(&mut pipes[idx], bun_spawn::SpawnedStdio::Unavailable) {
                     spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
                     other => {
                         // Restore the slot before panicking so the
@@ -2047,7 +2053,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         code: BunString::static_("ENOENT"),
         errno: -UV_E::NOENT,
         path: BunString::clone_utf8(command),
-        ..Default::default()
+        ..SystemError::new()
     };
     global_this.throw_value(err.to_error_instance(global_this))
 }
@@ -2179,7 +2185,7 @@ impl CgroupTarget {
                     min: 0,
                     max: i128::from(i32::MAX),
                     field_name: b"cgroup",
-                    ..Default::default()
+                    ..bun_sql_jsc::jsc::IntegerRange::new()
                 },
             )?;
             if fd < 0 {
@@ -2188,7 +2194,7 @@ impl CgroupTarget {
                     bun_fmt::OutOfRangeOptions {
                         field_name: b"cgroup",
                         msg: b"an integer",
-                        ..Default::default()
+                        ..bun_fmt::OutOfRangeOptions::new()
                     },
                 ));
             }

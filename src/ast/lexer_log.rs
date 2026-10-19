@@ -52,7 +52,7 @@ pub trait LexerLog<'s> {
             AddErrorOptions {
                 source: Some(source),
                 loc: l,
-                ..Default::default()
+                ..AddErrorOptions::new()
             },
         );
         *self.prev_error_loc_mut() = l;
@@ -73,7 +73,7 @@ pub trait LexerLog<'s> {
                 source: Some(source),
                 loc: r.loc,
                 len: r.len,
-                ..Default::default()
+                ..AddErrorOptions::new()
             },
         );
         *self.prev_error_loc_mut() = r.loc;

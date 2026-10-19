@@ -104,7 +104,6 @@ pub mod bun_spawn {
     // lives in `Actions.paths` below.
     pub use bun_core::spawn_ffi::{Action, FileActionType};
 
-    #[derive(Default)]
     pub struct Actions {
         pub(crate) chdir_buf: Option<CString>,
         pub(crate) actions: Vec<Action>,
@@ -116,8 +115,19 @@ pub mod bun_spawn {
     }
 
     impl Actions {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                chdir_buf: None,
+                actions: Vec::new(),
+                paths: Vec::new(),
+            }
+        }
+    }
+
+    impl Actions {
         pub(crate) fn init() -> Result<Actions, Error> {
-            Ok(Actions::default())
+            Ok(Actions::new())
         }
 
         // deinit: freed chdir_buf, each action.path, and the actions list — all owned
@@ -159,7 +169,7 @@ pub mod bun_spawn {
             self.actions.push(Action {
                 kind: FileActionType::Close,
                 fds: [fd.native(), 0],
-                ..Default::default()
+                ..Action::new()
             });
             Ok(())
         }
@@ -168,7 +178,7 @@ pub mod bun_spawn {
             self.actions.push(Action {
                 kind: FileActionType::Dup2,
                 fds: [fd.native(), newfd.native()],
-                ..Default::default()
+                ..Action::new()
             });
             Ok(())
         }
@@ -198,11 +208,11 @@ pub mod bun_spawn {
         pub cgroup_fd: i32,
     }
 
-    impl Default for Attr {
+    impl Attr {
         // `pty_slave_fd` must default to `-1`.
         // `#[derive(Default)]` would yield `0` (stdin), which makes `spawn_z` take
         // the PTY path and call setsid()+ioctl(TIOCSCTTY, 0) in the child.
-        fn default() -> Self {
+        pub(crate) fn new() -> Self {
             Self {
                 detached: false,
                 new_process_group: false,
@@ -219,7 +229,7 @@ pub mod bun_spawn {
 
     impl Attr {
         pub(crate) fn init() -> Result<Attr, Error> {
-            Ok(Attr::default())
+            Ok(Attr::new())
         }
 
         pub(crate) fn set(&mut self, flags: u16) -> Result<(), Error> {
@@ -480,7 +490,7 @@ pub mod posix_spawn {
             errno: rc as sys::ErrorInt,
             syscall: SYSCALL_POSIX_SPAWN,
             path: arg0.into(),
-            ..Default::default()
+            ..sys::Error::init()
         })
     }
 
@@ -648,7 +658,7 @@ pub mod posix_spawn {
                 errno: rc as sys::ErrorInt,
                 syscall: SYSCALL_POSIX_SPAWN,
                 path: path.to_bytes().into(),
-                ..Default::default()
+                ..sys::Error::init()
             });
         }
 

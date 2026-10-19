@@ -91,7 +91,7 @@ pub struct UnresolvedOrder<'a> {
 impl<'a> UnresolvedOrder<'a> {
     pub fn new(file: &'a File<'a>) -> Self {
         // The names, where each is first referred to: they get into the table in this order.
-        let mut seen = FxHashSet::default();
+        let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         let mut names: Vec<(u32, Name<'a>)> = (file.unresolved_references())
             .filter(|it| seen.insert(it.name()))
             .map(|it| (it.span().start, it.name()))

@@ -461,9 +461,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         None,
                     ),
                 ),
-                ..Default::default()
+                ..crate::api::bun_process::WindowsOptions::new()
             },
-            ..Default::default()
+            ..sync::Options::new()
         }) {
             Err(err) => {
                 if !silent {
@@ -647,7 +647,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         let env_loader = this_transpiler.env_mut();
         env_loader.quiet = true;
-        this_transpiler.options.env.prefix = Box::default();
+        this_transpiler.options.env.prefix = Box::new([]);
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
@@ -856,8 +856,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 // `BoxedSliceContext`), so re-seat by iterating instead of move.
                 // Cold path (only hit when bunfig declares `[macros]`).
                 for (k, v) in macros.iter() {
-                    let mut inner =
-                        bun_resolver::package_json::MacroImportReplacementMap::default();
+                    let mut inner = bun_resolver::package_json::MacroImportReplacementMap::init();
                     for (ik, iv) in v.iter() {
                         inner.put(ik, iv.clone()).unwrap_or_oom();
                     }
@@ -874,7 +873,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if preconnect.is_empty() {
             return;
         }
-        bun_http::http_thread::init(&Default::default());
+        bun_http::http_thread::init(&bun_http::http_thread::InitOpts::new());
 
         for url_str in preconnect {
             // SAFETY: `ctx.runtime_options.preconnect` is process-lifetime
@@ -1026,20 +1025,23 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             eval_mode: ctx.runtime_options.eval.eval_and_print,
             one_shot: bun_jsc::is_one_shot_eval_invocation(),
-            ..Default::default()
+            ..bun_jsc::InitializeOptions::new()
         });
         bun_ast::initialize_store();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
             transform_options: ctx.args.clone(),
             log: ::core::ptr::NonNull::new(ctx.log),
-            debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
+            debugger: ::core::mem::replace(
+                &mut ctx.runtime_options.debugger,
+                bun_options_types::context::Debugger::Unspecified,
+            ),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
             mini_mode: ctx.runtime_options.smol,
             eval_mode: ctx.runtime_options.eval.eval_and_print,
             is_main_thread: true,
-            ..Default::default()
+            ..VmInitOptions::new()
         })?;
         // SAFETY: `init` returns the unique freshly-boxed VM on this thread.
         let vm = unsafe { &mut *vm_ptr };
@@ -1214,7 +1216,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
-        bun_jsc::initialize(bun_jsc::InitializeOptions::default());
+        bun_jsc::initialize(bun_jsc::InitializeOptions::new());
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
@@ -1256,7 +1258,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             dns_result_order: bun_dns::Order::from_string_or_die(
                 &ctx.runtime_options.dns_result_order,
             ) as u8,
-            ..Default::default()
+            ..bun_jsc::virtual_machine::Options::new()
         })?;
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
         // on this thread.
@@ -1832,7 +1834,7 @@ impl RunCommand {
 
         Global::configure_allocator(core::Global::AllocatorConfiguration {
             long_running: true,
-            ..Default::default()
+            ..core::Global::AllocatorConfiguration::new()
         });
 
         // `entry_path` must outlive the VM (it's stored in `vm.main`); pass an
@@ -2216,9 +2218,9 @@ impl RunCommand {
                         None,
                     ),
                 ),
-                ..Default::default()
+                ..crate::api::bun_process::WindowsOptions::new()
             },
-            ..Default::default()
+            ..sync::Options::new()
         }) {
             Ok(r) => r,
             Err(err) => {
@@ -2403,7 +2405,7 @@ impl RunCommand {
         let target_name: Box<[u8]> = if !positionals.is_empty() {
             positionals[0].clone()
         } else {
-            Box::default()
+            Box::new([])
         };
         let target_name: &[u8] = &target_name;
         // unclear why passthrough is an escaped string, it should probably be
@@ -2513,7 +2515,7 @@ impl RunCommand {
                         );
                         Global::configure_allocator(core::Global::AllocatorConfiguration {
                             long_running: false,
-                            ..Default::default()
+                            ..core::Global::AllocatorConfiguration::new()
                         });
                         env_loader
                             .map
@@ -2830,7 +2832,7 @@ impl RunCommand {
             }
             Global::configure_allocator(core::Global::AllocatorConfiguration {
                 long_running: true,
-                ..Default::default()
+                ..core::Global::AllocatorConfiguration::new()
             });
             if let Err(err) = Self::boot_main(ctx, BootMain::Bake) {
                 Self::boot_failed_exit(ctx, b"bake", &err);
@@ -2910,7 +2912,7 @@ impl RunCommand {
             // `normalize_string` canonicalizes
             // separators. Both are no-ops on POSIX (`resolve_cwd` returns the
             // input slice untouched).
-            let mut win_resolver = paths::resolve_path::PosixToWinNormalizer::default();
+            let mut win_resolver = paths::resolve_path::PosixToWinNormalizer::new();
             let resolved = win_resolver
                 .resolve_cwd(target)
                 .unwrap_or_else(|_| panic!("Could not resolve path"));
@@ -2979,7 +2981,7 @@ impl RunCommand {
 
         Global::configure_allocator(core::Global::AllocatorConfiguration {
             long_running: true,
-            ..Default::default()
+            ..core::Global::AllocatorConfiguration::new()
         });
 
         // Re-derive the canonical absolute path from the open fd (resolves
@@ -3333,14 +3335,14 @@ impl RunCommand {
         // Walk the collected URLs once, deduping and picking out the
         // http(s) ones. If there are no remote URLs we never spawn the
         // HTTP worker or allocate any Download structs.
-        let mut seen: StringHashMap<()> = StringHashMap::default();
+        let mut seen: StringHashMap<()> = StringHashMap::init();
         let mut remote_urls: Vec<Box<[u8]>> = Vec::new();
         for u in collector.urls.iter() {
             let u: &[u8] = u.as_ref();
             if !u.starts_with(b"http://") && !u.starts_with(b"https://") {
                 continue;
             }
-            let Ok(gop) = seen.get_or_put(u) else {
+            let Ok(gop) = seen.get_or_put(u, || ()) else {
                 continue;
             };
             if gop.found_existing {
@@ -3355,7 +3357,7 @@ impl RunCommand {
             return;
         }
 
-        bun_http::http_thread::init(&Default::default());
+        bun_http::http_thread::init(&bun_http::http_thread::InitOpts::new());
 
         // Heap-allocate each Download so AsyncHTTP.task has a stable
         // address (see RemoteImageDownload doc comment).
@@ -3368,7 +3370,7 @@ impl RunCommand {
         // single ThreadPool.Batch, then ship the whole batch to the
         // HTTP thread in one schedule() call — worker picks up and runs
         // them concurrently.
-        let mut batch = bun_threading::thread_pool::Batch::default();
+        let mut batch = bun_threading::thread_pool::Batch::new();
         for raw_url in remote_urls.into_iter() {
             let Ok(response_buffer) = bun_core::MutableString::init(8 * 1024) else {
                 continue;
@@ -3398,7 +3400,7 @@ impl RunCommand {
             let async_http = bun_http::AsyncHTTP::init(
                 bun_http::Method::GET,
                 bun_url::URL::parse(url_static),
-                Default::default(),
+                bun_collections::MultiArrayList::new(),
                 b"",
                 b"",
                 bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
@@ -3406,7 +3408,7 @@ impl RunCommand {
                     RemoteImageDownload::on_done,
                 ),
                 bun_http::FetchRedirect::Follow,
-                Default::default(),
+                bun_http::async_http::Options::new(),
             );
             // SAFETY: last field — all four fields are now initialized.
             unsafe { ::core::ptr::addr_of_mut!((*slot).async_http).write(async_http) };
@@ -3598,7 +3600,7 @@ impl RunCommand {
         // inline. Only runs when kitty_graphics is on and the document
         // actually contains an image marker — otherwise the whole block
         // is a no-op.
-        let mut remote_map: StringHashMap<Box<[u8]>> = StringHashMap::default();
+        let mut remote_map: StringHashMap<Box<[u8]>> = StringHashMap::init();
         if kitty_graphics && strings::contains(&contents, b"![") {
             Self::prefetch_remote_images(&contents, md_opts, &mut remote_map);
         }
@@ -3681,7 +3683,7 @@ impl RunCommand {
         default_completions: Option<&'static [&'static [u8]]>,
         reject_list: &[&[u8]],
     ) -> crate::Result<ShellCompletions> {
-        let mut shell_out = ShellCompletions::default();
+        let mut shell_out = ShellCompletions::new();
         if FILTER != Filter::ScriptExclude {
             if let Some(defaults) = default_completions {
                 shell_out.commands = std::borrow::Cow::Borrowed(defaults);
@@ -3694,7 +3696,7 @@ impl RunCommand {
             return Ok(shell_out);
         };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
-        this_transpiler.options.env.prefix = Box::default();
+        this_transpiler.options.env.prefix = Box::new([]);
         // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
         unsafe { (*this_transpiler.env).quiet = true };
 
@@ -3739,7 +3741,7 @@ impl RunCommand {
             if let Some(defaults) = default_completions {
                 results.ensure_unused_capacity(defaults.len())?;
                 for item in defaults {
-                    let _ = results.get_or_put(Box::from(*item));
+                    let _ = results.get_or_put(Box::from(*item), || ());
                 }
             }
         }
@@ -3805,7 +3807,7 @@ impl RunCommand {
                                 else {
                                     continue;
                                 };
-                                let _ = results.get_or_put(Box::from(appended))?;
+                                let _ = results.get_or_put(Box::from(appended), || ())?;
                             }
                         }
                     }
@@ -3855,7 +3857,7 @@ impl RunCommand {
                             else {
                                 continue;
                             };
-                            let _ = results.get_or_put(Box::from(appended))?;
+                            let _ = results.get_or_put(Box::from(appended), || ())?;
                         }
                     }
                 }
@@ -3913,7 +3915,7 @@ impl RunCommand {
                         // Capacity reserved by `ensure_unused_capacity`
                         // above; `assume_capacity` skips the grow check and
                         // avoids a redundant alloc when the key is a duplicate.
-                        let entry_item = results.get_or_put_assume_capacity(Box::from(key));
+                        let entry_item = results.get_or_put_assume_capacity(Box::from(key), || ());
 
                         if FILTER == Filter::ScriptAndDescriptions && max_description_len > 0 {
                             let mut description: &[u8] = *scripts.get(key).unwrap();
@@ -4145,7 +4147,7 @@ impl BunXFastPath {
                 disposition: sys::windows::FILE_OPEN,
                 options: sys::windows::FILE_NON_DIRECTORY_FILE
                     | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
-                ..Default::default()
+                ..sys::NtCreateFileOptions::new()
             },
         ) {
             Ok(fd) => fd.native(),

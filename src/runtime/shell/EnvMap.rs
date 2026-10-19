@@ -12,7 +12,7 @@ pub(crate) type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
 // `sys::c::MapType` / `sys::posix::MapType` in diagnostic suggestions.
 type EnvMapInner = ArrayHashMap<EnvStr, EnvStr, EnvMapContext>;
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct EnvMapContext;
 
 impl bun_alloc::Stateless for EnvMapContext {
@@ -24,7 +24,7 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
         #[cfg(windows)]
         {
             return <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
-                &array_hash_map::CaseInsensitiveAsciiStringContext::default(),
+                &array_hash_map::CaseInsensitiveAsciiStringContext,
                 s.slice(),
             );
         }
@@ -78,7 +78,7 @@ impl EnvMap {
     /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
     /// before handing it to this function!!!
     pub(crate) fn insert(&mut self, key: EnvStr, val: EnvStr) {
-        let result = self.map.get_or_put(key).expect("OOM");
+        let result = self.map.get_or_put(key, EnvStr::new).expect("OOM");
         if !result.found_existing {
             key.ref_();
         } else {

@@ -698,9 +698,9 @@ impl core::hash::Hasher for Wyhash {
     }
 }
 
-impl Default for Wyhash {
+impl Wyhash {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Wyhash::init(0)
     }
 }
@@ -714,9 +714,16 @@ impl Default for Wyhash {
 /// Hash values are deterministic across runs (seed 0). Rust's `Hash for [T]`
 /// prepends a length prefix; that's fine — these are in-memory tables only
 /// (lockfile/on-disk hashes go through [`Wyhash11`] / [`hash`] directly).
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct OneShotHasher {
     hash: u64,
+}
+
+impl OneShotHasher {
+    #[inline]
+    pub fn new() -> Self {
+        Self { hash: 0 }
+    }
 }
 
 impl core::hash::Hasher for OneShotHasher {
@@ -772,7 +779,7 @@ impl core::hash::Hasher for OneShotHasher {
 /// for the length-prefix note.
 #[inline]
 pub fn auto_hash<K: core::hash::Hash + ?Sized>(key: &K) -> u64 {
-    let mut h = OneShotHasher::default();
+    let mut h = OneShotHasher::new();
     key.hash(&mut h);
     core::hash::Hasher::finish(&h)
 }

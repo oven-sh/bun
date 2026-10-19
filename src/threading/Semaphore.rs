@@ -23,8 +23,8 @@ unsafe impl Sync for Semaphore {}
 // semaphore holds no thread-affine state.
 unsafe impl Send for Semaphore {}
 
-impl Default for Semaphore {
-    fn default() -> Self {
+impl Semaphore {
+    pub fn init() -> Self {
         Self::new()
     }
 }

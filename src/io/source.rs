@@ -77,10 +77,9 @@ pub struct File {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FileState {
     /// fs.deinit() called, ready for next operation
-    #[default]
     Deinitialized,
     /// read or write operation in progress
     Operating,
@@ -90,8 +89,8 @@ pub enum FileState {
     Closing,
 }
 
-impl Default for File {
-    fn default() -> Self {
+impl File {
+    pub fn new() -> Self {
         // Hand-written equivalent of zero-initialization because `state` is an enum field
         // (PORTING.md forbids blanket zeroed() over enums). FileState::Deinitialized == 0.
         Self {
@@ -421,7 +420,7 @@ impl Source {
     pub fn open_file(fd: Fd) -> Box<File> {
         debug_assert!(fd.is_valid() && fd.uv() != -1);
         bun_core::scoped_log!(PipeSource, "openFile (fd = {})", fd);
-        let mut file: Box<File> = Box::new(File::default());
+        let mut file: Box<File> = Box::new(File::new());
         file.file = fd.uv();
         file
     }
@@ -485,7 +484,7 @@ impl Source {
                 errno: bun_sys::E::NOTSUP as _,
                 syscall: bun_sys::Tag::uv_tty_set_mode,
                 fd: self.get_fd(),
-                ..Default::default()
+                ..bun_sys::Error::init()
             }),
         }
     }

@@ -546,8 +546,12 @@ impl Env {
                 stack: env.stack(),
                 is_out_of_stack: Cell::new(false),
                 new_ids: Cell::new(0),
-                values: Joined::default(),
-                returned: Joined::default(),
+                values: core::cell::RefCell::new(rustc_hash::FxHashMap::with_hasher(
+                    rustc_hash::FxBuildHasher,
+                )),
+                returned: core::cell::RefCell::new(rustc_hash::FxHashMap::with_hasher(
+                    rustc_hash::FxBuildHasher,
+                )),
             },
             looks_into_functions: env.config.captured_refs_are_known_in_functions,
             has_ref_types,
@@ -561,8 +565,8 @@ impl Env {
             round: 0,
             read_in: vec![Cell::new(0); env.identifiers.len()],
             read_before_change_in: 0,
-            data: IdMap::default(),
-            set_to_none: IdBitSet::default(),
+            data: IdMap::init(),
+            set_to_none: IdBitSet::init(),
             temporaries: (0..env.identifiers.len() as u32)
                 .map(IdentifierId)
                 .collect(),
@@ -731,7 +735,7 @@ fn each_operand(
 
 /// The identifiers that are interpolated as JSX children.
 fn collect_interpolated_as_jsx(func: &HirFunction) -> IdBitSet<IdentifierId> {
-    let mut interpolated_as_jsx = IdBitSet::default();
+    let mut interpolated_as_jsx = IdBitSet::init();
     for (_, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
@@ -1175,7 +1179,7 @@ fn validate_no_ref_access_in_render_impl(
                                 });
                             } else if hook_kind.is_none() && instr.effects.is_some() {
                                 let mut visited_effects: HashSet<(IdentifierId, bool)> =
-                                    HashSet::default();
+                                    HashSet::with_hasher(rustc_hash::FxBuildHasher);
                                 // A call with n arguments has about n * n effects.
                                 let mut frozen: Option<HashSet<IdentifierId>> = None;
                                 for effect in instr.effects.as_ref().unwrap() {

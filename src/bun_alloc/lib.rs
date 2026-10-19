@@ -83,14 +83,6 @@ unsafe impl Send for StdAllocator {}
 // SAFETY: see the `Send` impl directly above.
 unsafe impl Sync for StdAllocator {}
 
-impl Default for StdAllocator {
-    /// The mimalloc-backed `c_allocator`.
-    #[inline]
-    fn default() -> Self {
-        basic::C_ALLOCATOR
-    }
-}
-
 impl StdAllocator {
     #[inline]
     pub(crate) fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
@@ -940,8 +932,15 @@ pub unsafe fn free_sensitive_cstr(p: *const core::ffi::c_char) {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct IndexType(u32);
+
+impl IndexType {
+    #[inline]
+    pub fn init() -> Self {
+        Self(0)
+    }
+}
 
 impl IndexType {
     #[inline]
@@ -1330,7 +1329,7 @@ type HashKeyType = u64;
 
 /// Identity hash on a u64 key. Keys here are already
 /// `bun_wyhash` outputs, so rehashing with std's SipHash just costs cycles.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct IdentityU64Hasher(u64);
 impl core::hash::Hasher for IdentityU64Hasher {
     #[inline]
@@ -1811,7 +1810,7 @@ pub struct BSSStringList<
     pub(crate) mutex: Mutex,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct EmptyType {
     len: usize,
 }
@@ -2346,7 +2345,7 @@ pub trait Allocator: 'static {}
 
 /// Legacy default-allocator ZST. With `#[global_allocator]` set,
 /// this is just a unit marker.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct DefaultAlloc;
 impl Allocator for DefaultAlloc {}
 

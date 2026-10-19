@@ -18,7 +18,7 @@ define_id!(SymbolId, ScopeId, TableId, FlowId);
 
 bitflags::bitflags! {
     /// `ast.SymbolFlags`
-    #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub struct SymFlags: u32 {
         const FUNCTION_SCOPED_VARIABLE = 1 << 0;
         const BLOCK_SCOPED_VARIABLE = 1 << 1;
@@ -396,9 +396,7 @@ impl SymbolIn<Growable> {
 }
 
 /// The declarations of a symbol. Nearly every symbol has one, which needs no separate allocation.
-#[derive(Default)]
 pub enum DeclsIn<S: Storage> {
-    #[default]
     None,
     One(Decl),
     Many(S::Few<Decl>),
@@ -1371,10 +1369,10 @@ impl BoundBuilder {
             scopes: Vec::new(),
             tables: Vec::new(),
             entries: Vec::new(),
-            large_tables: FxHashMap::default(),
+            large_tables: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             nested_names: Vec::new(),
             ids: Vec::new(),
-            file_symbol: SymbolId::default(),
+            file_symbol: SymbolId::NONE,
             export_stars: Vec::new(),
             ambient_modules: Vec::new(),
             pattern_ambient_modules: Vec::new(),
@@ -1385,7 +1383,7 @@ impl BoundBuilder {
             module_augmentations: Vec::new(),
             ambient_specifiers: Vec::new(),
             commonjs_indicator: None,
-            module_exports_property: SymbolId::default(),
+            module_exports_property: SymbolId::NONE,
             expr_symbol: Vec::new(),
             expr_parent: Vec::new(),
             expr_flow: Vec::new(),
@@ -1393,12 +1391,12 @@ impl BoundBuilder {
             stmt_scope: Vec::new(),
             type_scope: Vec::new(),
             type_by_alias: Vec::new(),
-            this_in_type_literal: FxHashSet::default(),
+            this_in_type_literal: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             pat_parent: Vec::new(),
             pat_symbol: Vec::new(),
             prop_owner: Vec::new(),
             member_symbol: Vec::new(),
-            property_symbol: FxHashMap::default(),
+            property_symbol: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             member_owner: Vec::new(),
             member_scope: Vec::new(),
             param_fn: Vec::new(),
@@ -1440,8 +1438,8 @@ impl BoundBuilder {
             import_scope: Vec::new(),
             import_equals_scope: Vec::new(),
             export_scope: Vec::new(),
-            expr_scope: FxHashMap::default(),
-            private_class: FxHashMap::default(),
+            expr_scope: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            private_class: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             private_names_outside_class_bodies: Vec::new(),
             classes_of_private_names: Vec::new(),
             free_idents: Vec::new(),
@@ -2310,7 +2308,7 @@ impl BoundBuilder {
             expr_kind_counts,
             kind_counts,
         } = self;
-        *ran_out_of_stack = Default::default();
+        *ran_out_of_stack = false;
         symbols.clear();
         scopes.clear();
         tables.clear();
@@ -2318,7 +2316,7 @@ impl BoundBuilder {
         large_tables.clear();
         nested_names.clear();
         ids.clear();
-        *file_symbol = Default::default();
+        *file_symbol = SymbolId::NONE;
         export_stars.clear();
         ambient_modules.clear();
         pattern_ambient_modules.clear();
@@ -2328,8 +2326,8 @@ impl BoundBuilder {
         specifiers.clear();
         module_augmentations.clear();
         ambient_specifiers.clear();
-        *commonjs_indicator = Default::default();
-        *module_exports_property = Default::default();
+        *commonjs_indicator = None;
+        *module_exports_property = SymbolId::NONE;
         expr_symbol.clear();
         expr_parent.clear();
         expr_flow.clear();
@@ -2397,8 +2395,8 @@ impl BoundBuilder {
         flow.clear();
         flow_edges.clear();
         flow_shared.clear();
-        *flow_depth = Default::default();
-        *has_loop_types_that_depend_on_order = Default::default();
+        *flow_depth = 0;
+        *has_loop_types_that_depend_on_order = false;
         expr_kinds.clear();
         expr_kind_counts.clear();
         kind_counts.clear();
@@ -2421,7 +2419,13 @@ impl BoundBuilder {
             scopes: copy_to_arena(&mut self.scopes, arena),
             tables: copy_to_arena(&mut self.tables, arena),
             entries: copy_to_arena(&mut self.entries, arena),
-            large_tables: map_to_arena(std::mem::take(&mut self.large_tables), arena),
+            large_tables: map_to_arena(
+                std::mem::replace(
+                    &mut self.large_tables,
+                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                ),
+                arena,
+            ),
             nested_names: copy_to_arena(&mut self.nested_names, arena),
             ids: copy_to_arena(&mut self.ids, arena),
             file_symbol: self.file_symbol,
@@ -2453,14 +2457,23 @@ impl BoundBuilder {
             type_scope: copy_to_arena(&mut self.type_scope, arena),
             type_by_alias: copy_to_arena(&mut self.type_by_alias, arena),
             this_in_type_literal: set_to_arena(
-                std::mem::take(&mut self.this_in_type_literal),
+                std::mem::replace(
+                    &mut self.this_in_type_literal,
+                    rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+                ),
                 arena,
             ),
             pat_parent: copy_to_arena(&mut self.pat_parent, arena),
             pat_symbol: copy_to_arena(&mut self.pat_symbol, arena),
             prop_owner: copy_to_arena(&mut self.prop_owner, arena),
             member_symbol: copy_to_arena(&mut self.member_symbol, arena),
-            property_symbol: map_to_arena(std::mem::take(&mut self.property_symbol), arena),
+            property_symbol: map_to_arena(
+                std::mem::replace(
+                    &mut self.property_symbol,
+                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                ),
+                arena,
+            ),
             member_owner: copy_to_arena(&mut self.member_owner, arena),
             member_scope: copy_to_arena(&mut self.member_scope, arena),
             param_fn: copy_to_arena(&mut self.param_fn, arena),
@@ -2511,8 +2524,20 @@ impl BoundBuilder {
             import_scope: copy_to_arena(&mut self.import_scope, arena),
             import_equals_scope: few_to_arena(std::mem::take(&mut self.import_equals_scope), arena),
             export_scope: copy_to_arena(&mut self.export_scope, arena),
-            expr_scope: map_to_arena(std::mem::take(&mut self.expr_scope), arena),
-            private_class: map_to_arena(std::mem::take(&mut self.private_class), arena),
+            expr_scope: map_to_arena(
+                std::mem::replace(
+                    &mut self.expr_scope,
+                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                ),
+                arena,
+            ),
+            private_class: map_to_arena(
+                std::mem::replace(
+                    &mut self.private_class,
+                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                ),
+                arena,
+            ),
             private_names_outside_class_bodies: few_to_arena(
                 std::mem::take(&mut self.private_names_outside_class_bodies),
                 arena,
@@ -2738,13 +2763,24 @@ impl<'s> Bound<'s> {
 }
 
 /// The compiler options `requiresScopeChangeWorker` reads.
-#[derive(Copy, Clone, Default, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct BindOptions {
     /// `GetEmitStandardClassFields`
     pub emit_standard_class_fields: bool,
     /// `GetEmitScriptTarget` is older than that.
     pub before_es2020: bool,
     pub before_es2017: bool,
+}
+
+impl BindOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            emit_standard_class_fields: false,
+            before_es2020: false,
+            before_es2017: false,
+        }
+    }
 }
 
 /// `bindSourceFile`
@@ -2767,7 +2803,8 @@ impl Recycled {
     }
 
     fn room(&mut self) -> &mut binder::Room {
-        self.0.get_or_insert_default()
+        self.0
+            .get_or_insert_with(|| Box::new(crate::bind::binder::Room::new()))
     }
 }
 

@@ -117,7 +117,7 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
             "setCallbacks",
             __jsc_host_set_callbacks,
             1,
-            Default::default(),
+            bun_jsc::js_function::CreateJSFunctionOptions::new(),
         ),
     );
 

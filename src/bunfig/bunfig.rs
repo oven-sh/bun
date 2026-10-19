@@ -48,7 +48,7 @@ fn parse_macros_json(
     json_source: &bun_ast::Source,
     bump: &Bump,
 ) -> MacroMap {
-    let mut macro_map = MacroMap::default();
+    let mut macro_map = MacroMap::new();
     let ExprData::EObject(obj) = &macros.data else {
         return macro_map;
     };
@@ -92,7 +92,7 @@ fn parse_macros_json(
             continue;
         }
 
-        let mut map = MacroImportReplacementMap::default();
+        let mut map = MacroImportReplacementMap::new();
         map.reserve(remap_properties.len());
         for remap in remap_properties {
             let Some(remap_key) = remap.key.as_ref() else {
@@ -175,7 +175,7 @@ impl<'a> Parser<'a, '_> {
                 source: Some(self.source),
                 loc,
                 redact_sensitive_information: true,
-                ..Default::default()
+                ..bun_ast::ErrorOpts::new()
             },
         );
         Err(crate::Error::InvalidBunfig)
@@ -192,7 +192,7 @@ impl<'a> Parser<'a, '_> {
                 source: Some(self.source),
                 loc,
                 redact_sensitive_information: true,
-                ..Default::default()
+                ..bun_ast::ErrorOpts::new()
             },
         );
         Err(crate::Error::InvalidBunfig)
@@ -385,7 +385,8 @@ impl<'a> Parser<'a, '_> {
 
         if self.counts == Counts::OnlyInstall {
             if let Some(install_obj) = json.get_object(b"install") {
-                self.ctx.install = Some(Box::default());
+                self.ctx.install =
+                    Some(Box::new(bun_options_types::schema::api::BunInstall::new()));
                 self.parse_install(&install_obj)?;
             }
             return Ok(());
@@ -757,7 +758,7 @@ impl<'a> Parser<'a, '_> {
                 // Ensure ctx.install is allocated so later passes can write into it
                 // once api::BunInstall fields land.
                 if self.ctx.install.is_none() {
-                    self.ctx.install = Some(Box::new(api::BunInstall::default()));
+                    self.ctx.install = Some(Box::new(api::BunInstall::new()));
                 }
 
                 if let Some(auto_install_expr) = install_obj.get(b"auto") {
@@ -1000,9 +1001,9 @@ impl<'a> Parser<'a, '_> {
         }
 
         // ── jsx ──────────────────────────────────────────────────────────────
-        let mut jsx_factory: Box<[u8]> = Box::default();
-        let mut jsx_fragment: Box<[u8]> = Box::default();
-        let mut jsx_import_source: Box<[u8]> = Box::default();
+        let mut jsx_factory: Box<[u8]> = Box::new([]);
+        let mut jsx_fragment: Box<[u8]> = Box::new([]);
+        let mut jsx_import_source: Box<[u8]> = Box::new([]);
         let mut jsx_runtime = api::JsxRuntime::Automatic;
         let mut jsx_dev = true;
 
@@ -1059,7 +1060,7 @@ impl<'a> Parser<'a, '_> {
                     import_source: jsx_import_source,
                     runtime: jsx_runtime,
                     development: jsx_dev,
-                    ..Default::default()
+                    ..api::Jsx::new()
                 });
             }
         }
@@ -1189,7 +1190,7 @@ impl Bunfig {
                             bun_ast::ErrorOpts {
                                 source: Some(source),
                                 redact_sensitive_information: true,
-                                ..Default::default()
+                                ..bun_ast::ErrorOpts::new()
                             },
                         );
                     }
@@ -1206,7 +1207,7 @@ impl Bunfig {
                             bun_ast::ErrorOpts {
                                 source: Some(source),
                                 redact_sensitive_information: true,
-                                ..Default::default()
+                                ..bun_ast::ErrorOpts::new()
                             },
                         );
                     }
@@ -1255,7 +1256,7 @@ impl Bunfig {
         let mut log = bun_ast::Log::init();
         let mut ctx = ContextData {
             log: &raw mut log,
-            ..Default::default()
+            ..ContextData::new()
         };
         let cmd = CommandTag::InstallCommand;
         Self::parse(cmd, source, true, &mut ctx, None, Counts::OnlyInstall)?;
@@ -1277,7 +1278,7 @@ impl<'a> Parser<'a, '_> {
                 let url = url.as_string(self.bump).expect("infallible: type checked");
                 api::NpmRegistry::from_url(url)
             }
-            None => api::NpmRegistry::default(),
+            None => api::NpmRegistry::new(),
         };
 
         let username = obj.get(b"username");
@@ -1288,7 +1289,7 @@ impl<'a> Parser<'a, '_> {
         if username.is_some() || password.is_some() || token.is_some() {
             registry = api::NpmRegistry {
                 url: registry.url,
-                ..Default::default()
+                ..api::NpmRegistry::new()
             };
         }
 
@@ -1318,7 +1319,7 @@ impl<'a> Parser<'a, '_> {
                     expr.loc,
                     b"Expected registry to be a URL string or an object",
                 )?;
-                Ok(api::NpmRegistry::default())
+                Ok(api::NpmRegistry::new())
             }
         }
     }
@@ -1404,7 +1405,10 @@ impl<'a> Parser<'a, '_> {
         }
 
         if let Some(scopes) = install_obj.get(b"scopes") {
-            let mut registry_map = install.scoped.take().unwrap_or_default();
+            let mut registry_map = install
+                .scoped
+                .take()
+                .unwrap_or_else(bun_options_types::schema::api::NpmRegistryMap::new);
             self.expect(&scopes, ExprTag::EObject)?;
             let obj = scopes.data.e_object().expect("infallible: variant checked");
             registry_map.scopes.reserve(obj.properties.slice().len());

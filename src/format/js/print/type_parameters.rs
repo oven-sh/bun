@@ -72,10 +72,20 @@ fn should_force_trailing_comma_for_arrow_function<'a>(
         && !f.file().is_flow()
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub(crate) struct FormatTSTypeParametersOptions {
     pub(crate) group_id: Option<GroupId>,
     pub(crate) is_type_or_interface_decl: bool,
+}
+
+impl FormatTSTypeParametersOptions {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            group_id: None,
+            is_type_or_interface_decl: false,
+        }
+    }
 }
 
 /// ESTree's `TSTypeParameterDeclaration`. Nothing is written if there are no type parameters.
@@ -95,7 +105,7 @@ pub(crate) fn type_parameters<'a>(
     FormatTSTypeParameters {
         params,
         owner,
-        options: FormatTSTypeParametersOptions::default(),
+        options: FormatTSTypeParametersOptions::new(),
     }
 }
 

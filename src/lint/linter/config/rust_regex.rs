@@ -48,10 +48,20 @@ enum Last {
 }
 
 /// What flags say about `x` and `u`.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Flags {
     ignore_whitespace: Option<bool>,
     unicode: Option<bool>,
+}
+
+impl Flags {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            ignore_whitespace: None,
+            unicode: None,
+        }
+    }
 }
 
 /// Which of them are on.
@@ -477,10 +487,10 @@ impl<'p> Parser<'p> {
         let inner_span = self.span();
         if self.bump_if("?P<") || self.bump_if("?<") {
             self.parse_capture_name()?;
-            return Ok(Group::Open(open_span, Flags::default()));
+            return Ok(Group::Open(open_span, Flags::new()));
         }
         if !self.bump_if("?") {
-            return Ok(Group::Open(open_span, Flags::default()));
+            return Ok(Group::Open(open_span, Flags::new()));
         }
         if self.is_eof() {
             return error(open_span, GROUP_UNCLOSED);

@@ -336,7 +336,7 @@ impl<'h> HirBuilder<'h> {
             entry,
             scopes: Vec::new(),
             context: IndexMap::new(),
-            bindings: bindings.unwrap_or_default(),
+            bindings: bindings.unwrap_or_else(IndexMap::init),
             env,
             host,
             type_casts: host.type_casts(),
@@ -464,7 +464,7 @@ impl<'h> HirBuilder<'h> {
 
     /// For the builder of a nested function, which starts with the bindings of this one.
     pub(crate) fn take_bindings(&mut self) -> IndexMap<Ref, IdentifierId> {
-        std::mem::take(&mut self.bindings)
+        std::mem::replace(&mut self.bindings, IndexMap::init())
     }
 
     /// What [`Self::take_bindings`] gave, and the bindings that the nested function added.
@@ -781,7 +781,7 @@ impl<'h> HirBuilder<'h> {
         mut self,
     ) -> Result<(HIR, HirVec<Instruction>, IndexMap<Ref, IdentifierId>), CompilerError> {
         let mut hir = HIR {
-            blocks: std::mem::take(&mut self.completed),
+            blocks: std::mem::replace(&mut self.completed, IndexMap::init()),
             entry: self.entry,
         };
 

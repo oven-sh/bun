@@ -120,8 +120,8 @@ pub(crate) struct Flags {
 
 bun_core::assert_ffi_layout!(Flags, 4, 1; redirect @ 0, cache @ 1, mode @ 2, https @ 3);
 
-impl Default for Flags {
-    fn default() -> Self {
+impl Flags {
+    pub(crate) fn new() -> Self {
         Self {
             redirect: FetchRedirect::Follow,
             cache: FetchCacheMode::Default,
@@ -427,7 +427,7 @@ impl Request {
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
             method,
-            flags: Flags::default(),
+            flags: Flags::new(),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
@@ -545,7 +545,7 @@ impl Request {
                 writer,
                 "{} ({}) {{",
                 class_label,
-                bun_fmt::size(size, Default::default())
+                bun_fmt::size(size, bun_core::fmt::SizeFormatterOptions::new())
             )?,
             None => writeln!(writer, "{} {{", class_label)?,
         }
@@ -994,7 +994,7 @@ impl Request {
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::init_weak(this_value)),
             method: Method::GET,
-            flags: Flags::default(),
+            flags: Flags::new(),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
@@ -1480,7 +1480,7 @@ impl Request {
         // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
         let headers = self.clone_headers(cx.global())?;
         let url = if preserve_url {
-            req.url.take()
+            req.url.replace(BunString::EMPTY)
         } else {
             self.url.get().clone()
         };
@@ -1537,7 +1537,7 @@ impl Request {
             }),
             js_ref: JsCell::new(JsRef::empty()),
             method: Method::GET,
-            flags: Flags::default(),
+            flags: Flags::new(),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
@@ -1565,7 +1565,7 @@ impl Request {
             method,
             flags: Flags {
                 https,
-                ..Flags::default()
+                ..Flags::new()
             },
             request_context,
             weak_ptr_data: WeakPtrData::EMPTY,

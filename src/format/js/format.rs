@@ -322,9 +322,8 @@ impl Spanned for FormatIdentifier {
 
 /// How a function or an arrow function is written where it is. See `print/function.rs` and
 /// `print/arrow_function_expression.rs`.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) enum ExprOptions {
-    #[default]
     None,
     Function(print::function::FormatFunctionOptions),
     Arrow(print::arrow_function_expression::FormatJsArrowFunctionExpressionOptions),
@@ -694,13 +693,13 @@ fn write_function_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Form
         (true, _) => print::arrow_function_expression::write_arrow_function_expression(
             e,
             func,
-            Default::default(),
+            crate::js::print::arrow_function_expression::FormatJsArrowFunctionExpressionOptions::new(),
             f,
         ),
         (false, ExprOptions::Function(options)) => {
             print::function::write_function(func, options, f)
         }
-        (false, _) => print::function::write_function(func, Default::default(), f),
+        (false, _) => print::function::write_function(func, crate::js::print::function::FormatFunctionOptions::new(), f),
     }
 }
 
@@ -1024,7 +1023,11 @@ pub(crate) fn write_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) 
         StmtKind::Var(declarations) => {
             print::variable_declaration::write_variable_declaration(statement, declarations, f);
         }
-        StmtKind::Fn(func) => print::function::write_function(func, Default::default(), f),
+        StmtKind::Fn(func) => print::function::write_function(
+            func,
+            crate::js::print::function::FormatFunctionOptions::new(),
+            f,
+        ),
         StmtKind::Class(class) => print::class::write_class(class, f),
         StmtKind::Interface(interface) => {
             ts_declarations::write_ts_interface_declaration(statement, interface, f)

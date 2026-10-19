@@ -31,7 +31,7 @@ impl Rule for NoDuplicateKeys {
         let objects = cx.state.nodes();
         for object in objects.filter(|it| it.kind() == NodeKind::Object) {
             first.clear();
-            let mut all: FxHashSet<&[u8]> = FxHashSet::default();
+            let mut all: FxHashSet<&[u8]> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
             for member in object.members() {
                 let key = member.key();
                 if first.len() == FEW && all.is_empty() {

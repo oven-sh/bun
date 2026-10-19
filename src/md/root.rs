@@ -9,7 +9,7 @@ pub use crate::types::SpanDetail;
 pub use crate::types::SpanType;
 pub use crate::types::TextType;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct RenderOptions {
     pub(crate) tag_filter: bool,
     pub(crate) heading_ids: bool,
@@ -56,8 +56,8 @@ pub struct Options {
     pub mdx: bool,
 }
 
-impl Default for Options {
-    fn default() -> Self {
+impl Options {
+    pub fn new() -> Self {
         Self {
             tables: true,
             strikethrough: true,
@@ -223,7 +223,7 @@ impl Options {
 }
 
 pub fn render_to_html(text: &[u8]) -> Result<Box<[u8]>, parser::ParserError> {
-    render_to_html_with_options(text, Options::default())
+    render_to_html_with_options(text, Options::new())
 }
 
 pub fn render_to_html_with_options(

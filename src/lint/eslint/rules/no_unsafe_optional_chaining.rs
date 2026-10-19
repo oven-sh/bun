@@ -129,7 +129,7 @@ impl Rule for NoUnsafeOptionalChaining {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(AncestorMemo::default())
+        Some(AncestorMemo::new())
     }
 
     fn expr<'a>(&self, chain: Expr<'a>, cx: &mut Cx<'a, Self>) {

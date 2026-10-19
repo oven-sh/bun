@@ -46,7 +46,7 @@ impl<'a> PrinterOptions<'a> {
             project_root: None,
             targets: Targets {
                 browsers: None,
-                ..Targets::default()
+                ..Targets::new()
             },
             analyze_dependencies: None,
             pseudo_classes: None,
@@ -54,16 +54,10 @@ impl<'a> PrinterOptions<'a> {
     }
 }
 
-impl<'a> Default for PrinterOptions<'a> {
-    fn default() -> Self {
-        Self::default()
-    }
-}
-
 /// A mapping of user action pseudo classes to replace with class names.
 ///
 /// See [PrinterOptions](PrinterOptions).
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct PseudoClasses<'a> {
     /// The class name to replace `:hover` with.
     pub(crate) hover: Option<&'a [u8]>,
@@ -304,7 +298,7 @@ impl<'a> Printer<'a> {
             indent_amt: 0,
             line: 0,
             col: 0,
-            vendor_prefix: css::VendorPrefix::default(),
+            vendor_prefix: css::VendorPrefix::empty(),
             skip_prefixed_nested_rules: false,
             in_calc: false,
             css_module: None,

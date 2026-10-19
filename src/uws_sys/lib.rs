@@ -64,8 +64,8 @@ impl us_bun_verify_error_t {
     }
 }
 
-impl Default for us_bun_verify_error_t {
-    fn default() -> Self {
+impl us_bun_verify_error_t {
+    pub fn new() -> Self {
         Self {
             error_no: 0,
             code: core::ptr::null(),

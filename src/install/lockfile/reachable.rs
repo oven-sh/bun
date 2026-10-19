@@ -83,11 +83,20 @@ impl Options {
 }
 
 /// Caches that are valid for one `resolutions` buffer. Each set is computed on first use.
-#[derive(Default)]
 pub(crate) struct Linked {
     /// The packages that this install links, given `--production`, `--omit` and `--filter`.
     packages: Option<DynamicBitSet>,
     members_outside: Option<DynamicBitSet>,
+}
+
+impl Linked {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            packages: None,
+            members_outside: None,
+        }
+    }
 }
 
 impl Linked {

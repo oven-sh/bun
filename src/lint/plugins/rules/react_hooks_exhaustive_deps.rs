@@ -27,7 +27,6 @@ enum StateVariable<'a> {
     Other,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The calls of hooks that take dependencies.
     calls: Vec<Expr<'a>>,
@@ -42,6 +41,23 @@ pub struct State<'a> {
     /// The innermost call of a name, or function, around something.
     call_or_function_around: AncestorMemo<'a, Node<'a>>,
     oxlint: RefCell<oxlint::exhaustive_deps::Memo<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            calls: Vec::new(),
+            additional_hooks: None,
+            set_state_call_sites: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            state_variables: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            use_effect_event_variables: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            stable_known_value_cache: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            function_without_captured_value_cache: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            call_or_function_around: AncestorMemo::new(),
+            oxlint: core::cell::RefCell::new(crate::oxlint::exhaustive_deps::Memo::new()),
+        }
+    }
 }
 
 struct Dependency<'a> {
@@ -154,12 +170,21 @@ fn get_dependency(mut node: Expr) -> Expr {
 
 /// For the paths `foo`, `foo.bar`, `foo.bar.baz`: whether all uses of the last member are optional. A tree, so that a path of n
 /// members takes n entries.
-#[derive(Default)]
 struct OptionalChains<'a> {
     /// The number of a path, by the number of what it is a member of, which is 0 for a variable, and its last name.
     paths: FxHashMap<(u32, &'a [u8]), u32>,
     /// By the number of the path less 1. `None`: it is only a part of other paths.
     is_optional: Vec<Option<bool>>,
+}
+
+impl<'a> OptionalChains<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            paths: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            is_optional: Vec::new(),
+        }
+    }
 }
 
 impl<'a> OptionalChains<'a> {
@@ -339,7 +364,6 @@ fn get_construction_expression_type<'a>(e: Expr<'a>) -> Option<&'static str> {
 
 // ───────────────────────────── collectRecommendations ─────────────────────────────
 
-#[derive(Default)]
 struct DepTreeNode<'k> {
     /// It is used in the code.
     is_used: bool,
@@ -358,6 +382,23 @@ struct DepTreeNode<'k> {
     children: Vec<(&'k [u8], usize)>,
 }
 
+impl<'k> DepTreeNode<'k> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            is_used: false,
+            is_satisfied_recursively: false,
+            is_subtree_used: false,
+            is_satisfying: false,
+            is_external: false,
+            is_suggested: false,
+            is_duplicate: false,
+            is_unnecessary: false,
+            children: Vec::new(),
+        }
+    }
+}
+
 struct DepTree<'k> {
     nodes: Vec<DepTreeNode<'k>>,
     /// The child of a node by its name.
@@ -370,7 +411,7 @@ impl<'k> DepTree<'k> {
         for key in strings::split(path, b".") {
             at = *self.child.entry((at, key)).or_insert_with(|| {
                 let child = self.nodes.len();
-                self.nodes.push(DepTreeNode::default());
+                self.nodes.push(DepTreeNode::new());
                 self.nodes[at].children.push((key, child));
                 child
             });
@@ -420,8 +461,8 @@ struct Recommendations {
 
 fn collect_recommendations(dependencies: &[Dependency], declared: &[DeclaredDependency], is_effect: bool) -> Recommendations {
     let mut tree = DepTree {
-        nodes: vec![DepTreeNode::default()],
-        child: FxHashMap::default(),
+        nodes: vec![DepTreeNode::new()],
+        child: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
     };
     for dependency in dependencies {
         let node = tree.get_or_create_node_by_path(&dependency.key, |it| it.is_subtree_used = true);
@@ -519,11 +560,11 @@ impl Rule for ExhaustiveDeps {
             return None;
         }
         if follows_oxlint {
-            return Some(State::default());
+            return Some(State::new());
         }
         Some(State {
             additional_hooks,
-            ..State::default()
+            ..State::new()
         })
     }
 
@@ -873,11 +914,11 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
 
         let mut dependencies: Vec<Dependency<'a>> = Vec::new();
         // Where each is in `dependencies`.
-        let mut dependency_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
-        let mut optional_chains = OptionalChains::default();
+        let mut dependency_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+        let mut optional_chains = OptionalChains::new();
         // `ref.current` in the function that an effect returns.
         let mut current_refs_in_effect_cleanup: Vec<(Vec<u8>, Reference<'a>, Ident<'a>)> = Vec::new();
-        let mut current_ref_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut current_ref_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let callback_parent = match node.owner() {
             Node::Expr(e) => e.parent().as_expr(),
             _ => None,

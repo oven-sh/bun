@@ -242,7 +242,7 @@ pub enum NSType {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct struct_ares_server_failover_options {
     pub(crate) retry_chance: c_ushort,
     pub(crate) retry_delay: usize,
@@ -283,8 +283,8 @@ pub struct Options {
 // `Option<extern fn>`; all-zero is the documented "no options set" state
 // passed to `ares_init_options` (S021).
 unsafe impl bun_core::ffi::Zeroable for Options {}
-impl Default for Options {
-    fn default() -> Self {
+impl Options {
+    pub fn new() -> Self {
         bun_core::ffi::zeroed()
     }
 }
@@ -349,7 +349,7 @@ impl struct_hostent {
             return;
         }
         let mut start: *mut struct_hostent = ptr::null_mut();
-        let mut addrttls = [struct_ares_addrttl::default(); 256];
+        let mut addrttls = [struct_ares_addrttl::new(); 256];
         let mut naddrttls: i32 = 256;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
@@ -435,8 +435,8 @@ pub struct hostent_with_ttls {
     pub ttls: [c_int; 256],
 }
 
-impl Default for hostent_with_ttls {
-    fn default() -> Self {
+impl hostent_with_ttls {
+    pub fn new() -> Self {
         Self {
             hostent: ptr::null_mut(),
             ttls: [-1; 256],
@@ -485,7 +485,7 @@ impl hostent_with_ttls {
 
     pub fn parse_a(buffer: &[u8]) -> Result<Box<hostent_with_ttls>, Error> {
         let mut start: *mut struct_hostent = ptr::null_mut();
-        let mut addrttls = [struct_ares_addrttl::default(); 256];
+        let mut addrttls = [struct_ares_addrttl::new(); 256];
         let mut naddrttls: c_int = 256;
         // SAFETY: c-ares FFI; `buffer` is a valid slice; out-params are valid
         // stack pointers per contract.
@@ -501,7 +501,7 @@ impl hostent_with_ttls {
         if result != ARES_SUCCESS {
             return Err(Error::get(result).unwrap());
         }
-        let mut with_ttls = Box::new(hostent_with_ttls::default());
+        let mut with_ttls = Box::new(hostent_with_ttls::new());
         with_ttls.hostent = start;
         for (i, ttl) in addrttls[..usize::try_from(naddrttls).expect("int cast")]
             .iter()
@@ -514,7 +514,7 @@ impl hostent_with_ttls {
 
     pub fn parse_aaaa(buffer: &[u8]) -> Result<Box<hostent_with_ttls>, Error> {
         let mut start: *mut struct_hostent = ptr::null_mut();
-        let mut addr6ttls = [struct_ares_addr6ttl::default(); 256];
+        let mut addr6ttls = [struct_ares_addr6ttl::new(); 256];
         let mut naddr6ttls: c_int = 256;
         // SAFETY: c-ares FFI; `buffer` is a valid slice; out-params are valid
         // stack pointers per contract.
@@ -530,7 +530,7 @@ impl hostent_with_ttls {
         if result != ARES_SUCCESS {
             return Err(Error::get(result).unwrap());
         }
-        let mut with_ttls = Box::new(hostent_with_ttls::default());
+        let mut with_ttls = Box::new(hostent_with_ttls::new());
         with_ttls.hostent = start;
         for (i, ttl) in addr6ttls[..usize::try_from(naddr6ttls).expect("int cast")]
             .iter()
@@ -649,20 +649,42 @@ impl AddrInfo {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct AddrInfo_hints {
     pub ai_flags: c_int,
     pub ai_family: c_int,
     pub ai_socktype: c_int,
     pub ai_protocol: c_int,
 }
+
+impl AddrInfo_hints {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            ai_flags: 0,
+            ai_family: 0,
+            ai_socktype: 0,
+            ai_protocol: 0,
+        }
+    }
+}
 // SAFETY: four `c_int` fields; all-zero is a valid hints value (S021).
 unsafe impl bun_core::ffi::Zeroable for AddrInfo_hints {}
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct ChannelOptions {
     pub timeout: Option<i32>,
     pub tries: Option<i32>,
+}
+
+impl ChannelOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            timeout: None,
+            tries: None,
+        }
+    }
 }
 
 bun_opaque::opaque_ffi! {
@@ -751,7 +773,7 @@ impl Channel {
             sock_state_cb_data: std::ptr::from_ref::<C>(this).cast_mut().cast::<c_void>(),
             timeout: options.timeout.unwrap_or(-1),
             tries: options.tries.unwrap_or(4),
-            ..Default::default()
+            ..Options::new()
         };
 
         let optmask: c_int =
@@ -800,7 +822,7 @@ impl Channel {
             ptr::null()
         };
 
-        let mut hints_buf = [AddrInfo_hints::default(); 3];
+        let mut hints_buf = [AddrInfo_hints::new(); 3];
         for (i, hint) in hints[..hints.len().min(2)].iter().enumerate() {
             hints_buf[i] = *hint;
         }
@@ -1058,10 +1080,17 @@ pub struct struct_ares_in6_addr {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct struct_ares_addrttl {
     pub(crate) ipaddr: u32,
     pub(crate) ttl: c_int,
+}
+
+impl struct_ares_addrttl {
+    #[inline]
+    pub fn new() -> Self {
+        Self { ipaddr: 0, ttl: 0 }
+    }
 }
 
 #[repr(C)]
@@ -1074,9 +1103,9 @@ pub struct struct_ares_addr6ttl {
 // SAFETY: `#[repr(C)]` POD — 16-byte byte-array union + `c_int`. All-zero is a
 // valid bit pattern (S021).
 unsafe impl bun_core::ffi::Zeroable for struct_ares_addr6ttl {}
-impl Default for struct_ares_addr6ttl {
+impl struct_ares_addr6ttl {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         bun_core::ffi::zeroed()
     }
 }
@@ -1277,8 +1306,8 @@ pub struct struct_any_reply {
     pub caa_reply: *mut struct_ares_caa_reply,
 }
 
-impl Default for struct_any_reply {
-    fn default() -> Self {
+impl struct_any_reply {
+    pub fn new() -> Self {
         Self {
             a_reply: None,
             aaaa_reply: None,
@@ -1335,7 +1364,7 @@ impl struct_any_reply {
     pub(crate) fn parse(buffer: &[u8]) -> Result<Box<Self>, Error> {
         let mut any_success = false;
         let mut last_error: Option<c_int> = None;
-        let mut reply = Box::new(struct_any_reply::default());
+        let mut reply = Box::new(struct_any_reply::new());
         let abuf = buffer.as_ptr();
         let alen = c_int::try_from(buffer.len()).unwrap_or(c_int::MAX);
 

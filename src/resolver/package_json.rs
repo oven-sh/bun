@@ -46,12 +46,21 @@ type ScriptsMap = StringArrayHashMap<&'static [u8]>;
 
 type MainFieldMap = StringMap;
 
-#[derive(Default)]
 pub struct DependencyMap {
     pub map: DependencyHashMap,
     // Borrows the package.json source contents; lifetime-erased to 'static,
     // kept alive by `PackageJSON::source_contents`. Owned if a name or version has a JSON escape.
     pub source_buf: std::borrow::Cow<'static, [u8]>,
+}
+
+impl DependencyMap {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            map: DependencyHashMap::new(),
+            source_buf: std::borrow::Cow::Owned(Vec::new()),
+        }
+    }
 }
 
 /// Returns `text` as a slice of `buf`. With `copied`, `buf` holds each string in visiting order.
@@ -137,23 +146,23 @@ pub struct PackageJSON {
 // package). The field defaults to `Install.invalid_package_id` (= `u32::MAX`);
 // `node_fallbacks.rs` relies on `..Default::default()` matching that. Likewise
 // `arch`/`os` default to `*::all()`.
-impl Default for PackageJSON {
-    fn default() -> Self {
+impl PackageJSON {
+    pub fn new() -> Self {
         PackageJSON {
-            name: Box::default(),
-            source: bun_ast::Source::default(),
-            source_contents: Box::default(),
+            name: Box::new([]),
+            source: bun_ast::Source::new(),
+            source_contents: Box::new([]),
             json_tape: None,
-            main_fields: MainFieldMap::default(),
-            module_type: ModuleType::default(),
-            version: Box::default(),
+            main_fields: MainFieldMap::init(),
+            module_type: ModuleType::Unknown,
+            version: Box::new([]),
             scripts: None,
             config: None,
             package_manager_package_id: INVALID_PACKAGE_ID,
-            dependencies: DependencyMap::default(),
-            installed_dependency_rows: Default::default(),
-            side_effects: SideEffects::default(),
-            browser_map: BrowserMap::default(),
+            dependencies: DependencyMap::new(),
+            installed_dependency_rows: core::array::from_fn(|_| 0..0),
+            side_effects: SideEffects::Unspecified,
+            browser_map: BrowserMap::init(),
             exports: None,
             imports: None,
         }
@@ -217,11 +226,9 @@ impl PackageJSON {
     }
 }
 
-#[derive(Default)]
 pub enum SideEffects {
     /// either `package.json` is missing "sideEffects", it is true, or some
     /// other unsupported value. Treat all files as side effects
-    #[default]
     Unspecified,
     /// "sideEffects": false
     False,
@@ -309,7 +316,7 @@ impl PackageJSON {
         log: &mut bun_ast::Log,
         json_source: &bun_ast::Source,
     ) -> MacroMap {
-        let mut macro_map = MacroMap::default();
+        let mut macro_map = MacroMap::init();
         if !macros.is_object() {
             return macro_map;
         }
@@ -344,7 +351,7 @@ impl PackageJSON {
                 return;
             }
 
-            let mut map = MacroImportReplacementMap::default();
+            let mut map = MacroImportReplacementMap::init();
             map.reserve(remap_count);
             value.for_each_property(|import_name, remap_key_loc, remap_value| {
                 let valid =
@@ -452,11 +459,12 @@ impl PackageJSON {
         // Immediately convert to owned `Box<[u8]>`: `use_shared_buffer = false`
         // above guarantees `Contents::Owned`/`Empty`, so the match is exhaustive
         // in practice (the catch-all copy is unreachable but defensive).
-        let entry_contents: Box<[u8]> = match core::mem::take(&mut entry.contents) {
-            crate::cache::Contents::Owned(v) => v.into_boxed_slice(),
-            crate::cache::Contents::Empty => Box::default(),
-            other => Box::from(other.as_slice()),
-        };
+        let entry_contents: Box<[u8]> =
+            match core::mem::replace(&mut entry.contents, crate::cache::Contents::Empty) {
+                crate::cache::Contents::Owned(v) => v.into_boxed_slice(),
+                crate::cache::Contents::Empty => Box::new([]),
+                other => Box::from(other.as_slice()),
+            };
         let _close_guard = scopeguard::guard(entry, |mut e| {
             let _ = e.close_fd();
         });
@@ -509,22 +517,22 @@ impl PackageJSON {
         }
 
         let mut package_json = PackageJSON {
-            name: Box::default(),
-            version: Box::default(),
+            name: Box::new([]),
+            version: Box::new([]),
             // Reshaped for borrowck — `json_source` stays a local until the
             // end so we can borrow it while mutating other `package_json` fields.
-            source: bun_ast::Source::default(),
+            source: bun_ast::Source::new(),
             // Filled at the bottom by moving `entry_contents` in (see SAFETY note above).
-            source_contents: Box::default(),
+            source_contents: Box::new([]),
             json_tape: None,
             module_type: ModuleType::Unknown,
-            browser_map: BrowserMap::default(),
-            main_fields: MainFieldMap::default(),
+            browser_map: BrowserMap::init(),
+            main_fields: MainFieldMap::init(),
             scripts: None,
             config: None,
             package_manager_package_id: INVALID_PACKAGE_ID,
-            dependencies: DependencyMap::default(),
-            installed_dependency_rows: Default::default(),
+            dependencies: DependencyMap::new(),
+            installed_dependency_rows: core::array::from_fn(|_| 0..0),
             side_effects: SideEffects::Unspecified,
             exports: None,
             imports: None,
@@ -653,7 +661,7 @@ impl PackageJSON {
                                 if !*boolean {
                                     package_json
                                         .browser_map
-                                        .put(key, Box::default())
+                                        .put(key, Box::new([]))
                                         .expect("unreachable");
                                 }
                             }
@@ -701,8 +709,8 @@ impl PackageJSON {
             } else if let js_ast::ExprData::EArrayJSON(e_array) = &side_effects_field.data {
                 // Handle arrays, including empty arrays
                 let items = e_array.get().items();
-                let mut map = SideEffectsMap::default();
-                let mut glob_list = GlobList::default();
+                let mut map = SideEffectsMap::init();
+                let mut glob_list = Vec::new();
                 let mut has_globs = false;
                 let mut has_exact = false;
 
@@ -888,7 +896,7 @@ impl PackageJSON {
                 }
 
                 if total_dependency_count > 0 {
-                    package_json.dependencies.map = DependencyHashMap::default();
+                    package_json.dependencies.map = DependencyHashMap::new();
                     // source_buf borrows json_source.contents (lifetime-erased;
                     // owned by `package_json.source_contents` on the success path).
                     package_json.dependencies.source_buf = contents_static.into();
@@ -1000,7 +1008,7 @@ impl PackageJSON {
                         return None;
                     };
                     let obj = obj.get();
-                    let mut map = StringArrayHashMap::<&'static [u8]>::default();
+                    let mut map = StringArrayHashMap::<&'static [u8]>::init();
                     map.ensure_total_capacity(obj.properties().len()).ok()?;
                     for p in obj.properties() {
                         let key = p.key.slice();
@@ -1315,11 +1323,11 @@ pub struct Resolution {
     pub(crate) path: Box<[u8]>,
 }
 
-impl Default for Resolution {
-    fn default() -> Self {
+impl Resolution {
+    pub fn new() -> Self {
         Resolution {
             status: Status::Undefined,
-            path: Box::default(),
+            path: Box::new([]),
         }
     }
 }
@@ -1377,9 +1385,18 @@ pub struct Package<'a> {
     pub(crate) subpath: &'a [u8],
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct PackageExternal {
     pub name: Semver::String,
+}
+
+impl PackageExternal {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            name: Semver::String::new(),
+        }
+    }
 }
 
 impl<'a> Package<'a> {
@@ -1398,7 +1415,7 @@ impl<'a> Package<'a> {
     /// `count` → `allocate` → `clone` Builder dance the resolver does at the
     /// auto-install pending sites, exposed as the `esm.copy` helper.
     pub(crate) fn copy(self) -> crate::CrateResult<(PackageExternal, Vec<u8>)> {
-        let mut builder = Semver::semver_string::Builder::default();
+        let mut builder = Semver::semver_string::Builder::new();
         self.count(&mut builder);
         builder.allocate()?;
         let cloned = self.clone(&mut builder);
@@ -1598,7 +1615,7 @@ impl<'a> ESModule<'a> {
         if !matches!(imports.data, EntryData::Map(_)) {
             return Resolution {
                 status: Status::InvalidPackageConfiguration,
-                ..Default::default()
+                ..Resolution::new()
             };
         }
 
@@ -1607,7 +1624,7 @@ impl<'a> ESModule<'a> {
         match result.status {
             Status::Undefined | Status::Null => Resolution {
                 status: Status::PackageImportNotDefined,
-                ..Default::default()
+                ..Resolution::new()
             },
             _ => Self::finalize(result),
         }
@@ -1690,7 +1707,7 @@ impl<'a> ESModule<'a> {
 
             return Resolution {
                 status: Status::InvalidPackageConfiguration,
-                ..Default::default()
+                ..Resolution::new()
             };
         }
 
@@ -1719,7 +1736,7 @@ impl<'a> ESModule<'a> {
             if result.status == Status::Null {
                 return Resolution {
                     status: Status::PackagePathDisabled,
-                    ..Default::default()
+                    ..Resolution::new()
                 };
             }
         }
@@ -1733,7 +1750,7 @@ impl<'a> ESModule<'a> {
 
         Resolution {
             status: Status::PackagePathNotExported,
-            ..Default::default()
+            ..Resolution::new()
         }
     }
 
@@ -1845,7 +1862,7 @@ impl<'a> ESModule<'a> {
 
         Resolution {
             status: Status::Null,
-            ..Default::default()
+            ..Resolution::new()
         }
     }
 
@@ -2162,7 +2179,7 @@ impl<'a> ESModule<'a> {
                 }
 
                 return Resolution {
-                    path: Box::default(),
+                    path: Box::new([]),
                     status: Status::UndefinedNoConditionsMatch,
                 };
             }
@@ -2176,7 +2193,7 @@ impl<'a> ESModule<'a> {
                     }
 
                     return Resolution {
-                        path: Box::default(),
+                        path: Box::new([]),
                         status: Status::Null,
                     };
                 }
@@ -2205,7 +2222,7 @@ impl<'a> ESModule<'a> {
                 }
 
                 return Resolution {
-                    path: Box::default(),
+                    path: Box::new([]),
                     status: last_exception,
                 };
             }
@@ -2218,7 +2235,7 @@ impl<'a> ESModule<'a> {
                 }
 
                 return Resolution {
-                    path: Box::default(),
+                    path: Box::new([]),
                     status: Status::Null,
                 };
             }
@@ -2234,7 +2251,7 @@ impl<'a> ESModule<'a> {
 
         Resolution {
             status: Status::InvalidPackageTarget,
-            ..Default::default()
+            ..Resolution::new()
         }
     }
 }

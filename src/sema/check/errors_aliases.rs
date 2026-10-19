@@ -37,7 +37,7 @@ const ALL_MEANINGS: SymFlags = SymFlags::VALUE
     .union(SymFlags::NAMESPACE);
 
 /// The properties of `location` that `resolveExternalModule` queries.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(super) struct SpecifierSite {
     /// `IsEmittableImport` of its enclosing node.
     pub(super) is_emittable: bool,
@@ -51,6 +51,20 @@ pub(super) struct SpecifierSite {
     pub(super) is_for_augmentation: bool,
     /// `moduleNotFoundError == nil`: the name of an augmentation in an ambient context.
     pub(super) is_not_validated: bool,
+}
+
+impl SpecifierSite {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            is_emittable: false,
+            is_type_only: false,
+            is_type_only_import: false,
+            is_ambient: false,
+            is_for_augmentation: false,
+            is_not_validated: false,
+        }
+    }
 }
 
 /// `directivesByLine` of a file that has comment directives.
@@ -102,8 +116,14 @@ impl DirectivesOfFile {
 }
 
 /// `DirectivesOfFile` for the files that a list of diagnostics is located in, each built once.
-#[derive(Default)]
 pub(super) struct Directives(FxHashMap<FileId, Option<DirectivesOfFile>>);
+
+impl Directives {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self(FxHashMap::with_hasher(rustc_hash::FxBuildHasher))
+    }
+}
 
 impl Directives {
     /// The start of the directive of `file`, whose HIR is `hir`, that suppresses a diagnostic at
@@ -1500,7 +1520,7 @@ impl Checker<'_, '_> {
         for &(_, start, _) in by_line.iter().filter(|directive| directive.2) {
             let directive = hir.comment_directives.iter().find(|it| it.start == start);
             let at = (file, start, directive.map_or(0, |it| it.end));
-            let mut unused = Reported::new(at, 2578, Default::default());
+            let mut unused = Reported::new(at, 2578, Box::new([]));
             self.settle_place(&mut unused);
             expected.push(unused);
         }

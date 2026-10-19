@@ -128,7 +128,7 @@ impl DisplayName {
         let file = cx.file();
         let mut version = None;
         let mut react_version = || *version.get_or_insert_with(|| get_react_version_from_context(file));
-        let mut queue = Queue::default();
+        let mut queue = Queue::new();
         let mut listen = |node: Node<'a>| queue.push(At::enter(node), 0, node);
 
         // ExpressionStatement, VariableDeclarator
@@ -182,9 +182,9 @@ impl DisplayName {
             ignore_transpiler_name: self.ignore_transpiler_name,
             pragmas: *components.pragmas(),
             components,
-            has_display_name: FxHashSet::default(),
+            has_display_name: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             context_objects: Vec::new(),
-            context_object_of: FxHashMap::default(),
+            context_object_of: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         };
         while let Some(event) = queue.pop_until(At::END) {
             walk.components.advance(event.at);
@@ -358,8 +358,8 @@ fn run_once<'a>(rule: &DisplayName, cx: &Cx<'a, DisplayName>) {
             major == 0 && minor >= 14 && patch >= 10 || major == 15 && minor >= 7 || (major, minor) >= (16, 12)
         }),
         component_wrapper_functions: component_wrapper_functions(file),
-        returns: Returns::default(),
-        assignments: AncestorMemo::default(),
+        returns: Returns::new(),
+        assignments: AncestorMemo::new(),
     };
     let report = |cx: &Cx<'a, DisplayName>, info: ReactComponentInfo<'a>| {
         cx.report(info.span, if info.is_context { CONTEXT_DISPLAY_NAME } else { COMPONENT_DISPLAY_NAME });
@@ -403,7 +403,7 @@ fn run_once<'a>(rule: &DisplayName, cx: &Cx<'a, DisplayName>) {
         return;
     }
     // Many a `module` can be in the same assignment.
-    let mut known = FxHashMap::default();
+    let mut known = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for reference in file.unresolved_references_to(b"module") {
         let is_assignment = |node: Node<'a>| node.as_expr().filter(|it| it.tag() == ExprTag::Assign);
         if let Some(assign) = state.assignments.find(reference.node(), |_, ancestor| is_assignment(ancestor))

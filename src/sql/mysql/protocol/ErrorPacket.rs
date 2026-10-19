@@ -9,8 +9,8 @@ pub struct ErrorPacket {
     pub error_message: Data,
 }
 
-impl Default for ErrorPacket {
-    fn default() -> Self {
+impl ErrorPacket {
+    pub fn new() -> Self {
         Self {
             header: 0xff,
             error_code: 0,

@@ -49,7 +49,7 @@ impl OutputFileJsc for OutputFile {
         let value = core::mem::replace(
             &mut self.value,
             OutputFileValue::Buffer {
-                bytes: Box::default(),
+                bytes: Box::new([]),
             },
         );
 
@@ -144,7 +144,7 @@ impl OutputFileJsc for OutputFile {
         let value = core::mem::replace(
             &mut self.value,
             OutputFileValue::Buffer {
-                bytes: Box::default(),
+                bytes: Box::new([]),
             },
         );
 

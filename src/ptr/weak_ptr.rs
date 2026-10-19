@@ -154,12 +154,6 @@ impl<T: HasWeakPtrData> Drop for WeakPtr<T> {
     }
 }
 
-impl<T: HasWeakPtrData> Default for WeakPtr<T> {
-    fn default() -> Self {
-        Self::EMPTY
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -93,7 +93,7 @@ impl<'s> Task<'s> {
             foreign_evaluations: [0; 14],
             order_dependent_variances: Vec::new(),
             listings: Vec::new(),
-            assignments_walked: RefCell::default(),
+            assignments_walked: core::cell::RefCell::new(Vec::new()),
             own: OwnStore::new_in(arena),
             buffer: UnsafeCell::new(Buffer::new()),
             file_local: UnsafeCell::new(FileLocalTables::new()),
@@ -244,7 +244,7 @@ impl<'s> Task<'s> {
             listings,
             assignments_walked,
             own,
-            link: Link::default(),
+            link: Link::new(),
             tables: published,
             buffered,
         }
@@ -375,7 +375,7 @@ impl OrderDependent<'_> {
 
 /// Statistics of a barrier, for `--timing`. Each is a function of the program. `buffered ==
 /// published + lost`.
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Published {
     /// The entries that the tasks passed to the barrier.
     pub buffered: u64,
@@ -386,6 +386,19 @@ pub struct Published {
     pub digest: u64,
     /// `(buffered, published)` of each table, in the order of `table_names`.
     pub by_table: Vec<(u64, u64)>,
+}
+
+impl Published {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            buffered: 0,
+            published: 0,
+            lost: 0,
+            digest: 0,
+            by_table: Vec::new(),
+        }
+    }
 }
 
 /// The `Buffered` tables keyed by a type, a signature or a mapper, except for `relations` and for the small ones that say something
@@ -514,7 +527,7 @@ fn publish_tables<'s>(
     if followed.is_empty() {
         return Published {
             by_table,
-            ..Published::default()
+            ..Published::new()
         };
     }
     let buffered: u64 = finished.iter().map(|it| it.buffered).sum();

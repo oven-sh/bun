@@ -21,7 +21,7 @@ bun_output::declare_scope!(Lockfile, hidden);
 const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Scripts {
     pub(crate) preinstall: SemverString,
     pub(crate) install: SemverString,
@@ -30,6 +30,21 @@ pub struct Scripts {
     pub(crate) prepare: SemverString,
     pub(crate) postprepare: SemverString,
     pub(crate) filled: bool,
+}
+
+impl Scripts {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            preinstall: SemverString::new(),
+            install: SemverString::new(),
+            postinstall: SemverString::new(),
+            preprepare: SemverString::new(),
+            prepare: SemverString::new(),
+            postprepare: SemverString::new(),
+            filled: false,
+        }
+    }
 }
 
 impl Scripts {
@@ -86,11 +101,11 @@ impl Scripts {
         builder: &mut LockfileStringBuilder<'_>,
     ) -> Scripts {
         if !self.filled {
-            return Scripts::default();
+            return Scripts::new();
         }
         let mut scripts = Scripts {
             filled: true,
-            ..Scripts::default()
+            ..Scripts::new()
         };
         for (dst, src) in scripts.hooks_mut().into_iter().zip(self.hooks()) {
             *dst = builder.append::<SemverString>(src.slice(buf));

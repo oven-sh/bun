@@ -62,11 +62,20 @@ pub(crate) use crate::jsc::AbortSignal;
 // `vm.event_loop().deferred_tasks`.
 use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct AutoFlusher {
     /// `Cell` so register/unregister can be called from `&self` callbacks
     /// (R-2 §provenance — see `FileSink::on_write`).
     pub(crate) registered: core::cell::Cell<bool>,
+}
+
+impl AutoFlusher {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            registered: core::cell::Cell::new(false),
+        }
+    }
 }
 
 /// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
@@ -334,9 +343,8 @@ pub(crate) enum PathOrFileDescriptor {
 // ─── SinkHandle ──────────────────────────────────────────────────────────────
 // Held by ByteStream; dispatches write()/end() to the native sink.
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub enum SinkHandle {
-    #[default]
     None,
     ServerResponse(crate::server::AnyRequestContext),
     FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink, bun_ptr::Mut>),

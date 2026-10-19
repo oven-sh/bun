@@ -239,7 +239,7 @@ fn parse_reg_exp_text(pattern: &[u8], unicode: bool) -> Option<Vec<u8>> {
         unicode,
         unicode_sets: false,
     };
-    let ast = parse_pattern(pattern, mode, RegexOptions::default()).ok()?;
+    let ast = parse_pattern(pattern, mode, RegexOptions::new()).ok()?;
     let RegexKind::Pattern { alternatives } = ast.pattern().kind() else {
         return None;
     };

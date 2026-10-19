@@ -154,8 +154,8 @@ pub struct CssRuleList<R> {
 // `CssRuleList<R>` is auto-`Send`/`Sync` via `Vec<CssRule<R>>` and the
 // `CssRule<R>` impls above — no `unsafe impl` needed.
 
-impl<R> Default for CssRuleList<R> {
-    fn default() -> Self {
+impl<R> CssRuleList<R> {
+    pub fn new() -> Self {
         Self { v: Vec::new() }
     }
 }
@@ -492,8 +492,8 @@ impl<R> CssRuleList<R> {
     where
         R: for<'b> css::generics::DeepClone<'b>,
     {
-        let mut style_rules = StyleRuleKeyMap::default();
-        let mut merge_state = StyleRuleMergeState::default();
+        let mut style_rules = StyleRuleKeyMap::new();
+        let mut merge_state = StyleRuleMergeState::new();
         let mut rules: Vec<CssRule<R>> = Vec::new();
 
         for rule in self.v.iter_mut() {
@@ -678,15 +678,17 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             && !sty.selectors.any_has_pseudo_element()
             && sty.selectors.specifities_all_equal()
         {
-            let component = Component::Is(core::mem::take(&mut sty.selectors.v).to_owned_slice());
-            let mut list = SmallList::<Selector, 1>::default();
+            let component = Component::Is(
+                core::mem::replace(&mut sty.selectors.v, super::SmallList::new()).to_owned_slice(),
+            );
+            let mut list = SmallList::<Selector, 1>::new();
             list.append(Selector::from_component(component));
             sty.selectors = SelectorList { v: list };
-            SmallList::default()
+            SmallList::new()
         } else {
             // Otherwise, partition the selectors and keep the compatible ones in this rule.
             // We will generate additional rules for incompatible selectors later.
-            let mut incompatible = SmallList::<Selector, 1>::default();
+            let mut incompatible = SmallList::<Selector, 1>::new();
             let mut i: u32 = 0;
             while i < sty.selectors.v.len() {
                 if selector::is_compatible(
@@ -701,7 +703,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             incompatible
         }
     } else {
-        SmallList::default()
+        SmallList::new()
     };
 
     sty.update_prefix(context);
@@ -815,7 +817,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         && sty.selectors.v.len() > 0
         && (!logical.is_empty() || !supps.is_empty() || !incompatible_rules.is_empty())
     {
-        let mut rulesss = CssRuleList::<R>::default();
+        let mut rulesss = CssRuleList::<R>::new();
         core::mem::swap(&mut sty.rules, &mut rulesss);
         // Empty block: route through the centralized `'bump`-erasure helper
         // instead of fabricating
@@ -932,11 +934,20 @@ impl StyleRuleKey {
 /// the caller's `rules` Vec; equality (`StyleRule::is_duplicate`) is evaluated
 /// against an explicitly-passed `&[CssRule<R>]` so we never smuggle a stale
 /// raw pointer across `&mut rules` writes (see the note on `StyleRuleKey`).
-#[derive(Default)]
 pub(crate) struct StyleRuleKeyMap {
     buckets: bun_collections::HashMap<u64, Vec<usize>>,
     /// Inserted keys in index order. A popped rule may no longer hash to the bucket that holds it.
     keys: Vec<StyleRuleKey>,
+}
+
+impl StyleRuleKeyMap {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            buckets: bun_collections::HashMap::init(),
+            keys: Vec::new(),
+        }
+    }
 }
 
 impl StyleRuleKeyMap {
@@ -960,7 +971,10 @@ impl StyleRuleKeyMap {
     /// Record the rule's index under its style-rule key for later dedup lookups.
     fn insert(&mut self, key: StyleRuleKey) {
         debug_assert!(self.keys.last().is_none_or(|last| last.index < key.index));
-        self.buckets.entry(key.hash).or_default().push(key.index);
+        self.buckets
+            .entry(key.hash)
+            .or_insert_with(Vec::new)
+            .push(key.index);
         self.keys.push(key);
     }
 
@@ -1004,10 +1018,19 @@ impl StyleRuleKeyMap {
 /// the same O(n^2) shape on the selector side. The cache is invalidated
 /// whenever the last rule changes and updated incrementally on selector
 /// merges (the merged result is compatible iff both inputs were).
-#[derive(Default)]
 pub(crate) struct StyleRuleMergeState {
     pending_minify: bool,
     last_compat: Option<bool>,
+}
+
+impl StyleRuleMergeState {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            pending_minify: false,
+            last_compat: None,
+        }
+    }
 }
 
 /// Re-run the declaration minifier on the last rule if it has pending merged
@@ -1168,7 +1191,7 @@ fn merge_style_rules<R>(
         if cached_is_compatible(src, src_compat, context.targets)
             && cached_is_compatible(dst, dst_compat, context.targets)
         {
-            let moved = core::mem::take(&mut src.selectors.v);
+            let moved = core::mem::replace(&mut src.selectors.v, super::SmallList::new());
             // `reserve` (not `ensure_total_capacity`) so capacity grows
             // super-linearly across repeated merges, keeping the N-way merge
             // amortized O(N).

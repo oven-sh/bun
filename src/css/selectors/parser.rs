@@ -394,11 +394,22 @@ pub mod attrs {
 // Specificity
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Specificity {
     pub(crate) id_selectors: u32,
     pub(crate) class_like_selectors: u32,
     pub(crate) element_selectors: u32,
+}
+
+impl Specificity {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            id_selectors: 0,
+            class_like_selectors: 0,
+            element_selectors: 0,
+        }
+    }
 }
 
 impl Specificity {
@@ -434,7 +445,7 @@ pub(crate) fn compute_specificity<Impl: BunSelectorImpl>(iter: &[GenericComponen
 fn compute_complex_selector_specificity<Impl: BunSelectorImpl>(
     iter: &[GenericComponent<Impl>],
 ) -> Specificity {
-    let mut specificity = Specificity::default();
+    let mut specificity = Specificity::new();
     for simple_selector in iter {
         compute_simple_selector_specificity::<Impl>(simple_selector, &mut specificity);
     }
@@ -1578,10 +1589,10 @@ pub struct GenericSelectorList<Impl: SelectorImpl> {
     pub(crate) v: SmallList<GenericSelector<Impl>, 1>,
 }
 
-impl<Impl: SelectorImpl> Default for GenericSelectorList<Impl> {
-    fn default() -> Self {
+impl<Impl: SelectorImpl> GenericSelectorList<Impl> {
+    pub fn new() -> Self {
         Self {
-            v: SmallList::default(),
+            v: SmallList::new(),
         }
     }
 }
@@ -1702,7 +1713,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         ) -> CResult<GenericSelector<Impl>>,
     ) -> CResult<Self> {
         let original_state = *state;
-        let mut values: SmallList<GenericSelector<Impl>, 1> = SmallList::default();
+        let mut values: SmallList<GenericSelector<Impl>, 1> = SmallList::new();
 
         loop {
             // Reshaped for borrowck — capture a local flag instead of a
@@ -1745,7 +1756,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
     }
 
     pub(crate) fn from_selector(selector: GenericSelector<Impl>) -> Self {
-        let mut result = Self::default();
+        let mut result = Self::new();
         result.v.append(selector);
         result
     }

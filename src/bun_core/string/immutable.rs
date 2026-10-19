@@ -121,11 +121,22 @@ pub mod unicode {
         }
     }
 
-    #[derive(Default, Clone, Copy)]
+    #[derive(Clone, Copy)]
     pub struct Cursor {
         pub i: u32,
         pub width: u8,
         pub c: CodePoint,
+    }
+
+    impl Cursor {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                i: 0,
+                width: 0,
+                c: 0,
+            }
+        }
     }
 
     impl<'a> NewCodePointIterator<'a> {
@@ -178,7 +189,7 @@ pub mod unicode {
     /// valid ECMAScript IdentifierName.
     pub fn contains_non_bmp_code_point_or_is_invalid_identifier(text: &[u8]) -> bool {
         let iter = CodepointIterator::init(text);
-        let mut curs = Cursor::default();
+        let mut curs = Cursor::new();
         if !iter.next(&mut curs) {
             return true;
         }
@@ -794,7 +805,7 @@ pub struct StringOrTinyString {
 }
 
 #[repr(transparent)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct StringOrTinyStringMeta(u8);
 
 impl StringOrTinyStringMeta {
@@ -1775,10 +1786,17 @@ pub fn trim_suffix<'a>(buffer: &'a [u8], suffix: &[u8]) -> &'a [u8] {
 
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
 /// The final element is the end index of the desired line
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct LineRange {
     pub(crate) start: u32,
     pub(crate) end: u32,
+}
+
+impl LineRange {
+    #[inline]
+    pub fn new() -> Self {
+        Self { start: 0, end: 0 }
+    }
 }
 
 pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
@@ -1786,10 +1804,10 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     target_line: u32,
 ) -> BoundedArray<LineRange, LINE_RANGE_COUNT> {
     if text.is_empty() {
-        return BoundedArray::default();
+        return BoundedArray::new();
     }
 
-    let mut ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
+    let mut ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::new();
 
     let mut current_line: u32 = 0;
     let Some(first_newline_or_nonascii_i) =
@@ -1808,7 +1826,7 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     let iter = CodepointIterator::init(text);
     let mut cursor = unicode::Cursor {
         i: first_newline_or_nonascii_i,
-        ..Default::default()
+        ..unicode::Cursor::new()
     };
     const NL: i32 = b'\n' as i32;
     const CR: i32 = b'\r' as i32;
@@ -1885,7 +1903,7 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         };
 
         if ranges.len() == LINE_RANGE_COUNT && current_line <= target_line {
-            let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
+            let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::new();
             let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: fire-and-forget
             ranges = new_ranges;
         }
@@ -1899,7 +1917,7 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     }
 
     if ranges.len() == LINE_RANGE_COUNT && current_line <= target_line {
-        let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
+        let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::new();
         let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: fire-and-forget
         ranges = new_ranges;
     }
@@ -1916,7 +1934,7 @@ pub fn get_lines_in_text<const LINE_RANGE_COUNT: usize>(
     if ranges.len() == 0 {
         return None;
     }
-    let mut results = BoundedArray::<&[u8], LINE_RANGE_COUNT>::default();
+    let mut results = BoundedArray::<&[u8], LINE_RANGE_COUNT>::new();
     for range in ranges.as_slice() {
         let _ = results.push(&text[range.start as usize..range.end as usize]); // OOM/capacity: fire-and-forget
     }
@@ -2108,8 +2126,8 @@ pub struct QuoteEscapeFormatFlags {
     pub str_encoding: Encoding,
 }
 
-impl Default for QuoteEscapeFormatFlags {
-    fn default() -> Self {
+impl QuoteEscapeFormatFlags {
+    pub fn new() -> Self {
         Self {
             quote_char: b'"',
             json: false,

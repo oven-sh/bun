@@ -395,9 +395,17 @@ fn signatures_differ_by_optional_or_rest_parameter<'a>(
     })
 }
 
-#[derive(Default)]
 struct UnionMembers<'a> {
     list: SmallVec<[TypeNode<'a>; 8]>,
+}
+
+impl<'a> UnionMembers<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            list: SmallVec::new(),
+        }
+    }
 }
 
 impl<'a> UnionMembers<'a> {
@@ -438,7 +446,7 @@ fn get_unified_type_text<'a>(type0: Option<TypeNode<'a>>, type1: Option<TypeNode
         }
         return text;
     };
-    let mut members = UnionMembers::default();
+    let mut members = UnionMembers::new();
     members.add(type0);
     members.add(type1);
     for (i, member) in members.list.into_iter().enumerate() {
@@ -609,11 +617,11 @@ impl UnifiedSignatures {
         if !overloads.spilled() && !overloads.iter().enumerate().any(has_same_key_as_earlier) {
             return;
         }
-        let mut by_key: FxHashMap<OverloadKey<'a>, SmallVec<[Func<'a>; 4]>> = FxHashMap::default();
+        let mut by_key: FxHashMap<OverloadKey<'a>, SmallVec<[Func<'a>; 4]>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for overload in &overloads {
             by_key
                 .entry(overload.key)
-                .or_default()
+                .or_insert_with(smallvec::SmallVec::new)
                 .push(overload.signature);
         }
         let outer = OuterTypeParameters::new(outer);

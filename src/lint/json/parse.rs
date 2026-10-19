@@ -268,7 +268,7 @@ impl Tree {
 
 pub(crate) fn parse(text: &[u8], options: Options) -> Result<(Tree, Vec<Comment>), SyntaxError> {
     let memory = Arena::new();
-    let mut tree = Tree::default();
+    let mut tree = Tree::new();
     let result = match SourceTokens::new(text, &memory, options.mode == Mode::Jsonc) {
         Some(tokens) => {
             let mut reader = Reader {

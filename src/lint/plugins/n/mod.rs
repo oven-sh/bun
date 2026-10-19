@@ -271,7 +271,7 @@ impl Builtins {
                 .map(|it| it.as_bytes().into())
                 .collect(),
             allows_experimental: options.object(0).bool_or("allowExperimental", false),
-            known: Default::default(),
+            known: core::array::from_fn(|_| std::sync::OnceLock::new()),
         }
     }
 

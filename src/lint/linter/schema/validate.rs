@@ -530,7 +530,7 @@ impl<'s> Validator<'s> {
             crate::linter::message::write_js_string(&mut out, value);
             out
         };
-        let mut seen: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut seen: FxHashMap<Vec<u8>, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for (i, item) in items.iter().enumerate().rev() {
             if types.iter().any(|name| has_type(item, name))
                 && let Some(later) = seen.insert(key(item), i)

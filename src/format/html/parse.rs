@@ -37,7 +37,7 @@ fn parse_options(parser: Parser) -> ParseOptions {
         lexer: lexer::Options {
             can_self_close: true,
             allow_htm_component_closing_tags: true,
-            ..lexer::Options::default()
+            ..lexer::Options::new()
         },
     };
     let other = ParseOptions {
@@ -47,7 +47,7 @@ fn parse_options(parser: Parser) -> ParseOptions {
         is_tag_name_case_sensitive: false,
         lexer: lexer::Options {
             can_self_close: true,
-            ..lexer::Options::default()
+            ..lexer::Options::new()
         },
     };
     match parser {
@@ -70,7 +70,7 @@ fn parse_options(parser: Parser) -> ParseOptions {
             ..other
         },
         Parser::Lwc => ParseOptions {
-            lexer: lexer::Options::default(),
+            lexer: lexer::Options::new(),
             ..other
         },
         // It is not parsed as HTML.

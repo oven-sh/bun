@@ -203,11 +203,21 @@ impl GenericKeyBuilder {
 
 /// The variables that `structuredTypeRelatedToWorker` shares with its closure `relateVariances`.
 /// The last two are read only under `reportErrors`.
-#[derive(Default)]
 struct WorkerState {
     variance_check_failed: bool,
     original_error_chain: Chain,
     save_error_state: ErrorState,
+}
+
+impl WorkerState {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            variance_check_failed: false,
+            original_error_chain: None,
+            save_error_state: ErrorState::new(),
+        }
+    }
 }
 
 /// State of one top-level relation check and all the comparisons nested in it.
@@ -267,7 +277,7 @@ impl Relater {
             top_source: TypeId::NEVER,
             top_target: TypeId::NEVER,
             maybe_keys: Vec::new(),
-            maybe_keys_set: FxHashSet::default(),
+            maybe_keys_set: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             source_stack: Vec::new(),
             target_stack: Vec::new(),
             source_identities: Vec::new(),
@@ -281,7 +291,7 @@ impl Relater {
             relation_count: 2_000_000,
             cycles,
             caches_failures: false,
-            failed: FxHashSet::default(),
+            failed: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             compares_types_assignable: false,
             error_node: (FileId(0), 0, 0),
             head_message: None,
@@ -4570,7 +4580,7 @@ impl<'p, 's> Checker<'p, 's> {
         state: u8,
     ) -> Ternary {
         let relation = r.relation;
-        let mut shared = WorkerState::default();
+        let mut shared = WorkerState::new();
         if REPORT {
             shared.save_error_state = r.get_error_state();
         }

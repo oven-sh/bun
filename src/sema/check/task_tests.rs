@@ -114,7 +114,9 @@ impl<'s> Tables<'s> {
     }
 
     fn link(&self, finished: &mut [Finished<'s>], in_parallel: InParallel<'_>) {
-        let own = finished.iter_mut().map(|it| std::mem::take(&mut it.own));
+        let own = finished
+            .iter_mut()
+            .map(|it| std::mem::replace(&mut it.own, OwnRecords::new()));
         let (links, _) = (self.types).link(&self.atoms, own.collect(), in_parallel, &|_| {});
         for (finished, link) in finished.iter_mut().zip(links) {
             finished.link = link;
@@ -470,7 +472,7 @@ fn a_task_that_goes_through_many_files_does_what_the_model_says() {
         let mut table = ByNode::<Node, TypeId, Buffered>::new_in(&bases, Global);
         table.set_slot(numbered(0));
         let mut task = begin(&session, 0);
-        let mut model: FxHashMap<Node, TypeId> = FxHashMap::default();
+        let mut model: FxHashMap<Node, TypeId> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut has_come_to = [false; FILES as usize];
         // Some files are visited a second time.
         for _ in 0..FILES * 2 {
@@ -679,9 +681,9 @@ fn the_digest_takes_an_atom_as_its_text() {
             atoms.intern(text);
         }
         let used = used.map(|text| atoms.lookup(text).unwrap());
-        let mut by_id = ById::<Atom, TypeId, Buffered>::default();
-        let mut by_key = ByKey::<(TypeId, Atom), TypeId, Buffered>::default();
-        let mut kept = ByIdIndirect::<TypeId, Box<[Atom]>, Buffered>::default();
+        let mut by_id = ById::<Atom, TypeId, Buffered>::new();
+        let mut by_key = ByKey::<(TypeId, Atom), TypeId, Buffered>::new();
+        let mut kept = ByIdIndirect::<TypeId, Box<[Atom]>, Buffered>::new();
         by_id.set_slot(numbered(0));
         by_key.set_slot(numbered(1));
         kept.set_slot(numbered(2));
@@ -768,7 +770,7 @@ fn a_type_that_two_tasks_create_is_one_key_after_the_link() {
 fn an_atom_that_two_tasks_create_is_one_key_after_the_link() {
     let session = Session::new();
     let tables = Tables::new(&session);
-    let mut names = ById::<Atom, TypeId, Buffered>::default();
+    let mut names = ById::<Atom, TypeId, Buffered>::new();
     names.set_slot(numbered(0));
     let all: [&dyn Publish; 1] = [&names];
     let values = [TypeId::STRING, TypeId::NUMBER];
@@ -990,10 +992,11 @@ fn random_tasks_publish_what_the_model_says() {
             (state >> 33) as usize % below
         };
         let tables = Tables::new(&session);
-        let mut by_node: FxHashMap<Node, usize> = FxHashMap::default();
-        let mut by_id: FxHashMap<usize, usize> = FxHashMap::default();
-        let mut by_key: FxHashMap<(usize, usize), usize> = FxHashMap::default();
-        let mut shapes: FxHashMap<usize, usize> = FxHashMap::default();
+        let mut by_node: FxHashMap<Node, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+        let mut by_id: FxHashMap<usize, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+        let mut by_key: FxHashMap<(usize, usize), usize> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+        let mut shapes: FxHashMap<usize, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut buffered = 0;
         let mut finished: Vec<Finished> = (0..6)
             .map(|index| {
@@ -1312,7 +1315,7 @@ fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn hashed_lists_its_entries_in_insertion_order() {
-    let mut hashed = Hashed::<u64, u32>::default();
+    let mut hashed = Hashed::<u64, u32>::new();
     // Not in the order of the keys, nor of their hashes.
     let keys: Vec<u64> = (0..1000u64).map(|i| i.wrapping_mul(7919) % 1009).collect();
     for (place, &key) in keys.iter().enumerate() {
@@ -1339,7 +1342,7 @@ fn hashed_lists_its_entries_in_insertion_order() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn the_nodes_of_many_files_have_different_hashes() {
-    let mut tags = crate::util::FxHashSet::default();
+    let mut tags = crate::util::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     for file in 0..512u64 {
         for index in 0..512u64 {
             tags.insert(spread_word(file << 32 | index) as u32);
@@ -1352,7 +1355,7 @@ fn the_nodes_of_many_files_have_different_hashes() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn places_are_added_in_one_batch_and_found_without_a_lock() {
-    let places = GrowingPlaces::<Global>::default();
+    let places = GrowingPlaces::<Global>::new();
     assert_eq!(places.find_frozen(spread_word(1), |_| true), None);
     places.extend(0, std::iter::empty());
     for batch in 0..3u32 {
@@ -1372,7 +1375,7 @@ fn places_are_added_in_one_batch_and_found_without_a_lock() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn threads_fill_and_read_a_sharded_map() {
-    let map = ShardedMap::<u32, Box<u32>>::default();
+    let map = ShardedMap::<u32, Box<u32>>::new();
     on_threads(4, &|thread| {
         for i in 0..300 {
             let key = (i * 7 + thread as u32) % 300;

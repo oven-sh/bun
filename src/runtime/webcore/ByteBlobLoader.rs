@@ -21,15 +21,15 @@ pub struct ByteBlobLoader {
     pub(crate) content_type: blob::BlobContentType,
 }
 
-impl Default for ByteBlobLoader {
-    fn default() -> Self {
+impl ByteBlobLoader {
+    pub fn new() -> Self {
         Self {
             offset: 0,
             store: None,
             chunk_size: 1024 * 1024 * 2,
             remain: 1024 * 1024 * 2,
             done: false,
-            content_type: blob::BlobContentType::default(),
+            content_type: blob::BlobContentType::new(),
         }
     }
 }
@@ -81,7 +81,7 @@ impl ByteBlobLoader {
         let content_type = if blob.content_type_was_set.get() {
             blob.content_type.get().clone()
         } else {
-            blob::BlobContentType::default()
+            blob::BlobContentType::new()
         };
         *self = ByteBlobLoader {
             offset,
@@ -165,7 +165,10 @@ impl ByteBlobLoader {
         // Make sure to preserve the content-type.
         // https://github.com/oven-sh/bun/issues/14988
         if !self.content_type.is_empty() {
-            let ct = core::mem::take(&mut self.content_type);
+            let ct = core::mem::replace(
+                &mut self.content_type,
+                bun_jsc::webcore_types::BlobContentType::new(),
+            );
             blob.content_type_was_set.set(!ct.is_empty());
             blob.content_type.set(ct);
         }
@@ -195,7 +198,7 @@ impl ByteBlobLoader {
     }
 
     fn clear_data(&mut self) {
-        self.content_type = blob::BlobContentType::default();
+        self.content_type = blob::BlobContentType::new();
 
         if let Some(store) = self.store.take() {
             drop(store); // store.deref()

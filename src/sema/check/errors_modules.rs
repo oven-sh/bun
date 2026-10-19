@@ -463,7 +463,7 @@ impl Checker<'_, '_> {
             is_ambient: true,
             is_for_augmentation: true,
             is_not_validated: around.is_ambient,
-            ..Default::default()
+            ..SpecifierSite::new()
         };
         self.resolve_external_module(cx.file, written, site);
         let own = Sym {
@@ -567,7 +567,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         let mut site = SpecifierSite {
             is_ambient,
-            ..Default::default()
+            ..SpecifierSite::new()
         };
         let type_only = match hir[s].kind {
             StmtKind::Import(_) if written.kind == SpecifierKind::SideEffect => true,

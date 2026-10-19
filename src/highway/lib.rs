@@ -492,13 +492,22 @@ pub fn index_of_interesting_character_in_multiline_comment(slice: &[u8]) -> Opti
 }
 
 /// Buffer for [`ScannerStops`]. Keep one per thread so the allocation is reused from file to file.
-#[derive(Default)]
 pub struct ScannerStopsBuffer {
     /// As long as the longest text so far needs: the kernel writes all that is read, so nothing
     /// is cleared from one text to the next.
     planes: Vec<u8>,
     /// The address and the length of the text that `planes` is filled for.
     filled_for: Option<(usize, usize)>,
+}
+
+impl ScannerStopsBuffer {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            planes: Vec::new(),
+            filled_for: None,
+        }
+    }
 }
 
 /// Where runs of bytes end in a JavaScript or TypeScript source. One kernel call finds them for the
@@ -1021,7 +1030,7 @@ impl XxHash64State {
 /// In/out accumulator state for [`parse_mappings`]. Layout must match the
 /// `kSt*` indices in `highway_sourcemap.cpp`.
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct ParseMappingsState {
     pub gen_line: i32,
     pub gen_col: i32,
@@ -1033,6 +1042,24 @@ pub struct ParseMappingsState {
     pub has_names: i32,
     pub fast_blocks: i32,
     pub slow_blocks: i32,
+}
+
+impl ParseMappingsState {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            gen_line: 0,
+            gen_col: 0,
+            orig_line: 0,
+            orig_col: 0,
+            src_idx: 0,
+            name_idx: 0,
+            needs_sort: 0,
+            has_names: 0,
+            fast_blocks: 0,
+            slow_blocks: 0,
+        }
+    }
 }
 
 // The C++ kernel indexes this struct as `int32_t state[10]` via the kSt*

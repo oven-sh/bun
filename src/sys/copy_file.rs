@@ -66,13 +66,8 @@ bitflags::bitflags! {
         // _: u3 padding
     }
 }
-impl Default for LinuxCopyFileState {
-    fn default() -> Self {
-        Self::empty()
-    }
-}
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct EmptyCopyFileState;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -245,7 +240,7 @@ pub fn copy_file_with_state(
 }
 
 pub fn copy_file(in_: InputType<'_>, out: InputType<'_>) -> CopyFileReturnType {
-    let mut state: CopyFileState = CopyFileState::default();
+    let mut state: CopyFileState = CopyFileState::empty();
     copy_file_with_state(in_, out, &mut state)
 }
 

@@ -228,7 +228,7 @@ impl PmPkgCommand {
             }
             [value] => *value,
             values => {
-                let mut object = E::Object::default();
+                let mut object = E::Object::new();
                 for (key, value) in found.keys().iter().zip(values) {
                     // `put` borrows the label. print_json writes ill-formed UTF-8 as `\x00`.
                     let label: &[u8] = match bstr::ByteSlice::to_str_lossy(&key[..]) {
@@ -387,9 +387,9 @@ impl PmPkgCommand {
                 indent: bun_ast::Indentation {
                     scalar: 2,
                     count: 0,
-                    ..Default::default()
+                    ..bun_ast::Indentation::new()
                 },
-                ..Default::default()
+                ..js_printer::PrintJsonOptions::new()
             },
         )?;
 
@@ -590,8 +590,8 @@ impl PmPkgCommand {
                 );
                 Global::exit(1);
             }
-            _ if next.creates_array() => Expr::init(E::Array::default(), Loc::EMPTY),
-            _ => Expr::init(E::Object::default(), Loc::EMPTY),
+            _ if next.creates_array() => Expr::init(E::Array::new(), Loc::EMPTY),
+            _ => Expr::init(E::Object::new(), Loc::EMPTY),
         }
     }
 
@@ -726,7 +726,7 @@ impl PmPkgCommand {
             js_printer::PrintJsonOptions {
                 indent: pkg.indentation,
                 mangled_props: None,
-                ..Default::default()
+                ..js_printer::PrintJsonOptions::new()
             },
         ) {
             Output::err_generic("Failed to serialize package.json: {s}", (e.name(),));

@@ -70,7 +70,7 @@ pub(crate) struct PathWatcherManager {
 impl PathWatcherManager {
     fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
         bun_core::heap::into_raw(Box::new(PathWatcherManager {
-            watchers: JsCell::new(StringArrayHashMap::default()),
+            watchers: JsCell::new(StringArrayHashMap::init()),
             vm,
             // A manager can be displaced from `DEFAULT_MANAGER` by a `watch()`
             // call from a different VM; without this the displaced manager
@@ -157,8 +157,8 @@ pub(crate) struct ChangeEvent {
     timestamp: u64,
 }
 
-impl Default for ChangeEvent {
-    fn default() -> Self {
+impl ChangeEvent {
+    pub(crate) fn new() -> Self {
         Self {
             hash: 0,
             event_type: WatchEventKind::Change,
@@ -349,7 +349,7 @@ impl PathWatcher {
                     return sys::Result::Err(sys::Error {
                         errno: err.errno,
                         syscall: sys::Tag::open,
-                        ..Default::default()
+                        ..sys::Error::init()
                     });
                 }
                 break 'brk path;
@@ -370,7 +370,7 @@ impl PathWatcher {
             handle: bun_core::ffi::zeroed(),
             manager: Cell::new(Some(manager)),
             emit_in_progress: Cell::new(false),
-            handlers: JsCell::new(ArrayHashMap::default()),
+            handlers: JsCell::new(ArrayHashMap::new()),
         });
         let this = bun_core::heap::into_raw(this_box);
 
@@ -541,7 +541,7 @@ pub(crate) fn watch(
     };
     // SAFETY: watcher is a valid freshly-returned heap pointer.
     unsafe { &*watcher }.handlers.with_mut(|h| {
-        h.insert(ctx, ChangeEvent::default());
+        h.insert(ctx, ChangeEvent::new());
     });
     sys::Result::Ok(watcher)
 }

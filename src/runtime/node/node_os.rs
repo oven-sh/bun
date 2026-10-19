@@ -11,13 +11,26 @@ unsafe extern "C" {
     safe fn bun_sysconf__SC_NPROCESSORS_ONLN() -> i32;
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct CPUTimes {
     pub user: u64,
     pub nice: u64,
     pub sys: u64,
     pub idle: u64,
     pub irq: u64,
+}
+
+impl CPUTimes {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            user: 0,
+            nice: 0,
+            sys: 0,
+            idle: 0,
+            irq: 0,
+        }
+    }
 }
 
 pub(crate) fn freemem() -> u64 {
@@ -127,7 +140,7 @@ mod _impl {
                 let err = SystemError {
                     message: BunString::static_("Failed to get CPU information"),
                     code: BunString::static_("ERR_SYSTEM_ERROR"),
-                    ..Default::default()
+                    ..SystemError::new()
                 };
                 Err(global.throw_value(err.to_error_instance(global)))
             }
@@ -158,11 +171,7 @@ mod _impl {
                         let mut i: u32 = 0;
                         while i < count {
                             let cpu = JSValue::create_empty_object(global_this, 3);
-                            cpu.put(
-                                global_this,
-                                b"times",
-                                CPUTimes::default().to_value(global_this),
-                            );
+                            cpu.put(global_this, b"times", CPUTimes::new().to_value(global_this));
                             cpu.put(
                                 global_this,
                                 b"model",
@@ -542,7 +551,7 @@ mod _impl {
                 #[cfg(windows)]
                 errno: libuv::UV_ESRCH,
                 syscall: BunString::static_("uv_os_getpriority"),
-                ..Default::default()
+                ..SystemError::new()
             };
             return Err(global.throw_value(err.to_error_instance_with_info_object(global)));
         }
@@ -763,7 +772,7 @@ mod _impl {
                 code: BunString::static_("ERR_SYSTEM_ERROR"),
                 errno: errno as c_int,
                 syscall: BunString::static_("getifaddrs"),
-                ..Default::default()
+                ..SystemError::new()
             };
 
             return Err(global_this.throw_value(err.to_error_instance(global_this)));
@@ -1045,7 +1054,7 @@ mod _impl {
                 //.info = info,
                 errno: err,
                 syscall: BunString::static_("uv_interface_addresses").into(),
-                ..Default::default()
+                ..SystemError::new()
             };
             return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
         }
@@ -1330,7 +1339,7 @@ mod _impl {
                     code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                     errno: err,
                     syscall: BunString::static_("uv_uptime").into(),
-                    ..Default::default()
+                    ..SystemError::new()
                 }));
             }
             return Ok(uptime_value);

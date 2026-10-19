@@ -176,7 +176,7 @@ impl JSBundleCompletionTask {
             bundle_ticket: Some(global_this.bun_vm().ticket()),
             global_this: BackRef::new(global_this),
             context,
-            promise: jsc::JSPromiseStrong::default(),
+            promise: jsc::JSPromiseStrong::new(),
             poll_ref: KeepAlive::init(),
             env: global_this.bun_vm().transpiler.env,
             log: bun_ast::Log::init(),
@@ -407,7 +407,7 @@ impl JSBundleCompletionTask {
             #[cfg(not(windows))]
             {
                 // On POSIX, makeOpenPath and change root_dir
-                root_dir = match root_dir.make_open_path(dirname, OpenDirOptions::default()) {
+                root_dir = match root_dir.make_open_path(dirname, OpenDirOptions::new()) {
                     Ok(d) => d,
                     Err(err) => {
                         return CompileResult::fail_fmt(format_args!(
@@ -434,7 +434,7 @@ impl JSBundleCompletionTask {
         // Use the target-specific base path for compile mode, not the user-configured public_path
         let module_prefix = target_base_public_path(compile_options.compile_target.os, b"root/");
 
-        let mut flags = StandaloneFlags::default();
+        let mut flags = StandaloneFlags::empty();
         if !compile_options.autoload_dotenv {
             flags |= StandaloneFlags::DISABLE_DEFAULT_ENV_FILES;
         }
@@ -641,7 +641,7 @@ impl JSBundleCompletionTask {
                 if let Some(plugin) = (*this).plugins.take() {
                     Plugin::destroy(plugin.as_ptr());
                 }
-                (*this).promise = jsc::JSPromiseStrong::default();
+                (*this).promise = jsc::JSPromiseStrong::new();
                 (*this).bundle_ticket = None;
                 // Publish only now: from here the bundle thread may free `this`.
                 (*this)
@@ -1274,7 +1274,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             // Use the config value, which `configure_bundler` reapplies anyway.
             ignore_dce_annotations: config.ignore_dce_annotations,
             drop: config.drop.keys().to_vec(),
-            bunfig_path: Box::default(),
+            bunfig_path: Box::new([]),
             jsx: Some(config.jsx.clone()),
             // Relative to where the entry points are relative to, as for `--tsconfig-override`.
             tsconfig_override: (!config.tsconfig_override.list.is_empty()).then(|| {
@@ -1288,7 +1288,7 @@ impl CompletionStruct for JSBundleCompletionTask {
                     bun_paths::platform::Auto,
                 >(cwd, &mut spill, &[path]))
             }),
-            ..Default::default()
+            ..api::TransformOptions::new()
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
@@ -1317,7 +1317,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // bump-allocated) so its `MiniEventLoop::tasks` queue is dropped at
         // scope exit; the bump bulk-free skips Drop. Declared before `bv2` so
         // it outlives the BACKREF in `linker.loop`.
-        let mut any_loop = bun_event_loop::AnyEventLoop::default();
+        let mut any_loop = bun_event_loop::AnyEventLoop::new();
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
             Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop>());
         if let bun_event_loop::AnyEventLoop::Mini(mini) = &any_loop {

@@ -32,7 +32,7 @@ pub struct MySQLQuery {
 
 /// Not all fields are `bool`, so per PORTING.md this is a transparent `u8` with shift accessors.
 #[repr(transparent)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Flags(u8);
 
 impl Flags {

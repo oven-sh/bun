@@ -67,7 +67,7 @@ impl<'o> Sink<'o> {
             line_start: printer.out.len(),
             printer: Some(printer),
             is_document: false,
-            elements: Elements::default(),
+            elements: Elements::new(),
             without_lines: Vec::new(),
             indent: 0,
             outer_indents: Vec::new(),
@@ -84,7 +84,7 @@ impl<'o> Sink<'o> {
             is_cleaned: false,
             printer: None,
             is_document: true,
-            elements: Elements::default(),
+            elements: Elements::new(),
             without_lines: Vec::new(),
             indent: 0,
             outer_indents: Vec::new(),
@@ -337,7 +337,7 @@ impl<'o> Sink<'o> {
         if self.is_document {
             self.elements.start_group(Group {
                 should_break,
-                ..Group::default()
+                ..Group::new()
             });
         } else if self.flat_groups > 0 {
             self.has_failed |= should_break;

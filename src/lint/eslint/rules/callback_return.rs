@@ -46,11 +46,20 @@ enum Around<'a> {
     Block(List<'a, Stmt<'a>>, bool),
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     around: AncestorMemo<'a, Around<'a>>,
     /// ESLint's `getUpperFunction`.
     functions: AncestorMemo<'a, Func<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            around: AncestorMemo::new(),
+            functions: AncestorMemo::new(),
+        }
+    }
 }
 
 impl Rule for CallbackReturn {
@@ -80,7 +89,7 @@ impl Rule for CallbackReturn {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

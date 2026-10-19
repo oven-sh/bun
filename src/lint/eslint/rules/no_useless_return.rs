@@ -43,12 +43,21 @@ const EMPTY: u32 = 0;
 /// Sets of `return` statements. A segment starts with what the segments before it end with, so a
 /// set is made of other sets, which takes no copy. Each is gone through once to mark what is in it
 /// as used, however many sets it is part of.
-#[derive(Default)]
 struct ReturnSets {
     /// The first is not used: it stands for the empty set.
     sets: Vec<(ReturnSet, Filtered)>,
     /// It grows whenever less is left in a set than before when it is marked as used.
     age: u32,
+}
+
+impl ReturnSets {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            sets: Vec::new(),
+            age: 0,
+        }
+    }
 }
 
 impl ReturnSets {
@@ -127,7 +136,6 @@ struct ScopeInfo<'a> {
     traversed_try_blocks: Vec<Span>,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// What the code paths to analyze start with.
     roots: FxHashSet<Node<'a>>,
@@ -155,6 +163,27 @@ pub struct State<'a> {
     oxlint_useless: AncestorMemo<'a, bool>,
     /// [`oxlint_is_at_the_end`]
     oxlint_at_the_end: AncestorMemo<'a, bool>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            roots: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            known: AncestorMemo::new(),
+            at_the_end: Vec::new(),
+            functions: AncestorMemo::new(),
+            in_loop_or_finally: AncestorMemo::new(),
+            scopes: Vec::new(),
+            segments: SegmentInfoMap::with_hasher(rustc_hash::FxBuildHasher),
+            returns: Vec::new(),
+            useless_count: 0,
+            sets: ReturnSets::new(),
+            used_unreachable: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            oxlint_useless: AncestorMemo::new(),
+            oxlint_at_the_end: AncestorMemo::new(),
+        }
+    }
 }
 
 /// ESLint's `isReturned`: `segment` ends with a `return`, or it is unreachable.
@@ -185,7 +214,7 @@ impl<'a> State<'a> {
     /// comes after a `return` stands for those before it, as if the `return` was not there.
     fn get_useless_returns(&mut self, segment: Segment<'a>) -> u32 {
         let mut useless_returns = EMPTY;
-        let mut traversed = FxHashSet::default();
+        let mut traversed = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         let mut pending = segment.all_prev_segments();
         while let Some(prev) = pending.pop() {
             if prev.is_reachable() {
@@ -468,7 +497,7 @@ impl NoUselessReturn {
         let state = &mut cx.state;
         state.segments.clear();
         state.returns.clear();
-        state.sets = ReturnSets::default();
+        state.sets = ReturnSets::new();
         state.used_unreachable.clear();
     }
 
@@ -589,7 +618,7 @@ impl Rule for NoUselessReturn {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        file.has_stmts([StmtTag::Return]).then(State::default)
+        file.has_stmts([StmtTag::Return]).then(State::new)
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -627,7 +656,7 @@ impl Rule for NoUselessReturn {
             }
         }
         let as_entered = |it: &Node<'_>| (it.span().start, std::cmp::Reverse(it.span().end));
-        for root in utils::sort::in_order_of(std::mem::take(&mut cx.state.roots), as_entered) {
+        for root in utils::sort::in_order_of(std::mem::replace(&mut cx.state.roots, rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher)), as_entered) {
             self.check_code_path(root, cx);
         }
     }

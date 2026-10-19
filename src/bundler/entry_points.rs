@@ -19,18 +19,26 @@ pub mod Fs {
     pub use bun_resolver::fs::FileSystem;
 }
 
-#[derive(Default)]
 pub struct ClientEntryPoint {
     pub(crate) source: bun_ast::Source,
 }
 
-#[derive(Default)]
 pub struct ServerEntryPoint {
     /// The generated wrapper source for `bun:main`. Always a valid slice
     /// (either empty or owned by `bun.default_allocator`) so readers never
     /// see `undefined` memory regardless of the `generated` flag's state.
     pub contents: Box<[u8]>,
     pub generated: bool,
+}
+
+impl ServerEntryPoint {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            contents: Box::new([]),
+            generated: false,
+        }
+    }
 }
 
 // `deinit` only freed `contents` and reset flags; with `Box<[u8]>` this is the
@@ -82,7 +90,7 @@ impl ServerEntryPoint {
                      \x20     console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
                      \x20  }}\n\
                      }}\n",
-                    strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'\'', ..Default::default() }),
+                    strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'\'', ..strings::QuoteEscapeFormatFlags::new() }),
                 )
                 .map_err(|_| crate::Error::FormatError)?;
                 break 'brk v;
@@ -107,7 +115,7 @@ impl ServerEntryPoint {
                  \x20  const server = Bun.serve(entryNamespace.default);\n\
                  \x20  console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
                  }}\n",
-                strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'"', ..Default::default() }),
+                strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'"', ..strings::QuoteEscapeFormatFlags::new() }),
             )
             .map_err(|_| crate::Error::FormatError)?;
             v
@@ -132,11 +140,11 @@ pub struct MacroEntryPoint {
     pub source: bun_ast::Source,
 }
 
-impl Default for MacroEntryPoint {
-    fn default() -> Self {
+impl MacroEntryPoint {
+    pub fn new() -> Self {
         Self {
             code_buffer: [0u8; MAX_PATH_BYTES * 2 + 500],
-            source: bun_ast::Source::default(),
+            source: bun_ast::Source::new(),
         }
     }
 }
@@ -245,14 +253,14 @@ impl MacroEntryPoint {
                     dir_to_use,
                     bun_fmt::PathFormatOptions {
                         escape_backslashes: true,
-                        ..Default::default()
+                        ..bun_fmt::PathFormatOptions::new()
                     }
                 ),
                 bun_fmt::fmt_path_u8(
                     import_path.filename,
                     bun_fmt::PathFormatOptions {
                         escape_backslashes: true,
-                        ..Default::default()
+                        ..bun_fmt::PathFormatOptions::new()
                     }
                 ),
                 BStr::new(function_name),
@@ -261,14 +269,14 @@ impl MacroEntryPoint {
                     dir_to_use,
                     bun_fmt::PathFormatOptions {
                         escape_backslashes: true,
-                        ..Default::default()
+                        ..bun_fmt::PathFormatOptions::new()
                     }
                 ),
                 bun_fmt::fmt_path_u8(
                     import_path.filename,
                     bun_fmt::PathFormatOptions {
                         escape_backslashes: true,
-                        ..Default::default()
+                        ..bun_fmt::PathFormatOptions::new()
                     }
                 ),
                 macro_id,

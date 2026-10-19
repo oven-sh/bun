@@ -128,7 +128,7 @@ pub struct Project {
 /// relative to the one that extends it, and nothing is left out. `None`: no file has it. Not what they mean to
 /// TypeScript: the graph of imports of `bun lint` reads them, for oxlint's rule about which files a `tsconfig.json` is
 /// for.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Written {
     pub files: Option<Vec<Vec<u8>>>,
     pub include: Option<Vec<Vec<u8>>>,
@@ -337,7 +337,7 @@ pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// One configuration file with its extended configuration files merged in.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct Raw {
     /// `options`. Paths are absolute, or start with `${configDir}`. No value is `null`.
     compiler: Vec<(Vec<u8>, Json)>,
@@ -351,8 +351,23 @@ struct Raw {
     has_extends: bool,
 }
 
+impl Raw {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            compiler: Vec::new(),
+            explicit_null_fields: Vec::new(),
+            files: List::new(),
+            include: List::new(),
+            exclude: List::new(),
+            references: List::new(),
+            has_extends: false,
+        }
+    }
+}
+
 /// `files`, `include`, `exclude` or `references`.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct List {
     /// `rawConfig.Has`: the property is there, whatever its value.
     is_specified: bool,
@@ -363,6 +378,18 @@ struct List {
     items: Option<Vec<Json>>,
     /// [`Written`]
     written: Option<Vec<Json>>,
+}
+
+impl List {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            is_specified: false,
+            is_array: false,
+            items: None,
+            written: None,
+        }
+    }
 }
 
 impl List {
@@ -467,8 +494,11 @@ fn parse_config(
 ) -> Option<Raw> {
     // The files that wait for what they extend, the outermost first, and `resolutionStack`, which has the path of each. Not by
     // recursion: a chain of `extends` is as long as somebody makes it.
-    let (mut waiting, mut stack): (Vec<Open>, FxHashSet<Vec<u8>>) = Default::default();
-    let mut circles = Circles::default();
+    let (mut waiting, mut stack): (Vec<Open>, FxHashSet<Vec<u8>>) = (
+        Vec::new(),
+        rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+    );
+    let mut circles = Circles::new();
     let mut to_read = Some(path.to_vec());
     // A file that is read, with all that it extends. `Some(None)`: it cannot be used.
     let mut read: Option<Option<Raw>> = None;
@@ -533,7 +563,6 @@ struct Open {
 }
 
 /// The circles of `extends` that one `parse_config` has met.
-#[derive(Default)]
 struct Circles {
     /// The files at which one was closed: TS18000 is reported once for each. TypeScript keeps such
     /// a file once it has met it, and what it keeps has no errors.
@@ -543,6 +572,17 @@ struct Circles {
     /// The files that met one, with what they are for this `parse_config`: it depends on where the
     /// circle was entered.
     kept: Vec<(Vec<u8>, Raw)>,
+}
+
+impl Circles {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            closed: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            met: 0,
+            kept: Vec::new(),
+        }
+    }
 }
 
 /// What [`parse_config`] does with the file itself. `stack`: `resolutionStack`.
@@ -629,7 +669,7 @@ fn open_config(
         ..ConfigError::new(problem.code, &[])
     };
     let base = dirname::<Posix>(path);
-    let mut own = Raw::default();
+    let mut own = Raw::new();
     // `getDefaultCompilerOptions`
     if path.ends_with(b"/jsconfig.json") {
         for (key, value) in [
@@ -731,7 +771,7 @@ fn open_config(
         path: path.to_vec(),
         resolved_path,
         own,
-        inherited: Raw::default(),
+        inherited: Raw::new(),
         extended: extended_config_path.map(Vec::into_iter),
         asked: None,
     })
@@ -909,7 +949,7 @@ pub fn load_overriding(
 ) -> Result<Project, Vec<ConfigError>> {
     let mut errors = Vec::new();
     let raw = parse_config(host, session, path, &mut errors);
-    let Some(mut raw) = raw.or_else(|| host.read(path).map(|_| Raw::default())) else {
+    let Some(mut raw) = raw.or_else(|| host.read(path).map(|_| Raw::new())) else {
         return Err(errors);
     };
     let base = dirname::<Posix>(path);
@@ -930,7 +970,7 @@ pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Ve
             items: (!files.is_empty()).then(|| files.into_iter().map(Json::String).collect()),
             written: None,
         },
-        ..Raw::default()
+        ..Raw::new()
     };
     project_from_raw(host, &Session::new(), b"", dir, raw, Vec::new())
 }
@@ -1152,9 +1192,9 @@ fn file_names_from_specs(
     let case_sensitive = host.is_case_sensitive();
     let key = |file: &[u8]| to_path(file, case_sensitive).into_owned();
     let supported = supported_extensions(options);
-    let mut literal_files = OrderedFiles::default();
-    let mut wildcard_files = OrderedFiles::default();
-    let mut wildcard_json_files = OrderedFiles::default();
+    let mut literal_files = OrderedFiles::new();
+    let mut wildcard_files = OrderedFiles::new();
+    let mut wildcard_json_files = OrderedFiles::new();
     // The key is the entry as it is written. What is asked below is a path, so only an entry that
     // is one is found.
     for name in literal {
@@ -1744,8 +1784,8 @@ fn match_files(
             extensions,
         },
         case_sensitive,
-        visited: Default::default(),
-        listed: Default::default(),
+        visited: rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+        listed: rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         results: (0..buckets).map(|_| Vec::new()).collect(),
     };
     let bases = base_paths(&path, includes, case_sensitive);
@@ -1753,10 +1793,13 @@ fn match_files(
     // the files. The entries of each directory and which of them match have been computed by then,
     // for many directories at a time.
     let mut level: Vec<Vec<u8>> = bases.clone();
-    let mut requested: FxHashSet<Vec<u8>> = Default::default();
+    let mut requested: FxHashSet<Vec<u8>> =
+        rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     while !level.is_empty() {
-        let found: Vec<bun_threading::Guarded<Option<Listed>>> =
-            level.iter().map(|_| Default::default()).collect();
+        let found: Vec<bun_threading::Guarded<Option<Listed>>> = level
+            .iter()
+            .map(|_| bun_threading::guarded::GuardedBy::init(None))
+            .collect();
         host.parallel(level.len(), &|i| {
             host.realpath(&level[i]);
             *found[i].lock() = Some(visitor.matchers.list(&level[i]));

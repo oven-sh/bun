@@ -122,7 +122,7 @@ where
         }
 
         let mut needs_space = false;
-        if self.width != BorderSideWidth::default() {
+        if self.width != BorderSideWidth::Medium {
             self.width.to_css(dest)?;
             needs_space = true;
         }
@@ -145,11 +145,11 @@ where
 
 impl<const P: u8> super::GenericBorderImpl for GenericBorder<LineStyle, P> {
     fn parse(input: &mut Parser) -> CssResult<Self> {
-        Self::parse_with_default_style(input, LineStyle::default())
+        Self::parse_with_default_style(input, LineStyle::None)
     }
 
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        self.to_css_with_default_style(dest, &LineStyle::default())
+        self.to_css_with_default_style(dest, &LineStyle::None)
     }
 }
 
@@ -198,10 +198,9 @@ where
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A [`<line-style>`](https://drafts.csswg.org/css-backgrounds/#typedef-line-style) value, used in the `border-style` property.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum LineStyle {
     /// No border.
-    #[default]
     None,
     /// Similar to `none` but with different rules for tables.
     Hidden,
@@ -234,12 +233,11 @@ impl LineStyle {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A value for the [border-width](https://www.w3.org/TR/css-backgrounds-3/#border-width) property.
-#[derive(Clone, Default, PartialEq, css::Parse, css::ToCss)]
+#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
 pub enum BorderSideWidth {
     /// A UA defined `thin` value.
     Thin,
     /// A UA defined `medium` value.
-    #[default]
     Medium,
     /// A UA defined `thick` value.
     Thick,
@@ -423,11 +421,21 @@ define_size_shorthand! {
 // BorderShorthand (private)
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 struct BorderShorthand {
     width: Option<BorderSideWidth>,
     style: Option<LineStyle>,
     color: Option<CssColor>,
+}
+
+impl BorderShorthand {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            width: None,
+            style: None,
+            color: None,
+        }
+    }
 }
 
 impl BorderShorthand {
@@ -473,7 +481,7 @@ impl BorderShorthand {
 // ──────────────────────────────────────────────────────────────────────────
 
 bitflags::bitflags! {
-    #[derive(Default, Clone, Copy)]
+    #[derive(Clone, Copy)]
     struct BorderProperty: u32 {
         const TOP_COLOR          = 1 << 0;
         const BOTTOM_COLOR       = 1 << 1;
@@ -609,7 +617,6 @@ impl BorderProperty {
 // BorderHandler
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct BorderHandler {
     border_top: BorderShorthand,
     border_bottom: BorderShorthand,
@@ -624,6 +631,27 @@ pub struct BorderHandler {
     border_radius_handler: BorderRadiusHandler,
     flushed_properties: BorderProperty,
     has_any: bool,
+}
+
+impl BorderHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            border_top: BorderShorthand::new(),
+            border_bottom: BorderShorthand::new(),
+            border_left: BorderShorthand::new(),
+            border_right: BorderShorthand::new(),
+            border_block_start: BorderShorthand::new(),
+            border_block_end: BorderShorthand::new(),
+            border_inline_start: BorderShorthand::new(),
+            border_inline_end: BorderShorthand::new(),
+            category: PropertyCategory::Physical,
+            border_image_handler: BorderImageHandler::new(),
+            border_radius_handler: BorderRadiusHandler::new(),
+            flushed_properties: BorderProperty::empty(),
+            has_any: false,
+        }
+    }
 }
 
 // Real `handle_property`/`finalize` bodies live in `border_handler_body` below.

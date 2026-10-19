@@ -61,7 +61,7 @@ fn outline_jsx_impl(
     }
 
     // Collect LoadGlobal instructions (tag -> instr)
-    let mut globals: HashMap<IdentifierId, usize> = HashMap::default(); // id -> instr_idx
+    let mut globals: HashMap<IdentifierId, usize> = HashMap::with_hasher(rustc_hash::FxBuildHasher); // id -> instr_idx
 
     // Process each block
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
@@ -69,9 +69,11 @@ fn outline_jsx_impl(
         let block = &func.body.blocks[block_id];
         let instr_ids = block.instructions.clone();
 
-        let mut rewrite_instr: HashMap<EvaluationOrder, Vec<Instruction>> = HashMap::default();
+        let mut rewrite_instr: HashMap<EvaluationOrder, Vec<Instruction>> =
+            HashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut jsx_group: Vec<JsxInstrInfo> = Vec::new();
-        let mut children_ids: HashSet<IdentifierId> = HashSet::default();
+        let mut children_ids: HashSet<IdentifierId> =
+            HashSet::with_hasher(rustc_hash::FxBuildHasher);
 
         // First pass: collect all instruction info without borrowing func mutably
         enum InstrAction {
@@ -268,7 +270,7 @@ fn collect_props(
     jsx_group: &[JsxInstrInfo],
 ) -> Option<Vec<OutlinedJsxAttribute>> {
     let mut id_counter = 1u32;
-    let mut seen: HashSet<StoreStr> = HashSet::default();
+    let mut seen: HashSet<StoreStr> = HashSet::with_hasher(rustc_hash::FxBuildHasher);
     let mut attributes = Vec::new();
     let jsx_ids: HashSet<IdentifierId> = jsx_group.iter().map(|j| j.lvalue_id).collect();
 

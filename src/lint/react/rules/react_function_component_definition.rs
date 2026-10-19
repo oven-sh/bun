@@ -83,7 +83,7 @@ impl Rule for FunctionComponentDefinition {
             may_have_hoc_calls: !component_wrapper_functions.is_empty()
                 || file.find_name("memo").is_some()
                 || file.find_name("forwardRef").is_some(),
-            returns: Returns::default(),
+            returns: Returns::new(),
             components: Components::new(file),
             has_es6_or_jsx: OnceCell::new(),
         })

@@ -16,8 +16,8 @@ pub(crate) struct Settings {
     pub enable_connect_protocol: u32, // 0/1
 }
 
-impl Default for Settings {
-    fn default() -> Self {
+impl Settings {
+    pub(crate) fn new() -> Self {
         Settings {
             header_table_size: 4_096,
             enable_push: 1,

@@ -235,7 +235,8 @@ impl Json {
         if !has_repeats {
             return Json::Object(entries);
         }
-        let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut places: FxHashMap<Vec<u8>, usize> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut kept: Vec<(Vec<u8>, Json)> = Vec::with_capacity(entries.len());
         for (key, value) in entries {
             match places.entry(key) {
@@ -486,7 +487,13 @@ impl<'s> TsConfigSourceFile<'s> {
     ) -> Option<Self> {
         let atoms = Interner::new_in(session);
         let path = b"/tsconfig.json";
-        let mut hir = host.parse(session.arena(), path, &text, &atoms, Default::default());
+        let mut hir = host.parse(
+            session.arena(),
+            path,
+            &text,
+            &atoms,
+            crate::resolve::ParseOptions::new(),
+        );
         hir.text = text;
         let is_object =
             |e: &ExprId| matches!(hir[*e].kind, ExprKind::Object(_)) && !is_parenthesized(&hir, *e);
@@ -499,7 +506,9 @@ impl<'s> TsConfigSourceFile<'s> {
             hir,
             atoms,
             root,
-            first_with_name: Default::default(),
+            first_with_name: core::cell::RefCell::new(rustc_hash::FxHashMap::with_hasher(
+                rustc_hash::FxBuildHasher,
+            )),
         })
     }
 
@@ -540,7 +549,7 @@ impl<'s> TsConfigSourceFile<'s> {
     pub(crate) fn properties(&self, object: ExprId) -> impl Iterator<Item = (PropId, &[u8])> {
         let props = match self.hir[object].kind {
             ExprKind::Object(props) if !is_parenthesized(&self.hir, object) => props,
-            _ => Default::default(),
+            _ => crate::hir::Span::EMPTY,
         };
         let assignments = props
             .iter()
@@ -568,7 +577,7 @@ impl<'s> TsConfigSourceFile<'s> {
         if props.len() > 32 {
             let mut first_with_name = self.first_with_name.borrow_mut();
             let of_object = first_with_name.entry(object).or_insert_with(|| {
-                let mut of_object = FxHashMap::default();
+                let mut of_object = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
                 for p in assignments {
                     if let Some(prop_name) = self.try_get_text_of_property_name(p) {
                         of_object.entry(prop_name.into()).or_insert(p);
@@ -593,7 +602,7 @@ impl<'s> TsConfigSourceFile<'s> {
     pub fn elements(&self, array: ExprId) -> impl Iterator<Item = ExprId> {
         let items = match self.hir[array].kind {
             ExprKind::Array(items) if !is_parenthesized(&self.hir, array) => items,
-            _ => Default::default(),
+            _ => crate::hir::IdList::EMPTY,
         };
         self.hir.ids(items)
     }

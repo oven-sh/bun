@@ -35,8 +35,8 @@ pub(crate) struct ReactFastRefresh {
     pub(crate) import_source: Utf8Bytes<'static>,
 }
 
-impl Default for ReactFastRefresh {
-    fn default() -> Self {
+impl ReactFastRefresh {
+    pub(crate) fn new() -> Self {
         Self {
             import_source: Utf8Bytes::Borrowed(b"react-refresh/runtime"),
         }
@@ -63,7 +63,6 @@ pub(crate) struct FileSystemRouterType {
 
 /// A "Framework" is simply a set of bundler options that a framework author
 /// would set in order to integrate with the application.
-#[derive(Default)]
 pub(crate) struct Framework {
     pub(crate) is_built_in_react: bool,
     /// Owned `Vec` so `resolve()` can take `&mut` and rewrite entries in
@@ -72,6 +71,19 @@ pub(crate) struct Framework {
     pub(crate) server_components: Option<ServerComponents>,
     pub(crate) react_fast_refresh: Option<ReactFastRefresh>,
     pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
+}
+
+impl Framework {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            is_built_in_react: false,
+            file_system_router_types: Vec::new(),
+            server_components: None,
+            react_fast_refresh: None,
+            built_in_modules: bun_collections::StringArrayHashMap::init(),
+        }
+    }
 }
 
 pub(super) fn resolve_path(
@@ -268,7 +280,7 @@ impl Framework {
             };
 
             if rfr == JSValue::TRUE {
-                break 'brk Some(ReactFastRefresh::default());
+                break 'brk Some(ReactFastRefresh::new());
             }
             if rfr == JSValue::FALSE || rfr.is_undefined_or_null() {
                 break 'brk None;

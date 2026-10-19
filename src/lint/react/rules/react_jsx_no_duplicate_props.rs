@@ -50,7 +50,7 @@ impl Rule for JsxNoDuplicateProps {
         let is_oxlint = cx.language().is_oxlint;
         // oxlint has no such option.
         if self.ignore_case && !is_oxlint {
-            let mut props: FxHashSet<Cow<'a, [u8]>> = FxHashSet::default();
+            let mut props: FxHashSet<Cow<'a, [u8]>> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
             for attribute in attributes.iter().filter_map(identifier) {
                 let name = text::to_lower_case(attribute.name.bytes());
                 if is_own_property(&name) && !props.insert(name) {
@@ -77,7 +77,7 @@ impl Rule for JsxNoDuplicateProps {
             }
             return;
         }
-        let mut props: FxHashMap<Name<'a>, Attribute<'a>> = FxHashMap::default();
+        let mut props: FxHashMap<Name<'a>, Attribute<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for new in attributes.iter().filter_map(identifier) {
             if let Some(old) = props.insert(new.name, new) {
                 report(old, new);

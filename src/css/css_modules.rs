@@ -56,7 +56,7 @@ impl<'a> CssModule<'a> {
         let exports_by_source_index = 'exports_by_source_index: {
             let mut exports_by_source_index = BumpVec::with_capacity_in(sources.len(), bump);
             for _ in 0..sources.len() {
-                exports_by_source_index.push(CssModuleExports::default());
+                exports_by_source_index.push(CssModuleExports::new());
             }
             break 'exports_by_source_index exports_by_source_index;
         };
@@ -259,10 +259,10 @@ pub struct Config {
     pub(crate) custom_idents: bool,
 }
 
-impl Default for Config {
-    fn default() -> Self {
+impl Config {
+    pub fn new() -> Self {
         Self {
-            pattern: Pattern::default(),
+            pattern: Pattern::new(),
             dashed_idents: false,
             animation: true,
             custom_idents: true,
@@ -276,8 +276,8 @@ pub struct Pattern {
     pub(crate) segments: crate::SmallList<Segment, 3>,
 }
 
-impl Default for Pattern {
-    fn default() -> Self {
+impl Pattern {
+    pub fn new() -> Self {
         Self {
             segments: crate::SmallList::init_inlined(&[
                 Segment::Local,

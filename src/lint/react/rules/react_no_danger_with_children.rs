@@ -20,9 +20,17 @@ const NO_DANGER_WITH_CHILDREN: Message =
 const CHILDREN: u8 = 1 << 0;
 const DANGER: u8 = 1 << 1;
 
-#[derive(Default)]
 pub struct State<'a> {
     props_of_variables: FlagsOfVariables<'a>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            props_of_variables: FlagsOfVariables::new(),
+        }
+    }
 }
 
 impl Rule for NoDangerWithChildren {
@@ -47,7 +55,7 @@ impl Rule for NoDangerWithChildren {
         if !file.mentions("dangerouslySetInnerHTML") {
             return None;
         }
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

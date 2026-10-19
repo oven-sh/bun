@@ -97,7 +97,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut expr = p.new_expr(
             E::Identifier {
                 ref_,
-                ..Default::default()
+                ..E::Identifier::new()
             },
             loc,
         );
@@ -156,7 +156,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 target: expr,
                                 name,
                                 name_loc,
-                                ..Default::default()
+                                ..E::Dot::new()
                             },
                             loc,
                         );
@@ -170,7 +170,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             target: expr,
                             args: args.list,
                             close_paren_loc: args.loc,
-                            ..Default::default()
+                            ..E::Call::new()
                         },
                         loc,
                     );
@@ -240,7 +240,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // suppression after a namespace member function; every other
             // consumer is gated on allow_await == AllowExpr (AllowIdent here).
             is_top_level: old_fn_or_arrow_data.is_top_level,
-            ..Default::default()
+            ..FnOrArrowDataParse::new()
         };
 
         // Parse the statements inside the namespace
@@ -253,7 +253,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_export: true,
                 scope: StatementScope::Namespace,
                 is_typescript_declare: opts.is_typescript_declare,
-                ..ParseStatementOptions::default()
+                ..ParseStatementOptions::new()
             };
             if !p.stack_check.is_safe_to_recurse() {
                 return Err(crate::Error::StackOverflow);
@@ -266,7 +266,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut _opts = ParseStatementOptions {
                 scope: StatementScope::Namespace,
                 is_typescript_declare: opts.is_typescript_declare,
-                ..ParseStatementOptions::default()
+                ..ParseStatementOptions::new()
             };
             stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
             p.lexer.next()?;
@@ -496,7 +496,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = p.new_expr(
             E::Identifier {
                 ref_: target_ref,
-                ..Default::default()
+                ..E::Identifier::new()
             },
             target_loc,
         );
@@ -519,7 +519,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         target,
                         close_paren_loc,
                         args,
-                        ..Default::default()
+                        ..E::Call::new()
                     },
                     loc,
                 );
@@ -537,7 +537,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         target: prev_value,
                         name: dot_name,
                         name_loc: dot_name_loc,
-                        ..Default::default()
+                        ..E::Dot::new()
                     },
                     loc,
                 );
@@ -618,7 +618,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // See the namespace body: preserve is_top_level for parse_fn.rs's
             // react-hooks suppression consume.
             is_top_level: old_fn_or_arrow_data.is_top_level,
-            ..Default::default()
+            ..FnOrArrowDataParse::new()
         };
 
         // Parse the body

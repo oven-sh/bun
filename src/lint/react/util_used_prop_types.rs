@@ -64,7 +64,7 @@ struct PropVariables<'a> {
 impl<'a> PropVariables<'a> {
     fn new() -> PropVariables<'a> {
         PropVariables {
-            prop_variables: FxHashMap::default(),
+            prop_variables: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             has_been_written: false,
             stack: vec![None],
             overwritten: Vec::new(),
@@ -323,7 +323,7 @@ pub(crate) fn used<'a>(file: &'a File<'a>) -> Box<dyn Instructions<'a> + 'a> {
     Box::new(UsedPropTypesInstructions {
         check_async_safe_life_cycles: get_react_version_from_context(file) >= (16, 3, 0),
         prop_variables: PropVariables::new(),
-        life_cycle_methods: AncestorMemo::default(),
+        life_cycle_methods: AncestorMemo::new(),
     })
 }
 
@@ -621,7 +621,7 @@ impl<'a> UsedPropTypesInstructions<'a> {
 impl<'a> Instructions<'a> for UsedPropTypesInstructions<'a> {
     fn nodes(&self, file: &'a File<'a>, add: &mut dyn FnMut(Node<'a>, Visit)) {
         // All that can be the name of the props or get into `propVariables`.
-        let mut names: FxHashSet<Name<'a>> = FxHashSet::default();
+        let mut names: FxHashSet<Name<'a>> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         names.extend(["props", "nextProps", "prevProps"].map(|it| file.name_of(it)));
 
         // VariableDeclarator

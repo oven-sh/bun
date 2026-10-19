@@ -43,7 +43,7 @@ impl Rule for RequireLocalTestContextForConcurrentSnapshots {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         // Whether something is in a call of `it.concurrent` or the like.
-        let mut in_concurrent = AncestorMemo::default();
+        let mut in_concurrent = AncestorMemo::new();
         for possible_jest_node in
             jest::iter_possible_jest_call_node(cx.file(), jest::Runner::Vitest)
         {

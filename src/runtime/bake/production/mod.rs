@@ -107,7 +107,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
 
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
-    jsc::initialize(jsc::InitializeOptions::default());
+    jsc::initialize(jsc::InitializeOptions::new());
     bun_ast::initialize_store();
 
     let mut arena = Arena::new();
@@ -117,7 +117,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         log: NonNull::new(ctx.log),
         args: ctx.args.clone(),
         smol: ctx.runtime_options.smol,
-        ..Default::default()
+        ..jsc::virtual_machine::Options::new()
     })?;
     // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
     // unique access for the rest of this function.
@@ -184,9 +184,9 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
             // distinct (`ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
             // vs `StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>`), so
             // rebuild the resolver-shaped map by cloning value bytes.
-            let mut remap = bun_resolver::package_json::MacroMap::default();
+            let mut remap = bun_resolver::package_json::MacroMap::init();
             for (pkg, inner) in macros.iter() {
-                let mut entry = bun_resolver::package_json::MacroImportReplacementMap::default();
+                let mut entry = bun_resolver::package_json::MacroImportReplacementMap::init();
                 for (import_name, path) in inner.iter() {
                     entry.insert(import_name.as_ref(), Box::<[u8]>::from(path.as_ref()));
                 }
@@ -547,7 +547,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
     let mut entry_points = EntryPointMap {
         root: Box::from(cwd),
-        files: EntryPointHashMap::default(),
+        files: EntryPointHashMap::new(),
         owned_paths: Vec::new(),
     };
 
@@ -650,7 +650,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     Output::flush();
 
     // mkdir -p + open.
-    let root_dir = bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?;
+    let root_dir = bun_sys::Dir::cwd().make_open_path(b"dist", bun_sys::OpenDirOptions::new())?;
 
     let mut maybe_runtime_file_index: Option<u32> = None;
 
@@ -662,8 +662,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // Server files get loaded in memory.
     // Populate indexes in `entry_points` to be looked up during prerendering
     let mut module_keys: Vec<BunString> = vec![BunString::DEAD; entry_points.files.count()];
-    let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
-    let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
+    let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::init();
+    let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::init();
     {
         let output_indexes = entry_points.files.values_mut();
         for (i, file) in bundled_outputs_list.iter().enumerate() {

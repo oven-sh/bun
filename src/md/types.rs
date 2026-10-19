@@ -201,8 +201,8 @@ pub enum Reference {
     Footnote,
 }
 
-impl<'a> Default for SpanDetail<'a> {
-    fn default() -> Self {
+impl<'a> SpanDetail<'a> {
+    pub fn new() -> Self {
         Self {
             href: b"",
             title: b"",
@@ -244,8 +244,8 @@ pub struct Line {
     pub(crate) enforce_new_block: bool,
 }
 
-impl Default for Line {
-    fn default() -> Self {
+impl Line {
+    pub fn new() -> Self {
         Self {
             r#type: LineType::Blank,
             beg: 0,
@@ -268,7 +268,7 @@ pub struct VerbatimLine {
 }
 
 /// Container types: blockquote or list item.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct Container {
     pub(crate) ch: u8,
     pub(crate) is_loose: bool,
@@ -281,6 +281,24 @@ pub struct Container {
     /// Where the marker of the container (of the current item of a list) is.
     pub(crate) mark_beg: OFF,
     pub(crate) mark_end: OFF,
+}
+
+impl Container {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            ch: 0,
+            is_loose: false,
+            is_task: false,
+            task_mark_off: 0,
+            start: 0,
+            mark_indent: 0,
+            contents_indent: 0,
+            block_byte_off: 0,
+            mark_beg: 0,
+            mark_end: 0,
+        }
+    }
 }
 
 /// The first `count` of the open containers end at `end`, as far as a later one of these does not say otherwise.

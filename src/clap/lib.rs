@@ -186,7 +186,7 @@ macro_rules! parse_params {
 }
 
 /// The names a `Param` can have.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Names {
     /// '-' prefix
     pub short: Option<u8>,
@@ -196,6 +196,17 @@ pub struct Names {
 
     /// Additional '--' prefixed aliases (e.g., --grep as alias for --test-name-pattern)
     pub long_aliases: &'static [&'static [u8]],
+}
+
+impl Names {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            short: None,
+            long: None,
+            long_aliases: &[],
+        }
+    }
 }
 
 impl Names {
@@ -217,9 +228,8 @@ impl Names {
 
 /// Whether a param takes no value (a flag), one value, or can be specified multiple times.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Values {
-    #[default]
     None,
     One,
     Many,
@@ -258,7 +268,7 @@ impl<Id: Default> Default for Param<Id> {
     fn default() -> Self {
         Self {
             id: Id::default(),
-            names: Names::default(),
+            names: Names::new(),
             takes_value: Values::None,
         }
     }
@@ -288,11 +298,21 @@ fn expect_param(expect: Param<Help>, actual: Param<Help>) {
 // that lifetime through `&mut Diagnostic` with invariance headaches, and this is
 // an error-path-only struct, so it owns its bytes instead. The `name: Names` field
 // is flattened to `short`/`long` because `Names.long` is `&'static`.
-#[derive(Default)]
 pub struct Diagnostic {
     pub(crate) arg: Vec<u8>,
     pub(crate) short: Option<u8>,
     pub(crate) long: Option<Vec<u8>>,
+}
+
+impl Diagnostic {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            arg: Vec::new(),
+            short: None,
+            long: None,
+        }
+    }
 }
 
 impl Diagnostic {
@@ -359,8 +379,8 @@ pub struct Help {
     pub value: &'static [u8],
 }
 
-impl Default for Help {
-    fn default() -> Self {
+impl Help {
+    pub fn new() -> Self {
         Self {
             msg: b"",
             msg_plain: b"",
@@ -370,7 +390,6 @@ impl Default for Help {
 }
 
 /// Options that can be set to customize the behavior of parsing.
-#[derive(Default)]
 pub struct ParseOptions<'a> {
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
@@ -386,6 +405,19 @@ pub struct ParseOptions<'a> {
     pub unknown_long_flags_are_positional: bool,
     /// Such a flag fails the parse, unless it comes from `BUN_OPTIONS`, which is for every command.
     pub unknown_long_flags_are_errors: bool,
+}
+
+impl<'a> ParseOptions<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            diagnostic: None,
+            stop_after_positional_at: 0,
+            short_aliases: &[],
+            unknown_long_flags_are_positional: false,
+            unknown_long_flags_are_errors: false,
+        }
+    }
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -661,12 +693,12 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"value",
-                    ..Default::default()
+                    ..Help::new()
                 },
                 names: Names {
                     short: Some(b's'),
                     long: Some(b"long"),
-                    ..Default::default()
+                    ..Names::new()
                 },
                 takes_value: Values::One,
             },
@@ -678,12 +710,12 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"value",
-                    ..Default::default()
+                    ..Help::new()
                 },
                 names: Names {
                     short: Some(b's'),
                     long: Some(b"long"),
-                    ..Default::default()
+                    ..Names::new()
                 },
                 takes_value: Values::Many,
             },
@@ -695,11 +727,11 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"value",
-                    ..Default::default()
+                    ..Help::new()
                 },
                 names: Names {
                     long: Some(b"long"),
-                    ..Default::default()
+                    ..Names::new()
                 },
                 takes_value: Values::One,
             },
@@ -711,11 +743,11 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"value",
-                    ..Default::default()
+                    ..Help::new()
                 },
                 names: Names {
                     short: Some(b's'),
-                    ..Default::default()
+                    ..Names::new()
                 },
                 takes_value: Values::One,
             },
@@ -726,12 +758,12 @@ mod tests {
             Param {
                 id: Help {
                     msg: b"Help text",
-                    ..Default::default()
+                    ..Help::new()
                 },
                 names: Names {
                     short: Some(b's'),
                     long: Some(b"long"),
-                    ..Default::default()
+                    ..Names::new()
                 },
                 ..Default::default()
             },
@@ -742,11 +774,11 @@ mod tests {
             Param {
                 id: Help {
                     msg: b"Help text",
-                    ..Default::default()
+                    ..Help::new()
                 },
                 names: Names {
                     short: Some(b's'),
-                    ..Default::default()
+                    ..Names::new()
                 },
                 ..Default::default()
             },
@@ -757,11 +789,11 @@ mod tests {
             Param {
                 id: Help {
                     msg: b"Help text",
-                    ..Default::default()
+                    ..Help::new()
                 },
                 names: Names {
                     long: Some(b"long"),
-                    ..Default::default()
+                    ..Names::new()
                 },
                 ..Default::default()
             },
@@ -773,11 +805,11 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"A | B",
-                    ..Default::default()
+                    ..Help::new()
                 },
                 names: Names {
                     long: Some(b"long"),
-                    ..Default::default()
+                    ..Names::new()
                 },
                 takes_value: Values::One,
             },
@@ -789,9 +821,9 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"A",
-                    ..Default::default()
+                    ..Help::new()
                 },
-                names: Names::default(),
+                names: Names::new(),
                 takes_value: Values::One,
             },
             parse_param!("<A> Help text"),
@@ -802,9 +834,9 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"A",
-                    ..Default::default()
+                    ..Help::new()
                 },
-                names: Names::default(),
+                names: Names::new(),
                 takes_value: Values::Many,
             },
             parse_param!("<A>... Help text"),

@@ -18,13 +18,23 @@ const NOT_FOUND: Message = Message::new("", "{{name}} not found in '{{source}}'"
 const NOT_FOUND_VIA: Message = Message::new("", "{{name}} not found via {{deepPath}}");
 const OXLINT: Message = Message::new("", "named import {{imported_name}} not found");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// `None`: oxlint, which asks its records.
     maps: Option<ExportMaps<'a>>,
     /// The specifier that was asked for last, and `ExportMapBuilder.get` of it unless that is ambiguous.
     last: Option<(Name<'a>, Option<ExportMap<'a>>)>,
     star_exports: StarExports<'a>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            maps: None,
+            last: None,
+            star_exports: StarExports::new(),
+        }
+    }
 }
 
 /// How a name of another module is named.
@@ -55,13 +65,13 @@ impl Rule for Named {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         if !file.language().is_oxlint {
-            return Some(State { maps: Some(ExportMaps::of(file)?), ..State::default() });
+            return Some(State { maps: Some(ExportMaps::of(file)?), ..State::new() });
         }
         // Before anything else: others ask what this file exports.
         if is_waiting_for_modules(file) || file.modules().is_none() || !file.is_javascript() {
             return None;
         }
-        Some(State::default())
+        Some(State::new())
     }
 
     /// upstream's `checkRequire`

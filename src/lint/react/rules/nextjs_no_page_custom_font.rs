@@ -17,12 +17,21 @@ const LINK_OUTSIDE_OF_HEAD: Message = Message::new(
     "Using `<link />` outside of `<Head>` will disable automatic font optimization. This is discouraged.",
 );
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The `name` of each `export default name;`.
     default_exports: Option<FxHashSet<Name<'a>>>,
     /// That something is in what is exported by default.
     in_export_default: AncestorMemo<'a, ()>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            default_exports: None,
+            in_export_default: AncestorMemo::new(),
+        }
+    }
 }
 
 impl Rule for NoPageCustomFont {
@@ -35,7 +44,7 @@ impl Rule for NoPageCustomFont {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        file.mentions("link").then(State::default)
+        file.mentions("link").then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

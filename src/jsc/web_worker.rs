@@ -304,7 +304,7 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
-        let mut temp_log = bun_ast::Log::default();
+        let mut temp_log = bun_ast::Log::empty();
         // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
         // are scoped to each statement.
         let prev_log = unsafe {
@@ -383,7 +383,7 @@ impl WebWorker {
         // Node). Proxy-env values may be RefCountedEnvValue bytes owned by the
         // parent's proxy_env_storage: snapshot slots + map under its lock so
         // every slice copied is backed by a ref the snapshot holds.
-        let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
+        let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::new();
         let mut env_loader = {
             let parent_slots = parent_ref.proxy_env_storage.lock();
             proxy_env_slots.clone_from(&parent_slots);
@@ -423,7 +423,7 @@ impl WebWorker {
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             preloads,
             name: if name_str.is_empty() {
-                bun_core::ZBox::default()
+                bun_core::ZBox::new()
             } else {
                 name_str.to_owned_slice_z()
             },
@@ -701,7 +701,7 @@ impl WebWorker {
                 args: transform_options,
                 env_loader: NonNull::new(loader_ptr),
                 graph: crate::virtual_machine::standalone_module_graph(),
-                ..Default::default()
+                ..virtual_machine::Options::new()
             },
         )?;
         // Scoped `&mut VirtualMachine` for the worker-specific fields; ends
@@ -1182,7 +1182,7 @@ fn on_unhandled_rejection(
             add_newline: false,
             flush: false,
             max_depth: 32,
-            ..Default::default()
+            ..jsc::console_object::FormatOptions::new()
         },
     );
     if let Err(err) = format_result {

@@ -223,7 +223,7 @@ mod darwin_impl {
         let flags = c::UL {
             op: c::ULOp::COMPARE_AND_WAIT,
             no_errno: true,
-            ..Default::default()
+            ..c::UL::new()
         };
         // SAFETY: addr points at a live AtomicU32; flags/expect/timeout are plain values.
         let status = unsafe {
@@ -273,7 +273,7 @@ mod darwin_impl {
             op: c::ULOp::COMPARE_AND_WAIT,
             no_errno: true,
             wake_all: max_waiters > 1,
-            ..Default::default()
+            ..c::UL::new()
         };
 
         loop {

@@ -68,7 +68,6 @@ struct Removal {
     version: Option<Box<[u8]>>,
 }
 
-#[derive(Default)]
 struct Plan {
     folders: Vec<Folder>,
     removals: Vec<Removal>,
@@ -82,6 +81,21 @@ struct Plan {
     left_linked_folder: bool,
     /// The store that an isolated install with this run's options would create.
     store: Option<Store>,
+}
+
+impl Plan {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            folders: Vec::new(),
+            removals: Vec::new(),
+            checked: 0,
+            leftovers: false,
+            linked_folders: Vec::new(),
+            left_linked_folder: false,
+            store: None,
+        }
+    }
 }
 
 impl Plan {
@@ -206,7 +220,7 @@ fn native_path(path: &[u8]) -> impl core::fmt::Display + '_ {
         path,
         PathFormatOptions {
             path_sep,
-            ..Default::default()
+            ..PathFormatOptions::new()
         },
     ))
 }
@@ -335,7 +349,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let staging_lock = StagingLock::acquire();
     let mut plan = Plan {
         leftovers: !staging_lock.is_busy,
-        ..Default::default()
+        ..Plan::new()
     };
     // The root `node_modules` is checked even if `--filter` excludes the root package, because the
     // store is inside it.
@@ -594,7 +608,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     nothing_to: &'static str,
 ) -> crate::Result<DiffSummary> {
     let Some(root) = manager.lockfile.root_package() else {
-        return Ok(DiffSummary::default());
+        return Ok(DiffSummary::new());
     };
     let quiet = manager.options.log_level == LogLevel::Silent;
 
@@ -603,7 +617,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
     let (source, json) = match manager
         .workspace_package_json_cache
-        .get_with_path(log, path, Default::default())
+        .get_with_path(log, path, super::GetJsonOptions::new())
         .unwrap()
     {
         Ok(entry) => (entry.source.clone(), entry.root),
@@ -616,8 +630,8 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
         }
     };
 
-    let mut to_lockfile = Lockfile::default();
-    let mut to_root = Package::default();
+    let mut to_lockfile = Lockfile::new();
+    let mut to_root = Package::new();
     let mut resolver: () = ();
     let pm: *mut PackageManager = manager;
     // SAFETY: same split as `hoist_install_tree`; neither call reaches `lockfile` through `pm`.
@@ -667,7 +681,8 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     for key in to_lockfile.self_contained_workspaces.keys() {
         manager.lockfile.self_contained_workspaces.put(*key, ())?;
     }
-    manager.lockfile.linked_members = core::mem::take(&mut to_lockfile.linked_members);
+    manager.lockfile.linked_members =
+        core::mem::replace(&mut to_lockfile.linked_members, LinkedMembers::new());
 
     if summary.changes_dependencies() {
         if !quiet {
@@ -1461,7 +1476,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             Some((folder, new_idx))
         })
         .collect();
-    let mut plan = Plan::default();
+    let mut plan = Plan::new();
     for old_idx in 0..old.folders.len() {
         let old_path = old.path(old_idx);
         if old_path.is_empty() {
@@ -1824,7 +1839,7 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
         let found = places.binary_search_by_key(&place, |&(key, _)| key);
         found.ok().map(|i| places[i].1)
     };
-    let mut plan = Plan::default();
+    let mut plan = Plan::new();
     for (id, older) in trees.iter().enumerate().skip(1) {
         let only_older: Vec<u64> = (older.dependencies.get(rows).iter())
             .map(|&row| deps[row as usize].name_hash)
@@ -1949,7 +1964,7 @@ pub(crate) fn unlink_dropped_dependencies(manager: &mut PackageManager, before: 
     let deps = after.buffers.dependencies.as_slice();
     let pkg_rows = after.packages.items_dependencies();
     let old_buf = before.buffers.string_bytes.as_slice();
-    let mut plan = Plan::default();
+    let mut plan = Plan::new();
     // The root `node_modules` is checked even if only workspaces dropped a dependency, because the
     // store is inside it.
     drop(open_workspace_folder(ROOT_DIR, &mut plan.linked_folders));
@@ -2141,7 +2156,7 @@ impl LinkedNodeModules {
         }
         Some(LinkedNodeModules {
             real_path: if cfg!(windows) {
-                Box::default()
+                Box::new([])
             } else {
                 LinkedMembers::real_path_of(node_modules.as_bytes())
             },
@@ -2537,7 +2552,7 @@ fn plan_isolated(
 
     let lockfile: &Lockfile = &manager.lockfile;
     let pkg_res = lockfile.packages.items_resolution();
-    let mut linked = reachable::Linked::default();
+    let mut linked = reachable::Linked::new();
     for pkg_id in 0..lockfile.packages.len() {
         let folder_path: Box<[u8]> = match pkg_res[pkg_id].tag {
             ResolutionTag::Root if pkg_id == 0 => b"node_modules".as_slice().into(),

@@ -684,7 +684,7 @@ impl ErrorDeferred {
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
             hostname: self.hostname.take().unwrap_or(bstr::String::EMPTY),
-            ..Default::default()
+            ..SystemError::new()
         };
 
         let instance =
@@ -773,7 +773,7 @@ pub(crate) fn error_to_deferred(
     promise: &mut bun_jsc::JSPromiseStrong,
 ) -> Box<ErrorDeferred> {
     let host_string: Option<bstr::String> = hostname.map(bstr::String::clone_utf8);
-    let taken = core::mem::take(promise);
+    let taken = core::mem::replace(promise, bun_jsc::JSPromiseStrong::new());
     ErrorDeferred::init(this, syscall, host_string, taken)
 }
 
@@ -792,7 +792,7 @@ pub(crate) fn error_to_js_with_syscall(
             BStr::new(syscall),
             BStr::new(&code[4..])
         )),
-        ..Default::default()
+        ..SystemError::new()
     }
     .to_error_instance(global_this);
     instance.put(
@@ -825,7 +825,7 @@ pub(crate) fn system_error_with_syscall_and_hostname(
         )),
         syscall: bstr::String::static_(syscall),
         hostname: bstr::String::clone_utf8(hostname),
-        ..Default::default()
+        ..SystemError::new()
     }
 }
 

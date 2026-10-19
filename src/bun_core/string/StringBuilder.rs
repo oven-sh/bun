@@ -12,11 +12,21 @@ use crate::string::{StringPointer, ZStr};
 // taking `&mut self`, so callers cannot hold two returned slices at once.
 // Callers that need to interleave appends
 // use `StringPointer` offsets or the unsafe `append_raw` escape hatch below.
-#[derive(Default)]
 pub struct StringBuilder {
     pub len: usize,
     pub cap: usize,
     pub ptr: Option<NonNull<u8>>,
+}
+
+impl StringBuilder {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            len: 0,
+            cap: 0,
+            ptr: None,
+        }
+    }
 }
 
 impl StringBuilder {
@@ -236,11 +246,11 @@ impl StringBuilder {
         // `Drop` frees the buffer when `ptr` is still `Some` — leaving it set
         // here would free the allocation we're about to hand back.
         let Some(ptr) = self.ptr.take() else {
-            *self = Self::default();
-            return Box::default();
+            *self = Self::new();
+            return Box::new([]);
         };
         let cap = self.cap;
-        *self = Self::default();
+        *self = Self::new();
         // SAFETY: ptr came from Box::<[u8]>::new_uninit_slice(cap) leaked above.
         // Caller contract: every counted byte must have been appended — if not
         // fully written, the returned Box exposes uninit bytes (UB to read).
@@ -279,7 +289,7 @@ mod tests {
 
     #[test]
     fn views_are_empty_after_allocate_with_nothing_counted() {
-        let mut builder = StringBuilder::default();
+        let mut builder = StringBuilder::new();
         builder.count(b"");
         builder.allocate().unwrap();
         assert_views_are_empty(&mut builder);

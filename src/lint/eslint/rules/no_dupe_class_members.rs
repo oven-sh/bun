@@ -14,13 +14,22 @@ const SET: u8 = 1 << 2;
 const STATIC: u8 = 3;
 
 /// It is kept between classes only for its allocations.
-#[derive(Default)]
 pub struct Seen<'a> {
     /// The names of the members of one class so far, as their keys have them.
     names: FxHashSet<Name<'a>>,
     /// The names that the members of one class have defined so far, each with how, and with a configuration of oxlint
     /// with the last member that has the name.
     defined: FxHashMap<Cow<'a, [u8]>, (u8, Option<Member<'a>>)>,
+}
+
+impl<'a> Seen<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            names: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            defined: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 /// The range of ESLint's `key`.
@@ -121,7 +130,7 @@ pub fn check<'a, R: Rule>(
         };
         if is_duplicate && let Some(key) = key_span(member) {
             // oxlint points at the member before.
-            let place = if is_oxlint { before.and_then(key_span).unwrap_or_default() } else { key };
+            let place = if is_oxlint { before.and_then(key_span).unwrap_or_else(Span::init) } else { key };
             cx.report(place, UNEXPECTED)
                 .hint("Only the last one counts.")
                 .labels_with(|labels| {
@@ -142,11 +151,11 @@ impl Rule for NoDupeClassMembers {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Seen<'a>> {
-        Some(Seen::default())
+        Some(Seen::new())
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        let mut seen = std::mem::take(&mut cx.state);
+        let mut seen = std::mem::replace(&mut cx.state, Seen::new());
         check(class, false, &mut seen, cx);
         cx.state = seen;
     }

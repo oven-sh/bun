@@ -53,10 +53,17 @@ pub(crate) enum HiddenKind {
 
 /// Where a scan of the block's inline content is in `Parser::marks` and in
 /// `Parser::hidden`.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct Walk {
     mark: usize,
     hidden: usize,
+}
+
+impl Walk {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { mark: 0, hidden: 0 }
+    }
 }
 
 /// The index of the first of `sorted[from..]` that is not before a place. Most of
@@ -94,8 +101,8 @@ pub struct EmphDelim {
     pub(crate) active: bool, // false if deactivated between matched pairs
 }
 
-impl Default for EmphDelim {
-    fn default() -> Self {
+impl EmphDelim {
+    pub fn new() -> Self {
         Self {
             pos: 0,
             count: 0,
@@ -340,7 +347,7 @@ impl Parser<'_> {
         let mut base: usize = 0;
 
         // Phase 1: Collect and resolve emphasis delimiters
-        let mut walk = Walk::default();
+        let mut walk = Walk::new();
         self.collect_emphasis_delimiters(cur, &brackets, base, walk, false);
         self.resolve_emphasis_delimiters();
 
@@ -653,7 +660,7 @@ impl Parser<'_> {
                                 permissive_autolink: true,
                                 autolink_email: c == b'@',
                                 autolink_www: c == b'.',
-                                ..Default::default()
+                                ..crate::types::SpanDetail::new()
                             },
                         )?;
                         self.at(base + a.beg, base + a.end);
@@ -728,7 +735,8 @@ impl Parser<'_> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
-        self.renderer.enter_span(span_type, Default::default())
+        self.renderer
+            .enter_span(span_type, crate::types::SpanDetail::new())
     }
 
     pub(crate) fn leave_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
@@ -1085,7 +1093,7 @@ impl Parser<'_> {
                     can_open: flanking.can_open(c),
                     can_close: flanking.can_close(c),
                     remaining: count,
-                    ..Default::default()
+                    ..EmphDelim::new()
                 });
                 continue;
             }
@@ -1105,7 +1113,7 @@ impl Parser<'_> {
                         can_open: flanking.can_open(b'~'),
                         can_close: flanking.can_close(b'~'),
                         remaining: count,
-                        ..Default::default()
+                        ..EmphDelim::new()
                     });
                 }
                 continue;
@@ -1127,7 +1135,7 @@ impl Parser<'_> {
             pos: usize::MAX,
             active: false,
             more: latest as u32,
-            ..Default::default()
+            ..EmphDelim::new()
         });
         let last = self.emph_delims.len() - 1;
         &mut self.emph_delims[last]

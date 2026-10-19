@@ -723,7 +723,7 @@ fn with_printer<'p, T>(
             reported_diagnostic: false,
             encountered_error: false,
             tracked_symbols: Vec::new(),
-            serialized_types: FxHashMap::default(),
+            serialized_types: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             has_fake_scope: [false; 2],
             fake_scope_count: 0,
             type_parameter_names: Vec::new(),
@@ -1148,7 +1148,6 @@ struct TrackedSymbolArgs {
 }
 
 /// `recoveryBoundary`
-#[derive(Default)]
 struct RecoveryBoundary {
     /// Set by a report, and where the visitor permanently fails on a node. Otherwise the visitor
     /// returns `None`.
@@ -1158,6 +1157,20 @@ struct RecoveryBoundary {
     old_tracked_symbols: Vec<TrackedSymbolArgs>,
     old_encountered_error: bool,
     old_approximate_length: usize,
+}
+
+impl RecoveryBoundary {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            had_error: false,
+            tracked_symbols: Vec::new(),
+            deferred_reports: Vec::new(),
+            old_tracked_symbols: Vec::new(),
+            old_encountered_error: false,
+            old_approximate_length: 0,
+        }
+    }
 }
 
 /// `SerializedTypeEntry`
@@ -1176,8 +1189,14 @@ struct SerializedTypeEntry {
 type SerializedTypeKey = (Enclosing, Option<ExprId>, TypeId, u32);
 
 /// `links.serializedTypes` of every node, in `c.typeToStringNodebuilder`.
-#[derive(Default)]
 pub(super) struct SerializedTypes(FxHashMap<SerializedTypeKey, SerializedTypeEntry>);
+
+impl SerializedTypes {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self(FxHashMap::with_hasher(rustc_hash::FxBuildHasher))
+    }
+}
 
 /// The locals of `visitAndTransformType` that outlive the call of `transform`.
 struct TypeVisit {
@@ -1273,7 +1292,7 @@ fn encode_utf16_escape_sequence(out: &mut Vec<u8>, unit: u32) {
 
 /// `escapeStringWorker`. `escapes_non_ascii`: without `getLiteralTextFlagsNeverAsciiEscape`.
 fn escape_string(text: &[u8], quote: u8, escapes_non_ascii: bool, out: &mut Vec<u8>) {
-    let (iterator, mut cursor) = (CodepointIterator::init(text), Cursor::default());
+    let (iterator, mut cursor) = (CodepointIterator::init(text), Cursor::new());
     while iterator.next(&mut cursor) {
         let i = cursor.i as usize;
         let (byte, next) = (text[i], text.get(i + 1).copied());
@@ -1567,7 +1586,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             old_tracked_symbols,
             old_encountered_error: self.encountered_error,
             old_approximate_length: self.approximate_length,
-            ..RecoveryBoundary::default()
+            ..RecoveryBoundary::new()
         });
     }
 

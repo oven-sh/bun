@@ -50,8 +50,8 @@ impl Rule for PropTypes {
         }
         let mut components = Components::new(file).with(declared(&self.custom_validators)).with(used(file));
         components.finish();
-        let nothing = DeclaredPropTypes::default();
-        let mut around = AncestorMemo::default();
+        let nothing = DeclaredPropTypes::new();
+        let mut around = AncestorMemo::new();
         let list = components.list();
         let is_certain = |node| components.get(node).is_some_and(|it| components.component(it).confidence >= 2);
         for id in list {

@@ -91,7 +91,7 @@ fn string_property(key: &'static [u8], value: &'static [u8]) -> G::Property {
     G::Property {
         key: Some(Expr::init(E::String::init(key), bun_ast::Loc::EMPTY)),
         value: Some(Expr::init(E::String::init(value), bun_ast::Loc::EMPTY)),
-        ..Default::default()
+        ..G::Property::new()
     }
 }
 
@@ -99,7 +99,7 @@ fn object_expr(properties: Vec<G::Property>) -> Expr {
     Expr::init(
         E::Object {
             properties: G::PropertyList::move_from_list(properties),
-            ..Default::default()
+            ..E::Object::new()
         },
         bun_ast::Loc::EMPTY,
     )
@@ -207,7 +207,7 @@ impl Context {
                 ),
                 bun_fmt::EscapeControlChars(bun_fmt::fmt_os_path(
                     stripped.unwrap_or(pathname),
-                    Default::default()
+                    bun_core::fmt::PathFormatOptions::new()
                 )),
             );
 
@@ -319,7 +319,7 @@ impl Context {
                 total_files,
                 unpacked_size,
                 packed_size: tarball_bytes.len(),
-                ..Default::default()
+                ..pack::Stats::new()
             },
             Some(&shasum),
             Some(&integrity),
@@ -346,7 +346,7 @@ impl Context {
             manager,
             command_ctx: ctx,
             bundled_deps: Vec::new(),
-            stats: pack::Stats::default(),
+            stats: pack::Stats::new(),
         };
 
         match pack::pack(pack_ctx, abs_package_json_path, true) {
@@ -882,7 +882,7 @@ impl PublishCommand {
         let _stdin_mode =
             bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
                 unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-                ..Default::default()
+                ..bun_sys::windows::UpdateStdioModeFlagsOpts::new()
             });
 
         // This runs on its own thread, and `Output::buffered_stdin()` is for the main thread only.
@@ -1160,7 +1160,7 @@ impl PublishCommand {
             bun_js_printer::PrintJsonOptions {
                 minify_whitespace: true,
                 mangled_props: None,
-                ..Default::default()
+                ..bun_js_printer::PrintJsonOptions::new()
             },
         ) {
             if e == bun_js_printer::Error::Alloc(bun_alloc::AllocError) {
@@ -1487,7 +1487,7 @@ impl PublishCommand {
         let _ = write!(
             &mut buf,
             ",\"dist-tags\":{{{}:\"{}\"}}",
-            bun_fmt::format_json_string_utf8(tag, Default::default()),
+            bun_fmt::format_json_string_utf8(tag, bun_core::fmt::JSONFormatterUTF8Options::new()),
             bstr::BStr::new(version_without_build_tag),
         );
 

@@ -248,7 +248,7 @@ impl WatcherAtomics {
                     }
                     (*ev).concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask {
                         task: bun_event_loop::Task::init(ev),
-                        ..Default::default()
+                        ..bun_event_loop::ConcurrentTask::ConcurrentTask::init()
                     };
                     // The queued node pointer is derived from `ev` (allocation-root
                     // provenance) so it stays valid across `Drop for DevServer`'s

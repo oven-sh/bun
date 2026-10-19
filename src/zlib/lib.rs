@@ -187,7 +187,7 @@ impl<'a> ZlibReaderArrayList<'a> {
     pub fn init(input: &'a [u8], list: &'a mut Vec<u8>) -> Result<Box<Self>, ZlibError> {
         let options = Options {
             window_bits: 15 + 32,
-            ..Default::default()
+            ..Options::new()
         };
 
         Self::init_with_options(input, list, options)
@@ -392,8 +392,8 @@ pub struct Options {
     pub strategy: c_int,
 }
 
-impl Default for Options {
-    fn default() -> Self {
+impl Options {
+    pub fn new() -> Self {
         Self {
             gzip: false,
             level: 6,

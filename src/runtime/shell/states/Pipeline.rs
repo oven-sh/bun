@@ -40,8 +40,8 @@ pub(crate) enum PipelineState {
     },
 }
 
-impl Default for PipelineState {
-    fn default() -> Self {
+impl PipelineState {
+    pub(crate) fn new() -> Self {
         Self::StartingCmds { idx: 0 }
     }
 }
@@ -60,7 +60,7 @@ impl Pipeline {
             io,
             exited_count: 0,
             cmds: None,
-            state: PipelineState::default(),
+            state: PipelineState::new(),
         }))
     }
 
@@ -206,7 +206,7 @@ impl Pipeline {
                         io_writer::Flags {
                             pollable: true,
                             is_socket: cfg!(unix),
-                            ..Default::default()
+                            ..io_writer::Flags::new()
                         },
                         evtloop,
                     );

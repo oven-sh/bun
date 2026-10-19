@@ -335,7 +335,7 @@ pub(crate) fn compile_outlined_fn(
             stmts: StoreSlice::new_mut(body.leak()),
         },
         flags: fn_flags,
-        ..G::Fn::default()
+        ..G::Fn::new()
     };
 
     let func_node = FunctionNode::Function(&outlined_decl);

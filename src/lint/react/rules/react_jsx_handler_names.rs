@@ -39,7 +39,6 @@ struct Regexes {
 }
 
 /// What has been looked up in the text of the file.
-#[derive(Default)]
 pub struct Known {
     /// Each `.` that the name of a handler follows, and the end of what makes it such a name.
     dots: OnceCell<Vec<(u32, u32)>>,
@@ -47,6 +46,17 @@ pub struct Known {
     colons: OnceCell<Vec<(u32, u32)>>,
     /// Whether `EVENT_HANDLER_REGEX` matches all of it.
     is_handler_name: OnceCell<bool>,
+}
+
+impl Known {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            dots: core::cell::OnceCell::new(),
+            colons: core::cell::OnceCell::new(),
+            is_handler_name: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 const BAD_HANDLER_NAME: Message = Message::new(
@@ -113,7 +123,7 @@ impl Rule for JsxHandlerNames {
         // Without the one there is neither.
         let has_prefixes = !self.event_handler_prop_prefixes.is_empty();
         let has_regexes = self.original.as_ref()?.regexes.is_some();
-        (has_prefixes || (!file.language().is_oxlint && has_regexes)).then(Known::default)
+        (has_prefixes || (!file.language().is_oxlint && has_regexes)).then(Known::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

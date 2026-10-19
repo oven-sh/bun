@@ -209,7 +209,6 @@ fn is_in_mixed_logical_expression<'a>(
 }
 
 /// What is known from the walks up from other nodes.
-#[derive(Default)]
 pub struct Walks<'a> {
     /// [`is_conditional_test`]
     conditional_tests: AncestorMemo<'a, bool>,
@@ -219,9 +218,20 @@ pub struct Walks<'a> {
     mixed: AncestorMemo<'a, bool>,
 }
 
+impl<'a> Walks<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            conditional_tests: AncestorMemo::new(),
+            boolean_contexts: AncestorMemo::new(),
+            mixed: AncestorMemo::new(),
+        }
+    }
+}
+
 /// `left`, `right`: the operands of `node`, which is an `a || b` or an `a ||= b`.
 fn is_mixed_logical_expression<'a>(node: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> bool {
-    let mut seen = FxHashSet::default();
+    let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     let mut queue: Vec<Expr<'a>> = Vec::new();
     let parent_of = |it: Expr<'a>| it.parent().as_expr().filter(|_| it.with_jsdoc_cast() == it);
     // For tsgolint the parent of an `a ||= b` that is an operand is the `ParenthesizedExpression`, which is no logical
@@ -875,7 +885,7 @@ impl Rule for PreferNullishCoalescing {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Walks<'a>> {
-        Some(Walks::default())
+        Some(Walks::new())
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {

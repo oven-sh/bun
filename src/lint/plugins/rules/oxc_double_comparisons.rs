@@ -51,7 +51,7 @@ impl Rule for DoubleComparisons {
         let span = left_bin_expr.span().to(right.span());
         let report = cx.report(span, DOUBLE_COMPARISONS).data("operator", new_op);
         report.suggest_with(SIMPLIFY, &[("operator", new_op.as_bytes())], |fixer| {
-            let mut codegen = Codegen::default();
+            let mut codegen = Codegen::new();
             codegen.print_expression(llhs);
             codegen.code.push(b' ');
             codegen.code.extend_from_slice(new_op.as_bytes());

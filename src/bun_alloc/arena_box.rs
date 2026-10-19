@@ -105,13 +105,6 @@ impl<'a, T> ArenaBox<'a, [T]> {
     }
 }
 
-impl<T> Default for ArenaBox<'_, [T]> {
-    #[inline]
-    fn default() -> Self {
-        Self::empty()
-    }
-}
-
 impl<'a, T> From<Vec<T, &'a MimallocArena>> for ArenaBox<'a, [T]> {
     /// The block is resized if the vector has spare capacity.
     #[inline]

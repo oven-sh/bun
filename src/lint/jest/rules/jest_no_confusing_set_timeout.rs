@@ -79,12 +79,12 @@ fn run_once<'a>(cx: &Cx<'a, NoConfusingSetTimeout>) {
         });
     }
     // Where the first identifier is that is called as, or passed to, a function of Jest.
-    let mut tops = AncestorMemo::default();
+    let mut tops = AncestorMemo::new();
     let first_jest_fn_call = (file.exprs_of_kind(ExprTag::Ident))
         .filter(|it| !is_jest_call(*it) && is_jest_fn_call(*it, file, &mut tops))
         .map(|it| it.span().start)
         .min();
-    let mut scopes = Scopes::default();
+    let mut scopes = Scopes::new();
     for (i, (_, expr)) in jest_reference_list.iter().enumerate() {
         if first_jest_fn_call.is_some_and(|first| first < expr.span().start) {
             cx.report(*expr, NO_UNORDER_SET_TIMEOUT);

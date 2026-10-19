@@ -118,7 +118,7 @@ pub(super) const MS_PER_SEC: u64 = 1_000;
 pub(super) fn stored_addr_from_sockaddr(ptr: *const c_void) -> StoredAddr {
     use crate::socket::socket_address::inet;
     if ptr.is_null() {
-        return StoredAddr::default();
+        return StoredAddr::new();
     }
     // SAFETY: caller passes a live sockaddr; the family field is within the
     // smallest sockaddr variant on every supported platform.
@@ -171,8 +171,8 @@ struct BindConfig {
     port: u16,
 }
 
-impl Default for BindConfig {
-    fn default() -> Self {
+impl BindConfig {
+    fn new() -> Self {
         BindConfig {
             host: b"127.0.0.1\0".to_vec(),
             port: 0,
@@ -271,8 +271,8 @@ pub(crate) struct UsNqDriver {
     pending: c_int,
 }
 
-impl Default for UsNqDriver {
-    fn default() -> Self {
+impl UsNqDriver {
+    pub(crate) fn new() -> Self {
         Self {
             next: null_mut(),
             owner: null_mut(),
@@ -1062,7 +1062,7 @@ fn apply_transport_params(
         active_connection_id_limit: 8,
         max_datagram_frame_size: snapshot_datagram_frame_size(s),
         disable_active_migration: (s.get_allow_migration() == 0) as c_int,
-        ..lsquic::NqTransportParams::default()
+        ..lsquic::NqTransportParams::new()
     };
     if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
         let name = bun_core::String::from_js(cc, global)?.to_owned_slice();
@@ -1124,8 +1124,8 @@ impl QuicEndpoint {
             closing: Cell::new(false),
             closed: Cell::new(false),
             socket: Cell::new(None),
-            bind_config: JsCell::new(BindConfig::default()),
-            local_addr: Cell::new(StoredAddr::default()),
+            bind_config: JsCell::new(BindConfig::new()),
+            local_addr: Cell::new(StoredAddr::new()),
             poll_ref: JsCell::new(KeepAlive::init()),
             this_value: JsCell::new(JsRef::empty()),
             server_engine: Cell::new(null_mut()),
@@ -1148,8 +1148,8 @@ impl QuicEndpoint {
             processing: Cell::new(false),
             followup_due: Cell::new(false),
             sessions: JsCell::new(Vec::new()),
-            server_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
-            client_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
+            server_local_tp: JsCell::new(lsquic::NqTransportParams::new()),
+            client_local_tp: JsCell::new(lsquic::NqTransportParams::new()),
             pending_new_sessions: JsCell::new(Vec::new()),
             provisional: JsCell::new(Vec::new()),
             pending_verneg: JsCell::new(Vec::new()),
@@ -1162,7 +1162,7 @@ impl QuicEndpoint {
                 EventLoopTimerTag::QuicEndpoint,
             )),
             pending_endpoint_close: Cell::new(false),
-            nq_driver: JsCell::new(UsNqDriver::default()),
+            nq_driver: JsCell::new(UsNqDriver::new()),
             nq_registered: Cell::new(false),
             defer_closes: Cell::new(false),
             send_scope_depth: Cell::new(0),
@@ -2022,7 +2022,7 @@ impl QuicEndpoint {
                 settings.origin_blob(origin_blob);
             }
         }
-        let mut local_tp = lsquic::NqTransportParams::default();
+        let mut local_tp = lsquic::NqTransportParams::new();
         apply_transport_params(global, &mut settings, options, &mut local_tp)?;
         if let Some(app) = options
             .get(global, "application")?

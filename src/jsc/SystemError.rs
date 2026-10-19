@@ -21,17 +21,17 @@ pub struct SystemError {
     pub dest: bun_core::String,
 }
 
-impl Default for SystemError {
-    fn default() -> Self {
+impl SystemError {
+    pub fn new() -> Self {
         Self {
             errno: 0,
-            code: bun_core::String::default(),
-            message: bun_core::String::default(),
-            path: bun_core::String::default(),
-            syscall: bun_core::String::default(),
-            hostname: bun_core::String::default(),
+            code: bun_core::String::EMPTY,
+            message: bun_core::String::EMPTY,
+            path: bun_core::String::EMPTY,
+            syscall: bun_core::String::EMPTY,
+            hostname: bun_core::String::EMPTY,
             fd: c_int::MIN,
-            dest: bun_core::String::default(),
+            dest: bun_core::String::EMPTY,
         }
     }
 }
@@ -147,7 +147,7 @@ pub fn verify_error_to_js(
     let fallback = SystemError {
         code: String::clone_utf8(code),
         message: String::clone_utf8(reason),
-        ..Default::default()
+        ..SystemError::new()
     };
 
     fallback.to_error_instance(global)

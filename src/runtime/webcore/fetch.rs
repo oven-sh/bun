@@ -187,7 +187,7 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
         response::Init {
             status_code: 200,
             status_text: BunString::create_atom(b"OK"),
-            ..Default::default()
+            ..response::Init::new()
         },
         Body::new(BodyValue::Blob(blob)),
         url,
@@ -460,7 +460,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut redirect_type: FetchRedirect = FetchRedirect::Follow;
     let signal: Option<AbortSignalRef>;
     let mut range: Option<bun_core::ZBox> = None;
-    let mut unix_socket_path: Box<[u8]> = Box::default();
+    let mut unix_socket_path: Box<[u8]> = Box::new([]);
 
     // `url_proxy_buffer` gets reassigned while `url`/`proxy`
     // still point into it (or into the buffer about to replace it). Detach the
@@ -614,8 +614,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
 
         for obj in objects_to_try {
@@ -638,8 +638,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "compress: boolean | string | { encoding, level? }"
     'extract_compress: {
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
 
         for obj in objects_to_try {
@@ -659,8 +659,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "maxRedirects: number"
     'extract_max_redirects: {
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
 
         for obj in objects_to_try {
@@ -694,8 +694,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'extract_session Some(fetch_session::SessionHold::from_js(global_this, bound)?);
         }
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
@@ -719,8 +719,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut request_has_tls = false;
     ssl_config = 'extract_ssl_config: {
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
 
         for obj in objects_to_try {
@@ -763,8 +763,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // unix: string | undefined
     unix_socket_path = 'extract_unix_socket_path: {
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
 
         for obj in objects_to_try {
@@ -785,8 +785,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // protocol: "http2" | "h2" | "http1.1" | "h1" | undefined.
     'extract_protocol: {
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
@@ -816,8 +816,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // timeout: false | number | undefined
     disable_timeout = 'extract_disable_timeout: {
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
 
         for obj in objects_to_try {
@@ -861,8 +861,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         // Then check options/init objects which can override the Request's redirect
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
 
         for obj in objects_to_try {
@@ -884,8 +884,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
     disable_keepalive = 'extract_disable_keepalive: {
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
 
         for obj in objects_to_try {
@@ -908,8 +908,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // verbose: boolean | "curl" | undefined;
     verbose = 'extract_verbose: {
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
 
         for obj in objects_to_try {
@@ -941,8 +941,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     {
         let mut proxy_option: Option<fetch_session::ProxyOption> = None;
         let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
+            options_object.unwrap_or_else(JSValue::new),
+            request_init_object.unwrap_or_else(JSValue::new),
         ];
         for obj in objects_to_try {
             if !obj.is_empty() && proxy_option.is_none() {
@@ -997,7 +997,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    let pool = session.map(|c| c.pool()).unwrap_or_default();
+    let pool = session
+        .map(|c| c.pool())
+        .unwrap_or_else(bun_http::PoolOptions::new);
 
     // signal: AbortSignal | null | undefined;
     // WebIDL `AbortSignal?` member: present iff not undefined. A present `null`
@@ -1148,7 +1150,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         break 'extract_body None;
     }
-    .unwrap_or_default();
+    .unwrap_or_else(HTTPRequestBody::new);
 
     // HTTPRequestBody::from_js() throws without returning Err; see Blob::from_dom_form_data
     if global_this.has_exception() {
@@ -1440,7 +1442,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         let response = bun_core::heap::into_raw(Box::new(Response::init(
             response::Init {
                 status_code: 200,
-                ..Default::default()
+                ..response::Init::new()
             },
             Body::new(BodyValue::Blob(blob_to_use)),
             url_string,
@@ -1505,7 +1507,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     {
         if let Some(credentials) = http::async_http::basic_authorization(&url) {
             headers
-                .get_or_insert_default()
+                .get_or_insert_with(Headers::new)
                 .append(b"Authorization", &credentials);
         }
     }
@@ -1654,9 +1656,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // The `vm.node_fs()` accessor is a jsc↔runtime cycle. `read_file`
             // with an `Fd` path only touches `self.sync_error_buf` for
             // path-variant inputs, so a fresh `NodeFS` is sufficient here.
-            let mut node_fs = node::fs::NodeFS::default();
+            let mut node_fs = node::fs::NodeFS::new();
             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
-            let mut rf_args = node::fs::args::ReadFile::default();
+            let mut rf_args = node::fs::args::ReadFile::new();
             rf_args.encoding = Encoding::Buffer;
             rf_args.path = PathOrFileDescriptor::Fd(*opened_fd);
             rf_args.offset = blob_offset;
@@ -1706,7 +1708,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             .is_some();
         if !already_has_encoding && !body.slice().is_empty() {
             headers
-                .get_or_insert_default()
+                .get_or_insert_with(Headers::new)
                 .append(b"Content-Encoding", compress_opt.encoding.header_value());
         } else {
             compress = None;
@@ -1728,10 +1730,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         );
         let mut credentials_with_options = s3::S3CredentialsWithOptions {
             credentials: env_creds,
-            options: Default::default(),
+            options: bun_s3_signing::MultiPartUploadOptions::new(),
             acl: None,
             storage_class: None,
-            ..Default::default()
+            ..s3::S3CredentialsWithOptions::new()
         };
         // `defer credentialsWithOptions.deinit()` → Drop.
 
@@ -1745,7 +1747,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     use crate::webcore::s3_client::S3CredentialsExt as _;
                     credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
                         &credentials_with_options.credentials,
-                        Default::default(),
+                        bun_s3_signing::MultiPartUploadOptions::new(),
                         Some(s3_options),
                         None,
                         None,
@@ -1837,7 +1839,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             &SignOptions {
                 path: url.s3_path(),
                 method,
-                ..Default::default()
+                ..SignOptions::new()
             },
             None,
         ) {
@@ -1898,7 +1900,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // Decided before anything is queued, so an unusable framing header rejects up front.
-    let mut stream_framing = StreamFraming::default();
+    let mut stream_framing = StreamFraming::new();
     if matches!(body, HTTPRequestBody::ReadableStream(_))
         && let Some(request_headers) = &headers
     {
@@ -1956,7 +1958,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let fetch_options = FetchOptions {
         method,
         url: url_static,
-        headers: headers.take().unwrap_or_default(),
+        headers: headers.take().unwrap_or_else(Headers::new),
         body,
         stream_framing,
         disable_keepalive,
@@ -2037,7 +2039,7 @@ impl<'a> S3StreamWrapper<'a> {
                     response::Init {
                         method: Method::PUT,
                         status_code: 200,
-                        ..Default::default()
+                        ..response::Init::new()
                     },
                     Body::new(BodyValue::Empty),
                     BunString::create_atom_if_possible(self_.url.href),
@@ -2056,7 +2058,7 @@ impl<'a> S3StreamWrapper<'a> {
                         method: Method::PUT,
                         status_code: 500,
                         status_text: BunString::create_atom_if_possible(err.code),
-                        ..Default::default()
+                        ..response::Init::new()
                     },
                     Body::new(BodyValue::InternalBlob(InternalBlob {
                         bytes: err.message.to_vec(),

@@ -35,12 +35,22 @@ pub(super) struct Sorted<'s> {
 }
 
 /// The plugins that the config lists for the files in this run.
-#[derive(Default)]
 struct Plugins {
     built_in: Vec<Vec<u8>>,
     /// Plugins that add a language. Files in that language go to the project's own Prettier.
     for_languages: Vec<Vec<u8>>,
     not_supported: Vec<Vec<u8>>,
+}
+
+impl Plugins {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            built_in: Vec::new(),
+            for_languages: Vec::new(),
+            not_supported: Vec::new(),
+        }
+    }
 }
 
 impl Plugins {
@@ -77,7 +87,7 @@ pub(super) fn report(
         Expanded::Error(_) => None,
     });
 
-    let (mut plugins, mut nested) = (Plugins::default(), Vec::new());
+    let (mut plugins, mut nested) = (Plugins::new(), Vec::new());
     for target in found {
         let (scope, path) = (&target.scope, &target.path);
         let named = configs.packages_of_plugins(scope, Some(path));
@@ -103,9 +113,9 @@ pub(super) fn report(
         .chain(prettier)
         .chain(files.not_installed.iter().copied());
     let for_files = sorted(for_files.map(<[u8]>::to_vec).collect());
-    let mut by_prettier = Kinds::default();
+    let mut by_prettier = Kinds::new();
     (files.handed_over.iter()).for_each(|it| by_prettier.add(&it.1.path));
-    let mut not_formatted = Kinds::default();
+    let mut not_formatted = Kinds::new();
     (files.others.iter()).for_each(|it| not_formatted.add_ending(it.0, it.1));
 
     // Resolving each file's options is what fills in `unsupported_options`.

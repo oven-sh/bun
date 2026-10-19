@@ -232,12 +232,6 @@ pub(crate) enum StringOrBuffer<'a> {
     PinnedBuffer(PinnedArrayBuffer),
 }
 
-impl Default for StringOrBuffer<'_> {
-    fn default() -> Self {
-        Self::EMPTY
-    }
-}
-
 impl<'a> StringOrBuffer<'a> {
     pub(crate) const EMPTY: Self = StringOrBuffer::Utf8(Utf8Bytes::EMPTY);
 
@@ -1212,7 +1206,7 @@ impl Valid {
         if arguments.deferred_error.is_none() {
             arguments.deferred_error = Some(Box::new(err));
         }
-        Ok(PathLike::default())
+        Ok(PathLike::new())
     }
 
     pub(crate) fn path_buffer(slice: &[u8], ctx: &JSGlobalObject) -> JsResult<()> {

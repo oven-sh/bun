@@ -1299,7 +1299,7 @@ pub(crate) fn compile_program<'a>(
         // The plugin validates hooks and the dependencies of memoization itself, with which the compiler looks for no comment.
         suppressions: match flavor {
             Flavor::Oxlint => find_program_suppressions(file, &ESLINT_SUPPRESSION_RULES),
-            Flavor::Eslint => ProgramSuppressions::default(),
+            Flavor::Eslint => ProgramSuppressions::new(),
         },
         diagnostics: Vec::new(),
     };

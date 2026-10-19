@@ -10,7 +10,6 @@ pub struct NoAccessorRecursion;
 
 const NO_ACCESSOR_RECURSION: Message = Message::new("", "Disallow recursive access to `this` within {{kind}}.");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The function whose `this` the `this` at a place is. `Some(None)`: that of a class.
     functions: AncestorMemo<'a, Option<Func<'a>>>,
@@ -18,6 +17,17 @@ pub struct State<'a> {
     keys: FxHashSet<Name<'a>>,
     /// `get #a() {}`, which is compared without the `#`.
     has_private_accessor: bool,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            functions: AncestorMemo::new(),
+            keys: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            has_private_accessor: false,
+        }
+    }
 }
 
 fn key_of(accessor: Func<'_>) -> Option<Key<'_>> {
@@ -42,7 +52,7 @@ impl Rule for NoAccessorRecursion {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let mut state = State::default();
+        let mut state = State::new();
         for key in file.funcs().filter(|it| matches!(it.kind(), FnKind::Getter | FnKind::Setter)).filter_map(key_of) {
             state.has_private_accessor |= key.is_private();
             state.keys.extend(key.name());

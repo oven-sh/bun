@@ -229,8 +229,8 @@ pub union ExternColumnIdentifierValue {
     pub name: ManuallyDrop<BunString>,
 }
 
-impl Default for ExternColumnIdentifier {
-    fn default() -> Self {
+impl ExternColumnIdentifier {
+    pub fn new() -> Self {
         Self {
             tag: 0,
             value: ExternColumnIdentifierValue { index: 0 },

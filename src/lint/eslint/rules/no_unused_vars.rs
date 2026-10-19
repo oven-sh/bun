@@ -210,7 +210,7 @@ fn is_used_variable(variable: Variable) -> bool {
         // without an assignment before there is no right side to be in.
         let mut is_for_itself = false;
         if reference.is_write() || rhs.is_some() {
-            let walks = walks.get_or_insert_with(Walks::default);
+            let walks = walks.get_or_insert_with(Walks::new);
             is_for_itself = is_read_for_itself(reference, rhs, walks);
             rhs = get_rhs_node(reference, rhs, walks);
         }
@@ -395,7 +395,7 @@ impl<'a> Estree<'a> {
             | Estree::AssignmentPattern(Holder::Param(it)) => estree_span(Node::Param(it)),
             Estree::VariableDeclarator(it) => it.span(),
             Estree::Function(func) => estree_span(Node::Func(func)),
-            Estree::CatchClause | Estree::Other => Span::default(),
+            Estree::CatchClause | Estree::Other => Span::init(),
         }
     }
 }

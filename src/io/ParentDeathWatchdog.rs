@@ -294,7 +294,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
         let poll = FilePoll::init(
             handle,
             Fd::from_native(original_ppid),
-            Default::default(),
+            enumset::EnumSet::empty(),
             Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
         );
         // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`

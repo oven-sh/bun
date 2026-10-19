@@ -253,7 +253,7 @@ impl WalkPlan {
             // A file is in the chunk that has its entry bits as key, also when it prints nothing there.
             let file_entry_bits = c.graph.files.items_entry_bits();
             let css = c.graph.ast.items_css();
-            let mut chunk_of_key: StringHashMap<u32> = StringHashMap::default();
+            let mut chunk_of_key: StringHashMap<u32> = StringHashMap::init();
             for (chunk_index, chunk) in chunks.iter().enumerate() {
                 if matches!(chunk.content, chunk::Content::Javascript(_)) {
                     bun_core::handle_oom(chunk_of_key.put(
@@ -806,7 +806,7 @@ impl EntryWalk {
         let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut left = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut stack: Vec<WalkFrame> = Vec::new();
-        let mut css_placed: HashMap<u64, ()> = HashMap::default();
+        let mut css_placed: HashMap<u64, ()> = HashMap::init();
         let root = c.graph.entry_points.items_source_index()[self.entry_id as usize];
         self.walk(
             c,
@@ -887,7 +887,7 @@ impl EntryWalk {
                 }
                 WalkFrame::PlaceCss { source_index, slot } => {
                     let key = u64::from(slot) << 32 | u64::from(source_index);
-                    if !bun_core::handle_oom(css_placed.get_or_put(key)).found_existing {
+                    if !bun_core::handle_oom(css_placed.get_or_put(key, || ())).found_existing {
                         self.owned[slot as usize].runs.push(PartRun {
                             source_index,
                             begin: 0,

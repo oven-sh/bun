@@ -11,8 +11,14 @@ use crate::node::Encoding;
 // provided by the attribute macro — do not hand-port the `pub const js = jsc.Codegen.JSCrypto`
 // alias block.
 #[bun_jsc::JsClass]
-#[derive(Default)]
 pub(crate) struct Crypto {}
+
+impl Crypto {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {}
+    }
+}
 
 impl Crypto {
     #[bun_jsc::host_fn(method)]
@@ -170,7 +176,7 @@ fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                 min: 0,
                 max: MAX_TIMESTAMP,
                 field_name: b"timestamp",
-                ..Default::default()
+                ..bun_jsc::RangeErrorOptions::new()
             };
             if timestamp_value.is_date() {
                 let date = timestamp_value.get_unix_timestamp();
@@ -190,7 +196,7 @@ fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                         min: 0,
                         max: i128::from(MAX_TIMESTAMP),
                         field_name: b"timestamp",
-                        ..Default::default()
+                        ..bun_jsc::IntegerRange::new()
                     },
                 )?)
                 .unwrap(),
@@ -294,5 +300,5 @@ extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
 
     // Box::new aborts on OOM, so an out-of-memory throw arm is unreachable.
     // `JsClass::to_js` boxes `self` internally and transfers ownership to the JS wrapper.
-    Crypto::default().to_js(global)
+    Crypto::new().to_js(global)
 }

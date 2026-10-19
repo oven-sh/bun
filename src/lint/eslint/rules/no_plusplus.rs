@@ -39,7 +39,7 @@ impl Rule for NoPlusplus {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(AncestorMemo::default())
+        Some(AncestorMemo::new())
     }
 
     fn unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

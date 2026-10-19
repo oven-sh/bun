@@ -14,10 +14,19 @@ use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
 use bun_core::strings;
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub(crate) struct FormatFunctionOptions {
     /// Whether what is formatted is kept, to be written again.
     pub(crate) cache_mode: FunctionCacheMode,
+}
+
+impl FormatFunctionOptions {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            cache_mode: FunctionCacheMode::NoCache,
+        }
+    }
 }
 
 /// `a = function /* comment */⏎<T>() {}`: for Prettier the line break after the comment breaks with what the function is in. For
@@ -339,7 +348,7 @@ impl<T> FormatContentWithCacheMode<T> {
     ) -> Self {
         Self {
             key: match cache_mode {
-                FunctionCacheMode::NoCache => Span::default(),
+                FunctionCacheMode::NoCache => Span::init(),
                 FunctionCacheMode::Cache => key(),
             },
             content,

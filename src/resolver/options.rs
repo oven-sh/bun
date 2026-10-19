@@ -12,18 +12,27 @@ pub use crate::tsconfig_json::options::jsx;
 pub(crate) use bun_ast::Target;
 pub use bun_options_types::bundle_enums::ModuleType;
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Packages {
-    #[default]
     Bundle,
     External,
 }
 
-#[derive(Default)]
 pub struct ExternalModules {
     pub patterns: Vec<WildcardPattern>,
     pub abs_paths: StringSet,
     pub node_modules: StringSet,
+}
+
+impl ExternalModules {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            patterns: Vec::new(),
+            abs_paths: StringSet::empty(),
+            node_modules: StringSet::empty(),
+        }
+    }
 }
 impl Clone for ExternalModules {
     fn clone(&self) -> Self {
@@ -47,7 +56,6 @@ pub struct WildcardPattern {
 /// silently ignored every `--external` absolute path / package name.
 pub use bun_collections::StringSet;
 
-#[derive(Default)]
 pub struct Conditions {
     pub import: crate::package_json::ConditionsMap,
     pub require: crate::package_json::ConditionsMap,
@@ -60,10 +68,9 @@ pub struct Conditions {
 /// `Resolver.opts`) with a value type. The tag is
 /// `Copy`, and the actual slice is resolved on demand via
 /// [`BundleOptions::ext_order_slice`] / [`Resolver::extension_order`].
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ExtOrder {
     /// `opts.extension_order.default.default`
-    #[default]
     DefaultDefault,
     /// `opts.extension_order.default.esm`
     DefaultEsm,

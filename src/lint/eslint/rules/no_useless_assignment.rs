@@ -42,7 +42,6 @@ struct ScopeStack<'a> {
     endless_loops: Vec<Span>,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// What the code paths to analyze start with: those that assign to a variable where the
     /// statements alone do not tell that the value is read.
@@ -66,6 +65,25 @@ pub struct State<'a> {
     /// By the id of a segment: from the start of the first identifier in it to the end of the last.
     /// Only identifiers that are expressions count, as only the place of those is asked for.
     identifier_ranges: Vec<Span>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            roots: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            unknown: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            exported: None,
+            all_roots: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            is_only_checked: false,
+            stack: Vec::new(),
+            current_segments: CurrentSegments::new(),
+            code_path_start_scopes: IdSet::init(),
+            evaluated_in: AncestorMemo::new(),
+            uses: Uses::new(),
+            identifier_ranges: Vec::new(),
+        }
+    }
 }
 
 const NO_IDENTIFIERS: Span = Span::new(u32::MAX, 0);
@@ -321,10 +339,10 @@ impl<'a, 'v> Variable<'a, 'v> {
     fn next_assignments(&self) -> SmallVec<[u32; 8]> {
         let mut next: SmallVec<[u32; 8]> = smallvec![NONE; self.assignments.len()];
         let get = |index: u32| self.assignments.get(index as usize);
-        let expression = |index: u32| get(index).and_then(|it| it.expression).unwrap_or_default();
+        let expression = |index: u32| get(index).and_then(|it| it.expression).unwrap_or_else(Span::init);
         // The assignments whose expression the walk is in, the outermost first, and those whose
         // expression is still to come, the last to come first: `[x, y = (x = 1)] = z`.
-        let (mut around, mut ahead): (SmallVec<[u32; 4]>, SmallVec<[u32; 4]>) = Default::default();
+        let (mut around, mut ahead): (SmallVec<[u32; 4]>, SmallVec<[u32; 4]>) = (smallvec::SmallVec::new(), smallvec::SmallVec::new());
         for in_segment in self.in_segments.chunk_by(|a, b| a.0 == b.0) {
             around.clear();
             ahead.clear();
@@ -677,7 +695,6 @@ fn code_path_root(scope: Scope<'_>) -> Option<Node<'_>> {
 }
 
 /// Where a variable is used, to look for ways from an assignment to a place where it is read.
-#[derive(Default)]
 struct Uses<'a> {
     /// In source order.
     all: Vec<Reference<'a>>,
@@ -691,6 +708,20 @@ struct Uses<'a> {
     budget: u32,
     /// What a module exports is not reported.
     is_in_module_scope: bool,
+}
+
+impl<'a> Uses<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            all: Vec::new(),
+            conditions: AncestorMemo::new(),
+            writers: AncestorMemo::new(),
+            loops: IdSet::init(),
+            budget: 0,
+            is_in_module_scope: false,
+        }
+    }
 }
 
 impl<'a> Uses<'a> {
@@ -1736,7 +1767,7 @@ impl NoUselessAssignment {
         let scope = node.scope();
         cx.state.stack.push(ScopeStack {
             scope,
-            assignments: FxHashMap::default(),
+            assignments: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             try_statement_blocks: Vec::new(),
             finalized_blocks: Vec::new(),
             endless_loops: Vec::new(),
@@ -1887,7 +1918,7 @@ impl Rule for NoUselessAssignment {
         if !file.has_stmts([StmtTag::Var]) && !file.has_exprs([ExprTag::Assign, ExprTag::Unary]) {
             return None;
         }
-        Some(State::default())
+        Some(State::new())
     }
 
     fn symbol<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
@@ -1908,12 +1939,12 @@ impl Rule for NoUselessAssignment {
             }
         }
         let as_entered = |it: &&Node<'_>| (it.span().start, std::cmp::Reverse(it.span().end));
-        let roots = std::mem::take(&mut cx.state.roots);
+        let roots = std::mem::replace(&mut cx.state.roots, rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher));
         for &root in utils::sort::in_order_of(&roots, as_entered) {
             self.check_code_path(root, cx);
         }
         cx.state.is_only_checked = true;
-        let all_roots = std::mem::take(&mut cx.state.all_roots);
+        let all_roots = std::mem::replace(&mut cx.state.all_roots, rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher));
         for root in utils::sort::in_order_of(all_roots.difference(&roots), as_entered) {
             self.check_code_path(*root, cx);
         }

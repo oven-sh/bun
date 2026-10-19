@@ -53,9 +53,9 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
     if spread_attrs.len() < 2 {
         return;
     }
-    let mut identifiers: FxHashMap<Name<'a>, Vec<Span>> = FxHashMap::default();
+    let mut identifiers: FxHashMap<Name<'a>, Vec<Span>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     // Those that are the same are in the same list.
-    let mut member_expressions: FxHashMap<u64, Vec<(Expr<'a>, Span)>> = FxHashMap::default();
+    let mut member_expressions: FxHashMap<u64, Vec<(Expr<'a>, Span)>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     let is_oxlint = cx.language().is_oxlint;
     for &(argument, span) in &spread_attrs {
         // oxlint looks through `a!`, `a as T` and the like, and compares member expressions as well.

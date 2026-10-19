@@ -153,12 +153,12 @@ impl RepositoryExt for Repository {
             return Ok(Repository {
                 repo: buf.append(&remain[..hash])?,
                 committish: buf.append(&remain[hash + 1..])?,
-                ..Default::default()
+                ..Repository::new()
             });
         }
         Ok(Repository {
             repo: buf.append(remain)?,
-            ..Default::default()
+            ..Repository::new()
         })
     }
 
@@ -182,7 +182,7 @@ impl RepositoryExt for Repository {
         let mut result = Repository {
             owner: buf.append(owner)?,
             repo: buf.append(repo)?,
-            ..Default::default()
+            ..Repository::new()
         };
 
         if let Some(committish) = committish {

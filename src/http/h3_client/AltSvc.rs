@@ -26,8 +26,8 @@ pub struct Entry {
     pub(crate) ma: u32,
 }
 
-impl Default for Entry {
-    fn default() -> Self {
+impl Entry {
+    pub fn new() -> Self {
         Self { port: 0, ma: 86400 }
     }
 }
@@ -100,7 +100,7 @@ pub(crate) fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
 
         let mut result = Entry {
             port,
-            ..Entry::default()
+            ..Entry::new()
         };
         for raw_param in params {
             let param = strings::trim(raw_param, b" \t");
@@ -140,7 +140,7 @@ static CACHE: bun_core::RacyCell<Option<StringHashMap<Record>>> = bun_core::Racy
 fn cache() -> &'static mut StringHashMap<Record> {
     // SAFETY: HTTP-thread only; lazy init cannot race. Every call site is a
     // per-statement reborrow (audited in r3); no two `&mut` overlap.
-    unsafe { (*CACHE.get()).get_or_insert_with(StringHashMap::default) }
+    unsafe { (*CACHE.get()).get_or_insert_with(StringHashMap::init) }
 }
 
 /// Hard cap on cached origins. When reached, `record()` first sweeps expired

@@ -762,7 +762,8 @@ impl CAresNameInfo {
     /// SAFETY: see `process_resolve`.
     unsafe fn on_complete(this: *mut Self, result: Outcome) {
         // SAFETY: see fn contract — `this` is a live node.
-        let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
+        let mut promise =
+            unsafe { core::mem::replace(&mut (*this).promise, JSPromiseStrong::new()) };
         // SAFETY: see fn contract — `this` is a live node.
         let (global_this, context) = unsafe { ((*this).global_this(), (*this).context) };
         result.settle(&mut promise, global_this, context);
@@ -1518,7 +1519,7 @@ impl CAresReverse {
     unsafe fn on_complete(this: *mut Self, result: Outcome) {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let mut promise = core::mem::take(&mut (*this).promise);
+            let mut promise = core::mem::replace(&mut (*this).promise, JSPromiseStrong::new());
             let global_this = (*this).global_this();
             result.settle(&mut promise, global_this, (*this).context);
             if let Some(resolver) = (*this).resolver.as_ref() {
@@ -1655,7 +1656,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
     unsafe fn on_complete(this: *mut Self, result: Outcome) {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let mut promise = core::mem::take(&mut (*this).promise);
+            let mut promise = core::mem::replace(&mut (*this).promise, JSPromiseStrong::new());
             let global_this = (*this).global_this();
             result.settle(&mut promise, global_this, (*this).context);
             if let Some(resolver) = (*this).resolver.as_ref() {
@@ -1831,7 +1832,7 @@ impl DNSLookup {
         bun_output::scoped_log!(DNSLookup, "onCompleteWithArray");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let mut promise = core::mem::take(&mut (*this).promise);
+            let mut promise = core::mem::replace(&mut (*this).promise, JSPromiseStrong::new());
             let global_this = (*this).global_this();
             result.settle(&mut promise, global_this, (*this).context);
             if let Some(resolver) = (*this).resolver.as_ref() {
@@ -2121,8 +2122,8 @@ pub(crate) mod internal {
     }
 
     #[cfg(target_os = "macos")]
-    impl Default for MacAsyncDNS {
-        fn default() -> Self {
+    impl MacAsyncDNS {
+        pub(crate) fn new() -> Self {
             Self {
                 query: dns_sd::QueryState::new(0),
             }
@@ -2163,7 +2164,7 @@ pub(crate) mod internal {
                 created_at,
                 valid: true,
                 #[cfg(target_os = "macos")]
-                dns_sd: MacAsyncDNS::default(),
+                dns_sd: MacAsyncDNS::new(),
             }))
         }
 
@@ -3914,7 +3915,7 @@ impl Resolver {
             made_in,
             vm: bun_ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
-            options: Cell::new(c_ares::ChannelOptions::default()),
+            options: Cell::new(c_ares::ChannelOptions::new()),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::DNSResolver,
             )),
@@ -4634,7 +4635,7 @@ impl Resolver {
                     errno: -1,
                     code: bun_core::String::static_(err.code()),
                     message: bun_core::String::static_(err.label()),
-                    ..Default::default()
+                    ..SystemError::new()
                 };
                 Err(global_this.throw_value(system_error.to_error_instance(global_this)))
             }
@@ -4762,7 +4763,7 @@ impl Resolver {
             // any re-entrant call (libuv `uv_poll_*` below do not call back into
             // this resolver synchronously).
             let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = bun_core::handle_oom(polls.get_or_put(fd));
+            let poll_entry = bun_core::handle_oom(polls.get_or_put(fd, || core::ptr::null_mut()));
             let poll: *mut UvDnsPoll = if poll_entry.found_existing {
                 *poll_entry.value_ptr
             } else {
@@ -4826,11 +4827,17 @@ impl Resolver {
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = polls.get_or_put(fd).expect("unreachable");
+            let poll_entry = polls
+                .get_or_put(fd, || core::ptr::null_mut())
+                .expect("unreachable");
 
             if !poll_entry.found_existing {
-                *poll_entry.value_ptr =
-                    FilePoll::init(ctx, sys::Fd::from_native(fd), Default::default(), owner);
+                *poll_entry.value_ptr = FilePoll::init(
+                    ctx,
+                    sys::Fd::from_native(fd),
+                    enumset::EnumSet::empty(),
+                    owner,
+                );
             }
 
             // SAFETY: `value_ptr` points at a slot just initialized above (or a
@@ -5107,7 +5114,7 @@ impl Resolver {
             ));
         }
 
-        let mut options = GetAddrInfoOptions::default();
+        let mut options = GetAddrInfoOptions::new();
         let mut port: u16 = 0;
 
         if arguments_len > 1 && arguments[1].is_object() {
@@ -5426,7 +5433,7 @@ impl Resolver {
                     code: bun_core::String::static_(err.code()),
                     message: bun_core::String::static_(err.label()),
                     syscall,
-                    ..Default::default()
+                    ..SystemError::new()
                 };
                 return Err(global_this.throw_value(system_error.to_error_instance(global_this)));
             }

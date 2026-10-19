@@ -61,7 +61,6 @@ pub(super) enum Reach {
 }
 
 /// What the parser keeps about the JSDoc comments of a file: `Parser::jsdoc`.
-#[derive(Default)]
 pub(crate) struct State {
     /// `flags`: a comment with one of them is read. 0: none is, and `Parser::reads_jsdoc` is false.
     pub(super) wanted: u8,
@@ -81,6 +80,21 @@ pub(crate) struct State {
 }
 
 impl State {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self {
+            wanted: 0,
+            is_in_comment: false,
+            reparsed: Vec::new(),
+            attached: Vec::new(),
+            property_types: Vec::new(),
+            full_signatures: bun_sema::util::FxHashSet::with_hasher(bun_sema::util::FxBuild),
+            documented_functions: bun_sema::util::FxHashSet::with_hasher(bun_sema::util::FxBuild),
+        }
+    }
+}
+
+impl State {
     /// `of_typescript`: `read_by_checker`, of a file that is parsed for the second time.
     pub(crate) fn new(options: &Options, has_interner: bool, of_typescript: u8) -> State {
         let is_script = options.is_javascript && !options.is_json;
@@ -93,13 +107,13 @@ impl State {
         };
         State {
             wanted,
-            ..State::default()
+            ..State::init()
         }
     }
 }
 
 /// The lengths of what a speculative parse gives back and `FileLens` does not have.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct Lens {
     reparsed: u32,
     attached: u32,
@@ -113,6 +127,26 @@ pub(crate) struct Lens {
     param_errors: u32,
     functions_with_param_tags: u32,
     unmatched_augments_tags: u32,
+}
+
+impl Lens {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            reparsed: 0,
+            attached: 0,
+            property_types: 0,
+            full_signatures: 0,
+            documented_functions: 0,
+            hosts: 0,
+            types: 0,
+            modifiers: 0,
+            member_comments: 0,
+            param_errors: 0,
+            functions_with_param_tags: 0,
+            unmatched_augments_tags: 0,
+        }
+    }
 }
 
 impl Lens {
@@ -1338,7 +1372,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     pub(crate) fn jsdoc_lens(&self) -> Lens {
         match self.reads_jsdoc() {
             true => Lens::of(&self.jsdoc, &self.f),
-            false => Lens::default(),
+            false => Lens::new(),
         }
     }
 

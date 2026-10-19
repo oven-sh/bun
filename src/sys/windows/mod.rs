@@ -251,11 +251,6 @@ pub struct SRWLOCK {
 pub const SRWLOCK_INIT: SRWLOCK = SRWLOCK {
     ptr: ptr::null_mut(),
 };
-impl Default for SRWLOCK {
-    fn default() -> Self {
-        SRWLOCK_INIT
-    }
-}
 
 #[repr(transparent)]
 #[derive(Copy, Clone)]
@@ -265,11 +260,6 @@ pub struct CONDITION_VARIABLE {
 pub const CONDITION_VARIABLE_INIT: CONDITION_VARIABLE = CONDITION_VARIABLE {
     ptr: ptr::null_mut(),
 };
-impl Default for CONDITION_VARIABLE {
-    fn default() -> Self {
-        CONDITION_VARIABLE_INIT
-    }
-}
 
 // `ntdll` is re-exported from `bun_windows_sys` above; the futex primitives
 // (`RtlWaitOnAddress` / `RtlWakeAddress*`) live there so this crate doesn't
@@ -968,8 +958,8 @@ pub struct DeleteFileOptions {
     pub(crate) remove_dir: bool,
 }
 
-impl Default for DeleteFileOptions {
-    fn default() -> Self {
+impl DeleteFileOptions {
+    pub fn new() -> Self {
         Self {
             dir: None,
             remove_dir: false,
@@ -1043,7 +1033,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     };
     bun_sys::syslog!(
         "NtCreateFile({}, DELETE) = {:?}",
-        bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
+        bun_core::fmt::fmt_path_u16(sub_path_w, crate::bun_str::fmt::PathFormatOptions::new()),
         rc
     );
     // Treat `STATUS_DELETE_PENDING`/`STATUS_FILE_DELETED` from the open as
@@ -1088,7 +1078,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     };
     bun_sys::syslog!(
         "NtSetInformationFile({}, DELETE) = {:?}",
-        bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
+        bun_core::fmt::fmt_path_u16(sub_path_w, crate::bun_str::fmt::PathFormatOptions::new()),
         rc
     );
     match rc {
@@ -1117,7 +1107,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         };
         bun_sys::syslog!(
             "NtSetInformationFile({}, DELETE) = {:?}",
-            bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
+            bun_core::fmt::fmt_path_u16(sub_path_w, crate::bun_str::fmt::PathFormatOptions::new()),
             rc
         );
     }
@@ -1420,7 +1410,7 @@ pub use bun_windows_sys::externs::SetEndOfFile;
 
 /// `PROCESS_MEMORY_COUNTERS` (`psapi.h`).
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct PROCESS_MEMORY_COUNTERS {
     pub(crate) cb: DWORD,
     pub(crate) PageFaultCount: DWORD,
@@ -1432,6 +1422,24 @@ pub struct PROCESS_MEMORY_COUNTERS {
     pub(crate) QuotaNonPagedPoolUsage: usize,
     pub(crate) PagefileUsage: usize,
     pub(crate) PeakPagefileUsage: usize,
+}
+
+impl PROCESS_MEMORY_COUNTERS {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            cb: 0,
+            PageFaultCount: 0,
+            PeakWorkingSetSize: 0,
+            WorkingSetSize: 0,
+            QuotaPeakPagedPoolUsage: 0,
+            QuotaPagedPoolUsage: 0,
+            QuotaPeakNonPagedPoolUsage: 0,
+            QuotaNonPagedPoolUsage: 0,
+            PagefileUsage: 0,
+            PeakPagefileUsage: 0,
+        }
+    }
 }
 
 /// psapi `K32GetProcessMemoryInfo`
@@ -1449,7 +1457,7 @@ pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, 
     let cb = size_of::<PROCESS_MEMORY_COUNTERS>() as DWORD;
     let mut out = PROCESS_MEMORY_COUNTERS {
         cb,
-        ..Default::default()
+        ..PROCESS_MEMORY_COUNTERS::new()
     };
     if K32GetProcessMemoryInfo(process, &mut out, cb) == 0 {
         return Err(Win32Error::get());
@@ -1459,10 +1467,16 @@ pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, 
 pub use bun_windows_sys::externs::GetConsoleMode;
 pub use bun_windows_sys::externs::SetConsoleMode;
 
-#[derive(Default)]
 pub struct UpdateStdioModeFlagsOpts {
     pub set: DWORD,
     pub unset: DWORD,
+}
+
+impl UpdateStdioModeFlagsOpts {
+    #[inline]
+    pub fn new() -> Self {
+        Self { set: 0, unset: 0 }
+    }
 }
 
 /// Returns the original mode, or null on failure
@@ -1921,7 +1935,7 @@ pub(crate) fn rename_at_w(
                     | win32::FILE_TRAVERSE,
                 disposition: win32::FILE_OPEN,
                 options: win32::FILE_SYNCHRONOUS_IO_NONALERT | win32::FILE_OPEN_REPARSE_POINT,
-                ..Default::default()
+                ..bun_sys::NtCreateFileOptions::new()
             },
         ) {
             bun_sys::Result::Err(_) => {
@@ -1934,7 +1948,7 @@ pub(crate) fn rename_at_w(
                         disposition: win32::FILE_OPEN,
                         options: win32::FILE_SYNCHRONOUS_IO_NONALERT
                             | win32::FILE_OPEN_REPARSE_POINT,
-                        ..Default::default()
+                        ..bun_sys::NtCreateFileOptions::new()
                     },
                 ) {
                     bun_sys::Result::Err(err2) => return bun_sys::Result::Err(err2),

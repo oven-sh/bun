@@ -271,12 +271,21 @@ enum NameResult {
 const NAME_THAT_CANNOT_BE_USED: &[u8] = b"__<>import_name_that_cant_be_used<>__";
 
 /// With a configuration of oxlint.
-#[derive(Default)]
 pub struct SideEffectImports<'a> {
     /// The modules that an `import "m"` has been seen of. It looks at the first of each.
     modules: FxHashSet<&'a [u8]>,
     /// [`Restrictions::check_what_is_exported_again`] has run.
     has_seen_exports: bool,
+}
+
+impl<'a> SideEffectImports<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            modules: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            has_seen_exports: false,
+        }
+    }
 }
 
 /// The elements of `paths`.
@@ -677,7 +686,7 @@ impl Restrictions {
             let group: Vec<&str> = strings.collect();
             let ignore = Box::new(ignore_rules(&group, true));
             let matcher = Matcher::Group(ignore, Globs::of_strings(&group));
-            all.push(Restriction::new(matcher, Object::default()));
+            all.push(Restriction::new(matcher, Object::new()));
             return Restrictions { all };
         }
         for pattern in patterns {
@@ -766,7 +775,7 @@ impl Restrictions {
         }
         let file = cx.file();
         // By the name here, the first of each. `None`: `* as a`, which is a local export there.
-        let mut entries: FxHashMap<&'a [u8], Option<(Stmt<'a>, Specifier<'a>)>> = FxHashMap::default();
+        let mut entries: FxHashMap<&'a [u8], Option<(Stmt<'a>, Specifier<'a>)>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for statement in file.body() {
             let Some(import) = statement.as_import() else {
                 continue;
@@ -788,7 +797,7 @@ impl Restrictions {
         }
         let mut again: Vec<Imported<'a>> = Vec::new();
         // Where each `import` is in `again`, by where it starts.
-        let mut places: FxHashMap<u32, usize> = FxHashMap::default();
+        let mut places: FxHashMap<u32, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for statement in file.body() {
             let Some(export) = statement.as_export_named() else {
                 continue;
@@ -883,7 +892,7 @@ impl Rule for NoRestrictedImports {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<SideEffectImports<'a>> {
-        (!self.restrictions.is_empty()).then(SideEffectImports::default)
+        (!self.restrictions.is_empty()).then(SideEffectImports::new)
     }
 
     fn expr<'a>(&self, call: Expr<'a>, cx: &mut Cx<'a, Self>) {

@@ -128,11 +128,20 @@ fn end_of_first_declared_namespace_in(namespace: Module<'_>) -> Option<u32> {
     first
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     declared_namespaces: AncestorMemo<'a, Module<'a>>,
     /// [`end_of_first_declared_namespace_in`] a `declare namespace`, by its statement.
     first_ends: IdMap<Stmt<'a>, Option<u32>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            declared_namespaces: AncestorMemo::new(),
+            first_ends: IdMap::init(),
+        }
+    }
 }
 
 /// ESLint's `insideDeclaredNamespace`, which is a flag and not a depth: the end of a
@@ -162,7 +171,7 @@ impl Rule for InitDeclarations {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     #[inline]

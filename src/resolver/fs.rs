@@ -386,7 +386,7 @@ impl DirEntry {
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         DirEntry {
             dir,
-            data: dir_entry::EntryMap::default(),
+            data: dir_entry::EntryMap::init(),
             generation,
             fd: Fd::INVALID,
         }
@@ -632,7 +632,7 @@ impl DirEntry {
 // `data` drops itself and `dir` is interned in DirnameStore (see the comment
 // on `DirEntry::dir`). Body would be empty, so no `impl Drop`.
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct ModKey {
     pub(crate) size: u64,
     pub(crate) mtime: i128,

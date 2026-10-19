@@ -186,7 +186,7 @@ impl ErrorReportRequest {
             };
 
             // Get and cache the parsed source map
-            let gop = bun_core::handle_oom(parsed_source_maps.get_or_put(id));
+            let gop = bun_core::handle_oom(parsed_source_maps.get_or_put(id, || None));
             if !gop.found_existing {
                 match dev.source_maps.get_parsed_source_map(id) {
                     None => {
@@ -390,7 +390,7 @@ impl ErrorReportRequest {
             InitFromBytesOptions {
                 mime_type: Some(&bun_http_types::MimeType::OTHER),
                 server: dev.server,
-                ..Default::default()
+                ..InitFromBytesOptions::new()
             },
         );
         // `should_finalize_self = true;` — see Note at fn top.

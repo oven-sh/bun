@@ -37,15 +37,25 @@ pub(super) enum Val<'a> {
 }
 
 /// A string of at most eight bytes.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(super) struct Short {
     bytes: [u8; 8],
     len: u8,
 }
 
 impl Short {
+    #[inline]
+    pub(super) fn init() -> Self {
+        Self {
+            bytes: [0; 8],
+            len: 0,
+        }
+    }
+}
+
+impl Short {
     fn new(text: &[u8]) -> Short {
-        let mut short = Short::default();
+        let mut short = Short::init();
         for (to, from) in short.bytes.iter_mut().zip(text) {
             *to = *from;
             short.len += 1;

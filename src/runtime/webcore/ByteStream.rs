@@ -39,14 +39,14 @@ pub struct ByteStream {
     pub(crate) buffer_action: JsCell<Option<BufferAction>>,
 }
 
-impl Default for ByteStream {
-    fn default() -> Self {
+impl ByteStream {
+    pub fn new() -> Self {
         Self {
-            buffered: Buffered::default(),
+            buffered: Buffered::new(),
             has_received_last_chunk: Cell::new(false),
             pending: JsCell::new(streams::Pending {
                 result: streams::Result::Done,
-                ..Default::default()
+                ..streams::Pending::new()
             }),
             done: Cell::new(false),
             pending_buffer: Cell::new(Self::empty_pending_buffer()),
@@ -61,10 +61,19 @@ impl Default for ByteStream {
 }
 
 /// Bytes a producer delivered. A consumer already took `bytes[..consumed]`.
-#[derive(Default)]
 pub(crate) struct Buffered {
     bytes: JsCell<Vec<u8>>,
     consumed: Cell<usize>,
+}
+
+impl Buffered {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            bytes: JsCell::new(Vec::new()),
+            consumed: core::cell::Cell::new(0),
+        }
+    }
 }
 
 impl Buffered {
@@ -147,10 +156,19 @@ pub(crate) type Source = readable_stream::NewSource<ByteStream>;
 /// `Source`, so delivery and unhooking go through memory the producer keeps alive rather than the
 /// JS wrapper (which the VM's last sweep destroys in no particular order), plus the parked bit of
 /// the receive backpressure. It roots the wrapper only for a native sink or a whole-body read.
-#[derive(Default)]
 pub(crate) struct ProducerHold {
     source: Cell<Option<core::ptr::NonNull<Source>>>,
     parked: Cell<bool>,
+}
+
+impl ProducerHold {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            source: core::cell::Cell::new(None),
+            parked: core::cell::Cell::new(false),
+        }
+    }
 }
 
 /// The JS-thread half of `BODY_HIGH_WATER_MARK`, decided from the stream's buffer after a
@@ -335,7 +353,7 @@ impl ByteStream {
         // Called immediately after `ByteStream::default()` construction;
         // the old value owns nothing the new one
         // reuses, so dropping it is the intended reset.
-        drop(core::mem::take(self));
+        drop(core::mem::replace(self, ByteStream::new()));
     }
 
     /// Seeds the stream from the drain result; init-time like [`Self::setup`].
@@ -659,7 +677,7 @@ impl ByteStream {
                 .get()
                 .get()
                 .and_then(|view| view.as_array_buffer(global))
-                .unwrap_or_default();
+                .unwrap_or_else(bun_jsc::ArrayBuffer::new);
             let pending_buf = pending_view.slice_mut();
             let to_copy_len = chunk.len().min(pending_buf.len());
             let pending_buffer_len = pending_buf.len();

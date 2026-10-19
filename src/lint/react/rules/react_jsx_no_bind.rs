@@ -50,10 +50,18 @@ struct Mention<'a> {
     declared: Option<Declared>,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The attributes whose value is an identifier.
     identifiers: Vec<Mention<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            identifiers: Vec::new(),
+        }
+    }
 }
 
 impl Rule for JsxNoBind {
@@ -73,7 +81,7 @@ impl Rule for JsxNoBind {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        file.has_exprs([ExprTag::Jsx]).then(State::default)
+        file.has_exprs([ExprTag::Jsx]).then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -108,7 +116,7 @@ impl Rule for JsxNoBind {
         // What each name is declared as in the blocks around the place that the last loop is at, the innermost last.
         let mut open: FxHashMap<Name<'_>, SmallVec<[Declared; 2]>> =
             mentions.iter().map(|it| (it.name, SmallVec::new())).collect();
-        let mut blocks = AncestorMemo::default();
+        let mut blocks = AncestorMemo::new();
         if !self.allow_functions {
             for statement in cx.file().stmts_of_kind(StmtTag::Fn) {
                 if let StmtKind::Fn(function) = statement.kind()

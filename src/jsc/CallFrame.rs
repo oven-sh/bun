@@ -143,7 +143,7 @@ impl CallFrame {
     }
 
     pub fn get_caller_src_loc(&self, global_this: &JSGlobalObject) -> CallerSrcLoc {
-        let mut str = bun_core::String::default();
+        let mut str = bun_core::String::EMPTY;
         let mut line: c_uint = 0;
         let mut column: c_uint = 0;
         Bun__CallFrame__getCallerSrcLoc(self, global_this, &mut str, &mut line, &mut column);

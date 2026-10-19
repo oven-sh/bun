@@ -157,7 +157,6 @@ struct Override {
 }
 
 /// A list of plugins.
-#[derive(Default)]
 struct Plugins {
     /// One of them isn't built in, so Bun doesn't know its options.
     names_others: bool,
@@ -174,6 +173,22 @@ struct Plugins {
     endings: Vec<&'static [u8]>,
     /// The packages among them: not paths, not objects.
     packages: Vec<Vec<u8>>,
+}
+
+impl Plugins {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            names_others: false,
+            sorts_classes: false,
+            reads_svelte: false,
+            sorts_package_json: false,
+            oxc: Oxc::Absent,
+            missing: Vec::new(),
+            endings: Vec::new(),
+            packages: Vec::new(),
+        }
+    }
 }
 
 /// A configuration file that has been read.
@@ -794,12 +809,23 @@ fn of_prettier(directory: &[u8], at: usize) -> Option<Vec<u8>> {
 
 /// Which formatters are among the dependencies of a project. That tells what one without a configuration file is
 /// formatted with.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Formatters {
     oxfmt: bool,
     /// It brings oxfmt, as `vp fmt`, whose options are the `fmt` of the `vite.config.ts`.
     vite_plus: bool,
     prettier: bool,
+}
+
+impl Formatters {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            oxfmt: false,
+            vite_plus: false,
+            prettier: false,
+        }
+    }
 }
 
 impl Formatters {
@@ -809,7 +835,7 @@ impl Formatters {
             .find_map(|it| fs::read(&paths::join(it, b"package.json")).ok())
             .and_then(|text| json::parse(&text));
         let Some(json) = nearest else {
-            return Formatters::default();
+            return Formatters::new();
         };
         let has = |name: &[u8]| {
             [&b"dependencies"[..], b"devDependencies"]
@@ -898,14 +924,13 @@ impl Config {
                 })
                 .collect(),
             is_oxfmt,
-            plugins: Plugins::of(json).unwrap_or_default(),
+            plugins: Plugins::of(json).unwrap_or_else(Plugins::new),
             ignores: gitignore::with_lines(None, paths::dirname(path), ignored.iter().copied()),
         }
     }
 }
 
 /// How to format a file.
-#[derive(Default)]
 pub(crate) struct Resolved {
     pub(crate) options: FormatOptions,
     /// `insertFinalNewline: false` of oxfmt.
@@ -914,6 +939,18 @@ pub(crate) struct Resolved {
     pub(crate) has_unsupported_option: bool,
     /// What oxc's parser reports and recovers from is formatted, as in the tests of its formatter. oxfmt refuses it.
     pub(crate) formats_what_has_errors: bool,
+}
+
+impl Resolved {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            options: FormatOptions::new(),
+            omits_final_newline: false,
+            has_unsupported_option: false,
+            formats_what_has_errors: false,
+        }
+    }
 }
 
 /// Adds what the `tsconfig.json` at `path` says about JSX, after what the files that it extends say.
@@ -990,12 +1027,22 @@ fn read_tsconfig(path: &[u8], settings: &mut Settings) {
 pub(crate) type Found = Result<Arc<Scope>, Fatal>;
 
 /// What is in a directory, of what matters for its [`Scope`].
-#[derive(Default)]
 struct Listed {
     /// The configuration files, as indices into [`NAMES`].
     candidates: Vec<usize>,
     has_editorconfig: bool,
     is_project_root: bool,
+}
+
+impl Listed {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            candidates: Vec::new(),
+            has_editorconfig: false,
+            is_project_root: false,
+        }
+    }
 }
 
 pub(crate) struct Configs<'c> {
@@ -1078,22 +1125,22 @@ impl<'c> Configs<'c> {
             options,
             overrides,
             environment,
-            by_directory: Guarded::new(FxHashMap::default()),
+            by_directory: Guarded::new(FxHashMap::with_hasher(bun_sema::util::FxBuild)),
             named: None,
-            arguments: Default::default(),
+            arguments: bun_threading::guarded::GuardedBy::init(Vec::new()),
             lacks_file: OnceLock::new(),
             note: OnceLock::new(),
             counts_everywhere,
             flavor: Flavor::Prettier,
-            tsconfigs: Guarded::new(FxHashMap::default()),
+            tsconfigs: Guarded::new(FxHashMap::with_hasher(bun_sema::util::FxBuild)),
             has_files_of_yarn_or_pnpm: OnceLock::new(),
             sort_imports: Guarded::new(Vec::new()),
             editorconfig_of_oxfmt: None,
             warnings: Guarded::new(Vec::new()),
             unsupported_options: Guarded::new(Vec::new()),
-            classes: Arc::default(),
+            classes: std::sync::Arc::new(crate::fmt::tailwind::Classes::new()),
         };
-        let mut formatters = Formatters::default();
+        let mut formatters = Formatters::new();
         let mut is_oxfmt = match configs.for_directory(&environment.cwd) {
             Ok(scope) => match &scope.config {
                 Some(config) => config.is_oxfmt,
@@ -1380,7 +1427,7 @@ impl<'c> Configs<'c> {
                 || (name.eq_ignore_ascii_case(wanted)
                     && bun_sys::exists(&paths::join(directory, wanted)))
         };
-        let mut listed = Listed::default();
+        let mut listed = Listed::new();
         for (name, is_directory) in
             entries.filter(|it| matches!(it.0.first(), Some(b'.' | b'p' | b'o' | b'P' | b'O')))
         {
@@ -1931,8 +1978,8 @@ impl<'c> Configs<'c> {
         if is_oxfmt {
             check_widths(|name| all.iter().rfind(|it| it.0 == name).map(|it| it.1))?;
         }
-        let mut resolved = Resolved::default();
-        let mut sort = SortSettings::default();
+        let mut resolved = Resolved::new();
+        let mut sort = SortSettings::new();
         let _ = resolved.options.set(b"filepath", path.unwrap_or_default());
         resolved.options.format_javascript = Some(super::format_block);
         resolved.options.parse_javascript = Some(super::parse_javascript);
@@ -1969,7 +2016,7 @@ impl<'c> Configs<'c> {
         let names_plugin_for_svelte = self.names_plugin_for_svelte(scope, path);
         // Prettier validates a plugin's options for every file.
         let mut package_json = (!is_oxfmt && self.names_plugin_for_package_json(scope, path))
-            .then(PackageJsonPlugin::default);
+            .then(PackageJsonPlugin::new);
         let mut unknown: Vec<(&[u8], &[u8])> = Vec::new();
         // `sortTailwindcss` as the options of the plugin have it.
         let mut of_plugin =
@@ -2005,7 +2052,7 @@ impl<'c> Configs<'c> {
                     let first = package_sort_order(value).map_err(Fatal)?;
                     package_json = Some(PackageJsonPlugin {
                         first,
-                        ..Default::default()
+                        ..PackageJsonPlugin::new()
                     });
                 }
                 b"experimentalSortPackageJson" if is_oxfmt => {
@@ -2117,7 +2164,7 @@ impl<'c> Configs<'c> {
             plugin.has_files_of_yarn_or_pnpm = self.has_files_of_yarn_or_pnpm();
             resolved.options.sort_package_json = Some(SortPackageJson {
                 plugin: Some(Arc::new(plugin)),
-                ..Default::default()
+                ..SortPackageJson::new()
             });
         }
         // A flag or `[fmt]` overrides the plugin.

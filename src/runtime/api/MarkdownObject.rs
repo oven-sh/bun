@@ -48,7 +48,7 @@ fn parser_err_to_js(
             RangeErrorOptions {
                 max: MAX_INPUT_LEN as i64,
                 field_name: b"input.byteLength",
-                ..Default::default()
+                ..RangeErrorOptions::new()
             },
         ),
         // The document, not the input length, overflowed the parser's u32
@@ -213,7 +213,7 @@ fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
 }
 
 fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<md::Options> {
-    let mut options = md::Options::default();
+    let mut options = md::Options::new();
     if opts_value.is_object() {
         // Handle compound autolinks: true | { url, www, email }
         if let Some(autolinks_val) = opts_value.get(global_this, "autolinks")? {
@@ -460,7 +460,6 @@ unsafe extern "C" {
 
 /// Component overrides keyed by HTML tag name.
 /// When set, the value replaces the string tag name in the `type` field.
-#[derive(Default)]
 struct Components {
     h1: JSValue,
     h2: JSValue,
@@ -492,6 +491,43 @@ struct Components {
     u: JSValue,
     br: JSValue,
 }
+
+impl Components {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            h1: JSValue::new(),
+            h2: JSValue::new(),
+            h3: JSValue::new(),
+            h4: JSValue::new(),
+            h5: JSValue::new(),
+            h6: JSValue::new(),
+            p: JSValue::new(),
+            blockquote: JSValue::new(),
+            ul: JSValue::new(),
+            ol: JSValue::new(),
+            li: JSValue::new(),
+            pre: JSValue::new(),
+            hr: JSValue::new(),
+            html: JSValue::new(),
+            table: JSValue::new(),
+            thead: JSValue::new(),
+            tbody: JSValue::new(),
+            tr: JSValue::new(),
+            th: JSValue::new(),
+            td: JSValue::new(),
+            em: JSValue::new(),
+            strong: JSValue::new(),
+            a: JSValue::new(),
+            img: JSValue::new(),
+            code: JSValue::new(),
+            del: JSValue::new(),
+            math: JSValue::new(),
+            u: JSValue::new(),
+            br: JSValue::new(),
+        }
+    }
+}
 // Note: `Default` for JSValue must be `JSValue::ZERO` (encoded 0).
 
 struct ParseStackEntry {
@@ -504,14 +540,14 @@ struct ParseStackEntry {
     title: Box<[u8]>,
 }
 
-impl Default for ParseStackEntry {
-    fn default() -> Self {
+impl ParseStackEntry {
+    fn new() -> Self {
         Self {
             children: JSValue::ZERO,
             data: 0,
             flags: 0,
-            href: Box::default(),
-            title: Box::default(),
+            href: Box::new([]),
+            title: Box::new([]),
         }
     }
 }
@@ -564,7 +600,7 @@ impl<'a> ParseRenderer<'a> {
             stack_check: StackCheck::init(),
             src_text,
             heading_tracker: md::helpers::HeadingIdTracker::init(heading_ids),
-            components: Components::default(),
+            components: Components::new(),
             react_version,
         };
         // Root entry — its children array becomes the return value
@@ -573,7 +609,7 @@ impl<'a> ParseRenderer<'a> {
         self_.marked_args.append(root_array);
         self_.stack.push(ParseStackEntry {
             children: root_array,
-            ..Default::default()
+            ..ParseStackEntry::new()
         });
         Ok(self_)
     }
@@ -701,7 +737,7 @@ impl<'a> ParseRenderer<'a> {
             children: array,
             data,
             flags,
-            ..Default::default()
+            ..ParseStackEntry::new()
         });
         Ok(())
     }
@@ -849,7 +885,7 @@ impl<'a> ParseRenderer<'a> {
             children: array,
             href: Box::from(detail.href),
             title: Box::from(detail.title),
-            ..Default::default()
+            ..ParseStackEntry::new()
         });
         Ok(())
     }
@@ -1053,7 +1089,6 @@ struct JsCallbackRenderer<'a> {
     stack_check: StackCheck,
 }
 
-#[derive(Default)]
 struct Callbacks {
     heading: JSValue,
     paragraph: JSValue,
@@ -1077,6 +1112,35 @@ struct Callbacks {
     strikethrough: JSValue,
     text: JSValue,
 }
+
+impl Callbacks {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            heading: JSValue::new(),
+            paragraph: JSValue::new(),
+            blockquote: JSValue::new(),
+            code: JSValue::new(),
+            list: JSValue::new(),
+            list_item: JSValue::new(),
+            hr: JSValue::new(),
+            table: JSValue::new(),
+            thead: JSValue::new(),
+            tbody: JSValue::new(),
+            tr: JSValue::new(),
+            th: JSValue::new(),
+            td: JSValue::new(),
+            html: JSValue::new(),
+            strong: JSValue::new(),
+            emphasis: JSValue::new(),
+            link: JSValue::new(),
+            image: JSValue::new(),
+            codespan: JSValue::new(),
+            strikethrough: JSValue::new(),
+            text: JSValue::new(),
+        }
+    }
+}
 // Note: `Default` for JSValue must be `JSValue::ZERO`.
 
 struct CallbackStackEntry {
@@ -1093,16 +1157,16 @@ struct CallbackStackEntry {
     title: Box<[u8]>,
 }
 
-impl Default for CallbackStackEntry {
-    fn default() -> Self {
+impl CallbackStackEntry {
+    fn new() -> Self {
         Self {
             buffer: Vec::new(),
             block_type: md::BlockType::Doc,
             data: 0,
             flags: 0,
             child_index: 0,
-            href: Box::default(),
-            title: Box::default(),
+            href: Box::new([]),
+            title: Box::new([]),
         }
     }
 }
@@ -1149,11 +1213,11 @@ impl<'a> JsCallbackRenderer<'a> {
             stack: Vec::new(),
             collecting: Vec::new(),
             list_depth: 0,
-            callbacks: Callbacks::default(),
+            callbacks: Callbacks::new(),
             heading_tracker: md::helpers::HeadingIdTracker::init(heading_ids),
             stack_check: StackCheck::init(),
         };
-        self_.push_entry(CallbackStackEntry::default(), true);
+        self_.push_entry(CallbackStackEntry::new(), true);
         Ok(self_)
     }
 
@@ -1314,7 +1378,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 data,
                 flags,
                 child_index,
-                ..Default::default()
+                ..CallbackStackEntry::new()
             },
             collects,
         );
@@ -1363,10 +1427,10 @@ impl<'a> JsCallbackRenderer<'a> {
             CallbackStackEntry {
                 href: Box::from(detail.href),
                 title: Box::from(detail.title),
-                ..Default::default()
+                ..CallbackStackEntry::new()
             }
         } else {
-            CallbackStackEntry::default()
+            CallbackStackEntry::new()
         };
         self.push_entry(entry, collects);
         Ok(())

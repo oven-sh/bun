@@ -427,7 +427,7 @@ mod tests {
     }
 
     fn test_err(params: &[clap::Param<u8>], args_strings: &[&[u8]], expected: &[u8]) {
-        let mut diag = clap::Diagnostic::default();
+        let mut diag = clap::Diagnostic::new();
         let mut iter = args::SliceIterator {
             remain: args_strings,
         };
@@ -489,7 +489,7 @@ mod tests {
                 id: 0,
                 names: clap::Names {
                     short: Some(b'a'),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 ..Default::default()
             },
@@ -497,7 +497,7 @@ mod tests {
                 id: 1,
                 names: clap::Names {
                     short: Some(b'b'),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 ..Default::default()
             },
@@ -505,7 +505,7 @@ mod tests {
                 id: 2,
                 names: clap::Names {
                     short: Some(b'c'),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 takes_value: clap::Values::One,
                 ..Default::default()
@@ -514,7 +514,7 @@ mod tests {
                 id: 3,
                 names: clap::Names {
                     short: Some(b'd'),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 takes_value: clap::Values::Many,
                 ..Default::default()
@@ -595,7 +595,7 @@ mod tests {
                 id: 0,
                 names: clap::Names {
                     long: Some(b"aa"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 ..Default::default()
             },
@@ -603,7 +603,7 @@ mod tests {
                 id: 1,
                 names: clap::Names {
                     long: Some(b"bb"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 ..Default::default()
             },
@@ -611,7 +611,7 @@ mod tests {
                 id: 2,
                 names: clap::Names {
                     long: Some(b"cc"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 takes_value: clap::Values::One,
                 ..Default::default()
@@ -620,7 +620,7 @@ mod tests {
                 id: 3,
                 names: clap::Names {
                     long: Some(b"dd"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 takes_value: clap::Values::Many,
                 ..Default::default()
@@ -692,7 +692,7 @@ mod tests {
                 names: clap::Names {
                     short: Some(b'a'),
                     long: Some(b"aa"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 ..Default::default()
             },
@@ -701,7 +701,7 @@ mod tests {
                 names: clap::Names {
                     short: Some(b'b'),
                     long: Some(b"bb"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 ..Default::default()
             },
@@ -710,7 +710,7 @@ mod tests {
                 names: clap::Names {
                     short: Some(b'c'),
                     long: Some(b"cc"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 takes_value: clap::Values::One,
                 ..Default::default()
@@ -844,7 +844,7 @@ mod tests {
                 names: clap::Names {
                     short: Some(b'a'),
                     long: Some(b"aa"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 ..Default::default()
             },
@@ -853,7 +853,7 @@ mod tests {
                 names: clap::Names {
                     short: Some(b'c'),
                     long: Some(b"cc"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 takes_value: clap::Values::One,
                 ..Default::default()
@@ -893,7 +893,7 @@ mod tests {
                 id: 0,
                 names: clap::Names {
                     long: Some(b"aa"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 ..Default::default()
             },
@@ -936,7 +936,7 @@ mod tests {
                 id: 0,
                 names: clap::Names {
                     long: Some(b"aa"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 ..Default::default()
             },
@@ -989,7 +989,7 @@ mod tests {
                 id: 0,
                 names: clap::Names {
                     long: Some(b"aa"),
-                    ..Default::default()
+                    ..clap::Names::new()
                 },
                 ..Default::default()
             },
@@ -1000,7 +1000,7 @@ mod tests {
             },
         ];
         let parse = |args: &[&[u8]]| {
-            let mut diag = clap::Diagnostic::default();
+            let mut diag = clap::Diagnostic::new();
             let mut iter = args::SliceIterator { remain: args };
             let mut c = StreamingClap::<u8, args::SliceIterator> {
                 short_aliases: &[],

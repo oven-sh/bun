@@ -55,15 +55,15 @@ impl HotReloadEvent {
         HotReloadEvent {
             owner,
             atomics: core::ptr::null_mut(),
-            concurrent_task: Default::default(),
-            files: Default::default(),
-            dirs: Default::default(),
+            concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask::init(),
+            files: StringArrayHashMap::init(),
+            dirs: StringArrayHashMap::init(),
             extra_files: Vec::new(),
             timer: std::time::Instant::now(),
             #[cfg(debug_assertions)]
             contention_indicator: core::sync::atomic::AtomicU32::new(0),
             #[cfg(debug_assertions)]
-            debug_mutex: bun_threading::Mutex::default(),
+            debug_mutex: bun_threading::Mutex::init(),
         }
     }
 
@@ -143,7 +143,9 @@ impl HotReloadEvent {
                             // cached, anyways.
                             // Note: inlined `append_file` body for disjoint borrow
                             // (`self.dirs.keys()` is held immutably across this loop).
-                            bun_core::handle_oom(self.files.get_or_put(source_file_path.slice()));
+                            bun_core::handle_oom(
+                                self.files.get_or_put(source_file_path.slice(), || ()),
+                            );
                             dev.directory_watchers.free_dependency_index(index);
                         } else {
                             // rebuild a new linked list for unaffected files
@@ -227,7 +229,7 @@ impl HotReloadEvent {
 
     /// Records a changed file path in the pending hot-reload event (deduplicated).
     pub(crate) fn append_file(&mut self, file_path: &[u8]) {
-        bun_core::handle_oom(self.files.get_or_put(file_path));
+        bun_core::handle_oom(self.files.get_or_put(file_path, || ()));
     }
 
     /// Records a changed directory (and, when present, the changed entry
@@ -236,7 +238,7 @@ impl HotReloadEvent {
         if dir_path.is_empty() {
             return;
         }
-        bun_core::handle_oom(self.dirs.get_or_put(dir_path));
+        bun_core::handle_oom(self.dirs.get_or_put(dir_path, || ()));
 
         let Some(sub_path) = maybe_sub_path else {
             return;
@@ -305,7 +307,7 @@ impl HotReloadEvent {
             return;
         }
 
-        let mut entry_points = EntryPointList::default();
+        let mut entry_points = EntryPointList::new();
 
         // SAFETY: `first` is live; `&mut *dev` re-borrowed for the call only.
         // `process_file_list` mutates graph/watcher/transpiler fields of `dev`,

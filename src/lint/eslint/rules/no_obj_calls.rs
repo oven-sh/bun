@@ -79,7 +79,7 @@ impl<'a> Oxlint<'a> {
     /// name. Of the global variables only `objects` are told.
     fn resolve_global_binding(&self, mut ident: Expr<'a>) -> Option<Name<'a>> {
         // `var a = b, b = a;` has no end.
-        let mut seen = rustc_hash::FxHashSet::default();
+        let mut seen = rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         loop {
             let name = ident.as_ident()?;
             let Some(declaration) = get_declaration_of_variable(ident) else {

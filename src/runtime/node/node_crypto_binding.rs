@@ -459,7 +459,7 @@ pub(crate) mod random {
                         global,
                         options,
                         format_args!("options"),
-                        Default::default(),
+                        crate::node::validators_impl::ValidateObjectOptions::empty(),
                     )?;
                     if let Some(disable_entropy_cache_value) =
                         options.get(global, "disableEntropyCache")?
@@ -501,7 +501,7 @@ pub(crate) mod random {
                         global,
                         options,
                         format_args!("options"),
-                        Default::default(),
+                        crate::node::validators_impl::ValidateObjectOptions::empty(),
                     )?;
                     if let Some(disable_entropy_cache_value) =
                         options.get(global, "disableEntropyCache")?
@@ -560,7 +560,7 @@ pub(crate) mod random {
                     jsc::RangeErrorOptions {
                         field_name: b"offset",
                         msg: range.as_bytes(),
-                        ..Default::default()
+                        ..jsc::RangeErrorOptions::new()
                     },
                 ));
             }
@@ -586,7 +586,7 @@ pub(crate) mod random {
                     jsc::RangeErrorOptions {
                         field_name: b"size",
                         msg: range.as_bytes(),
-                        ..Default::default()
+                        ..jsc::RangeErrorOptions::new()
                     },
                 ));
             }
@@ -597,7 +597,7 @@ pub(crate) mod random {
                     jsc::RangeErrorOptions {
                         field_name: b"size + offset",
                         max: i64::try_from(length).expect("int cast"),
-                        ..Default::default()
+                        ..jsc::RangeErrorOptions::new()
                     },
                 ));
             }
@@ -1561,7 +1561,13 @@ mod _impl {
         crypto.put(
             global,
             b"pbkdf2",
-            JSFunction::create(global, "pbkdf2", __jsc_host_pbkdf2, 6, Default::default()),
+            JSFunction::create(
+                global,
+                "pbkdf2",
+                __jsc_host_pbkdf2,
+                6,
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
+            ),
         );
         crypto.put(
             global,
@@ -1571,7 +1577,7 @@ mod _impl {
                 "pbkdf2Sync",
                 __jsc_host_pbkdf2_sync,
                 5,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         crypto.put(
@@ -1582,7 +1588,7 @@ mod _impl {
                 "randomInt",
                 random::__jsc_host_random_int,
                 2,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         crypto.put(
@@ -1593,7 +1599,7 @@ mod _impl {
                 "randomFill",
                 random::__jsc_host_random_fill,
                 4,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         crypto.put(
@@ -1604,7 +1610,7 @@ mod _impl {
                 "randomFillSync",
                 random::__jsc_host_random_fill_sync,
                 3,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         crypto.put(
@@ -1615,7 +1621,7 @@ mod _impl {
                 "randomUUID",
                 random::__jsc_host_random_uuid,
                 1,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         crypto.put(
@@ -1626,7 +1632,7 @@ mod _impl {
                 "randomUUIDv7",
                 random::__jsc_host_random_uuid_v7,
                 1,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         crypto.put(
@@ -1637,7 +1643,7 @@ mod _impl {
                 "randomBytes",
                 random::__jsc_host_random_bytes,
                 2,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         crypto.put(
@@ -1648,7 +1654,7 @@ mod _impl {
                 "timingSafeEqual",
                 __jsc_host_timing_safe_equal,
                 2,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
 
@@ -1660,7 +1666,7 @@ mod _impl {
                 "secureHeapUsed",
                 __jsc_host_secure_heap_used,
                 0,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         crypto.put(
@@ -1671,7 +1677,7 @@ mod _impl {
                 "getFips",
                 __jsc_host_get_fips,
                 0,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         crypto.put(
@@ -1682,7 +1688,7 @@ mod _impl {
                 "setFips",
                 __jsc_host_set_fips,
                 1,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         crypto.put(
@@ -1693,7 +1699,7 @@ mod _impl {
                 "setEngine",
                 __jsc_host_set_engine,
                 2,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
 
@@ -1705,14 +1711,20 @@ mod _impl {
                 "getHashes",
                 __jsc_host_get_hashes,
                 0,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
 
         crypto.put(
             global,
             b"scrypt",
-            JSFunction::create(global, "scrypt", __jsc_host_scrypt, 5, Default::default()),
+            JSFunction::create(
+                global,
+                "scrypt",
+                __jsc_host_scrypt,
+                5,
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
+            ),
         );
         crypto.put(
             global,
@@ -1722,14 +1734,20 @@ mod _impl {
                 "scryptSync",
                 __jsc_host_scrypt_sync,
                 4,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
 
         crypto.put(
             global,
             b"argon2",
-            JSFunction::create(global, "argon2", __jsc_host_argon2, 10, Default::default()),
+            JSFunction::create(
+                global,
+                "argon2",
+                __jsc_host_argon2,
+                10,
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
+            ),
         );
         crypto.put(
             global,
@@ -1739,7 +1757,7 @@ mod _impl {
                 "argon2Sync",
                 __jsc_host_argon2_sync,
                 9,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
 

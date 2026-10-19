@@ -144,10 +144,10 @@ pub struct EnvironmentConfig {
     pub enable_forest: bool,
 }
 
-impl Default for EnvironmentConfig {
-    fn default() -> Self {
+impl EnvironmentConfig {
+    pub fn new() -> Self {
         Self {
-            custom_hooks: HashMap::default(),
+            custom_hooks: HashMap::with_hasher(rustc_hash::FxBuildHasher),
             enable_reset_cache_on_source_file_changes: None,
             module_type_provider: None,
             enable_preserve_existing_memoization_guarantees: true,

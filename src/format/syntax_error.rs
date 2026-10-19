@@ -55,8 +55,8 @@ impl<'a> BeforeNormalizing<'a> {
 /// the reason where nothing is refused.
 pub(crate) struct Refusal(std::cell::Cell<SyntaxError>);
 
-impl Default for Refusal {
-    fn default() -> Self {
+impl Refusal {
+    pub(crate) fn new() -> Self {
         Refusal(std::cell::Cell::new(SyntaxError(
             Message::UnexpectedToken,
             0,

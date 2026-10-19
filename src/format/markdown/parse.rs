@@ -101,7 +101,7 @@ fn line_end_in(text: &[u8], offset: usize) -> usize {
 }
 
 /// What `liquid_end` has looked for, so that it is not looked for again from every `{{`.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct LeafMemo {
     /// For `}}` and for `%}`: from where it has been looked for, and where the first one is from there. `usize::MAX`:
     /// there is none. 0: it has not been looked for.
@@ -109,6 +109,17 @@ struct LeafMemo {
     /// The start of a line that starts a container, with no such line between it and `no_container_from`.
     container: usize,
     no_container_from: usize,
+}
+
+impl LeafMemo {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            closing: [(0, 0); 2],
+            container: 0,
+            no_container_from: 0,
+        }
+    }
 }
 
 /// Where the `{{ .. }}` or `{% .. %}` ends that starts a line, if nothing follows it on its last line.
@@ -195,7 +206,7 @@ mod tag {
 const SPAN_BYTES: &[u8] = b"$[{@:.";
 
 /// What has been looked for in a text, so that it is not looked for again from every marker. Places are addresses.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct SpanMemo {
     /// `SpanStart::serial` of the text.
     serial: u32,
@@ -205,6 +216,18 @@ struct SpanMemo {
     no_liquid_end: [(usize, usize); 2],
     /// There is no `]` and no line break from the first place to the second.
     no_bracket: (usize, usize),
+}
+
+impl SpanMemo {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            serial: 0,
+            no_address: (0, 0),
+            no_liquid_end: [(0, 0); 2],
+            no_bracket: (0, 0),
+        }
+    }
 }
 
 /// Prettier's `tokenizeEsComment`: `{/* .. */}` on one line. Returns where what is in it is, and where it ends.
@@ -300,7 +323,7 @@ fn span_at(
     if known.serial != start.serial {
         known = SpanMemo {
             serial: start.serial,
-            ..SpanMemo::default()
+            ..SpanMemo::new()
         };
     }
     let from_here = |end: usize, tag: u32| ExtensionSpan {
@@ -639,7 +662,7 @@ fn leaves_paragraph(above: Option<&[u8]>, line: &[u8]) -> bool {
         }
     };
     let text = [first, b"\n", line, b"\n"].concat();
-    let mut tree = Tree::default();
+    let mut tree = Tree::new();
     let Some(root) = parse_lines(&text, &mut tree, Syntax::TwoLines, 0) else {
         return false;
     };
@@ -2132,7 +2155,7 @@ pub(crate) fn parse_lines(
     }
     let is_plain = syntax == Syntax::Plain;
     let is_mdx = syntax == Syntax::Mdx;
-    let mut options = Options::default();
+    let mut options = Options::new();
     (options.tables, options.math_blocks) = (!is_plain, !is_plain);
     (options.footnotes, options.no_single_tilde) = (true, true);
     let is_as_oxfmt_reads = matches!(syntax, Syntax::WithDirectives | Syntax::TwoLines);
@@ -2146,12 +2169,12 @@ pub(crate) fn parse_lines(
         (options.math_blocks, options.no_single_tilde) = (math, false);
         (options.micromark, options.micromark_to_the_letter) = (false, false);
     }
-    let leaf_memo = Cell::new(LeafMemo::default());
+    let leaf_memo = Cell::new(LeafMemo::new());
     let leaf = |start: &LeafStart<'_>| match is_mdx {
         true => es_syntax_end(start),
         false => liquid_end(start, &leaf_memo),
     };
-    let memo = Cell::new(SpanMemo::default());
+    let memo = Cell::new(SpanMemo::new());
     let can_start_with_check = Cell::new(false);
     let span = |start: &SpanStart<'_>| span_at(start, syntax, can_start_with_check.get(), &memo);
     let extensions = Extensions {

@@ -216,8 +216,8 @@ pub struct URL<'a> {
     pub(crate) authority_end: AuthorityEnd,
 }
 
-impl<'a> Default for URL<'a> {
-    fn default() -> Self {
+impl<'a> URL<'a> {
+    pub fn new() -> Self {
         Self {
             hash: b"",
             host: b"",
@@ -240,9 +240,16 @@ impl<'a> Default for URL<'a> {
 
 /// An owning URL — holds the normalized `href` buffer that the borrowed
 /// `URL<'_>` view slices into; `Drop` frees it.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct OwnedURL {
     href: Box<[u8]>,
+}
+
+impl OwnedURL {
+    #[inline]
+    pub fn new() -> Self {
+        Self { href: Box::new([]) }
+    }
 }
 
 impl OwnedURL {
@@ -699,12 +706,12 @@ impl<'a> URL<'a> {
 
     fn parse_with(base: &'a [u8], authority_end: AuthorityEnd) -> URL<'a> {
         if base.is_empty() {
-            return URL::default();
+            return URL::new();
         }
         let mut url = URL {
             href: base,
             authority_end,
-            ..Default::default()
+            ..URL::new()
         };
         let mut offset: u32 = 0;
         match base[0] {
@@ -1051,7 +1058,7 @@ impl QueryStringMap {
     pub fn init_with_scanner(
         mut scanner: CombinedScanner<'_>,
     ) -> Result<Option<QueryStringMap>, bun_alloc::AllocError> {
-        let mut list = ParamList::default();
+        let mut list = Vec::new();
 
         let mut estimated_str_len: usize = 0;
         let mut count: usize = 0;
@@ -1207,7 +1214,7 @@ impl QueryStringMap {
     }
 
     pub fn init(query_string: &[u8]) -> Result<Option<QueryStringMap>, bun_alloc::AllocError> {
-        let mut list = ParamList::default();
+        let mut list = Vec::new();
 
         let mut scanner = Scanner::init(query_string);
         let mut count: usize = 0;
@@ -1624,7 +1631,7 @@ impl<'a> CombinedScanner<'a> {
 
 fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer {
     if in_.is_empty() || parent.is_empty() {
-        return api::StringPointer::default();
+        return api::StringPointer::new();
     }
 
     if let Some([offset, length]) = bun_core::range_of_slice_in_buffer(in_, parent) {
@@ -1640,7 +1647,7 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
         }
     }
 
-    api::StringPointer::default()
+    api::StringPointer::new()
 }
 
 pub struct PathnameScanner<'a> {

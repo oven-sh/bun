@@ -87,7 +87,7 @@ fn print_installed_workspace_section<W: Write>(
                 | ShouldPrintPackageInstallResult::Return => {}
                 ShouldPrintPackageInstallResult::Update(update_info) => {
                     if update_dedupe
-                        .get_or_put(dependencies[dep_id as usize].name_hash)?
+                        .get_or_put(dependencies[dep_id as usize].name_hash, || ())?
                         .found_existing
                     {
                         continue;
@@ -157,7 +157,7 @@ fn print_installed_workspace_section<W: Write>(
         let dep = &dependencies[dep_id as usize];
         let package_id = resolutions[dep_id as usize];
 
-        if dep_dedupe.get_or_put(dep.name_hash)?.found_existing {
+        if dep_dedupe.get_or_put(dep.name_hash, || ())?.found_existing {
             continue;
         }
 
@@ -416,7 +416,10 @@ fn print_catalog_entry_updates<W: Write>(
         else {
             continue;
         };
-        if update_dedupe.get_or_put(dep.name_hash)?.found_existing {
+        if update_dedupe
+            .get_or_put(dep.name_hash, || ())?
+            .found_existing
+        {
             continue;
         }
         print_updated_package(this, manager, &update_info, writer, enable_ansi_colors)?;

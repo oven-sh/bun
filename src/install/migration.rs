@@ -107,7 +107,7 @@ pub(crate) fn push_workspace_dependency(
             value: dependency::Value {
                 workspace: sbuf!(this).append(path)?,
             },
-            ..Default::default()
+            ..dependency::Version::new()
         },
     };
     this.buffers.dependencies.push(dep);
@@ -185,7 +185,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                 return LoadResult::Ok(LoadResultOk {
                     lockfile: this,
                     migrated,
-                    serializer_result: Default::default(),
+                    serializer_result: crate::lockfile_real::bun_lockb::SerializerLoadResult::new(),
                     format,
                 });
             }
@@ -279,7 +279,7 @@ fn finish_migration(
     if let Some(path) = crate::lockfile_real::join_top_level_dir(&[b"package.json"])
         && let crate::GetJsonResult::Entry(root) = manager
             .workspace_package_json_cache
-            .get_with_path(log, path.slice(), Default::default())
+            .get_with_path(log, path.slice(), super::GetJsonOptions::new())
     {
         bun_core::handle_oom(crate::lockfile_real::package::append_patched_dependencies(
             ok.lockfile,
@@ -559,7 +559,7 @@ fn migrate_npm_lockfile<'a>(
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile: this,
         migrated: Migrated::Npm,
-        serializer_result: Default::default(),
+        serializer_result: crate::lockfile_real::bun_lockb::SerializerLoadResult::new(),
         format: LockfileFormat::Binary,
     }))
 }

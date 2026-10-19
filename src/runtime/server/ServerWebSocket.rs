@@ -67,8 +67,15 @@ pub(crate) struct ServerWebSocket {
 // We pack the per-socket data into this struct below:
 // ssl:1, closed:1, ws_package:1, binary_type:4, packed_websocket_ptr:57
 #[repr(transparent)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct Flags(u64);
+
+impl Flags {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl Flags {
     const SSL_BIT: u64 = 1 << 0;
@@ -574,7 +581,7 @@ impl ServerWebSocket {
         let this = bun_core::heap::into_raw(Box::new(ServerWebSocket {
             handler: bun_ptr::BackRef::new(handler),
             this_value: JsCell::new(JsRef::empty()),
-            flags: Cell::new(Flags::default()),
+            flags: Cell::new(Flags::new()),
             signal: Cell::new(signal),
         }));
         // Get a strong ref and downgrade when terminating/close and GC will be able to collect the newly created value

@@ -311,7 +311,7 @@ impl Rule for NoConstantBinaryExpression {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Constants> {
-        Some(Constants::default())
+        Some(Constants::new())
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {

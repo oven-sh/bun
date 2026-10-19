@@ -60,7 +60,7 @@ impl BuildCommand {
     ) -> Result<(), crate::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: true,
-            ..Default::default()
+            ..Global::AllocatorConfiguration::new()
         });
         let log = ctx.log;
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
@@ -543,9 +543,9 @@ impl BuildCommand {
                 use bun_resolver::package_json::{
                     MacroImportReplacementMap as ResolverInner, MacroMap as ResolverMacroMap,
                 };
-                let mut remap = ResolverMacroMap::default();
+                let mut remap = ResolverMacroMap::init();
                 for (pkg, imports) in macros.iter() {
-                    let mut inner = ResolverInner::default();
+                    let mut inner = ResolverInner::init();
                     for (name, path) in imports.iter() {
                         inner.insert(name, Box::<[u8]>::from(path.as_ref()));
                     }
@@ -785,7 +785,8 @@ impl BuildCommand {
             let root_dir = if root_path.is_empty() || root_path == b"." {
                 bun_sys::Dir::cwd()
             } else {
-                match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
+                match bun_sys::Dir::cwd().make_open_path(root_path, bun_sys::OpenDirOptions::new())
+                {
                     Ok(d) => d,
                     Err(err) => {
                         Output::err(
@@ -814,7 +815,7 @@ impl BuildCommand {
                     max_path_len.max(from_path.len().max(f.dest_path.len()) + 2 - from_path.len());
                 size_padding = size_padding.max(bun_fmt::count(format_args!(
                     "{}",
-                    bun_fmt::size(f.size, Default::default())
+                    bun_fmt::size(f.size, bun_core::fmt::SizeFormatterOptions::new())
                 )));
             }
 
@@ -872,7 +873,7 @@ impl BuildCommand {
                     ctx.bundler_options.compile_executable_path.as_deref(),
                     {
                         use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
-                        let mut flags = Flags::default();
+                        let mut flags = Flags::empty();
                         if !ctx.bundler_options.compile_autoload_dotenv {
                             flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
                         }
@@ -964,7 +965,7 @@ impl BuildCommand {
                                     encoding: bun_sys::WriteFileEncoding::Buffer,
                                     dirfd: root_dir.fd,
                                     file: bun_sys::PathOrFileDescriptor::Path(map_basename),
-                                    ..Default::default()
+                                    ..bun_sys::WriteFileArgs::new()
                                 },
                             ) {
                                 Err(err) => {
@@ -1036,7 +1037,7 @@ impl BuildCommand {
             for f in output_files.iter() {
                 size_padding = size_padding.max(bun_fmt::count(format_args!(
                     "{}",
-                    bun_fmt::size(f.size, Default::default())
+                    bun_fmt::size(f.size, bun_core::fmt::SizeFormatterOptions::new())
                 )));
             }
 
@@ -1093,14 +1094,18 @@ impl BuildCommand {
                 }
 
                 splat_byte_all(writer, b' ', padding_count)?;
-                write!(writer, "{}  ", bun_fmt::size(f.size, Default::default()))?;
+                write!(
+                    writer,
+                    "{}  ",
+                    bun_fmt::size(f.size, bun_core::fmt::SizeFormatterOptions::new())
+                )?;
                 splat_byte_all(
                     writer,
                     b' ',
                     size_padding
                         - bun_fmt::count(format_args!(
                             "{}",
-                            bun_fmt::size(f.size, Default::default())
+                            bun_fmt::size(f.size, bun_core::fmt::SizeFormatterOptions::new())
                         )),
                 )?;
 
@@ -1205,7 +1210,7 @@ fn print_summary(
                 "  <green>minify<r>  -{} <d>(estimate)<r>",
                 bun_fmt::size(
                     usize::try_from(delta).expect("int cast"),
-                    Default::default()
+                    bun_core::fmt::SizeFormatterOptions::new()
                 )
             );
         } else if -delta > 1024 {
@@ -1213,7 +1218,7 @@ fn print_summary(
                 "  <b>minify<r>   +{} <d>(estimate)<r>",
                 bun_fmt::size(
                     usize::try_from(-delta).expect("int cast"),
-                    Default::default()
+                    bun_core::fmt::SizeFormatterOptions::new()
                 )
             );
         } else {

@@ -17,7 +17,7 @@ use crate::{
 // the `Property` enum (properties_generated.rs) stays lifetime-free.
 // Re-threading `'bump` through `Property<'a>` crate-wide is deferred work
 // (see /tmp/todo-fix/complex/mk04-repair.md; also TransformHandler below).
-#[derive(Clone, PartialEq, Default)]
+#[derive(Clone, PartialEq)]
 pub struct TransformList {
     pub(crate) v: Vec<Transform>,
 }
@@ -921,13 +921,25 @@ crate::css_eql_partialeq!(
 // port iteration; the `Property` enum is lifetime-free (see TransformList
 // above), so the handler is too. Re-threading `'bump` crate-wide is deferred
 // work (see /tmp/todo-fix/complex/mk04-repair.md).
-#[derive(Default)]
 pub struct TransformHandler {
     pub(crate) transform: Option<(TransformList, VendorPrefix)>,
     pub(crate) translate: Option<Translate>,
     pub(crate) rotate: Option<Rotate>,
     pub(crate) scale: Option<Scale>,
     pub(crate) has_any: bool,
+}
+
+impl TransformHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            transform: None,
+            translate: None,
+            rotate: None,
+            scale: None,
+            has_any: false,
+        }
+    }
 }
 
 // `context.arena` does not exist on PropertyHandlerContext; the arena is

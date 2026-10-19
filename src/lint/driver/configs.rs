@@ -758,8 +758,8 @@ impl<'l> Loader<'l> {
             options,
             environment,
             js_plugins,
-            by_directory: Guarded::new(FxHashMap::default()),
-            by_file: Guarded::new(FxHashMap::default()),
+            by_directory: Guarded::new(FxHashMap::with_hasher(bun_sema::util::FxBuild)),
+            by_file: Guarded::new(FxHashMap::with_hasher(bun_sema::util::FxBuild)),
             warnings: Guarded::new(Vec::new()),
             unsupported: Guarded::new(Vec::new()),
             advice: Guarded::new(Vec::new()),
@@ -770,15 +770,17 @@ impl<'l> Loader<'l> {
             passed_over: OnceLock::new(),
             has_file_of_eslint: OnceLock::new(),
             lacks_file: OnceLock::new(),
-            named: Default::default(),
+            named: bun_threading::guarded::GuardedBy::init(Vec::new()),
             refused: OnceLock::new(),
             mistake: OnceLock::new(),
             packages_of_built_in: Guarded::new(Vec::new()),
             wants_types: OnceLock::new(),
             is_of_vite: OnceLock::new(),
-            searched_from: Default::default(),
-            tsconfigs: Default::default(),
-            frameworks: Default::default(),
+            searched_from: bun_threading::guarded::GuardedBy::init(Vec::new()),
+            tsconfigs: bun_threading::guarded::GuardedBy::init(Vec::new()),
+            frameworks: bun_threading::guarded::GuardedBy::init(
+                bun_sema::util::FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            ),
         }
     }
 
@@ -1048,7 +1050,7 @@ impl<'l> Loader<'l> {
             rules: rules_of(alone, self.cwd()),
             wildcards: alone.wildcards.clone(),
             globals: (globals_of(alone).and_then(Json::into_object)).unwrap_or_default(),
-            ..Override::default()
+            ..Override::new()
         });
         let is_empty =
             |it: &Override| it.rules.is_empty() && it.globals.is_empty() && it.wildcards.is_empty();
@@ -2789,7 +2791,7 @@ impl<'l> Loader<'l> {
 
     /// For oxlint `--ignore-pattern` is for the whole run, whatever configuration file is nearest.
     fn patterns_of_the_run(&self) -> gitignore::Chain {
-        let mut chain = gitignore::Chain::default();
+        let mut chain = None;
         for (start, patterns) in self.ignore_patterns() {
             chain = gitignore::with_lines(chain, &start, patterns.iter().map(|it| &it[..]));
         }
@@ -2805,7 +2807,7 @@ impl<'l> Loader<'l> {
         are_all_in_repositories: impl FnOnce() -> bool,
     ) -> Option<Files> {
         if !self.reads_ignore_files(loaded) {
-            return Some(Files::default());
+            return Some(Files::new());
         }
         let is_for_oxc = loaded.flavor == Flavor::Oxlint;
         let of_git = match OfGit::for_search(directory, is_for_oxc, are_all_in_repositories) {

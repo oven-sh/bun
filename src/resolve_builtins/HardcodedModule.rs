@@ -910,9 +910,18 @@ fn lookup(
     map.get(name).copied()
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct Cfg {
     pub rewrite_jest_for_tests: bool,
+}
+
+impl Cfg {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            rewrite_jest_for_tests: false,
+        }
+    }
 }
 
 impl Alias {

@@ -120,7 +120,7 @@ impl FilePoll {
         }
 
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
-        self.flags = FlagsSet::default();
+        self.flags = FlagsSet::empty();
         self.fd = Fd::INVALID;
         // All `self` field writes are done. Decay `self` to a raw slot pointer
         // *before* materializing `&mut Store` so the `&mut Store` borrow (which

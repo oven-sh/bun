@@ -53,7 +53,7 @@ pub(crate) mod js_bundler {
     /// The bytes are copied: the bundler runs on a separate thread and must not
     /// borrow JS heap memory.
     fn file_map_from_js(global_this: &JSGlobalObject, files_value: JSValue) -> JsResult<FileMap> {
-        let mut this = FileMap::default();
+        let mut this = FileMap::new();
         // errdefer this.deinit() — `FileMap` (Box<[u8]> values) drops on `?`.
 
         let Some(files_obj) = files_value.get_object() else {
@@ -68,7 +68,7 @@ pub(crate) mod js_bundler {
             jsc::JSPropertyIteratorOptions {
                 skip_empty_name: true,
                 include_value: true,
-                ..Default::default()
+                ..jsc::JSPropertyIteratorOptions::init()
             },
         )?;
 
@@ -169,67 +169,67 @@ pub(crate) mod js_bundler {
         pub(crate) optimize_imports: StringSet,
     }
 
-    impl Default for Config {
-        fn default() -> Self {
+    impl Config {
+        pub(crate) fn new() -> Self {
             Self {
                 target: Target::Browser,
-                entry_points: StringSet::default(),
+                entry_points: StringSet::empty(),
                 react_fast_refresh: false,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
                 react_compiler_output_mode: None,
                 define: StringMap::init(false),
                 loaders: None,
-                dir: OwnedString::default(),
-                outdir: OwnedString::default(),
-                rootdir: OwnedString::default(),
-                tsconfig_override: OwnedString::default(),
+                dir: OwnedString::new(),
+                outdir: OwnedString::new(),
+                rootdir: OwnedString::new(),
+                tsconfig_override: OwnedString::new(),
                 jsx: api::Jsx {
-                    factory: Box::default(),
-                    fragment: Box::default(),
+                    factory: Box::new([]),
+                    fragment: Box::new([]),
                     runtime: api::JsxRuntime::Automatic,
-                    import_source: Box::default(),
+                    import_source: Box::new([]),
                     development: true, // Default to development mode like old Pragma
-                    ..Default::default()
+                    ..api::Jsx::new()
                 },
                 force_node_env: options::ForceNodeEnv::Unspecified,
                 code_splitting: false,
                 split_require: true,
-                minify: Minify::default(),
+                minify: Minify::new(),
                 no_macros: false,
                 ignore_dce_annotations: false,
                 emit_dce_annotations: None,
                 deprecated_namespace_object_setters: true,
                 tree_shaking: None,
-                names: Names::default(),
-                external: StringSet::default(),
+                names: Names::new(),
+                external: StringSet::empty(),
                 allow_unresolved: None,
                 source_map: options::SourceMapOption::None,
-                public_path: OwnedString::default(),
-                conditions: StringSet::default(),
+                public_path: OwnedString::new(),
+                conditions: StringSet::empty(),
                 packages: options::PackagesOption::Bundle,
                 format: options::Format::Esm,
                 bytecode: false,
                 bytecode_depth: u32::MAX,
                 optimize_bytecode: true,
-                banner: OwnedString::default(),
-                footer: OwnedString::default(),
-                metafile_json_path: OwnedString::default(),
-                metafile_markdown_path: OwnedString::default(),
+                banner: OwnedString::new(),
+                footer: OwnedString::new(),
+                metafile_json_path: OwnedString::new(),
+                metafile_markdown_path: OwnedString::new(),
                 css_chunking: false,
                 min_chunk_size: None,
                 fold_chunks: true,
                 module_preload: true,
                 check: false,
-                drop: StringSet::default(),
-                features: StringSet::default(),
+                drop: StringSet::empty(),
+                features: StringSet::empty(),
                 throw_on_error: true,
                 env_behavior: api::DotEnvBehavior::Disable,
-                env_prefix: OwnedString::default(),
+                env_prefix: OwnedString::new(),
                 compile: None,
-                files: FileMap::default(),
+                files: FileMap::new(),
                 metafile: false,
-                optimize_imports: StringSet::default(),
+                optimize_imports: StringSet::empty(),
             }
         }
     }
@@ -257,20 +257,20 @@ pub(crate) mod js_bundler {
         pub(crate) bytecode_order: Vec<Box<[u8]>>,
     }
 
-    impl Default for CompileOptions {
-        fn default() -> Self {
+    impl CompileOptions {
+        pub(crate) fn new() -> Self {
             Self {
-                compile_target: CompileTarget::default(),
-                exec_argv: OwnedString::default(),
-                executable_path: OwnedString::default(),
+                compile_target: CompileTarget::new(),
+                exec_argv: OwnedString::new(),
+                executable_path: OwnedString::new(),
                 windows_hide_console: false,
-                windows_icon_path: OwnedString::default(),
-                windows_title: OwnedString::default(),
-                windows_publisher: OwnedString::default(),
-                windows_version: OwnedString::default(),
-                windows_description: OwnedString::default(),
-                windows_copyright: OwnedString::default(),
-                outfile: OwnedString::default(),
+                windows_icon_path: OwnedString::new(),
+                windows_title: OwnedString::new(),
+                windows_publisher: OwnedString::new(),
+                windows_version: OwnedString::new(),
+                windows_description: OwnedString::new(),
+                windows_copyright: OwnedString::new(),
+                outfile: OwnedString::new(),
                 assets: Vec::new(),
                 autoload_dotenv: true,
                 autoload_bunfig: true,
@@ -289,8 +289,8 @@ pub(crate) mod js_bundler {
             compile_target: Option<CompileTarget>,
         ) -> JsResult<Option<CompileOptions>> {
             let mut this = CompileOptions {
-                compile_target: compile_target.unwrap_or_default(),
-                ..Default::default()
+                compile_target: compile_target.unwrap_or_else(CompileTarget::new),
+                ..CompileOptions::new()
             };
             // errdefer this.deinit() — Drop handles owned fields
 
@@ -502,7 +502,7 @@ pub(crate) mod js_bundler {
                             bun_jsc::RangeErrorOptions {
                                 field_name: b"compile.jitPolicy",
                                 msg: b"a finite number >= 1",
-                                ..Default::default()
+                                ..bun_jsc::RangeErrorOptions::new()
                             },
                         ));
                     }
@@ -522,7 +522,7 @@ pub(crate) mod js_bundler {
         ) -> JsResult<Config> {
             // Config implements Drop, so functional-record-update from Default::default()
             // is rejected by rustc (E0509). Construct default then mutate instead.
-            let mut this = Config::default();
+            let mut this = Config::new();
             // `define` defaults to `StringMap::init(false)`; only the flag differs.
             this.define.dupe_keys = true;
             // errdefer this.deinit(allocator) — handled by `impl Drop for Config` on `?` paths.
@@ -538,7 +538,7 @@ pub(crate) mod js_bundler {
                 if slice.slice().starts_with(b"bun-") {
                     this.compile = Some(CompileOptions {
                         compile_target: compile_target_from_slice(global_this, slice.slice())?,
-                        ..Default::default()
+                        ..CompileOptions::new()
                     });
                     this.target = Target::Bun;
                     did_set_target = true;
@@ -1087,7 +1087,7 @@ pub(crate) mod js_bundler {
                             "allowUnresolved must be an array"
                         )));
                     }
-                    this.allow_unresolved = Some(StringSet::default());
+                    this.allow_unresolved = Some(StringSet::empty());
                     if allow_unresolved_val.get_length(global_this)? > 0 {
                         let mut iter = allow_unresolved_val.array_iterator(global_this)?;
                         while let Some(entry) = iter.next()? {
@@ -1196,7 +1196,7 @@ pub(crate) mod js_bundler {
                     jsc::JSPropertyIteratorOptions {
                         skip_empty_name: true,
                         include_value: true,
-                        ..Default::default()
+                        ..jsc::JSPropertyIteratorOptions::init()
                     },
                 )?;
 
@@ -1235,7 +1235,7 @@ pub(crate) mod js_bundler {
                     jsc::JSPropertyIteratorOptions {
                         skip_empty_name: true,
                         include_value: true,
-                        ..Default::default()
+                        ..jsc::JSPropertyIteratorOptions::init()
                     },
                 )?;
 
@@ -1447,8 +1447,8 @@ pub(crate) mod js_bundler {
         pub(crate) asset: options::PathTemplate,
     }
 
-    impl Default for Names {
-        fn default() -> Self {
+    impl Names {
+        pub(crate) fn new() -> Self {
             Self {
                 entry_point: options::PathTemplate::FILE.into(),
                 chunk: options::PathTemplate::CHUNK.into(),
@@ -1457,12 +1457,23 @@ pub(crate) mod js_bundler {
         }
     }
 
-    #[derive(Default)]
     pub(crate) struct Minify {
         pub(crate) whitespace: bool,
         pub(crate) identifiers: bool,
         pub(crate) syntax: bool,
         pub(crate) keep_names: bool,
+    }
+
+    impl Minify {
+        #[inline]
+        pub(crate) fn new() -> Self {
+            Self {
+                whitespace: false,
+                identifiers: false,
+                syntax: false,
+                keep_names: false,
+            }
+        }
     }
 
     fn build(
@@ -1961,10 +1972,10 @@ pub(crate) mod js_bundler {
                             file: std::borrow::Cow::Owned(file.to_vec()),
                             line: -1,
                             column: -1,
-                            ..Default::default()
+                            ..bun_ast::Location::new()
                         }),
                     },
-                    ..Default::default()
+                    ..bun_ast::Msg::new()
                 }
             }
         }

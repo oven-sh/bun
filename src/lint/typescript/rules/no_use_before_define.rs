@@ -16,11 +16,20 @@ const NO_USE_BEFORE_DEFINE: Message = Message::new(
     "'{{name}}' was used before it was defined.",
 );
 
-#[derive(Default)]
 pub struct State<'a> {
     /// Whether the file has an `export { a }`.
     has_export_specs: bool,
     initializers: Initializers<'a>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            has_export_specs: false,
+            initializers: Initializers::new(),
+        }
+    }
 }
 
 fn report<'a>(reference: Reference<'a>, at: Span, cx: &mut Cx<'a, NoUseBeforeDefine>) {
@@ -239,7 +248,7 @@ impl Rule for NoUseBeforeDefine {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn export_spec<'a>(&self, _: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {

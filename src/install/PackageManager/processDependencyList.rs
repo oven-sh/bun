@@ -21,10 +21,19 @@ use crate::{
 
 /// What a package.json depends on, parsed into a lockfile of its own. `LookAhead` reads it to
 /// request manifests for a package before the package is resolved.
-#[derive(Default)]
 pub(crate) struct ListedDependencies {
     pub(crate) lockfile: Lockfile,
     pub(crate) package: Package,
+}
+
+impl ListedDependencies {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            lockfile: Lockfile::new(),
+            package: Package::new(),
+        }
+    }
 }
 
 /// Parses a package.json for `ListedDependencies`, where the package's resolution does not matter.
@@ -44,7 +53,7 @@ impl ResolverContext for OnlyDependencies {
         _builder: &mut StringBuilder<'_>,
         _json: &Expr,
     ) -> Result<ResolutionType<u64>, crate::Error> {
-        Ok(ResolutionType::default())
+        Ok(ResolutionType::new())
     }
 }
 
@@ -253,7 +262,7 @@ impl PackageManager {
         self.parse_extracted(package, &source, resolver)?;
         self.adopt_contained_folders(package, &json.path, &mut |this, source| {
             let start = this.lockfile.buffers.dependencies.len();
-            this.parse_extracted(&mut Package::default(), source, resolver)?;
+            this.parse_extracted(&mut Package::new(), source, resolver)?;
             this.lockfile.buffers.resolutions.truncate(start);
             Ok(this.lockfile.buffers.dependencies.split_off(start))
         })
@@ -394,7 +403,7 @@ impl PackageManager {
             Some(self.log_mut()),
             None,
         )
-        .unwrap_or_default();
+        .unwrap_or_else(bun_install_types::DependencyVersion::new);
         Ok(Dependency { version, ..row })
     }
 
@@ -421,7 +430,7 @@ impl PackageManager {
                         locked_repo: locked_scp_like(repo),
                     };
 
-                    let mut pkg = Package::default();
+                    let mut pkg = Package::new();
                     if let Some(json) = &data.json {
                         if let Err(err) = self.parse_with_folders(&mut pkg, json, &mut resolver) {
                             if log_level != LogLevel::Silent {
@@ -446,7 +455,7 @@ impl PackageManager {
                         let mut builder = self.lockfile.string_builder();
 
                         builder.count(&fallback_name);
-                        resolver.count(&mut builder, &Expr::default());
+                        resolver.count(&mut builder, &Expr::EMPTY);
 
                         bun_core::handle_oom(builder.allocate());
 
@@ -455,7 +464,7 @@ impl PackageManager {
                         pkg.name_hash = name.hash;
 
                         pkg.resolution = resolver
-                            .resolve(&mut builder, &Expr::default())
+                            .resolve(&mut builder, &Expr::EMPTY)
                             .expect("unreachable");
                     }
 
@@ -466,7 +475,7 @@ impl PackageManager {
             }
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let json = data.json.as_ref().unwrap();
-                let mut package = Package::default();
+                let mut package = Package::new();
 
                 let mut resolver = TarballResolver {
                     url: &data.url,
@@ -519,7 +528,7 @@ impl PackageManager {
     ) {
         if let Some(json) = &data.json {
             let source = bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
-            let mut listed = ListedDependencies::default();
+            let mut listed = ListedDependencies::new();
             // What is wrong with the package.json is reported when the package is added.
             let parsed = listed.package.parse(
                 &mut listed.lockfile,

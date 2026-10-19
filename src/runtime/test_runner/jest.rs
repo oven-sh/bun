@@ -21,18 +21,38 @@ use super::timers::fake_timers;
 use bun_test::js_fns::generic_hook;
 use bun_test::{BaseScopeCfg, RefDataValue, ScopeMode};
 
-#[derive(Default)]
 struct RepeatInfo {
     count: u32,
     index: u32,
 }
 
-#[derive(Default)]
+impl RepeatInfo {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            count: 0,
+            index: 0,
+        }
+    }
+}
+
 pub(crate) struct CurrentFile {
     title: Box<[u8]>,
     prefix: Box<[u8]>,
     repeat_info: RepeatInfo,
     has_printed_filename: bool,
+}
+
+impl CurrentFile {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            title: Box::new([]),
+            prefix: Box::new([]),
+            repeat_info: RepeatInfo::new(),
+            has_printed_filename: false,
+        }
+    }
 }
 
 impl CurrentFile {
@@ -238,7 +258,7 @@ impl<'a> TestRunner<'a> {
     }
 
     pub(crate) fn get_or_put_file(&mut self, file_path: &'static [u8]) -> GetOrPutFileResult {
-        let entry = self.index.get_or_put(file_path).expect("unreachable");
+        let entry = self.index.get_or_put(file_path, || 0).expect("unreachable");
         if entry.found_existing {
             return GetOrPutFileResult {
                 file_id: *entry.value_ptr,
@@ -259,7 +279,7 @@ impl<'a> TestRunner<'a> {
 // through `crate::timer` (see src/runtime/timer/mod.rs).
 use crate::timer::EventLoopTimerState as TimerState;
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct Summary {
     pub(crate) pass: u32,
     pub(crate) expectations: u32,
@@ -268,6 +288,21 @@ pub(crate) struct Summary {
     pub(crate) fail: u32,
     pub(crate) files: u32,
     pub(crate) skipped_because_label: u32,
+}
+
+impl Summary {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            pass: 0,
+            expectations: 0,
+            skip: 0,
+            todo: 0,
+            fail: 0,
+            files: 0,
+            skipped_because_label: 0,
+        }
+    }
 }
 
 impl Summary {
@@ -338,7 +373,7 @@ pub(crate) mod Jest {
             global_object,
             ScopeKind::Test,
             JSValue::ZERO,
-            BaseScopeCfg::default(),
+            BaseScopeCfg::new(),
             "test",
         )?;
         module.put(global_object, b"test", test_scope_functions);
@@ -348,7 +383,7 @@ pub(crate) mod Jest {
             global_object,
             ScopeKind::Test,
             JSValue::ZERO,
-            BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
+            BaseScopeCfg { self_mode: ScopeMode::Skip, ..BaseScopeCfg::new() },
             "xtest",
         )?;
         module.put(global_object, b"xtest", xtest_scope_functions);
@@ -358,7 +393,7 @@ pub(crate) mod Jest {
             global_object,
             ScopeKind::Describe,
             JSValue::ZERO,
-            BaseScopeCfg::default(),
+            BaseScopeCfg::new(),
             "describe",
         )?;
         module.put(global_object, b"describe", describe_scope_functions);
@@ -367,7 +402,7 @@ pub(crate) mod Jest {
             global_object,
             ScopeKind::Describe,
             JSValue::ZERO,
-            BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
+            BaseScopeCfg { self_mode: ScopeMode::Skip, ..BaseScopeCfg::new() },
             "xdescribe",
         )?;
         module.put(global_object, b"xdescribe", xdescribe_scope_functions);
@@ -377,32 +412,32 @@ pub(crate) mod Jest {
         module.put(
             global_object,
             b"beforeEach",
-            jsc::JSFunction::create(global_object, "beforeEach", generic_hook::__jsc_host_before_each, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "beforeEach", generic_hook::__jsc_host_before_each, 1, bun_jsc::js_function::CreateJSFunctionOptions::new()),
         );
         module.put(
             global_object,
             b"beforeAll",
-            jsc::JSFunction::create(global_object, "beforeAll", generic_hook::__jsc_host_before_all, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "beforeAll", generic_hook::__jsc_host_before_all, 1, bun_jsc::js_function::CreateJSFunctionOptions::new()),
         );
         module.put(
             global_object,
             b"afterAll",
-            jsc::JSFunction::create(global_object, "afterAll", generic_hook::__jsc_host_after_all, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "afterAll", generic_hook::__jsc_host_after_all, 1, bun_jsc::js_function::CreateJSFunctionOptions::new()),
         );
         module.put(
             global_object,
             b"afterEach",
-            jsc::JSFunction::create(global_object, "afterEach", generic_hook::__jsc_host_after_each, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "afterEach", generic_hook::__jsc_host_after_each, 1, bun_jsc::js_function::CreateJSFunctionOptions::new()),
         );
         module.put(
             global_object,
             b"onTestFinished",
-            jsc::JSFunction::create(global_object, "onTestFinished", generic_hook::__jsc_host_on_test_finished, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "onTestFinished", generic_hook::__jsc_host_on_test_finished, 1, bun_jsc::js_function::CreateJSFunctionOptions::new()),
         );
         module.put(
             global_object,
             b"setDefaultTimeout",
-            jsc::JSFunction::create(global_object, "setDefaultTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "setDefaultTimeout", __jsc_host_js_set_default_timeout, 1, bun_jsc::js_function::CreateJSFunctionOptions::new()),
         );
         module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
         module.put(global_object, b"expectTypeOf", jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object));
@@ -414,15 +449,15 @@ pub(crate) mod Jest {
     }
 
     fn create_mock_objects(global_object: &JSGlobalObject, module: JSValue) {
-        let set_system_time = jsc::JSFunction::create(global_object, "setSystemTime", JSMock__jsSetSystemTime, 0, Default::default());
+        let set_system_time = jsc::JSFunction::create(global_object, "setSystemTime", JSMock__jsSetSystemTime, 0, bun_jsc::js_function::CreateJSFunctionOptions::new());
         module.put(global_object, b"setSystemTime", set_system_time);
 
-        let mock_fn = jsc::JSFunction::create(global_object, "fn", JSMock__jsMockFn, 1, Default::default());
-        let spy_on = jsc::JSFunction::create(global_object, "spyOn", JSMock__jsSpyOn, 2, Default::default());
-        let restore_all_mocks = jsc::JSFunction::create(global_object, "restoreAllMocks", JSMock__jsRestoreAllMocks, 2, Default::default());
-        let clear_all_mocks = jsc::JSFunction::create(global_object, "clearAllMocks", JSMock__jsClearAllMocks, 2, Default::default());
-        let reset_all_mocks = jsc::JSFunction::create(global_object, "resetAllMocks", JSMock__jsResetAllMocks, 2, Default::default());
-        let mock_module_fn = jsc::JSFunction::create(global_object, "module", JSMock__jsModuleMock, 2, Default::default());
+        let mock_fn = jsc::JSFunction::create(global_object, "fn", JSMock__jsMockFn, 1, bun_jsc::js_function::CreateJSFunctionOptions::new());
+        let spy_on = jsc::JSFunction::create(global_object, "spyOn", JSMock__jsSpyOn, 2, bun_jsc::js_function::CreateJSFunctionOptions::new());
+        let restore_all_mocks = jsc::JSFunction::create(global_object, "restoreAllMocks", JSMock__jsRestoreAllMocks, 2, bun_jsc::js_function::CreateJSFunctionOptions::new());
+        let clear_all_mocks = jsc::JSFunction::create(global_object, "clearAllMocks", JSMock__jsClearAllMocks, 2, bun_jsc::js_function::CreateJSFunctionOptions::new());
+        let reset_all_mocks = jsc::JSFunction::create(global_object, "resetAllMocks", JSMock__jsResetAllMocks, 2, bun_jsc::js_function::CreateJSFunctionOptions::new());
+        let mock_module_fn = jsc::JSFunction::create(global_object, "module", JSMock__jsModuleMock, 2, bun_jsc::js_function::CreateJSFunctionOptions::new());
         module.put(global_object, b"mock", mock_fn);
         mock_fn.put(global_object, b"module", mock_module_fn);
         mock_fn.put(global_object, b"restore", restore_all_mocks);
@@ -436,8 +471,8 @@ pub(crate) mod Jest {
         jest.put(global_object, b"clearAllMocks", clear_all_mocks);
         jest.put(global_object, b"resetAllMocks", reset_all_mocks);
         jest.put(global_object, b"setSystemTime", set_system_time);
-        jest.put(global_object, b"now", jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, Default::default()));
-        jest.put(global_object, b"setTimeout", jsc::JSFunction::create(global_object, "setTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()));
+        jest.put(global_object, b"now", jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, bun_jsc::js_function::CreateJSFunctionOptions::new()));
+        jest.put(global_object, b"setTimeout", jsc::JSFunction::create(global_object, "setTimeout", __jsc_host_js_set_default_timeout, 1, bun_jsc::js_function::CreateJSFunctionOptions::new()));
 
         module.put(global_object, b"jest", jest);
         module.put(global_object, b"spyOn", spy_on);

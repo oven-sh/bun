@@ -87,7 +87,7 @@ impl Rule for NoUndef {
         let file = cx.file();
         // Whether a global variable of a name is one for a value, and for a type.
         let (for_value, for_type) = (1, 2);
-        let mut globals: ByName<u8> = ByName::default();
+        let mut globals: ByName<u8> = ByName::new();
         // With no config file, a name that the file tests with `typeof` isn't reported anywhere in it. The author knows that it may
         // be missing: `if (typeof define === "function" && define.amd) define(factory);`
         let trusts_typeof = cx.language().stands_alone && !self.considers_typeof;

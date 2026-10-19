@@ -60,8 +60,8 @@ struct WebPData {
     bytes: *const u8,
     size: usize,
 }
-impl Default for WebPData {
-    fn default() -> Self {
+impl WebPData {
+    fn new() -> Self {
         Self {
             bytes: core::ptr::null(),
             size: 0,
@@ -315,7 +315,7 @@ pub(crate) fn encode(
     if unsafe { WebPMuxSetChunk(mux, b"ICCP".as_ptr(), &raw const icc, 0) } != WEBP_MUX_OK {
         return Err(codecs::Error::EncodeFailed);
     }
-    let mut assembled = WebPData::default();
+    let mut assembled = WebPData::new();
     // SAFETY: mux is live; assembled is a valid out-param.
     if unsafe { WebPMuxAssemble(mux, &raw mut assembled) } != WEBP_MUX_OK {
         // `WebPMuxAssemble` writes a half-built buffer into `assembled` even

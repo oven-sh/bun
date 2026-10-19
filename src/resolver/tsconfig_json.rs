@@ -165,15 +165,15 @@ pub struct TSConfigJSON {
     pub use_define_for_class_fields: Option<bool>,
 }
 
-impl Default for TSConfigJSON {
-    fn default() -> Self {
+impl TSConfigJSON {
+    pub fn init() -> Self {
         Self {
-            abs_path: Box::default(),
-            base_url: Box::default(),
-            base_url_for_paths: Box::default(),
-            extends: Box::default(),
-            paths: PathsMap::default(),
-            jsx: options::jsx::Pragma::default(),
+            abs_path: Box::new([]),
+            base_url: Box::new([]),
+            base_url_for_paths: Box::new([]),
+            extends: Box::new([]),
+            paths: PathsMap::new(),
+            jsx: options::jsx::Pragma::new(),
             jsx_flags: JsxFieldSet::empty(),
             preserve_imports_not_used_as_values: Some(false),
             emit_decorator_metadata: false,
@@ -331,8 +331,8 @@ impl TSConfigJSON {
 
         let mut result = TSConfigJSON {
             abs_path: Box::from(source.path.text),
-            paths: PathsMap::default(),
-            ..Default::default()
+            paths: PathsMap::new(),
+            ..TSConfigJSON::init()
         };
         // PERF: avoid re-scanning each JSON object's
         // property vector once per field — `expr.asProperty(...)` is an O(n)
@@ -564,7 +564,7 @@ impl TSConfigJSON {
                     } else {
                         Box::from(b".".as_slice())
                     };
-                    result.paths = PathsMap::default();
+                    result.paths = PathsMap::new();
                     for property in paths.properties() {
                         let key = property.key.slice();
                         let key_loc = property.key_loc;

@@ -28,7 +28,8 @@ fn find_scopes_to_merge(
     func: &HirFunction,
     env: &Environment,
 ) -> Result<DisjointSet<ScopeId>, CompilerDiagnostic> {
-    let mut object_method_decls: HashSet<IdentifierId> = HashSet::default();
+    let mut object_method_decls: HashSet<IdentifierId> =
+        HashSet::with_hasher(rustc_hash::FxBuildHasher);
     let mut merged_scopes = DisjointSet::<ScopeId>::new();
 
     for (_block_id, block) in &func.body.blocks {
@@ -116,7 +117,7 @@ pub(crate) fn align_object_method_scopes(
     // Use a HashMap to accumulate min/max across all scopes mapping to the same root,
     // matching TS behavior where root.range is updated in-place during iteration.
     let mut range_updates: HashMap<ScopeId, (EvaluationOrder, EvaluationOrder)> =
-        HashMap::default();
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
 
     merged_scopes.for_each(|scope_id, root_id| {
         if scope_id == root_id {
@@ -165,7 +166,8 @@ pub(crate) fn align_object_method_scopes(
 
     // Step 2: Repoint identifiers whose scopes were merged
     // Build a map from old scope -> root scope for quick lookup
-    let mut scope_remap: HashMap<ScopeId, ScopeId> = HashMap::default();
+    let mut scope_remap: HashMap<ScopeId, ScopeId> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     merged_scopes.for_each(|scope_id, root_id| {
         if scope_id != root_id {
             scope_remap.insert(scope_id, root_id);

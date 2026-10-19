@@ -142,8 +142,8 @@ pub struct Again<'o> {
     pub had_types: bool,
 }
 
-impl Default for LintOptions<'_> {
-    fn default() -> Self {
+impl LintOptions<'_> {
+    pub fn new() -> Self {
         LintOptions {
             allow_inline_config: true,
             report_unused_disable_directives: None,
@@ -165,7 +165,7 @@ impl Default for LintOptions<'_> {
 }
 
 /// What [`Linter::lint`] returns.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct LintResult {
     /// Sorted by position: see [`LintOptions::wants_places`].
     pub messages: Vec<LintMessage>,
@@ -188,6 +188,22 @@ pub struct LintResult {
     /// With a configuration of oxlint that has a rule for which the file may be linted again: where in the run of oxlint each of
     /// the messages of the rules is, by [`LintMessage::reported`], from 1.
     pub run_keys: Vec<(u64, u128)>,
+}
+
+impl LintResult {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            messages: Vec::new(),
+            suppressed: Vec::new(),
+            skipped_rules: Vec::new(),
+            handed_back: None,
+            is_unread: false,
+            thrown: None,
+            line_starts: None,
+            run_keys: Vec::new(),
+        }
+    }
 }
 
 /// `S`: the rules that it has.
@@ -472,20 +488,20 @@ impl<S: RuleSet> Linter<S> {
         if !fatal.is_empty() {
             let is_oxlint = file.language().is_oxlint;
             if is_oxlint && is_of_parser && syntax::is_flow(file) {
-                return LintResult::default();
+                return LintResult::new();
             }
             // What oxc refuses, oxlint does not lint. tsgolint reads the file on its own, and oxlint, which has not seen the comments,
             // passes on all that it reports. Here that is so where the tree is whole: the error is an early one.
             if !is_oxlint || file.types.is_none() || file.has_parse_errors() {
                 return LintResult {
                     messages: fatal,
-                    ..LintResult::default()
+                    ..LintResult::new()
                 };
             }
             problems.append(&mut fatal);
         }
         let is_refused = !problems.is_empty();
-        let mut result = LintResult::default();
+        let mut result = LintResult::new();
         let enabled_js =
             (config.js_rules.iter()).filter(|it| it.severity != Severity::Off && !is_refused);
         let mut running_js: Vec<RunningJs> = enabled_js
@@ -615,7 +631,7 @@ impl<S: RuleSet> Linter<S> {
         {
             return LintResult {
                 is_unread: true,
-                ..LintResult::default()
+                ..LintResult::new()
             };
         }
         let mut off: Vec<RuleId> = Vec::new();
@@ -648,7 +664,7 @@ impl<S: RuleSet> Linter<S> {
                 line: 1,
                 column: 1,
                 end: Some((1, 2)),
-                ..LintMessage::default()
+                ..LintMessage::new()
             });
         }
 
@@ -703,7 +719,7 @@ impl<S: RuleSet> Linter<S> {
         if let Some(refusal) = refusal {
             return LintResult {
                 thrown: Some([refusal, b"\nOccurred while linting ", file.path()].concat()),
-                ..LintResult::default()
+                ..LintResult::new()
             };
         }
         // Rules that need types are skipped when there are none.
@@ -786,7 +802,7 @@ impl<S: RuleSet> Linter<S> {
                             Err(thrown) => {
                                 return LintResult {
                                     thrown: Some(thrown),
-                                    ..LintResult::default()
+                                    ..LintResult::new()
                                 };
                             }
                         }
@@ -898,7 +914,7 @@ impl<S: RuleSet> Linter<S> {
                 Err(thrown) => {
                     return LintResult {
                         thrown: Some(thrown),
-                        ..LintResult::default()
+                        ..LintResult::new()
                     };
                 }
             }
@@ -968,7 +984,7 @@ impl<S: RuleSet> Linter<S> {
         }
         let places = wants_places.then_some(&locator);
         // What becomes of what the last rule and `messageId` change that change something.
-        let mut changes = (None, config::OxlintChanges::default());
+        let mut changes = (None, config::OxlintChanges::new());
         for (at, step) in order.into_iter().zip(1..) {
             let Some(diagnostic) = diagnostics.get_mut(at as usize) else {
                 continue;
@@ -1066,7 +1082,7 @@ impl<S: RuleSet> Linter<S> {
                         Err(thrown) => {
                             return LintResult {
                                 thrown: Some(thrown),
-                                ..LintResult::default()
+                                ..LintResult::new()
                             };
                         }
                     }
@@ -1203,7 +1219,7 @@ fn to_message(
 ) -> LintMessage {
     let position = |offset: u32| locator.map_or((0, 0), |it| it.position(offset));
     let details = diagnostic.details.take();
-    let (start, end) = locator.map_or_else(Default::default, |it| it.positions(diagnostic.span));
+    let (start, end) = locator.map_or_else(|| ((0, 0), (0, 0)), |it| it.positions(diagnostic.span));
     let (line, column) = match details.as_deref().and_then(|it| it.start_position) {
         Some(start) => (start.line, start.column.wrapping_add(1)),
         None => start,
@@ -1231,7 +1247,7 @@ fn to_message(
         suppressions: Vec::new(),
         comments_apply_at: (details.as_deref().and_then(|it| it.comments_apply_at))
             .map(|it| (position(it.start), position(it.end))),
-        not_numbers: NotNumbers::default(),
+        not_numbers: NotNumbers::new(),
         details: details.map(|it| {
             let place = |(span, text): (Span, Cow<'static, str>)| {
                 (position(span.start), position(span.end), text)
@@ -1356,7 +1372,7 @@ impl ThrownError<'_> {
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
-            not_numbers: NotNumbers::default(),
+            not_numbers: NotNumbers::new(),
             details: None,
             constant_help: None,
             reported: 0,

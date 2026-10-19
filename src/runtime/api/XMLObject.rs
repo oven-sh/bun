@@ -142,7 +142,7 @@ pub(crate) fn stringify<'a>(
         builder: wtf::StringBuilder::init(),
         indent: 0,
         space: Space::init(global, space_value)?,
-        visiting: HashMap::default(),
+        visiting: HashMap::init(),
     };
 
     let result = if is_node(global, root)? {
@@ -269,7 +269,7 @@ impl Stringifier {
     fn mark_visiting(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         let was_present = self
             .visiting
-            .get_or_put(value)
+            .get_or_put(value, || ())
             .map_err(|_| StringifyError::Js(JsError::OutOfMemory))?
             .found_existing;
         if was_present {

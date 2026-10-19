@@ -168,7 +168,7 @@ impl PostgresSQLConnection {
         if self.copy_out.get().is_empty() {
             return true;
         }
-        let bytes = self.copy_out.take();
+        let bytes = self.copy_out.replace(Vec::new());
         let Some(request) = self.copying(CopyStream::ReadableOpen) else {
             return true;
         };

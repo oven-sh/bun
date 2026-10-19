@@ -196,7 +196,7 @@ impl<'a> BinaryLikeExpression<'a> {
             return write!(
                 f,
                 group(&soft_block_indent(&format_with(|f| {
-                    format_flattened_logical_expression(*self, ChainPlace::default(), f)
+                    format_flattened_logical_expression(*self, ChainPlace::new(), f)
                 })))
             );
         }
@@ -206,7 +206,7 @@ impl<'a> BinaryLikeExpression<'a> {
                 f,
                 group(&format_with(|f| format_flattened_logical_expression(
                     *self,
-                    ChainPlace::default(),
+                    ChainPlace::new(),
                     f
                 )))
             );
@@ -215,7 +215,7 @@ impl<'a> BinaryLikeExpression<'a> {
         let inline_logical_expression = self.should_inline_logical_expression(f);
         let should_indent_if_inlines =
             !is_in_type_cast && should_indent_if_parent_inlines(parent, f);
-        let parts = split_into_left_and_right_sides(*self, ChainPlace::default(), f);
+        let parts = split_into_left_and_right_sides(*self, ChainPlace::new(), f);
         let flattened = parts.len() > 2 || self.right_with_same_operator(f).is_some();
 
         if (inline_logical_expression && !flattened)
@@ -314,12 +314,22 @@ enum Operands {
 }
 
 /// Where a chain is. By default it is not in a condition, and is a node of its own.
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone)]
 struct ChainPlace {
     /// See [`BinaryLeftOrRightSide::Right::inside_condition`].
     inside_condition: bool,
     /// See [`BinaryLeftOrRightSide::Right::is_nested`], for the whole chain.
     is_nested: bool,
+}
+
+impl ChainPlace {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            inside_condition: false,
+            is_nested: false,
+        }
+    }
 }
 
 /// Writes all operands of a chain one after the other.

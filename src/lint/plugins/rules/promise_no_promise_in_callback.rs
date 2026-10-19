@@ -23,7 +23,7 @@ impl Rule for NoPromiseInCallback {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         (file.mentions_any(&["err", "error"]) && file.mentions_any(&["then", "catch", "finally", "Promise"]))
-            .then(AncestorMemo::default)
+            .then(AncestorMemo::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

@@ -89,9 +89,8 @@ pub use bun_http_types::Method::Method;
 pub use bun_picohttp as picohttp;
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum HTTPVerboseLevel {
-    #[default]
     None,
     Headers,
     Curl,
@@ -102,9 +101,8 @@ pub enum HTTPVerboseLevel {
 /// pool key could compare. An `http:` hop, where the closure cannot run, pools
 /// as usual. Decided per hop in `start()`, because `url` already names the
 /// next hop by the time a redirect releases this hop's socket.
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum PoolBypass {
-    #[default]
     Off,
     /// Asked for, and the hop in progress is `http:`.
     NotThisHop,
@@ -113,9 +111,8 @@ pub enum PoolBypass {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Protocol {
-    #[default]
     Http1_1,
     Http2,
     Http3,
@@ -123,10 +120,9 @@ pub enum Protocol {
 
 /// Which redirects the request's credential headers survive.
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum RedirectCredentialsPolicy {
     /// fetch(): https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
-    #[default]
     SameOrigin,
     /// `bun install`: also http -> https on the same hostname, from port 80 to port 443 or on one port.
     HttpsUpgrade,
@@ -184,7 +180,7 @@ impl Drop for HTTPResponseMetadata {
             // need to round-trip through `(ptr, len)` + `from_raw_parts`.
             unsafe { bun_core::heap::destroy(core::ptr::from_ref(list).cast_mut()) };
         }
-        self.response.headers = bun_picohttp::HeaderList::default();
+        self.response.headers = bun_picohttp::HeaderList::new();
         self.response.status = b"";
     }
 }
@@ -200,9 +196,8 @@ use bun_ptr::RefPtr;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 enum HTTPUpgradeState {
-    #[default]
     None = 0,
     Pending = 1,
     Upgraded = 2,
@@ -239,8 +234,8 @@ pub struct Flags {
     pub yields_to_other_requests: bool,
 }
 
-impl Default for Flags {
-    fn default() -> Self {
+impl Flags {
+    pub fn new() -> Self {
         Self {
             disable_timeout: false,
             disable_keepalive: false,
@@ -451,15 +446,13 @@ impl HTTPClient<'_> {
     }
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub enum BodySize {
     TotalReceived(usize),
     ContentLength(usize),
-    #[default]
     Unknown,
 }
 
-#[derive(Default)]
 pub struct HTTPClientResult<'a> {
     pub body: &'a [u8],
     /// Populated only on the terminal (`!has_more`) progress callback:
@@ -506,14 +499,47 @@ pub struct HTTPClientResult<'a> {
     pub proxy_connect_response: Option<Box<HTTPResponseMetadata>>,
 }
 
+impl<'a> HTTPClientResult<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            body: &[],
+            body_owned: Vec::new(),
+            has_more: false,
+            redirected: false,
+            can_stream: false,
+            is_http2: false,
+            fail: None,
+            dns_error: 0,
+            dns_hostname: None,
+            metadata: None,
+            body_size: BodySize::Unknown,
+            certificate_info: None,
+            connect_errno: 0,
+            proxy_connect_response: None,
+        }
+    }
+}
+
 /// Keep-alive pool partition of the fetch session a request belongs to.
 /// Sockets are only shared between requests with the same `id`; 0 is the
 /// default session. Zero limits mean "use the default".
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PoolOptions {
     pub id: u64,
     pub idle_timeout_seconds: u32,
     pub max_idle_sockets: u16,
+}
+
+impl PoolOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            id: 0,
+            idle_timeout_seconds: 0,
+            max_idle_sockets: 0,
+        }
+    }
 }
 
 impl<'a> HTTPClientResult<'a> {
@@ -2268,7 +2294,7 @@ impl<'a> HTTPClient<'a> {
         {
             self.allow_retry = false;
             // we need to retry the request, clean up the response message buffer and start again
-            self.state.response_message_buffer = MutableString::default();
+            self.state.response_message_buffer = MutableString::new();
             let body = core::mem::replace(
                 &mut self.state.original_request_body,
                 HTTPRequestBody::Bytes(b""),
@@ -2640,7 +2666,7 @@ impl<'a> HTTPClient<'a> {
                 // `StreamFraming`, decided by the producer. An upgrade tunnels the bytes unframed.
                 let framing = match &self.state.original_request_body {
                     HTTPRequestBody::Stream(stream) => stream.framing,
-                    _ => Default::default(),
+                    _ => crate::http_request_body::StreamFraming::new(),
                 };
                 if let Some(content_length) = framing.content_length {
                     let value: &[u8] = bun_core::fmt::int_as_bytes(
@@ -2727,7 +2753,7 @@ impl<'a> HTTPClient<'a> {
             b""
         };
 
-        self.state.response_message_buffer = MutableString::default();
+        self.state.response_message_buffer = MutableString::new();
 
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
@@ -2769,7 +2795,7 @@ impl<'a> HTTPClient<'a> {
         }
         // Cleared after `release_socket` above, which keys the pool entry on it.
         self.unix_socket_path = b"";
-        self.connected_url = URL::default();
+        self.connected_url = URL::new();
         // connected_url was the last borrower of the previous hop's URL buffer
         // (handleResponseMetadata already repointed this.url at the new one).
         self.prev_redirect = Vec::new();
@@ -3774,7 +3800,10 @@ impl<'a> HTTPClient<'a> {
         // both disjoint from `&mut self`. The short-read paths move it back;
         // every other path either drops it (terminal / reset) or lets it drop
         // here once `clone_metadata()` has deep-copied the parsed headers.
-        let mut buffer = std::mem::take(&mut self.state.response_message_buffer);
+        let mut buffer = std::mem::replace(
+            &mut self.state.response_message_buffer,
+            MutableString::new(),
+        );
         let needs_move = buffer.list.is_empty();
         let mut to_read: &[u8] = if needs_move {
             incoming_data
@@ -4155,7 +4184,7 @@ impl<'a> HTTPClient<'a> {
     /// buffer the parsed slices borrow.
     pub(crate) fn clone_metadata(&mut self, response: &picohttp::Response<'_>) {
         self.state.cloned_metadata = None;
-        let mut builder = picohttp::StringBuilder::default();
+        let mut builder = picohttp::StringBuilder::new();
         response.count(&mut builder);
         builder.count(self.url.href);
         let _ = builder.allocate();
@@ -4439,7 +4468,8 @@ impl<'a> HTTPClient<'a> {
         // `on_async_http_callback_raw` on the terminal callback drops
         // `self.state` and deallocates the embedding `ThreadlocalAsyncHTTP`
         // (making `self` dangle) before dispatching to the user callback.
-        let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
+        let mut decoded_body =
+            core::mem::replace(&mut self.state.decoded_body, MutableString::new());
         let parent = self.parent_async_http();
         if has_more {
             result.body = decoded_body.list.as_slice();
@@ -4478,7 +4508,8 @@ impl<'a> HTTPClient<'a> {
         }
         // See `send_progress_update_without_stage_check`: move the body out of
         // `self.state` before the terminal callback's `self` teardown.
-        let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
+        let mut decoded_body =
+            core::mem::replace(&mut self.state.decoded_body, MutableString::new());
         let parent = self.parent_async_http();
         if is_done {
             result.body_owned = decoded_body.list;
@@ -4513,12 +4544,12 @@ impl<'a> HTTPClient<'a> {
         } else {
             b""
         };
-        self.state.response_message_buffer = MutableString::default();
+        self.state.response_message_buffer = MutableString::new();
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
         self.unregister_abort_tracker();
-        self.connected_url = URL::default();
+        self.connected_url = URL::new();
         self.prev_redirect = Vec::new();
         if self.remaining_redirect_count == 0 {
             self.fail(crate::Error::TooManyRedirects);
@@ -4612,7 +4643,7 @@ impl<'a> HTTPClient<'a> {
                 fail: None,
                 metadata: None,
                 has_more: false,
-                ..Default::default()
+                ..HTTPClientResult::new()
             },
         );
     }
@@ -5187,7 +5218,7 @@ impl<'a> HTTPClient<'a> {
 
                 {
                     if let Some(i) = strings::index_of(location, b"://") {
-                        let mut string_builder = StringBuilder::default();
+                        let mut string_builder = StringBuilder::new();
 
                         let is_protocol_relative = i == 0;
                         let protocol_name: &[u8] = if is_protocol_relative {
@@ -5256,7 +5287,7 @@ impl<'a> HTTPClient<'a> {
                         self.prev_redirect =
                             core::mem::replace(&mut self.redirect, normalized_url_str);
                     } else if location.starts_with(b"//") {
-                        let mut string_builder = StringBuilder::default();
+                        let mut string_builder = StringBuilder::new();
 
                         let protocol_name = self.url.display_protocol();
 

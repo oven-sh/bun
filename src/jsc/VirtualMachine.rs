@@ -64,7 +64,6 @@ pub type ExceptionList = Vec<crate::exception_list::JsException>;
 // VirtualMachine struct (file-level @This())
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
@@ -112,11 +111,11 @@ pub struct InitOptions {
     pub mini_mode: bool,
 }
 
-impl Default for InitOptions {
-    fn default() -> Self {
+impl InitOptions {
+    pub fn new() -> Self {
         Self {
-            transform_options: Default::default(),
-            debugger: Default::default(),
+            transform_options: bun_bundler::options::TransformOptions::new(),
+            debugger: bun_options_types::context::Debugger::Unspecified,
             log: None,
             env_loader: None,
             graph: None,
@@ -415,7 +414,6 @@ pub struct VirtualMachine {
     pub test_isolation_state: TestIsolationState,
 }
 
-#[derive(Default)]
 pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
     /// The time zone the test runner applied at startup (`TZ`, default
@@ -639,9 +637,8 @@ pub unsafe extern "C" fn Bun__standalonePrelinkedModuleName(
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum GCLevel {
-    #[default]
     None = 0,
     Mild = 1,
     Aggressive = 2,
@@ -770,7 +767,6 @@ pub fn is_smol_mode() -> bool {
     IS_SMOL_MODE.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-#[derive(Default)]
 pub struct ExitHandler {
     pub exit_code: u8,
     /// `bun test` sets this at the end of a run unless `node:test` APIs were used: jest and vitest never fire a test file's `process.on('exit')` listeners.
@@ -1711,7 +1707,7 @@ impl VirtualMachine {
     #[inline]
     pub fn rare_data(&mut self) -> &mut RareData {
         if self.rare_data.is_none() {
-            let rd = Box::new(RareData::default());
+            let rd = Box::new(RareData::new());
             // RareData embeds the per-VM `us_socket_group_t` heads as value fields.
             // Registering the allocation as a root region lets LSAN trace
             // `RareData → group.head_sockets → us_socket_t`.
@@ -1895,10 +1891,10 @@ impl VirtualMachine {
     pub(crate) fn enable_macro_mode(&mut self) {
         if !self.has_enabled_macro_mode {
             self.has_enabled_macro_mode = true;
-            self.macro_event_loop = EventLoop::default();
+            self.macro_event_loop = EventLoop::new();
             self.macro_event_loop.virtual_machine = NonNull::new(std::ptr::from_mut(self));
             self.macro_event_loop.global = NonNull::new(self.global);
-            self.macro_event_loop.concurrent_tasks = Default::default();
+            self.macro_event_loop.concurrent_tasks = bun_threading::UnboundedQueue::new();
         }
         // Idempotent; outside the `has_enabled_macro_mode` guard because
         // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
@@ -2058,7 +2054,7 @@ impl VirtualMachine {
         let entry_point: *mut MacroEntryPoint = match self.macro_entry_points.entry(hash) {
             Entry::Occupied(e) => (*e.get()).cast(),
             Entry::Vacant(v) => {
-                let mut ep = Box::new(MacroEntryPoint::default());
+                let mut ep = Box::new(MacroEntryPoint::new());
                 // SAFETY: PathName stores slices with an artificial 'static
                 // bound; the generated entry point is
                 // boxed into `macro_entry_points` and lives for the VM
@@ -3184,7 +3180,7 @@ impl VirtualMachine {
 
         let log: *mut bun_ast::Log = match opts.log {
             Some(l) => l.as_ptr(),
-            None => bun_core::heap::into_raw(Box::new(bun_ast::Log::default())),
+            None => bun_core::heap::into_raw(Box::new(bun_ast::Log::empty())),
         };
 
         // SAFETY: VM is large + self-referential; allocate zeroed and fill in
@@ -3251,7 +3247,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
-            addr_of_mut!((*vm).bake_config_plugin_names).write(Box::default());
+            addr_of_mut!((*vm).bake_config_plugin_names).write(Box::new([]));
             addr_of_mut!((*vm).bake_pages).write(false);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
@@ -3290,22 +3286,25 @@ impl VirtualMachine {
                 .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
-            addr_of_mut!((*vm).macros).write(Default::default());
-            addr_of_mut!((*vm).macro_entry_points).write(Default::default());
-            addr_of_mut!((*vm).auto_killer).write(Default::default());
+            addr_of_mut!((*vm).macros).write(bun_collections::ArrayHashMap::new());
+            addr_of_mut!((*vm).macro_entry_points).write(bun_collections::ArrayHashMap::new());
+            addr_of_mut!((*vm).auto_killer)
+                .write(crate::process_auto_killer::ProcessAutoKiller::new());
             addr_of_mut!((*vm).root_context).write(crate::ScriptExecutionContext::root());
-            addr_of_mut!((*vm).graph_contexts).write(Default::default());
+            addr_of_mut!((*vm).graph_contexts).write(bun_collections::ArrayHashMap::new());
             addr_of_mut!((*vm).entered_context).write(Cell::new(None));
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead());
-            addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
-            addr_of_mut!((*vm).entry_point).write(Default::default());
-            addr_of_mut!((*vm).origin).write(Default::default());
-            addr_of_mut!((*vm).ref_strings).write(Default::default());
-            addr_of_mut!((*vm).modules).write(Default::default());
-            addr_of_mut!((*vm).macro_event_loop).write(EventLoop::default());
-            addr_of_mut!((*vm).proxy_env_storage).write(Default::default());
-            addr_of_mut!((*vm).gc_controller).write(Default::default());
-            addr_of_mut!((*vm).channel_ref).write(Default::default());
+            addr_of_mut!((*vm).commonjs_custom_extensions)
+                .write(bun_collections::StringArrayHashMap::init());
+            addr_of_mut!((*vm).entry_point)
+                .write(bun_bundler::entry_points::ServerEntryPoint::new());
+            addr_of_mut!((*vm).origin).write(bun_url::URL::new());
+            addr_of_mut!((*vm).ref_strings).write(bun_collections::HashMap::init());
+            addr_of_mut!((*vm).modules).write(crate::async_module::Queue::new());
+            addr_of_mut!((*vm).macro_event_loop).write(EventLoop::new());
+            addr_of_mut!((*vm).proxy_env_storage).write(crate::rare_data::ProxyEnvStorage::new());
+            addr_of_mut!((*vm).gc_controller).write(super::GarbageCollectionController::new());
+            addr_of_mut!((*vm).channel_ref).write(bun_io::KeepAlive::new());
             if let Some(graph) = opts.graph {
                 let _ = STANDALONE_MODULE_GRAPH.set(graph);
             }
@@ -3320,13 +3319,13 @@ impl VirtualMachine {
                 .write(crate::runtime_transpiler_store::RuntimeTranspilerStore::init());
 
             // Event-loop wiring (self-pointers).
-            addr_of_mut!((*vm).regular_event_loop).write(EventLoop::default());
+            addr_of_mut!((*vm).regular_event_loop).write(EventLoop::new());
             let regular = addr_of_mut!((*vm).regular_event_loop);
             (*regular).virtual_machine = NonNull::new(vm);
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
 
-            addr_of_mut!((*vm).source_mappings).write(SavedSourceMap::default());
+            addr_of_mut!((*vm).source_mappings).write(SavedSourceMap::new());
         }
 
         // High-tier per-VM state — Transpiler / Timer::All / entry_point.
@@ -3725,7 +3724,7 @@ pub fn process_fetch_log(
                         )
                         .into_bytes(),
                     ),
-                    ..Default::default()
+                    ..bun_ast::Msg::new()
                 }
             } else {
                 bun_ast::Msg {
@@ -3734,7 +3733,7 @@ pub fn process_fetch_log(
                         bun_ast::Range::NONE,
                         format!("{} while building {specifier}", err.name()).into_bytes(),
                     ),
-                    ..Default::default()
+                    ..bun_ast::Msg::new()
                 }
             };
             take(BuildMessage::create(global_this, msg))
@@ -3754,7 +3753,7 @@ pub fn process_fetch_log(
             // to that scan, so a GC triggered by a later `create` could sweep
             // the earlier cells and free their native
             // `BuildMessage`/`ResolveMessage` out from under us.
-            let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
+            let mut errors_stack: [JSValue; 256] = [JSValue::new(); 256];
             let len = log.msgs.len().min(errors_stack.len());
             for (i, msg) in log.msgs.drain(..len).enumerate() {
                 errors_stack[i] = msg_to_js(msg);
@@ -3957,7 +3956,6 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `allocator` dropped per §Allocators (global mimalloc).
-#[derive(Default)]
 pub struct Options {
     pub args: bun_options_types::schema::api::TransformOptions,
     pub log: Option<NonNull<bun_ast::Log>>,
@@ -3979,6 +3977,22 @@ pub struct Options {
     // CLI option struct lives in `bun_cli`, a forward dep). See
     // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
     pub is_main_thread: bool,
+}
+
+impl Options {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            args: bun_options_types::schema::api::TransformOptions::new(),
+            log: None,
+            env_loader: None,
+            smol: false,
+            dns_result_order: 0,
+            eval: false,
+            graph: None,
+            is_main_thread: false,
+        }
+    }
 }
 
 /// Inherited IPC channel recorded at env load; consumed by `bun_runtime`'s
@@ -4027,13 +4041,22 @@ impl ResolveMode {
 }
 
 /// Output slot for module resolution: the resolved path and query string.
-#[derive(Default)]
 pub struct ResolveFunctionResult {
     // LIFETIME-ERASED: `path`/`query_string` borrow argv or the resolver's
     // process-lifetime arena (`detach_lifetime` in `resolve_maybe_need_dirname_uncached`),
     // which outlives every `ResolveFunctionResult`.
     pub path: &'static [u8],
     pub(crate) query_string: &'static [u8],
+}
+
+impl ResolveFunctionResult {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            path: &[],
+            query_string: &[],
+        }
+    }
 }
 
 /// Per-thread `BufferPrinter` used when printing transpiled module source.
@@ -4808,7 +4831,7 @@ impl VirtualMachine {
             mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
-            ..Default::default()
+            ..InitOptions::new()
         };
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
@@ -4842,7 +4865,7 @@ impl VirtualMachine {
             worker_ptr: worker.messaging_proxy(),
             context_id: Some(worker.execution_context_id() as i32),
             mini_mode: worker.mini(),
-            ..Default::default()
+            ..InitOptions::new()
         };
         // Route through
         // [`init`] (which already wires console / event-loop / global / jsc_vm
@@ -4879,7 +4902,7 @@ impl VirtualMachine {
             mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
-            ..Default::default()
+            ..InitOptions::new()
         };
         // Note: shares the console / log / event-loop wiring with `init`;
         // the only delta is the global is created via `BakeCreateProdGlobal`
@@ -4937,7 +4960,7 @@ impl VirtualMachine {
         if code.is_empty() {
             return ResolvedSource {
                 source_url: specifier.create_if_different(source_url),
-                ..Default::default()
+                ..ResolvedSource::new()
             };
         }
         let source = self.ref_counted_string::<true>(code, hash_);
@@ -4948,7 +4971,7 @@ impl VirtualMachine {
         ResolvedSource {
             source_code: bun_core::String::retain_wtf_impl(source_ref.impl_),
             source_url: specifier.create_if_different(source_url),
-            ..Default::default()
+            ..ResolvedSource::new()
         }
     }
 
@@ -5196,7 +5219,7 @@ impl VirtualMachine {
         if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
             specifier,
             bun_ast::Target::Bun,
-            Default::default(),
+            bun_resolve_builtins::Cfg::new(),
         ) {
             ret.path = result.path.as_bytes();
             return Ok(());
@@ -5424,7 +5447,7 @@ impl VirtualMachine {
             );
             let msg = bun_ast::Msg {
                 data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
-                ..Default::default()
+                ..bun_ast::Msg::new()
             };
             return Ok(Err(crate::ResolveMessage::create(
                 global,
@@ -5433,7 +5456,7 @@ impl VirtualMachine {
             )?));
         }
 
-        let mut result = ResolveFunctionResult::default();
+        let mut result = ResolveFunctionResult::new();
         let jsc_vm_ptr = global.bun_vm_ptr();
         // SAFETY: per-thread VM is live (caller is on the JS thread).
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
@@ -5445,7 +5468,7 @@ impl VirtualMachine {
             if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
                 specifier.latin1(),
                 bun_ast::Target::Bun,
-                Default::default(),
+                bun_resolve_builtins::Cfg::new(),
             ) {
                 return Ok(Ok(
                     if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
@@ -5463,7 +5486,7 @@ impl VirtualMachine {
         if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
             specifier_utf8.slice(),
             bun_ast::Target::Bun,
-            Default::default(),
+            bun_resolve_builtins::Cfg::new(),
         ) {
             return Ok(Ok(
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
@@ -5494,7 +5517,7 @@ impl VirtualMachine {
         // zeroed-init nicety; the `expect` is infallible.
         let old_log: NonNull<bun_ast::Log> = jsc_vm.log.expect("vm.log set in init");
         let old_transpiler_log: *mut bun_ast::Log = jsc_vm.transpiler.log;
-        let mut log = bun_ast::Log::default();
+        let mut log = bun_ast::Log::empty();
         jsc_vm.log = NonNull::new(&raw mut log);
         jsc_vm.transpiler.log = &raw mut log;
         jsc_vm.transpiler.resolver.log = NonNull::from(&mut log);
@@ -5577,7 +5600,7 @@ impl VirtualMachine {
                             import_kind,
                             err: bun_ast::Error::ModuleNotFound,
                         }),
-                        ..Default::default()
+                        ..bun_ast::Msg::new()
                     }
                 }
             };
@@ -5617,17 +5640,28 @@ impl VirtualMachine {
 
         // `ProcessAutoKiller`'s `Drop`
         // is the deinit body; take()+drop runs it without dropping `self`.
-        drop(core::mem::take(&mut self.auto_killer));
+        drop(core::mem::replace(
+            &mut self.auto_killer,
+            crate::process_auto_killer::ProcessAutoKiller::new(),
+        ));
 
         // A graph context whose release was still queued: teardown stopped what it owned.
-        for (_, context) in core::mem::take(&mut self.graph_contexts).iter() {
+        for (_, context) in core::mem::replace(
+            &mut self.graph_contexts,
+            bun_collections::ArrayHashMap::new(),
+        )
+        .iter()
+        {
             // SAFETY: registered ⇒ live and owned here.
             drop(unsafe { Box::from_raw(context.as_ptr()) });
         }
         drop_source_code_printer();
 
         // `SavedSourceMap`'s `Drop` frees each stored map along with its table.
-        drop(core::mem::take(&mut self.source_mappings));
+        drop(core::mem::replace(
+            &mut self.source_mappings,
+            SavedSourceMap::new(),
+        ));
 
         if let Some(hooks) = runtime_hooks() {
             (hooks.stop_cron_for_vm_teardown)(self);
@@ -5645,14 +5679,20 @@ impl VirtualMachine {
 
         // Drops all `Arc`-held
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
-        drop(core::mem::take(&mut self.proxy_env_storage));
+        drop(core::mem::replace(
+            &mut self.proxy_env_storage,
+            crate::rare_data::ProxyEnvStorage::new(),
+        ));
 
         // The VM box is `dealloc`'d raw by the worker (see `web_worker.rs`
         // section 5) so field `Drop`s never run; reclaim the boxed
         // `ModuleLoader` payloads explicitly. `eval_source.contents` may be
         // mmap-backed (`MAPPED_CONTENTS_CACHE`) — `Source`'s `Drop` is a
         // no-op, so dropping the box just frees its own allocation.
-        drop(core::mem::take(&mut self.module_loader));
+        drop(core::mem::replace(
+            &mut self.module_loader,
+            crate::module_loader::ModuleLoader::new(),
+        ));
 
         // Same raw-dealloc story: `preload` is cloned into the VM at spin()
         // time and `load_preloads` clears the boxes but keeps the Vec buffer,
@@ -5664,7 +5704,10 @@ impl VirtualMachine {
         unsafe { self.transpiler.deinit() };
 
         drop(core::mem::take(&mut self.resolved_path_dups));
-        drop(core::mem::take(&mut self.main_resolved_path));
+        drop(core::mem::replace(
+            &mut self.main_resolved_path,
+            super::String::EMPTY,
+        ));
 
         self.overridden_main.deinit();
         self.bake_config_plugins.deinit();
@@ -6655,7 +6698,7 @@ impl VirtualMachine {
             let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
                 Some(bun_sourcemap::mapping::Lookup {
                     mapping: bun_sourcemap::mapping::Mapping {
-                        generated: bun_sourcemap::LineColumnOffset::default(),
+                        generated: bun_sourcemap::LineColumnOffset::new(),
                         original: bun_sourcemap::LineColumnOffset {
                             lines: bun_sourcemap::Ordinal::from_zero_based(
                                 frames[top].position.line.zero_based().max(0),
@@ -6717,7 +6760,7 @@ impl VirtualMachine {
                     // Avoid printing "export default 'native'"
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
-                let mut log = bun_ast::Log::default();
+                let mut log = bun_ast::Log::empty();
                 let Ok(original_source) = Self::fetch_without_on_load_plugins(
                     self,
                     global,
@@ -7049,7 +7092,7 @@ impl VirtualMachine {
                 clamped,
                 bun_core::fmt::HighlighterOptions {
                     enable_colors: allow_ansi_color,
-                    ..Default::default()
+                    ..bun_core::fmt::HighlighterOptions::new()
                 },
             );
             if clamped.len() != trimmed.len() {
@@ -7142,7 +7185,7 @@ impl VirtualMachine {
                         clamped,
                         bun_core::fmt::HighlighterOptions {
                             enable_colors: allow_ansi_color,
-                            ..Default::default()
+                            ..bun_core::fmt::HighlighterOptions::new()
                         },
                     );
                     if clamped.len() != trimmed.len() {
@@ -7179,7 +7222,7 @@ impl VirtualMachine {
                         clamped,
                         bun_core::fmt::HighlighterOptions {
                             enable_colors: allow_ansi_color,
-                            ..Default::default()
+                            ..bun_core::fmt::HighlighterOptions::new()
                         },
                     );
                     if clamped.len() != trimmed.len() {
@@ -7424,11 +7467,12 @@ impl VirtualMachine {
                     .expect("ObjectPool::get_node always returns a valid heap node");
                 let data = console_object::formatter::visited::node_data_mut(&mut node);
                 data.clear();
-                formatter.map = core::mem::take(data);
+                formatter.map =
+                    core::mem::replace(data, crate::console_object::formatter::visited::Map::new());
                 formatter.map_node = Some(node);
             }
 
-            let entry = formatter.map.get_or_put(err).expect("unreachable");
+            let entry = formatter.map.get_or_put(err, || ()).expect("unreachable");
             if entry.found_existing {
                 writer.write_all(b"\n")?;
                 pretty_write!(writer, "<r><cyan>[Circular]<r>")?;

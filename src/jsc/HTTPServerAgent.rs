@@ -12,8 +12,8 @@ pub struct HTTPServerAgent {
     pub next_server_id: ServerId,
 }
 
-impl Default for HTTPServerAgent {
-    fn default() -> Self {
+impl HTTPServerAgent {
+    pub fn new() -> Self {
         Self {
             agent: None,
             next_server_id: ServerId::init(0),
@@ -57,8 +57,8 @@ pub enum RouteType {
     Static = 4,
 }
 
-impl Default for Route {
-    fn default() -> Self {
+impl Route {
+    pub fn new() -> Self {
         Self {
             route_id: 0,
             path: BunString::EMPTY,

@@ -21,11 +21,10 @@ use crate::properties::PropertyId;
 
 /// A [`<geometry-box>`](https://www.w3.org/TR/css-masking-1/#typedef-geometry-box) value
 /// as used in the `mask-clip` and `clip-path` properties.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum GeometryBox {
     /// The painted content is clipped to the content box.
     #[css(name = "border-box")]
-    #[default]
     BorderBox,
     /// The painted content is clipped to the padding box.
     #[css(name = "padding-box")]
@@ -54,7 +53,7 @@ impl GeometryBox {
 }
 
 /// A value for the [mask-mode](https://www.w3.org/TR/css-masking-1/#the-mask-mode) property.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskMode {
     /// The luminance values of the mask image is used.
     #[css(name = "luminance")]
@@ -64,7 +63,6 @@ pub enum MaskMode {
     Alpha,
     /// If an SVG source is used, the value matches the `mask-type` property. Otherwise, the alpha values are used.
     #[css(name = "match-source")]
-    #[default]
     MatchSource,
 }
 
@@ -79,11 +77,10 @@ pub enum MaskClip {
 }
 
 /// A value for the [mask-composite](https://www.w3.org/TR/css-masking-1/#the-mask-composite) property.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskComposite {
     /// The source is placed over the destination.
     #[css(name = "add")]
-    #[default]
     Add,
     /// The source is placed, where it falls outside of the destination.
     #[css(name = "subtract")]
@@ -208,8 +205,8 @@ impl Mask {
         }
 
         Ok(Self {
-            image: image.unwrap_or_default(),
-            position: position.unwrap_or_default(),
+            image: image.unwrap_or(Image::None),
+            position: position.unwrap_or_else(Position::new),
             repeat: repeat.unwrap_or_else(BackgroundRepeat::default),
             size: size.unwrap_or_else(BackgroundSize::default),
             origin: origin.unwrap_or(GeometryBox::BorderBox),
@@ -222,7 +219,7 @@ impl Mask {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.image.to_css(dest)?;
 
-        if self.position != Position::default() || self.size != BackgroundSize::default() {
+        if self.position != Position::new() || self.size != BackgroundSize::default() {
             dest.write_char(b' ')?;
             self.position.to_css(dest)?;
 
@@ -249,12 +246,12 @@ impl Mask {
             }
         }
 
-        if self.composite != MaskComposite::default() {
+        if self.composite != MaskComposite::Add {
             dest.write_char(b' ')?;
             self.composite.to_css(dest)?;
         }
 
-        if self.mode != MaskMode::default() {
+        if self.mode != MaskMode::MatchSource {
             dest.write_char(b' ')?;
             self.mode.to_css(dest)?;
         }
@@ -267,14 +264,13 @@ impl Mask {
 }
 
 /// A value for the [mask-border-mode](https://www.w3.org/TR/css-masking-1/#the-mask-border-mode) property.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskBorderMode {
     /// The luminance values of the mask image is used.
     #[css(name = "luminance")]
     Luminance,
     /// The alpha values of the mask image is used.
     #[css(name = "alpha")]
-    #[default]
     Alpha,
 }
 
@@ -322,7 +318,7 @@ impl MaskBorder {
                 width: bi.width,
                 outset: bi.outset,
                 repeat: bi.repeat,
-                mode: mode.unwrap_or_default(),
+                mode: mode.unwrap_or(MaskBorderMode::Alpha),
             })
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_declaration))
@@ -338,7 +334,7 @@ impl MaskBorder {
             &self.repeat,
             dest,
         )?;
-        if self.mode != MaskBorderMode::default() {
+        if self.mode != MaskBorderMode::Alpha {
             dest.write_char(b' ')?;
             self.mode.to_css(dest)?;
         }

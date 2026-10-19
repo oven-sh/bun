@@ -25,13 +25,23 @@ enum After<'a> {
     Require(Expr<'a>),
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     is_oxlint: bool,
     /// Each `require("a")` which counts, with where its statement at the top level starts.
     requires: Vec<(u32, Expr<'a>)>,
     /// That something is in a function, a block, an object literal or a decorator.
     hidden: AncestorMemo<'a, ()>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            is_oxlint: false,
+            requires: Vec::new(),
+            hidden: AncestorMemo::new(),
+        }
+    }
 }
 
 impl Rule for NewlineAfterImport {
@@ -64,7 +74,7 @@ impl Rule for NewlineAfterImport {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         Some(State {
             is_oxlint: file.language().is_oxlint,
-            ..State::default()
+            ..State::new()
         })
     }
 

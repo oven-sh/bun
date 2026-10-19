@@ -28,7 +28,7 @@ impl TinyLog {
         TinyLog {
             cursor_at: u32::MAX,
             cursor_len: 0,
-            msg: BoundedArray::default(),
+            msg: BoundedArray::new(),
         }
     }
 

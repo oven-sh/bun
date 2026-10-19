@@ -113,7 +113,7 @@ fn check_pattern<'a>(
     if !may_have_backreference(pattern) {
         return;
     }
-    let Ok(ast) = parse_pattern(pattern, mode, regex::Options::default()) else {
+    let Ok(ast) = parse_pattern(pattern, mode, regex::Options::new()) else {
         return;
     };
     for bref in ast.root().descendants() {

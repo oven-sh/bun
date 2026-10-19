@@ -292,7 +292,7 @@ impl JSMySQLConnection {
             vm: BackRef::from(
                 core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
             ),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: JsCell::new(KeepAlive::new()),
             connection: JsCell::new(my_sql_connection::MySQLConnection::init(
                 database,
                 username,
@@ -619,7 +619,7 @@ impl JSMySQLConnection {
             ResultMode::Objects => {
                 // Build unconditionally (matches postgres) so toJS always has
                 // either a Structure or a names array.
-                let owner = self.js_value.get().try_get().unwrap_or_default();
+                let owner = self.js_value.get().try_get().unwrap_or_else(JSValue::new);
                 let cs = statement.structure(owner, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                 Some(ParentRef::new(cs))
@@ -634,7 +634,7 @@ impl JSMySQLConnection {
             binary: !request.is_simple(),
             raw: result_mode == ResultMode::Raw,
             bigint: request.is_bigint_supported(),
-            values: Box::default(),
+            values: Box::new([]),
         };
         if let Err(e) = row.decode(reader) {
             return self.on_undecodable_row(request, e);

@@ -21,10 +21,19 @@ enum Owner<'a> {
 }
 
 /// Finds the first `this` type that is not in a type literal, where it is invalid.
-#[derive(Default)]
 struct ThisTypes {
     literal_nesting: u32,
     first: Option<Span>,
+}
+
+impl ThisTypes {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            literal_nesting: 0,
+            first: None,
+        }
+    }
 }
 
 impl<'a> Visitor<'a> for ThisTypes {
@@ -158,7 +167,7 @@ fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunc
     let (phrase, is_default_export) = match owner {
         Owner::TypeLiteral(_) => ("Type literal", false),
         Owner::Interface(interface) => {
-            let mut this_types = ThisTypes::default();
+            let mut this_types = ThisTypes::new();
             walk_node(Node::Stmt(interface.stmt()), &mut this_types);
             if let Some(this) = this_types.first {
                 let report = cx.report(this, UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE);

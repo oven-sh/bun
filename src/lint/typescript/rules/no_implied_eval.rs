@@ -93,7 +93,7 @@ impl Rule for NoImpliedEval {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<GlobalFunctions<'a>> {
-        Some(GlobalFunctions::default())
+        Some(GlobalFunctions::with_hasher(rustc_hash::FxBuildHasher))
     }
 
     // The outer one first, as upstream: `Function()` as an argument of `setTimeout` is reported twice at one place.

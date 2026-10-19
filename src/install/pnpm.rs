@@ -164,7 +164,7 @@ fn collect_workspace_yaml_strings(
         &arena,
         bun_parsers::yaml::CyclicAliases::Reject,
     ) {
-        Ok(root) => collect_strings(&root.get(field).unwrap_or_default(), out),
+        Ok(root) => collect_strings(&root.get(field).unwrap_or(Expr::EMPTY), out),
         Err(_) => Ok(()),
     }
 }
@@ -177,7 +177,7 @@ fn root_package_json<'a>(
     let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
     let options = crate::GetJsonOptions {
         guess_indentation: true,
-        ..Default::default()
+        ..crate::GetJsonOptions::new()
     };
     let cache = &mut manager.workspace_package_json_cache;
     cache
@@ -267,7 +267,7 @@ fn resolution_from_package_entry(
                 committish: commit,
                 // `resolved` is the commit that gets checked out, and it names the cache folder.
                 resolved: commit,
-                ..Default::default()
+                ..Repository::new()
             })));
         }
 
@@ -381,7 +381,7 @@ fn importer_package_json(
 ) -> Result<Expr, MigratePnpmLockfileError> {
     let json_path = join_top_level_dir(&[path, b"package.json"]).ok_or(InvalidPnpmLockfile)?;
     let cache = &mut manager.workspace_package_json_cache;
-    match cache.get_with_path(log, json_path.slice(), Default::default()) {
+    match cache.get_with_path(log, json_path.slice(), super::GetJsonOptions::new()) {
         crate::GetJsonResult::Entry(entry) => Ok(entry.root),
         _ => Err(InvalidPnpmLockfile),
     }
@@ -485,7 +485,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         )?;
     }
 
-    for (key, value) in props(&root.get(b"overrides").unwrap_or_default()) {
+    for (key, value) in props(&root.get(b"overrides").unwrap_or(Expr::EMPTY)) {
         let name_str = as_str(key).ok_or(InvalidPnpmLockfile)?;
         let Some(version_str) = as_str(value) else {
             bail!(
@@ -529,7 +529,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     let mut patches: StringArrayHashMap<Vec<Patch>> = StringArrayHashMap::new();
     let mut config_patch_paths: Option<StringMap> = None;
 
-    for (key, value) in props(&root.get(b"patchedDependencies").unwrap_or_default()) {
+    for (key, value) in props(&root.get(b"patchedDependencies").unwrap_or(Expr::EMPTY)) {
         let key_str = as_str(key).ok_or(InvalidPnpmLockfile)?;
 
         let (hash_str, path_str, config_key) = if let Some(hash_str) = as_str(value) {
@@ -558,10 +558,13 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         };
 
         let path = sbuf!(lockfile).append(path_str)?;
-        patches.get_or_put(hash_str)?.value_ptr.push(Patch {
-            path,
-            config_key: Box::from(config_key),
-        });
+        patches
+            .get_or_put(hash_str, Vec::new)?
+            .value_ptr
+            .push(Patch {
+                path,
+                config_key: Box::from(config_key),
+            });
     }
 
     let Some(importers_obj) = root.get_object(b"importers") else {
@@ -586,7 +589,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             Some(path) => manager.workspace_package_json_cache.get_with_path(
                 log,
                 path.slice(),
-                Default::default(),
+                super::GetJsonOptions::new(),
             ),
             None => crate::GetJsonResult::ReadErr(crate::Error::Sys(
                 bun_errno::SystemErrno::ENAMETOOLONG,
@@ -623,14 +626,15 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     {
         let root_manifest = importer_package_json(manager, log, b".")?;
-        let mut root_pkg = lockfile::Package::default();
+        let mut root_pkg = lockfile::Package::new();
 
         if let Some(name) = get_str(&root_manifest, b"name") {
             root_pkg.name_hash = string_hash(name);
             root_pkg.name = sbuf!(lockfile).append_with_hash(name, root_pkg.name_hash)?;
         }
 
-        let importer_versions = importer_dep_res_versions.get_or_put(b".")?;
+        let importer_versions =
+            importer_dep_res_versions.get_or_put(b".", StringArrayHashMap::init)?;
         *importer_versions.value_ptr = StringArrayHashMap::new();
 
         parse_append_importer_dependencies(
@@ -673,10 +677,11 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             resolution: Resolution::init(TaggedValue::Workspace(sbuf!(lockfile).append(path)?)),
             name: sbuf!(lockfile).append_with_hash(name, name_hash)?,
             name_hash,
-            ..Default::default()
+            ..lockfile::Package::new()
         };
 
-        let importer_versions = importer_dep_res_versions.get_or_put(path)?;
+        let importer_versions =
+            importer_dep_res_versions.get_or_put(path, StringArrayHashMap::init)?;
         if importer_versions.found_existing {
             return Err(InvalidPnpmLockfile);
         }
@@ -697,7 +702,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
         let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-        let entry = pkg_map.get_or_put(abs_path.slice())?;
+        let entry = pkg_map.get_or_put(abs_path.slice(), || 0)?;
         if entry.found_existing {
             return Err(InvalidPnpmLockfile);
         }
@@ -777,7 +782,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 );
             };
 
-            let pkg_entry = pkg_map.get_or_put(abs_link_path.slice())?;
+            let pkg_entry = pkg_map.get_or_put(abs_link_path.slice(), || 0)?;
             if pkg_entry.found_existing {
                 // they point to the same package
                 continue;
@@ -789,7 +794,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 resolution: Resolution::init_symlink(
                     sbuf!(lockfile).append(&dependency::link_path_for_lockfile(folder))?,
                 ),
-                ..Default::default()
+                ..lockfile::Package::new()
             };
             *pkg_entry.value_ptr = lockfile.append_package_dedupe(&mut pkg)?;
         }
@@ -807,20 +812,20 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     let mut packages_by_key: StringArrayHashMap<Expr> = StringArrayHashMap::new();
 
-    for (key, package_obj) in props(&packages_obj.unwrap_or_default()) {
+    for (key, package_obj) in props(&packages_obj.unwrap_or(Expr::EMPTY)) {
         let key_str = as_str(key).ok_or(InvalidPnpmLockfile)?;
         if !package_obj.is_object() {
             return Err(InvalidPnpmLockfile);
         }
 
         // Pruned lockfiles (`turbo prune`) can leave peer-suffixed keys in `packages:`.
-        let entry = packages_by_key.get_or_put(remove_suffix(key_str))?;
+        let entry = packages_by_key.get_or_put(remove_suffix(key_str), || Expr::EMPTY)?;
         if !entry.found_existing {
             *entry.value_ptr = *package_obj;
         }
     }
 
-    for (key, snapshot_obj) in props(&snapshots_obj.unwrap_or_default()) {
+    for (key, snapshot_obj) in props(&snapshots_obj.unwrap_or(Expr::EMPTY)) {
         let key_str = as_str(key).ok_or(InvalidPnpmLockfile)?;
         if !snapshot_obj.is_object() {
             return Err(InvalidPnpmLockfile);
@@ -950,7 +955,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 string_hash(&key),
                 crate::lockfile_real::PatchedDep::with_path(patch.path),
             )?;
-            let found = found_patches.get_or_put(&patch.config_key)?;
+            let found = found_patches.get_or_put(&patch.config_key, Vec::new)?;
             found.value_ptr.push(key.into_boxed_slice());
         }
 
@@ -969,7 +974,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             && lockfile::bun_lock::url_is_under_registry(scope_registry, url)
                     });
                     if !is_scope_registry
-                        && !warned_registries.get_or_put(registry_name)?.found_existing
+                        && !warned_registries
+                            .get_or_put(registry_name, || ())?
+                            .found_existing
                         && !silent
                     {
                         match url {
@@ -1009,7 +1016,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         let mut pkg = lockfile::Package {
             name,
             name_hash,
-            ..Default::default()
+            ..lockfile::Package::new()
         };
 
         if let Some(integrity_expr) = resolution_expr.as_ref().and_then(|r| r.get(b"integrity")) {
@@ -1215,7 +1222,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,
         migrated: lockfile::Migrated::Pnpm,
-        serializer_result: Default::default(),
+        serializer_result: crate::lockfile_real::bun_lockb::SerializerLoadResult::new(),
         format: lockfile::Format::Text,
     }))
 }
@@ -1300,7 +1307,7 @@ fn declared_peers(
         return Err(InvalidPnpmLockfile);
     }
 
-    for (key, value) in props(&declared.unwrap_or_default()) {
+    for (key, value) in props(&declared.unwrap_or(Expr::EMPTY)) {
         let (Some(name_str), Some(range)) = (as_str(key), as_str(value)) else {
             if strict {
                 return Err(InvalidPnpmLockfile);
@@ -1310,7 +1317,7 @@ fn declared_peers(
         peers.put(name_str, PeerDecl::new(range, false))?;
     }
 
-    for (key, value) in props(&meta.unwrap_or_default()) {
+    for (key, value) in props(&meta.unwrap_or(Expr::EMPTY)) {
         let Some(name_str) = as_str(key) else {
             if strict {
                 return Err(InvalidPnpmLockfile);
@@ -1588,7 +1595,7 @@ fn parse_append_importer_dependencies(
                 continue;
             }
 
-            let entry = importer_versions.get_or_put(name_str)?;
+            let entry = importer_versions.get_or_put(name_str, || Box::new([]))?;
             if entry.found_existing {
                 continue;
             }
@@ -1646,7 +1653,7 @@ fn parse_append_importer_dependencies(
 
     if exclude_links_from_lockfile && verbose {
         for (group_name, _) in DEPENDENCY_GROUPS {
-            for (key, value) in props(&manifest.get(group_name).unwrap_or_default()) {
+            for (key, value) in props(&manifest.get(group_name).unwrap_or(Expr::EMPTY)) {
                 if let (Some(name_str), Some(spec)) = (as_str(key), as_str(value))
                     && spec.starts_with(b"link:")
                     && !importer_versions.contains(name_str)
@@ -1730,7 +1737,7 @@ fn array_expr(items: js_ast::ExprNodeList) -> Expr {
         E::Array {
             items,
             is_single_line,
-            ..Default::default()
+            ..E::Array::new()
         },
         bun_ast::Loc::EMPTY,
     )
@@ -1964,7 +1971,7 @@ fn update_package_json_after_migration(
 }
 
 fn empty_object() -> Expr {
-    Expr::init(E::Object::default(), bun_ast::Loc::EMPTY)
+    Expr::init(E::Object::new(), bun_ast::Loc::EMPTY)
 }
 
 /// The entries of YAML `map` that package.json can take: scalar keys and values, as written.
@@ -1991,14 +1998,14 @@ fn string_entries(source: &[u8], map: &Expr, named: bool, skipped: &mut usize) -
             js_ast::G::Property {
                 key,
                 value,
-                ..Default::default()
+                ..js_ast::G::Property::new()
             },
         );
     }
     Expr::init(
         E::Object {
             properties,
-            ..Default::default()
+            ..E::Object::new()
         },
         map.loc,
     )

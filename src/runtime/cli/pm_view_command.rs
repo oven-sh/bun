@@ -48,7 +48,7 @@ fn to_json_text(value: ast::Expr, source: &bun_ast::Source) -> Result<Vec<u8>, c
         source,
         JSPrinter::PrintJsonOptions {
             mangled_props: None,
-            ..Default::default()
+            ..JSPrinter::PrintJsonOptions::new()
         },
     )?;
     Ok(printer.ctx.get_written().to_vec())
@@ -313,7 +313,7 @@ pub(crate) fn view(
         let versions_array = ast::Expr::init(
             ast::E::Array {
                 items: ast::ExprNodeList::from_owned_slice(keys.into_boxed_slice()),
-                ..Default::default()
+                ..ast::E::Array::new()
             },
             bun_ast::Loc { start: -1 },
         );
@@ -371,7 +371,10 @@ pub(crate) fn view(
                     if json_output {
                         Output::print(format_args!(
                             "{}\n",
-                            bun_fmt::format_json_string_utf8(slice, Default::default())
+                            bun_fmt::format_json_string_utf8(
+                                slice,
+                                bun_core::fmt::JSONFormatterUTF8Options::new()
+                            )
                         ));
                     } else {
                         Output::print(format_args!(
@@ -392,7 +395,7 @@ pub(crate) fn view(
                 }
             }
             (labels, values) if json_output => {
-                let mut object = ast::Expr::init(ast::E::Object::default(), bun_ast::Loc::EMPTY);
+                let mut object = ast::Expr::init(ast::E::Object::new(), bun_ast::Loc::EMPTY);
                 for (label, value) in labels.iter().zip(values) {
                     object.set(&bump, label, *value)?;
                 }
@@ -534,7 +537,7 @@ pub(crate) fn view(
         if let Some(u) = dist.get_number(b"unpackedSize") {
             prettyln!(
                 " <d>.<r>unpackedSize<r><d>:<r> <blue>{}<r>",
-                bun_fmt::size(u.0 as usize, Default::default()),
+                bun_fmt::size(u.0 as usize, bun_core::fmt::SizeFormatterOptions::new()),
             );
         }
     }

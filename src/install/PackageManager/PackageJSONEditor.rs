@@ -28,10 +28,20 @@ const DEPENDENCY_GROUPS: [DependencyGroup; 4] = [
     DependencyGroup::PEER,
 ];
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct EditOptions {
     pub exact_versions: bool,
     pub before_install: bool,
+}
+
+impl EditOptions {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            exact_versions: false,
+            before_install: false,
+        }
+    }
 }
 
 #[inline]
@@ -182,7 +192,7 @@ fn copy_property(p: &G::Property) -> G::Property {
     G::Property {
         key: p.key,
         value: p.value,
-        ..G::Property::default()
+        ..G::Property::new()
     }
 }
 
@@ -194,7 +204,7 @@ pub(crate) fn edit_patched_dependencies(
 ) -> Result<(), bun_alloc::AllocError> {
     let arena = &manager.ast_arena;
     // const pkg_to_patch = manager.
-    let mut patched_dependencies = E::Object::default();
+    let mut patched_dependencies = E::Object::new();
     if let Some(query) = package_json.as_property(b"patchedDependencies") {
         if let bun_ast::ExprData::EObject(obj) = &query.expr.data {
             // Preserve the formatting fields so the printed
@@ -277,7 +287,7 @@ pub fn edit_trusted_dependencies(
         Expr::init(
             E::Array {
                 items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice()),
-                ..Default::default()
+                ..E::Array::new()
             },
             bun_ast::Loc::EMPTY,
         )
@@ -303,12 +313,12 @@ pub fn edit_trusted_dependencies(
                 bun_ast::Loc::EMPTY,
             )),
             value: Some(trusted_dependencies_array),
-            ..Default::default()
+            ..G::Property::new()
         });
         *package_json = Expr::init(
             E::Object {
                 properties: G::PropertyList::move_from_list(root_properties),
-                ..Default::default()
+                ..E::Object::new()
             },
             bun_ast::Loc::EMPTY,
         );
@@ -417,7 +427,7 @@ pub(crate) fn edit_update_entries(
                 {
                     continue;
                 }
-                let entry = updating_packages.get_or_put(key_str)?;
+                let entry = updating_packages.get_or_put(key_str, PackageUpdateInfo::new)?;
 
                 // The first of `dependency_groups` wins, as when picking the installed version.
                 if entry.found_existing {
@@ -426,7 +436,7 @@ pub(crate) fn edit_update_entries(
 
                 *entry.value_ptr = PackageUpdateInfo {
                     original_version_literal: Box::from(version_literal),
-                    ..Default::default()
+                    ..PackageUpdateInfo::new()
                 };
             }
             continue;
@@ -654,7 +664,7 @@ pub(crate) fn steer_used_catalogs_to_latest(
         );
         let options = GetJSONOptions {
             init_reset_store: false,
-            ..Default::default()
+            ..GetJSONOptions::new()
         };
         let GetResult::Entry(entry) =
             package_json_cache.get_with_path(log, package_json_path, options)
@@ -719,13 +729,13 @@ pub(crate) fn record_catalog_originals(
             continue;
         };
         let key = PackageUpdateInfo::catalog_row_key(dep_name, catalog_name);
-        let entry = updating_packages.get_or_put(&key)?;
+        let entry = updating_packages.get_or_put(&key, PackageUpdateInfo::new)?;
         if entry.found_existing {
             continue;
         }
         *entry.value_ptr = PackageUpdateInfo {
             original_version_literal: info.original_version_literal.clone(),
-            ..Default::default()
+            ..PackageUpdateInfo::new()
         };
         entry
             .value_ptr
@@ -795,7 +805,7 @@ impl CatalogInfoIndex {
     fn init(infos: &[CatalogUpdateInfo]) -> Result<CatalogInfoIndex, bun_alloc::AllocError> {
         let mut map = StringArrayHashMap::<Vec<usize>>::with_capacity(infos.len());
         for (i, info) in infos.iter().enumerate() {
-            map.get_or_put(&info.dep_name)?.value_ptr.push(i);
+            map.get_or_put(&info.dep_name, Vec::new)?.value_ptr.push(i);
         }
         Ok(CatalogInfoIndex(map))
     }
@@ -1141,8 +1151,9 @@ pub(crate) fn edit(
                                                 // `manager.updating_packages` mutably.
                                                 let version_literal_owned =
                                                     Box::<[u8]>::from(version_literal);
-                                                let entry =
-                                                    manager.updating_packages.get_or_put(name)?;
+                                                let entry = manager
+                                                    .updating_packages
+                                                    .get_or_put(name, PackageUpdateInfo::new)?;
 
                                                 // first come, first serve
                                                 if entry.found_existing {
@@ -1151,7 +1162,7 @@ pub(crate) fn edit(
 
                                                 *entry.value_ptr = PackageUpdateInfo {
                                                     original_version_literal: version_literal_owned,
-                                                    ..Default::default()
+                                                    ..PackageUpdateInfo::new()
                                                 };
                                             }
                                         }
@@ -1262,7 +1273,7 @@ pub(crate) fn edit(
             }
             let target = dependencies.len() + remaining - replacing;
             while dependencies.len() < target {
-                dependencies.push(G::Property::default());
+                dependencies.push(G::Property::new());
             }
             dependencies
         };
@@ -1290,7 +1301,7 @@ pub(crate) fn edit(
                     if request.package_id == INVALID_PACKAGE_ID {
                         // Duplicate dependency (e.g., "react" in both "dependencies" and
                         // "optionalDependencies"). Remove the old dependency.
-                        new_dependencies[k] = G::Property::default();
+                        new_dependencies[k] = G::Property::new();
                         // Drop the trailing slot (no shift).
                         let new_len = new_dependencies.len() - 1;
                         new_dependencies.truncate(new_len);
@@ -1384,7 +1395,7 @@ pub(crate) fn edit(
                 arena,
                 E::Object {
                     properties: bun_alloc::AstAlloc::vec(),
-                    ..Default::default()
+                    ..E::Object::new()
                 },
                 bun_ast::Loc::EMPTY,
             )
@@ -1413,13 +1424,13 @@ pub(crate) fn edit(
                     bun_ast::Loc::EMPTY,
                 )),
                 value: Some(dependencies_object),
-                ..Default::default()
+                ..G::Property::new()
             });
             *current_package_json = Expr::allocate(
                 arena,
                 E::Object {
                     properties: G::PropertyList::move_from_list(root_properties),
-                    ..Default::default()
+                    ..E::Object::new()
                 },
                 bun_ast::Loc::EMPTY,
             );

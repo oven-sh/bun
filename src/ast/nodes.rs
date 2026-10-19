@@ -221,13 +221,6 @@ impl StoreStr {
     }
 }
 
-impl Default for StoreStr {
-    #[inline]
-    fn default() -> Self {
-        StoreStr::EMPTY
-    }
-}
-
 impl core::ops::Deref for StoreStr {
     type Target = [u8];
     #[inline]
@@ -443,13 +436,6 @@ impl<'a, T> From<bun_alloc::ArenaVec<'a, T>> for StoreSlice<T> {
     }
 }
 
-impl<T> Default for StoreSlice<T> {
-    #[inline]
-    fn default() -> Self {
-        StoreSlice::EMPTY
-    }
-}
-
 impl<T> core::ops::Deref for StoreSlice<T> {
     type Target = [T];
     #[inline]
@@ -541,10 +527,9 @@ pub enum ImportItemStatus {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, strum::IntoStaticStr)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum AssignTarget {
-    #[default]
     None = 0,
     /// "a = b"
     Replace = 1,
@@ -560,8 +545,8 @@ pub struct LocRef {
 
 const _: () = assert!(core::mem::size_of::<LocRef>() == 12);
 
-impl Default for LocRef {
-    fn default() -> Self {
+impl LocRef {
+    pub fn new() -> Self {
         Self {
             loc: crate::Loc::EMPTY,
             ref_: Ref::NONE,
@@ -597,12 +582,12 @@ impl ClauseItem {
     pub const DEFAULT_ALIAS: &'static [u8] = b"default";
 }
 
-impl Default for ClauseItem {
-    fn default() -> Self {
+impl ClauseItem {
+    pub fn new() -> Self {
         Self {
             alias: empty_arena_str(),
             alias_loc: crate::Loc::EMPTY,
-            name: LocRef::default(),
+            name: LocRef::new(),
             original_name: empty_arena_str(),
         }
     }
@@ -719,8 +704,8 @@ pub struct TlaCheck {
     pub import_record_index: crate::base::IndexInt,
 }
 
-impl Default for TlaCheck {
-    fn default() -> Self {
+impl TlaCheck {
+    pub fn new() -> Self {
         Self {
             depth: 0,
             parent: Index::INVALID.get(),
@@ -735,11 +720,11 @@ pub struct Span {
     pub range: crate::Range,
 }
 
-impl Default for Span {
-    fn default() -> Self {
+impl Span {
+    pub fn new() -> Self {
         Self {
             text: empty_arena_str(),
-            range: crate::Range::default(),
+            range: crate::Range::new(),
         }
     }
 }
@@ -870,8 +855,8 @@ pub struct DeclaredSymbolList {
     pub(crate) entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
 }
 
-impl Default for DeclaredSymbolList {
-    fn default() -> Self {
+impl DeclaredSymbolList {
+    pub fn new() -> Self {
         Self {
             entries: MultiArrayList::new_in(bun_alloc::AstAlloc),
         }
@@ -884,7 +869,7 @@ impl DeclaredSymbolList {
     }
 
     pub fn to_owned_slice(&mut self) -> DeclaredSymbolList {
-        core::mem::take(self)
+        core::mem::replace(self, DeclaredSymbolList::new())
     }
 
     pub fn clone(&self) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
@@ -1076,21 +1061,31 @@ pub type PartSymbolPropertyUseMap = ArrayHashMap<
 >;
 
 /// The reads of one `X.name` in `Part::import_symbol_property_uses`.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct PropertyUse {
     pub count_estimate: u32,
     /// Some read is called, as `X.name()` or a template tag, with `X` as `this`.
     pub is_call_target: bool,
 }
 
-impl Default for Part {
-    fn default() -> Self {
+impl PropertyUse {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            count_estimate: 0,
+            is_call_target: false,
+        }
+    }
+}
+
+impl Part {
+    pub fn new() -> Self {
         Self {
             stmts: StoreSlice::EMPTY,
             scopes: StoreSlice::EMPTY,
             import_record_indices: PartImportRecordIndices::new_in(bun_alloc::AstAlloc),
-            declared_symbols: DeclaredSymbolList::default(),
-            symbol_uses: PartSymbolUseMap::default(),
+            declared_symbols: DeclaredSymbolList::new(),
+            symbol_uses: PartSymbolUseMap::new(),
             import_symbol_property_uses: None,
             dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
@@ -1106,9 +1101,9 @@ pub enum StmtOrExpr {
     Expr(Expr),
 }
 
-impl Default for StmtOrExpr {
-    fn default() -> Self {
-        StmtOrExpr::Expr(Expr::default())
+impl StmtOrExpr {
+    pub fn new() -> Self {
+        StmtOrExpr::Expr(Expr::EMPTY)
     }
 }
 
@@ -1120,11 +1115,11 @@ impl StmtOrExpr {
                 crate::stmt::Data::SFunction(mut s) => {
                     // The StoreRef arena slot is never individually dropped, so
                     // `take` (replace with Default) is safe here.
-                    let func = core::mem::take(&mut s.func);
+                    let func = core::mem::replace(&mut s.func, crate::g::Fn::new());
                     Expr::init(E::Function { func }, stmt.loc)
                 }
                 crate::stmt::Data::SClass(mut s) => {
-                    let class = core::mem::take(&mut s.class);
+                    let class = core::mem::replace(&mut s.class, crate::g::Class::new());
                     Expr::init::<E::Class>(class, stmt.loc)
                 }
                 other => Output::panic(format_args!(

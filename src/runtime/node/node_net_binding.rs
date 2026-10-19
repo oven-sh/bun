@@ -78,13 +78,13 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
             owned_ssl_ctx: JsCell::new(None),
             // node:net/node:tls own server-identity (`checkServerIdentity`)
             // policy in JS, so a hostname mismatch is never enforced natively.
-            flags: Cell::new(SocketFlags::default() | SocketFlags::DEFERS_SERVER_IDENTITY),
+            flags: Cell::new(SocketFlags::OWNED_PROTOS | SocketFlags::DEFERS_SERVER_IDENTITY),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
             server_name: JsCell::new(None),
-            buffered_data_for_node_net: Default::default(),
+            buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),

@@ -53,7 +53,8 @@ fn transitive_macro() -> MacroDefinition {
 }
 
 fn fbt_macro() -> MacroDefinition {
-    let mut props: HashMap<&'static [u8], MacroDefinition> = HashMap::default();
+    let mut props: HashMap<&'static [u8], MacroDefinition> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     props.insert(b"*", shallow_macro());
     // fbt.enum gets FBT_MACRO (recursive/transitive)
     // We'll fill this in after construction since it's self-referential.
@@ -67,7 +68,8 @@ fn fbt_macro() -> MacroDefinition {
     let enum_macro = MacroDefinition {
         level: InlineLevel::Transitive,
         properties: Some({
-            let mut p: HashMap<&'static [u8], MacroDefinition> = HashMap::default();
+            let mut p: HashMap<&'static [u8], MacroDefinition> =
+                HashMap::with_hasher(rustc_hash::FxBuildHasher);
             p.insert(b"*", shallow_macro());
             // enum's enum is also recursive, but in practice the depth is bounded
             p.insert(b"enum", transitive_macro());
@@ -80,7 +82,8 @@ fn fbt_macro() -> MacroDefinition {
 
 /// Built-in FBT tags and their macro definitions.
 fn fbt_tags() -> HashMap<Vec<u8>, MacroDefinition> {
-    let mut tags: HashMap<Vec<u8>, MacroDefinition> = HashMap::default();
+    let mut tags: HashMap<Vec<u8>, MacroDefinition> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     tags.insert(b"fbt".to_vec(), fbt_macro());
     tags.insert(b"fbt:param".to_vec(), shallow_macro());
     tags.insert(b"fbt:enum".to_vec(), fbt_macro());

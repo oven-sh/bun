@@ -25,14 +25,13 @@ pub struct DecoderOptions {
 }
 
 /// One `bool` per `BrotliDecoderParameter` variant, default `false`.
-#[derive(Default)]
 struct DecoderParams {
     pub(crate) large_window: bool,
     pub(crate) disable_ring_buffer_reallocation: bool,
 }
 
-impl Default for DecoderOptions {
-    fn default() -> Self {
+impl DecoderOptions {
+    pub fn new() -> Self {
         Self {
             params: DecoderParams {
                 large_window: true,

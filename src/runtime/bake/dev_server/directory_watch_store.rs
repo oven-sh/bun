@@ -14,12 +14,22 @@ use super::*;
 /// import is removed or renamed), nothing walks this store to release the
 /// now-unneeded watcher; it stays until the directory changes or the file
 /// is evicted from the incremental graph.
-#[derive(Default)]
 pub(crate) struct DirectoryWatchStore {
     pub(crate) watches: StringArrayHashMap<Entry>,
     pub(crate) dependencies: Vec<Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
     pub(crate) dependencies_free_list: Vec<u32>,
+}
+
+impl DirectoryWatchStore {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            watches: StringArrayHashMap::init(),
+            dependencies: Vec::new(),
+            dependencies_free_list: Vec::new(),
+        }
+    }
 }
 // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers` field of
 // a heap-allocated `DevServer` (never moved post-init). Raw ptr (not `&mut
@@ -44,7 +54,7 @@ impl DirectoryWatchStore {
         // Zero out the slot so DevServer.deinit/memoryCost — which iterate
         // `dependencies` without consulting the free list — do not touch the
         // freed allocation or stale borrowed pointers.
-        self.dependencies[index as usize] = Dep::default();
+        self.dependencies[index as usize] = Dep::new();
         if index as usize == self.dependencies.len() - 1 {
             self.dependencies.truncate(self.dependencies.len() - 1);
         } else {
@@ -96,8 +106,8 @@ pub(crate) struct Entry {
     /// To pass to `Watcher.remove`.
     pub(crate) watch_index: u16,
 }
-impl Default for Entry {
-    fn default() -> Self {
+impl Entry {
+    pub(crate) fn new() -> Self {
         Self {
             dir: bun_sys::Fd::INVALID,
             dir_fd_owned: false,
@@ -117,12 +127,12 @@ pub(crate) struct Dep {
     /// The specifier that failed. Allocated memory.
     pub(crate) specifier: Box<[u8]>,
 }
-impl Default for Dep {
-    fn default() -> Self {
+impl Dep {
+    pub(crate) fn new() -> Self {
         Dep {
             next: None,
             source_file_path: bun_ptr::RawSlice::EMPTY,
-            specifier: Box::default(),
+            specifier: Box::new([]),
         }
     }
 }
@@ -245,6 +255,7 @@ impl DirectoryWatchStore {
         // calling self methods that need &mut self.
         let gop = self.watches.get_or_put(
             bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
+            Entry::new,
         )?;
         let gop_index = gop.index;
         let found_existing = gop.found_existing;

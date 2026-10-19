@@ -14,7 +14,6 @@ fn trim_path_delimiters(input: &[u8]) -> &[u8] {
     trimmed
 }
 
-#[derive(Default)]
 pub struct EnvPath {
     buf: Vec<u8>,
 }

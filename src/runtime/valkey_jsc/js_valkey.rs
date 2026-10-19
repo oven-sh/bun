@@ -39,11 +39,21 @@ type Socket = uws::AnySocket;
 // SubscriptionCtx
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub(crate) struct SubscriptionCtx {
     pub(crate) is_subscriber: bool,
     pub(crate) original_enable_offline_queue: bool,
     pub(crate) original_enable_auto_pipelining: bool,
+}
+
+impl SubscriptionCtx {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            is_subscriber: false,
+            original_enable_offline_queue: false,
+            original_enable_auto_pipelining: false,
+        }
+    }
 }
 
 /// The generate-classes.ts output emits a
@@ -408,7 +418,7 @@ impl RefCountedTimer {
     fn take_fire_ref(&self) -> Option<RefPtr<JSValkeyClient>> {
         self.event_loop_timer
             .with_mut(|t| t.state = Timer::State::FIRED);
-        self.held_ref.take()
+        self.held_ref.replace(None)
     }
 }
 
@@ -643,14 +653,14 @@ impl JSValkeyClient {
         {
             Options::from_js(cx.global(), arguments[1])?
         } else {
-            valkey::Options::default()
+            valkey::Options::new()
         };
 
         // Copy strings into a persistent buffer since the URL object will be deinitialized
-        let mut connection_strings: Box<[u8]> = Box::default();
-        let mut username: Box<[u8]> = Box::default();
-        let mut password: Box<[u8]> = Box::default();
-        let mut hostname: Box<[u8]> = Box::default();
+        let mut connection_strings: Box<[u8]> = Box::new([]);
+        let mut username: Box<[u8]> = Box::new([]);
+        let mut password: Box<[u8]> = Box::new([]);
+        let mut hostname: Box<[u8]> = Box::new([]);
 
         // errdefer free(connection_strings) — handled by Box drop on `?`.
 
@@ -658,7 +668,7 @@ impl JSValkeyClient {
             || !password_utf8.slice().is_empty()
             || !hostname_slice.is_empty()
         {
-            let mut b = bun_core::StringBuilder::default();
+            let mut b = bun_core::StringBuilder::new();
             b.count(username_utf8.slice());
             b.count(password_utf8.slice());
             b.count(hostname_slice);
@@ -701,7 +711,7 @@ impl JSValkeyClient {
         // `_subscription_ctx` is a placeholder here; properly initialized later by `create()`.
         Ok(JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
-            _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
+            _subscription_ctx: JsCell::new(SubscriptionCtx::new()),
             client: JsCell::new(valkey::ValkeyClient {
                 vm,
                 address: match uri {
@@ -735,20 +745,20 @@ impl JSValkeyClient {
                     enable_auto_reconnect: options.enable_auto_reconnect,
                     enable_offline_queue: options.enable_offline_queue,
                     enable_auto_pipelining: options.enable_auto_pipelining,
-                    ..Default::default()
+                    ..valkey::ConnectionFlags::new()
                 },
                 max_retries: options.max_retries,
                 connection_timeout_ms: options.connection_timeout_ms,
                 idle_timeout_interval_ms: options.idle_timeout_ms,
-                write_buffer: Default::default(),
-                read_buffer: Default::default(),
-                reply_scanner: Default::default(),
+                write_buffer: bun_collections::OffsetByteList::new(),
+                read_buffer: bun_collections::OffsetByteList::new(),
+                reply_scanner: bun_valkey::valkey_protocol::ReplyScanner::new(),
                 retry_attempts: 0,
-                auto_flusher: Default::default(),
+                auto_flusher: crate::webcore::AutoFlusher::new(),
             }),
             global_object: GlobalRef::from(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: JsCell::new(KeepAlive::new()),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
@@ -807,7 +817,7 @@ impl JSValkeyClient {
 
         Ok(JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
-            _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
+            _subscription_ctx: JsCell::new(SubscriptionCtx::new()),
             client: JsCell::new(valkey::ValkeyClient {
                 vm,
                 address: match client.protocol {
@@ -847,20 +857,20 @@ impl JSValkeyClient {
                     } else {
                         client.flags.enable_auto_pipelining
                     },
-                    ..Default::default()
+                    ..valkey::ConnectionFlags::new()
                 },
                 max_retries: client.max_retries,
                 connection_timeout_ms: client.connection_timeout_ms,
                 idle_timeout_interval_ms: client.idle_timeout_interval_ms,
-                write_buffer: Default::default(),
-                read_buffer: Default::default(),
-                reply_scanner: Default::default(),
+                write_buffer: bun_collections::OffsetByteList::new(),
+                read_buffer: bun_collections::OffsetByteList::new(),
+                reply_scanner: bun_valkey::valkey_protocol::ReplyScanner::new(),
                 retry_attempts: 0,
-                auto_flusher: Default::default(),
+                auto_flusher: crate::webcore::AutoFlusher::new(),
             }),
             global_object: GlobalRef::from(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: JsCell::new(KeepAlive::new()),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
@@ -1217,7 +1227,7 @@ impl JSValkeyClient {
         // Ref the poll to keep event loop alive during connection
         self.poll_ref.with_mut(|r| {
             r.disable();
-            *r = KeepAlive::default();
+            *r = KeepAlive::new();
             r.ref_(vm_event_loop_ctx());
         });
 
@@ -1990,7 +2000,7 @@ impl Options {
                 !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
                     .get()
                     .unwrap_or(false),
-            ..Default::default()
+            ..valkey::Options::new()
         };
 
         if let Some(idle_timeout) =

@@ -45,7 +45,7 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
     }
     let mut collector = Collector { source: pattern, control_chars: Vec::new() };
     // What precedes a syntax error counts.
-    _ = regex::validate_pattern(pattern, Mode::of_flags(flags), regex::Options::default(), &mut collector);
+    _ = regex::validate_pattern(pattern, Mode::of_flags(flags), regex::Options::new(), &mut collector);
     if collector.control_chars.is_empty() {
         return;
     }
@@ -60,16 +60,25 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
 }
 
 /// oxlint's `ControlCharacterFinder`
-#[derive(Default)]
 struct Finder {
     /// With where each of them is in the pattern.
     control_chars: Vec<(u8, u32, u32)>,
     capture_groups: u32,
 }
 
+impl Finder {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            control_chars: Vec::new(),
+            capture_groups: 0,
+        }
+    }
+}
+
 impl Handler for Finder {
     fn on_pattern_enter(&mut self, _: u32) {
-        *self = Finder::default();
+        *self = Finder::new();
     }
 
     fn on_character(&mut self, start: u32, end: u32, value: u32) {
@@ -94,8 +103,8 @@ fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoControlRegex>) {
     if !strings::contains_char(text, b'\\') && !text.iter().any(|b| *b <= 0x1F) {
         return;
     }
-    let mut finder = Finder::default();
-    if regex::validate_pattern(text, pattern.mode, regex::Options::default(), &mut finder).is_err() {
+    let mut finder = Finder::new();
+    if regex::validate_pattern(text, pattern.mode, regex::Options::new(), &mut finder).is_err() {
         return;
     }
     let byte = |at: u32| text.get(at as usize).copied();

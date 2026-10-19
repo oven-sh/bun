@@ -38,7 +38,7 @@ impl<'src> HtmlRenderer<'src> {
             },
             src_text,
             image_nesting_level: 0,
-            saved_img_title: Box::default(),
+            saved_img_title: Box::new([]),
             tag_filter: render_opts.tag_filter,
             autolink_headings: render_opts.autolink_headings,
             heading_buf: Vec::new(),
@@ -324,7 +324,7 @@ impl<'src> HtmlRenderer<'src> {
                         self.write(b"\"");
                     }
                     self.write(b" />");
-                    self.saved_img_title = Box::default();
+                    self.saved_img_title = Box::new([]);
                 }
             }
             return;

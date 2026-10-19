@@ -292,7 +292,7 @@ impl Process {
             event_loop,
             poller: Poller::Detached,
             status,
-            exit_handler: ProcessExitHandler::default(),
+            exit_handler: None,
         }))
     }
 
@@ -413,7 +413,7 @@ impl Process {
         if let Some(poll) = self.poller.fd_poll_mut() {
             poll.deinit();
         }
-        self.poller = Poller::WaiterThread(KeepAlive::default());
+        self.poller = Poller::WaiterThread(KeepAlive::new());
         self.poller.enable_keeping_event_loop_alive(ctx);
         self.ref_();
         // SAFETY: `self` is live and now carries the ref that the delivery releases.
@@ -470,7 +470,7 @@ impl Process {
         {
             let ctx = self.event_loop_ctx();
             if WaiterThread::should_use_waiter_thread() {
-                self.poller = Poller::WaiterThread(KeepAlive::default());
+                self.poller = Poller::WaiterThread(KeepAlive::new());
                 if let Poller::WaiterThread(w) = &mut self.poller {
                     w.ref_(ctx);
                 }
@@ -494,7 +494,7 @@ impl Process {
                 FilePoll::init(
                     ctx,
                     Fd::from_native(watchfd),
-                    bun_io::file_poll::FlagsSet::default(),
+                    bun_io::file_poll::FlagsSet::empty(),
                     bun_io::Owner::new(
                         bun_io::posix_event_loop::poll_tag::PROCESS,
                         std::ptr::from_mut::<Process>(self).cast(),
@@ -536,7 +536,7 @@ impl Process {
         let ctx = self.event_loop_ctx();
         if WaiterThread::should_use_waiter_thread() {
             if !matches!(self.poller, Poller::WaiterThread(_)) {
-                self.poller = Poller::WaiterThread(KeepAlive::default());
+                self.poller = Poller::WaiterThread(KeepAlive::new());
             }
             if let Poller::WaiterThread(w) = &mut self.poller {
                 w.ref_(ctx);
@@ -714,7 +714,7 @@ impl Process {
 
     pub fn detach(&mut self) {
         self.close();
-        self.exit_handler = ProcessExitHandler::default();
+        self.exit_handler = None;
     }
 
     #[cfg(unix)]
@@ -812,9 +812,8 @@ impl Process {
 
 // Not `Copy` — `bun_sys::Error` carries `Box<[u8]>` path/dest.
 // Callers use `.clone()`.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub enum Status {
-    #[default]
     Running,
     Exited(Exited),
     /// The platform's number (`WTERMSIG`), any `u8`; see `Status::signal` / `Status::signal_code`.
@@ -822,7 +821,7 @@ pub enum Status {
     Err(bun_sys::Error),
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Exited {
     pub code: u8,
     /// The platform's signal number, or `0` for none; see `Status::signal`.
@@ -1339,7 +1338,7 @@ pub mod waiter_thread_posix {
                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
                     result,
                     subprocess: process,
-                    task: AnyTaskWithExtraContext::default(),
+                    task: AnyTaskWithExtraContext::new(),
                 });
                 // SAFETY: `out` just produced by heap::alloc — non-null.
                 unsafe {
@@ -1588,8 +1587,8 @@ pub struct WindowsSpawnResult {
 }
 
 #[cfg(windows)]
-impl Default for WindowsSpawnResult {
-    fn default() -> Self {
+impl WindowsSpawnResult {
+    pub fn new() -> Self {
         Self {
             process: None,
             stdin: WindowsStdioResult::Unavailable,
@@ -1615,20 +1614,13 @@ pub enum WindowsStdioResult {
 }
 
 #[cfg(windows)]
-impl Default for WindowsStdioResult {
-    fn default() -> Self {
-        Self::Unavailable
-    }
-}
-
-#[cfg(windows)]
 impl WindowsStdioResult {
     /// Mirrors `Option::<Fd>::take()` on the POSIX `SpawnedStdio` so callers
     /// (`shell::subproc`, `bun_spawn` JS bindings) can pull the handle out by
     /// value without per-platform `mem::replace` at every call site.
     #[inline]
     pub fn take(&mut self) -> Self {
-        core::mem::take(self)
+        core::mem::replace(self, WindowsStdioResult::Unavailable)
     }
 }
 
@@ -1646,7 +1638,9 @@ impl Drop for WindowsSpawnResult {
         // can keep destructuring `Buffer(pipe)` by value; the container is
         // the ownership boundary.
         for slot in [&mut self.stdin, &mut self.stdout, &mut self.stderr] {
-            if let WindowsStdioResult::Buffer(pipe) = core::mem::take(slot) {
+            if let WindowsStdioResult::Buffer(pipe) =
+                core::mem::replace(slot, WindowsStdioResult::Unavailable)
+            {
                 // SAFETY: `pipe` is the Box-allocated `uv::Pipe` from
                 // `create_zeroed_pipe`; `close_and_destroy` reclaims it via
                 // `Box::from_raw` in the close callback (or immediately if
@@ -1709,8 +1703,8 @@ pub struct WindowsSpawnOptions {
 }
 
 #[cfg(windows)]
-impl Default for WindowsSpawnOptions {
-    fn default() -> Self {
+impl WindowsSpawnOptions {
+    pub fn new() -> Self {
         Self {
             stdin: WindowsStdio::Inherit,
             stdout: WindowsStdio::Inherit,
@@ -1721,7 +1715,7 @@ impl Default for WindowsSpawnOptions {
             detached: false,
             uid: None,
             gid: None,
-            windows: WindowsOptions::default(),
+            windows: WindowsOptions::new(),
             argv0: None,
             stream: true,
             use_execve_on_macos: false,
@@ -1743,8 +1737,8 @@ pub struct WindowsOptions {
 }
 
 #[cfg(windows)]
-impl Default for WindowsOptions {
-    fn default() -> Self {
+impl WindowsOptions {
+    pub fn new() -> Self {
         Self {
             verbatim_arguments: false,
             hide_window: true,
@@ -2261,7 +2255,7 @@ mod spawn_process_body {
             pid: 0,
             status: Status::Running,
             poller: Poller::Detached,
-            exit_handler: ProcessExitHandler::default(),
+            exit_handler: None,
         }));
 
         // SAFETY: process is freshly allocated
@@ -2498,21 +2492,21 @@ mod spawn_process_body {
             }
         }
 
-        impl Default for Options {
-            fn default() -> Self {
+        impl Options {
+            pub fn new() -> Self {
                 Self {
                     stdin: SyncStdio::Ignore,
                     stdout: SyncStdio::Inherit,
                     stderr: SyncStdio::Inherit,
                     ipc: None,
-                    cwd: Box::default(),
+                    cwd: Box::new([]),
                     detached: false,
                     argv: Vec::new(),
                     envp: None,
                     use_execve_on_macos: false,
                     argv0: None,
                     #[cfg(windows)]
-                    windows: Default::default(),
+                    windows: WindowsOptions::new(),
                 }
             }
         }
@@ -2532,7 +2526,7 @@ mod spawn_process_body {
                     new_process_group,
                     #[cfg(windows)]
                     windows: self.windows.clone(),
-                    ..Default::default()
+                    ..SpawnOptions::new()
                 }
             }
         }
@@ -2981,7 +2975,7 @@ mod spawn_process_body {
             // `environ` array when no envp override is provided.
             let envp: *const *const c_char = options.envp.unwrap_or_else(bun_sys::environ_ptr);
             let argv = &options.argv;
-            let mut string_builder = bun_core::StringBuilder::default();
+            let mut string_builder = bun_core::StringBuilder::new();
             for arg in argv {
                 string_builder.count_z(arg);
             }

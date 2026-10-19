@@ -83,7 +83,7 @@ fn comments_on_lines_before_property<'a>(member: Expr<'a>, f: &Formatter<'a>) ->
     (member.member_name_start())
         .map(|start| f.comments().of_name(start).leading)
         .filter(|comments| comments.iter().any(|comment| comment.has_newline_after()))
-        .unwrap_or_default()
+        .unwrap_or_else(CommentList::empty)
 }
 
 /// The `.b` or `?.b` of `member`. Prettier's `printMemberLookup`.

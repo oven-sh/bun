@@ -94,7 +94,7 @@ impl NoCastToBrand {
     fn brand_in<'a>(&self, ty: TypeNode<'a>, file: &File) -> Option<&Brand> {
         let mut pending: SmallVec<[TypeNode<'a>; 8]> = smallvec![ty];
         // An alias can be its own.
-        let mut seen = rustc_hash::FxHashSet::default();
+        let mut seen = rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         while let Some(ty) = pending.pop() {
             if !seen.insert(ty) {
                 continue;

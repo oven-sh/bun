@@ -37,7 +37,6 @@ enum Read {
 }
 
 /// The enclosing type parameters that a piece of type syntax may reference.
-#[derive(Default)]
 struct Mentioned {
     /// The names of the enclosing type parameters. A type reference with any other name is not
     /// resolved.
@@ -54,6 +53,20 @@ struct Mentioned {
     /// `getOuterTypeParameters`: the `infer` type parameters of the conditional types around the
     /// syntax. `isTypeParameterPossiblyReferenced` never reaches their container, an `infer` type.
     inferred_around: SmallVec<[TypeId; 4]>,
+}
+
+impl Mentioned {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            candidates: SmallVec::new(),
+            type_params: SmallVec::new(),
+            this: false,
+            values_in: Vec::new(),
+            everything: false,
+            inferred_around: SmallVec::new(),
+        }
+    }
 }
 
 /// `toInt32` of jsnum.go
@@ -388,12 +401,24 @@ fn number_operation(op: BinOp, a: f64, b: f64) -> Option<f64> {
 }
 
 /// `evaluator.Result`
-#[derive(Copy, Clone, Default, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub(super) struct Evaluated {
     pub(super) value: Option<EnumValue>,
     pub(super) is_syntactically_string: bool,
     pub(super) resolved_other_files: bool,
     pub(super) has_external_references: bool,
+}
+
+impl Evaluated {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            value: None,
+            is_syntactically_string: false,
+            resolved_other_files: false,
+            has_external_references: false,
+        }
+    }
 }
 
 crate::types::follow_struct!(Evaluated {
@@ -409,7 +434,7 @@ impl Evaluated {
         let n = if n.is_nan() { f64::NAN } else { n };
         Evaluated {
             value: Some(EnumValue::Number(n.to_bits())),
-            ..Evaluated::default()
+            ..Evaluated::new()
         }
     }
 
@@ -467,7 +492,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn evaluate(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
         if self.is_stack_low() {
             self.bailed_out();
-            return Evaluated::default();
+            return Evaluated::new();
         }
         let (mut file, mut e, mut location) = (file, e, location);
         let mut begun: SmallVec<[Evaluating; 4]> = SmallVec::new();
@@ -503,13 +528,13 @@ impl<'p, 's> Checker<'p, 's> {
                 ExprKind::String(text) => Evaluated {
                     value: Some(EnumValue::String(text)),
                     is_syntactically_string: true,
-                    ..Evaluated::default()
+                    ..Evaluated::new()
                 },
                 ExprKind::Template { exprs } => {
                     let head = hir.id_at(hir.template_texts(exprs), 0);
                     let result = Evaluated {
                         is_syntactically_string: true,
-                        ..Evaluated::default()
+                        ..Evaluated::new()
                     };
                     if !exprs.is_empty() {
                         begun.push(Evaluating::TemplateSpan {
@@ -528,7 +553,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 ExprKind::Number(n) => Evaluated::number(hir.numbers[n as usize]),
                 ExprKind::Dot { .. } if !is_property_access_entity_name_expression(hir, e) => {
-                    Evaluated::default()
+                    Evaluated::new()
                 }
                 ExprKind::Ident(_) | ExprKind::Index { .. } | ExprKind::Dot { .. } => {
                     match self.evaluate_entity(file, e, location) {
@@ -542,7 +567,7 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                     }
                 }
-                _ => Evaluated::default(),
+                _ => Evaluated::new(),
             };
             loop {
                 let Some(outer) = begun.pop() else {
@@ -565,7 +590,7 @@ impl<'p, 's> Checker<'p, 's> {
                         let Some(value) = result.value else {
                             result = Evaluated {
                                 is_syntactically_string: true,
-                                ..Evaluated::default()
+                                ..Evaluated::new()
                             };
                             continue;
                         };
@@ -635,7 +660,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `evaluateEntity`: by the symbols the names resolve to, never by the type of the expression.
     fn evaluate_entity(&mut self, file: FileId, e: ExprId, location: Location) -> Entity {
         let (hir, files) = (self.hir(file), self.files());
-        let no_value = Entity::Result(Evaluated::default());
+        let no_value = Entity::Result(Evaluated::new());
         if let ExprKind::Index { obj, index, .. } = hir[e].kind {
             let name = match hir[index].kind {
                 ExprKind::String(name) => name,
@@ -697,7 +722,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((declaration, declared @ (of, _))) = declaration.filter(|it| it.1 != used) else {
             let at = self.place_of_expr(file, e);
             self.error_at(at, 2565, &[Arg::Sym(symbol)]);
-            return Evaluated::default();
+            return Evaluated::new();
         };
         if !is_declared_before_use(self, declared, location) {
             let at = self.place_of_expr(file, e);
@@ -707,7 +732,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `E["x"]` is any export of `E`. `getEnumMemberValue` of what a merged namespace exports
         // panics.
         let Decl::EnumMember(member) = declaration else {
-            return Evaluated::default();
+            return Evaluated::new();
         };
         let value = self.enum_member_value_at(of, member, location);
         // `location.Parent != declaration.Parent`
@@ -735,7 +760,7 @@ impl<'p, 's> Checker<'p, 's> {
             && member.0 > using.0
             && owner[using.idx()] == owner[member.idx()]
         {
-            return Evaluated::default();
+            return Evaluated::new();
         }
         self.get_enum_member_value(file, member)
     }
@@ -1181,7 +1206,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.type_params_in_scope(file, scope).is_empty() {
             let mut mentioned = Mentioned {
                 candidates: self.type_param_names_in_scope(file, scope),
-                ..Mentioned::default()
+                ..Mentioned::new()
             };
             self.collect_mentions_in_node(file, hir.node(e), &mut mentioned);
             declared = self.identity_mapper_of_mentioned(file, scope, hir[e].pos, &mentioned);
@@ -1242,7 +1267,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut mentioned = Mentioned {
             candidates: self.type_param_names_in_scope(file, scope),
-            ..Mentioned::default()
+            ..Mentioned::new()
         };
         self.collect_mentions(file, node, &mut mentioned);
         self.collect_mentions_of_extends_types_around(file, node, &mut mentioned);
@@ -1278,7 +1303,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut mentioned = Mentioned {
             candidates: self.type_param_names_in_scope(file, scope),
-            ..Mentioned::default()
+            ..Mentioned::new()
         };
         for &(f, func) in decls {
             self.collect_fn_mentions(f, func, &mut mentioned);
@@ -1306,7 +1331,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         let mut mentioned = Mentioned {
             candidates: SmallVec::from_slice(&[self.hir(file)[tp].name]),
-            ..Mentioned::default()
+            ..Mentioned::new()
         };
         self.collect_fn_mentions(file, func, &mut mentioned);
         let id = self.bound(file).type_param_symbol[tp.idx()];
@@ -1695,7 +1720,7 @@ impl<'p, 's> Checker<'p, 's> {
         // A merged symbol is declared at the top level of a file or of a namespace in each of its
         // declarations.
         if symbol.flags.contains(SymFlags::MERGED) {
-            return List::default();
+            return List::new();
         }
         let (file, bound) = (sym.file, self.bound(sym.file));
         // The class if it is one, or else the first declaration of the interface.
@@ -1710,7 +1735,7 @@ impl<'p, 's> Checker<'p, 's> {
             })
         });
         let Some(own) = own.filter(|scope| scope.is_some()) else {
-            return List::default();
+            return List::new();
         };
         let all = self.outer_type_params(file, bound.scopes[own.idx()].parent);
         if !all
@@ -2594,10 +2619,10 @@ impl<'p, 's> Checker<'p, 's> {
         let at = (member.0 - self.hir(file)[en].members.start) as usize;
         let mut in_progress = self.enum_values_in_progress.iter().rev();
         if let Some((_, so_far)) = in_progress.find(|it| it.0 == (file, en)) {
-            return so_far.get(at).copied().unwrap_or_default();
+            return so_far.get(at).copied().unwrap_or_else(Evaluated::new);
         }
         let values = self.compute_enum_member_values(file, en);
-        values.get(at).copied().unwrap_or_default()
+        values.get(at).copied().unwrap_or_else(Evaluated::new)
     }
 
     /// `computeEnumMemberValues`, where `NodeCheckFlagsEnumValuesComputed` is not set. Returns the
@@ -2630,7 +2655,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     result
                 }
-                None => Evaluated::default(),
+                None => Evaluated::new(),
             };
             self.enum_values_in_progress[run].1.push(result);
             auto_value = match result.value {
@@ -2672,11 +2697,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let en = self.bound(file).enum_member_owner[member.idx()];
         if is_ambient_enum(hir, en) && !hir[en].flags.contains(Flags::CONST) {
-            return Evaluated::default();
+            return Evaluated::new();
         }
         let Some(auto_value) = auto_value else {
             self.error_at(at, 1061, &[]);
-            return Evaluated::default();
+            return Evaluated::new();
         };
         if self.p.files.options.isolated_modules
             && let Some((previous, before)) = previous
@@ -4046,7 +4071,7 @@ impl<'p, 's> Checker<'p, 's> {
                 reference,
                 Provenance {
                     alias: Some((alias, self.list(type_arguments))),
-                    ..Provenance::default()
+                    ..Provenance::new()
                 },
             ),
             None => self.intern(reference),
@@ -4362,7 +4387,7 @@ impl<'p, 's> Checker<'p, 's> {
                     Some(owner) if self.is_context_sensitive(*file, owner) => {
                         List::Own(self.adopted_type_params(sig))
                     }
-                    _ => List::default(),
+                    _ => List::new(),
                 };
             }
             _ => {}
@@ -4738,7 +4763,7 @@ impl<'p, 's> Checker<'p, 's> {
             SigData::DefaultConstruct { .. } => {
                 return match self.default_construct_base_sig(sig) {
                     Some(base) => self.sig_params_with_first(base, count),
-                    None => List::default(),
+                    None => List::new(),
                 };
             }
             SigData::Decl { file, func, mapper }

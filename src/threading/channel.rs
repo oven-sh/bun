@@ -56,9 +56,9 @@ impl<T: Copy, const N: usize> Channel<T, StaticBuffer<T, N>> {
 impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
     fn with_buffer(buffer: LinearFifo<T, B>) -> Self {
         Self {
-            mutex: Mutex::default(),
-            putters: Condition::default(),
-            getters: Condition::default(),
+            mutex: Mutex::init(),
+            putters: Condition::init(),
+            getters: Condition::init(),
             buffer: UnsafeCell::new(buffer),
             is_closed: Cell::new(false),
         }

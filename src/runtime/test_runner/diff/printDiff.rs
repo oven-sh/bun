@@ -58,7 +58,7 @@ pub(crate) fn print_diff_main(
         colors: config.enable_ansi_colors,
         limit: config.truncate_threshold.max(config.truncate_context * 2),
         config,
-        chars: diff::CharDiff::default(),
+        chars: diff::CharDiff::new(),
     };
 
     if strings::index_of_char(received_slice, b'\n').is_none()
@@ -547,7 +547,7 @@ impl<'c, W: Write> Printer<'c, W> {
             return self.modified_without_highlight(removed, inserted, rs, is, single_line);
         }
 
-        let mut chars = core::mem::take(&mut self.chars);
+        let mut chars = core::mem::replace(&mut self.chars, bun_text_diff::CharDiff::new());
         let hunks = chars.diff(removed, inserted);
         'highlight: {
             let deleted_highlighted: usize = hunks.iter().map(Hunk::deleted).sum();

@@ -199,7 +199,7 @@ pub(super) fn migrate_packages(
     this.packages.ensure_total_capacity(entry_count)?;
     this.package_index.reserve(entry_count);
 
-    let mut index = StringHashMap::<u32>::default();
+    let mut index = StringHashMap::<u32>::init();
     index.reserve(entry_count);
 
     let silent = manager.options.log_level.is_silent();
@@ -400,7 +400,7 @@ impl<'a> Migrator<'a> {
             os: parse_platform_list(pkg.get(b"os"), Npm::OperatingSystem::ALL)?,
             libc: parse_platform_list(pkg.get(b"libc"), Npm::Libc::NONE)?,
 
-            man_dir: SemverString::default(),
+            man_dir: SemverString::new(),
 
             has_install_script: if let Some(h) = pkg.get(b"hasInstallScript") {
                 let E::JsonValue::Boolean(b) = h else {
@@ -418,10 +418,10 @@ impl<'a> Migrator<'a> {
             integrity: if let Some(integrity) = pkg.get(b"integrity") {
                 Integrity::parse(integrity.as_str().ok_or(Error::InvalidNPMLockfile)?)
             } else {
-                Integrity::default()
+                Integrity::new()
             },
 
-            ..lockfile::Meta::default()
+            ..lockfile::Meta::new()
         };
 
         let mut res = self.entry_resolution(
@@ -455,7 +455,7 @@ impl<'a> Migrator<'a> {
             {
                 // A tarball from that host could not be verified. With an empty URL, the package is
                 // downloaded from the configured registry instead.
-                res.npm_mut().url = SemverString::default();
+                res.npm_mut().url = SemverString::new();
                 self.unverifiable.push(j);
             }
         }
@@ -491,11 +491,11 @@ impl<'a> Migrator<'a> {
             name: name_string,
             name_hash,
             resolution: res,
-            dependencies: ExternalSlice::default(),
-            resolutions: ExternalSlice::default(),
+            dependencies: ExternalSlice::empty(),
+            resolutions: ExternalSlice::empty(),
             meta,
             bin: bin_value,
-            scripts: Default::default(),
+            scripts: crate::lockfile_real::package::scripts::Scripts::new(),
         })?;
         self.this.get_or_put_id(id, name_hash)?;
         self.queue.push((j, id));
@@ -917,7 +917,7 @@ impl<'a> Migrator<'a> {
         let len = self.this.buffers.dependencies.len() - start;
         debug_assert_eq!(len, self.this.buffers.resolutions.len() - start);
         let (deps_slice, res_slice) = if len == 0 {
-            (ExternalSlice::default(), ExternalSlice::default())
+            (ExternalSlice::empty(), ExternalSlice::empty())
         } else {
             (
                 ExternalSlice::new(start as u32, len as u32),

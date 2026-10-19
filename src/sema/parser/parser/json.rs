@@ -63,7 +63,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.f.stmts.push(Stmt {
             kind: StmtKind::ExportAssign(value),
             start: 0,
-            loc: TextRange::default(),
+            loc: TextRange::new(),
             modifiers: Span::EMPTY,
         });
         id

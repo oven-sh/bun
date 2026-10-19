@@ -515,18 +515,26 @@ pub const VOLUME_NAME_GUID: DWORD = 0x1;
 pub const VOLUME_NAME_NT: DWORD = 0x2;
 pub const VOLUME_NAME_NONE: DWORD = 0x4;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum VolumeName {
-    #[default]
     Dos,
     Nt,
     /// `VOLUME_NAME_NONE`: the path relative to the volume root, no device.
     None,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub struct GetFinalPathNameByHandleFormat {
     pub volume_name: VolumeName,
+}
+
+impl GetFinalPathNameByHandleFormat {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            volume_name: VolumeName::Dos,
+        }
+    }
 }
 
 impl FILE_INFORMATION_CLASS {
@@ -1523,7 +1531,7 @@ pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
 // `IO_COUNTERS::default()` instead of `unsafe { zeroed_unchecked() }`.
 // Zeroable impl lives in bun_core/lib.rs (orphan-rule home).
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct IO_COUNTERS {
     pub ReadOperationCount: u64,
     pub WriteOperationCount: u64,
@@ -1531,6 +1539,20 @@ pub struct IO_COUNTERS {
     pub(crate) ReadTransferCount: u64,
     pub(crate) WriteTransferCount: u64,
     pub(crate) OtherTransferCount: u64,
+}
+
+impl IO_COUNTERS {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            ReadOperationCount: 0,
+            WriteOperationCount: 0,
+            OtherOperationCount: 0,
+            ReadTransferCount: 0,
+            WriteTransferCount: 0,
+            OtherTransferCount: 0,
+        }
+    }
 }
 
 #[repr(C)]

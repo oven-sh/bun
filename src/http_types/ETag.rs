@@ -191,10 +191,20 @@ pub fn if_none_match(
 /// `bun_http::headers::api::StringPointer` keep resolving.
 pub use bun_core::StringPointer;
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct HeaderEntry {
     pub name: StringPointer,
     pub value: StringPointer,
+}
+
+impl HeaderEntry {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            name: StringPointer::new(),
+            value: StringPointer::new(),
+        }
+    }
 }
 
 pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
@@ -228,11 +238,20 @@ impl HeaderEntryColumns for HeaderEntryList {
     }
 }
 
-#[derive(Default)]
 pub struct Headers {
     pub entries: HeaderEntryList,
     pub buf: Vec<u8>,
     // No allocator field: non-AST crate → global mimalloc (PORTING.md §allocators).
+}
+
+impl Headers {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            entries: HeaderEntryList::new(),
+            buf: Vec::new(),
+        }
+    }
 }
 
 impl Clone for Headers {

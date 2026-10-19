@@ -20,12 +20,21 @@ fn is_init_of_for_statement(stmt: Stmt) -> bool {
 }
 
 /// The ways out of patterns. In a deep one they are long, and many start in it: they are remembered.
-#[derive(Default)]
 struct Patterns<'a> {
     /// By a part of a pattern in a declaration or a parameter.
     declared: AncestorMemo<'a, Node<'a>>,
     /// By a part of a pattern that is assigned to.
     assigned: AncestorMemo<'a, Node<'a>>,
+}
+
+impl<'a> Patterns<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            declared: AncestorMemo::new(),
+            assigned: AncestorMemo::new(),
+        }
+    }
 }
 
 impl<'a> Patterns<'a> {
@@ -113,7 +122,6 @@ fn is_name_in_through<'a>(scope: Scope<'a>, name: Name<'a>, is_global: bool) -> 
 }
 
 /// What has been found out about the variables, the scopes and the assignments of the file.
-#[derive(Default)]
 struct Known<'a> {
     /// Whether `scope.through` has a reference to a variable of that name.
     through: FxHashMap<(Scope<'a>, Name<'a>), bool>,
@@ -123,6 +131,18 @@ struct Known<'a> {
     /// to it if there is one.
     redeclared: IdMap<Symbol<'a>, (Option<Node<'a>>, SmallVec<[Node<'a>; 1]>)>,
     patterns: Patterns<'a>,
+}
+
+impl<'a> Known<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            through: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            assignments: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            redeclared: IdMap::init(),
+            patterns: Patterns::new(),
+        }
+    }
 }
 
 impl<'a> Known<'a> {
@@ -230,10 +250,19 @@ fn find_variable_declaration<'a>(
 
 /// The identifiers to report, or `None` for a variable that stays as it is, by what writes to
 /// them, in the order of ESLint's `Map`.
-#[derive(Default)]
 struct Groups<'a> {
     index: FxHashMap<Node<'a>, usize>,
     nodes: Vec<SmallVec<[Option<Node<'a>>; 2]>>,
+}
+
+impl<'a> Groups<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            index: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            nodes: Vec::new(),
+        }
+    }
 }
 
 impl<'a> Groups<'a> {
@@ -250,7 +279,6 @@ impl<'a> Groups<'a> {
 }
 
 /// What ESLint's `checkGroup` keeps from one group to the next.
-#[derive(Default)]
 struct Checked<'a> {
     report_count: usize,
     id: Option<Pat<'a>>,
@@ -258,6 +286,18 @@ struct Checked<'a> {
     name: Option<Option<Name<'a>>>,
     /// Of the declaration that the last group was in. The groups of a declaration follow each other.
     declaration: Option<(Stmt<'a>, DeclarationFacts)>,
+}
+
+impl<'a> Checked<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            report_count: 0,
+            id: None,
+            name: None,
+            declaration: None,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -488,7 +528,7 @@ impl Rule for PreferConst {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut statements = std::mem::take(&mut cx.state);
         utils::sort::sort_unstable_by_key(&mut statements, |it| it.span().start);
-        let (mut groups, mut known) = (Groups::default(), Known::default());
+        let (mut groups, mut known) = (Groups::new(), Known::new());
         for statement in statements {
             let StmtKind::Var(declarations) = statement.kind() else {
                 continue;
@@ -515,7 +555,7 @@ impl Rule for PreferConst {
                 });
             }
         }
-        let mut checked = Checked::default();
+        let mut checked = Checked::new();
         for nodes in &groups.nodes {
             self.check_group(nodes, &mut checked, &mut known.patterns, cx);
         }

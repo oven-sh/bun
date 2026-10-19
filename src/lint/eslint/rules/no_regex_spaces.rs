@@ -38,7 +38,7 @@ fn check_regex<'a>(
     flags: &[u8],
     cx: &mut Cx<'a, NoRegexSpaces>,
 ) {
-    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default())
+    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::new())
     else {
         return;
     };
@@ -138,14 +138,14 @@ fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoRegexSpaces>) {
             (args.first())
                 .filter(|it| !it.is_parenthesized() && args.get(1).is_none_or(may_be_flags))
                 .filter(|it| it.as_string().is_some_and(|value| has_double_space(value.bytes())))
-                .and_then(|it| Pattern::read(it, regex::Mode::default()))
+                .and_then(|it| Pattern::read(it, regex::Mode::new()))
         }
         _ => None,
     };
     let Some(pattern) = pattern else {
         return;
     };
-    let Ok(ast) = regex::parse_pattern(pattern.text(), pattern.mode, regex::Options::default()) else {
+    let Ok(ast) = regex::parse_pattern(pattern.text(), pattern.mode, regex::Options::new()) else {
         return;
     };
     let is_passed_over = |it: regex::Node| matches!(it.ty(), NodeType::Quantifier | NodeType::CharacterClass);

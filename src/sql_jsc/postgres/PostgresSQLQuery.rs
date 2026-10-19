@@ -45,17 +45,17 @@ pub struct PostgresSQLQuery {
     pub(crate) flags: Cell<Flags>,
 }
 
-impl Default for PostgresSQLQuery {
-    fn default() -> Self {
+impl PostgresSQLQuery {
+    pub fn new() -> Self {
         Self {
             statement: JsCell::new(None),
             connection: JsCell::new(None),
             query: BunString::EMPTY,
-            undescribed: JsCell::new(Undescribed::default()),
+            undescribed: JsCell::new(Undescribed::new()),
             this_value: JsCell::new(JsRef::empty()),
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
-            flags: Cell::new(Flags::default()),
+            flags: Cell::new(Flags::new()),
         }
     }
 }
@@ -112,8 +112,8 @@ pub enum RequestCounter {
     Pipelined,
 }
 
-impl Default for Flags {
-    fn default() -> Self {
+impl Flags {
+    pub fn new() -> Self {
         Self {
             formats: ResultFormats::Text,
             bigint: false,
@@ -391,7 +391,7 @@ impl PostgresSQLQuery {
             simple,
         } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
 
-        let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
+        let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::new()));
 
         let this_value = js::to_js(ptr, global_this);
         this_value.ensure_still_alive();
@@ -403,7 +403,7 @@ impl PostgresSQLQuery {
             (*ptr).flags.set(Flags {
                 bigint,
                 simple,
-                ..Default::default()
+                ..Flags::new()
             });
         }
 
@@ -469,7 +469,7 @@ impl PostgresSQLQuery {
         }
 
         let this_value = callframe.this();
-        let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
+        let binding_value = js::binding_get_cached(this_value).unwrap_or_else(JSValue::new);
         let unnamed = connection
             .flags
             .get()
@@ -514,7 +514,7 @@ impl PostgresSQLQuery {
         let new_statement =
             |id: Option<u64>| PostgresSQLStatement::new(Signature::new(&declared, id));
         this.statement.set(Some(if this.flags.get().simple {
-            let mut s = PostgresSQLStatement::default();
+            let mut s = PostgresSQLStatement::init();
             // It has no Parse of its own: the Query message is the whole request.
             s.status = StatementStatus::Parsing;
             RefPtr::new(s)

@@ -147,7 +147,7 @@ impl bun_event_loop::Taskable for Result {
         let mut result = unsafe { bun_core::heap::take(this) };
         // A native plugin's source buffer: `on_parse_task_complete` would have handed this to
         // the bundle's finalizers. The source may borrow the buffer, so it goes first.
-        let external = core::mem::take(&mut result.external);
+        let external = core::mem::replace(&mut result.external, ExternalFreeFunction::NONE);
         drop(result);
         external.call();
     }
@@ -298,11 +298,11 @@ impl ParseTask {
             external_free_function: ExternalFreeFunction::NONE,
             loader: None,
             task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
+                node: ThreadPoolLib::Node::new(),
                 callback: task_callback,
             },
             io_task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
+                node: ThreadPoolLib::Node::new(),
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
@@ -318,8 +318,8 @@ impl ParseTask {
     }
 }
 
-impl Default for ParseTask {
-    fn default() -> Self {
+impl ParseTask {
+    pub fn new() -> Self {
         ParseTask {
             ctx: None,
             path: Fs::Path::init(b""),
@@ -328,18 +328,18 @@ impl Default for ParseTask {
             external_free_function: ExternalFreeFunction::NONE,
             side_effects: bun_ast::SideEffects::HasSideEffects,
             loader: None,
-            jsx: Default::default(),
+            jsx: bun_options_types::jsx::Pragma::new(),
             source_index: Index::INVALID,
             task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
+                node: ThreadPoolLib::Node::new(),
                 callback: task_callback,
             },
             io_task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
+                node: ThreadPoolLib::Node::new(),
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            known_target: options::Target::default(),
+            known_target: options::Target::Browser,
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
@@ -601,7 +601,7 @@ pub mod parse_worker {
             side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
             jsx: options::jsx::Pragma {
                 parse: false,
-                ..Default::default()
+                ..options::jsx::Pragma::new()
             },
             contents_or_fd: ContentsOrFd::Contents(runtime_code),
             source_index: Index::RUNTIME,
@@ -611,11 +611,11 @@ pub mod parse_worker {
             secondary_path_for_commonjs_interop: None,
             external_free_function: ExternalFreeFunction::NONE,
             task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
+                node: ThreadPoolLib::Node::new(),
                 callback: task_callback,
             },
             io_task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
+                node: ThreadPoolLib::Node::new(),
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
@@ -642,7 +642,7 @@ pub mod parse_worker {
             // `Source.index` is `bun_ast::Index` (newtype `u32`),
             // distinct from `bun_ast::Index`. Runtime source is index 0.
             index: bun_ast::Index(Index::RUNTIME.get()),
-            ..Default::default()
+            ..Source::new()
         };
         RuntimeSource { parse_task, source }
     }
@@ -667,7 +667,7 @@ pub mod parse_worker {
         bump: &'static Bump,
         source: &'static Source,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
-        let root = Expr::init(E::Object::default(), Loc { start: 0 });
+        let root = Expr::init(E::Object::new(), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
         let define = unsafe { &mut (*transpiler).options.define };
@@ -740,7 +740,7 @@ pub mod parse_worker {
         let import_path = Expr::init(
             E::String {
                 data: unique_key.into(),
-                ..Default::default()
+                ..E::String::new()
             },
             Loc { start: 0 },
         );
@@ -751,7 +751,7 @@ pub mod parse_worker {
                     loc: Loc { start: 0 },
                 },
                 args: bun_ast::ExprNodeList::from_arena_slice(&[import_path]),
-                ..Default::default()
+                ..E::Call::new()
             },
             Loc { start: 0 },
         )
@@ -864,7 +864,7 @@ pub mod parse_worker {
                     )
                 } else {
                     get_empty_ast(
-                        E::Object::default(),
+                        E::Object::new(),
                         log,
                         transpiler,
                         fallback_opts,
@@ -884,7 +884,7 @@ pub mod parse_worker {
                 // `caches` is disjoint from `(*transpiler).options` reborrowed above.
                 let root: Expr = unsafe { &mut (*resolver).caches.json }
                     .parse_json(log, source, mode)?
-                    .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
+                    .unwrap_or_else(|| Expr::init(E::Object::new(), Loc::EMPTY));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
@@ -1019,7 +1019,7 @@ pub mod parse_worker {
                     Expr::init(
                         E::String {
                             data: source.contents().into(),
-                            ..Default::default()
+                            ..E::String::new()
                         },
                         Loc { start: 0 },
                     )
@@ -1061,7 +1061,7 @@ pub mod parse_worker {
                 let root = Expr::init(
                     E::String {
                         data: html.into(),
-                        ..Default::default()
+                        ..E::String::new()
                     },
                     Loc { start: 0 },
                 );
@@ -1116,7 +1116,7 @@ pub mod parse_worker {
                 let import_path = Expr::init(
                     E::String {
                         data: path_to_use.into(),
-                        ..Default::default()
+                        ..E::String::new()
                     },
                     Loc { start: 0 },
                 );
@@ -1127,36 +1127,37 @@ pub mod parse_worker {
                         target: import_meta,
                         name_loc: Loc::EMPTY,
                         name: b"require".into(),
-                        ..Default::default()
+                        ..E::Dot::new()
                     },
                     Loc { start: 0 },
                 );
-                let require_args = bump.alloc_slice_fill_default::<Expr>(2);
+                let require_args = bump.alloc_slice_fill_with::<Expr, _>(2, |_| Expr::EMPTY);
                 require_args[0] = import_path;
-                let object_properties = bump.alloc_slice_fill_default::<G::Property>(1);
+                let object_properties = bump
+                    .alloc_slice_fill_with::<G::Property, _>(1, |_| bun_ast::g::Property::new());
                 object_properties[0] = G::Property {
                     key: Some(Expr::init(
                         E::String {
                             data: b"type".into(),
-                            ..Default::default()
+                            ..E::String::new()
                         },
                         Loc { start: 0 },
                     )),
                     value: Some(Expr::init(
                         E::String {
                             data: b"sqlite".into(),
-                            ..Default::default()
+                            ..E::String::new()
                         },
                         Loc { start: 0 },
                     )),
-                    ..Default::default()
+                    ..G::Property::new()
                 };
                 require_args[1] = Expr::init(
                     E::Object {
                         // SAFETY: bump-owned slice; never grown via this Vec.
                         properties: unsafe { G::PropertyList::from_bump_slice(object_properties) },
                         is_single_line: true,
-                        ..Default::default()
+                        ..E::Object::new()
                     },
                     Loc { start: 0 },
                 );
@@ -1165,7 +1166,7 @@ pub mod parse_worker {
                         target: require_property,
                         // SAFETY: bump-owned slice; never grown via this Vec.
                         args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
-                        ..Default::default()
+                        ..E::Call::new()
                     },
                     Loc { start: 0 },
                 );
@@ -1175,7 +1176,7 @@ pub mod parse_worker {
                         target: require_call,
                         name_loc: Loc::EMPTY,
                         name: b"db".into(),
-                        ..Default::default()
+                        ..E::Dot::new()
                     },
                     Loc { start: 0 },
                 );
@@ -1273,7 +1274,7 @@ pub mod parse_worker {
                             .extend(0..u32::try_from(import_records_len).expect("int cast"));
                         import_record_indices
                     },
-                    ..Default::default()
+                    ..Part::new()
                 };
 
                 // Try to avoid generating unnecessary ESM <> CJS wrapper code.
@@ -1287,7 +1288,7 @@ pub mod parse_worker {
             }
             Loader::Css => {
                 // make css ast
-                let mut import_records = Vec::<ImportRecord>::default();
+                let mut import_records = Vec::<ImportRecord>::new();
                 let source_code = &source.contents;
                 let mut temp_log = Log::init();
                 // `temp_log` is flushed into `log` on every exit path via linear
@@ -1301,7 +1302,7 @@ pub mod parse_worker {
                     let mut parseropts = bun_css::ParserOptions::default(Some(&mut temp_log));
                     if enable_css_modules {
                         parseropts.filename = source.path.pretty;
-                        parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
+                        parseropts.css_modules = Some(bun_css::CssModuleConfig::new());
                     }
                     parseropts
                 };
@@ -1332,7 +1333,7 @@ pub mod parse_worker {
                     bump,
                     &bun_css::MinifyOptions {
                         targets: bun_css::Targets::for_bundler_target(topts.target),
-                        unused_symbols: Default::default(),
+                        unused_symbols: bun_collections::ArrayHashMap::new(),
                     },
                     &extra,
                 ) {
@@ -1345,7 +1346,7 @@ pub mod parse_worker {
                     let _ = has_any_css_locals.fetch_add(1, Ordering::Relaxed);
                 }
                 // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
-                let root = Expr::init(E::Object::default(), Loc { start: 0 });
+                let root = Expr::init(E::Object::new(), Loc { start: 0 });
                 // `StylesheetExtra.symbols` is
                 // `Vec<bun_ast::Symbol>`; `new_lazy_export_ast_impl` takes
                 // `Vec<bun_ast::Symbol>`. Convert field-by-field so CSS-module local refs
@@ -1373,7 +1374,7 @@ pub mod parse_worker {
             }
             // TODO:
             Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
-                return get_empty_ast(E::String::default(), log, transpiler, opts, bump, source);
+                return get_empty_ast(E::String::new(), log, transpiler, opts, bump, source);
             }
             Loader::File | Loader::Wasm => {
                 debug_assert!(loader.should_copy_for_bundling());
@@ -1416,7 +1417,7 @@ pub mod parse_worker {
                 let root = Expr::init(
                     E::String {
                         data: unique_key.into(),
-                        ..Default::default()
+                        ..E::String::new()
                     },
                     Loc { start: 0 },
                 );
@@ -1483,7 +1484,7 @@ pub mod parse_worker {
                                 len: file_contents.len(),
                             },
                             fd: Fd::INVALID,
-                            ..Default::default()
+                            ..CacheEntry::new()
                         });
                     }
                 }
@@ -1500,7 +1501,7 @@ pub mod parse_worker {
                                                 len: code.len(),
                                             },
                                             fd: Fd::INVALID,
-                                            ..Default::default()
+                                            ..CacheEntry::new()
                                         });
                                     }
                                     crate::bake_types::BuiltInModule::Import(path) => {
@@ -1519,7 +1520,7 @@ pub mod parse_worker {
                                 len: fallback.len(),
                             },
                             fd: Fd::INVALID,
-                            ..Default::default()
+                            ..CacheEntry::new()
                         });
                     }
                 }
@@ -1563,7 +1564,7 @@ pub mod parse_worker {
                         Ok(CacheEntry {
                             contents,
                             fd: e.fd,
-                            ..Default::default()
+                            ..CacheEntry::new()
                         })
                     }
                     Err(e) => {
@@ -1607,7 +1608,7 @@ pub mod parse_worker {
                     len: contents.len(),
                 },
                 fd: Fd::INVALID,
-                ..Default::default()
+                ..CacheEntry::new()
             }),
         }
     }
@@ -1725,8 +1726,8 @@ pub mod parse_worker {
         pub(crate) external: *mut c_void, // FFI (LIFETIMES.tsv)
     }
 
-    impl Default for OnBeforeParseArguments {
-        fn default() -> Self {
+    impl OnBeforeParseArguments {
+        pub fn new() -> Self {
             Self {
                 struct_size: core::mem::size_of::<OnBeforeParseArguments>(),
                 context: core::ptr::null_mut(),
@@ -1848,9 +1849,9 @@ pub mod parse_worker {
                 data: bun_ast::Data {
                     location: Some(location),
                     text: std::borrow::Cow::Owned(self.message().to_vec()),
-                    ..Default::default()
+                    ..bun_ast::Data::new()
                 },
-                ..Default::default()
+                ..Msg::new()
             };
             match self.level {
                 bun_ast::Level::Err => msg.kind = bun_ast::Kind::Err,
@@ -1998,7 +1999,10 @@ pub mod parse_worker {
             // plugin keeps the original source, or drops it when the plugin
             // replaces the source.
             let fd = entry.fd;
-            this.original_contents = Some(core::mem::take(&mut entry.contents));
+            this.original_contents = Some(core::mem::replace(
+                &mut entry.contents,
+                bun_resolver::cache::Contents::Empty,
+            ));
             let contents_slice = this
                 .original_contents
                 .as_ref()
@@ -2097,7 +2101,7 @@ pub mod parse_worker {
                 path_ptr: self.file_path.text.as_ptr(),
                 path_len: self.file_path.text.len(),
                 default_loader: *self.loader,
-                ..Default::default()
+                ..OnBeforeParseArguments::new()
             };
             if !self.file_path.namespace.is_empty() {
                 args.namespace_ptr = self.file_path.namespace.as_ptr();
@@ -2175,9 +2179,9 @@ pub mod parse_worker {
                         text: std::borrow::Cow::Borrowed(
                             &b"Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field."[..],
                         ),
-                        ..Default::default()
+                        ..bun_ast::Data::new()
                     },
-                    ..Default::default()
+                    ..Msg::new()
                 };
                     msg.kind = bun_ast::Kind::Err;
                     // `args.context == self` — use `self` directly; materializing
@@ -2465,7 +2469,7 @@ pub mod parse_worker {
             // `Source<'arena>` once that lifetime is threaded through `Success`/Graph.
             contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
             contents_is_recycled: false,
-            ..Default::default()
+            ..Source::new()
         });
 
         let target = (if task.source_index.get() == 1 {
@@ -2726,7 +2730,7 @@ pub mod parse_worker {
             } else if module_type == options::ModuleType::Esm {
                 get_empty_ast(E::Undefined {}, log, transpiler, opts, bump, source)
             } else {
-                get_empty_ast(E::Object::default(), log, transpiler, opts, bump, source)
+                get_empty_ast(E::Object::new(), log, transpiler, opts, bump, source)
             };
         let mut ast = match ast_result {
             Ok(a) => a,
@@ -2768,7 +2772,7 @@ pub mod parse_worker {
         Ok(Success {
             ast,
             source: source.clone(),
-            log: core::mem::take(log),
+            log: core::mem::replace(log, Log::empty()),
             use_directive,
             unique_key_for_additional_file: unique_key_for_additional_file.key,
             side_effects: task.side_effects,
@@ -2897,11 +2901,14 @@ pub mod parse_worker {
 
         let result = Box::new(Result {
             ctx: this.ctx.expect("ParseTask.ctx unset"),
-            task: EventLoop::Task::default(),
+            task: EventLoop::Task::init(),
             value,
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
-            external: core::mem::take(&mut this.external_free_function),
+            external: core::mem::replace(
+                &mut this.external_free_function,
+                ExternalFreeFunction::NONE,
+            ),
             watcher_data: match this.contents_or_fd {
                 ContentsOrFd::Fd { file, dir } => WatcherData {
                     fd: file,
@@ -2913,7 +2920,10 @@ pub mod parse_worker {
         let result = bun_core::heap::into_raw(result);
 
         // `ParseTask` is arena-owned (no Drop); `jsx` may hold owned slices from tsconfig.
-        drop(core::mem::take(&mut this.jsx));
+        drop(core::mem::replace(
+            &mut this.jsx,
+            bun_options_types::jsx::Pragma::new(),
+        ));
 
         // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
         // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
@@ -2965,8 +2975,8 @@ pub mod parse_worker {
     // heap-owning field `on_parse_task_complete` doesn't move out, so take it here.
     fn drop_result_owned_fields(result: &mut Result) {
         match &mut result.value {
-            ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
-            ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
+            ResultValue::Success(s) => drop(core::mem::replace(&mut s.log, Log::empty())),
+            ResultValue::Err(e) => drop(core::mem::replace(&mut e.log, Log::empty())),
             ResultValue::Empty { .. } => {}
         }
     }

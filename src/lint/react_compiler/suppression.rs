@@ -19,12 +19,21 @@ pub(crate) struct SuppressionRange<'a> {
 }
 
 /// The suppressions of a file. Each list is in the order of the file.
-#[derive(Default)]
 pub(crate) struct ProgramSuppressions<'a> {
     /// Those of `eslint-disable-next-line`.
     next_line: Vec<SuppressionRange<'a>>,
     /// Those of `eslint-disable`.
     block: Vec<SuppressionRange<'a>>,
+}
+
+impl<'a> ProgramSuppressions<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            next_line: Vec::new(),
+            block: Vec::new(),
+        }
+    }
 }
 
 /// The text of the comment without `//` or `/* */`, trimmed as `str::trim` does it. Of a `<!--` oxc takes two characters off

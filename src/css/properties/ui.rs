@@ -10,7 +10,7 @@ use css::css_values::ident::DashedIdent;
 
 bitflags::bitflags! {
     /// A value for the [color-scheme](https://drafts.csswg.org/css-color-adjust/#color-scheme-prop) property.
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct ColorScheme: u8 {
         /// Indicates that the element supports a light color scheme.
         const LIGHT = 1 << 0;
@@ -101,7 +101,6 @@ fn color_scheme_map_get(ident: &[u8]) -> Option<ColorSchemeKeyword> {
     }
 }
 
-#[derive(Default)]
 pub struct ColorSchemeHandler;
 
 // `define_var` needs no arena because `TokenList.v` is a std `Vec<TokenOrValue>`.

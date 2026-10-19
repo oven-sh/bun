@@ -126,10 +126,20 @@ struct DebugState {
 }
 
 #[cfg(debug_assertions)]
-#[derive(Default)]
 struct LiveTickets {
     next_id: u64,
     at: bun_collections::HashMap<u64, &'static Location<'static>>,
+}
+
+#[cfg(debug_assertions)]
+impl LiveTickets {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            next_id: 0,
+            at: bun_collections::HashMap::init(),
+        }
+    }
 }
 
 // SAFETY: `vm` is dereferenced only under the discipline in the module doc
@@ -316,7 +326,7 @@ impl VmHandle {
             #[cfg(debug_assertions)]
             debug: DebugState {
                 js_thread: std::thread::current().id(),
-                live: Default::default(),
+                live: bun_threading::guarded::GuardedBy::init(LiveTickets::new()),
                 gate: core::sync::atomic::AtomicBool::new(false),
             },
         }))

@@ -71,7 +71,7 @@ impl<'e> Prettier<'e> {
             host,
             cwd: environment.cwd.clone(),
             run,
-            once: fs::Written::default(),
+            once: fs::Written::new(),
         }
     }
 

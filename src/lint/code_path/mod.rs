@@ -113,7 +113,7 @@ type Edges = SmallVec<[u32; 4]>;
 /// `finally` block.
 type SegmentIds = SmallVec<[u32; 2]>;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SegmentData {
     next: Edges,
     prev: Edges,
@@ -133,8 +133,27 @@ pub(crate) struct SegmentData {
     is_thrown: bool,
 }
 
+impl SegmentData {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            next: Edges::new(),
+            prev: Edges::new(),
+            all_next: Edges::new(),
+            all_prev: Edges::new(),
+            looped_prev: SmallVec::new(),
+            path: 0,
+            number: 0,
+            mark: 0,
+            is_reachable: false,
+            is_used: false,
+            is_returned: false,
+            is_thrown: false,
+        }
+    }
+}
+
 /// The code paths and the segments of a file.
-#[derive(Default)]
 pub(crate) struct Store {
     paths: RefCell<Vec<CodePathData>>,
     segments: RefCell<Vec<SegmentData>>,
@@ -143,6 +162,19 @@ pub(crate) struct Store {
     /// What matters to the analysis itself.
     matters: OnceCell<matters::Matters>,
     reach: OnceCell<Reach>,
+}
+
+impl Store {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            paths: core::cell::RefCell::new(Vec::new()),
+            segments: core::cell::RefCell::new(Vec::new()),
+            epoch: core::cell::Cell::new(0),
+            matters: core::cell::OnceCell::new(),
+            reach: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 impl Store {
@@ -383,8 +415,8 @@ impl<'a> CodePath<'a> {
         let store = &file.lazy.code_paths;
         let start = first.map_or_else(|| self.read(|path| path.initial_segment), |it| it.id);
         let last = last.map(|it| it.id);
-        let mut visited = Numbers::default();
-        let mut skipped = Numbers::default();
+        let mut visited = Numbers::new();
+        let mut skipped = Numbers::new();
         let mut stack: SmallVec<[(u32, u32); 16]> = SmallVec::new();
         stack.push((start, 0));
         while let Some(&(id, index)) = stack.last() {
@@ -411,7 +443,7 @@ impl<'a> CodePath<'a> {
                     } else {
                         let number = (segment.path, segment.number);
                         drop(segments);
-                        let mut traversal = Traversal::default();
+                        let mut traversal = Traversal::new();
                         visit(Segment { file, id }, &mut traversal);
                         if traversal.is_skipped || last == Some(id) {
                             skipped.add_number(number);
@@ -441,10 +473,19 @@ impl<'a> CodePath<'a> {
 }
 
 /// The `controller` of ESLint's `traverseSegments`.
-#[derive(Default)]
 pub struct Traversal {
     is_skipped: bool,
     is_broken: bool,
+}
+
+impl Traversal {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            is_skipped: false,
+            is_broken: false,
+        }
+    }
 }
 
 impl Traversal {
@@ -456,10 +497,19 @@ impl Traversal {
 }
 
 /// A set of segments of one code path: a bit for each number.
-#[derive(Default)]
 struct Numbers {
     path: Option<u32>,
     bits: SmallVec<[u64; 4]>,
+}
+
+impl Numbers {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            path: None,
+            bits: SmallVec::new(),
+        }
+    }
 }
 
 impl Numbers {
@@ -589,12 +639,22 @@ impl<'a> Segment<'a> {
 ///
 /// [`CodePath::current_segments`] is the same without that. This is for a rule that does not keep
 /// the current `CodePath`.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct CurrentSegments<'a> {
     /// Those of the outermost code path first.
     segments: SmallVec<[Segment<'a>; 4]>,
     /// Where those of each code path start in `segments`.
     starts: SmallVec<[u32; 8]>,
+}
+
+impl<'a> CurrentSegments<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            segments: SmallVec::new(),
+            starts: SmallVec::new(),
+        }
+    }
 }
 
 impl<'a> CurrentSegments<'a> {

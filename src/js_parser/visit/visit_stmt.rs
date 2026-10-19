@@ -490,7 +490,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ),
                                 value: Some(value_expr),
                             }]),
-                            ..Default::default()
+                            ..S::Local::new()
                         },
                         stmt.loc,
                     ));
@@ -529,7 +529,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     stmts.push(p.s(
                         S::Local {
                             decls,
-                            ..Default::default()
+                            ..S::Local::new()
                         },
                         stmt.loc,
                     ));
@@ -537,7 +537,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         alias: js_ast::StoreStr::new(b"default"),
                         alias_loc: data.default_name.loc,
                         name: data.default_name,
-                        ..Default::default()
+                        ..js_ast::ClauseItem::new()
                     }));
                     stmts.push(p.s(
                         S::ExportClause {
@@ -604,8 +604,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
                         let open_parens_loc = func.func.open_parens_loc;
-                        func.func =
-                            p.visit_func(core::mem::take(&mut func.func), open_parens_loc, false);
+                        func.func = p.visit_func(
+                            core::mem::replace(&mut func.func, bun_ast::g::Fn::new()),
+                            open_parens_loc,
+                            false,
+                        );
                         p.react_compiler_candidate_name = None;
 
                         if p.is_control_flow_dead {
@@ -630,7 +633,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             let func_expr = p.new_expr(
                                 E::Function {
-                                    func: core::mem::take(&mut func.func),
+                                    func: core::mem::replace(&mut func.func, bun_ast::g::Fn::new()),
                                 },
                                 stmt.loc,
                             );
@@ -712,7 +715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 ),
                                                 value: Some(e),
                                             }]),
-                                            ..Default::default()
+                                            ..S::Local::new()
                                         },
                                         stmt.loc,
                                     ));
@@ -733,7 +736,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 } else {
                                     p.new_expr(
                                         E::Function {
-                                            func: core::mem::take(&mut func.func),
+                                            func: core::mem::replace(
+                                                &mut func.func,
+                                                bun_ast::g::Fn::new(),
+                                            ),
                                         },
                                         stmt.loc,
                                     )
@@ -754,7 +760,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if p.options.features.server_components.wraps_exports() {
                                 let func_expr = p.new_expr(
                                     E::Function {
-                                        func: core::mem::take(&mut func.func),
+                                        func: core::mem::replace(
+                                            &mut func.func,
+                                            bun_ast::g::Fn::new(),
+                                        ),
                                     },
                                     stmt.loc,
                                 );
@@ -857,8 +866,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // `data.value` is mutated *after* pushing `stmt`; the pushed
                             // stmt still observes the write because `data` is an arena
                             // backref shared with the pushed copy.
-                            let class_expr =
-                                p.new_expr(core::mem::take(&mut class.class), stmt.loc);
+                            let class_expr = p.new_expr(
+                                core::mem::replace(&mut class.class, bun_ast::e::Class::new()),
+                                stmt.loc,
+                            );
                             data.value = js_ast::StmtOrExpr::Expr(
                                 p.wrap_value_for_server_component_reference(class_expr, b"default"),
                             );
@@ -909,7 +920,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let open_parens_loc = data.func.open_parens_loc;
         let this_expr_count_before = p.this_expr_count;
-        data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc, false);
+        data.func = p.visit_func(
+            core::mem::replace(&mut data.func, bun_ast::g::Fn::new()),
+            open_parens_loc,
+            false,
+        );
         p.react_compiler_candidate_name = None;
 
         let name_ref = data.func.name.expect("infallible: name checked").ref_;
@@ -939,7 +954,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         target: Expr::init_identifier(enclosing_namespace_arg_ref, stmt.loc),
                         name: original_name.into(),
                         name_loc: func_name.loc,
-                        ..Default::default()
+                        ..E::Dot::new()
                     },
                     stmt.loc,
                 ),
@@ -964,7 +979,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 data.func.name = None;
                 let func_expr = p.new_expr(
                     E::Function {
-                        func: core::mem::take(&mut data.func),
+                        func: core::mem::replace(&mut data.func, bun_ast::g::Fn::new()),
                     },
                     stmt.loc,
                 );
@@ -978,7 +993,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             binding,
                             value: Some(wrapped),
                         }]),
-                        ..Default::default()
+                        ..S::Local::new()
                     },
                     stmt.loc,
                 ));
@@ -1014,7 +1029,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts.push(p.s(
                     S::SExpr {
                         value: init,
-                        ..Default::default()
+                        ..S::SExpr::new()
                     },
                     bun_ast::Loc::EMPTY,
                 ));
@@ -1110,7 +1125,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ),
                         name: original_name.into(),
                         name_loc: class_name.loc,
-                        ..Default::default()
+                        ..E::Dot::new()
                     },
                     stmt.loc,
                 ),
@@ -1168,7 +1183,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     stmts.push(p.s(
                         S::SExpr {
                             value: Expr::assign(lhs, val),
-                            ..Default::default()
+                            ..S::SExpr::new()
                         },
                         stmt.loc,
                     ));
@@ -1513,7 +1528,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             ref_,
                                             loc: last_loc,
                                         },
-                                        ..Default::default()
+                                        ..js_ast::ClauseItem::new()
                                     }));
                                 let local = p.s(
                                     S::Local {
@@ -1801,7 +1816,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 stmts.push(p.s(
                                     S::SExpr {
                                         value: test,
-                                        ..Default::default()
+                                        ..S::SExpr::new()
                                     },
                                     test.loc,
                                 ));
@@ -1821,7 +1836,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 stmts.push(p.s(
                                     S::SExpr {
                                         value: test,
-                                        ..Default::default()
+                                        ..S::SExpr::new()
                                     },
                                     test.loc,
                                 ));
@@ -2024,7 +2039,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         S::Local {
                             kind: init2.kind,
                             decls: first_decls,
-                            ..Default::default()
+                            ..S::Local::new()
                         },
                         loc,
                     );
@@ -2058,7 +2073,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         data.body = p.s(
                             S::Block {
                                 stmts: list_to_stmts(visited_stmts),
-                                ..Default::default()
+                                ..S::Block::new()
                             },
                             loc,
                         );
@@ -2321,7 +2336,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             target: Expr::init_identifier(data.arg, value.loc),
                             name: name.into(),
                             name_loc: value.loc,
-                            ..Default::default()
+                            ..E::Dot::new()
                         },
                         value.loc,
                     ),
@@ -2376,7 +2391,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             value_stmts.push(p.s(
                 S::SExpr {
                     value: *expr,
-                    ..Default::default()
+                    ..S::SExpr::new()
                 },
                 expr.loc,
             ));
@@ -2418,7 +2433,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut prepend_temp_refs = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
-            ..Default::default()
+            ..PrependTempRefsOpts::new()
         };
         let mut prepend_list = stmts_to_list(p.arena, data.stmts);
 

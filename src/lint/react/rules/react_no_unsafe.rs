@@ -71,10 +71,10 @@ impl Rule for NoUnsafe {
         };
         (is_oxlint || check_unsafe_prefix).then(|| State {
             check_unsafe_prefix,
-            parent_component: AncestorMemo::default(),
-            in_es5_component: AncestorMemo::default(),
+            parent_component: AncestorMemo::new(),
+            in_es5_component: AncestorMemo::new(),
             pragmas: Pragmas::new(file),
-            first: FxHashMap::default(),
+            first: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         })
     }
 

@@ -1,11 +1,20 @@
 use crate::jsc::{JSArrayIterator, JSGlobalObject, JSValue, JsResult};
 use bun_sql::postgres::postgres_types::Int4;
 
-#[derive(Default)]
 pub struct Signature {
     /// The type Parse declares for each parameter. 0 leaves it to the server.
     pub(crate) fields: Box<[Int4]>,
     pub(crate) prepared_statement_name: Box<[u8]>,
+}
+
+impl Signature {
+    #[inline]
+    pub fn init() -> Self {
+        Self {
+            fields: Box::new([]),
+            prepared_statement_name: Box::new([]),
+        }
+    }
 }
 
 impl Signature {

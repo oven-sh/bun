@@ -7,16 +7,14 @@ use crate::shell::yield_::Yield;
 
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum State {
-    #[default]
     Idle,
     WaitingWriteErr,
     WaitingIo,
     Err,
 }
 
-#[derive(Default)]
 pub(crate) struct Yes {
     pub(crate) state: State,
     /// One repetition of the output (`"y\n"` or joined argv + `'\n'`), tiled
@@ -25,6 +23,18 @@ pub(crate) struct Yes {
     pub(crate) buffer_used: usize,
     /// Populated in `start()`.
     pub task: Option<YesTask>,
+}
+
+impl Yes {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            state: State::Idle,
+            buffer: Vec::new(),
+            buffer_used: 0,
+            task: None,
+        }
+    }
 }
 
 impl Yes {

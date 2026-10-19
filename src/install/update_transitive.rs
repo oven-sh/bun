@@ -26,10 +26,19 @@ use crate::{
 };
 
 /// Root/workspace dependency rows as loaded from bun.lock, taken before the differ re-enqueues them.
-#[derive(Default)]
 pub struct DirectDependencies {
     owners: Vec<(PackageID, u32, u32)>,
     rows: Vec<(PackageNameHash, Behavior, PackageID)>,
+}
+
+impl DirectDependencies {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            owners: Vec::new(),
+            rows: Vec::new(),
+        }
+    }
 }
 
 impl DirectDependencies {
@@ -40,7 +49,7 @@ impl DirectDependencies {
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
-        let mut out = DirectDependencies::default();
+        let mut out = DirectDependencies::new();
         for owner in 0..pkg_res.len() {
             if !matches!(
                 pkg_res[owner].tag,
@@ -192,7 +201,7 @@ fn later_in_cache(manager: &mut PackageManager, pkg_id: PackageID) -> Box<[u8]> 
     };
     match manager.format_later_version_in_cache(&name, name_hash, &resolution) {
         Some(later) => text(later),
-        None => Box::default(),
+        None => Box::new([]),
     }
 }
 
@@ -282,9 +291,15 @@ struct Pin {
 }
 
 /// The transitive half of a bare `bun update`: every edge owned by a non-workspace package the selected workspaces reach (all of them from the root or with -r) moves to the newest release its own range allows, or to wherever its dist-tag points now.
-#[derive(Default)]
 pub struct TransitiveUpdate {
     pins: Vec<Pin>,
+}
+
+impl TransitiveUpdate {
+    #[inline]
+    pub fn new() -> Self {
+        Self { pins: Vec::new() }
+    }
 }
 
 impl TransitiveUpdate {
@@ -315,7 +330,7 @@ impl TransitiveUpdate {
     /// Returns the rows it pinned so later invalidation passes leave them alone.
     pub fn enqueue(&self, manager: &mut PackageManager) -> crate::Result<DynamicBitSet> {
         if self.pins.is_empty() {
-            return Ok(DynamicBitSet::default());
+            return Ok(DynamicBitSet::new());
         }
         let mut pinned = DynamicBitSet::init_empty(manager.lockfile.buffers.resolutions.len())?;
         let _ = manager.get_cache_directory();
@@ -418,7 +433,7 @@ pub(crate) fn refresh_children_of(
         }
         edges
     };
-    let (pins, moved) = plan_edges(manager, &edges, &DirectDependencies::default())?;
+    let (pins, moved) = plan_edges(manager, &edges, &DirectDependencies::new())?;
     register_moved(manager, &moved)?;
     let update = TransitiveUpdate { pins };
     update.enqueue(manager)?;
@@ -564,7 +579,8 @@ pub(crate) fn register_moved(
             continue;
         }
         let current = res[pkg_id as usize].npm().version;
-        let entry = updating.get_or_put(names[pkg_id as usize].slice(buf))?;
+        let entry =
+            updating.get_or_put(names[pkg_id as usize].slice(buf), PackageUpdateInfo::new)?;
         if entry.found_existing {
             let info = &*entry.value_ptr;
             let keep = !info.original_version_literal.is_empty()
@@ -576,7 +592,7 @@ pub(crate) fn register_moved(
                 continue;
             }
         }
-        *entry.value_ptr = PackageUpdateInfo::default();
+        *entry.value_ptr = PackageUpdateInfo::new();
         entry.value_ptr.set_original_version(current, buf);
     }
     Ok(())
@@ -663,7 +679,7 @@ fn kept_patched_rows(manager: &mut PackageManager) -> Vec<Row> {
                     .version
                     .fmt(buf),
             ),
-            to: Box::default(),
+            to: Box::new([]),
             later,
         });
     }
@@ -725,7 +741,7 @@ fn root_patched_dependencies<'a>(
     }
     let opts = GetJsonOptions {
         init_reset_store: false,
-        ..Default::default()
+        ..GetJsonOptions::new()
     };
     let GetJsonResult::Entry(entry) = cache.get_with_path(log, path, opts) else {
         return None;

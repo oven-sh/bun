@@ -30,7 +30,7 @@ pub fn is_identifier(text: &[u8]) -> bool {
         return false;
     }
     let iter = CodepointIterator::init(text);
-    let mut cursor = Cursor::default();
+    let mut cursor = Cursor::new();
     if !iter.next(&mut cursor) || !is_identifier_start(cursor.c) {
         return false;
     }

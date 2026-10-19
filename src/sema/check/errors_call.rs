@@ -106,7 +106,7 @@ impl Checker<'_, '_> {
             if code != self.reported[i].code {
                 let end = self.error_end_of(file, callee);
                 let d = &mut self.reported[i];
-                (d.code, d.end, d.args) = (code, end, Default::default());
+                (d.code, d.end, d.args) = (code, end, Box::new([]));
             }
         }
         called
@@ -157,7 +157,7 @@ impl Checker<'_, '_> {
             self.report_call_resolution(file, e);
         }
         let call_sigs = if found_none {
-            List::default()
+            List::new()
         } else {
             self.signatures(reduced, false)
         };
@@ -165,7 +165,7 @@ impl Checker<'_, '_> {
         let construct_sigs = if !found_none && (is_new || call_sigs.is_empty()) {
             self.signatures(reduced, true)
         } else {
-            List::default()
+            List::new()
         };
         if !is_new {
             if self.is_untyped_function_call(

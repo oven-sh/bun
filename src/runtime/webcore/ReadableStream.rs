@@ -35,9 +35,7 @@ pub enum NativeWireResult {
 
 /// A `ReadableStream` handle for [`crate::webcore::body::PendingValue`] and the
 /// producers that feed it.
-#[derive(Default)]
 pub(crate) enum Strong {
-    #[default]
     Empty,
     /// GC-roots the stream.
     Held(bun_jsc::Strong),
@@ -531,7 +529,7 @@ impl ReadableStream {
             webcore::blob::store::Data::Bytes(_) => {
                 let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(cx.global())),
-                    ..NewSource::with_context(ByteBlobLoader::default())
+                    ..NewSource::with_context(ByteBlobLoader::new())
                 });
                 reader.context.setup(blob, recommended_chunk_size);
                 reader.to_readable_stream(cx)
@@ -550,7 +548,7 @@ impl ReadableStream {
                             None
                         },
                         lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
-                        ..Default::default()
+                        ..FileReader::new()
                     })
                 });
                 reader.to_readable_stream(cx)
@@ -585,7 +583,7 @@ impl ReadableStream {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                     cx.vm().as_mut().event_loop().cast(),
                 )),
-                ..Default::default()
+                ..FileReader::new()
             })
         });
         let ctx_ptr: *mut FileReader = &raw mut source.context;
@@ -623,7 +621,7 @@ impl ReadableStream {
                 read_error: bun_jsc::JsCell::new(Some(err)),
                 // The reader never starts: a sink attached later ends with the error.
                 done: Cell::new(true),
-                ..Default::default()
+                ..FileReader::new()
             })
         });
         source.to_readable_stream(cx)
@@ -814,7 +812,7 @@ pub trait SourceContext: Sized {
 
     /// `drainInternalBuffer` — default returns empty.
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
-        Vec::<u8>::default()
+        Vec::<u8>::new()
     }
 
     /// `memoryCostFn` — default returns 0; `NewSource::memory_cost` adds `size_of::<Self>()`.

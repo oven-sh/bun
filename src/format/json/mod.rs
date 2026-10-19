@@ -186,7 +186,6 @@ impl Config {
 }
 
 /// Everything that is allocated to format a document. It is reused for the next one.
-#[derive(Default)]
 pub struct Scratch {
     tree: parser::Tree,
     frames: writer::Frames,
@@ -197,6 +196,22 @@ pub struct Scratch {
     printer: crate::ir::printer::PrinterBuffers,
     /// The text with `\n` for every line break, if it has others.
     normalized: Vec<u8>,
+}
+
+impl Scratch {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            tree: parser::Tree::new(),
+            frames: writer::Frames::new(),
+            attached: Vec::new(),
+            document_frames: document::Frames::new(),
+            storage: crate::ir::formatter::Storage::new(),
+            propagate: crate::ir::document::PropagateBuffers::new(),
+            printer: crate::ir::printer::PrinterBuffers::new(),
+            normalized: Vec::new(),
+        }
+    }
 }
 
 /// Appends the formatted `text` to `out`.

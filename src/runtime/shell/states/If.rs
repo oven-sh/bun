@@ -13,9 +13,8 @@ pub(crate) struct If {
     pub(crate) state: IfState,
 }
 
-#[derive(Default, strum::IntoStaticStr)]
+#[derive(strum::IntoStaticStr)]
 pub enum IfState {
-    #[default]
     Idle,
     Exec(Exec),
 }

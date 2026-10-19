@@ -87,10 +87,19 @@ impl FitsEndPredicate for AllPredicate {
 }
 
 /// Measures from a [`Tag::StartEntry`] to its [`Tag::EndEntry`].
-#[derive(Default)]
 struct SingleEntryPredicate {
     depth: usize,
     is_done: bool,
+}
+
+impl SingleEntryPredicate {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            depth: 0,
+            is_done: false,
+        }
+    }
 }
 
 impl FitsEndPredicate for SingleEntryPredicate {
@@ -200,7 +209,7 @@ impl<'d> Printer<'d> {
             return Err(PrintError::InvalidDocument);
         }
         self.measure_push(measure, FrameKind::Fill, PrintMode::Flat);
-        let mut predicate = SingleEntryPredicate::default();
+        let mut predicate = SingleEntryPredicate::new();
         let fits = self.fits(measure, &mut predicate)?;
         if predicate.is_done {
             self.measure_pop(measure, FrameKind::Fill)?;

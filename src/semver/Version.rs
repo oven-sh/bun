@@ -77,14 +77,14 @@ const _: () = {
     assert!(core::mem::offset_of!(VersionType<u32>, tag) == 16);
 };
 
-impl<T: VersionInt> Default for VersionType<T> {
-    fn default() -> Self {
+impl<T: VersionInt> VersionType<T> {
+    pub fn new() -> Self {
         Self {
             major: T::ZERO,
             minor: T::ZERO,
             patch: T::ZERO,
             _tag_padding: T::TAG_PADDING,
-            tag: Tag::default(),
+            tag: Tag::new(),
         }
     }
 }
@@ -148,7 +148,7 @@ impl VersionType<u64> {
                 major: number(major)?,
                 minor: minor.map_or(Some(0), |it| number(it.0))?,
                 patch: patch.map_or(Some(0), |it| number(it.0))?,
-                ..Default::default()
+                ..Self::new()
             });
         }
     }
@@ -518,7 +518,7 @@ impl<T: VersionInt> VersionType<T> {
 
     pub fn parse(sliced_string: SlicedString) -> ParseResult<T> {
         let input = sliced_string.slice;
-        let mut result = ParseResult::<T>::default();
+        let mut result = ParseResult::<T>::new();
 
         let mut part_i: u8 = 0;
         let mut part_start_i: usize;
@@ -948,13 +948,13 @@ pub struct Partial<T: VersionInt> {
     pub tag: Tag,
 }
 
-impl<T: VersionInt> Default for Partial<T> {
-    fn default() -> Self {
+impl<T: VersionInt> Partial<T> {
+    pub fn new() -> Self {
         Self {
             major: None,
             minor: None,
             patch: None,
-            tag: Tag::default(),
+            tag: Tag::new(),
         }
     }
 }
@@ -986,10 +986,20 @@ impl<T: VersionInt> Partial<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct Tag {
     pub pre: ExternalString,
     pub build: ExternalString,
+}
+
+impl Tag {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            pre: ExternalString::new(),
+            build: ExternalString::new(),
+        }
+    }
 }
 
 // TODO: support multiple tags
@@ -1164,7 +1174,7 @@ impl Tag {
         if build_count == 0 && pre_count == 0 {
             return TagResult {
                 len: 0,
-                ..Default::default()
+                ..TagResult::new()
             };
         }
 
@@ -1174,7 +1184,7 @@ impl Tag {
             Pre,
             Build,
         }
-        let mut result = TagResult::default();
+        let mut result = TagResult::new();
         // Common case: no allocation is necessary.
         let mut state = State::None;
         let mut start: usize = 0;
@@ -1250,10 +1260,20 @@ impl Tag {
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct TagResult {
     pub(crate) tag: Tag,
     pub(crate) len: u32,
+}
+
+impl TagResult {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            tag: Tag::new(),
+            len: 0,
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1271,13 +1291,13 @@ pub struct ParseResult<T: VersionInt> {
     pub(crate) len: u32,
 }
 
-impl<T: VersionInt> Default for ParseResult<T> {
-    fn default() -> Self {
+impl<T: VersionInt> ParseResult<T> {
+    pub fn new() -> Self {
         Self {
             wildcard: Wildcard::None,
             valid: true,
             overflow: false,
-            version: Partial::default(),
+            version: Partial::new(),
             len: 0,
         }
     }

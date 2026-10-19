@@ -46,7 +46,7 @@ fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
         op,
         // @truncate(kevent.udata)
         index: kevent.udata as _,
-        ..Default::default()
+        ..WatchEvent::new()
     }
 }
 

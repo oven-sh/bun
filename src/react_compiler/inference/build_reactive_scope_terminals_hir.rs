@@ -226,7 +226,7 @@ fn handle_rewrite(
     let curr_block_id = context.next_block_id;
     let preds = match context.next_pred {
         Some(pred) => IndexSet::from([pred]),
-        None => std::mem::take(&mut source_block.preds),
+        None => std::mem::replace(&mut source_block.preds, IndexSet::init()),
     };
 
     context.rewrites.push(BasicBlock {
@@ -273,7 +273,7 @@ pub(crate) fn build_reactive_scope_terminals_hir(
     // Reverse so we can pop from the end while traversing in ascending order
     queued_rewrites.reverse();
 
-    for (_block_id, mut block) in std::mem::take(&mut func.body.blocks) {
+    for (_block_id, mut block) in std::mem::replace(&mut func.body.blocks, IndexMap::init()) {
         let mut context = RewriteContext {
             next_block_id: block.id,
             rewrites: Vec::new(),

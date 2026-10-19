@@ -199,7 +199,7 @@ pub struct PosixBufferedReader {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct PosixFlags: u16 {
         const IS_DONE                  = 1 << 0;
         const POLLABLE                 = 1 << 1;
@@ -1033,7 +1033,7 @@ pub struct WindowsBufferedReader {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct WindowsFlags: u16 {
         const IS_DONE                  = 1 << 0;
         const POLLABLE                 = 1 << 1;
@@ -1366,7 +1366,7 @@ impl WindowsBufferedReader {
             return sys::Result::Err(sys::Error {
                 errno: sys::E::BADF as _,
                 syscall: sys::Tag::uv_tty_set_mode,
-                ..Default::default()
+                ..sys::Error::init()
             });
         };
         source.set_raw_mode(value)

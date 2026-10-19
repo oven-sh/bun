@@ -99,7 +99,7 @@ impl FileRoute {
 
         // `Cell::take` then restore — single-threaded event loop, no re-entry
         // reads `stat_hash` between take/set (see field comment).
-        let sh = self.stat_hash.take();
+        let sh = self.stat_hash.replace(StatHash::new());
         let last_modified_u64 = sh.last_modified_u64;
         self.stat_hash.set(sh);
         if last_modified_u64 > 0 {
@@ -120,7 +120,7 @@ impl FileRoute {
             blob,
             headers,
             status_code,
-            stat_hash: Cell::new(StatHash::default()),
+            stat_hash: Cell::new(StatHash::new()),
         }
     }
 
@@ -213,7 +213,7 @@ impl FileRoute {
         if !self.has_last_modified_header {
             // `Cell::take` then restore — `write_header` is a sync uWS buffer
             // copy, no re-entry into `stat_hash` between take/set.
-            let sh = self.stat_hash.take();
+            let sh = self.stat_hash.replace(StatHash::new());
             if let Some(last_modified) = sh.last_modified() {
                 resp.write_header(b"last-modified", last_modified);
             }
@@ -343,7 +343,7 @@ impl FileRoute {
 
             // `Cell::take` → mutate → `set`: single-threaded event loop, no
             // re-entry reads `stat_hash` between take/set.
-            let mut sh = self.stat_hash.take();
+            let mut sh = self.stat_hash.replace(StatHash::new());
             sh.hash(&stat, path);
             self.stat_hash.set(sh);
 

@@ -13,14 +13,14 @@ pub(crate) struct Unexpected;
 
 type Result<T> = std::result::Result<T, Unexpected>;
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Point {
     pub(crate) offset: u32,
     pub(crate) line: u32,
     pub(crate) column: u32,
 }
 
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone)]
 pub(crate) struct Position {
     pub(crate) start: Point,
     pub(crate) end: Point,
@@ -121,11 +121,22 @@ impl Id {
 }
 
 /// Nodes that follow each other by their `next`. Each node is in one list at most.
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone)]
 pub(crate) struct List {
     first: Option<Id>,
     last: Option<Id>,
     len: u32,
+}
+
+impl List {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            first: None,
+            last: None,
+            len: 0,
+        }
+    }
 }
 
 impl List {
@@ -347,10 +358,10 @@ impl<'a> Context<'_, 'a> {
             position,
             parent: None,
             next: None,
-            children: List::default(),
-            leading_comments: List::default(),
-            middle_comments: List::default(),
-            end_comments: List::default(),
+            children: List::new(),
+            leading_comments: List::new(),
+            middle_comments: List::new(),
+            end_comments: List::new(),
             trailing_comment: None,
             indicator_comment: None,
             tag: None,
@@ -780,7 +791,7 @@ impl<'a> Context<'_, 'a> {
             if self.pending.len() > children && self.is_at_key_that_yaml_refuses() {
                 return Err(Unexpected);
             }
-            let key_props = std::mem::take(&mut key_props);
+            let key_props = std::mem::replace(&mut key_props, smallvec::SmallVec::new());
             let child = self.transform_pair(property, Kind::MappingItem, key_props)?;
             self.pending.push(child);
         }
@@ -1204,12 +1215,24 @@ impl<'a> Context<'_, 'a> {
 
 // ───────────────────────────── `attach.ts` ─────────────────────────────
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Line {
     comment: Option<Id>,
     leading_attachable_node: Option<Id>,
     trailing_attachable_node: Option<Id>,
     trailing_node: Option<Id>,
+}
+
+impl Line {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            comment: None,
+            leading_attachable_node: None,
+            trailing_attachable_node: None,
+            trailing_node: None,
+        }
+    }
 }
 
 fn init_node_table(nodes: &[Node<'_>], table: &mut [Line], id: Id, stack: &Stack) {
@@ -1327,7 +1350,12 @@ fn attach_comment(
 ) -> Result<()> {
     let position = nodes[comment.index()].position;
     let comment_line = position.start.line as usize;
-    let line_at = |line: usize| table.get(line.wrapping_sub(1)).copied().unwrap_or_default();
+    let line_at = |line: usize| {
+        table
+            .get(line.wrapping_sub(1))
+            .copied()
+            .unwrap_or_else(Line::new)
+    };
     if let Some(node) = line_at(comment_line).trailing_attachable_node {
         if nodes[node.index()]
             .trailing_comment
@@ -1518,7 +1546,7 @@ pub(crate) fn build<'a>(
         text,
         tokens,
         at: 0,
-        tags: Default::default(),
+        tags: smallvec::SmallVec::new(),
         is_ascii: text.is_ascii(),
         // Before the first.
         last_line: std::cell::Cell::new((0, 0, 0)),
@@ -1568,7 +1596,7 @@ pub(crate) fn build<'a>(
         );
         return Ok(Tree { nodes, root });
     }
-    let mut table = vec![Line::default(); nodes[root.index()].position.end.line as usize];
+    let mut table = vec![Line::new(); nodes[root.index()].position.end.line as usize];
     for &comment in &comments {
         if let Some(line) = table.get_mut(nodes[comment.index()].position.start.line as usize - 1) {
             line.comment = Some(comment);

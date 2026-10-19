@@ -396,7 +396,7 @@ enum As {
 }
 
 fn check_sort_imports(json: &[u8]) -> Result<(), Vec<u8>> {
-    let mut sort = bun_format::sort_imports::Settings::default();
+    let mut sort = bun_format::sort_imports::Settings::new();
     sort.set(b"sortImports", json);
     sort.compile().map(|_| ())
 }
@@ -511,10 +511,7 @@ impl Feature {
                     text
                 }
             };
-            if bun_format::FormatOptions::default()
-                .set(name, &text)
-                .is_err()
-            {
+            if bun_format::FormatOptions::new().set(name, &text).is_err() {
                 let hint: &[u8] = match name {
                     b"svelte.sortOrder" => {
                         b"\n  Use \"none\", or all four parts in the order you want: \"options-scripts-markup-styles\""
@@ -554,7 +551,7 @@ pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> 
     let Some(section) = file.get(b"fmt") else {
         return Ok(None);
     };
-    let mut options = crate::fmt::cli::Options::default();
+    let mut options = crate::fmt::cli::Options::new();
     for (key, value) in entries(&section)? {
         // `--no-config` is the opposite of a flag that takes a value.
         if key.name == b"config" && matches!(value.data, Data::EBoolean(it) if !it.value) {
@@ -584,11 +581,7 @@ fn set_in_format(
         // The flag only reports an invalid value once the first file is formatted. Here it's checked right away.
         let given = options.format.last().filter(|_| value.is_some());
         match given.filter(|it| key.name == it.0) {
-            Some((name, value))
-                if bun_format::FormatOptions::default()
-                    .set(name, value)
-                    .is_err() =>
-            {
+            Some((name, value)) if bun_format::FormatOptions::new().set(name, value).is_err() => {
                 error(&[b"Invalid ", *name, b" value: ", &value[..], b"."])
             }
             _ => Ok(()),
@@ -618,7 +611,7 @@ fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
     // `parser` only makes sense for some files, so it's allowed here and not at the top level.
     let is_option = |flag: &&&[u8]| crate::fmt::cli::option_of(flag).is_some();
     let options_of = |table: &Expr| {
-        let mut options = crate::fmt::cli::Options::default();
+        let mut options = crate::fmt::cli::Options::new();
         for (key, value) in entries(table)? {
             if key.name == b"parser" {
                 let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
@@ -636,7 +629,7 @@ fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
         Ok(options.format)
     };
     let one = |item: &Expr| {
-        let mut it = crate::fmt::cli::Override::default();
+        let mut it = crate::fmt::cli::Override::new();
         for (key, value) in entries(item)? {
             match &key.name[..] {
                 b"files" => it.files = patterns(value)?,
@@ -824,7 +817,7 @@ fn severity_of(of: &[u8], value: &Expr) -> Result<Severity, Refusal> {
 }
 
 /// Byte offset of a value in bunfig.toml, and of the values nested in it.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Place {
     pub at: usize,
     pub items: Vec<Place>,
@@ -833,10 +826,21 @@ pub struct Place {
 }
 
 impl Place {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            at: 0,
+            items: Vec::new(),
+            entries: Vec::new(),
+        }
+    }
+}
+
+impl Place {
     fn of(value: &Expr) -> Place {
         let mut place = Place {
             at: value.loc.start.max(0) as usize,
-            ..Place::default()
+            ..Place::new()
         };
         if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return place;
@@ -1000,7 +1004,7 @@ fn rules(table: &Expr) -> Result<Rules, Refusal> {
 fn overrides_of_lint(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal> {
     let items = tables_of(value, b"lint")?;
     let one = |item: &Expr| {
-        let mut it = crate::cli::Override::default();
+        let mut it = crate::cli::Override::new();
         for (key, value) in entries(item)? {
             match &key.name[..] {
                 b"files" => it.files = patterns(value)?,
@@ -1059,7 +1063,7 @@ fn settings(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
 
 /// What `[lint]` of `file` says.
 pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
-    let mut options = crate::cli::Options::default();
+    let mut options = crate::cli::Options::new();
     let Some(section) = file.get(b"lint") else {
         return Ok(None);
     };

@@ -2,7 +2,6 @@ use crate::postgres::AnyPostgresError;
 use crate::postgres::postgres_types::Int4;
 use crate::postgres::protocol::new_reader::NewReader;
 
-#[derive(Default)]
 pub struct ParameterDescription {
     pub parameters: Box<[Int4]>,
 }
@@ -23,7 +22,7 @@ impl ParameterDescription {
         if n * core::mem::size_of::<Int4>() > remaining_bytes - 2 {
             return Err(AnyPostgresError::InvalidMessage);
         }
-        let mut parameters: Box<[Int4]> = vec![Int4::default(); n].into_boxed_slice();
+        let mut parameters: Box<[Int4]> = vec![0u32; n].into_boxed_slice();
 
         let data = reader.read(n * core::mem::size_of::<Int4>())?;
         // `defer data.deinit()` — handled by Drop.

@@ -233,7 +233,7 @@ impl Ident {
 /// In debug mode, if it is a `Ref` we will also set the `__ptrbits` to point to the original
 /// []const u8 so we can debug the string. This should be fine since we use arena
 #[repr(transparent)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct IdentOrRef(u128);
 
 // Packed u128 field layout, LSB-first:
@@ -478,7 +478,7 @@ pub enum NoneOrCustomIdentList {
 
 impl NoneOrCustomIdentList {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
-        let mut idents = CustomIdentList::default();
+        let mut idents = CustomIdentList::new();
         while let Ok(ident) = input.try_parse(CustomIdent::parse) {
             if strings::eql_case_insensitive_ascii_check_length(ident.v(), b"none") {
                 if idents.len() == 0 {

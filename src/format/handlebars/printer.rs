@@ -21,17 +21,37 @@ fn starts_with_upper_case(tag: &[u8]) -> bool {
 }
 
 /// Whether there is a blank before and behind words.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Blanks {
     before: bool,
     behind: bool,
 }
 
+impl Blanks {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            before: false,
+            behind: false,
+        }
+    }
+}
+
 /// What a text is next to in a `ConcatStatement`.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Neighbors {
     follows_mustache: bool,
     precedes_mustache: bool,
+}
+
+impl Neighbors {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            follows_mustache: false,
+            precedes_mustache: false,
+        }
+    }
 }
 
 /// What a text is in.
@@ -83,7 +103,7 @@ impl<'a> Printer<'a> {
     }
 
     fn start_group(&mut self) {
-        self.out.start_group(doc::Group::default());
+        self.out.start_group(doc::Group::new());
     }
 
     fn start_indent(&mut self) {
@@ -571,7 +591,7 @@ impl<'a> Printer<'a> {
         }
         match node.kind {
             Kind::Text { chars } => {
-                self.text_in_attribute(self.text(chars), is_class, Neighbors::default(), escapes)
+                self.text_in_attribute(self.text(chars), is_class, Neighbors::new(), escapes)
             }
             Kind::Concat { parts } => {
                 let parts = self.list(parts);
@@ -678,7 +698,7 @@ impl<'a> Printer<'a> {
             if !leading.is_empty() {
                 self.breaks(leading, false);
             }
-            self.fill(words, Blanks::default());
+            self.fill(words, Blanks::new());
             if !trailing.is_empty() && !trims_trailing {
                 self.breaks(trailing, is_last);
             }
@@ -830,7 +850,7 @@ impl<'a> Printer<'a> {
     fn body_of(&self, block: NodeId) -> (&'a [NodeId], Range) {
         match self.tree.kind(block) {
             Kind::Block { body, block_params } => (self.list(body), block_params),
-            _ => (&[], Range::default()),
+            _ => (&[], Range::new()),
         }
     }
 

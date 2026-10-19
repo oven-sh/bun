@@ -109,7 +109,7 @@ impl<'a> Report<'a> {
         // functionHasExecutedCache), so we must preserve write provenance.
         let vm = global_this.vm_ptr();
 
-        let mut generator = Generator::default();
+        let mut generator = Generator::new();
 
         for &source_id in &byte_range_mapping.source_ids {
             // SAFETY: `vm` is the live VM of `global_this`; the callback runs before the call returns.
@@ -267,7 +267,6 @@ pub mod wire {
 /// somewhere or every report agrees it is executable; otherwise the coarse
 /// span from an import-only worker would show a fully executed function as
 /// partially covered (#39930).
-#[derive(Default)]
 pub struct MergedReport {
     source_url: Vec<u8>,
     reports: u32,
@@ -277,6 +276,21 @@ pub struct MergedReport {
     /// Every report's ranges with their executed bit; deduplicated in `finish`.
     functions: Vec<(ByteRange, bool)>,
     stmts: Vec<(ByteRange, bool)>,
+}
+
+impl MergedReport {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            source_url: Vec::new(),
+            reports: 0,
+            executable_in_all: Bitset::new(),
+            executed_in_any: Bitset::new(),
+            line_hits: Vec::new(),
+            functions: Vec::new(),
+            stmts: Vec::new(),
+        }
+    }
 }
 
 impl MergedReport {
@@ -579,12 +593,22 @@ unsafe extern "C" {
 }
 
 /// What JSC recorded for one file, under each of its SourceIDs.
-#[derive(Default)]
 struct Generator {
     blocks: Vec<BasicBlockRange>,
     function_blocks: Vec<BasicBlockRange>,
     /// SourceIDs that had anything compiled.
     loads: usize,
+}
+
+impl Generator {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            blocks: Vec::new(),
+            function_blocks: Vec::new(),
+            loads: 0,
+        }
+    }
 }
 
 impl Generator {
@@ -632,7 +656,7 @@ fn fold(ranges: &mut Vec<BasicBlockRange>) {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct BasicBlockRange {
     start_offset: c_int,
     end_offset: c_int,
@@ -674,7 +698,7 @@ fn thread_map() -> *mut ByteRangeMappingHashMap {
         // concurrently on this thread while we hold this exclusive borrow.
         let slot = unsafe { &mut *cell.get() };
         if slot.is_none() {
-            *slot = Some(Box::new(ByteRangeMappingHashMap::default()));
+            *slot = Some(Box::new(ByteRangeMappingHashMap::init()));
         }
         // SAFETY: just ensured Some above; Box deref gives stable address.
         &raw mut **slot.as_mut().unwrap()
@@ -1121,7 +1145,7 @@ extern "C" fn ByteRangeMapping__findExecutedLines(
         return JSValue::UNDEFINED;
     };
 
-    let thresholds = Fraction::default();
+    let thresholds = Fraction::new();
 
     // std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_io::Write target).
     let mut buf: Vec<u8> = Vec::new();
@@ -1156,7 +1180,7 @@ pub use bun_options_types::code_coverage_options::Fraction;
 /// A basic block or function body as `[start, end)` byte offsets into the
 /// generated source. Offsets are what JSC reports, so they identify the same
 /// block across processes that loaded the same file.
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ByteRange {
     pub start: u32,
     pub end: u32,

@@ -730,7 +730,7 @@ impl<T> Slice<T> {
 
     pub(crate) fn to_multi_array_list(self) -> MultiArrayList<T> {
         if Reflected::<T>::COUNT == 0 || self.capacity == 0 {
-            return MultiArrayList::default();
+            return MultiArrayList::new();
         }
         // The first entry in `SIZES.1` is the highest-alignment field, whose
         // column starts at the buffer base (offset 0).
@@ -869,8 +869,8 @@ impl<T> Slice<T> {
 
 // ───────────────────────────── MultiArrayList ─────────────────────────────
 
-impl<T, A: Allocator + Stateless> Default for MultiArrayList<T, A> {
-    fn default() -> Self {
+impl<T, A: Allocator + Stateless> MultiArrayList<T, A> {
+    pub fn new() -> Self {
         Self::new_in(A::INSTANCE)
     }
 }
@@ -1375,7 +1375,7 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let mut list = MultiArrayList::<Foo>::default();
+        let mut list = MultiArrayList::<Foo>::new();
         for i in 0..10u32 {
             list.push(Foo {
                 a: i,
@@ -1392,7 +1392,7 @@ mod tests {
 
     #[test]
     fn list_items() {
-        let mut list = MultiArrayList::<Foo>::default();
+        let mut list = MultiArrayList::<Foo>::new();
         for i in 0..4u32 {
             list.push(Foo {
                 a: i,
@@ -1415,7 +1415,7 @@ mod tests {
 
     #[test]
     fn generic_lifetime() {
-        let mut list = MultiArrayList::<Borrowed<'static>>::default();
+        let mut list = MultiArrayList::<Borrowed<'static>>::new();
         list.push(Borrowed { name: b"hi", n: 7 }).unwrap();
         assert_eq!(list.items::<"name", &[u8]>()[0], b"hi");
         assert_eq!(list.items::<"n", u32>()[0], 7);
@@ -1427,13 +1427,13 @@ mod tests {
     fn empty_items_aligned() {
         // Exercise the `cap == 0` path: must yield a valid empty `&[u64]`
         // (i.e. a `u64`-aligned dangling base, not `NonNull::<u8>::dangling()`).
-        let list = MultiArrayList::<Foo>::default();
+        let list = MultiArrayList::<Foo>::new();
         assert_eq!(list.items::<"c", u64>(), &[] as &[u64]);
     }
 
     #[test]
     fn ordered_remove_memmove() {
-        let mut list = MultiArrayList::<Foo>::default();
+        let mut list = MultiArrayList::<Foo>::new();
         for i in 0..6u32 {
             list.push(Foo {
                 a: i,
@@ -1463,7 +1463,7 @@ mod tests {
     // Under Miri this also checks that every `name` is freed exactly once.
     #[test]
     fn remove_returns_owned_element() {
-        let mut list = MultiArrayList::<Owning>::default();
+        let mut list = MultiArrayList::<Owning>::new();
         for i in 0..4u32 {
             list.push(Owning {
                 name: vec![b'a' + i as u8; 3].into_boxed_slice(),
@@ -1491,7 +1491,7 @@ mod tests {
 
     #[test]
     fn sort_swaps_all_columns() {
-        let mut list = MultiArrayList::<Foo>::default();
+        let mut list = MultiArrayList::<Foo>::new();
         for i in (0..5u32).rev() {
             list.push(Foo {
                 a: i,

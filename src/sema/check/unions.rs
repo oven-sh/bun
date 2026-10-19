@@ -551,7 +551,7 @@ impl<'p, 's> Checker<'p, 's> {
         let by_prefix = (patterns.len() >= PatternsByPrefix::WORTHWHILE)
             .then(|| PatternsByPrefix::new(self, &patterns));
         let mut candidates: Vec<u32> = Vec::new();
-        for m in std::mem::take(members) {
+        for m in std::mem::replace(members, smallvec::SmallVec::new()) {
             // For a type with `TypeFlagsStringLiteral`: the value, and whether it is the plain
             // string literal type of that value.
             let (value, is_plain) = match *self.data(m) {
@@ -1588,7 +1588,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let mut common: Vec<TypeId> = Vec::new();
-        let mut checked = crate::util::FxHashSet::default();
+        let mut checked = crate::util::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for &union in &unions {
             for &t in self.parts(union) {
                 if !checked.insert(t) || !self.each_union_contains(&unions, t) {

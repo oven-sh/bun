@@ -10,13 +10,21 @@ use crate::shell::interpreter::{Interpreter, NodeId, ShellTask, closefd, shell_o
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
 pub(crate) struct Mv {
     pub args: MvArgs,
     pub(crate) state: MvState,
 }
 
-#[derive(Default)]
+impl Mv {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            args: MvArgs::new(),
+            state: MvState::Idle,
+        }
+    }
+}
+
 pub(crate) struct MvArgs {
     /// Index into argv where source paths start.
     pub(crate) sources_start: usize,
@@ -25,9 +33,18 @@ pub(crate) struct MvArgs {
     pub(crate) target_fd: Option<bun_sys::Fd>,
 }
 
-#[derive(Default)]
+impl MvArgs {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            sources_start: 0,
+            target_idx: 0,
+            target_fd: None,
+        }
+    }
+}
+
 pub(crate) enum MvState {
-    #[default]
     Idle,
     CheckTarget(Box<ShellMvCheckTargetTask>),
     Executing {

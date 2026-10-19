@@ -22,7 +22,7 @@ impl Rule for PreferAwaitToThen {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions_any(&["then", "catch", "finally"]).then(AncestorMemo::default)
+        file.mentions_any(&["then", "catch", "finally"]).then(AncestorMemo::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

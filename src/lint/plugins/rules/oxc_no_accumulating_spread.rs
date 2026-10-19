@@ -18,7 +18,6 @@ struct InLoop<'a> {
     is_in_array: bool,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// What is first assigned to, for each variable that was asked about.
     first_assignments: IdMap<Symbol<'a>, Option<Expr<'a>>>,
@@ -26,6 +25,17 @@ pub struct State<'a> {
     in_reduce_or_loop: AncestorMemo<'a, ()>,
     /// All those of one accumulator are reported at the accumulator: oxlint has them in the order of the source.
     in_loops: Vec<InLoop<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            first_assignments: IdMap::init(),
+            in_reduce_or_loop: AncestorMemo::new(),
+            in_loops: Vec::new(),
+        }
+    }
 }
 
 impl Rule for NoAccumulatingSpread {
@@ -42,7 +52,7 @@ impl Rule for NoAccumulatingSpread {
         if !file.mentions_any(&["reduce", "reduceRight"]) && !file.has_stmts(loops) {
             return None;
         }
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -147,7 +157,7 @@ fn check_reduce_usage<'a>(spread: Node<'a>, pat: Pat<'a>, cx: &Cx<'a, NoAccumula
         let callee = call.as_expr().and_then(Expr::callee);
         let reduce_span = callee.and_then(|it| static_property_info(it.skip_type_wrappers())).map(|it| it.0);
         let report = cx.report(spread, REDUCE_SPREAD).first_label("From this spread");
-        let report = report.label(reduce_span.unwrap_or_default(), "For this reduce");
+        let report = report.label(reduce_span.unwrap_or_else(Span::init), "For this reduce");
         report.help(match initial.map(|it| it.skip_type_wrappers().tag()) {
             Some(ExprTag::Object) => {
                 "It looks like you're spreading an `Object`. Consider using the `Object.assign` or assignment \

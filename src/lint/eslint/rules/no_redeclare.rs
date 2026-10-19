@@ -194,7 +194,7 @@ fn check_declarations<'a, R: Rule<State<'a> = bool>>(config: Config, symbol: Sym
     let mut declarations = Vec::new();
     let is_builtin = matches!(global, Some(it) if matches!(it.implicit_setting, Some(Global::Readonly | Global::Writable)));
     if config.builtin_globals && is_builtin {
-        declarations.push((DeclarationType::Builtin, Span::default()));
+        declarations.push((DeclarationType::Builtin, Span::init()));
     }
     let comments = global.map_or(&[][..], |it| it.comments);
     let comments = comments.iter().map(|&it| (DeclarationType::Comment, cx.name_in_global_comment(it, name)));
@@ -224,7 +224,7 @@ pub fn check_globals_in_comments<'a, R: Rule>(config: Config, cx: &Cx<'a, R>) {
         }
         let mut declarations = Vec::new();
         if is_builtin {
-            declarations.push((DeclarationType::Builtin, Span::default()));
+            declarations.push((DeclarationType::Builtin, Span::init()));
         }
         let comments = global.comments.iter();
         declarations.extend(comments.map(|&it| (DeclarationType::Comment, file.name_in_global_comment(it, name))));

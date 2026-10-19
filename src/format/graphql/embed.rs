@@ -123,7 +123,7 @@ fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
         .clone()
         .all(|line| matches!(bun_core::strings::trim_js_whitespace(line), [] | [b'#', ..]));
     let content = if !has_only_comments {
-        let (mut tree, mut attached) = (Tree::default(), Vec::new());
+        let (mut tree, mut attached) = (Tree::new(), Vec::new());
         parser::parse(text, &mut tree).ok()?;
         comments::attach(text, &tree, &mut attached);
         Content::Document(tree, attached)
@@ -183,10 +183,19 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 }
 
 /// The line breaks between what Prettier's `printEmbedGraphQL` joins.
-#[derive(Default)]
 struct Separator {
     is_needed: bool,
     has_blank_line: bool,
+}
+
+impl Separator {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            is_needed: false,
+            has_blank_line: false,
+        }
+    }
 }
 
 impl Separator {
@@ -226,8 +235,8 @@ pub(crate) fn write_template<'a>(
     f.write_token("`");
     f.write_element(FormatElement::Tag(Tag::StartIndent));
     f.write_element(FormatElement::Line(LineMode::Hard));
-    let mut separator = Separator::default();
-    let empty = Tree::default();
+    let mut separator = Separator::new();
+    let empty = Tree::new();
     for (index, part) in parts.iter().enumerate() {
         let (is_first, is_last) = (index == 0, index + 1 == parts.len());
         let (tree, attached) = match &part.content {

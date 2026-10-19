@@ -47,18 +47,16 @@ pub(crate) struct Expect {
 // Stored packed inside `Flags(u8)` bits 0..2, so `repr(u8)` here only
 // governs the standalone discriminant size.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Promise {
-    #[default]
     None = 0,
     Resolves = 1,
     Rejects = 2,
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AsymmetricMatcherConstructorType {
-    #[default]
     None = 0,
     Symbol = 1,
     String = 2,
@@ -110,8 +108,15 @@ impl AsymmetricMatcherConstructorType {
 /// note: keep this struct in sync with C++ implementation (at bindings.cpp)
 // Bit layout: promise (bits 0..2), not (bit 2), asymmetric_matcher_constructor_type (bits 3..8).
 #[repr(transparent)]
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Flags(pub(crate) u8);
+
+impl Flags {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(0)
+    }
+}
 
 pub(crate) type FlagsCppType = u8;
 const _: () = assert!(core::mem::size_of::<Flags>() == core::mem::size_of::<FlagsCppType>());
@@ -230,7 +235,7 @@ impl Expect {
         type Key = (&'static str, &'static str, bool);
         static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, [Box<str>; 2]>>> =
             OnceLock::new();
-        let cache = CACHE.get_or_init(Default::default);
+        let cache = CACHE.get_or_init(|| bun_threading::guarded::GuardedBy::init(bun_collections::HashMap::init()));
         let colors = Output::enable_ansi_colors_stderr();
 
         let mut map = cache.lock();
@@ -616,7 +621,7 @@ impl Expect {
             } else if let Some(instance) = ExpectArrayContaining::from_js(instance_value) {
                 break 'flags (*instance).flags.get();
             } else {
-                break 'flags Flags::default();
+                break 'flags Flags::new();
             }
         } };
 
@@ -719,7 +724,7 @@ impl Expect {
         // ownership.
 
         let expect = Expect {
-            flags: Cell::new(Flags::default()),
+            flags: Cell::new(Flags::new()),
             custom_label,
             parent: active_execution_entry_ref,
         };
@@ -1262,7 +1267,7 @@ impl Expect {
         _: JSValue,
         _: crate::generated_classes::PropertyName,
     ) -> JsResult<JSValue> {
-        let mut f = Flags::default();
+        let mut f = Flags::new();
         f.set_not(true);
         ExpectStatic::create(global_this, f)
     }
@@ -1273,7 +1278,7 @@ impl Expect {
         _: JSValue,
         _: crate::generated_classes::PropertyName,
     ) -> JsResult<JSValue> {
-        let mut f = Flags::default();
+        let mut f = Flags::new();
         f.set_promise(Promise::Resolves);
         ExpectStatic::create(global_this, f)
     }
@@ -1284,7 +1289,7 @@ impl Expect {
         _: JSValue,
         _: crate::generated_classes::PropertyName,
     ) -> JsResult<JSValue> {
-        let mut f = Flags::default();
+        let mut f = Flags::new();
         f.set_promise(Promise::Rejects);
         ExpectStatic::create(global_this, f)
     }
@@ -1538,7 +1543,7 @@ impl Expect {
             &bun_core::String::EMPTY,
             matcher_name,
             matcher_params,
-            Flags::default(),
+            Flags::new(),
             format_args!("{}", message_text),
         ))
     }
@@ -2320,7 +2325,7 @@ pub(crate) struct ExpectAnything {
 impl ExpectAnything {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub(crate) fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        let anything_js_value = ExpectAnything { flags: Cell::new(Flags::default()) }.to_js(global_this);
+        let anything_js_value = ExpectAnything { flags: Cell::new(Flags::new()) }.to_js(global_this);
         anything_js_value.ensure_still_alive();
 
         global_this.bun_vm().auto_garbage_collect();
@@ -2348,7 +2353,7 @@ impl ExpectStringMatching {
 
         let test_value = args[0];
 
-        let string_matching_js_value = ExpectStringMatching { flags: Cell::new(Flags::default()) }.to_js(global_this);
+        let string_matching_js_value = ExpectStringMatching { flags: Cell::new(Flags::new()) }.to_js(global_this);
         expect_string_matching_js::test_value_set_cached(string_matching_js_value, global_this, test_value);
 
         global_this.bun_vm().auto_garbage_collect();
@@ -2385,7 +2390,7 @@ impl ExpectCloseTo {
             ));
         }
 
-        let instance_jsvalue = ExpectCloseTo { flags: Cell::new(Flags::default()) }.to_js(global_this);
+        let instance_jsvalue = ExpectCloseTo { flags: Cell::new(Flags::new()) }.to_js(global_this);
         number_value.ensure_still_alive();
         precision_value.ensure_still_alive();
         expect_close_to_js::number_value_set_cached(instance_jsvalue, global_this, number_value);
@@ -2415,7 +2420,7 @@ impl ExpectObjectContaining {
 
         let object_value = args[0];
 
-        let instance_jsvalue = ExpectObjectContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
+        let instance_jsvalue = ExpectObjectContaining { flags: Cell::new(Flags::new()) }.to_js(global_this);
         expect_object_containing_js::object_value_set_cached(instance_jsvalue, global_this, object_value);
 
         global_this.bun_vm().auto_garbage_collect();
@@ -2442,7 +2447,7 @@ impl ExpectStringContaining {
 
         let string_value = args[0];
 
-        let string_containing_js_value = ExpectStringContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
+        let string_containing_js_value = ExpectStringContaining { flags: Cell::new(Flags::new()) }.to_js(global_this);
         expect_string_containing_js::string_value_set_cached(string_containing_js_value, global_this, string_value);
 
         global_this.bun_vm().auto_garbage_collect();
@@ -2478,7 +2483,7 @@ impl ExpectAny {
 
         let asymmetric_matcher_constructor_type = AsymmetricMatcherConstructorType::from_js(global_this, constructor)?;
 
-        let mut flags = Flags::default();
+        let mut flags = Flags::new();
         flags.set_asymmetric_matcher_constructor_type(asymmetric_matcher_constructor_type);
 
         let any_js_value = ExpectAny { flags: Cell::new(flags) }.to_js(global_this);
@@ -2511,7 +2516,7 @@ impl ExpectArrayContaining {
 
         let array_value = args[0];
 
-        let array_containing_js_value = ExpectArrayContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
+        let array_containing_js_value = ExpectArrayContaining { flags: Cell::new(Flags::new()) }.to_js(global_this);
         expect_array_containing_js::array_value_set_cached(array_containing_js_value, global_this, array_value);
 
         global_this.bun_vm().auto_garbage_collect();
@@ -2546,7 +2551,7 @@ impl ExpectCustomAsymmetricMatcher {
             unsafe { (*expect_static).flags }
         } else {
             // if it's not an ExpectStatic instance, assume it was called from the Expect constructor, so use the default flags
-            Flags::default()
+            Flags::new()
         };
 
         // create the matcher instance (flags stored upfront)

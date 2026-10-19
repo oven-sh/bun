@@ -28,10 +28,19 @@ bun_output::declare_scope!(zlib, hidden);
 // `T` go through the [`CompressionStreamImpl`] trait below.
 pub(crate) struct CompressionStream<T>(PhantomData<T>);
 
-#[derive(Default)]
 pub(crate) struct CountedKeepAlive {
     pub(crate) keep_alive: KeepAlive,
     pub(crate) ref_count: u32,
+}
+
+impl CountedKeepAlive {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            keep_alive: KeepAlive::new(),
+            ref_count: 0,
+        }
+    }
 }
 
 impl Drop for CountedKeepAlive {
@@ -376,7 +385,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let vm = global_this.bun_vm();
         this.task().set(WorkPoolTask {
-            node: Default::default(),
+            node: bun_threading::thread_pool::Node::new(),
             callback: Self::async_job_run_task,
         });
         this.poll_ref().with_mut(|p| p.ref_(vm));

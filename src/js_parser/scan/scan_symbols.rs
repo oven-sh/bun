@@ -91,7 +91,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                                         namespace_ref: arg_ref,
                                         alias: js_ast::StoreStr::new(name),
-                                        ..Default::default()
+                                        ..js_ast::NamespaceAlias::new()
                                     }));
                                 break 'brk new_ref;
                             }

@@ -67,7 +67,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             kind: ScopeKind::Entry,
             label_ref: Ref::NONE,
             parent: None,
-            ..Default::default()
+            ..Scope::EMPTY
         });
         let mut ab = AstBuilder {
             bump,
@@ -79,9 +79,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             symbols: Vec::new(),
             import_records: Vec::new(),
             import_records_for_current_part: Vec::new(),
-            named_imports: Default::default(),
-            named_exports: Default::default(),
-            declared_symbols: Default::default(),
+            named_imports: bun_collections::ArrayHashMap::new(),
+            named_exports: bun_collections::StringArrayHashMap::init(),
+            declared_symbols: DeclaredSymbolList::new(),
             hot_reloading,
             module_ref: Ref::NONE,  // overwritten below
             hmr_api_ref: Ref::NONE, // overwritten below
@@ -117,7 +117,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         self.symbols.push(Symbol {
             kind,
             original_name: bun_ast::StoreStr::new(identifier),
-            ..Default::default()
+            ..Symbol::new()
         });
         let ref_ = Ref::new(inner_index, self.source_index, RefTag::Symbol);
         self.current_scope_mut().generated.push(ref_);
@@ -143,12 +143,12 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         self.import_records.push(ImportRecord {
             path: FsPath::init(path),
             kind,
-            range: Range::default(),
-            tag: Default::default(),
+            range: Range::new(),
+            tag: bun_ast::ImportRecordTag::None,
             loader: None,
-            source_index: Default::default(),
+            source_index: super::Index::INVALID,
             original_path: b"",
-            flags: Default::default(),
+            flags: bun_ast::ImportRecordFlags::empty(),
         });
         Ok(u32::try_from(index).expect("int cast"))
     }
@@ -171,7 +171,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let name: &[u8] = self.bump.alloc_slice_copy(&name);
         let namespace_ref = self.new_symbol(SymbolKind::Other, name)?;
 
-        let clauses: &mut [ClauseItem] = self.bump.alloc_slice_fill_default(N);
+        let clauses: &mut [ClauseItem] = self.bump.alloc_slice_fill_with(N, |_| ClauseItem::new());
 
         for ((import_id, out_ref), clause) in identifiers_to_import
             .iter()
@@ -186,12 +186,12 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         namespace_ref,
                         alias: bun_ast::StoreStr::new(import_id),
                         import_record_index: record,
-                        ..Default::default()
+                        ..G::NamespaceAlias::new()
                     }));
             }
             out_ref.write(self.new_expr(E::ImportIdentifier {
                 ref_,
-                ..Default::default()
+                ..E::ImportIdentifier::init()
             }));
             *clause = ClauseItem {
                 name: LocRef {
@@ -209,7 +209,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             import_record_index: record,
             items: bun_ast::StoreSlice::new_mut(clauses),
             is_single_line: N < 1,
-            ..Default::default()
+            ..S::Import::new()
         })?;
 
         // SAFETY: every element of `out` was written in the loop above (loop
@@ -258,7 +258,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // heap (observed downstream as `printStmt` reading a junk `Stmt`
         // discriminant from an arena allocation that was clobbered). Append
         // into the reserved capacity instead so no drop runs.
-        parts.push(Part::default());
+        parts.push(Part::new());
         parts.push(Part {
             // overwritten below with the arena-backed copy (`stmts_in_bump`)
             stmts: bun_ast::StoreSlice::EMPTY,
@@ -266,7 +266,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
 
             // pretend that every symbol was used
             symbol_uses: 'uses: {
-                let mut map = PartSymbolUseMap::default();
+                let mut map = PartSymbolUseMap::new();
                 map.ensure_total_capacity(self.symbols.len())?;
                 for i in 0..self.symbols.len() {
                     map.put_assume_capacity(
@@ -280,10 +280,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 }
                 break 'uses map;
             },
-            ..Default::default()
+            ..Part::new()
         });
 
-        let mut top_level_symbols_to_parts = TopLevelSymbolToParts::default();
+        let mut top_level_symbols_to_parts = TopLevelSymbolToParts::new();
         // SAFETY: module_scope is a live arena allocation (set in init, scopes stack is empty)
         let module_scope_ref = unsafe { &*module_scope };
         let generated_len = module_scope_ref.generated.len();
@@ -375,7 +375,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                         binding.loc,
                                     )),
                                     value: Some(Expr::init_identifier(ref_, binding.loc)),
-                                    ..Default::default()
+                                    ..G::Property::new()
                                 });
                             }
                         }
@@ -404,7 +404,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         export_props.push(G::Property {
                             key: Some(Expr::init(E::String::init(b"default"), stmt.loc)),
                             value: Some(Expr::init_identifier(temp_id, stmt.loc)),
-                            ..Default::default()
+                            ..G::Property::new()
                         });
                         hmr_stmts.push(Stmt::alloc(
                             S::Local {
@@ -417,7 +417,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     ),
                                     value: Some(value),
                                 }]),
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             stmt.loc,
                         ));
@@ -437,19 +437,19 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     target: Expr::init_identifier(self.hmr_api_ref, Loc::EMPTY),
                                     name: b"exports".into(),
                                     name_loc: Loc::EMPTY,
-                                    ..Default::default()
+                                    ..E::Dot::new()
                                 },
                                 Loc::EMPTY,
                             ),
                             Expr::init(
                                 E::Object {
                                     properties: G::PropertyList::move_from_list(export_props),
-                                    ..Default::default()
+                                    ..E::Object::new()
                                 },
                                 Loc::EMPTY,
                             ),
                         ),
-                        ..Default::default()
+                        ..S::SExpr::new()
                     },
                     Loc::EMPTY,
                 ));
@@ -520,7 +520,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             parts[1].stmts = bun_ast::StoreSlice::new_mut(stmts_in_bump);
         }
 
-        parts[1].declared_symbols = core::mem::take(&mut self.declared_symbols);
+        parts[1].declared_symbols =
+            core::mem::replace(&mut self.declared_symbols, DeclaredSymbolList::new());
         parts[1].scopes =
             bun_ast::StoreSlice::new_mut(self.bump.alloc_slice_copy(self.scopes.as_slice()));
         parts[1].import_record_indices = bun_ast::PartImportRecordIndices::move_from_list(
@@ -546,25 +547,31 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             approximate_newline_count: 1,
             exports_kind: ExportsKind::Esm,
             module_type: crate::options::ModuleType::Unknown,
-            named_imports: core::mem::take(&mut self.named_imports),
-            named_exports: core::mem::take(&mut self.named_exports),
-            dynamic_import_aliases: Default::default(),
+            named_imports: core::mem::replace(
+                &mut self.named_imports,
+                bun_collections::ArrayHashMap::new(),
+            ),
+            named_exports: core::mem::replace(
+                &mut self.named_exports,
+                bun_collections::StringArrayHashMap::init(),
+            ),
+            dynamic_import_aliases: bun_collections::ArrayHashMap::new(),
             top_level_symbols_to_parts,
-            scope_uses: Default::default(),
+            scope_uses: bun_ast::ast_result::ScopeUseList::new(),
             char_freq: None,
-            flags: Default::default(),
+            flags: crate::bundled_ast::Flags::empty(),
             target,
             top_level_await_keyword: Range::NONE,
-            nested_scope_slot_counts: Default::default(),
+            nested_scope_slot_counts: bun_ast::SlotCounts::new(),
             hashbang: b"".into(),
             export_default_alias_of_import: Ref::NONE,
             css: None,
             url_for_css: b"",
             require_ref: Ref::NONE,
-            tla_check: Default::default(),
-            commonjs_named_exports: Default::default(),
+            tla_check: bun_ast::TlaCheck::new(),
+            commonjs_named_exports: bun_collections::StringArrayHashMap::init(),
             redirect_import_record_index: u32::MAX,
-            ts_enums: Default::default(),
+            ts_enums: bun_collections::ArrayHashMap::new(),
         })
     }
 

@@ -305,7 +305,6 @@ impl DataUrlBuf for Vec<u8> {
     }
 }
 
-#[derive(Default)]
 struct CountingBuf {
     len: usize,
 }

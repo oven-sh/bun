@@ -20,7 +20,7 @@ enum Readonlyness {
 }
 
 /// `ReadonlynessOptions`. The default is `readonlynessOptionsDefaults`.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ReadonlynessOptions {
     /// Types that count as readonly whatever they are.
     pub allow: Vec<TypeOrValueSpecifier>,

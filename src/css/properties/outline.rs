@@ -6,11 +6,11 @@ pub(crate) type Outline = GenericBorder<OutlineStyle, 11>;
 
 impl super::GenericBorderImpl for Outline {
     fn parse(input: &mut Parser) -> CssResult<Self> {
-        Self::parse_with_default_style(input, OutlineStyle::default())
+        Self::parse_with_default_style(input, OutlineStyle::new())
     }
 
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        self.to_css_with_default_style(dest, &OutlineStyle::default())
+        self.to_css_with_default_style(dest, &OutlineStyle::new())
     }
 }
 
@@ -23,8 +23,8 @@ pub enum OutlineStyle {
     LineStyle(LineStyle),
 }
 
-impl Default for OutlineStyle {
-    fn default() -> Self {
+impl OutlineStyle {
+    pub fn new() -> Self {
         OutlineStyle::LineStyle(LineStyle::None)
     }
 }

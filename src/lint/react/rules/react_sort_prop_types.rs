@@ -29,10 +29,18 @@ const CALLBACK_PROPS_LAST: Message =
 const PROPS_NOT_SORTED: Message =
     Message::new("propsNotSorted", "Prop types declarations should be sorted alphabetically");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// `typeAnnotations`: by its name the first `type A = { .. }` of the file.
     type_annotations: OnceCell<FxHashMap<Name<'a>, Stmt<'a>>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            type_annotations: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 /// The `properties` of an object literal, or the `members` of a type literal.
@@ -134,7 +142,7 @@ impl Rule for SortPropTypes {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -359,7 +367,7 @@ impl SortPropTypes {
 
 /// `typeAnnotations`, when the walk is over.
 fn type_annotations<'a>(file: &'a File<'a>) -> FxHashMap<Name<'a>, Stmt<'a>> {
-    let mut first: FxHashMap<Name<'a>, Stmt<'a>> = FxHashMap::default();
+    let mut first: FxHashMap<Name<'a>, Stmt<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for statement in file.stmts_of_kind(StmtTag::TypeAlias) {
         let StmtKind::TypeAlias(alias) = statement.kind() else {
             continue;

@@ -82,9 +82,9 @@ impl Rule for NoDuplicates {
         if !file.language().is_oxlint {
             return self.check_resolved(cx);
         }
-        let mut by_specifier: FxHashMap<Name<'a>, Imports<'a>> = FxHashMap::default();
+        let mut by_specifier: FxHashMap<Name<'a>, Imports<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for import in import_declarations(file) {
-            by_specifier.entry(import.spec()).or_default().push(import);
+            by_specifier.entry(import.spec()).or_insert_with(smallvec::SmallVec::new).push(import);
         }
         // The imports of each file, or of each specifier that stands for none. Only of specifiers that follow each other in oxlint's
         // hash map.
@@ -121,11 +121,11 @@ impl Rule for NoDuplicates {
                 continue;
             }
             // With other attributes it is another module.
-            let mut attribute_groups: FxHashMap<Attributes<'a>, Imports<'a>> = FxHashMap::default();
+            let mut attribute_groups: FxHashMap<Attributes<'a>, Imports<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for &import in group {
                 attribute_groups
                     .entry(attributes_of(import))
-                    .or_default()
+                    .or_insert_with(smallvec::SmallVec::new)
                     .push(import);
             }
             // oxlint sorts them by the attributes.
@@ -181,7 +181,7 @@ impl NoDuplicates {
                     _ => None,
                 })
         };
-        let mut resolved: FxHashMap<Name<'a>, Cow<'a, [u8]>> = FxHashMap::default();
+        let mut resolved: FxHashMap<Name<'a>, Cow<'a, [u8]>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for specifier in imports().map(Import::spec) {
             resolved
                 .entry(specifier)
@@ -206,7 +206,7 @@ impl NoDuplicates {
 
     fn check_group<'a>(&self, group: &[Import<'a>], cx: &Cx<'a, Self>) {
         // Values and, with `preferInline`, types by name; types by name; namespaces; types that are default exports.
-        let mut import_entries_maps: [Imports<'a>; 4] = Default::default();
+        let mut import_entries_maps: [Imports<'a>; 4] = core::array::from_fn(|_| smallvec::SmallVec::new());
         // An import for the side effects and an `import type` cannot be merged. An import of values can take in either.
         let (mut key0_side_effect_imports, mut key0_type_only_imports) =
             (Imports::new(), Imports::new());
@@ -317,11 +317,20 @@ impl NoDuplicates {
 }
 
 /// Where the next two `\n` are from a place on. It is kept for the next question, which is often about the same line.
-#[derive(Default)]
 struct NextNewlines {
     from: u32,
     /// `None`: nothing was asked yet. In it: there is none.
     found: Option<[Option<u32>; 2]>,
+}
+
+impl NextNewlines {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            from: 0,
+            found: None,
+        }
+    }
 }
 
 impl NextNewlines {
@@ -414,7 +423,7 @@ fn merge_imports_fix<'a>(
 ) -> Option<Vec<Fix>> {
     let file = fixer.file();
     let (&first, rest) = decls.split_first()?;
-    let mut newlines = [NextNewlines::default(), NextNewlines::default()];
+    let mut newlines = [NextNewlines::new(), NextNewlines::new()];
     // oxlint merges only what is written alike, without attributes.
     let is_other = |it: &Import<'a>| {
         it.spec() != first.spec() || it.attributes().is_some() || it.phase().is_some()
@@ -471,7 +480,7 @@ fn merge_imports_fix<'a>(
             .is_some_and(|it| it.is_punctuator(",")),
         (false, None) => false,
     };
-    let mut existing: FxHashSet<&[u8]> = FxHashSet::default();
+    let mut existing: FxHashSet<&[u8]> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     if !first_is_empty {
         existing.extend(strings::split(first_brace_content, b",").map(strings::trim_js_whitespace));
     }

@@ -153,11 +153,21 @@ fn fmt_status_text_line(
 /// Name, message and stack of the error(s) thrown by the test that is
 /// currently failing, captured as they are printed so structured reporters
 /// get them without re-running the exception formatter.
-#[derive(Default)]
 pub(crate) struct TestFailure {
     pub name: Vec<u8>,
     pub(crate) message: Vec<u8>,
     pub(crate) body: Vec<u8>,
+}
+
+impl TestFailure {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            name: Vec::new(),
+            message: Vec::new(),
+            body: Vec::new(),
+        }
+    }
 }
 
 /// How a test file is named in the JUnit document: relative to the project
@@ -208,7 +218,6 @@ fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
 // Remaining TODOs:
 // - Add stdout/stderr to the JUnit report
 // - Add timestamp field to the JUnit report
-#[derive(Default)]
 pub(crate) struct JunitReporter {
     pub(crate) contents: Vec<u8>,
     pub(crate) total_metrics: Metrics,
@@ -223,7 +232,23 @@ pub(crate) struct JunitReporter {
     pub(crate) hostname_value: Option<Box<[u8]>>,
 }
 
-#[derive(Default)]
+impl JunitReporter {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            contents: Vec::new(),
+            total_metrics: Metrics::new(),
+            offset_of_testsuites_value: 0,
+            current_file: Box::new([]),
+            file_start_ns: 0,
+            properties_list_to_repeat_in_every_test_suite: None,
+            suite_stack: Vec::new(),
+            current_depth: 0,
+            hostname_value: None,
+        }
+    }
+}
+
 pub(crate) struct SuiteInfo {
     pub name: Box<[u8]>,
     pub(crate) offset_of_attributes: usize,
@@ -235,13 +260,26 @@ pub(crate) struct SuiteInfo {
 // We dupe the name unconditionally in begin_test_suite_with_line, so the
 // unconditional drop is correct.
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct Metrics {
     pub(crate) test_cases: u32,
     pub(crate) assertions: u32,
     pub(crate) failures: u32,
     pub(crate) skipped: u32,
     pub(crate) elapsed_time: u64,
+}
+
+impl Metrics {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            test_cases: 0,
+            assertions: 0,
+            failures: 0,
+            skipped: 0,
+            elapsed_time: 0,
+        }
+    }
 }
 
 impl Metrics {
@@ -266,14 +304,14 @@ impl JunitReporter {
                 const HOST_NAME_MAX: usize = 256;
                 let mut name_buffer = [0u8; HOST_NAME_MAX];
                 if bun_sys::posix::gethostname(&mut name_buffer).is_err() {
-                    self.hostname_value = Some(Box::default());
+                    self.hostname_value = Some(Box::new([]));
                     return None;
                 }
                 let hostname = bun_core::slice_to_nul(&name_buffer);
 
                 let mut arraylist_writer: Vec<u8> = Vec::new();
                 if escape_xml(hostname, &mut arraylist_writer).is_err() {
-                    self.hostname_value = Some(Box::default());
+                    self.hostname_value = Some(Box::new([]));
                     return None;
                 }
                 self.hostname_value = Some(arraylist_writer.into_boxed_slice());
@@ -289,7 +327,7 @@ impl JunitReporter {
     }
 
     pub(crate) fn init() -> Box<JunitReporter> {
-        Box::new(JunitReporter::default())
+        Box::new(JunitReporter::new())
     }
 }
 
@@ -298,7 +336,7 @@ impl TestFailure {
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
     pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException) {
-        let failure = slot.get_or_insert_default();
+        let failure = slot.get_or_insert_with(TestFailure::new);
         let name = exception.name.to_utf8();
         let raw_message = exception.message.to_utf8();
         let mut message = Vec::with_capacity(raw_message.slice().len());
@@ -448,7 +486,7 @@ impl JunitReporter {
         let properties = PropertiesList { ci, commit };
 
         if properties.ci.is_empty() && properties.commit.is_empty() {
-            self.properties_list_to_repeat_in_every_test_suite = Some(Box::default());
+            self.properties_list_to_repeat_in_every_test_suite = Some(Box::new([]));
             return Ok(());
         }
 
@@ -547,7 +585,7 @@ impl JunitReporter {
         self.suite_stack.push(SuiteInfo {
             name: Box::<[u8]>::from(name),
             offset_of_attributes,
-            metrics: Metrics::default(),
+            metrics: Metrics::new(),
             is_file_suite,
             started_ns: if is_file_suite { self.file_start_ns } else { 0 },
         });
@@ -566,7 +604,7 @@ impl JunitReporter {
         while !self.suite_stack.is_empty() {
             self.end_test_suite(elapsed_ns)?;
         }
-        self.current_file = Box::default();
+        self.current_file = Box::new([]);
         Ok(())
     }
 
@@ -977,11 +1015,21 @@ pub(crate) struct CommandLineReporter {
     pub(crate) timings: Option<Timings>,
 }
 
-#[derive(Default)]
 pub(crate) struct ReportersConfig {
     pub(crate) dots: bool,
     pub(crate) only_failures: bool,
     pub(crate) junit: Option<Box<JunitReporter>>,
+}
+
+impl ReportersConfig {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            dots: false,
+            only_failures: false,
+            junit: None,
+        }
+    }
 }
 
 impl CommandLineReporter {
@@ -997,7 +1045,7 @@ impl CommandLineReporter {
         let initial_repeat_count = test_entry.repeat_count;
         let repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
         let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> =
-            BoundedArray::default();
+            BoundedArray::new();
         let mut parent_: Option<*const bun_test::DescribeScope> =
             test_entry.base.parent.map(|p| p.cast_const());
 
@@ -1646,12 +1694,12 @@ fn write_lcov_report(
         let _ = coverage::lcov::write_format(report, relative_dir, &mut contents);
     }
 
-    let mut fs = crate::node::fs::NodeFS::default();
+    let mut fs = crate::node::fs::NodeFS::new();
     let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
         path: crate::node::PathLike::borrowed(&opts.reports_directory),
         always_return_none: true,
         recursive: true,
-        ..Default::default()
+        ..crate::node::fs::args::Mkdir::new()
     });
 
     let mut rand = [0u8; 8];
@@ -1784,9 +1832,9 @@ impl TestCommand {
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
         jsc::initialize(jsc::InitializeOptions {
             short_lived_globals: ctx.test_options.isolate,
-            ..Default::default()
+            ..jsc::InitializeOptions::new()
         });
-        bun_http::http_thread::init(&Default::default());
+        bun_http::http_thread::init(&bun_http::http_thread::InitOpts::new());
 
         let enable_random = ctx.test_options.randomize;
         let seed: u32 = if enable_random {
@@ -1867,15 +1915,15 @@ impl TestCommand {
                 // `TestRunner` cannot derive `Default` because of the
                 // `&'a TestOptions` field, so spell the remaining fields out
                 // explicitly.
-                current_file: jest::CurrentFile::default(),
-                files: jest::FileList::default(),
-                index: jest::FileMap::default(),
+                current_file: jest::CurrentFile::new(),
+                files: jest::FileList::new(),
+                index: jest::FileMap::new(),
                 default_timeout_override: u32::MAX,
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
-                summary: Summary::default(),
+                summary: Summary::new(),
                 node_test_used: false,
             },
             repeat_count: 1,
@@ -1885,7 +1933,7 @@ impl TestCommand {
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
-            reporters: ReportersConfig::default(),
+            reporters: ReportersConfig::new(),
             timings: if ctx.test_options.test_worker || ctx.test_options.timings_files.is_empty() {
                 None
             } else {
@@ -1931,12 +1979,15 @@ impl TestCommand {
                 // allow_addons,allow_ffi_cc,jsx} after this point to forward them
                 // to workers.
                 transform_options: ctx.args.clone(),
-                debugger: core::mem::take(&mut ctx.runtime_options.debugger),
+                debugger: core::mem::replace(
+                    &mut ctx.runtime_options.debugger,
+                    bun_options_types::context::Debugger::Unspecified,
+                ),
                 log: core::ptr::NonNull::new(ctx.log),
                 env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
-                ..Default::default()
+                ..jsc::virtual_machine::InitOptions::new()
             })?
         };
         vm.argv = core::mem::take(&mut ctx.passthrough);

@@ -52,10 +52,20 @@ pub const KNOWN_TEXTS: &[&[u8]] = known::ALL_TEXTS;
 pub const NOT_IN_THE_FILE: u32 = 1 << 29;
 
 /// Where the texts of the atoms of one file are, for a reader of many of them: nothing is called.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct OwnTexts<'a> {
     spans: &'a [(u32, u32)],
     source: &'a [u8],
+}
+
+impl<'a> OwnTexts<'a> {
+    #[inline]
+    pub fn init() -> Self {
+        Self {
+            spans: &[],
+            source: &[],
+        }
+    }
 }
 
 impl<'a> OwnTexts<'a> {
@@ -67,7 +77,7 @@ impl<'a> OwnTexts<'a> {
         // A start with `ELSEWHERE` is past the end of the source.
         match source.len() <= Self::ELSEWHERE as usize {
             true => OwnTexts { spans, source },
-            false => OwnTexts::default(),
+            false => OwnTexts::init(),
         }
     }
 
@@ -162,7 +172,7 @@ struct Tables {
 impl Tables {
     fn new(is_in_common: bool) -> Tables {
         Tables {
-            shards: Box::new(std::array::from_fn(|_| GrowingPlaces::default())),
+            shards: Box::new(std::array::from_fn(|_| GrowingPlaces::new())),
             texts: AppendVec::new(),
             number: NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             is_in_common,
@@ -477,8 +487,8 @@ thread_local! {
 /// check owns the cache: a thread holds one only while it works for the check.
 pub struct RecentAtoms(Recent);
 
-impl Default for RecentAtoms {
-    fn default() -> Self {
+impl RecentAtoms {
+    pub fn new() -> Self {
         RecentAtoms(Recent::EMPTY)
     }
 }
@@ -486,7 +496,7 @@ impl Default for RecentAtoms {
 impl RecentAtoms {
     /// Takes the cache from the calling thread.
     pub fn take() -> RecentAtoms {
-        RecentAtoms::default().install()
+        RecentAtoms::new().install()
     }
 
     /// Installs the cache on the calling thread. Returns the previous one.
@@ -528,7 +538,7 @@ pub trait Intern: Sync {
     fn of_this_thread(&self) -> &dyn Intern;
     /// Empty unless it is the interner of one file.
     fn own_texts(&self) -> OwnTexts<'_> {
-        OwnTexts::default()
+        OwnTexts::init()
     }
 }
 
@@ -574,7 +584,7 @@ impl<'s> InternerPerThread<'s> {
         InternerPerThread {
             number: all.first().map_or(0, Interner::number),
             all,
-            threads: Default::default(),
+            threads: core::sync::atomic::AtomicUsize::new(0),
         }
     }
 

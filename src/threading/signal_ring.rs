@@ -23,12 +23,6 @@ const fn pack(head: u16, tail: u16) -> u32 {
     (tail as u32) << 16 | head as u32
 }
 
-impl<const CAPACITY: usize> Default for SignalRing<CAPACITY> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<const CAPACITY: usize> SignalRing<CAPACITY> {
     const CAPACITY_IS_VALID: () = assert!(
         CAPACITY.is_power_of_two() && CAPACITY <= 1 << 15,

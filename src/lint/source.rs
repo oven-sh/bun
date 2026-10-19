@@ -15,11 +15,11 @@ pub struct ByName<T> {
     others: FxHashMap<u32, T>,
 }
 
-impl<T> Default for ByName<T> {
-    fn default() -> Self {
+impl<T> ByName<T> {
+    pub fn new() -> Self {
         ByName {
             small: Vec::new(),
-            others: FxHashMap::default(),
+            others: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 }
@@ -100,10 +100,9 @@ impl Lines {
 }
 
 /// What counts as a line break. It depends on the language.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum LineBreaks {
     /// `\n`, `\r\n`, `\r`, U+2028 and U+2029.
-    #[default]
     EcmaScript,
     /// `\n`, `\r\n` and `\r`.
     Newlines,
@@ -237,7 +236,6 @@ const BLOCK: usize = 1024;
 
 /// For the line of an offset in a file of which few are asked for: then the lines in between are counted, and the starts of
 /// all the lines are not looked for.
-#[derive(Default)]
 pub(crate) struct NearbyLine {
     /// Only `\n` ends a line.
     is_plain: OnceCell<bool>,
@@ -247,6 +245,18 @@ pub(crate) struct NearbyLine {
     looked_at: Cell<usize>,
     /// How many lines there are.
     count: OnceCell<u32>,
+}
+
+impl NearbyLine {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            is_plain: core::cell::OnceCell::new(),
+            known: core::cell::Cell::new((0, 0)),
+            looked_at: core::cell::Cell::new(0),
+            count: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 impl<'a> File<'a> {

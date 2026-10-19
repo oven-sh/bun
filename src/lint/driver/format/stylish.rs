@@ -140,7 +140,7 @@ pub(super) fn plural(count: usize) -> &'static str {
 
 pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let color = meta.color;
-    let mut counts = Counts::default();
+    let mut counts = Counts::new();
     let mut has_errors = false;
     let mut padded = 0usize;
     let start = out.len();

@@ -28,10 +28,9 @@ fn core_rule_of(extension: &Meta) -> &'static str {
 
 /// For which of the plugins that a configuration of ESLint loads from a package the rules here answer, in place of those of
 /// the package.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum NativePlugins {
     /// All that are implemented here.
-    #[default]
     All,
     None,
     /// By the names that configurations have for them: `react-hooks`, `@typescript-eslint`.

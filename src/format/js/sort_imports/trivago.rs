@@ -257,10 +257,10 @@ fn sorted_nodes(model: &mut Model, options: &Options) -> Vec<Node> {
     for declaration in &mut model.declarations {
         declaration.comments = Attached {
             leading: declaration.comments.leading,
-            ..Attached::default()
+            ..Attached::new()
         };
     }
-    model.declarations[0].comments.leading = Default::default();
+    model.declarations[0].comments.leading = crate::js::sort_imports::babel::List::new();
     for at in 0..model.list(first_comments).len() {
         let comment = model.list(first_comments)[at];
         model.comments[comment as usize].has_loc = false;

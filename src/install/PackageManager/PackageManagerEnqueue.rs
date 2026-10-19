@@ -67,7 +67,7 @@ fn bind_existing(
 
 fn task_callback_list(this: &mut PackageManager, task_id: Task::Id) -> &mut TaskCallbackList {
     this.task_queue
-        .get_or_put(task_id)
+        .get_or_put(task_id, Vec::new)
         .expect("unreachable")
         .value_ptr
 }
@@ -93,7 +93,10 @@ fn push_task_callback(
     task_id: Task::Id,
     callback: TaskCallbackContext,
 ) -> bool {
-    let entry = this.task_queue.get_or_put(task_id).expect("unreachable");
+    let entry = this
+        .task_queue
+        .get_or_put(task_id, Vec::new)
+        .expect("unreachable");
     entry.value_ptr.push(callback);
     !entry.found_existing
 }
@@ -251,7 +254,7 @@ pub(crate) fn add_dependency_error(
     if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
         log.add_warning_with_note(
             None,
-            bun_ast::Loc::default(),
+            bun_ast::Loc::new(),
             err.name().as_bytes(),
             format_args!("error occurred while resolving {}", path_fmt),
         );
@@ -922,7 +925,10 @@ fn refetch_stale_manifest(
         return Ok(false);
     }
     let task_id = Task::Id::for_manifest(name);
-    let entry = this.network_dedupe_map.get_or_put(task_id)?.value_ptr;
+    let entry = this
+        .network_dedupe_map
+        .get_or_put(task_id, crate::network_task::DedupeMapEntry::new)?
+        .value_ptr;
     match entry.manifest {
         ManifestOrigin::Registry => return Ok(false),
         ManifestOrigin::Refetching => return Ok(true),
@@ -2391,7 +2397,7 @@ fn bind_row_without_manifest(
                         name: dependency.name,
                         name_hash: dependency.name_hash,
                         resolution: res,
-                        ..Package::default()
+                        ..Package::new()
                     },
                     Authorization::NoAuthorization,
                 ) {
@@ -2881,7 +2887,7 @@ fn enqueue_local_tarball(
                     cache_dir: get_cache_directory(this),
                     temp_dir: get_temporary_directory(this).handle.fd(),
                     dependency_id,
-                    integrity: locked_integrity.copied().unwrap_or_default(),
+                    integrity: locked_integrity.copied().unwrap_or_else(Integrity::new),
                     stays_unpinned: locked_integrity.is_some() && !this.pins_tarballs(),
                     url: stored_string(path),
                     skip_verify: false,
@@ -3027,7 +3033,6 @@ pub(crate) enum ResolvedPackageTask {
     PatchTask(Box<PatchTask>),
 }
 
-#[derive(Default)]
 pub(crate) struct ResolvedPackageResult {
     pub package: Package,
 
@@ -3035,6 +3040,17 @@ pub(crate) struct ResolvedPackageResult {
     pub is_first_time: bool,
 
     pub task: Option<ResolvedPackageTask>,
+}
+
+impl ResolvedPackageResult {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            package: Package::new(),
+            is_first_time: false,
+            task: None,
+        }
+    }
 }
 
 /// Once per version. A version that no package.json of the project names needs `--verbose`.
@@ -3451,10 +3467,10 @@ fn get_or_put_resolved_package(
         Some(Settled::Resolved) => {
             return Ok(Some(ResolvedPackageResult {
                 package: *this.lockfile.packages.get(resolution as usize),
-                ..Default::default()
+                ..ResolvedPackageResult::new()
             }));
         }
-        Some(Settled::ProvidedLocally) => return Ok(Some(ResolvedPackageResult::default())),
+        Some(Settled::ProvidedLocally) => return Ok(Some(ResolvedPackageResult::new())),
         Some(Settled::Deferred) => return Ok(None),
         None => {}
     }
@@ -3723,7 +3739,7 @@ fn get_or_put_resolved_package(
                     }
                 }
 
-                let mut package = Package::default();
+                let mut package = Package::new();
 
                 {
                     // Copied out of `string_bytes`, which `StringBuilder::allocate` may grow.

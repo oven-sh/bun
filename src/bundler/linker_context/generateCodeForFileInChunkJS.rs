@@ -108,14 +108,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 &mut stmts.all_stmts.as_mut_slice()[0..main_stmts_len],
             );
 
-            let mut clousure_args: BoundedArray<G::Arg, 3> = BoundedArray::default();
+            let mut clousure_args: BoundedArray<G::Arg, 3> = BoundedArray::new();
             clousure_args.append_assume_capacity(G::Arg {
                 binding: Binding::alloc(
                     temp_arena,
                     B::Identifier { r#ref: hmr_api_ref },
                     bun_ast::Loc::EMPTY,
                 ),
-                ..Default::default()
+                ..G::Arg::new()
             });
 
             if ast
@@ -130,7 +130,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         },
                         bun_ast::Loc::EMPTY,
                     ),
-                    ..Default::default()
+                    ..G::Arg::new()
                 });
                 clousure_args.append_assume_capacity(G::Arg {
                     binding: Binding::alloc(
@@ -140,7 +140,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         },
                         bun_ast::Loc::EMPTY,
                     ),
-                    ..Default::default()
+                    ..G::Arg::new()
                 });
             }
 
@@ -151,7 +151,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     temp_arena,
                 );
                 for a in clousure_args.slice().iter_mut() {
-                    v.push(core::mem::take(a));
+                    v.push(core::mem::replace(a, bun_ast::g::Arg::new()));
                 }
                 v.into_bump_slice_mut()
             };
@@ -166,7 +166,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 stmts: inner,
                                 loc: bun_ast::Loc::EMPTY,
                             },
-                            ..Default::default()
+                            ..G::Fn::new()
                         },
                     },
                     bun_ast::Loc::EMPTY,
@@ -471,7 +471,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     G::Property {
                                         key,
                                         value: Some(Expr::init_identifier(export_ref, value_loc)),
-                                        ..Default::default()
+                                        ..G::Property::new()
                                     },
                                 );
                             }
@@ -483,7 +483,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     temp_arena,
                     E::Object {
                         properties: Vec::move_from_list(new_properties),
-                        ..Default::default()
+                        ..E::Object::new()
                     },
                     default_expr.loc,
                 );
@@ -568,7 +568,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             },
                             bun_ast::Loc::EMPTY,
                         ),
-                        ..Default::default()
+                        ..G::Arg::new()
                     });
 
                     if ast.flags.contains(AstFlags::USES_MODULE_REF) {
@@ -580,7 +580,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 },
                                 bun_ast::Loc::EMPTY,
                             ),
-                            ..Default::default()
+                            ..G::Arg::new()
                         });
                     }
                 }
@@ -598,7 +598,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 stmts: body_stmts,
                                 loc: bun_ast::Loc::EMPTY,
                             },
-                            ..Default::default()
+                            ..G::Fn::new()
                         },
                     },
                     bun_ast::Loc::EMPTY,
@@ -609,12 +609,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         target: Expr::init(
                             E::Identifier {
                                 ref_: c.cjs_runtime_ref,
-                                ..Default::default()
+                                ..E::Identifier::new()
                             },
                             bun_ast::Loc::EMPTY,
                         ),
                         args: Vec::move_from_list(cjs_args),
-                        ..Default::default()
+                        ..E::Call::new()
                     },
                     bun_ast::Loc::EMPTY,
                 );
@@ -637,7 +637,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         Stmt::alloc(
                             S::Local {
                                 decls,
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             bun_ast::Loc::EMPTY,
                         ),
@@ -845,7 +845,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 decls: G::DeclList::move_from_list(core::mem::take(
                                     &mut hoist.decls,
                                 )),
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             bun_ast::Loc::EMPTY,
                         ),
@@ -867,7 +867,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 stmts: inner_stmts,
                                 loc: bun_ast::Loc::EMPTY,
                             },
-                            ..Default::default()
+                            ..E::Arrow::new()
                         },
                         bun_ast::Loc::EMPTY,
                     )]);
@@ -877,7 +877,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         E::Call {
                             target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
                             args: Vec::move_from_list(esm_args),
-                            ..Default::default()
+                            ..E::Call::new()
                         },
                         bun_ast::Loc::EMPTY,
                     );
@@ -898,7 +898,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         Stmt::alloc(
                             S::Local {
                                 decls,
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             bun_ast::Loc::EMPTY,
                         ),
@@ -929,7 +929,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     stmts: inner_stmts,
                                     loc: bun_ast::Loc::EMPTY,
                                 },
-                                ..Default::default()
+                                ..E::Arrow::new()
                             },
                             bun_ast::Loc::EMPTY,
                         );
@@ -948,7 +948,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                         ),
                                         value: Some(value),
                                     }]),
-                                    ..Default::default()
+                                    ..S::Local::new()
                                 },
                                 bun_ast::Loc::EMPTY,
                             ),

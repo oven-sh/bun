@@ -169,14 +169,22 @@ impl RouteIndexAndRecurseFlag {
 }
 
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
-#[derive(Default)]
 pub(crate) struct EntryPointList {
     pub(crate) set: bun_collections::StringArrayHashMap<entry_point_list::Flags>,
 }
 
+impl EntryPointList {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            set: bun_collections::StringArrayHashMap::init(),
+        }
+    }
+}
+
 pub(crate) mod entry_point_list {
     bitflags::bitflags! {
-        #[derive(Default, Copy, Clone)]
+        #[derive(Copy, Clone)]
         #[repr(transparent)]
         pub struct Flags: u8 {
             const CLIENT = 1 << 0;
@@ -192,7 +200,7 @@ pub(crate) mod entry_point_list {
 
 impl EntryPointList {
     pub(crate) fn empty() -> EntryPointList {
-        EntryPointList::default()
+        EntryPointList::new()
     }
 
     pub(crate) fn append_js(&mut self, abs_path: &[u8], side: bake::Graph) -> crate::Result<()> {
@@ -227,7 +235,10 @@ impl EntryPointList {
         abs_path: &[u8],
         flags: entry_point_list::Flags,
     ) -> crate::Result<()> {
-        let gop = self.set.get_or_put(abs_path)?;
+        let gop = self.set.get_or_put(
+            abs_path,
+            crate::bake::dev_server::bundle::entry_point_list::Flags::empty,
+        )?;
         if gop.found_existing {
             *gop.value_ptr |= flags;
         } else {
@@ -281,10 +292,18 @@ impl DevServer {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct TestingBatch {
     /// Keys are borrowed.
     pub(crate) entry_points: EntryPointList,
+}
+
+impl TestingBatch {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            entry_points: EntryPointList::new(),
+        }
+    }
 }
 
 impl TestingBatch {
@@ -447,11 +466,14 @@ impl DevServer {
             timer,
             start_data,
             had_reload_event,
-            requests: ::core::mem::take(&mut self.next_bundle.requests),
-            resolution_failure_entries: Default::default(),
+            requests: ::core::mem::replace(
+                &mut self.next_bundle.requests,
+                bun_collections::pool::SinglyLinkedList::new(),
+            ),
+            resolution_failure_entries: ArrayHashMap::new(),
         });
 
-        self.next_bundle.requests = deferred_request::List::default();
+        self.next_bundle.requests = deferred_request::List::new();
         self.next_bundle.route_queue.clear_retaining_capacity();
         Ok(())
     }

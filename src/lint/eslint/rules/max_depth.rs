@@ -41,10 +41,18 @@ fn keyword_of(stmt: Stmt) -> Option<&'static str> {
 /// A long walk towards the root leaves its count at every [`AncestorCounter::STRIDE`]th node on its
 /// way, and a walk that comes to such a node ends there. So all the walks in a file together take
 /// O(nodes + walks) steps, however deep the nodes are in each other.
-#[derive(Default)]
 pub struct AncestorCounter<'a> {
     /// How many ancestors of a node count.
     known: FxHashMap<Node<'a>, u32>,
+}
+
+impl<'a> AncestorCounter<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            known: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 /// What an ancestor is to an [`AncestorCounter`].
@@ -95,11 +103,20 @@ impl<'a> AncestorCounter<'a> {
     }
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     ancestors: AncestorCounter<'a>,
     /// ESLint before 10 counts while it walks: how deep it is in each of the functions around.
     depths: Vec<i64>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            ancestors: AncestorCounter::new(),
+            depths: Vec::new(),
+        }
+    }
 }
 
 /// Whether ESLint before 10 counts `node` where it ends.
@@ -181,7 +198,7 @@ impl Rule for MaxDepth {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

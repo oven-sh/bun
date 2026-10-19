@@ -171,7 +171,7 @@ impl PackageManager {
                             match self.workspace_package_json_cache.get_with_path(
                                 log,
                                 &root_package_json_path(),
-                                Default::default(),
+                                super::super::GetJsonOptions::new(),
                             ) {
                                 GetJsonResult::Entry(entry) => {
                                     entry.root.get(b"workspaces").is_some()

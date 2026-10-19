@@ -241,7 +241,7 @@ impl TOML {
             },
             bump,
             stack_check: StackCheck::init(),
-            meta: HashMap::default(),
+            meta: HashMap::init(),
             block: 0,
         };
         match parser.parse_root() {
@@ -1719,7 +1719,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     fn parse_root(&mut self) -> PResult<Expr> {
         let start = self.scanner.init_document()?;
 
-        let root = Expr::init(E::Object::default(), loc_of(start));
+        let root = Expr::init(E::Object::new(), loc_of(start));
         let root_ptr = root
             .data
             .e_object()
@@ -2062,7 +2062,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     // ── table bookkeeping ──────────────────────────────────────────────────
 
     fn new_table(&mut self, pos: usize, kind: Kind) -> (Expr, *mut E::Object) {
-        let expr = Expr::init(E::Object::default(), loc_of(pos));
+        let expr = Expr::init(E::Object::new(), loc_of(pos));
         let ptr = expr
             .data
             .e_object()
@@ -2079,7 +2079,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     }
 
     fn new_array(&mut self, pos: usize, kind: Kind) -> (Expr, *mut E::Array) {
-        let expr = Expr::init(E::Array::default(), loc_of(pos));
+        let expr = Expr::init(E::Array::new(), loc_of(pos));
         let ptr = expr
             .data
             .e_array()

@@ -23,10 +23,20 @@ pub trait Orders: std::fmt::Debug + Send + Sync + std::panic::RefUnwindSafe {
 }
 
 /// Names, and patterns for names, which are written `"/^tw/"`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Names {
     names: Vec<Vec<u8>>,
     patterns: Vec<Regex>,
+}
+
+impl Names {
+    #[inline]
+    pub fn init() -> Self {
+        Self {
+            names: Vec::new(),
+            patterns: Vec::new(),
+        }
+    }
 }
 
 /// Nothing in it changes.
@@ -35,7 +45,7 @@ impl std::panic::RefUnwindSafe for Names {}
 impl Names {
     /// The plugin's `parseRegex`, for each of `list`.
     pub fn new(list: Vec<Vec<u8>>) -> Names {
-        let mut all = Names::default();
+        let mut all = Names::init();
         for it in list {
             let pattern = it.strip_prefix(b"/").and_then(|rest| {
                 let slash = strings::last_index_of_char(rest, b'/')?;
@@ -74,9 +84,8 @@ impl Names {
 }
 
 /// Whether `@prettier/plugin-oxc` is among the plugins. It reads TypeScript, and the JavaScript that is not in HTML.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Oxc {
-    #[default]
     Absent,
     /// The plugin that sorts classes looks at its tree.
     Before,
@@ -279,7 +288,7 @@ impl Tailwind {
             is_rest(a.0).cmp(&is_rest(z.0)).then(a.1.cmp(&z.1))
         });
         // Of a class that Tailwind knows, the first stays.
-        let mut seen = FxHashSet::default();
+        let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         let is_removed: Vec<bool> = ordered
             .iter()
             .map(|&(class, rank)| {

@@ -33,7 +33,7 @@ impl DoneCallback {
             "done",
             __jsc_host_bun_test_done_callback,
             1,
-            Default::default(),
+            bun_jsc::js_function::CreateJSFunctionOptions::new(),
         );
         call_fn.bind(global, value, &BunString::static_("done"), 1.0, &[])
     }

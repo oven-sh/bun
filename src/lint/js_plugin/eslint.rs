@@ -68,7 +68,7 @@ pub struct Text<'t> {
 }
 
 /// What ESLint's `Linter` says about a text.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct Linted {
     pub messages: Vec<LintMessage>,
     pub suppressed: Vec<LintMessage>,

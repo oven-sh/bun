@@ -16,8 +16,14 @@ enum AllowedType {
 
 /// By a variable, [`get_type_from_imported`] of the first of its declarations that has one: an enum that is declared
 /// many times has as many declarations to go through for each of them.
-#[derive(Default)]
 pub struct State<'a>(IdMap<Symbol<'a>, Option<AllowedType>>);
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self(IdMap::init())
+    }
+}
 
 /// Whether it is in quotes, and one name of upstream's `getModuleName`.
 fn name_part<'a>(module: Module<'a>) -> (bool, &'a [u8]) {
@@ -195,7 +201,7 @@ impl Rule for NoMixedEnums {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

@@ -56,8 +56,8 @@ pub struct SinglyLinkedList<T> {
     pub first: *mut Node<T>,
 }
 
-impl<T> Default for SinglyLinkedList<T> {
-    fn default() -> Self {
+impl<T> SinglyLinkedList<T> {
+    pub fn new() -> Self {
         Self {
             first: ptr::null_mut(),
         }
@@ -144,10 +144,10 @@ pub struct DataStruct<T> {
     pub(crate) count: usize,
 }
 
-impl<T> Default for DataStruct<T> {
-    fn default() -> Self {
+impl<T> DataStruct<T> {
+    pub fn new() -> Self {
         Self {
-            list: SinglyLinkedList::default(),
+            list: SinglyLinkedList::new(),
             loaded: false,
             count: 0,
         }
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn singly_linked_list_push_pop() {
-        let mut list: SinglyLinkedList<u32> = SinglyLinkedList::default();
+        let mut list: SinglyLinkedList<u32> = SinglyLinkedList::new();
         assert_eq!(list.len(), 0);
         assert!(list.pop_first().is_none());
 
@@ -617,7 +617,7 @@ mod tests {
     fn singly_linked_list_drop_frees_nodes() {
         let _serial = serial();
         let before = drops();
-        let mut list: SinglyLinkedList<Tracked> = SinglyLinkedList::default();
+        let mut list: SinglyLinkedList<Tracked> = SinglyLinkedList::new();
         for i in 0..3 {
             let node = bun_core::heap::into_raw(Box::new(Node {
                 next: ptr::null_mut(),

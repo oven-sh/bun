@@ -47,15 +47,23 @@ pub fn write_file(path: &[u8], contents: &[u8]) {
 
 /// Many small files in one, as `test/cli/format/bundle.ts` writes it, decompressed. One file after
 /// the other: `=== /<path> <length in bytes>\n`, the bytes, `\n`.
-#[derive(Default)]
 pub struct Bundle<'a> {
     files: BTreeMap<&'a [u8], &'a [u8]>,
 }
 
 impl<'a> Bundle<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            files: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+impl<'a> Bundle<'a> {
     /// `None` if `bytes` is malformed.
     pub fn parse(bytes: &'a [u8]) -> Option<Bundle<'a>> {
-        let mut bundle = Bundle::default();
+        let mut bundle = Bundle::new();
         let mut rest = bytes;
         while !rest.is_empty() {
             let (header, after) = strings::split_once_char(rest.strip_prefix(b"=== /")?, b'\n')?;
@@ -94,7 +102,6 @@ pub type Format<'f> =
     &'f dyn Fn(&[u8], &[u8], &FormatOptions) -> Result<(Vec<u8>, Option<u32>), Failure>;
 
 /// What is on the command line after the path of the bundle.
-#[derive(Default)]
 pub struct Flags<'a> {
     /// `--filter=text`: only the cases whose path contains the text.
     pub filter: Option<&'a [u8]>,
@@ -178,10 +185,20 @@ pub fn run_from_command_line(
     true
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct Count {
     passed: usize,
     total: usize,
+}
+
+impl Count {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            passed: 0,
+            total: 0,
+        }
+    }
 }
 
 impl Count {

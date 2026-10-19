@@ -128,7 +128,7 @@ impl Rule for NoUnhandledEmitterErrors {
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
-        let mut known = Known::default();
+        let mut known = Known::with_hasher(rustc_hash::FxBuildHasher);
         let mut check = |e: Expr<'a>, name: &str| {
             if let Some(callee) = e.callee()
                 && !is_taken_care_of(e, Some(&mut known))

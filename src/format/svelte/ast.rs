@@ -6,10 +6,17 @@ use std::borrow::Cow;
 pub(crate) type Id = u32;
 pub(crate) type FragmentId = u32;
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Span {
     pub(crate) start: u32,
     pub(crate) end: u32,
+}
+
+impl Span {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self { start: 0, end: 0 }
+    }
 }
 
 impl Span {
@@ -259,7 +266,7 @@ pub(crate) struct Comment {
     pub(crate) is_block: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Tree<'a> {
     pub(crate) nodes: Vec<Node<'a>>,
     pub(crate) fragments: Vec<Vec<Id>>,
@@ -274,6 +281,23 @@ pub(crate) struct Tree<'a> {
     pub(crate) comments: Vec<Comment>,
     /// `_svelte_ts` of the plugin: a `<script>` or a `<style>` says `lang="ts"`. Or `ts` of Svelte.
     pub(crate) says_typescript: bool,
+}
+
+impl<'a> Tree<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            fragments: Vec::new(),
+            fragment: 0,
+            options: None,
+            module: None,
+            instance: None,
+            css: None,
+            comments: Vec::new(),
+            says_typescript: false,
+        }
+    }
 }
 
 impl<'a> Tree<'a> {

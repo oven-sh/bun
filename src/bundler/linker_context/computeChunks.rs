@@ -121,7 +121,7 @@ pub(crate) fn compute_chunks(
 
         // Put this early on in this loop so that CSS-only entry points work.
         if has_html_chunk {
-            let html_chunk_entry = html_chunks.get_or_put(js_chunk_key)?;
+            let html_chunk_entry = html_chunks.get_or_put(js_chunk_key, Chunk::new)?;
             if !html_chunk_entry.found_existing {
                 *html_chunk_entry.value_ptr = Chunk {
                     entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
@@ -133,7 +133,7 @@ pub(crate) fn compute_chunks(
                         could_be_browser_target_from_server_build
                             && ast_targets[source_index as usize] == Target::Browser,
                     ),
-                    ..Default::default()
+                    ..Chunk::new()
                 };
             }
         }
@@ -158,7 +158,7 @@ pub(crate) fn compute_chunks(
                 }
                 hasher.final_()
             };
-            let css_chunk_entry = css_chunks.get_or_put(hash_to_use)?;
+            let css_chunk_entry = css_chunks.get_or_put(hash_to_use, Chunk::new)?;
             if !css_chunk_entry.found_existing {
                 // const css_chunk_entry = try js_chunks.getOrPut();
                 let order_len = order.len() as usize;
@@ -178,7 +178,7 @@ pub(crate) fn compute_chunks(
                         could_be_browser_target_from_server_build
                             && ast_targets[source_index as usize] == Target::Browser,
                     ),
-                    ..Default::default()
+                    ..Chunk::new()
                 };
             }
 
@@ -187,21 +187,21 @@ pub(crate) fn compute_chunks(
 
         // Create a chunk for the entry point here to ensure that the chunk is
         // always generated even if the resulting file is empty
-        let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
+        let js_chunk_entry = js_chunks.get_or_put(js_chunk_key, Chunk::new)?;
         debug_assert!(!js_chunk_entry.found_existing);
         entry_point_to_js_chunk_idx[entry_id_] =
             u32::try_from(js_chunk_entry.index).expect("int cast");
         *js_chunk_entry.value_ptr = Chunk {
             entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
             entry_bits: entry_point_chunk_bits,
-            content: chunk::Content::Javascript(chunk::JavaScriptChunk::default()),
+            content: chunk::Content::Javascript(chunk::JavaScriptChunk::new()),
             output_source_map: SourceMapPieces::init(),
             flags: make_flags(
                 has_html_chunk,
                 could_be_browser_target_from_server_build
                     && ast_targets[source_index as usize] == Target::Browser,
             ),
-            ..Default::default()
+            ..Chunk::new()
         };
 
         {
@@ -234,7 +234,7 @@ pub(crate) fn compute_chunks(
                     hasher.final_()
                 };
 
-                let css_chunk_entry = css_chunks.get_or_put(hash_to_use)?;
+                let css_chunk_entry = css_chunks.get_or_put(hash_to_use, Chunk::new)?;
 
                 if let chunk::Content::Javascript(js) = &mut js_chunk_entry.value_ptr.content {
                     js.css_chunks = Box::<[u32]>::from(
@@ -271,7 +271,7 @@ pub(crate) fn compute_chunks(
                             could_be_browser_target_from_server_build
                                 && ast_targets[source_index as usize] == Target::Browser,
                         ),
-                        ..Default::default()
+                        ..Chunk::new()
                     };
                 }
             }
@@ -329,7 +329,7 @@ pub(crate) fn compute_chunks(
                         }
                         let js_chunk_key =
                             temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
-                        let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
+                        let js_chunk_entry = js_chunks.get_or_put(js_chunk_key, Chunk::new)?;
 
                         if !js_chunk_entry.found_existing {
                             let is_browser_chunk_from_server_build =
@@ -341,12 +341,10 @@ pub(crate) fn compute_chunks(
                                     source_index.get(),
                                     0,
                                 ),
-                                content: chunk::Content::Javascript(
-                                    chunk::JavaScriptChunk::default(),
-                                ),
+                                content: chunk::Content::Javascript(chunk::JavaScriptChunk::new()),
                                 output_source_map: SourceMapPieces::init(),
                                 flags: make_flags(false, is_browser_chunk_from_server_build),
-                                ..Default::default()
+                                ..Chunk::new()
                             };
                         } else if could_be_browser_target_from_server_build
                             && !js_chunk_entry.value_ptr.entry_point.is_entry_point()
@@ -369,7 +367,9 @@ pub(crate) fn compute_chunks(
                         let entry = js_chunk_entry
                             .value_ptr
                             .files_with_parts_in_chunk
-                            .get_or_put(source_index.get() as u32)
+                            .get_or_put(source_index.get() as u32, || {
+                                core::sync::atomic::AtomicUsize::new(0)
+                            })
                             .expect("unreachable");
                         if !entry.found_existing {
                             *entry.value_ptr = AtomicUsize::new(0); // Initialize byte count to 0
@@ -391,7 +391,9 @@ pub(crate) fn compute_chunks(
 
                             let entry = c.chunks[chunk_idx as usize]
                                 .files_with_parts_in_chunk
-                                .get_or_put(c.source_id as u32)
+                                .get_or_put(c.source_id as u32, || {
+                                    core::sync::atomic::AtomicUsize::new(0)
+                                })
                                 .expect("unreachable");
                             if !entry.found_existing {
                                 *entry.value_ptr = AtomicUsize::new(0); // Initialize byte count to 0
@@ -472,7 +474,7 @@ pub(crate) fn compute_chunks(
 
             // `Chunk` is not `Clone`; take by index.
             let idx = js_chunks.get_index(&key).expect("unreachable");
-            let owned = core::mem::take(&mut js_chunks.values_mut()[idx]);
+            let owned = core::mem::replace(&mut js_chunks.values_mut()[idx], Chunk::new());
             let has_html = owned.flags.contains(chunk::Flags::HAS_HTML_CHUNK);
             sorted_chunks.append_assume_capacity(owned);
 
@@ -499,7 +501,7 @@ pub(crate) fn compute_chunks(
             for (sorted_index, &key) in (sorted_chunks.len() as usize..).zip(sorted_css_keys.iter())
             {
                 let index = css_chunks.get_index(&key).expect("unreachable");
-                let owned = core::mem::take(&mut css_chunks.values_mut()[index]);
+                let owned = core::mem::replace(&mut css_chunks.values_mut()[index], Chunk::new());
                 sorted_chunks.append_assume_capacity(owned);
                 remapped_css_indexes[index] = u32::try_from(sorted_index).expect("int cast");
             }
@@ -518,7 +520,7 @@ pub(crate) fn compute_chunks(
 
         // We don't care about the order of the HTML chunks that have no JS chunks.
         for v in html_chunks.values_mut() {
-            sorted_chunks.push(core::mem::take(v));
+            sorted_chunks.push(core::mem::replace(v, Chunk::new()));
         }
 
         break 'sort_chunks sorted_chunks;
@@ -550,8 +552,8 @@ pub(crate) fn compute_chunks(
 
     // Handle empty chunks case
     if chunks.is_empty() {
-        this.unique_key_buf = Box::default();
-        return Ok(Box::default());
+        this.unique_key_buf = Box::new([]);
+        return Ok(Box::new([]));
     }
 
     let unique_key_item_len = chunk::UNIQUE_KEY_LEN;
@@ -618,7 +620,7 @@ pub(crate) fn compute_chunks(
                 data: Box::from(&b"./[name]"[..]),
                 placeholder: Placeholder {
                     name: bv2.transpiler().options.compile_entry_point_name.clone(),
-                    ..Default::default()
+                    ..Placeholder::new()
                 },
             };
             continue;

@@ -71,7 +71,7 @@ fn config_of(flavor: Flavor, stands_alone: bool) -> EnvironmentConfig {
             true => ExhaustiveEffectDepsMode::All,
             false => ExhaustiveEffectDepsMode::Off,
         },
-        ..EnvironmentConfig::default()
+        ..EnvironmentConfig::new()
     }
 }
 

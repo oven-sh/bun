@@ -10,7 +10,6 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
 
-#[derive(Default)]
 pub(crate) struct Cp {
     pub(crate) opts: Opts,
     pub(crate) state: State,
@@ -22,9 +21,18 @@ pub(crate) struct Cp {
     pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
 }
 
-#[derive(Default)]
+impl Cp {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            opts: Opts::new(),
+            state: State::Idle,
+            output_queue: std::collections::VecDeque::new(),
+        }
+    }
+}
+
 pub(crate) enum State {
-    #[default]
     Idle,
     Exec(Box<ExecState>),
     /// Windows-only post-processing of EBUSY collisions.
@@ -53,7 +61,6 @@ pub(crate) struct ExecState {
 /// `cp myfile.txt myfile.txt mydir/` — two tasks race for the same dest. Bun
 /// ignores the EBUSY if at least one task succeeded for that dest.
 #[cfg(windows)]
-#[derive(Default)]
 pub(crate) struct EbusyState {
     pub(crate) tasks: Vec<*mut ShellCpTask>,
     pub(crate) idx: usize,
@@ -64,9 +71,23 @@ pub(crate) struct EbusyState {
     pub(crate) absolute_srcs: bun_collections::StringSet,
 }
 
+#[cfg(windows)]
+impl EbusyState {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            tasks: Vec::new(),
+            idx: 0,
+            main_exit_code: 0,
+            absolute_targets: bun_collections::StringSet::empty(),
+            absolute_srcs: bun_collections::StringSet::empty(),
+        }
+    }
+}
+
 impl Cp {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let mut opts = Opts::default();
+        let mut opts = Opts::new();
         let (sources_start, target_idx) = {
             let args = Builtin::of(interp, cmd).args_slice();
             match parse_flags(&mut opts, args) {
@@ -95,7 +116,7 @@ impl Cp {
             output_done: 0,
             err: None,
             #[cfg(windows)]
-            ebusy: EbusyState::default(),
+            ebusy: EbusyState::new(),
         }));
         Self::next(interp, cmd)
     }
@@ -157,7 +178,7 @@ impl Cp {
                 let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                     unreachable!()
                 };
-                let mut ebusy = core::mem::take(&mut exec.ebusy);
+                let mut ebusy = core::mem::replace(&mut exec.ebusy, EbusyState::new());
                 ebusy.idx = 0;
                 ebusy.main_exit_code = exit_code;
                 Self::state_mut(interp, cmd).state = State::Ebusy(ebusy);
@@ -784,12 +805,22 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct Opts {
     /// `-R` — copy file hierarchies
     pub(crate) recursive: bool,
     /// `-v` — verbose
     pub(crate) verbose: bool,
+}
+
+impl Opts {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            recursive: false,
+            verbose: false,
+        }
+    }
 }
 
 impl FlagParser for Opts {

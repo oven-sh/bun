@@ -14,11 +14,20 @@ const SUGGEST_REMOVING_NON_NULL: Message =
     Message::new("suggestRemovingNonNull", "Remove the non-null assertion.");
 
 /// Where the first of what gives a variable a value ends.
-#[derive(Default)]
 pub struct State<'a> {
     of_variables: IdMap<Symbol<'a>, Option<u32>>,
     /// By the name, for the names that nothing in the file declares. `None` until it is asked for.
     of_globals: Option<FxHashMap<Name<'a>, u32>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            of_variables: IdMap::init(),
+            of_globals: None,
+        }
+    }
 }
 
 /// Whether `variable` is given a value by something that ends before `end`.
@@ -48,7 +57,7 @@ impl Rule for NoNonNullAssertedNullishCoalescing {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -74,7 +83,7 @@ impl Rule for NoNonNullAssertedNullishCoalescing {
                 None if is_configured_global(cx.file(), name.bytes()) => {
                     let file = cx.file();
                     let first_writes = cx.state.of_globals.get_or_insert_with(|| {
-                        let mut first_writes: FxHashMap<Name<'a>, u32> = FxHashMap::default();
+                        let mut first_writes: FxHashMap<Name<'a>, u32> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
                         for reference in file.unresolved_references().filter(|it| it.is_write()) {
                             let first = first_writes.entry(reference.name()).or_insert(u32::MAX);
                             *first = reference.span().end.min(*first);

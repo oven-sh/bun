@@ -17,7 +17,7 @@ pub fn contains_all_types_by_name(
     allowed_names: impl Names,
     match_any_instead: bool,
 ) -> bool {
-    let mut known = BaseTypeAnswers::default();
+    let mut known = BaseTypeAnswers::new();
     contains(ty, allow_any, allowed_names, match_any_instead, &mut known)
 }
 
@@ -71,7 +71,7 @@ pub fn contains_all_types_by_name_as_tsgolint(
     allowed_names: impl Names,
     match_any_instead: bool,
 ) -> bool {
-    let mut known = BaseTypeAnswers::default();
+    let mut known = BaseTypeAnswers::new();
     contains_as_tsgolint(ty, allowed_names, match_any_instead, &mut known)
 }
 

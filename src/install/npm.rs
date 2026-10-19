@@ -233,7 +233,7 @@ pub mod registry {
     // `unreachable!()`.
     bun_collections::object_pool!(pub BodyPool: MutableString, threadsafe, 8);
 
-    #[derive(Default, Clone)]
+    #[derive(Clone)]
     pub struct Scope {
         pub name: Box<[u8]>,
         // https://github.com/npm/npm-registry-fetch/blob/main/lib/auth.js#L96
@@ -253,15 +253,40 @@ pub mod registry {
         pub(crate) url_auth_key: Option<Box<[u8]>>,
     }
 
+    impl Scope {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                name: Box::new([]),
+                auth: Box::new([]),
+                url: OwnedURL::new(),
+                url_hash: 0,
+                token: Box::new([]),
+                user: Box::new([]),
+                declared_in_npmrc: false,
+                url_auth_key: None,
+            }
+        }
+    }
+
     /// After `:` in yarn's shape (`/api/:_authToken=T`), after `/` in JFrog's (`/npm/_auth=<b64>`).
     const EMBEDDED_OPTIONS: [&[u8]; 4] = [b"_authToken=", b"_auth=", b"username=", b"_password="];
 
-    #[derive(Default)]
     struct EmbeddedAuth<'a> {
         /// In the order of `EMBEDDED_OPTIONS`.
         values: [Option<&'a [u8]>; 4],
         /// The scan hit a token or an `_auth`, which ends it; nothing after it is read.
         terminal: bool,
+    }
+
+    impl<'a> EmbeddedAuth<'a> {
+        #[inline]
+        fn new() -> Self {
+            Self {
+                values: [None; 4],
+                terminal: false,
+            }
+        }
     }
 
     /// `(start, index in EMBEDDED_OPTIONS)`. Anchored on the whole marker: base64 values hold `/`.
@@ -294,7 +319,7 @@ pub mod registry {
 
     /// Stripped whether or not adopted: left there, the secret ships in every request path.
     fn parse_embedded_auth<'a>(url: &mut URL<'a>) -> EmbeddedAuth<'a> {
-        let mut out = EmbeddedAuth::default();
+        let mut out = EmbeddedAuth::new();
         let mut pathname: &'a [u8] = url.pathname;
 
         // Right to left: the credentials are appended after the path.
@@ -486,7 +511,7 @@ pub mod registry {
                                 bun_fmt::escape_control_chars(&**field),
                             );
                         }
-                        *field = Box::default();
+                        *field = Box::new([]);
                     }
                     None => {}
                 }
@@ -494,8 +519,8 @@ pub mod registry {
 
             let registry_url: Box<[u8]> = core::mem::take(&mut registry.url);
             let mut url = URL::parse(&registry_url);
-            let mut auth: Box<[u8]> = Box::default();
-            let mut user: Box<[u8]> = Box::default();
+            let mut auth: Box<[u8]> = Box::new([]);
+            let mut user: Box<[u8]> = Box::new([]);
 
             let original_pathname_len = url.pathname.len();
             let embedded = parse_embedded_auth(&mut url);
@@ -568,7 +593,7 @@ pub mod registry {
                 auth,
                 user,
                 declared_in_npmrc: registry.declared_in_npmrc,
-                ..Default::default()
+                ..Scope::new()
             };
             scope.set_url(final_href);
             Ok(scope)
@@ -777,19 +802,39 @@ pub use registry as Registry;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct DistTagMap {
     pub(crate) tags: ExternalStringList,
     pub(crate) versions: VersionSlice,
 }
 
+impl DistTagMap {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            tags: ExternalStringList::empty(),
+            versions: VersionSlice::empty(),
+        }
+    }
+}
+
 pub(crate) type PackageVersionList = ExternalSlice<PackageVersion>;
 
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct ExternVersionMap {
     pub(crate) keys: VersionSlice,
     pub(crate) values: PackageVersionList,
+}
+
+impl ExternVersionMap {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            keys: VersionSlice::empty(),
+            values: PackageVersionList::empty(),
+        }
+    }
 }
 
 impl ExternVersionMap {
@@ -934,23 +979,23 @@ pub struct PackageVersion {
     pub(crate) publish_timestamp_ms: f64,
 }
 
-impl Default for PackageVersion {
-    fn default() -> Self {
+impl PackageVersion {
+    pub fn new() -> Self {
         Self {
-            integrity: Integrity::default(),
+            integrity: Integrity::new(),
             _padding_after_integrity: [0; 3],
-            dependencies: ExternalStringMap::default(),
-            optional_dependencies: ExternalStringMap::default(),
-            peer_dependencies: ExternalStringMap::default(),
-            dev_dependencies: ExternalStringMap::default(),
-            bundled_dependencies: ExternalPackageNameHashList::default(),
-            bin: Bin::default(),
-            engines: ExternalStringMap::default(),
+            dependencies: ExternalStringMap::new(),
+            optional_dependencies: ExternalStringMap::new(),
+            peer_dependencies: ExternalStringMap::new(),
+            dev_dependencies: ExternalStringMap::new(),
+            bundled_dependencies: ExternalPackageNameHashList::empty(),
+            bin: Bin::empty(),
+            engines: ExternalStringMap::new(),
             non_optional_peer_dependencies_start: 0,
             _padding_before_man_dir: [0; 4],
-            man_dir: ExternalString::default(),
-            tarball_url: ExternalString::default(),
-            deprecated: SemverString::default(),
+            man_dir: ExternalString::new(),
+            tarball_url: ExternalString::new(),
+            deprecated: SemverString::new(),
             unpacked_size: 0,
             file_count: 0,
             os: OperatingSystem::ALL,
@@ -1038,7 +1083,7 @@ const _: () = {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct NpmPackage {
     /// HTTP response headers
     pub(crate) last_modified: SemverString,
@@ -1069,6 +1114,27 @@ pub struct NpmPackage {
     pub(crate) _padding_tail: [u8; 7],
 }
 
+impl NpmPackage {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            last_modified: SemverString::new(),
+            etag: SemverString::new(),
+            modified: SemverString::new(),
+            public_max_age: 0,
+            _padding_after_max_age: [0; 4],
+            name: ExternalString::new(),
+            releases: ExternVersionMap::new(),
+            prereleases: ExternVersionMap::new(),
+            dist_tags: DistTagMap::new(),
+            versions_buf: VersionSlice::empty(),
+            string_lists_buf: ExternalStringList::empty(),
+            has_extended_manifest: false,
+            _padding_tail: [0; 7],
+        }
+    }
+}
+
 // Compile-time proof that the explicit `_padding_*` fields above leave no
 // implicit padding gaps in `NpmPackage` (so `&NpmPackage as &[u8]` reads only
 // initialized bytes). Mirrors the per-field-gap check documented in
@@ -1091,7 +1157,7 @@ const _: () = {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct PackageManifest {
     pub(crate) pkg: NpmPackage,
 
@@ -1103,6 +1169,22 @@ pub struct PackageManifest {
     pub(crate) package_versions: Box<[PackageVersion]>,
     pub(crate) extern_strings_bin_entries: Box<[ExternalString]>,
     pub(crate) bundled_deps_buf: Box<[PackageNameHash]>,
+}
+
+impl PackageManifest {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            pkg: NpmPackage::new(),
+            string_buf: Box::new([]),
+            versions: Box::new([]),
+            external_strings: Box::new([]),
+            external_strings_for_versions: Box::new([]),
+            package_versions: Box::new([]),
+            extern_strings_bin_entries: Box::new([]),
+            bundled_deps_buf: Box::new([]),
+        }
+    }
 }
 
 impl PackageManifest {
@@ -1521,7 +1603,7 @@ pub mod package_manifest {
                 tmpdir,
                 cache_dir,
                 task: PoolTask {
-                    node: PoolNode::default(),
+                    node: PoolNode::new(),
                     callback: SaveTask::run,
                 },
             }));
@@ -2100,7 +2182,7 @@ impl PackageManifest {
         exclusions: Option<&MinimumReleaseAgeExcludes>,
     ) -> FindVersionResult<'_> {
         self.find_best_version_with_filter(
-            &Semver::query::Group::default(),
+            &Semver::query::Group::new(),
             b"",
             minimum_release_age_ms,
             exclusions,
@@ -2451,17 +2533,17 @@ impl PackageManifest {
         // For cache determinism the serialized `NpmPackage` has explicit
         // `_padding_*` fields zeroed by `Default`, so plain `default()` is
         // already deterministic here.
-        let mut result: PackageManifest = PackageManifest::default();
+        let mut result: PackageManifest = PackageManifest::new();
 
-        let mut all_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
-        let mut version_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
+        let mut all_extern_strings_dedupe_map = ExternalStringMapDeduper::init();
+        let mut version_extern_strings_dedupe_map = ExternalStringMapDeduper::init();
         let mut optional_peer_dep_names: Vec<u64> = Vec::new();
 
         let mut bundled_deps_count: usize = 0;
 
         let mut string_builder = Semver::semver_string::Builder {
-            string_pool: Semver::semver_string::StringPool::default(),
-            ..Default::default()
+            string_pool: Semver::semver_string::StringPool::new(),
+            ..Semver::semver_string::Builder::new()
         };
 
         if PackageManager::verbose_install() {
@@ -2679,25 +2761,21 @@ impl PackageManifest {
         }
 
         let mut versioned_packages: Box<[PackageVersion]> =
-            vec![PackageVersion::default(); release_versions_len + pre_versions_len]
-                .into_boxed_slice();
+            vec![PackageVersion::new(); release_versions_len + pre_versions_len].into_boxed_slice();
         let mut all_semver_versions: Box<[Semver::Version]> =
-            vec![
-                Semver::Version::default();
-                release_versions_len + pre_versions_len + dist_tags_count
-            ]
-            .into_boxed_slice();
+            vec![Semver::Version::new(); release_versions_len + pre_versions_len + dist_tags_count]
+                .into_boxed_slice();
         let mut all_extern_strings: Box<[ExternalString]> =
-            vec![ExternalString::default(); extern_string_count + tarball_urls_count]
+            vec![ExternalString::new(); extern_string_count + tarball_urls_count]
                 .into_boxed_slice();
         let mut version_extern_strings: Box<[ExternalString]> =
-            vec![ExternalString::default(); dependency_sum].into_boxed_slice();
+            vec![ExternalString::new(); dependency_sum].into_boxed_slice();
         let mut all_extern_strings_bin_entries: Box<[ExternalString]> =
-            vec![ExternalString::default(); extern_string_count_bin].into_boxed_slice();
+            vec![ExternalString::new(); extern_string_count_bin].into_boxed_slice();
         let mut all_tarball_url_strings: Box<[ExternalString]> =
-            vec![ExternalString::default(); tarball_urls_count].into_boxed_slice();
+            vec![ExternalString::new(); tarball_urls_count].into_boxed_slice();
         let mut bundled_deps_buf: Box<[PackageNameHash]> =
-            vec![PackageNameHash::default(); bundled_deps_count].into_boxed_slice();
+            vec![0u64; bundled_deps_count].into_boxed_slice();
         let mut bundled_deps_offset: usize = 0;
 
         // Default::default() above zeroes the buffers for determinism.
@@ -2758,10 +2836,10 @@ impl PackageManifest {
             // versions change more often than names
             // so names go last because we are better able to dedupe at the end
             let mut prev_extern_bin_group: Option<core::ops::Range<usize>> = None;
-            let mut prev_deprecated: (&[u8], SemverString) = (b"", SemverString::default());
+            let mut prev_deprecated: (&[u8], SemverString) = (b"", SemverString::new());
             let empty_version = PackageVersion {
                 bin: Bin::init(),
-                ..PackageVersion::default()
+                ..PackageVersion::new()
             };
             // PackageVersion's explicit `_padding_*` fields are zeroed by
             // `Default`, so no separate padding scrub is needed.
@@ -2776,11 +2854,11 @@ impl PackageManifest {
                 .as_ref()
                 .map(|o| o.get().properties())
                 .unwrap_or(&[]);
-            let mut time_index: HashMap<u64, u32, IdentityContext<u64>> = HashMap::default();
+            let mut time_index: HashMap<u64, u32, IdentityContext<u64>> = HashMap::init();
             if !time_props.is_empty() {
                 time_index.ensure_total_capacity(time_props.len())?;
                 for (i, p) in time_props.iter().enumerate() {
-                    let gop = time_index.get_or_put(Wyhash11::hash(0, p.key.slice()))?;
+                    let gop = time_index.get_or_put(Wyhash11::hash(0, p.key.slice()), || 0)?;
                     if !gop.found_existing {
                         *gop.value_ptr = i as u32;
                     }
@@ -2830,7 +2908,7 @@ impl PackageManifest {
                             &bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
                         )
                     }
-                    _ => ExternalPackageNameHashList::default(),
+                    _ => ExternalPackageNameHashList::empty(),
                 };
 
                 if let Some(cpu) = version_obj.and_then(|o| o.get(b"cpu")) {
@@ -3229,8 +3307,8 @@ impl PackageManifest {
                             let name_map_hash = name_hasher.final_();
                             let version_map_hash = version_hasher.final_();
 
-                            let name_entry =
-                                all_extern_strings_dedupe_map.get_or_put(name_map_hash)?;
+                            let name_entry = all_extern_strings_dedupe_map
+                                .get_or_put(name_map_hash, ExternalSlice::empty)?;
                             if name_entry.found_existing {
                                 name_list = *name_entry.value_ptr;
                             } else {
@@ -3238,8 +3316,8 @@ impl PackageManifest {
                                 dependency_names_cursor += count;
                             }
 
-                            let version_entry =
-                                version_extern_strings_dedupe_map.get_or_put(version_map_hash)?;
+                            let version_entry = version_extern_strings_dedupe_map
+                                .get_or_put(version_map_hash, ExternalSlice::empty)?;
                             if version_entry.found_existing {
                                 version_list = *version_entry.value_ptr;
                             } else {
@@ -3390,9 +3468,9 @@ impl PackageManifest {
         {
             let mut all_indices: Vec<u32> = vec![0; max_versions_count];
             let mut all_cloned_versions: Vec<Semver::Version> =
-                vec![Semver::Version::default(); max_versions_count];
+                vec![Semver::Version::new(); max_versions_count];
             let mut all_cloned_packages: Vec<PackageVersion> =
-                vec![PackageVersion::default(); max_versions_count];
+                vec![PackageVersion::new(); max_versions_count];
 
             let releases_list = [result.pkg.releases, result.pkg.prereleases];
 

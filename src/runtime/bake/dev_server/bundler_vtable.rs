@@ -65,16 +65,16 @@ bun_bundler::link_impl_DevServerHandle! {
         register_barrel_with_deferrals(path) => {
             let _ = (*this)
                 .barrel_files_with_deferrals
-                .get_or_put(path)
+                .get_or_put(path, || ())
                 .map_err(|_| bun_alloc::out_of_memory());
             Ok(())
         },
         register_barrel_export(barrel_path, alias) => {
             // Silently drop on alloc failure.
-            let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path) else {
+            let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path, StringHashMap::init) else {
                 return;
             };
-            let _ = gop.value_ptr.get_or_put(alias);
+            let _ = gop.value_ptr.get_or_put(alias, || ());
         },
     }
 }

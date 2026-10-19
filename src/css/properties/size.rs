@@ -385,7 +385,7 @@ fn parse_fit_content(input: &mut css::Parser) -> css::Result<LengthPercentage> {
 }
 
 bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct SizeProperty: u16 {
         const WIDTH           = 1 << 0;
         const HEIGHT          = 1 << 1;
@@ -423,7 +423,6 @@ impl SizeProperty {
     }
 }
 
-#[derive(Default)]
 pub struct SizeHandler {
     pub(crate) width: Option<Size>,
     pub(crate) height: Option<Size>,
@@ -440,6 +439,29 @@ pub struct SizeHandler {
     pub(crate) has_any: bool,
     pub(crate) flushed_properties: SizeProperty,
     pub(crate) category: PropertyCategory,
+}
+
+impl SizeHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            width: None,
+            height: None,
+            min_width: None,
+            min_height: None,
+            max_width: None,
+            max_height: None,
+            block_size: None,
+            inline_size: None,
+            min_block_size: None,
+            min_inline_size: None,
+            max_block_size: None,
+            max_inline_size: None,
+            has_any: false,
+            flushed_properties: SizeProperty::empty(),
+            category: PropertyCategory::Physical,
+        }
+    }
 }
 
 // `context.arena` was dropped from PropertyHandlerContext; the

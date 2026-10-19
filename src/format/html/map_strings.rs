@@ -36,7 +36,7 @@ pub(crate) fn write_mapped(content: Interned, map: &mut impl MapString, f: &mut 
         true => {
             let mut mapper = Mapper {
                 map,
-                mapped: FxHashMap::default(),
+                mapped: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
                 strings: SmallVec::new(),
                 text: Vec::new(),
                 line_breaks: LineBreaks::None,

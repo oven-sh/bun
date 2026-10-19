@@ -65,12 +65,12 @@ pub(crate) fn load_package_for_link(
     manager: &mut PackageManager,
     verb: &str,
 ) -> crate::Result<(Lockfile, Package)> {
-    let mut lockfile = Lockfile::default();
-    let mut package = Package::default();
+    let mut lockfile = Lockfile::new();
+    let mut package = Package::new();
 
     let package_json_source = match bun_ast::to_source(
         manager.original_package_json_path.as_zstr(),
-        Default::default(),
+        bun_ast::ToSourceOptions::new(),
     ) {
         Ok(s) => s,
         Err(e) => {
@@ -150,7 +150,7 @@ pub(crate) fn open_global_node_modules(
         .global_dir
         .as_ref()
         .unwrap()
-        .make_open_path(b"node_modules", Default::default())
+        .make_open_path(b"node_modules", bun_sys::OpenDirOptions::new())
     {
         Ok(d) => Ok(d),
         Err(e) => {

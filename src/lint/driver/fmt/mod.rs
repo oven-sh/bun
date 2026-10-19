@@ -110,10 +110,10 @@ impl Problem {
                     line: self.at.as_ref().map_or(-1, |it| it.line as i32),
                     column: self.at.as_ref().map_or(-1, |it| it.column as i32),
                     line_text: self.at.as_ref().map(|it| it.line_text.clone().into()),
-                    ..Default::default()
+                    ..bun_ast::Location::new()
                 }),
             },
-            ..Default::default()
+            ..bun_ast::Msg::new()
         };
         let mut printed = String::new();
         let _ = match colors {
@@ -320,7 +320,7 @@ impl How<'_> {
             } else {
                 SourceType::Module
             },
-            ..LanguageOptions::default()
+            ..LanguageOptions::new()
         };
         let options = language.parse_options(path);
         let dialect = match self.is_flow {
@@ -447,7 +447,6 @@ fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Pr
 }
 
 /// What is allocated to format a file, and used again for the next.
-#[derive(Default)]
 struct Scratches {
     js: Scratch,
     json: bun_format::json::Scratch,
@@ -465,6 +464,26 @@ struct Scratches {
     warnings: Vec<Problem>,
 }
 
+impl Scratches {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            js: Scratch::new(),
+            json: bun_format::json::Scratch::new(),
+            css: bun_format::css::Scratch::new(),
+            graphql: bun_format::graphql::Scratch::new(),
+            handlebars: bun_format::handlebars::Scratch::new(),
+            html: bun_format::html::Scratch::new(),
+            svelte: bun_format::svelte::Scratch::new(),
+            yaml: bun_format::yaml::Scratch::new(),
+            markdown: bun_format::markdown::Scratch::new(),
+            verify: bun_format::verify::Scratch::new(),
+            blocks: None,
+            warnings: Vec::new(),
+        }
+    }
+}
+
 fn without_final_newline(out: &mut Vec<u8>) {
     let end = match &out[..] {
         [rest @ .., b'\r', b'\n'] | [rest @ .., b'\n' | b'\r'] => rest.len(),
@@ -478,7 +497,7 @@ fn without_final_newline(out: &mut Vec<u8>) {
 fn format_block(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
     let names = Session::new();
     let names = (&Interner::new_in(&names) as &dyn Intern, &names);
-    format_block_in(path, code, options, out, names, &mut Scratches::default())
+    format_block_in(path, code, options, out, names, &mut Scratches::new())
 }
 
 /// The same with what the caller keeps from one block to the next.
@@ -496,7 +515,7 @@ fn format_block_in(
             sort_imports: sort_imports.filter(|it| it.applies_to_embedded_code()),
             ..options.clone()
         },
-        ..Resolved::default()
+        ..Resolved::new()
     };
     let formatted = format(path, code, &resolved, names, scratch, false);
     formatted
@@ -508,7 +527,7 @@ fn format_block_in(
 fn parse_javascript(code: Code<'_>, then: Then<'_>) {
     let names = Session::new();
     let names = (&Interner::new_in(&names) as &dyn Intern, &names);
-    parse_code(code, &Resolved::default(), names, then);
+    parse_code(code, &Resolved::new(), names, then);
 }
 
 fn parse_code(
@@ -532,7 +551,7 @@ fn parse_code(
 /// For the expressions in a component of Svelte.
 fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
     let names = Session::new();
-    let (atoms, plain) = (Interner::new_in(&names), Resolved::default());
+    let (atoms, plain) = (Interner::new_in(&names), Resolved::new());
     let how = |path| How {
         path,
         is_script: false,
@@ -669,7 +688,10 @@ fn format(
             return finish(done, out, "YAML");
         }
         Some(kind @ (Kind::Markdown | Kind::Mdx)) => {
-            let mut blocks = scratch.blocks.take().unwrap_or_default();
+            let mut blocks = scratch
+                .blocks
+                .take()
+                .unwrap_or_else(|| Box::new(Scratches::new()));
             let mut format_block =
                 |path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>| {
                     let names = (atoms, memory);
@@ -724,7 +746,7 @@ fn format(
             return finish(done, out, "TOML");
         }
         Some(Kind::Svelte) => {
-            let plain = Resolved::default();
+            let plain = Resolved::new();
             let parse = |code: Code<'_>, then: Then<'_>| {
                 parse_code(code, &plain, (atoms, memory), then);
             };
@@ -765,7 +787,7 @@ fn format(
             return finish(done, out, "Handlebars");
         }
         Some(Kind::Html(parser)) => {
-            let plain = Resolved::default();
+            let plain = Resolved::new();
             let parse = |code: Code<'_>, then: Then<'_>| {
                 parse_code(code, &plain, (atoms, memory), then);
             };
@@ -982,7 +1004,7 @@ pub fn format_for_tests(
             ..options.clone()
         },
         formats_what_has_errors: true,
-        ..Resolved::default()
+        ..Resolved::new()
     };
     let names = Session::new();
     format(
@@ -990,7 +1012,7 @@ pub fn format_for_tests(
         text,
         &resolved,
         (&Interner::new_in(&names), &names),
-        &mut Scratches::default(),
+        &mut Scratches::new(),
         false,
     )
     .map_err(|failure| match failure {
@@ -1016,7 +1038,7 @@ pub fn debug_comments(
             true => bun_format::options::DebugComments::Unprinted,
             false => bun_format::options::DebugComments::Owners,
         },
-        ..FormatOptions::default()
+        ..FormatOptions::new()
     };
     Some(format_for_tests(path, text, &options).ok()?.0)
 }
@@ -1027,7 +1049,7 @@ pub fn is_same_svelte_for_tests(before: &[u8], after: &[u8]) -> bool {
     let options = FormatOptions {
         parse_javascript: Some(parse_javascript),
         parse_parts: Some(parse_parts),
-        ..FormatOptions::default()
+        ..FormatOptions::new()
     };
     bun_format::svelte::has_same_content(before, after, &options, None)
 }
@@ -1520,7 +1542,7 @@ impl Run<'_> {
         let names = Session::new();
         // Prettier's `listDifferent` comes first, and that is all.
         let verifies = self.options.debug_check && !only_looks;
-        let mut scratch = Scratches::default();
+        let mut scratch = Scratches::new();
         let mut format_text = |options: &Resolved| {
             let mut first_failure = None;
             for path in paths {
@@ -1781,12 +1803,12 @@ impl Run<'_> {
         let mut warnings: Guarded<Vec<(usize, Vec<Problem>)>> = Guarded::new(Vec::new());
         // Tailwind cannot be asked, and that is allowed.
         let leaves_classes = AtomicBool::new(false);
-        let once = fs::Written::default();
+        let once = fs::Written::new();
         let format_at = |at: usize| {
             let (index, target) = work[at];
             let began = Instant::now();
             let shown = paths::relative(cwd, &target.path);
-            let mut scratch = scratches.lock().pop().unwrap_or_default();
+            let mut scratch = scratches.lock().pop().unwrap_or_else(Scratches::new);
             let result = (|| {
                 let mut options = configs
                     .options_for(&target.scope, &target.path)
@@ -2307,7 +2329,7 @@ fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules
     let run = Run {
         options,
         environment,
-        out: Outcome::default(),
+        out: Outcome::new(),
         began: Instant::now(),
         modules,
         is_native: false,

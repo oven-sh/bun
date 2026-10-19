@@ -128,7 +128,7 @@ fn starts_with_keyword(text: &[u8], keyword: [u8; 6]) -> bool {
     units <= 6 && upper.as_bytes() == keyword
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Tag {
     is_end: bool,
     name: Text,
@@ -138,7 +138,20 @@ struct Tag {
     is_as_written: bool,
 }
 
-#[derive(Copy, Clone, Default)]
+impl Tag {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            is_end: false,
+            name: Text::new(),
+            start: 0,
+            is_self_closing: false,
+            is_as_written: false,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
 struct Attribute {
     name: Text,
     start: usize,
@@ -147,6 +160,20 @@ struct Attribute {
     is_dynamic: bool,
     /// Empty: there is none.
     current_part: Text,
+}
+
+impl Attribute {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            name: Text::new(),
+            start: 0,
+            value_start: 0,
+            is_quoted: false,
+            is_dynamic: false,
+            current_part: Text::new(),
+        }
+    }
 }
 
 /// What is open: an element, or the body of a block or of the template.
@@ -316,7 +343,7 @@ impl Builder<'_> {
             tag: self.tag.name,
             attributes: self.tree.add_list(&self.sorted_tag_parts),
             block_params: self.tree.add_names(&self.tag_params),
-            children: Range::default(),
+            children: Range::new(),
             is_self_closing: self.tag.is_self_closing,
         };
         let element = self.tree.add(kind, self.tag.start, self.index);
@@ -370,7 +397,7 @@ impl Builder<'_> {
         self.attribute = Attribute {
             start: position,
             value_start: position,
-            ..Attribute::default()
+            ..Attribute::new()
         };
         self.attribute_parts.clear();
     }
@@ -403,7 +430,7 @@ impl Builder<'_> {
     }
 
     fn finalize_text_part(&mut self) {
-        let chars = std::mem::take(&mut self.attribute.current_part);
+        let chars = std::mem::replace(&mut self.attribute.current_part, Text::new());
         if !chars.is_empty() {
             let part = self.tree.add(Kind::Text { chars }, 0, 0);
             self.attribute_parts.push(part);
@@ -1184,12 +1211,12 @@ impl Builder<'_> {
                 let second = (first_end as usize, statement.next as usize);
                 let (default_block, else_block) = match is_inverted {
                     true => (
-                        self.block(second, Range::default())?,
-                        self.block(first, Range::default())?,
+                        self.block(second, Range::new())?,
+                        self.block(first, Range::new())?,
                     ),
                     false if has_second => (
                         self.block(first, block_params)?,
-                        self.block(second, Range::default())?,
+                        self.block(second, Range::new())?,
                     ),
                     false => (self.block(first, block_params)?, NOTHING),
                 };
@@ -1212,7 +1239,7 @@ impl Builder<'_> {
     /// `parseProgram`
     fn body(&mut self, (first, last): (usize, usize)) -> Result<Range, Error> {
         if first >= last {
-            return Ok(Range::default());
+            return Ok(Range::new());
         }
         if !self.room.has_room() {
             return Err(Error::NestedTooDeeply);
@@ -1269,11 +1296,11 @@ pub(crate) fn build(
         has_read_too_far: false,
         is_tag_name_buffer_empty: true,
         tag_open: 0,
-        tag: Tag::default(),
-        tag_parts: Default::default(),
+        tag: Tag::new(),
+        tag_parts: core::array::from_fn(|_| Vec::new()),
         sorted_tag_parts: Vec::new(),
         tag_params: Vec::new(),
-        attribute: Attribute::default(),
+        attribute: Attribute::new(),
         attribute_parts: Vec::new(),
         start: 0,
         comment: Text::EMPTY,

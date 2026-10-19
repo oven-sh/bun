@@ -654,7 +654,7 @@ impl Builtin {
                         pollable: if cfg!(windows) { true } else { pollable },
                         nonblock: is_nonblocking,
                         is_socket,
-                        ..Default::default()
+                        ..io_writer::Flags::new()
                     },
                     evtloop,
                 );

@@ -14,9 +14,8 @@ pub(crate) struct Subshell {
     pub(crate) exit_code: ExitCode,
 }
 
-#[derive(Default, strum::IntoStaticStr)]
+#[derive(strum::IntoStaticStr)]
 pub enum SubshellState {
-    #[default]
     Idle,
     Exec,
     Done,

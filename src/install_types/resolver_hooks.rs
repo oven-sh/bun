@@ -55,9 +55,9 @@ impl<T> Clone for ExternalSlice<T> {
         *self
     }
 }
-impl<T> Default for ExternalSlice<T> {
+impl<T> ExternalSlice<T> {
     #[inline]
-    fn default() -> Self {
+    pub fn empty() -> Self {
         Self {
             off: 0,
             len: 0,
@@ -154,10 +154,20 @@ impl<T> ExternalSlice<T> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct ExternalStringMap {
     pub name: ExternalStringList,
     pub value: ExternalStringList,
+}
+
+impl ExternalStringMap {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            name: ExternalStringList::empty(),
+            value: ExternalStringList::empty(),
+        }
+    }
 }
 
 pub type ExternalStringList = ExternalSlice<ExternalString>;
@@ -174,7 +184,7 @@ pub mod behavior {
         /// bit 7 are reserved so the on-disk
         /// lockfile encoding stays byte-compatible.
         #[repr(transparent)]
-        #[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(Clone, Copy, PartialEq, Eq, Hash)]
         pub struct Behavior: u8 {
             const PROD      = 1 << 1;
             const OPTIONAL  = 1 << 2;
@@ -303,11 +313,10 @@ const _: () = assert!(Behavior::DEV.bits() == (1 << 3));
 const _: () = assert!(Behavior::PEER.bits() == (1 << 4));
 const _: () = assert!(Behavior::WORKSPACE.bits() == (1 << 5));
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")] // "npm"/"dist_tag"/"github"/...
 #[repr(u8)]
 pub enum DependencyVersionTag {
-    #[default]
     Uninitialized = 0,
     /// Semver range
     Npm = 1,
@@ -427,9 +436,9 @@ pub union DependencyVersionValue {
     pub catalog: SemverString,
 }
 
-impl Default for DependencyVersionValue {
+impl DependencyVersionValue {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         DependencyVersionValue { uninitialized: () }
     }
 }
@@ -443,11 +452,11 @@ pub struct DependencyVersion {
     pub value: DependencyVersionValue,
 }
 
-impl Default for DependencyVersion {
-    fn default() -> Self {
+impl DependencyVersion {
+    pub fn new() -> Self {
         Self {
             tag: DependencyVersionTag::Uninitialized,
-            literal: SemverString::default(),
+            literal: SemverString::new(),
             value: DependencyVersionValue { uninitialized: () },
         }
     }
@@ -519,12 +528,23 @@ impl DependencyVersion {
 /// `&[bun_install::Dependency]` is reinterpretable as `&[Self]` (asserted in
 /// `bun_install::auto_installer`).
 #[repr(C)]
-#[derive(Default)]
 pub struct Dependency {
     pub name_hash: PackageNameHash,
     pub name: SemverString,
     pub version: DependencyVersion,
     pub behavior: Behavior,
+}
+
+impl Dependency {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            name_hash: 0,
+            name: SemverString::new(),
+            version: DependencyVersion::new(),
+            behavior: Behavior::empty(),
+        }
+    }
 }
 
 impl Clone for Dependency {
@@ -595,8 +615,8 @@ pub struct Negatable<T: NegatableEnum> {
     pub had_unrecognized_values: bool,
 }
 
-impl<T: NegatableEnum> Default for Negatable<T> {
-    fn default() -> Self {
+impl<T: NegatableEnum> Negatable<T> {
+    pub fn new() -> Self {
         Self {
             added: T::NONE,
             removed: T::NONE,
@@ -674,13 +694,13 @@ impl<T: NegatableEnum> Negatable<T> {
             *self = Self {
                 added: self.added,
                 removed: T::from_raw(self.removed.to_raw() | field),
-                ..Default::default()
+                ..Self::new()
             };
         } else {
             *self = Self {
                 added: T::from_raw(self.added.to_raw() | field),
                 removed: self.removed,
-                ..Default::default()
+                ..Self::new()
             };
         }
     }
@@ -790,8 +810,15 @@ macro_rules! negatable_names {
 
 /// https://nodejs.org/api/os.html#osplatform
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct OperatingSystem(pub u16);
+
+impl OperatingSystem {
+    #[inline]
+    pub fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl OperatingSystem {
     pub const NONE: Self = Self(0);
@@ -852,8 +879,15 @@ negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
 
 /// Unlike `os`/`cpu`, zero is "not declared": such a package installs on every libc.
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Libc(pub u8);
+
+impl Libc {
+    #[inline]
+    pub fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl Libc {
     pub const NONE: Self = Self(0);
@@ -907,8 +941,15 @@ negatable_names! { Libc: u8, LIBC_NAMES => [ b"musl" => MUSL, b"glibc" => GLIBC 
 /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
 /// https://nodejs.org/api/os.html#osarch
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Architecture(pub u16);
+
+impl Architecture {
+    #[inline]
+    pub fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl Architecture {
     pub const NONE: Self = Self(0);
@@ -972,13 +1013,26 @@ negatable_names! { Architecture: u16, ARCHITECTURE_NAMES => [
 // name a real type instead of an opaque blob.
 
 #[repr(C)]
-#[derive(Copy, Default)]
+#[derive(Copy)]
 pub struct Repository {
     pub owner: SemverString,
     pub repo: SemverString,
     pub committish: SemverString,
     pub resolved: SemverString,
     pub package_name: SemverString,
+}
+
+impl Repository {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            owner: SemverString::new(),
+            repo: SemverString::new(),
+            committish: SemverString::new(),
+            resolved: SemverString::new(),
+            package_name: SemverString::new(),
+        }
+    }
 }
 
 // Manual `Clone` so the inherent buffer-relative `clone(&self, buf, builder)`
@@ -1069,15 +1123,6 @@ impl<SemverInt: bun_semver::version::VersionInt> Clone for VersionedURLType<Semv
         *self
     }
 }
-impl<SemverInt: bun_semver::version::VersionInt> Default for VersionedURLType<SemverInt> {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            url: SemverString::default(),
-            version: bun_semver::VersionType::default(),
-        }
-    }
-}
 
 impl<SemverInt: bun_semver::version::VersionInt> VersionedURLType<SemverInt> {
     #[inline]
@@ -1115,10 +1160,9 @@ impl VersionedURLType<u32> {
 
 // ─── Resolution ───────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ResolutionTag {
-    #[default]
     Uninitialized = 0,
     Root = 1,
     Npm = 2,
@@ -1194,8 +1238,8 @@ pub struct Features {
     /// The members' versions are not known to this parse, so a `workspace:` range counts as satisfied.
     pub unchecked_workspace_ranges: bool,
 }
-impl Default for Features {
-    fn default() -> Self {
+impl Features {
+    pub fn new() -> Self {
         Self {
             dependencies: true,
             dev_dependencies: false,
@@ -1277,8 +1321,15 @@ impl Features {
 /// What the runtime installs to nudge the JS event loop when a network task completes.
 // Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
 // installed; the fn-ptr is POD.
-#[derive(Default, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct WakeHandler(pub Option<WakeTarget>);
+
+impl WakeHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self(None)
+    }
+}
 
 /// `handler`'s second parameter is a `*PackageManager`, which lives in a higher tier.
 #[derive(Copy, Clone)]
@@ -1302,11 +1353,6 @@ pub struct DependencyGroup {
     pub prop: &'static [u8],
     pub field: &'static [u8],
     pub behavior: Behavior,
-}
-impl Default for DependencyGroup {
-    fn default() -> Self {
-        Self::DEPENDENCIES
-    }
 }
 impl DependencyGroup {
     pub const DEPENDENCIES: Self = Self {

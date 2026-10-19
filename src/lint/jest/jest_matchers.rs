@@ -67,10 +67,10 @@ pub(crate) mod prefer_snapshot_hint {
         }
 
         pub(crate) fn run_once<'a>(self, ctx: &Ctx<'a, '_>) {
-            let mut functions = EnclosingFunctions::default();
+            let mut functions = EnclosingFunctions::new();
             // By the test, or the outermost function, that they are in.
             let mut scoped_expects: FxHashMap<Option<Func<'a>>, SmallVec<[Expr<'a>; 2]>> =
-                FxHashMap::default();
+                FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 if let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node)
                     && jest_fn_call
@@ -81,7 +81,7 @@ pub(crate) mod prefer_snapshot_hint {
                     let node = possible_jest_node.node;
                     scoped_expects
                         .entry(get_scope_owner(node, &mut functions))
-                        .or_default()
+                        .or_insert_with(smallvec::SmallVec::new)
                         .push(node);
                 }
             }
@@ -458,7 +458,7 @@ pub(crate) mod prefer_to_have_length {
                         measured.outer_span().end,
                     )),
                     rest,
-                    file.slice(modifier.unwrap_or_default()),
+                    file.slice(modifier.unwrap_or_else(Span::init)),
                     b".toHaveLength".as_slice(),
                 ];
                 Some(fixer.replace(Span::new(node.span().start, open_paren), code.concat()))

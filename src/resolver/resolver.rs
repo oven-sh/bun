@@ -308,7 +308,7 @@ fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     // box interior, treated as `'static`; unboxing would dangle on `Vec` realloc.
     #[expect(clippy::vec_box)]
     static ARENA: std::sync::LazyLock<bun_threading::Guarded<Vec<Box<PackageJSON>>>> =
-        std::sync::LazyLock::new(Default::default);
+        std::sync::LazyLock::new(|| bun_threading::guarded::GuardedBy::init(Vec::new()));
     let mut guard = ARENA.lock();
     guard.push(Box::new(pkg));
     // SAFETY: ARENA is `'static` (LazyLock); entries are never removed; the
@@ -977,7 +977,7 @@ impl<'a> Resolver<'a> {
             watcher: None,
             generation: 0,
             package_manager: None,
-            on_wake_package_manager: Default::default(),
+            on_wake_package_manager: bun_install_types::WakeHandler::new(),
             env_loader: None,
             store_fd: false,
             standalone_module_graph: None,
@@ -1062,13 +1062,13 @@ impl<'a> Resolver<'a> {
                         data: bun_ast::range_data(
                             None,
                             bun_ast::Range {
-                                loc: bun_ast::Loc::default(),
-                                ..Default::default()
+                                loc: bun_ast::Loc::new(),
+                                ..bun_ast::Range::new()
                             },
                             what,
                         ),
                         notes,
-                        ..Default::default()
+                        ..Msg::new()
                     });
                 }
             } else if (log.level as u32) <= (bun_ast::Level::Verbose as u32) {
@@ -1081,12 +1081,12 @@ impl<'a> Resolver<'a> {
                             None,
                             bun_ast::Range {
                                 loc: bun_ast::Loc::EMPTY,
-                                ..Default::default()
+                                ..bun_ast::Range::new()
                             },
                             what,
                         ),
                         notes,
-                        ..Default::default()
+                        ..Msg::new()
                     });
                 }
             }
@@ -1205,7 +1205,7 @@ impl<'a> Resolver<'a> {
                     module_type: options::ModuleType::Cjs,
                     primary_side_effects_data: SideEffects::NoSideEffectsPureData,
                     flags: ResultFlags::IS_EXTERNAL,
-                    ..Default::default()
+                    ..Result::new()
                 });
             }
         }
@@ -1220,7 +1220,7 @@ impl<'a> Resolver<'a> {
             && is_package_path(import_path)
             && !self.matches_user_external_pattern(import_path)
         {
-            let mut res = MatchResult::default();
+            let mut res = MatchResult::new();
             if self
                 .resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res)
                 .is_success()
@@ -1240,7 +1240,7 @@ impl<'a> Resolver<'a> {
                     dirname_fd: res.dirname_fd,
                     file_fd: res.file_fd,
                     jsx: self.opts.jsx.clone(),
-                    ..Default::default()
+                    ..Result::new()
                 });
             }
         }
@@ -1276,7 +1276,7 @@ impl<'a> Resolver<'a> {
                     options::ModuleType::Unknown
                 },
                 flags: ResultFlags::IS_EXTERNAL,
-                ..Default::default()
+                ..Result::new()
             });
         }
 
@@ -1299,7 +1299,7 @@ impl<'a> Resolver<'a> {
                         },
                         module_type: options::ModuleType::Unknown,
                         flags: ResultFlags::IS_EXTERNAL,
-                        ..Default::default()
+                        ..Result::new()
                     });
                 }
                 self.extension_order = original_order;
@@ -1325,7 +1325,7 @@ impl<'a> Resolver<'a> {
                             primary: Path::init_with_namespace(import_path, b"dataurl"),
                             secondary: None,
                         },
-                        ..Default::default()
+                        ..Result::new()
                     });
                 }
 
@@ -1342,7 +1342,7 @@ impl<'a> Resolver<'a> {
                         secondary: None,
                     },
                     flags: ResultFlags::IS_EXTERNAL,
-                    ..Default::default()
+                    ..Result::new()
                 });
             }
             Ok(None) => {}
@@ -1354,7 +1354,7 @@ impl<'a> Resolver<'a> {
         // It's always relative to the current working directory of the project root.
         //
         // ...unless you pass a relative path that exists in the standalone module graph executable.
-        let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
+        let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::new();
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
@@ -1372,7 +1372,7 @@ impl<'a> Resolver<'a> {
                             },
                             module_type: options::ModuleType::Esm,
                             flags: ResultFlags::IS_STANDALONE_MODULE,
-                            ..Default::default()
+                            ..Result::new()
                         });
                     }
                     if specifier_is_embedded_path {
@@ -1476,7 +1476,7 @@ impl<'a> Resolver<'a> {
                     // dead-strips the `resolved_text` computation in release too.
                     let resolved_text: &[u8] =
                         result.path().map_or(&b"<NULL>"[..], |path| path.text());
-                    let opts = bun_core::fmt::PathFormatOptions::default;
+                    let opts = bun_core::fmt::PathFormatOptions::new;
                     if let Some(secondary) = result.path_pair.secondary.as_ref() {
                         debuglog!(
                             "resolve({}, from: {}, {}) = {} (secondary: {})",
@@ -1554,8 +1554,8 @@ impl<'a> Resolver<'a> {
                             },
                             module_type: options::ModuleType::Esm,
                             primary_side_effects_data: SideEffects::NoSideEffectsPureData,
-                            flags: ResultFlags::default(),
-                            ..Default::default()
+                            flags: ResultFlags::empty(),
+                            ..Result::new()
                         });
                     }
                     bun_options_types::BuiltInModule::Import(path) => {
@@ -1631,7 +1631,10 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
-                result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
+                result.jsx = tsconfig.merge_jsx(core::mem::replace(
+                    &mut result.jsx,
+                    bun_options_types::jsx::Pragma::new(),
+                ));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
                 );
@@ -1769,7 +1772,7 @@ impl<'a> Resolver<'a> {
                 primary: Path::empty(),
                 secondary: None,
             },
-            ..Default::default()
+            ..Result::new()
         };
 
         // Return early if this is already an absolute path. In addition to asking
@@ -1815,7 +1818,7 @@ impl<'a> Resolver<'a> {
             if let Ok(Some(dir_info)) = self.dir_info_cached(source_dir) {
                 if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) {
                     if tsconfig.paths.count() > 0 {
-                        let mut res = MatchResult::default();
+                        let mut res = MatchResult::new();
                         if self
                             .match_tsconfig_paths(&tsconfig, import_path, kind, &mut res)
                             .is_success()
@@ -1827,7 +1830,7 @@ impl<'a> Resolver<'a> {
                                 dirname_fd: res.dirname_fd,
                                 file_fd: res.file_fd,
                                 jsx: tsconfig.merge_jsx(self.opts.jsx.clone()),
-                                ..Default::default()
+                                ..Result::new()
                             });
                         }
                     }
@@ -1855,13 +1858,13 @@ impl<'a> Resolver<'a> {
                         secondary: None,
                     },
                     flags: ResultFlags::IS_EXTERNAL,
-                    ..Default::default()
+                    ..Result::new()
                 });
             }
 
             // Run node's resolution rules (e.g. adding ".js")
-            let mut normalizer = ResolvePath::PosixToWinNormalizer::default();
-            let mut entry = MatchResult::default();
+            let mut normalizer = ResolvePath::PosixToWinNormalizer::new();
+            let mut entry = MatchResult::new();
             if self
                 .load_as_file_or_directory(
                     normalizer.resolve(source_dir, import_path),
@@ -1876,7 +1879,7 @@ impl<'a> Resolver<'a> {
                     package_json: entry.package_json,
                     file_fd: entry.file_fd,
                     jsx: self.opts.jsx.clone(),
-                    ..Default::default()
+                    ..Result::new()
                 });
             }
 
@@ -1968,7 +1971,7 @@ impl<'a> Resolver<'a> {
                         if !HardcodedAlias::has(
                             import_path_without_node_prefix,
                             options::Target::Node,
-                            HardcodedAliasCfg::default(),
+                            HardcodedAliasCfg::new(),
                         ) {
                             return ResultUnion::NotFound;
                         }
@@ -2020,7 +2023,7 @@ impl<'a> Resolver<'a> {
                                 secondary: None,
                             },
                             flags: ResultFlags::IS_EXTERNAL,
-                            ..Default::default()
+                            ..Result::new()
                         });
                     }
 
@@ -2121,7 +2124,7 @@ impl<'a> Resolver<'a> {
                     secondary: None,
                 },
                 flags: ResultFlags::IS_EXTERNAL,
-                ..Default::default()
+                ..Result::new()
             });
         }
 
@@ -2152,11 +2155,11 @@ impl<'a> Resolver<'a> {
                                     primary: _path,
                                     secondary: None,
                                 },
-                                ..Default::default()
+                                ..Result::new()
                             });
                         }
 
-                        let mut match_result = MatchResult::default();
+                        let mut match_result = MatchResult::new();
                         if self
                             .resolve_without_remapping(
                                 import_dir_info,
@@ -2167,7 +2170,7 @@ impl<'a> Resolver<'a> {
                             )
                             .is_success()
                         {
-                            let mut flags = ResultFlags::default();
+                            let mut flags = ResultFlags::empty();
                             flags.set_external_kind(if match_result.is_external {
                                 ExternalKind::ExternalRewritePath
                             } else {
@@ -2180,7 +2183,7 @@ impl<'a> Resolver<'a> {
                                 jsx: self.opts.jsx.clone(),
                                 module_type: match_result.module_type,
                                 flags,
-                                ..Default::default()
+                                ..Result::new()
                             });
                         }
                     }
@@ -2210,7 +2213,7 @@ impl<'a> Resolver<'a> {
             abs_path
         };
 
-        let mut res = MatchResult::default();
+        let mut res = MatchResult::new();
         let ret = if self
             .load_as_file_or_directory(abs_path, kind, &mut res)
             .is_success()
@@ -2220,7 +2223,7 @@ impl<'a> Resolver<'a> {
                 dirname_fd: res.dirname_fd,
                 package_json: res.package_json,
                 jsx: self.opts.jsx.clone(),
-                ..Default::default()
+                ..Result::new()
             })
         } else {
             ResultUnion::NotFound
@@ -2294,7 +2297,7 @@ impl<'a> Resolver<'a> {
                         if remapped.is_empty() {
                             // "browser": {"module": false}
                             // does the module exist in the filesystem?
-                            let mut node_module = MatchResult::default();
+                            let mut node_module = MatchResult::new();
                             if self
                                 .load_node_modules(
                                     import_path,
@@ -2316,7 +2319,7 @@ impl<'a> Resolver<'a> {
                                     dirname_fd: node_module.dirname_fd,
                                     package_json: Some(std::ptr::from_ref(package_json)),
                                     jsx: self.opts.jsx.clone(),
-                                    ..Default::default()
+                                    ..Result::new()
                                 });
                             } else {
                                 // "browser": {"module": false}
@@ -2330,7 +2333,7 @@ impl<'a> Resolver<'a> {
                                         secondary: None,
                                     },
                                     jsx: self.opts.jsx.clone(),
-                                    ..Default::default()
+                                    ..Result::new()
                                 });
                             }
                         }
@@ -2342,7 +2345,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let mut res = MatchResult::default();
+        let mut res = MatchResult::new();
         match self.resolve_without_remapping(
             source_dir_info,
             import_path,
@@ -2357,7 +2360,7 @@ impl<'a> Resolver<'a> {
                         secondary: None,
                     },
                     jsx: self.opts.jsx.clone(),
-                    ..Default::default()
+                    ..Result::new()
                 };
                 result.path_pair = res.path_pair;
                 result.dirname_fd = res.dirname_fd;
@@ -2399,7 +2402,7 @@ impl<'a> Resolver<'a> {
                                 result.path_pair.primary =
                                     Fs::Path::init_with_namespace(remap, b"file");
                             } else {
-                                let mut remapped = MatchResult::default();
+                                let mut remapped = MatchResult::new();
                                 if self
                                     .resolve_without_remapping(
                                         browser_scope,
@@ -2823,7 +2826,7 @@ impl<'a> Resolver<'a> {
                                             .is_node_module(),
                                             package_json: Some(std::ptr::from_ref(package_json)),
                                             dir_info: Some(dir_info),
-                                            ..Default::default()
+                                            ..MatchResult::new()
                                         };
                                         return MatchStatus::Success;
                                     }
@@ -2973,7 +2976,7 @@ impl<'a> Resolver<'a> {
                         unsafe { &mut *manager_ptr }
                     };
                 }
-                let mut dependency_version = Dependency::Version::default();
+                let mut dependency_version = Dependency::Version::new();
                 let mut dependency_behavior = Dependency::Behavior::PROD;
                 let installed_buf: Vec<u8>;
                 let mut string_buf: &[u8] = esm.version;
@@ -3201,7 +3204,7 @@ impl<'a> Resolver<'a> {
                                         primary: path,
                                         secondary: None,
                                     },
-                                    ..Default::default()
+                                    ..MatchResult::new()
                                 };
                                 return MatchStatus::Success;
                             }
@@ -3333,7 +3336,7 @@ impl<'a> Resolver<'a> {
                                                 .is_node_module(),
                                             package_json: Some(std::ptr::from_ref(package_json)),
                                             dir_info: Some(dir_info),
-                                            ..Default::default()
+                                            ..MatchResult::new()
                                         };
                                         return MatchStatus::Success;
                                     }
@@ -3541,7 +3544,7 @@ impl<'a> Resolver<'a> {
             DirInfo::put_slot(
                 self.dir_cache(),
                 &mut dir_cache_info_result,
-                DirInfo::DirInfo::default(),
+                DirInfo::DirInfo::new(),
             )
         }
         .expect("unreachable");
@@ -3639,7 +3642,7 @@ impl<'a> Resolver<'a> {
                         root_dependency_id: id,
                         string_buf,
                         tag: PendingResolutionTag::Resolve,
-                        ..Default::default()
+                        ..PendingResolution::new()
                     }));
                 }
                 Install::EnqueueResult::NotFound | Install::EnqueueResult::Failure(_) => {
@@ -3846,7 +3849,7 @@ impl<'a> Resolver<'a> {
                             .unwrap_or_else(|| std::ptr::from_ref(package_json)),
                     ),
                     module_type,
-                    ..Default::default()
+                    ..MatchResult::new()
                 };
                 MatchStatus::Success
             }
@@ -4015,7 +4018,7 @@ impl<'a> Resolver<'a> {
                     .unwrap_or_else(|| std::ptr::from_ref(package_json)),
             ),
             module_type,
-            ..Default::default()
+            ..MatchResult::new()
         };
     }
 
@@ -4061,7 +4064,7 @@ impl<'a> Resolver<'a> {
         )?;
         // NOTE: reshaped for borrowck — `mem::take` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
-        let entry_contents = core::mem::take(&mut entry.contents);
+        let entry_contents = core::mem::replace(&mut entry.contents, crate::cache::Contents::Empty);
         let _close_guard = scopeguard::guard(entry, |mut e| {
             let _ = e.close_fd();
         });
@@ -4510,7 +4513,7 @@ impl<'a> Resolver<'a> {
                             bun_sys::WindowsOpenDirOptions {
                                 iterable: true,
                                 no_follow: false,
-                                ..Default::default()
+                                ..bun_sys::WindowsOpenDirOptions::new()
                             },
                         )
                         .map_err(Into::into)
@@ -4573,7 +4576,7 @@ impl<'a> Resolver<'a> {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
                                         None,
-                                        bun_ast::Loc::default(),
+                                        bun_ast::Loc::new(),
                                         format_args!(
                                             "Cannot read directory \"{}\": {}",
                                             bstr::BStr::new(pretty),
@@ -4759,7 +4762,7 @@ impl<'a> Resolver<'a> {
                 DirInfo::put_slot(
                     self.dir_cache(),
                     &mut queue_top.result,
-                    DirInfo::DirInfo::default(),
+                    DirInfo::DirInfo::new(),
                 )
             }?;
             // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
@@ -5078,7 +5081,7 @@ impl<'a> Resolver<'a> {
                 if let Some(alias) = HardcodedAlias::get(
                     &esm_resolution.path,
                     self.opts.target,
-                    HardcodedAliasCfg::default(),
+                    HardcodedAliasCfg::new(),
                 ) {
                     *out = MatchResult {
                         path_pair: PathPair {
@@ -5086,7 +5089,7 @@ impl<'a> Resolver<'a> {
                             secondary: None,
                         },
                         is_external: true,
-                        ..Default::default()
+                        ..MatchResult::new()
                     };
                     return MatchStatus::Success;
                 }
@@ -5263,7 +5266,7 @@ impl<'a> Resolver<'a> {
                                     secondary: None,
                                 },
                                 package_json: Some(std::ptr::from_ref(browser_json)),
-                                ..Default::default()
+                                ..MatchResult::new()
                             };
                             dec_ret!(MatchStatus::Success);
                         }
@@ -5287,7 +5290,7 @@ impl<'a> Resolver<'a> {
                     },
                     package_json: Some(std::ptr::from_ref(package_json)),
                     dirname_fd: result.dirname_fd,
-                    ..Default::default()
+                    ..MatchResult::new()
                 };
                 dec_ret!(MatchStatus::Success);
             }
@@ -5298,7 +5301,7 @@ impl<'a> Resolver<'a> {
                     secondary: None,
                 },
                 dirname_fd: result.dirname_fd,
-                ..Default::default()
+                ..MatchResult::new()
             };
             dec_ret!(MatchStatus::Success);
         }
@@ -5438,7 +5441,7 @@ impl<'a> Resolver<'a> {
                         },
                         package_json: Some(std::ptr::from_ref(package_json)),
                         dirname_fd,
-                        ..Default::default()
+                        ..MatchResult::new()
                     };
                     return MatchStatus::Success;
                 }
@@ -5449,7 +5452,7 @@ impl<'a> Resolver<'a> {
                         secondary: None,
                     },
                     dirname_fd,
-                    ..Default::default()
+                    ..MatchResult::new()
                 };
                 return MatchStatus::Success;
             }
@@ -5514,7 +5517,7 @@ impl<'a> Resolver<'a> {
                                     secondary: None,
                                 },
                                 package_json: Some(std::ptr::from_ref(browser_json)),
-                                ..Default::default()
+                                ..MatchResult::new()
                             };
                             return MatchStatus::Success;
                         }
@@ -5532,7 +5535,7 @@ impl<'a> Resolver<'a> {
                                     primary: Path::init(file_result.path),
                                     secondary: None,
                                 },
-                                ..Default::default()
+                                ..MatchResult::new()
                             };
                             return MatchStatus::Success;
                         }
@@ -5586,7 +5589,7 @@ impl<'a> Resolver<'a> {
                                 dirname_fd: file.dirname_fd,
                                 package_json: Some(std::ptr::from_ref(package_json)),
                                 file_fd: file.file_fd,
-                                ..Default::default()
+                                ..MatchResult::new()
                             };
                             return MatchStatus::Success;
                         }
@@ -5603,7 +5606,7 @@ impl<'a> Resolver<'a> {
                 },
                 dirname_fd: file.dirname_fd,
                 file_fd: file.file_fd,
-                ..Default::default()
+                ..MatchResult::new()
             };
             return MatchStatus::Success;
         }
@@ -5710,7 +5713,7 @@ impl<'a> Resolver<'a> {
                     // that only has `jsnext:main` + `main` (e.g. moment) resolves to the
                     // ESM file and hands back `{ default }` instead of the CJS export.
                     if auto_main && (key == b"module" || key == b"jsnext:main") {
-                        let mut auto_main_result = MatchResult::default();
+                        let mut auto_main_result = MatchResult::new();
                         let mut auto_main_found = false;
 
                         if let Some(main_rel_path) = main_field_values.get(b"main".as_slice()) {
@@ -5775,7 +5778,7 @@ impl<'a> Resolver<'a> {
                                     dirname_fd: out.dirname_fd,
                                     package_json,
                                     file_fd: auto_main_result.file_fd,
-                                    ..Default::default()
+                                    ..MatchResult::new()
                                 };
                                 dec_ret!(MatchStatus::Success);
                             } else {
@@ -6159,7 +6162,7 @@ impl<'a> Resolver<'a> {
             // .abs_real_path = path,
             parent: parent_index,
             entries: dir_entry_index,
-            ..Default::default()
+            ..DirInfo::DirInfo::new()
         };
 
         // A "node_modules" directory isn't allowed to directly contain another "node_modules" directory
@@ -6192,14 +6195,14 @@ impl<'a> Resolver<'a> {
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below
                         if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
                             // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                            unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
+                            unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::new()) };
                             BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
                         }
 
                         let Ok(file) = bun_sys::open_dir_z(
                             fd,
                             bun_paths::path_literal!(b"node_modules/.bin"),
-                            Default::default(),
+                            bun_sys::OpenDirOptions::new(),
                         ) else {
                             break 'append_bin_dir;
                         };
@@ -6237,12 +6240,13 @@ impl<'a> Resolver<'a> {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
                             if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
                                 // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                                unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
+                                unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::new()) };
                                 BIN_FOLDERS_LOADED
                                     .store(true, core::sync::atomic::Ordering::Release);
                             }
 
-                            let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
+                            let Ok(file) =
+                                bun_sys::open_dir_z(fd, b".bin\0", bun_sys::OpenDirOptions::new())
                             else {
                                 break 'append_bin_dir;
                             };
@@ -6545,7 +6549,7 @@ impl<'a> Resolver<'a> {
             }
         };
         if let Some(tsconfig_json) = parsed_tsconfig {
-            let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
+            let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::new();
             parent_configs.append(tsconfig_json)?;
             // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
             // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
@@ -6621,7 +6625,10 @@ impl<'a> Resolver<'a> {
                     // The previous merged_config.paths is being replaced;
                     // dropping the map frees the values automatically, so the
                     // PathsMap from the deeper config doesn't leak.
-                    mc.paths = core::mem::take(&mut parent_config.paths);
+                    mc.paths = core::mem::replace(
+                        &mut parent_config.paths,
+                        bun_collections::ArrayHashMap::new(),
+                    );
                     mc.base_url_for_paths = core::mem::take(&mut parent_config.base_url_for_paths);
                 } else {
                     // paths were not moved to merged_config, so they're still owned

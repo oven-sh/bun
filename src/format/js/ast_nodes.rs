@@ -58,7 +58,7 @@ impl<'a> ExpressionStatement<'a> {
         match self {
             ExpressionStatement::Stmt(statement) => statement.span(),
             ExpressionStatement::ArrowBody(_) => {
-                self.expression().map_or_else(Span::default, Expr::span)
+                self.expression().map_or_else(Span::init, Expr::span)
             }
         }
     }

@@ -345,7 +345,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
         global_object,
         path_object_ptr,
         format_args!("pathObject"),
-        Default::default(),
+        crate::node::validators_impl::ValidateObjectOptions::empty(),
     )?;
 
     let mut root: &[u8] = b"";
@@ -639,7 +639,7 @@ pub(crate) fn parse(
 
     let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
-        return PathParsed::<u8>::default().to_js_object(global_object);
+        return PathParsed::<u8>::new().to_js_object(global_object);
     }
 
     let path_slice = path_str.to_utf8();

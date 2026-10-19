@@ -55,9 +55,17 @@ use crate::Futex;
 use crate::Mutex;
 use crate::guarded::GuardedLock;
 
-#[derive(Default)]
 pub struct Condition {
     impl_: Impl,
+}
+
+impl Condition {
+    #[inline]
+    pub fn init() -> Self {
+        Self {
+            impl_: Impl::init(),
+        }
+    }
 }
 
 /// `parking_lot::Condvar` drop-in alias. Same type, different spelling so
@@ -215,12 +223,6 @@ mod windows_impl {
     unsafe impl Sync for WindowsImpl {}
     unsafe impl Send for WindowsImpl {}
 
-    impl Default for WindowsImpl {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
     impl WindowsImpl {
         pub(super) const fn new() -> Self {
             Self {
@@ -301,10 +303,20 @@ mod windows_impl {
 use windows_impl::WindowsImpl;
 
 #[cfg(not(windows))]
-#[derive(Default)]
 struct FutexImpl {
     state: AtomicU32,
     epoch: AtomicU32,
+}
+
+#[cfg(not(windows))]
+impl FutexImpl {
+    #[inline]
+    fn init() -> Self {
+        Self {
+            state: core::sync::atomic::AtomicU32::new(0),
+            epoch: core::sync::atomic::AtomicU32::new(0),
+        }
+    }
 }
 
 #[cfg(not(windows))]

@@ -124,7 +124,7 @@ impl Reported {
     /// `NewDiagnostic` with already printed arguments.
     /// For a message without arguments.
     pub(super) fn bare(at: (FileId, u32, u32), code: u32) -> Reported {
-        Reported::new(at, code, Args::default())
+        Reported::new(at, code, Box::new([]))
     }
 
     pub(super) fn new(at: (FileId, u32, u32), code: u32, args: Args) -> Reported {
@@ -227,7 +227,7 @@ impl<'s> Sink<'s> {
     /// `arena`: that of the thread that runs the barriers, where `owners` grows.
     pub(super) fn new_in(files: usize, arena: &'s Arena) -> Sink<'s> {
         Sink {
-            by_file: vec_from_iter_in((0..files).map(|_| Guarded::default()), arena),
+            by_file: vec_from_iter_in((0..files).map(|_| Guarded::init(Vec::new())), arena),
             owners: Guarded::new(set_in(arena)),
         }
     }
@@ -719,7 +719,10 @@ impl Checker<'_, '_> {
         }
         if self.task.is_planned() {
             self.task.diagnostics.push((owner, diagnostic));
-        } else if let Some(diagnostic) = self.settled(diagnostic, &mut Default::default()) {
+        } else if let Some(diagnostic) = self.settled(
+            diagnostic,
+            &mut crate::check::errors_aliases::Directives::new(),
+        ) {
             // The diagnostics buffered by a task outside the plan are dropped with it, so nothing
             // competes for its entries.
             self.p.push_diagnostic(diagnostic);
@@ -833,7 +836,7 @@ impl Checker<'_, '_> {
     /// does not go to the barrier: the diagnostics reported under it belong to the task.
     pub(super) fn take_diagnostics(&mut self) -> Vec<(Option<Query>, Reported)> {
         let diagnostics = std::mem::take(&mut self.task.diagnostics);
-        let mut directives = Default::default();
+        let mut directives = crate::check::errors_aliases::Directives::new();
         (diagnostics.into_iter())
             .filter_map(|(owner, diagnostic)| {
                 let diagnostic = self.settled(diagnostic, &mut directives)?;

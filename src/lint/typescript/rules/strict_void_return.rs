@@ -163,7 +163,7 @@ fn make_sync_func_fix<'a>(fixer: Fixer<'a>, func: Func<'a>) -> Vec<Fix> {
 
 /// Makes the function sync and adds a `void` operator to the body of the arrow function. `None` if the body has no side effects.
 fn add_void_to_arrow_fix<'a>(fixer: Fixer<'a>, func: Func<'a>, body: Expr<'a>) -> Option<Vec<Fix>> {
-    if !has_side_effect(body, HasSideEffectOptions::default()) {
+    if !has_side_effect(body, HasSideEffectOptions::new()) {
         return None;
     }
     let mut fixes = make_sync_func_fix(fixer, func);

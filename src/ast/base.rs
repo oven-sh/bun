@@ -95,13 +95,6 @@ impl Index {
     }
 }
 
-impl Default for Index {
-    #[inline]
-    fn default() -> Self {
-        Self::INVALID
-    }
-}
-
 // (Former bridge `From` impls to `bun_ast::Index`
 
 // ───────────────────────────────── Ref ─────────────────────────────────

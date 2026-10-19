@@ -12,12 +12,21 @@ pub struct NoThisBeforeSuper;
 const NO_BEFORE_SUPER: Message =
     Message::new("noBeforeSuper", "'{{kind}}' is not allowed before 'super()'.");
 
-#[derive(Default)]
 struct SegmentInfo<'a> {
     /// `super()` is called in all code paths.
     super_called: bool,
     /// The invalid `this` and `super`.
     invalid_nodes: SmallVec<[Expr<'a>; 1]>,
+}
+
+impl<'a> SegmentInfo<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            super_called: false,
+            invalid_nodes: SmallVec::new(),
+        }
+    }
 }
 
 struct FuncInfo<'a> {
@@ -26,7 +35,6 @@ struct FuncInfo<'a> {
     code_path: CodePath<'a>,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The constructor that is checked. Those of the classes in it are checked on their own.
     constructor: Option<Func<'a>>,
@@ -38,6 +46,19 @@ pub struct State<'a> {
     winding_switches: Option<Vec<u32>>,
     /// With a configuration of oxlint: in the arguments of how many `super()` that it takes for called the current node is.
     called_around: u32,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            constructor: None,
+            func_infos: Vec::new(),
+            seg_info_map: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            winding_switches: None,
+            called_around: 0,
+        }
+    }
 }
 
 impl<'a> State<'a> {
@@ -201,7 +222,7 @@ impl NoThisBeforeSuper {
         // called. There is no need to: this leaves out a segment if it leaves out all that precede
         // it, so one that is marked for what precedes it is not looked at, marked or not.
         // In a `finally` block a node belongs to several segments.
-        let mut reported = FxHashSet::default();
+        let mut reported = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         // oxlint reports a constructor once, and points at it.
         let constructor = match node {
             Node::Func(func) if cx.language().is_oxlint => Some(func.span()),
@@ -251,7 +272,7 @@ impl NoThisBeforeSuper {
         if e.is_jsx_tag_name() && !is_oxlint || cx.state.called_around > 0 {
             return;
         }
-        for segment in cx.state.segments_before_call_of_super().unwrap_or_default() {
+        for segment in cx.state.segments_before_call_of_super().unwrap_or_else(smallvec::SmallVec::new) {
             if let Some(info) = cx.state.seg_info_map.get_mut(&segment.id()) {
                 info.invalid_nodes.push(e);
             }
@@ -275,7 +296,7 @@ impl NoThisBeforeSuper {
     }
 
     fn mark_as_called(cx: &mut Cx<'_, Self>) {
-        for segment in cx.state.segments_before_call_of_super().unwrap_or_default() {
+        for segment in cx.state.segments_before_call_of_super().unwrap_or_else(smallvec::SmallVec::new) {
             if let Some(info) = cx.state.seg_info_map.get_mut(&segment.id()) {
                 info.super_called = true;
             }
@@ -293,7 +314,7 @@ impl Rule for NoThisBeforeSuper {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {

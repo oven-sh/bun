@@ -76,7 +76,7 @@ impl Rule for ForbidComponentProps {
         }
         let mut map: Vec<usize> = Vec::new();
         {
-            let mut places: FxHashMap<&[u8], usize> = FxHashMap::default();
+            let mut places: FxHashMap<&[u8], usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for (at, it) in forbid.iter().enumerate() {
                 let next = map.len();
                 let place = *places.entry(&it.key.written).or_insert(next);

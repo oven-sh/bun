@@ -5,12 +5,10 @@ use bun_http_types::Encoding::Encoding;
 // `(input, output)` per call to [`Decompressor::decompress_chunk`], so no
 // borrow of the request's `compressed_body` / `body_out_str` escapes the
 // call.
-#[derive(Default)]
 pub enum Decompressor {
     Zlib(bun_zlib::InflateDecoder),
     Brotli(Box<bun_brotli::StreamingDecoder>),
     Zstd(Box<bun_zstd::StreamingDecoder>),
-    #[default]
     None,
 }
 
@@ -57,7 +55,7 @@ impl Decompressor {
             }
             Encoding::Brotli => {
                 *self = Decompressor::Brotli(Box::new(bun_brotli::StreamingDecoder::new(
-                    &Default::default(),
+                    &bun_brotli::DecoderOptions::new(),
                 )?));
             }
             Encoding::Zstd => {

@@ -47,7 +47,7 @@ impl Rule for NoEagerNativeAddon {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<RunsLater<'a>> {
-        Some(RunsLater::default())
+        Some(RunsLater::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

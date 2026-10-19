@@ -514,13 +514,6 @@ impl core::borrow::Borrow<[u8]> for Interned {
     }
 }
 
-impl Default for Interned {
-    #[inline]
-    fn default() -> Self {
-        Self::EMPTY
-    }
-}
-
 impl From<&'static str> for Interned {
     #[inline]
     fn from(s: &'static str) -> Self {
@@ -722,13 +715,6 @@ impl<T> DetachablePtr<T> {
         // live `&mut T` whose originating borrow has not ended; the paired
         // `detach()` nulls the slot before it does. Sole live `&mut` per call.
         unsafe { self.0.get().as_mut() }
-    }
-}
-
-impl<T> Default for DetachablePtr<T> {
-    #[inline]
-    fn default() -> Self {
-        Self::null()
     }
 }
 

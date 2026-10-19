@@ -110,10 +110,19 @@ pub struct PackageInstaller<'a> {
 
 use bun_core::UnwrapOrOom;
 
-#[derive(Default)]
 pub struct NodeModulesFolder {
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) path: Vec<u8>,
+}
+
+impl NodeModulesFolder {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            tree_id: 0,
+            path: Vec::new(),
+        }
+    }
 }
 
 pub struct TreeDir {
@@ -366,7 +375,7 @@ impl NodeModulesFolder {
                     self.path.as_slice(),
                     bun_sys::WindowsOpenDirOptions {
                         can_rename_or_delete: false,
-                        ..Default::default()
+                        ..bun_sys::WindowsOpenDirOptions::new()
                     },
                 )
                 .map_err(|e| e.to_zig_err())?,
@@ -378,7 +387,9 @@ impl NodeModulesFolder {
         #[cfg(unix)]
         {
             if lockfile.is_importer_tree_id(self.tree_id) {
-                return Ok(root.make_open_path(self.path.as_slice(), Default::default())?);
+                return Ok(
+                    root.make_open_path(self.path.as_slice(), bun_sys::OpenDirOptions::new())?
+                );
             }
             let mut path_buf = bun_paths::path_buffer_pool::get();
             let path = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
@@ -395,7 +406,7 @@ impl NodeModulesFolder {
                     bun_sys::WindowsOpenDirOptions {
                         can_rename_or_delete: false,
                         op: bun_sys::WindowsOpenDirOp::OpenOrCreate,
-                        ..Default::default()
+                        ..bun_sys::WindowsOpenDirOptions::new()
                     },
                 )
                 .map_err(|e| e.to_zig_err())?,
@@ -767,7 +778,7 @@ impl<'a> PackageInstaller<'a> {
                         .postinstall_optimizer
                         .get(&postinstall_optimizer::PkgInfo {
                             name_hash,
-                            ..Default::default()
+                            ..postinstall_optimizer::PkgInfo::new()
                         })
                 {
                     match optimizer {
@@ -1087,7 +1098,8 @@ impl<'a> PackageInstaller<'a> {
         if self.pending_install_count == 0 {
             return;
         }
-        let prev_node_modules = core::mem::take(&mut self.node_modules);
+        let prev_node_modules =
+            core::mem::replace(&mut self.node_modules, NodeModulesFolder::new());
         let prev_tree_id = self.current_tree_id;
 
         let trees_len = self.trees.len();
@@ -1383,8 +1395,8 @@ impl<'a> PackageInstaller<'a> {
         let batch = package_install::LinkBatch {
             jobs: core::mem::take(&mut deferred.jobs),
             staging,
-            next: Default::default(),
-            remaining: Default::default(),
+            next: core::sync::atomic::AtomicUsize::new(0),
+            remaining: core::sync::atomic::AtomicUsize::new(0),
         };
         Some((batch, core::mem::take(&mut deferred.events)))
     }
@@ -1396,7 +1408,8 @@ impl<'a> PackageInstaller<'a> {
         events: Vec<(usize, DeferredEvent)>,
         log_level: Options::LogLevel,
     ) {
-        let prev_node_modules = core::mem::take(&mut self.node_modules);
+        let prev_node_modules =
+            core::mem::replace(&mut self.node_modules, NodeModulesFolder::new());
         let prev_tree_id = self.current_tree_id;
         let resolutions = self.resolutions;
         // A tree that is complete now lets the ones below it go on.
@@ -1570,7 +1583,8 @@ impl<'a> PackageInstaller<'a> {
             // Manual save/restore of self.node_modules / self.current_tree_id
             // (see install_available_packages). Infallible body — both exit
             // paths below restore the saved values.
-            let prev_node_modules = core::mem::take(&mut self.node_modules);
+            let prev_node_modules =
+                core::mem::replace(&mut self.node_modules, NodeModulesFolder::new());
             let prev_tree_id = self.current_tree_id;
 
             if callbacks.is_empty() {
@@ -1645,8 +1659,8 @@ impl<'a> PackageInstaller<'a> {
                 break 'brk (scripts, None);
             }
 
-            let mut temp = PackageScripts::default();
-            let mut temp_lockfile = Lockfile::default();
+            let mut temp = PackageScripts::new();
+            let mut temp_lockfile = Lockfile::new();
             temp_lockfile.init_empty();
             let mut string_builder = temp_lockfile.string_builder();
             let log = self.manager().log_mut();
@@ -2158,7 +2172,7 @@ impl<'a> PackageInstaller<'a> {
                                 bstr::BStr::new(pkg_name.slice(string_buf!())),
                                 bun_core::fmt::fmt_path(
                                     self.node_modules.path.as_slice(),
-                                    Default::default(),
+                                    crate::bun_output::fmt::PathFormatOptions::new(),
                                 ),
                             ),
                         );
@@ -2218,7 +2232,7 @@ impl<'a> PackageInstaller<'a> {
                             dir_name,
                             bun_sys::OpenDirOptions {
                                 iterate: true,
-                                ..Default::default()
+                                ..bun_sys::OpenDirOptions::new()
                             },
                         ) {
                             Ok(d) => d,
@@ -2301,7 +2315,7 @@ impl<'a> PackageInstaller<'a> {
                             skip_delete,
                             random: bun_core::fast_random(),
                             resolution_tag: resolution.tag,
-                            result: Default::default(),
+                            result: std::sync::OnceLock::new(),
                         });
                     }
                     let method = if copy {
@@ -2494,7 +2508,7 @@ impl<'a> PackageInstaller<'a> {
                         let dependencies = self.lockfile().buffers.dependencies.as_slice();
                         let name_hash = dependencies[dependency_id as usize].name_hash;
                         let entry = (self.summary.packages_with_blocked_scripts)
-                            .get_or_put(name_hash as TruncatedPackageNameHash)
+                            .get_or_put(name_hash as TruncatedPackageNameHash, || 0)
                             .unwrap_or_oom();
                         if !entry.found_existing {
                             *entry.value_ptr = 0;
@@ -2669,7 +2683,7 @@ impl<'a> PackageInstaller<'a> {
                 .push(Box::<[u8]>::from(trusted_name));
             self.lockfile_mut()
                 .trusted_dependencies
-                .get_or_insert_with(Default::default)
+                .get_or_insert_with(ArrayHashMap::new)
                 .put(trusted_name_hash, Box::<[u8]>::from(trusted_name))
                 .unwrap_or_oom();
         }

@@ -178,9 +178,9 @@ pub use smallvec;
 #[repr(transparent)]
 pub struct SmallList<T, const N: usize>(pub smallvec::SmallVec<[T; N]>);
 
-impl<T, const N: usize> Default for SmallList<T, N> {
+impl<T, const N: usize> SmallList<T, N> {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self(smallvec::SmallVec::new())
     }
 }

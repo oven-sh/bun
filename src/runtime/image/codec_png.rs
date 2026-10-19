@@ -60,7 +60,6 @@ struct Iccp {
 }
 
 #[repr(C)]
-#[derive(Default)]
 struct Ihdr {
     width: u32,
     height: u32,
@@ -69,6 +68,21 @@ struct Ihdr {
     compression_method: u8,
     filter_method: u8,
     interlace_method: u8,
+}
+
+impl Ihdr {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            width: 0,
+            height: 0,
+            bit_depth: 0,
+            color_type: 0,
+            compression_method: 0,
+            filter_method: 0,
+            interlace_method: 0,
+        }
+    }
 }
 
 const SPNG_CTX_IGNORE_ADLER32: c_int = 1;
@@ -118,7 +132,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     if unsafe { spng_set_png_buffer(ctx, bytes.as_ptr(), bytes.len()) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    let mut ihdr = Ihdr::default();
+    let mut ihdr = Ihdr::new();
     // SAFETY: ctx is valid; ihdr is a valid out-ptr.
     if unsafe { spng_get_ihdr(ctx, &raw mut ihdr) } != 0 {
         return Err(codecs::Error::DecodeFailed);
@@ -233,7 +247,7 @@ pub(crate) fn encode(
         height: h,
         bit_depth: 8,
         color_type: SPNG_COLOR_TYPE_TRUECOLOR_ALPHA,
-        ..Default::default()
+        ..Ihdr::new()
     };
     // SAFETY: ctx is valid; ihdr is fully initialised.
     if unsafe { spng_set_ihdr(ctx, &raw const ihdr) } != 0 {
@@ -319,7 +333,7 @@ pub(crate) fn encode_indexed(
         height: h,
         bit_depth: 8,
         color_type: SPNG_COLOR_TYPE_INDEXED,
-        ..Default::default()
+        ..Ihdr::new()
     };
     // SAFETY: ctx is valid; ihdr is fully initialised.
     if unsafe { spng_set_ihdr(ctx, &raw const ihdr) } != 0 {

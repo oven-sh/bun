@@ -104,7 +104,7 @@ impl BlockList {
         let ptr = bun_core::heap::into_raw(Box::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             da_rules: JsCell::new(Vec::new()),
-            mutex: Mutex::default(),
+            mutex: Mutex::init(),
             estimated_size: AtomicU32::new(0),
             serialize_nonce: {
                 let mut n = [0u8; 8];

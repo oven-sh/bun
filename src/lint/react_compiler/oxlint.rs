@@ -170,7 +170,7 @@ pub fn render_all<'a, 'f>(
     file: &'a File<'a>,
     findings: impl IntoIterator<Item = &'f Finding>,
 ) -> impl Iterator<Item = (&'f Finding, Rendered)> {
-    let mut said = FxHashSet::default();
+    let mut said = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     findings.into_iter().filter_map(move |finding| {
         if is_about_what_a_callback_captures(file, finding) {
             return None;
@@ -435,7 +435,7 @@ fn function_of_value<'a>(file: &'a File<'a>, span: Span) -> Option<Func<'a>> {
         return function_at(file, span);
     };
     // Names that stand for each other in a circle do not end.
-    let mut seen = FxHashSet::default();
+    let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     loop {
         let symbol = reference.symbol()?;
         if !seen.insert(symbol.key()) {
@@ -721,7 +721,7 @@ fn inferred_dependency(call: Call, help: &str) -> Option<Span> {
     let (func, whole) = (callback.as_fn()?, callback.span());
     let is_one_scope = called(call)?.is("useCallback");
     let symbol = callback.parent().scope().resolve_bytes(variable)?;
-    let (mut first, mut barren) = (None, Span::default());
+    let (mut first, mut barren) = (None, Span::init());
     for reference in symbol.references().filter(|it| whole.contains(it.span())) {
         let Some((read, place)) = reference.expr().and_then(|it| read_of(it, &path)) else {
             continue;
@@ -1000,7 +1000,10 @@ fn derived_state_in_effect<'a>(file: &'a File<'a>, out: &mut Rendered) {
         _ => None,
     });
     let total = dependencies.map_or(0, |all| all.len());
-    let (mut names, mut seen) = (String::new(), FxHashSet::default());
+    let (mut names, mut seen) = (
+        String::new(),
+        FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+    );
     for (index, dependency) in dependencies.into_iter().flatten().enumerate() {
         if let Some(name) = dependency.as_ident()
             && seen.insert(name)

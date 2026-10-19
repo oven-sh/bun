@@ -421,7 +421,7 @@ impl<'a> Printer<'a, '_> {
         if matches!(parent.value, Value::Rule(_)) || !self.context.is_original_text {
             return None;
         }
-        let (selectors, values) = Default::default();
+        let (selectors, values) = (Selectors::new(), Values::new());
         let statement = Statement::new(scope, &selectors, &values);
         let flags = [
             self.syntax() == Syntax::Less,
@@ -461,7 +461,8 @@ impl<'a> Printer<'a, '_> {
             raw.prop,
             raw.between,
             raw.value,
-            raw.raw_important.unwrap_or_default(),
+            raw.raw_important
+                .unwrap_or_else(crate::css::postcss::Range::init),
         ];
         let end = parts
             .iter()
@@ -852,7 +853,7 @@ impl<'a> Printer<'a, '_> {
 
     /// The name of a declaration whose value is a block. See `print_name_and_extend`.
     fn print_name(&mut self, scope: &Scope<'_, 'a>) -> bool {
-        let (selectors, values) = Default::default();
+        let (selectors, values) = (Selectors::new(), Values::new());
         self.print_name_and_extend(Statement::new(scope, &selectors, &values))
     }
 

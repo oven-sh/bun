@@ -15,9 +15,17 @@ use bun_parsers::yaml::{ParseError, YAML};
 use std::borrow::Cow;
 
 /// What can be used again for the next file.
-#[derive(Default)]
 pub struct Scratch {
     elements: Elements,
+}
+
+impl Scratch {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            elements: Elements::new(),
+        }
+    }
 }
 
 /// Whether Prettier takes the file at `path` for YAML.
@@ -55,7 +63,7 @@ pub fn is_yaml_path(path: &[u8]) -> bool {
 
 /// The document for `text`, whose line breaks are `\n`, as a tree.
 pub(crate) fn document(text: &[u8], options: &FormatOptions) -> Result<Doc<'static>, FormatError> {
-    let mut elements = Elements::default();
+    let mut elements = Elements::new();
     write_document(text, options, &mut elements)?;
     elements.to_tree()
 }
@@ -199,7 +207,7 @@ pub fn format(
             &text,
             crate::json::Parser::Json,
             options,
-            &mut Default::default(),
+            &mut crate::json::Scratch::new(),
             out,
         )
         .is_ok()

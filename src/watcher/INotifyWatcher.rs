@@ -58,8 +58,8 @@ pub struct INotifyWatcher {
     pub(crate) coalesce_interval: isize,
 }
 
-impl Default for INotifyWatcher {
-    fn default() -> Self {
+impl INotifyWatcher {
+    pub fn init() -> Self {
         Self {
             fd: Fd::INVALID,
             loaded: false,
@@ -201,7 +201,7 @@ impl INotifyWatcher {
                 .get()
                 .and_then(|v| isize::try_from(v).ok())
                 .unwrap_or(100_000),
-            ..Self::default()
+            ..Self::init()
         })
     }
 
@@ -293,7 +293,7 @@ impl INotifyWatcher {
                                             return Err(bun_sys::Error {
                                                 errno: e as u32 as _,
                                                 syscall: bun_sys::Tag::read,
-                                                ..Default::default()
+                                                ..bun_sys::Error::init()
                                             });
                                         }
                                     }
@@ -315,14 +315,14 @@ impl INotifyWatcher {
                         return Err(bun_sys::Error {
                             errno: errno as u32 as _,
                             syscall: bun_sys::Tag::read,
-                            ..Default::default()
+                            ..bun_sys::Error::init()
                         });
                     }
                     _ => {
                         return Err(bun_sys::Error {
                             errno: errno as u32 as _,
                             syscall: bun_sys::Tag::read,
-                            ..Default::default()
+                            ..bun_sys::Error::init()
                         });
                     }
                 }
@@ -545,6 +545,6 @@ fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> Watch
     WatchEvent {
         op,
         index,
-        ..Default::default()
+        ..WatchEvent::new()
     }
 }

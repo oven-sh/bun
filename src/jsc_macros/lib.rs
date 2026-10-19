@@ -23,16 +23,24 @@ use syn::{
 // #[bun_jsc::host_fn(export = "Name")]
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 struct HostFnArgs {
     kind: HostFnKind,
     export: Option<LitStr>,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+impl HostFnArgs {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            kind: HostFnKind::Free,
+            export: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum HostFnKind {
     /// `fn(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>`
-    #[default]
     Free,
     /// `fn(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>`
     Method,
@@ -44,7 +52,7 @@ enum HostFnKind {
 
 impl Parse for HostFnArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut out = HostFnArgs::default();
+        let mut out = HostFnArgs::new();
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
             match ident.to_string().as_str() {
@@ -486,7 +494,6 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
 // `.classes.ts` generator gains a `.rs` output mode.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 struct JsClassArgs {
     /// Override the C++-side type name (defaults to the Rust struct ident).
     name: Option<LitStr>,
@@ -504,9 +511,22 @@ struct JsClassArgs {
     estimated_size: bool,
 }
 
+impl JsClassArgs {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            name: None,
+            no_finalize: false,
+            no_construct: false,
+            no_constructor: false,
+            estimated_size: false,
+        }
+    }
+}
+
 impl Parse for JsClassArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut out = JsClassArgs::default();
+        let mut out = JsClassArgs::new();
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
             match ident.to_string().as_str() {
@@ -557,7 +577,7 @@ pub fn js_class_derive(item: TokenStream) -> TokenStream {
     let strukt = parse_macro_input!(item as ItemStruct);
     // Derive can't see the struct tokens to re-emit them, so only emit the
     // hooks + trait impl.
-    let hooks = js_class_hooks(&JsClassArgs::default(), &strukt.ident);
+    let hooks = js_class_hooks(&JsClassArgs::new(), &strukt.ident);
     hooks.into()
 }
 
@@ -786,16 +806,26 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
 // dispatch shims (cycle-break externs).
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 struct UwsCallbackArgs {
     export: Option<LitStr>,
     thunk: Option<LitStr>,
     no_catch: bool,
 }
 
+impl UwsCallbackArgs {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            export: None,
+            thunk: None,
+            no_catch: false,
+        }
+    }
+}
+
 impl Parse for UwsCallbackArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut out = UwsCallbackArgs::default();
+        let mut out = UwsCallbackArgs::new();
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
             match ident.to_string().as_str() {

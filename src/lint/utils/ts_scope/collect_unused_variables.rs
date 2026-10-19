@@ -33,9 +33,16 @@ use smallvec::{SmallVec, smallvec};
 // ───────────────────────────── eslintUsed ─────────────────────────────
 
 /// Some of the symbols of one file: a bit for each.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SymbolSet {
     words: Vec<u64>,
+}
+
+impl SymbolSet {
+    #[inline]
+    pub fn new() -> Self {
+        Self { words: Vec::new() }
+    }
 }
 
 impl SymbolSet {
@@ -59,9 +66,18 @@ impl SymbolSet {
 }
 
 /// ESLint's `variable.eslintUsed`, for the symbols of one file.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct UsedMarks {
     marked: SymbolSet,
+}
+
+impl UsedMarks {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            marked: SymbolSet::new(),
+        }
+    }
 }
 
 impl UsedMarks {
@@ -409,7 +425,7 @@ fn head_of_loop_that_only_returns(statement: Stmt<'_>) -> Option<Stmt<'_>> {
 /// Upstream's `visitForInForOf`: the first name that the head of such a loop declares, or the
 /// variable that it assigns to.
 fn variables_of_loops_that_only_return<'a>(file: &'a File<'a>) -> SymbolSet {
-    let mut variables = SymbolSet::default();
+    let mut variables = SymbolSet::new();
     let loops = (file.stmts_of_kind(StmtTag::ForIn)).chain(file.stmts_of_kind(StmtTag::ForOf));
     for head in loops.filter_map(head_of_loop_that_only_returns) {
         let symbol = match head.kind() {
@@ -749,7 +765,6 @@ fn as_estree_function(node: Node<'_>) -> Option<Func<'_>> {
 
 /// What the walks up from the references to a variable have found, for those that start far below:
 /// the operands of `a = a + a + ..`, of `a = 1, a = 2, ..`.
-#[derive(Default)]
 pub struct Walks<'a> {
     /// The function around a node.
     functions: AncestorMemo<'a, Func<'a>>,
@@ -757,6 +772,17 @@ pub struct Walks<'a> {
     loops: AncestorMemo<'a, bool>,
     /// `is_storable_function`, for the functions inside this `rhs_node`.
     storable: (Option<Expr<'a>>, AncestorMemo<'a, bool>),
+}
+
+impl<'a> Walks<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            functions: AncestorMemo::new(),
+            loops: AncestorMemo::new(),
+            storable: (None, AncestorMemo::new()),
+        }
+    }
 }
 
 /// ESLint's `isInLoop`: there is a loop around `node` in its function.
@@ -806,7 +832,7 @@ pub fn is_storable_function<'a>(
 ) -> bool {
     let within = rhs_node.span();
     if walks.storable.0 != Some(rhs_node) {
-        walks.storable = (Some(rhs_node), AncestorMemo::default());
+        walks.storable = (Some(rhs_node), AncestorMemo::new());
     }
     let found = walks.storable.1.find(func_node.owner(), |node, parent| {
         if matches!(parent, Node::File(_)) || !within.contains(parent.span()) {
@@ -1036,7 +1062,7 @@ fn is_plainly_marked(symbol: Symbol, properties: &SymbolSet) -> bool {
 
 /// What the parameter properties of the file declare.
 fn parameter_properties<'a>(file: &'a File<'a>) -> SymbolSet {
-    let mut properties = SymbolSet::default();
+    let mut properties = SymbolSet::new();
     for id in 0..file.hir.params.len() {
         let param = Param::new(file, hir::ParamId(id as u32));
         if param.is_parameter_property()
@@ -1058,19 +1084,31 @@ pub fn is_used_global_variable<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
         || has_use(
             file.unresolved_references_to(name),
             |_| true,
-            &mut Walks::default(),
+            &mut Walks::new(),
         )
 }
 
 // ───────────────────────────── the analysis ─────────────────────────────
 
 /// typescript-eslint's `VariableAnalysis`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct VariableAnalysis<'a> {
     unused_variables: Vec<Variable<'a>>,
     used_variables: Vec<Variable<'a>>,
     unused: SymbolSet,
     eslint_used: UsedMarks,
+}
+
+impl<'a> VariableAnalysis<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            unused_variables: Vec::new(),
+            used_variables: Vec::new(),
+            unused: SymbolSet::new(),
+            eslint_used: UsedMarks::new(),
+        }
+    }
 }
 
 impl<'a> VariableAnalysis<'a> {
@@ -1126,7 +1164,7 @@ fn collect<'a>(
     eslint_used: UsedMarks,
     keeps_used: bool,
 ) -> VariableAnalysis<'a> {
-    let mut analysis = VariableAnalysis::default();
+    let mut analysis = VariableAnalysis::new();
     if keeps_used {
         analysis
             .used_variables
@@ -1142,7 +1180,7 @@ fn collect<'a>(
     mark_identifiers_in_parameters(file, &mut marks);
     let marked_by_loops = variables_of_loops_that_only_return(file);
     let declares_globals = file.scope().symbols().len() != 0;
-    let mut walks = Walks::default();
+    let mut walks = Walks::new();
     let properties = parameter_properties(file);
     for symbol in file.symbols() {
         if !keeps_used && !declares_globals {

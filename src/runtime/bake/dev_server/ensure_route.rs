@@ -139,7 +139,7 @@ pub(super) fn ensure_route_is_bundled(
                                     .flatten()
                                     .chain(vm.bake_config_plugin_names.iter())
                                     .find(|p| strings::includes(p, b"tailwind"))
-                                    .map(|_| Default::default());
+                                    .map(|_| ArrayHashMap::new());
                                 dev.has_tailwind_plugin_hack = has_tailwind;
 
                                 let load_result: crate::server::GetOrStartLoadResult = dev
@@ -574,7 +574,7 @@ impl DevServer {
         &mut self,
         pattern: &[u8],
     ) -> Option<route_bundle::Index> {
-        let mut params: router::MatchedParams = Default::default();
+        let mut params: router::MatchedParams = crate::bake::router::MatchedParams::new();
         if let Some(route_index) = self.router.match_slow(pattern, &mut params) {
             return Some(
                 self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
@@ -594,7 +594,6 @@ impl DevServer {
 /// This structure does not increment the reference count of its contents, as
 /// the lifetime of them are all tied to the underling Bun.serve instance.
 /// `<'a>` retained only for the owning `DevServer<'a>`'s `Transpiler` borrows.
-#[derive(Default)]
 pub(crate) struct HTMLRouter {
     pub(crate) map: StringHashMap<bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Root>>,
     /// If a catch-all route exists, it is not stored in map, but here.

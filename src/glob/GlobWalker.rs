@@ -1342,8 +1342,8 @@ pub struct Component {
     pub(crate) trailing_sep: bool,
 }
 
-impl Default for Component {
-    fn default() -> Self {
+impl Component {
+    pub fn new() -> Self {
         Self {
             start: 0,
             len: 0,
@@ -1460,7 +1460,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             end_byte_of_basename_excluding_special_syntax: 0,
             pattern_components: Vec::new(),
             component_shapes: Vec::new(),
-            matched_paths: MatchedMap::default(),
+            matched_paths: MatchedMap::init(),
             path_buf: bun_paths::path_buffer_pool::get(),
             workbuf: Vec::new(),
             follow_matched_symlinks: false,
@@ -2094,7 +2094,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let mut component = Component {
             start: start_byte,
             len: end_byte - start_byte,
-            ..Default::default()
+            ..Component::new()
         };
         if component.len == 0 {
             return None;

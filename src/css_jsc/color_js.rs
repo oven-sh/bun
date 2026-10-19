@@ -295,9 +295,21 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 }
             }
         } else if args[0].is_object() {
-            let r = color_int_from_js(global, args[0].get(global, b"r")?.unwrap_or_default(), "r")?;
-            let g = color_int_from_js(global, args[0].get(global, b"g")?.unwrap_or_default(), "g")?;
-            let b = color_int_from_js(global, args[0].get(global, b"b")?.unwrap_or_default(), "b")?;
+            let r = color_int_from_js(
+                global,
+                args[0].get(global, b"r")?.unwrap_or_else(JSValue::new),
+                "r",
+            )?;
+            let g = color_int_from_js(
+                global,
+                args[0].get(global, b"g")?.unwrap_or_else(JSValue::new),
+                "g",
+            )?;
+            let b = color_int_from_js(
+                global,
+                args[0].get(global, b"b")?.unwrap_or_else(JSValue::new),
+                "b",
+            )?;
 
             let a: Option<u8> = if let Some(a_value) = args[0].get_truthy(global, b"a")? {
                 'brk2: {
@@ -331,7 +343,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         let mut parser = css::Parser::new(
             &mut parser_input,
             None,
-            css::css_parser::ParserOpts::default(),
+            css::css_parser::ParserOpts::empty(),
             None,
         );
         break 'brk CssColor::parse(&mut parser);
@@ -602,7 +614,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             let arena = Arena::new();
             let mut dest: Vec<u8> = Vec::new();
 
-            let symbols = SymbolMap::init_list(Default::default());
+            let symbols = SymbolMap::init_list(Vec::new());
             let mut printer = css::Printer::new(
                 &arena,
                 bun_alloc::ArenaVec::<u8>::new_in(&arena),

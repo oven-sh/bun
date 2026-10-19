@@ -3,18 +3,20 @@ use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
 pub(crate) struct Pwd {
     state: State,
 }
 
-#[derive(Default)]
+impl Pwd {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { state: State::Idle }
+    }
+}
+
 enum State {
-    #[default]
     Idle,
-    WaitingIo {
-        kind: WaitKind,
-    },
+    WaitingIo { kind: WaitKind },
     Err,
     Done,
 }

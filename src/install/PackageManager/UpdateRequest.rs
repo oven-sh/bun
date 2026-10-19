@@ -39,12 +39,12 @@ pub struct UpdateRequest {
     pub(crate) e_string: Option<*mut js_ast::E::String>,
 }
 
-impl Default for UpdateRequest {
-    fn default() -> Self {
+impl UpdateRequest {
+    pub fn new() -> Self {
         Self {
             name: b"",
             name_hash: 0,
-            version: dependency::Version::default(),
+            version: dependency::Version::new(),
             version_buf: bun_ptr::RawSlice::EMPTY,
             package_id: INVALID_PACKAGE_ID,
             is_aliased: false,
@@ -57,7 +57,6 @@ impl Default for UpdateRequest {
 pub type Array = Vec<UpdateRequest>;
 
 /// name_hash -> first position in PackageManager::update_requests; rebuilt by set_update_requests, read once per lockfile row during resolution.
-#[derive(Default)]
 pub struct UpdateRequestIndex(
     bun_collections::HashMap<
         PackageNameHash,
@@ -65,6 +64,13 @@ pub struct UpdateRequestIndex(
         bun_collections::IdentityContext<PackageNameHash>,
     >,
 );
+
+impl UpdateRequestIndex {
+    #[inline]
+    pub fn new() -> Self {
+        Self(bun_collections::HashMap::init())
+    }
+}
 
 /// Park CLI-lifetime bytes in a process-lifetime static so LSan sees them as
 /// reachable. `UpdateRequest::name`/`version_buf` store raw `&'static`/
@@ -273,7 +279,7 @@ impl UpdateRequest {
             let mut request = UpdateRequest {
                 version,
                 version_buf: bun_ptr::RawSlice::new(input),
-                ..UpdateRequest::default()
+                ..UpdateRequest::new()
             };
             if let Some(name) = alias {
                 request.is_aliased = true;
@@ -316,7 +322,7 @@ fn unrecognised_format(log: &mut Log, positional: &[u8], fatal: bool) -> crate::
 
 impl PackageManager {
     pub(crate) fn set_update_requests(&mut self, updates: Vec<UpdateRequest>) {
-        let mut index = UpdateRequestIndex::default();
+        let mut index = UpdateRequestIndex::new();
         for (i, r) in updates.iter().enumerate().rev() {
             index.0.insert(r.name_hash, i as u32);
         }

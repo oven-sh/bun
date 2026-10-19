@@ -40,9 +40,9 @@ impl JSPropertyIteratorOptions {
     }
 }
 
-impl Default for JSPropertyIteratorOptions {
+impl JSPropertyIteratorOptions {
     #[inline]
-    fn default() -> Self {
+    pub fn init() -> Self {
         Self {
             skip_empty_name: false,
             include_value: false,
@@ -56,7 +56,7 @@ impl Default for JSPropertyIteratorOptions {
 
 /// Two-field shorthand of [`JSPropertyIteratorOptions`]; the remaining options
 /// take the default values via the `From` conversion.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PropertyIteratorOptions {
     pub skip_empty_name: bool,
     pub include_value: bool,

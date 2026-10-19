@@ -91,8 +91,8 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
     let mut active_block_fallthrough_ranges: Vec<BlockFallthroughRange> = Vec::new();
-    let mut active_scopes: HashSet<ScopeId> = HashSet::default();
-    let mut seen: HashSet<ScopeId> = HashSet::default();
+    let mut active_scopes: HashSet<ScopeId> = HashSet::with_hasher(rustc_hash::FxBuildHasher);
+    let mut seen: HashSet<ScopeId> = HashSet::with_hasher(rustc_hash::FxBuildHasher);
     let mut value_block_nodes: IdMap<BlockId, ValueBlockNode> = IdMap::new();
 
     for (&block_id, block) in &func.body.blocks {

@@ -48,11 +48,20 @@ bun_collections::multi_array_columns! {
 /// The requirements for this data structure is to have reasonable lookup
 /// speed, but also being able to pull a `[]const Index.Int` of all
 /// boundaries for iteration.
-#[derive(Default)]
 pub struct List {
     pub list: MultiArrayList<ServerComponentBoundary>,
     /// Used to facilitate fast lookups into `items` by `.source_index`
     pub map: Map,
+}
+
+impl List {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            list: MultiArrayList::new(),
+            map: Map::new(),
+        }
+    }
 }
 
 // A keyless array-hash-map used purely as an index table; all lookups go

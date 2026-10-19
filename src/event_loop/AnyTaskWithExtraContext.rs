@@ -12,8 +12,8 @@ pub struct AnyTaskWithExtraContext {
     pub(crate) next: bun_threading::Link<AnyTaskWithExtraContext>,
 }
 
-impl Default for AnyTaskWithExtraContext {
-    fn default() -> Self {
+impl AnyTaskWithExtraContext {
+    pub fn new() -> Self {
         Self {
             ctx: None,
             callback: |_, _| unreachable!("callback was undefined"),

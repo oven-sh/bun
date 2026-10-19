@@ -143,7 +143,7 @@ impl Store {
             path,
             number,
             is_reachable,
-            ..SegmentData::default()
+            ..SegmentData::new()
         });
         segments.len() as u32 - 1
     }
@@ -521,7 +521,6 @@ struct LoopContext {
     end_of_left_segments: SegmentIds,
 }
 
-#[derive(Default)]
 struct SwitchContext {
     has_case: bool,
     default_segments: SegmentIds,
@@ -529,6 +528,20 @@ struct SwitchContext {
     found_empty_default: bool,
     last_is_default: bool,
     fork_count: u32,
+}
+
+impl SwitchContext {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            has_case: false,
+            default_segments: SegmentIds::new(),
+            default_body_segments: SegmentIds::new(),
+            found_empty_default: false,
+            last_is_default: false,
+            fork_count: 0,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -783,7 +796,7 @@ impl State {
     pub(super) fn push_switch_context(&mut self, has_case: bool, label: Option<Atom>) {
         self.switches.push(SwitchContext {
             has_case,
-            ..SwitchContext::default()
+            ..SwitchContext::new()
         });
         self.push_break_context(true, label);
     }

@@ -28,7 +28,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let _ = p.skip_type_script_type_arguments::<true, false>()?;
         }
 
-        let mut previous_string_with_backslash_loc = bun_ast::Loc::default();
+        let mut previous_string_with_backslash_loc = bun_ast::Loc::new();
         let mut properties = bun_alloc::AstAlloc::vec();
         let mut key_prop_i: i32 = -1;
         let mut flags = flags::JSXElementBitset::empty();
@@ -97,7 +97,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         props.push(G::Property {
                             key: Some(prop_name),
                             value: Some(value),
-                            ..Default::default()
+                            ..G::Property::new()
                         });
                         i += 1;
                     }
@@ -119,7 +119,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 props.push(G::Property {
                                     value: Some(value),
                                     kind: G::PropertyKind::Spread,
-                                    ..Default::default()
+                                    ..G::Property::new()
                                 });
                             }
                             // This implements
@@ -180,7 +180,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     value: Some(expr),
                                     key: Some(key),
                                     kind: G::PropertyKind::Normal,
-                                    ..Default::default()
+                                    ..G::Property::new()
                                 });
                             }
                             // This implements
@@ -198,7 +198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     value: Some(key),
                                     key: Some(key),
                                     kind: G::PropertyKind::Normal,
-                                    ..Default::default()
+                                    ..G::Property::new()
                                 });
                             }
 
@@ -278,7 +278,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     key_prop_index: key_prop_i,
                     flags,
                     close_tag_loc,
-                    ..Default::default()
+                    ..E::JSXElement::new()
                 },
                 loc,
             ));
@@ -369,7 +369,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             key_prop_index: key_prop_i,
                             flags,
                             close_tag_loc: end_tag.range.loc,
-                            ..Default::default()
+                            ..E::JSXElement::new()
                         },
                         loc,
                     ));

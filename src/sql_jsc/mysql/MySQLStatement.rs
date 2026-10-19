@@ -43,12 +43,12 @@ fn parameter_type(param: &impl ExecuteParam) -> Option<ParameterType> {
 impl MySQLStatement {
     /// The statement of a simple query: it only holds the columns of the result.
     pub(crate) fn unprepared() -> Self {
-        Self::new(Status::Prepared, Box::default())
+        Self::new(Status::Prepared, Box::new([]))
     }
 
     fn new(status: Status, parameter_types: Box<[Cell<Option<ParameterType>>]>) -> Self {
         Self {
-            cached_structure: CachedStructure::default(),
+            cached_structure: CachedStructure::new(),
             ref_count: Cell::new(1),
             statement_id: 0,
             params: Vec::new(),
@@ -56,8 +56,8 @@ impl MySQLStatement {
             columns: Vec::new(),
             columns_received: 0,
             status,
-            execution_flags: ExecutionFlags::default(),
-            fields_flags: DataCellFlags::default(),
+            execution_flags: ExecutionFlags::NEEDS_DUPLICATE_CHECK,
+            fields_flags: DataCellFlags::empty(),
             result_count: 0,
             parameter_types,
         }
@@ -104,19 +104,13 @@ bitflags::bitflags! {
     }
 }
 
-impl Default for ExecutionFlags {
-    fn default() -> Self {
-        ExecutionFlags::NEEDS_DUPLICATE_CHECK
-    }
-}
-
 pub use bun_sql::shared::statement_status::Status;
 
 impl MySQLStatement {
     pub(crate) fn reset(&mut self) {
         self.result_count = 0;
         self.columns_received = 0;
-        self.execution_flags = ExecutionFlags::default();
+        self.execution_flags = ExecutionFlags::NEEDS_DUPLICATE_CHECK;
     }
 
     fn check_for_duplicate_fields(&mut self) {

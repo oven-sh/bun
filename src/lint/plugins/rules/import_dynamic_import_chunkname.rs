@@ -49,7 +49,7 @@ fn evaluates(value: &[u8]) -> bool {
     let mut is_valid = true;
     let without_regexes = STRING_OR_REGEX.replace_with(value, |found, out| match found.get(2) {
         Some(literal) => {
-            is_valid &= parse_literal(literal.as_bytes(), bun_lint::regex::Options::default()).is_ok();
+            is_valid &= parse_literal(literal.as_bytes(), bun_lint::regex::Options::new()).is_ok();
             out.extend_from_slice(found.bytes(1));
             out.push(b'0');
         }

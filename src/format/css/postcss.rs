@@ -9,10 +9,17 @@ use crate::syntax_error::{Message, Refusal, Refused, SyntaxError};
 use crate::text::{self, ByteSet};
 
 /// A range of the text.
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Range {
     pub(crate) start: u32,
     pub(crate) end: u32,
+}
+
+impl Range {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self { start: 0, end: 0 }
+    }
 }
 
 impl Range {
@@ -100,7 +107,7 @@ impl Texts<'_> {
             [first, .., last] if self.is_in_order => Range::new(first.range.start, last.range.end),
             _ => tokens
                 .iter()
-                .fold(Range::default(), |all, token| self.join(all, token.range)),
+                .fold(Range::init(), |all, token| self.join(all, token.range)),
         }
     }
 
@@ -467,9 +474,8 @@ impl<'a> Tokenizer<'a> {
 
 pub(crate) type NodeId = u32;
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Kind {
-    #[default]
     Root,
     Comment,
     Rule,
@@ -478,7 +484,7 @@ pub(crate) enum Kind {
 }
 
 /// A node, with the properties of all kinds of nodes. `raws.x` is `x`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Node {
     pub(crate) kind: Kind,
     pub(crate) parent: NodeId,
@@ -533,6 +539,48 @@ pub(crate) struct Node {
     pub(crate) identifier: Range,
     /// Whether there is a `raws.ownSemicolon`.
     own_semicolon: bool,
+}
+
+impl Node {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            kind: Kind::Root,
+            parent: 0,
+            has_block: false,
+            first_child: 0,
+            last_child: 0,
+            next_sibling: 0,
+            start: 0,
+            end: None,
+            before: Range::init(),
+            after: Range::init(),
+            between: Range::init(),
+            semicolon: false,
+            text: Range::init(),
+            inline: false,
+            raw_inline: false,
+            selector: Range::init(),
+            clean_selector: None,
+            prop: Range::init(),
+            value: Range::init(),
+            clean_value: None,
+            important: false,
+            raw_important: None,
+            is_nested: false,
+            name: Range::init(),
+            after_name: Range::init(),
+            params: Range::init(),
+            clean_params: None,
+            extend: false,
+            mixin: false,
+            function: false,
+            variable: false,
+            value_skips: 0,
+            identifier: Range::init(),
+            own_semicolon: false,
+        }
+    }
 }
 
 pub(crate) struct Tree {
@@ -689,8 +737,8 @@ impl<'a> Parser<'a> {
             kind,
             parent: current,
             start: offset,
-            before: std::mem::take(&mut self.spaces),
-            ..Node::default()
+            before: std::mem::replace(&mut self.spaces, Range::init()),
+            ..Node::new()
         });
         if kind != Kind::Comment {
             self.semicolon = false;
@@ -743,7 +791,7 @@ impl<'a> Parser<'a> {
         let (current, semicolon, spaces) = (
             self.current,
             self.semicolon,
-            std::mem::take(&mut self.spaces),
+            std::mem::replace(&mut self.spaces, Range::init()),
         );
         let node = &mut self.nodes[current as usize];
         if node.first_child != 0 {
@@ -777,7 +825,7 @@ impl<'a> Parser<'a> {
         if prev.kind == Kind::Rule && !prev.own_semicolon {
             prev.end = Some(token.start + (spaces.end - spaces.start));
             prev.own_semicolon = true;
-            self.spaces = Range::default();
+            self.spaces = Range::init();
         }
     }
 
@@ -921,7 +969,7 @@ impl<'a> Parser<'a> {
                     .last()
                     .and_then(|token| token.last_position())
                     .map(|at| at + 1);
-                node.between = Range::default();
+                node.between = Range::init();
                 self.spaces = between;
             }
         }
@@ -1092,7 +1140,7 @@ impl<'a> Parser<'a> {
                 break;
             } else if is(text, b"important") {
                 let mut cache = tokens[base..].to_vec();
-                let mut string = Range::default();
+                let mut string = Range::init();
                 let mut j = index - base;
                 while j > 0 {
                     let starts_with_bang =
@@ -1657,7 +1705,7 @@ fn parse_from(
         tokenizer: Tokenizer {
             css,
             syntax,
-            refusal: Refusal::default(),
+            refusal: Refusal::new(),
             pos,
             shift: 0,
             buffer: Vec::new(),
@@ -1668,7 +1716,7 @@ fn parse_from(
         nodes: Vec::with_capacity((css.len() - pos.min(css.len())) / 32 + 1),
         current: 0,
         last_node: 0,
-        spaces: Range::default(),
+        spaces: Range::init(),
         semicolon: false,
         is_custom_property_set,
         token_buffer: Vec::new(),
@@ -1676,7 +1724,7 @@ fn parse_from(
     };
     parser.nodes.push(Node {
         has_block: true,
-        ..Node::default()
+        ..Node::new()
     });
     parser
         .parse()

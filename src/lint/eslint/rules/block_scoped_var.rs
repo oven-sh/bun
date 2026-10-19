@@ -10,11 +10,20 @@ const OUT_OF_SCOPE: Message = Message::new(
     "'{{name}}' declared on line {{definitionLine}} column {{definitionColumn}} is used outside of binding context.",
 );
 
-#[derive(Default)]
 pub struct State<'a> {
     binding_contexts: AncestorMemo<'a, Span>,
     /// The last statement with several names that declares the symbol.
     declared_in: IdMap<Symbol<'a>, Stmt<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            binding_contexts: AncestorMemo::new(),
+            declared_in: IdMap::init(),
+        }
+    }
 }
 
 /// All that is on the left in the declaration that `pat` is in.
@@ -57,7 +66,7 @@ impl Rule for BlockScopedVar {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

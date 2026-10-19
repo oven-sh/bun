@@ -38,8 +38,14 @@ pub(crate) struct How {
 }
 
 /// Paths of the modules that were loaded while evaluating the config files.
-#[derive(Default)]
 pub(crate) struct Modules(Guarded<Vec<Vec<u8>>>);
+
+impl Modules {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(Guarded::init(Vec::new()))
+    }
+}
 
 impl Modules {
     /// The packages those modules belong to.
@@ -55,7 +61,7 @@ pub(crate) fn watching<R>(
     environment: &Environment,
     run: impl FnOnce(&Environment, &Modules) -> R,
 ) -> R {
-    let (modules, run_script) = (Modules::default(), environment.run_script);
+    let (modules, run_script) = (Modules::new(), environment.run_script);
     let watched = |script: &Script| {
         let printed = run_script(script)?;
         modules.0.lock().extend(evaluate::modules_in(&printed));
@@ -86,8 +92,14 @@ pub(crate) fn texts(all: &[Vec<u8>]) -> Json {
 }
 
 /// File counts, grouped by extension.
-#[derive(Default)]
 pub(crate) struct Kinds(Vec<(Vec<u8>, usize)>);
+
+impl Kinds {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(Vec::new())
+    }
+}
 
 impl Kinds {
     pub(crate) fn add(&mut self, path: &[u8]) {
@@ -215,7 +227,6 @@ impl Reason {
 }
 
 /// Every rule that's on for at least one file the run would lint.
-#[derive(Default)]
 struct Rules {
     /// IDs as they appear in reports.
     native: Vec<Vec<u8>>,
@@ -223,6 +234,18 @@ struct Rules {
     not_run: Vec<(Reason, Vec<u8>)>,
     /// At least one rule needs types and gets them.
     has_types: bool,
+}
+
+impl Rules {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            native: Vec::new(),
+            javascript: Vec::new(),
+            not_run: Vec::new(),
+            has_types: false,
+        }
+    }
 }
 
 impl Rules {
@@ -350,10 +373,10 @@ pub(crate) fn lint(
         patterns => patterns,
     };
     let targets = discover::find_files(loader, pool, patterns, false)?;
-    let (mut rules, mut files) = (Rules::default(), 0usize);
-    let (mut by_eslint, mut not_linted) = (Kinds::default(), Kinds::default());
+    let (mut rules, mut files) = (Rules::new(), 0usize);
+    let (mut by_eslint, mut not_linted) = (Kinds::new(), Kinds::new());
     let mut all_loaded: Vec<&Arc<Loaded>> = vec![&own];
-    let mut seen = FxHashSet::default();
+    let mut seen = FxHashSet::with_hasher(bun_sema::util::FxBuild);
     // Some files are skipped only because the `eslint` package isn't installed.
     let mut lacks_eslint = false;
     for target in &targets {

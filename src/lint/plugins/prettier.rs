@@ -56,7 +56,7 @@ fn code_units(bytes: &[u8]) -> (Vec<u16>, Vec<usize>) {
 
 /// `generateDifferences()`: what of `source` is to be replaced with what of `formatted`, in bytes.
 fn differences(source: &[u8], formatted: &[u8]) -> Vec<Hunk> {
-    let mut differ = CharDiff::default();
+    let mut differ = CharDiff::new();
     let is_ascii = |it: &[u8]| strings::first_non_ascii(it).is_none();
     let mut hunks = if is_ascii(source) && is_ascii(formatted) {
         differ.diff_as_fast_diff(source, formatted).to_vec()

@@ -646,7 +646,7 @@ impl Rule for IdLength {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<ByName<bool>> {
-        Some(ByName::default())
+        Some(ByName::new())
     }
 
     #[inline]

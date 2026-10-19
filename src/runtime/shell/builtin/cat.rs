@@ -9,14 +9,20 @@ use crate::shell::io_reader::{ChildPtr as ReaderChildPtr, IOReader, ReaderTag};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
 pub(crate) struct Cat {
     pub(crate) state: CatState,
 }
 
-#[derive(Default)]
+impl Cat {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            state: CatState::Idle,
+        }
+    }
+}
+
 pub(crate) enum CatState {
-    #[default]
     Idle,
     ExecStdin {
         in_done: bool,
@@ -58,7 +64,7 @@ impl Step {
 
 impl Cat {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let mut opts = Opts::default();
+        let mut opts = Opts::new();
         let filepath_start = {
             let args = Builtin::of(interp, cmd).args_slice();
             match parse_flags(&mut opts, args) {
@@ -404,8 +410,15 @@ impl Cat {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct Opts {}
+
+impl Opts {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {}
+    }
+}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {

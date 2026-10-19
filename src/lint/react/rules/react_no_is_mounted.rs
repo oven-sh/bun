@@ -28,7 +28,7 @@ impl Rule for NoIsMounted {
             true => is_jsx(file) && file.mentions("isMounted"),
             false => file.mentions("isMounted") || file.mentions("#isMounted"),
         };
-        is_candidate.then(AncestorMemo::default)
+        is_candidate.then(AncestorMemo::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

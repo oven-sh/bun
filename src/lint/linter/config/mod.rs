@@ -381,8 +381,8 @@ fn stay_as_they_are(settings: &Json, is_legacy: bool) -> bool {
     entries.all(|(at, it)| it.0 != b"__proto__" && (is_legacy || !is_again(at, &it.0)))
 }
 
-impl Default for ConfigObject {
-    fn default() -> Self {
+impl ConfigObject {
+    fn new() -> Self {
         ConfigObject {
             base_path: None,
             files: None,
@@ -433,7 +433,6 @@ pub enum FileConfig {
 
 /// Which elements of the `files` of all objects can match a file, by what its path starts with. Most patterns of `overrides` name
 /// a directory first, and most files are in none of these.
-#[derive(Default)]
 struct Heads {
     /// The elements of which a pattern starts with these names, without magic, each with its object.
     by_head: FxHashMap<Box<[u8]>, SmallVec<[(u32, u32); 2]>>,
@@ -450,6 +449,21 @@ struct Heads {
     /// The patterns in `files` that look at more of the name of a file than its extension. `None`: the objects that are for a
     /// file don't follow from what these say about it, its extension and its directory, or there are more than 64.
     by_name: Option<Vec<Place>>,
+}
+
+impl Heads {
+    #[inline]
+    fn init() -> Self {
+        Self {
+            by_head: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            is_listed: Vec::new(),
+            objects: Vec::new(),
+            by_extension: Vec::new(),
+            without_extension: OfExtension::new(),
+            about_directories: Bits::new(),
+            by_name: None,
+        }
+    }
 }
 
 /// Where a pattern is: in which element of `files` of which object.
@@ -479,18 +493,36 @@ fn has_bit(bits: &Bits, index: usize) -> bool {
 }
 
 /// What is listed for a path: a bit for each element, and one for each object.
-#[derive(Default)]
 struct Listed {
     elements: Bits,
     objects: Bits,
 }
 
+impl Listed {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            elements: Bits::new(),
+            objects: Bits::new(),
+        }
+    }
+}
+
 /// What is known of the files with an extension.
-#[derive(Default)]
 struct OfExtension {
     can_match: Listed,
     /// One of these elements makes ESLint lint what it matches.
     can_be_linted: bool,
+}
+
+impl OfExtension {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            can_match: Listed::new(),
+            can_be_linted: false,
+        }
+    }
 }
 
 /// What a path starts with that all of `patterns` match. One of them that says so is enough.
@@ -504,7 +536,7 @@ fn heads_of(patterns: &[Pattern]) -> Option<Vec<&[u8]>> {
 
 impl Heads {
     fn new<'o>(objects: &'o [ConfigObject]) -> Heads {
-        let mut heads = Heads::default();
+        let mut heads = Heads::init();
         for (index, object) in objects.iter().enumerate() {
             let first = heads.is_listed.len();
             for patterns in object.files.iter().flatten() {
@@ -1137,8 +1169,8 @@ impl Config {
             name_at: directory.len() + usize::from(!directory.ends_with(b"/")),
             relative: seen.before_name.clone().unwrap_or_default(),
             merged: None,
-            said: Said::default(),
-            known: Known::default(),
+            said: core::cell::RefCell::new(smallvec::SmallVec::new()),
+            known: core::cell::RefCell::new(Vec::new()),
             missing_frameworks: Frameworks::empty(),
         }
     }
@@ -1442,7 +1474,7 @@ impl Config {
         let mut settings: Option<Arc<Json>> = None;
         let mut linter = LinterOptions {
             report_unused_disable_directives: Severity::Off,
-            ..LinterOptions::default()
+            ..LinterOptions::new()
         };
         let mut rules: Vec<RuleSetting> = Vec::new();
         let mut config = ResolvedConfig {
@@ -1450,7 +1482,7 @@ impl Config {
             prefers_typescript_rules: self.prefers_typescript_rules,
             has_every_rule: self.has_every_rule,
             understands_oxlint_comments: self.prefers_typescript_rules,
-            ..ResolvedConfig::default()
+            ..ResolvedConfig::new()
         };
         let mut plugins: Vec<&[u8]> = Vec::new();
         // Where the plugins of the file are in `js_locations`, if that is not plain from their names.
@@ -1544,7 +1576,10 @@ impl Config {
             false => config.options_of_other_language = Some(language_options.clone()),
         }
         let language = self.language_of(registry, &config, &plugins);
-        let line_breaks = language.map_or_else(Default::default, |it| it.0.line_breaks());
+        let line_breaks = language.map_or_else(
+            || crate::source::LineBreaks::EcmaScript,
+            |it| it.0.line_breaks(),
+        );
         let dialect = match language {
             Some((language, name)) => match language.configure(name, &language_options) {
                 Ok(configured) => Some(Dialect {

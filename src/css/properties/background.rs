@@ -121,8 +121,8 @@ impl Background {
         }
 
         Ok(Background {
-            image: image.unwrap_or_default(),
-            color: color.unwrap_or_default(),
+            image: image.unwrap_or(Image::None),
+            color: color.unwrap_or_else(CssColor::new),
             position: position.unwrap_or_else(BackgroundPosition::default),
             repeat: repeat.unwrap_or_else(BackgroundRepeat::default),
             size: size.unwrap_or_else(BackgroundSize::default),
@@ -135,12 +135,12 @@ impl Background {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut has_output = false;
 
-        if self.color != CssColor::default() {
+        if self.color != CssColor::new() {
             self.color.to_css(dest)?;
             has_output = true;
         }
 
-        if !self.image.eql(&Image::default()) {
+        if !self.image.eql(&Image::None) {
             if has_output {
                 dest.write_str(" ")?;
             }
@@ -354,7 +354,7 @@ impl BackgroundPosition {
     }
 
     fn default() -> Self {
-        BackgroundPosition::from_position(Position::default())
+        BackgroundPosition::from_position(Position::new())
     }
 
     fn from_position(pos: Position) -> BackgroundPosition {
@@ -524,7 +524,7 @@ impl BackgroundClip {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct BackgroundProperty: u16 {
         const COLOR      = 1 << 0;
         const IMAGE      = 1 << 1;
@@ -579,7 +579,6 @@ impl BackgroundProperty {
     }
 }
 
-#[derive(Default)]
 pub struct BackgroundHandler {
     pub(crate) color: Option<CssColor>,
     pub(crate) images: Option<SmallList<Image, 1>>,
@@ -596,6 +595,27 @@ pub struct BackgroundHandler {
     pub(crate) decls: Vec<Property>,
     pub(crate) flushed_properties: BackgroundProperty,
     pub(crate) has_any: bool,
+}
+
+impl BackgroundHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            color: None,
+            images: None,
+            has_prefix: false,
+            x_positions: None,
+            y_positions: None,
+            repeats: None,
+            sizes: None,
+            attachments: None,
+            origins: None,
+            clips: None,
+            decls: Vec::new(),
+            flushed_properties: BackgroundProperty::empty(),
+            has_any: false,
+        }
+    }
 }
 
 // Struct fields cannot be indexed by string at runtime; the `flushHelper` /
@@ -901,7 +921,7 @@ impl BackgroundHandler {
                         color: if i == (len as usize) - 1 {
                             color.deep_clone(arena)
                         } else {
-                            CssColor::default()
+                            CssColor::new()
                         },
                         image: images.slice()[i].deep_clone(arena),
                         position: BackgroundPosition {

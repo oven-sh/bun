@@ -75,7 +75,7 @@ impl Skip {
     pub(crate) fn new(len: u32) -> Self {
         Skip {
             len,
-            flat: Flat::default(),
+            flat: Flat::new(),
             will_break: false,
         }
     }
@@ -86,7 +86,7 @@ impl Skip {
 ///
 /// A space is pending until a text follows it, and two in a row are one. So the spaces before
 /// the first text and after the last are not part of the width.
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) struct Flat {
     /// The number of columns from the start of the first text to the end of the last. 0 if there
     /// is no text: content with a text that has no width is not measured.
@@ -94,8 +94,25 @@ pub(crate) struct Flat {
     pub(crate) flags: FlatFlags,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+impl Flat {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            width: 0,
+            flags: FlatFlags::new(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) struct FlatFlags(u8);
+
+impl FlatFlags {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl FlatFlags {
     /// The rest is known, and printing the content flat is only a matter of writing its texts.
@@ -427,9 +444,8 @@ impl Tag {
     }
 }
 
-#[derive(Debug, Copy, Default, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum GroupMode {
-    #[default]
     Flat,
     /// The same, but it is [`GroupMode::Expand`] if it is broken in the source. So if it breaks because it does not fit, it is
     /// written to break when the result is formatted again.
@@ -447,7 +463,7 @@ impl GroupMode {
 }
 
 /// The halves of the numbers are apart so that it is aligned to two bytes, and the element is 16 bytes.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct Group {
     /// 0 is none.
     id: [u16; 2],
@@ -460,8 +476,21 @@ pub(crate) struct Group {
 }
 
 impl Group {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self {
+            id: [0; 2],
+            end: [0; 2],
+            width: 0,
+            flags: FlatFlags::new(),
+            mode: GroupMode::Flat,
+        }
+    }
+}
+
+impl Group {
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self::init()
     }
 
     #[must_use]

@@ -413,7 +413,7 @@ pub mod bv2_impl {
 
         /// `EntryPointList` flags.
         #[repr(transparent)]
-        #[derive(Copy, Clone, Default, Eq, PartialEq)]
+        #[derive(Copy, Clone, Eq, PartialEq)]
         pub struct EntryPointFlags(pub u8);
         impl EntryPointFlags {
             pub(crate) const CLIENT: u8 = 1 << 0;
@@ -447,7 +447,6 @@ pub mod bv2_impl {
 
         /// TYPE_ONLY moved down; bundler
         /// reads `.set` (count/keys/values) in `enqueue_entry_points_dev_server`.
-        #[derive(Default)]
         pub struct EntryPointList {
             pub set: bun_collections::StringArrayHashMap<EntryPointFlags>,
         }
@@ -498,7 +497,7 @@ pub mod bv2_impl {
         /// surface so the parser-side projection (ParseTask.rs `run_with_source_code`)
         /// can forward user-configured `serverRegisterServerReference` /
         /// `clientRegisterServerReference` instead of hardcoding defaults.
-        #[derive(Default, Clone)]
+        #[derive(Clone)]
         pub struct ServerComponents {
             pub separate_ssr_graph: bool,
             pub server_runtime_import: Box<[u8]>,
@@ -577,7 +576,7 @@ pub mod bv2_impl {
                         is_symlink: true,
                     },
                     index: bun_ast::Index(crate::Index::BAKE_SERVER_DATA.get()),
-                    ..Default::default()
+                    ..bun_ast::Source::new()
                 }
             });
         pub(crate) static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
@@ -590,7 +589,7 @@ pub mod bv2_impl {
                     is_symlink: true,
                 },
                 index: bun_ast::Index(crate::Index::BAKE_CLIENT_DATA.get()),
-                ..Default::default()
+                ..bun_ast::Source::new()
             });
 
         /// `EntryPointMap`.
@@ -662,7 +661,6 @@ pub mod bv2_impl {
 
             pub type EntryPointHashMap = bun_collections::ArrayHashMap<InputFile, OutputFileIndex>;
 
-            #[derive(Default)]
             pub struct EntryPointMap {
                 pub root: Box<[u8]>,
                 /// `OpaqueFileId` is the insertion index into this map.
@@ -671,6 +669,17 @@ pub mod bv2_impl {
                 /// keys point into (raw ptr+len) — kept here so the allocations
                 /// drop with the map (no `Box::leak`).
                 pub owned_paths: Vec<Box<[u8]>>,
+            }
+
+            impl EntryPointMap {
+                #[inline]
+                pub fn new() -> Self {
+                    Self {
+                        root: Box::new([]),
+                        files: EntryPointHashMap::new(),
+                        owned_paths: Vec::new(),
+                    }
+                }
             }
             impl EntryPointMap {
                 /// Mirrors `getOrPutEntryPoint`. Dupes `abs_path` on first insert
@@ -894,9 +903,17 @@ pub mod bv2_impl {
             /// stores raw bytes.
             /// `bun_runtime`'s `from_js` parses JS values via `BlobOrStringOrBuffer`
             /// in async (owning-copy) mode and inserts the extracted bytes here.
-            #[derive(Default)]
             pub struct FileMap {
                 pub map: bun_collections::StringHashMap<Box<[u8]>>,
+            }
+
+            impl FileMap {
+                #[inline]
+                pub fn new() -> Self {
+                    Self {
+                        map: bun_collections::StringHashMap::init(),
+                    }
+                }
             }
             impl FileMap {
                 /// Keys are stored with forward slashes (`file_map_from_js`).
@@ -1044,16 +1061,16 @@ pub mod bv2_impl {
                     bun_resolver::Result {
                         path_pair: bun_resolver::PathPair {
                             primary: crate::bun_fs::Path::init_with_namespace(key, b"file"),
-                            ..Default::default()
+                            ..bun_resolver::PathPair::new()
                         },
                         module_type: crate::options::ModuleType::Unknown,
-                        ..Default::default()
+                        ..bun_resolver::Result::new()
                     }
                 }
             }
 
             /// Owned snapshot of an import record handed to onResolve plugins.
-            #[derive(Clone, Default)]
+            #[derive(Clone)]
             pub struct MiniImportRecord {
                 pub(crate) kind: ImportKind,
                 pub source_file: Box<[u8]>,
@@ -1067,20 +1084,35 @@ pub mod bv2_impl {
                 pub(crate) loader: Option<Loader>,
             }
 
+            impl MiniImportRecord {
+                #[inline]
+                pub fn new() -> Self {
+                    Self {
+                        kind: ImportKind::Stmt,
+                        source_file: Box::new([]),
+                        namespace: Box::new([]),
+                        specifier: Box::new([]),
+                        importer_source_index: 0,
+                        import_record_index: 0,
+                        range: bun_ast::Range::new(),
+                        original_target: Target::Browser,
+                        loader: None,
+                    }
+                }
+            }
+
             /// Mirrors `JSBundler.Resolve.Value.success` payload.
-            #[derive(Clone, Default)]
+            #[derive(Clone)]
             pub struct ResolveSuccess {
                 pub path: Box<[u8]>,
                 pub namespace: Box<[u8]>,
                 pub external: bool,
             }
             /// Mirrors `JSBundler.Resolve.Value` (`union(enum)`).
-            #[derive(Default)]
             pub enum ResolveValue {
                 Err(bun_ast::Msg),
                 Success(ResolveSuccess),
                 NoMatch,
-                #[default]
                 Pending,
                 Consumed,
             }
@@ -1101,10 +1133,10 @@ pub mod bv2_impl {
                             file: std::borrow::Cow::Owned(file.to_vec()),
                             line: -1,
                             column: -1,
-                            ..Default::default()
+                            ..bun_ast::Location::new()
                         }),
                     },
-                    ..Default::default()
+                    ..bun_ast::Msg::new()
                 }
             }
 
@@ -1118,14 +1150,15 @@ pub mod bv2_impl {
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
                 pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
-            impl Default for Resolve {
-                fn default() -> Self {
+            impl Resolve {
+                pub fn new() -> Self {
                     Self {
-                    bv2: core::ptr::null_mut(),
-                    import_record: MiniImportRecord::default(),
-                    value: ResolveValue::Pending,
-                    task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
-                }
+                        bv2: core::ptr::null_mut(),
+                        import_record: MiniImportRecord::new(),
+                        value: ResolveValue::Pending,
+                        task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::new(
+                        ),
+                    }
                 }
             }
             impl bun_event_loop::Taskable for Resolve {
@@ -1169,13 +1202,14 @@ pub mod bv2_impl {
             impl Resolve {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
                     Self {
-                    // SAFETY: lifetime erased — Resolve is owned by the dispatch
-                    // chain and never outlives `bv2`.
-                    bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
-                    import_record: record,
-                    value: ResolveValue::Pending,
-                    task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
-                }
+                        // SAFETY: lifetime erased — Resolve is owned by the dispatch
+                        // chain and never outlives `bv2`.
+                        bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
+                        import_record: record,
+                        value: ResolveValue::Pending,
+                        task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::new(
+                        ),
+                    }
                 }
                 /// Hands the request over to the plugins' (JS) thread, which answers it exactly once — the
                 /// `onResolve` chain's answer, or "cancelled" once that VM is shutting down — unless the pass
@@ -1227,17 +1261,15 @@ pub mod bv2_impl {
             }
 
             /// Mirrors `JSBundler.Load.Value.success` payload.
-            #[derive(Clone, Default)]
+            #[derive(Clone)]
             pub struct LoadSuccess {
                 pub source_code: Box<[u8]>,
                 pub loader: Loader,
             }
             /// Mirrors `JSBundler.Load.Value` (`union(enum)`).
-            #[derive(Default)]
             pub enum LoadValue {
                 Err(bun_ast::Msg),
                 Success(LoadSuccess),
-                #[default]
                 Pending,
                 NoMatch,
                 Consumed,
@@ -1278,18 +1310,20 @@ pub mod bv2_impl {
                         .loader(&bv2.transpiler.options.loaders)
                         .unwrap_or(Loader::Js);
                     Self {
-                    bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
-                    parse_task: bun_ptr::BackRef::new_mut(parse),
-                    source_index: parse.source_index,
-                    default_loader,
-                    value: LoadValue::Pending,
-                    path: parse.path.text.to_vec().into_boxed_slice(),
-                    namespace: parse.path.namespace.to_vec().into_boxed_slice(),
-                    called_defer: false,
-                    deferred_in: None,
-                    task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
-                    defer_task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
-                }
+                        bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
+                        parse_task: bun_ptr::BackRef::new_mut(parse),
+                        source_index: parse.source_index,
+                        default_loader,
+                        value: LoadValue::Pending,
+                        path: parse.path.text.to_vec().into_boxed_slice(),
+                        namespace: parse.path.namespace.to_vec().into_boxed_slice(),
+                        called_defer: false,
+                        deferred_in: None,
+                        task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::new(
+                        ),
+                        defer_task:
+                            bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::new(),
+                    }
                 }
                 /// Shared access to the heap-allocated `ParseTask` this load wraps.
                 ///
@@ -2709,7 +2743,7 @@ pub mod bv2_impl {
                         let mut tmp_source = bun_ast::Source {
                             path: path_as_static(&path_primary),
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
-                            ..Default::default()
+                            ..bun_ast::Source::new()
                         };
                         let idx = self
                             .enqueue_parse_task(
@@ -2964,7 +2998,7 @@ pub mod bv2_impl {
                 let mut tmp_source = bun_ast::Source {
                     path: path_as_static(&path.dupe_alloc(self.arena()).expect("oom")),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
-                    ..Default::default()
+                    ..bun_ast::Source::new()
                 };
                 let idx = self
                     .enqueue_parse_task(
@@ -3074,11 +3108,11 @@ pub mod bv2_impl {
                     path: path_as_static(&path),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     index: bun_ast::Index(source_index.get()),
-                    ..Default::default()
+                    ..bun_ast::Source::new()
                 },
                 loader,
                 side_effects: result.primary_side_effects_data,
-                ..Default::default()
+                ..crate::Graph::InputFile::new()
             })?;
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(&result, source_index, self);
@@ -3185,11 +3219,11 @@ pub mod bv2_impl {
                     path: path_as_static(&path),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     index: bun_ast::Index(source_index.get()),
-                    ..Default::default()
+                    ..bun_ast::Source::new()
                 },
                 loader,
                 side_effects,
-                ..Default::default()
+                ..crate::Graph::InputFile::new()
             })?;
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(result, source_index, self);
@@ -3266,8 +3300,8 @@ pub mod bv2_impl {
                 },
                 linker: LinkerContext {
                     r#loop: event_loop,
-                    graph: LinkerGraph::default(),
-                    ..Default::default()
+                    graph: LinkerGraph::new(),
+                    ..LinkerContext::new()
                 },
                 bun_watcher: None,
                 plugins: None,
@@ -3285,7 +3319,7 @@ pub mod bv2_impl {
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
                 finalizers: Vec::new(),
-                drain_defer_task: DeferredBatchTask::default(),
+                drain_defer_task: DeferredBatchTask::new(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
@@ -3777,7 +3811,7 @@ pub mod bv2_impl {
                 source: rt.source,
                 loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
-                ..Default::default()
+                ..crate::Graph::InputFile::new()
             })?;
 
             // try this.graph.entry_points.append(arena, Index.runtime);
@@ -3862,21 +3896,21 @@ pub mod bv2_impl {
 
             let id_string = server.new_expr(E::EString {
                 data: b"id".into(),
-                ..Default::default()
+                ..E::EString::new()
             });
             let name_string = server.new_expr(E::EString {
                 data: b"name".into(),
-                ..Default::default()
+                ..E::EString::new()
             });
             let chunks_string = server.new_expr(E::EString {
                 data: b"chunks".into(),
-                ..Default::default()
+                ..E::EString::new()
             });
             let specifier_string = server.new_expr(E::EString {
                 data: b"specifier".into(),
-                ..Default::default()
+                ..E::EString::new()
             });
-            let empty_array = server.new_expr(E::Array::default());
+            let empty_array = server.new_expr(E::Array::new());
 
             for ((r#use, source_id), ssr_index) in scbs
                 .items_use_directive()
@@ -3900,7 +3934,7 @@ pub mod bv2_impl {
                     let keys = named_exports_array[*source_id as usize].keys();
                     // `G::Property: !Clone` — build via iterator instead of `vec![v; n]`.
                     let mut client_manifest_items: Box<[G::Property]> =
-                        (0..keys.len()).map(|_| G::Property::default()).collect();
+                        (0..keys.len()).map(|_| G::Property::new()).collect();
 
                     if !sc.separate_ssr_graph {
                         bun_core::todo_panic!("separate_ssr_graph=false");
@@ -3925,7 +3959,7 @@ pub mod bv2_impl {
                             ),
                         )
                         .into(),
-                        ..Default::default()
+                        ..E::EString::new()
                     });
                     let ssr_path = server.new_expr(E::EString {
                         data: astr(
@@ -3942,7 +3976,7 @@ pub mod bv2_impl {
                             ),
                         )
                         .into(),
-                        ..Default::default()
+                        ..E::EString::new()
                     });
 
                     debug_assert_eq!(keys.len(), client_manifest_items.len());
@@ -3965,36 +3999,36 @@ pub mod bv2_impl {
                         );
                         let export_name = server.new_expr(E::EString {
                             data: astr(export_name_string).into(),
-                            ..Default::default()
+                            ..E::EString::new()
                         });
 
                         // write dependencies on the underlying module, not the proxy
                         server_manifest_props.push(G::Property {
                             key: Some(server.new_expr(E::EString {
                                 data: server_key_string.into(),
-                                ..Default::default()
+                                ..E::EString::new()
                             })),
                             value: Some(server.new_expr(E::Object {
                                 properties: bun_ast::g::PropertyList::from_owned_slice(Box::new([
                                     G::Property {
                                         key: Some(id_string),
                                         value: Some(client_path),
-                                        ..Default::default()
+                                        ..G::Property::new()
                                     },
                                     G::Property {
                                         key: Some(name_string),
                                         value: Some(export_name),
-                                        ..Default::default()
+                                        ..G::Property::new()
                                     },
                                     G::Property {
                                         key: Some(chunks_string),
                                         value: Some(empty_array),
-                                        ..Default::default()
+                                        ..G::Property::new()
                                     },
                                 ])),
-                                ..Default::default()
+                                ..E::Object::new()
                             })),
-                            ..Default::default()
+                            ..G::Property::new()
                         });
                         *client_item = G::Property {
                             key: Some(export_name),
@@ -4003,17 +4037,17 @@ pub mod bv2_impl {
                                     G::Property {
                                         key: Some(name_string),
                                         value: Some(export_name),
-                                        ..Default::default()
+                                        ..G::Property::new()
                                     },
                                     G::Property {
                                         key: Some(specifier_string),
                                         value: Some(ssr_path),
-                                        ..Default::default()
+                                        ..G::Property::new()
                                     },
                                 ])),
-                                ..Default::default()
+                                ..E::Object::new()
                             })),
-                            ..Default::default()
+                            ..G::Property::new()
                         };
                     }
 
@@ -4023,9 +4057,9 @@ pub mod bv2_impl {
                             properties: bun_ast::g::PropertyList::from_owned_slice(
                                 client_manifest_items,
                             ),
-                            ..Default::default()
+                            ..E::Object::new()
                         })),
-                        ..Default::default()
+                        ..G::Property::new()
                     });
                 } else {
                     bun_core::todo_panic!("\"use server\"");
@@ -4036,7 +4070,7 @@ pub mod bv2_impl {
                 server.new_symbol(bun_ast::symbol::Kind::Other, b"serverManifest")?;
             let server_manifest_value = server.new_expr(E::Object {
                 properties: bun_ast::g::PropertyList::move_from_list(server_manifest_props),
-                ..Default::default()
+                ..E::Object::new()
             });
             server.append_stmt(S::Local {
                 kind: bun_ast::s::Kind::KConst,
@@ -4051,13 +4085,13 @@ pub mod bv2_impl {
                     value: Some(server_manifest_value),
                 }])),
                 is_export: true,
-                ..Default::default()
+                ..S::Local::new()
             })?;
             let ssr_manifest_ref =
                 server.new_symbol(bun_ast::symbol::Kind::Other, b"ssrManifest")?;
             let ssr_manifest_value = server.new_expr(E::Object {
                 properties: bun_ast::g::PropertyList::move_from_list(client_manifest_props),
-                ..Default::default()
+                ..E::Object::new()
             });
             server.append_stmt(S::Local {
                 kind: bun_ast::s::Kind::KConst,
@@ -4072,7 +4106,7 @@ pub mod bv2_impl {
                     value: Some(ssr_manifest_value),
                 }])),
                 is_export: true,
-                ..Default::default()
+                ..S::Local::new()
             })?;
 
             let server_ast: JSAst = server.to_bundled_ast(Target::Bun)?;
@@ -4097,10 +4131,10 @@ pub mod bv2_impl {
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
             self.graph.input_files.append(crate::Graph::InputFile {
-                source: core::mem::take(source),
+                source: core::mem::replace(source, bun_ast::Source::new()),
                 loader,
                 side_effects: loader.side_effects(),
-                ..Default::default()
+                ..crate::Graph::InputFile::new()
             })?;
             // `ParseTask::init` takes `bun_ast::Index`; both Index newtypes
             // are `repr(transparent)` u32 so reconstruct via `.get()`.
@@ -4150,10 +4184,10 @@ pub mod bv2_impl {
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
             self.graph.input_files.append(crate::Graph::InputFile {
-                source: core::mem::take(source),
+                source: core::mem::replace(source, bun_ast::Source::new()),
                 loader,
                 side_effects: loader.side_effects(),
-                ..Default::default()
+                ..crate::Graph::InputFile::new()
             })?;
             // `core::mem::take` moved the real `Source` into `graph.input_files`,
             // leaving `*source` as `Default`. Read path/contents back from the
@@ -4203,7 +4237,7 @@ pub mod bv2_impl {
                 package_version: bun_ast::StoreStr::EMPTY,
                 loader: Some(loader),
                 known_target,
-                ..Default::default()
+                ..ParseTask::new()
             });
             // SAFETY: `task` was just arena-allocated above; no other references exist yet.
             unsafe {
@@ -4258,7 +4292,7 @@ pub mod bv2_impl {
                 source: new_source,
                 loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::HasSideEffects,
-                ..Default::default()
+                ..crate::Graph::InputFile::new()
             })?;
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
@@ -4277,7 +4311,7 @@ pub mod bv2_impl {
                 }),
                 source: task_source,
                 // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
-                ..Default::default()
+                ..ServerComponentParseTask::new()
             }));
 
             self.increment_scan_counter();
@@ -4360,7 +4394,7 @@ pub mod bv2_impl {
                 bun_resolve_builtins::HardcodedModule::Alias::has(
                     specifier,
                     Target::Node,
-                    Default::default(),
+                    bun_resolve_builtins::Cfg::new(),
                 ) || specifier.starts_with(b"bun:")
                     || specifier == b"bun"
             };
@@ -4865,7 +4899,7 @@ pub mod bv2_impl {
                                 side: Some(crate::options::Side::Client),
                                 entry_point_index: None,
                                 is_executable: false,
-                                ..Default::default()
+                                ..crate::output_file::Options::new()
                             },
                         ));
                         additional_files[index].push(crate::AdditionalFile::OutputFile(
@@ -5124,7 +5158,7 @@ pub mod bv2_impl {
                             errors: (kind == bun_ast::Kind::Err) as u32,
                             warnings: (kind == bun_ast::Kind::Warn) as u32,
                             msgs: vec![msg],
-                            ..Default::default()
+                            ..bun_ast::Log::empty()
                         };
                         dev.handle_parse_task_failure(
                             crate::Error::Plugin,
@@ -5185,7 +5219,10 @@ pub mod bv2_impl {
                     // SAFETY: `self.0` is the live `&mut Resolve`; the guard drops before that borrow ends.
                     unsafe {
                         let r = &mut *self.0;
-                        drop(core::mem::take(&mut r.import_record));
+                        drop(core::mem::replace(
+                            &mut r.import_record,
+                            crate::bundle_v2::bv2_impl::api::JSBundler::MiniImportRecord::new(),
+                        ));
                         drop(core::mem::replace(
                             &mut r.value,
                             jsc_api::JSBundler::ResolveValue::Consumed,
@@ -5362,11 +5399,11 @@ pub mod bv2_impl {
                                         path: path_as_static(&path),
                                         contents: std::borrow::Cow::Borrowed(&b""[..]),
                                         index: bun_ast::Index(source_index.get()),
-                                        ..Default::default()
+                                        ..bun_ast::Source::new()
                                     },
                                     loader,
                                     side_effects: bun_ast::SideEffects::HasSideEffects,
-                                    ..Default::default()
+                                    ..crate::Graph::InputFile::new()
                                 })
                                 .expect("unreachable");
                             let task_val = ParseTask {
@@ -5396,7 +5433,7 @@ pub mod bv2_impl {
                                 known_target: resolve.import_record.original_target,
                                 is_entry_point: resolve.import_record.kind
                                     == ImportKind::EntryPointBuild,
-                                ..Default::default()
+                                ..ParseTask::new()
                             };
                             // Arena-owned.
                             // SAFETY: arena outlives the bundle pass.
@@ -5477,7 +5514,10 @@ pub mod bv2_impl {
                             {
                                 let entry = this
                                     .resolve_tasks_waiting_for_import_source_index
-                                    .get_or_put(resolve.import_record.importer_source_index)
+                                    .get_or_put(
+                                        resolve.import_record.importer_source_index,
+                                        Vec::new,
+                                    )
                                     .expect("oom");
                                 if !entry.found_existing {
                                     *entry.value_ptr = Vec::new();
@@ -5816,7 +5856,7 @@ pub mod bv2_impl {
             is_executable: false,
             side: None,
             entry_point_index: None,
-            ..Default::default()
+            ..crate::output_file::Options::new()
         }));
         Ok(())
     }
@@ -5995,7 +6035,7 @@ pub mod bv2_impl {
 
                                 let gop = start
                                     .css_entry_points
-                                    .get_or_put(record.source_index)
+                                    .get_or_put(record.source_index, CssEntryPointMeta::new)
                                     .expect("oom");
                                 if target != Target::Browser {
                                     *gop.value_ptr = CssEntryPointMeta {
@@ -6103,7 +6143,9 @@ pub mod bv2_impl {
             // Generate chunks
             let js_part_ranges = self
                 .arena()
-                .alloc_slice_fill_default::<crate::PartRange>(js_reachable_files.len());
+                .alloc_slice_fill_with::<crate::PartRange, _>(js_reachable_files.len(), |_| {
+                    PartRange::new()
+                });
             let parts = self.graph.ast.items_parts();
             debug_assert_eq!(js_reachable_files.len(), js_part_ranges.len());
             for (source_index, part_range) in
@@ -6131,10 +6173,10 @@ pub mod bv2_impl {
                         .collect::<Vec<u32>>()
                         .into_boxed_slice(),
                     parts_in_chunk_in_order: js_part_ranges.to_vec().into_boxed_slice(),
-                    ..Default::default()
+                    ..chunk::JavaScriptChunk::new()
                 }),
                 output_source_map: SourceMap::SourceMapPieces::init(),
-                ..Chunk::default()
+                ..Chunk::new()
             });
 
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
@@ -6154,7 +6196,7 @@ pub mod bv2_impl {
                             .into_boxed_slice(),
                     }),
                     output_source_map: SourceMap::SourceMapPieces::init(),
-                    ..Chunk::default()
+                    ..Chunk::new()
                 });
             }
 
@@ -6167,7 +6209,7 @@ pub mod bv2_impl {
                     ),
                     content: chunk::Content::Html,
                     output_source_map: SourceMap::SourceMapPieces::init(),
-                    ..Chunk::default()
+                    ..Chunk::new()
                 });
             }
             // Arena-owned; the
@@ -6193,7 +6235,10 @@ pub mod bv2_impl {
                     self,
                     &mut DevServerOutput {
                         chunks,
-                        css_file_list: core::mem::take(&mut start.css_entry_points),
+                        css_file_list: core::mem::replace(
+                            &mut start.css_entry_points,
+                            ArrayHashMap::new(),
+                        ),
                         html_files,
                     },
                 )
@@ -6232,7 +6277,7 @@ pub mod bv2_impl {
                     // back, at which point the bundle pass is still alive.
                     // SAFETY: arena outlives the bundle pass.
                     let resolve: &mut jsc_api::JSBundler::Resolve =
-                        self.arena_create(jsc_api::JSBundler::Resolve::default());
+                        self.arena_create(jsc_api::JSBundler::Resolve::new());
                     *resolve = jsc_api::JSBundler::Resolve::init(
                         self,
                         jsc_api::JSBundler::MiniImportRecord {
@@ -6276,14 +6321,14 @@ pub mod bv2_impl {
                     // Arena-owned.
                     // SAFETY: arena outlives the bundle pass.
                     let resolve: &mut jsc_api::JSBundler::Resolve =
-                        self.arena_create(jsc_api::JSBundler::Resolve::default());
+                        self.arena_create(jsc_api::JSBundler::Resolve::new());
                     self.increment_scan_counter();
 
                     *resolve = jsc_api::JSBundler::Resolve::init(
                         self,
                         jsc_api::JSBundler::MiniImportRecord {
                             kind: ImportKind::EntryPointBuild,
-                            source_file: Box::default(), // No importer for entry points
+                            source_file: Box::new([]), // No importer for entry points
                             namespace: (&b"file"[..]).into(),
                             specifier: entry_point.into(),
                             importer_source_index: u32::MAX, // Sentinel value for entry points
@@ -6403,12 +6448,12 @@ pub mod bv2_impl {
             let server_source = bun_ast::Source {
                 path: bake::SERVER_VIRTUAL_SOURCE.path,
                 index: bake::SERVER_VIRTUAL_SOURCE.index,
-                ..Default::default()
+                ..bun_ast::Source::new()
             };
             let client_source = bun_ast::Source {
                 path: bake::CLIENT_VIRTUAL_SOURCE.path,
                 index: bake::CLIENT_VIRTUAL_SOURCE.index,
-                ..Default::default()
+                ..bun_ast::Source::new()
             };
 
             // OOM/capacity: fire-and-forget
@@ -6416,14 +6461,14 @@ pub mod bv2_impl {
                 source: server_source,
                 loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
-                ..Default::default()
+                ..crate::Graph::InputFile::new()
             });
             // OOM/capacity: fire-and-forget
             let _ = self.graph.input_files.append(crate::Graph::InputFile {
                 source: client_source,
                 loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
-                ..Default::default()
+                ..crate::Graph::InputFile::new()
             });
 
             debug_assert!(
@@ -6615,7 +6660,7 @@ pub mod bv2_impl {
             if let Some(only) = only_records {
                 estimated_resolve_queue_count = estimated_resolve_queue_count.min(only.len());
             }
-            let mut resolve_queue = ResolveQueue::default();
+            let mut resolve_queue = ResolveQueue::init();
             resolve_queue.reserve(estimated_resolve_queue_count);
 
             let mut last_error: Option<Error> = None;
@@ -6819,8 +6864,9 @@ pub mod bv2_impl {
                             continue;
                         }
 
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
+                        let resolve_entry = resolve_queue
+                            .get_or_put(path_primary.text, || core::ptr::null_mut())
+                            .expect("oom");
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                             import_record.path =
@@ -7208,7 +7254,9 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
+                let resolve_entry = resolve_queue
+                    .get_or_put(path.text, || core::ptr::null_mut())
+                    .expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     import_record.path =
@@ -7322,7 +7370,7 @@ pub mod bv2_impl {
                         } else {
                             bun_alloc::AstAlloc::vec()
                         },
-                        ..Default::default()
+                        ..crate::Graph::InputFile::new()
                     };
 
                     self.graph.has_any_secondary_paths = self.graph.has_any_secondary_paths
@@ -7411,8 +7459,8 @@ pub mod bv2_impl {
         pub(crate) only_records: Option<&'a [u32]>,
     }
 
-    impl Default for PatchImportRecordsCtx<'_> {
-        fn default() -> Self {
+    impl PatchImportRecordsCtx<'_> {
+        pub fn new() -> Self {
             Self {
                 source_index: Index::INVALID,
                 source_path: b"",
@@ -7501,7 +7549,7 @@ pub mod bv2_impl {
                 path: path_as_static(path),
                 index: bun_ast::Index(self.graph.input_files.len() as u32),
                 contents: std::borrow::Cow::Borrowed(&b""[..]),
-                ..Default::default()
+                ..bun_ast::Source::new()
             });
             let mut js_parser_options = bun_js_parser::ParserOptions::init(
                 self.transpiler_for_target(target).options.jsx.clone(),
@@ -7547,7 +7595,7 @@ pub mod bv2_impl {
                     Expr::init(
                         E::EString {
                             data: unique_key.into(),
-                            ..Default::default()
+                            ..E::EString::new()
                         },
                         bun_ast::Loc::EMPTY,
                     ),
@@ -7561,7 +7609,7 @@ pub mod bv2_impl {
             let fake_input_file = crate::Graph::InputFile {
                 source: empty_html_file_source.clone(),
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
-                ..Default::default()
+                ..crate::Graph::InputFile::new()
             };
 
             let fake_source_index = fake_input_file.source.index;
@@ -7605,8 +7653,10 @@ pub mod bv2_impl {
                 // `InputFile.arena` column dropped in the Rust port;
                 // stash the finalizer regardless so plugin-owned bytes are freed.
                 let _ = loader;
-                this.finalizers
-                    .push(core::mem::take(&mut parse_result.external));
+                this.finalizers.push(core::mem::replace(
+                    &mut parse_result.external,
+                    super::ExternalFreeFunction::NONE,
+                ));
             }
 
             let mut diff: i32 = -1;
@@ -7614,7 +7664,7 @@ pub mod bv2_impl {
             // hoisted to tail position (see end of fn) so a deferred closure doesn't
             // double-borrow `graph`/`this`.
 
-            let mut resolve_queue = ResolveQueue::default();
+            let mut resolve_queue = ResolveQueue::init();
             let mut process_log = true;
 
             if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
@@ -8042,11 +8092,22 @@ pub mod bv2_impl {
 
     pub use bun_core::cheap_prefix_normalizer;
 
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct PartRange {
         pub source_index: Index,
         pub(crate) part_index_begin: u32,
         pub(crate) part_index_end: u32,
+    }
+
+    impl PartRange {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                source_index: Index::INVALID,
+                part_index_begin: 0,
+                part_index_end: 0,
+            }
+        }
     }
 
     #[repr(C, packed)]
@@ -8074,11 +8135,22 @@ pub mod bv2_impl {
     }
     impl Eq for StableRef {}
 
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct ImportTracker {
         pub(crate) source_index: Index,
         pub(crate) name_loc: bun_ast::Loc,
         pub(crate) import_ref: bun_ast::Ref,
+    }
+
+    impl ImportTracker {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                source_index: Index::INVALID,
+                name_loc: bun_ast::Loc::new(),
+                import_ref: bun_ast::Ref::NONE,
+            }
+        }
     }
 
     pub enum CompileResult {
@@ -8130,7 +8202,7 @@ pub mod bv2_impl {
             match self {
                 CompileResult::Javascript { result, .. } => match result {
                     bun_js_printer::PrintResult::Result(r) => r.code,
-                    bun_js_printer::PrintResult::Err(_) => Box::default(),
+                    bun_js_printer::PrintResult::Err(_) => Box::new([]),
                 },
                 CompileResult::Css { result, .. } => result.unwrap_or_default(),
                 CompileResult::Html { code, .. } => code,
@@ -8149,8 +8221,8 @@ pub mod bv2_impl {
         }
     }
 
-    impl Default for CompileResult {
-        fn default() -> Self {
+    impl CompileResult {
+        pub fn new() -> Self {
             CompileResult::Javascript {
                 source_index: 0,
                 result: bun_js_printer::PrintResult::Result(bun_js_printer::PrintResultSuccess {
@@ -8176,9 +8248,17 @@ pub mod bv2_impl {
         }
     }
 
-    #[derive(Default)]
     pub struct ContentHasher {
         pub(crate) hasher: bun_hash::XxHash64Streaming,
+    }
+
+    impl ContentHasher {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                hasher: bun_hash::XxHash64Streaming::init(),
+            }
+        }
     }
     bun_core::declare_scope!(ContentHasher, hidden);
     impl ContentHasher {
@@ -8193,7 +8273,7 @@ pub mod bv2_impl {
             self.hasher.update(bytes);
         }
         pub(crate) fn run(bytes: &[u8]) -> u64 {
-            let mut h = ContentHasher::default();
+            let mut h = ContentHasher::new();
             h.write(bytes);
             h.digest()
         }
@@ -8207,9 +8287,8 @@ pub mod bv2_impl {
     }
 
     #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum WrapKind {
-        #[default]
         None = 0,
         Cjs,
         Esm,
@@ -8292,10 +8371,9 @@ pub mod bv2_impl {
     }
 
     #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum ImportTrackerStatus {
         /// The imported file has no matching export
-        #[default]
         NoMatch,
 
         /// The imported file has a matching export
@@ -8343,11 +8421,11 @@ pub mod bv2_impl {
         pub(crate) default_alias_of: bun_ast::Ref,
     }
 
-    impl Default for ImportTrackerIterator {
-        fn default() -> Self {
+    impl ImportTrackerIterator {
+        pub fn new() -> Self {
             Self {
-                status: ImportTrackerStatus::default(),
-                value: crate::ImportTracker::default(),
+                status: ImportTrackerStatus::NoMatch,
+                value: crate::ImportTracker::new(),
                 import_data: bun_ptr::BackRef::new(&[] as &[crate::ImportData]),
                 default_alias_of: bun_ast::Ref::NONE,
             }
@@ -8361,10 +8439,19 @@ pub mod bv2_impl {
         Some(id)
     }
 
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct CssEntryPointMeta {
         /// When this is true, a stub file is added to the Server's IncrementalGraph
         pub imported_on_server: bool,
+    }
+
+    impl CssEntryPointMeta {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                imported_on_server: false,
+            }
+        }
     }
 
     /// The lifetime of this structure is tied to the bundler's arena

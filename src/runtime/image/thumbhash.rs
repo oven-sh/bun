@@ -76,7 +76,7 @@ pub(crate) fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]
         Channel {
             dc: 1.0,
             scale: 1.0,
-            ..Channel::default()
+            ..Channel::new()
         }
     };
 
@@ -125,8 +125,8 @@ struct Channel {
     n: usize,
 }
 
-impl Default for Channel {
-    fn default() -> Self {
+impl Channel {
+    fn new() -> Self {
         Self {
             dc: 0.0,
             scale: 0.0,
@@ -140,7 +140,7 @@ impl Default for Channel {
 /// "diagonal half" that ThumbHash keeps. Coeffs are normalised to [0,1] by
 /// the per-channel max so 4-bit packing is uniform across channels.
 fn dct(chan: &[f32], w: u32, h: u32, nx: u32, ny: u32) -> Channel {
-    let mut c = Channel::default();
+    let mut c = Channel::new();
     let mut fx = [0.0f32; 100];
     let mut cy: u32 = 0;
     while cy < ny {

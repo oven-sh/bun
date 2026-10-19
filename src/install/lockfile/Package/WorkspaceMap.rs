@@ -25,7 +25,6 @@ pub(crate) struct WorkspaceMap {
 
 type Map = StringArrayHashMap<Entry>;
 
-#[derive(Default)]
 pub struct Entry {
     pub(crate) name: Box<[u8]>,
     pub(crate) version: Option<Box<[u8]>>,
@@ -41,10 +40,24 @@ pub struct Entry {
     pub(crate) is_behind_link: Option<bool>,
 }
 
+impl Entry {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            name: Box::new([]),
+            version: None,
+            name_loc: bun_ast::Loc::new(),
+            hoisting_limits: false,
+            unsupported_hoisting_limits: None,
+            is_behind_link: None,
+        }
+    }
+}
+
 impl WorkspaceMap {
     pub(crate) fn init() -> WorkspaceMap {
         WorkspaceMap {
-            map: Map::default(),
+            map: Map::init(),
             skipped_with_dependencies: Vec::new(),
         }
     }
@@ -118,7 +131,7 @@ impl WorkspaceMap {
                 builder.count(version);
             }
         }
-        let entry = self.map.get_or_put(key)?;
+        let entry = self.map.get_or_put(key, Entry::new)?;
         if !entry.found_existing {
             *entry.key_ptr = Box::<[u8]>::from(key);
         }
@@ -194,7 +207,7 @@ fn process_workspace_name(
             GetJSONOptions {
                 init_reset_store: false,
                 guess_indentation: true,
-                ..Default::default()
+                ..GetJSONOptions::new()
             },
         )
         .unwrap()?;
@@ -395,7 +408,7 @@ impl WorkspaceMap {
         let orig_msgs_len = log.msgs.len();
 
         let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
-        let mut negated = NegatedWorkspaces::default();
+        let mut negated = NegatedWorkspaces::new();
         let mut filepath_buf_os = path::path_buffer_pool::get();
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
         let mut rel_path_buf = path::path_buffer_pool::get();
@@ -686,7 +699,7 @@ impl WorkspaceMap {
         let mut abs_buf = path::path_buffer_pool::get();
         let mut rel_buf = path::path_buffer_pool::get();
         let scratch = Arena::new();
-        let mut negated = NegatedWorkspaces::default();
+        let mut negated = NegatedWorkspaces::new();
         let mut matched = false;
         for i in 0..arr.len() {
             let Some(input_path) = arr.item_str(i, &scratch) else {

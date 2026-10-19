@@ -22,7 +22,7 @@ impl HmrSocket {
             dev: bun_ptr::BackRef::new_mut(dev),
             subscriptions: HmrTopicBits::empty(),
             active_route: None,
-            referenced_source_maps: HashMap::default(),
+            referenced_source_maps: HashMap::init(),
             underlying: None,
             inspector_connection_id: -1,
         })
@@ -197,7 +197,7 @@ impl HmrSocket {
                             dev.testing_batch_events = super::TestingBatchEvents::EnableAfterBundle;
                         } else {
                             dev.testing_batch_events =
-                                super::TestingBatchEvents::Enabled(Default::default());
+                                super::TestingBatchEvents::Enabled(TestingBatch::new());
                             dev.publish(
                                 HmrTopic::TestingWatchSynchronization,
                                 &[MessageId::TestingWatchSynchronization.char(), 0],
@@ -360,7 +360,9 @@ impl HmrSocket {
 
 /// `WebSocketBehavior.Wrap(DevServer, HmrSocket, ssl).apply(.{})`.
 pub(super) fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
-    bun_uws_sys::web_socket::Wrap::<DevServer, HmrSocket, SSL>::apply(&Default::default())
+    bun_uws_sys::web_socket::Wrap::<DevServer, HmrSocket, SSL>::apply(
+        &bun_uws_sys::WebSocketBehavior::new(),
+    )
 }
 
 // `WebSocketBehavior.Wrap(ServerType, Type, ssl)` requires `Type` (= `HmrSocket`)

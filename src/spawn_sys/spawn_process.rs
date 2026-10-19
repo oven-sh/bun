@@ -51,13 +51,20 @@ pub type PidFdType = FdT;
 // via libuv).
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct WinTimeval {
     pub(crate) sec: i64,
     pub(crate) usec: i64,
 }
 
-#[derive(Default, Clone, Copy)]
+impl WinTimeval {
+    #[inline]
+    pub fn new() -> Self {
+        Self { sec: 0, usec: 0 }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct WinRusage {
     pub(crate) utime: WinTimeval,
     pub(crate) stime: WinTimeval,
@@ -66,6 +73,19 @@ pub struct WinRusage {
     pub(crate) inblock: u64,
     pub(crate) oublock: u64,
     // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: always zero — omitted
+}
+
+impl WinRusage {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            utime: WinTimeval::new(),
+            stime: WinTimeval::new(),
+            maxrss: 0,
+            inblock: 0,
+            oublock: 0,
+        }
+    }
 }
 
 pub type IoCounters = bun_windows_sys::IO_COUNTERS;
@@ -82,7 +102,7 @@ unsafe extern "system" {
 #[cfg(windows)]
 pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     use core::ffi::c_void;
-    let mut usage_info = Rusage::default();
+    let mut usage_info = Rusage::new();
     let process_pid: *mut c_void = process.process_handle;
     type WinTime = bun_sys::windows::FILETIME;
     // SAFETY: all-zero is a valid FILETIME (POD C struct)
@@ -124,7 +144,7 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
             usage_info.utime.usec = ((temp % 10_000_000) / 10) as i64;
         }
     }
-    let mut counters = IoCounters::default();
+    let mut counters = IoCounters::new();
     // SAFETY: FFI call with valid out-pointer
     let _ = unsafe { GetProcessIoCounters(process_pid, &mut counters) };
     usage_info.inblock = counters.ReadOperationCount;
@@ -349,15 +369,15 @@ pub struct PosixSpawnOptions {
     pub cgroup_fd: Option<Fd>,
 }
 
-impl Default for PosixSpawnOptions {
-    fn default() -> Self {
+impl PosixSpawnOptions {
+    pub fn new() -> Self {
         Self {
             stdin: PosixStdio::Inherit,
             stdout: PosixStdio::Inherit,
             stderr: PosixStdio::Inherit,
             ipc: None,
-            extra_fds: Box::default(),
-            cwd: Box::default(),
+            extra_fds: Box::new([]),
+            cwd: Box::new([]),
             detached: false,
             uid: None,
             gid: None,
@@ -448,7 +468,6 @@ impl PosixStdio {
     }
 }
 
-#[derive(Default)]
 pub struct PosixSpawnResult {
     pub pid: PidT,
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -462,6 +481,25 @@ pub struct PosixSpawnResult {
     pub memfds: [bool; 3],
     // ESRCH can happen when requesting the pidfd
     pub has_exited: bool,
+}
+
+impl PosixSpawnResult {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            pid: 0,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            pidfd: None,
+            stdin: None,
+            stdout: None,
+            stderr: None,
+            #[cfg(not(windows))]
+            ipc: None,
+            extra_pipes: Vec::new(),
+            memfds: [false; 3],
+            has_exited: false,
+        }
+    }
 }
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
@@ -707,7 +745,7 @@ pub unsafe fn spawn_process_posix(
     if !options.cwd.is_empty() {
         actions.chdir(&options.cwd)?;
     }
-    let mut spawned = PosixSpawnResult::default();
+    let mut spawned = PosixSpawnResult::new();
     let mut extra_fds: Vec<ExtraPipe> = Vec::new();
     // Cleanup is owned by an RAII guard so every `?`
     // (and every explicit `return Ok(Err(..))`) runs it. See PosixSpawnFdGuard.

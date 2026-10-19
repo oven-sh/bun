@@ -90,21 +90,21 @@ mod _impl {
 
             let stream = Context {
                 mode: c::NodeMode::from_int(mode_int as u8),
-                ..Default::default()
+                ..Context::new()
             };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 global_this: bun_ptr::BackRef::new(global),
                 ticket: Cell::new(None),
                 stream: JsCell::new(stream),
-                poll_ref: JsCell::new(CountedKeepAlive::default()),
+                poll_ref: JsCell::new(CountedKeepAlive::new()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pinned_buffers: Cell::new(0),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 task: JsCell::new(WorkPoolTask {
-                    node: Default::default(),
+                    node: bun_threading::thread_pool::Node::new(),
                     callback: noop_task_callback,
                 }),
             }))
@@ -196,7 +196,7 @@ mod _impl {
                         bun_jsc::RangeErrorOptions {
                             field_name: b"dictionary.byteLength",
                             max: i64::from(u32::MAX),
-                            ..Default::default()
+                            ..bun_jsc::RangeErrorOptions::new()
                         },
                     ));
                 }
@@ -281,8 +281,8 @@ pub(crate) struct Context {
     pub(crate) gzip_id_bytes_read: u8,
 }
 
-impl Default for Context {
-    fn default() -> Self {
+impl Context {
+    pub(crate) fn new() -> Self {
         Self {
             mode: c::NodeMode::NONE,
             state: bun_core::ffi::zeroed::<c::z_stream>(),

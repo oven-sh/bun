@@ -81,14 +81,14 @@ pub(crate) type Backend = WindowsBackend;
 #[cfg(not(windows))]
 pub(crate) type Backend = PosixBackend;
 
-impl<Owner> Default for Channel<Owner> {
-    fn default() -> Self {
+impl<Owner> Channel<Owner> {
+    pub(crate) fn new() -> Self {
         Self {
             r#in: JsCell::new(Vec::new()),
             out: JsCell::new(Vec::new()),
             done: Cell::new(false),
             corrupt_frame: Cell::new(false),
-            backend: Backend::default(),
+            backend: Backend::new(),
             root: Cell::new(core::ptr::null_mut()),
             _owner: PhantomData,
         }
@@ -121,8 +121,8 @@ pub(crate) struct PosixBackend {
 }
 
 #[cfg(not(windows))]
-impl Default for PosixBackend {
-    fn default() -> Self {
+impl PosixBackend {
+    pub(crate) fn new() -> Self {
         Self {
             socket: Cell::new(Socket::DETACHED),
             out_head: Cell::new(0),
@@ -175,8 +175,8 @@ pub(crate) struct WindowsBackend {
 }
 
 #[cfg(windows)]
-impl Default for WindowsBackend {
-    fn default() -> Self {
+impl WindowsBackend {
+    pub(crate) fn new() -> Self {
         Self {
             pipe: Cell::new(core::ptr::null_mut()),
             read_chunk: JsCell::new([0u8; 16 * 1024]),

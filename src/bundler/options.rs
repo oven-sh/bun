@@ -47,7 +47,7 @@ pub(crate) fn validate_path(
     path_kind: &[u8],
 ) -> Box<[u8]> {
     if rel_path.is_empty() {
-        return Box::default();
+        return Box::new([]);
     }
     // TODO: switch to getFdPath()-based implementation
     // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
@@ -64,7 +64,7 @@ pub(crate) fn validate_path(
                 bstr::BStr::new(rel_path),
             ),
         );
-        return Box::default();
+        return Box::new([]);
     }
     Box::from(out)
 }
@@ -88,7 +88,7 @@ pub use bun_resolver::options::{ExternalModules, WildcardPattern};
 /// method) because `ExternalModules` is now a foreign type and Rust forbids
 /// inherent impls across crates (E0116).
 pub(crate) fn is_node_builtin(str: &[u8]) -> bool {
-    bun_resolve_builtins::Alias::has(str, bun_ast::Target::Node, Default::default())
+    bun_resolve_builtins::Alias::has(str, bun_ast::Target::Node, bun_resolve_builtins::Cfg::new())
 }
 
 const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
@@ -118,8 +118,8 @@ pub(crate) fn init_external_modules(
     target: Target,
 ) -> ExternalModules {
     let mut result = ExternalModules {
-        node_modules: StringSet::default(),
-        abs_paths: StringSet::default(),
+        node_modules: StringSet::empty(),
+        abs_paths: StringSet::empty(),
         patterns: default_wildcard_patterns(),
     };
 
@@ -297,7 +297,7 @@ impl TargetExt for Target {
     }
 
     fn out_extensions(self) -> StringHashMap<&'static [u8]> {
-        let mut exts = StringHashMap::<&'static [u8]>::default();
+        let mut exts = StringHashMap::<&'static [u8]>::init();
 
         const OUT_EXTENSIONS_LIST: &[&[u8]] = &[
             b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
@@ -536,7 +536,7 @@ pub fn get_loader_and_virtual_source<'a>(
                 *virtual_source_to_use = Some(bun_ast::Source {
                     path: bun_paths::fs::Path::init(static_text),
                     contents: Cow::Borrowed(jsc_vm.blob_shared_view(blob)),
-                    ..Default::default()
+                    ..bun_ast::Source::new()
                 });
                 virtual_source = virtual_source_to_use.as_ref();
             }
@@ -728,11 +728,11 @@ impl ESMConditions {
         allow_addons: bool,
         conditions: &[&[u8]],
     ) -> Result<ESMConditions, bun_alloc::AllocError> {
-        let mut default_condition_amp = ConditionsMap::default();
+        let mut default_condition_amp = ConditionsMap::init();
 
-        let mut import_condition_map = ConditionsMap::default();
-        let mut require_condition_map = ConditionsMap::default();
-        let mut style_condition_map = ConditionsMap::default();
+        let mut import_condition_map = ConditionsMap::init();
+        let mut require_condition_map = ConditionsMap::init();
+        let mut style_condition_map = ConditionsMap::init();
 
         let addon_extra = if allow_addons { 1 } else { 0 };
         default_condition_amp.reserve(defaults.len() + 2 + addon_extra + conditions.len());
@@ -835,13 +835,13 @@ pub(crate) fn defines_from_transform_options(
         None => (&[], &[]),
     };
 
-    let mut user_defines: defines::RawDefines = defines::RawDefines::default();
+    let mut user_defines: defines::RawDefines = defines::RawDefines::init();
     user_defines.reserve(input_keys.len() + 4);
     for (i, key) in input_keys.iter().enumerate() {
         user_defines.insert(key.as_ref(), input_values[i].clone());
     }
 
-    let mut environment_defines = defines::UserDefinesArray::default();
+    let mut environment_defines = defines::UserDefinesArray::init();
 
     let mut behavior = api::DotEnvBehavior::disable;
 
@@ -922,8 +922,8 @@ pub(crate) fn defines_from_transform_options(
                 defines::DefineData::init(defines::DefineDataInit {
                     valueless: true,
                     original_name: Some(b"window".as_slice()),
-                    value: defines::DefineValue::EUndefined(Default::default()),
-                    ..Default::default()
+                    value: defines::DefineValue::EUndefined(bun_ast::e::Undefined),
+                    ..defines::DefineDataInit::new()
                 }),
             )?;
         }
@@ -977,8 +977,8 @@ pub struct ResolveFileExtensions {
     pub(crate) default: ResolveFileExtensionsGroup,
 }
 
-impl Default for ResolveFileExtensions {
-    fn default() -> Self {
+impl ResolveFileExtensions {
+    pub fn new() -> Self {
         ResolveFileExtensions {
             node_modules: ResolveFileExtensionsGroup {
                 esm: owned_string_list(
@@ -986,7 +986,7 @@ impl Default for ResolveFileExtensions {
                 ),
                 default: owned_string_list(bundle_options_defaults::node_modules::EXTENSION_ORDER),
             },
-            default: ResolveFileExtensionsGroup::default(),
+            default: ResolveFileExtensionsGroup::new(),
         }
     }
 }
@@ -1006,8 +1006,8 @@ pub struct ResolveFileExtensionsGroup {
     pub(crate) default: Box<[Box<[u8]>]>,
 }
 
-impl Default for ResolveFileExtensionsGroup {
-    fn default() -> Self {
+impl ResolveFileExtensionsGroup {
+    pub fn new() -> Self {
         ResolveFileExtensionsGroup {
             esm: owned_string_list(bundle_options_defaults::MODULE_EXTENSION_ORDER),
             default: owned_string_list(bundle_options_defaults::EXTENSION_ORDER),
@@ -1021,7 +1021,7 @@ pub fn loaders_from_transform_options(
 ) -> Result<StringArrayHashMap<Loader>, bun_alloc::AllocError> {
     // Borrow the caller's `LoaderMap` (a `Vec<u8>` + `Vec<Box<[u8]>>`); this fn
     // only reads from it, so there's no need to clone it on every call.
-    let empty = api::LoaderMap::default();
+    let empty = api::LoaderMap::new();
     let input_loaders = loaders.unwrap_or(&empty);
     let mut loader_values: Vec<Loader> = Vec::with_capacity(input_loaders.loaders.len());
 
@@ -1042,7 +1042,7 @@ pub fn loaders_from_transform_options(
         }
         + DEFAULT_LOADER_EXT.len();
 
-    let mut loaders = StringArrayHashMap::<Loader>::default();
+    let mut loaders = StringArrayHashMap::<Loader>::init();
     loaders.reserve(u32::try_from(total_capacity).expect("int cast") as usize);
     for (i, ext) in input_loaders.extensions.iter().enumerate() {
         loaders.insert(ext, loader_values[i]);
@@ -1076,9 +1076,8 @@ pub fn loaders_from_transform_options(
     Ok(loaders)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceMapOption {
-    #[default]
     None,
     Inline,
     External,
@@ -1123,18 +1122,16 @@ bun_core::comptime_string_map! {
 /// sources differ per platform, so for another platform they are read out of that bun executable's builtins section
 /// (`bun_exe_format::builtins`); `None` is a target executable without one (an older bun), which then gets no builtin
 /// bytecode.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub enum CompileTargetBuiltins {
-    #[default]
     Host,
     Target(std::sync::Arc<[u8]>),
     None,
 }
 
 /// What `--compile` resolved to for this bundle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompileMode {
-    #[default]
     None,
     Executable,
     StandaloneHtml,
@@ -1416,7 +1413,7 @@ pub use bun_options_types::ForceNodeEnv;
 /// so the outer `StringArrayHashMap::<V: Clone>::clone()` bound is unmet —
 /// rebuild entrywise instead.
 fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
-    let mut out = MacroRemap::default();
+    let mut out = MacroRemap::init();
     for (k, v) in src.iter() {
         bun_core::handle_oom(out.put(k, bun_core::handle_oom(v.clone())));
     }
@@ -1723,15 +1720,15 @@ impl<'a> BundleOptions<'a> {
             log,
             // `define` is filled by `load_defines` later;
             // initialize empty so the struct is well-formed before `load_defines` runs.
-            define: Box::new(defines::Define::default()),
+            define: Box::new(defines::Define::new()),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,
             write: transform.write.unwrap_or(false),
-            external: ExternalModules::default(), // filled below
+            external: ExternalModules::new(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),
-            out_extensions: StringHashMap::default(), // filled below
-            env: Env::default(),
+            out_extensions: StringHashMap::init(), // filled below
+            env: Env::new(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
             min_chunk_size: None,
@@ -1742,7 +1739,7 @@ impl<'a> BundleOptions<'a> {
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
-            jsx: jsx::Pragma::default(),
+            jsx: jsx::Pragma::new(),
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: true,
@@ -1756,9 +1753,9 @@ impl<'a> BundleOptions<'a> {
             react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
             react_compiler_parse_test_pragmas: false,
             inject: None,
-            origin: bun_url::OwnedURL::from_href(Box::default()),
+            origin: bun_url::OwnedURL::from_href(Box::new([])),
             output_dir_handle: None,
-            root_dir: Box::default(),
+            root_dir: Box::new([]),
             preserve_symlinks: false,
             preserve_extensions: false,
             production: false,
@@ -1766,13 +1763,13 @@ impl<'a> BundleOptions<'a> {
             tsconfig_override: None,
             main_fields: owned_string_list(Target::default_main_fields_map()[Target::Browser]),
             allow_unresolved: AllowUnresolved::All,
-            entry_naming: Box::default(),
-            asset_naming: Box::default(),
-            chunk_naming: Box::default(),
-            public_path: Box::default(),
-            extension_order: ResolveFileExtensions::default(),
+            entry_naming: Box::new([]),
+            asset_naming: Box::new([]),
+            chunk_naming: Box::new([]),
+            public_path: Box::new([]),
+            extension_order: ResolveFileExtensions::new(),
             main_field_extension_order: bundle_options_defaults::MAIN_FIELD_EXTENSION_ORDER,
-            extra_cjs_extensions: Box::default(),
+            extra_cjs_extensions: Box::new([]),
             import_path_format: ImportPathFormat::Relative,
             defines_loaded: false,
             polyfill_node_globals: false,
@@ -1780,13 +1777,13 @@ impl<'a> BundleOptions<'a> {
             load_tsconfig_json: true,
             load_package_json: true,
             rewrite_jest_for_tests: false,
-            macro_remap: MacroRemap::default(),
+            macro_remap: MacroRemap::init(),
             no_macros: false,
             conditions: ESMConditions {
-                default: Default::default(),
-                import: Default::default(),
-                require: Default::default(),
-                style: Default::default(),
+                default: StringArrayHashMap::init(),
+                import: StringArrayHashMap::init(),
+                require: StringArrayHashMap::init(),
+                style: StringArrayHashMap::init(),
             }, // filled below
             tree_shaking: false,
             tree_shaking_override: None,
@@ -1817,14 +1814,14 @@ impl<'a> BundleOptions<'a> {
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,
-            compile_entry_point_name: Box::default(),
+            compile_entry_point_name: Box::new([]),
             metafile: false,
-            metafile_json_path: Box::default(),
-            metafile_markdown_path: Box::default(),
+            metafile_json_path: Box::new([]),
+            metafile_markdown_path: Box::new([]),
             dev_server: core::ptr::null(),
             framework: None,
             serve_plugins: None,
-            bunfig_path: Box::default(),
+            bunfig_path: Box::new([]),
             unwrap_commonjs_packages: Self::DEFAULT_UNWRAP_COMMONJS_PACKAGES,
             supports_multiple_outputs: true,
             force_node_env: ForceNodeEnv::Unspecified,
@@ -2071,11 +2068,21 @@ pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
 
 pub use crate::output_file::OutputFile;
 
-#[derive(Default)]
 pub struct TransformResult {
     pub errors: Box<[bun_ast::Msg]>,
     pub output_files: Box<[OutputFile]>,
     pub(crate) outbase: Box<[u8]>,
+}
+
+impl TransformResult {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            errors: Box::new([]),
+            output_files: Box::new([]),
+            outbase: Box::new([]),
+        }
+    }
 }
 
 impl TransformResult {
@@ -2110,21 +2117,31 @@ pub struct Env {
     pub disable_default_env_files: bool,
 }
 
-impl Default for Env {
-    fn default() -> Self {
+impl Env {
+    pub fn new() -> Self {
         Env {
             behavior: api::DotEnvBehavior::disable,
-            prefix: Box::default(),
-            files: Box::default(),
+            prefix: Box::new([]),
+            files: Box::new([]),
             disable_default_env_files: false,
         }
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PathTemplate {
     pub data: Box<[u8]>,
     pub(crate) placeholder: Placeholder,
+}
+
+impl PathTemplate {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            data: Box::new([]),
+            placeholder: Placeholder::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -2495,13 +2512,26 @@ impl PathTemplate {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Placeholder {
     pub(crate) dir: Box<[u8]>,
     pub(crate) name: Box<[u8]>,
     pub(crate) ext: Box<[u8]>,
     pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) target: Box<[u8]>,
+}
+
+impl Placeholder {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            dir: Box::new([]),
+            name: Box::new([]),
+            ext: Box::new([]),
+            hash: None,
+            target: Box::new([]),
+        }
+    }
 }
 
 // hoisted from `impl Placeholder` — Rust forbids `static` in inherent impls.

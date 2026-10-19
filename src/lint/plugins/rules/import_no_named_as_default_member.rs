@@ -62,7 +62,7 @@ impl Rule for NoNamedAsDefaultMember {
         let file = cx.file();
         let Some(maps) = &cx.state.maps else {
             // Once, if a name is declared several times.
-            let mut seen = FxHashSet::default();
+            let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
             for entry in import_entries(file).filter(|it| seen.insert(it.local_name().name())) {
                 let ImportImportName::Default(local) = entry.import_name else {
                     continue;
@@ -118,7 +118,7 @@ fn file_imports<'a>(maps: &ExportMaps<'a>, cx: &Cx<'a, NoNamedAsDefaultMember>) 
     });
     let mut declarations: SmallVec<[(Import<'a>, Ident<'a>); 8]> = declarations.collect();
     utils::sort::sort_unstable_by_key(&mut declarations, |it| it.1.start());
-    let mut file_imports = FxHashMap::default();
+    let mut file_imports = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for (declaration, local) in declarations {
         let source_path = declaration.spec();
         let Some(export_map) = maps.get(source_path.bytes()) else {

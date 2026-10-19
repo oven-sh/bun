@@ -46,8 +46,8 @@ pub(crate) struct InitFromBytesOptions<'a> {
     pub(crate) headers: Option<&'a FetchHeaders>,
 }
 
-impl<'a> Default for InitFromBytesOptions<'a> {
-    fn default() -> Self {
+impl<'a> InitFromBytesOptions<'a> {
+    pub(crate) fn new() -> Self {
         Self {
             server: None,
             mime_type: None,

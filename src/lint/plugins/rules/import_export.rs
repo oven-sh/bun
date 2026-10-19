@@ -428,10 +428,10 @@ impl Rule for Export {
         let mut exports = Exports {
             cx,
             is_oxlint,
-            places: FxHashMap::default(),
+            places: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             named: Vec::new(),
             maps: maps.as_ref(),
-            visited: FxHashSet::default(),
+            visited: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             all_export_names: Vec::new(),
             order: HashOrder::new(),
         };
@@ -472,7 +472,7 @@ fn walk_exported_recursive<'m>(
     module: Loaded<'m>,
     visited: &mut FxHashSet<ModuleId>,
 ) -> FxHashSet<&'m [u8]> {
-    let mut result = FxHashSet::default();
+    let mut result = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     let mut pending = vec![module];
     while let Some(at) = pending.pop() {
         let is_in_node_modules = strings::split(at.path(), b"/").any(|it| it == b"node_modules");

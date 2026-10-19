@@ -344,7 +344,7 @@ impl Rule for PreferTemplate {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<AncestorMemo<'a, ()>> {
-        Some(AncestorMemo::default())
+        Some(AncestorMemo::new())
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

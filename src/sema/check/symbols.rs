@@ -23,12 +23,22 @@ pub(super) struct WideningContext<'p> {
 }
 
 /// The arguments of `getSymbolFlagsEx`.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(super) struct ExcludedMeanings {
     /// `excludeTypeOnlyMeanings`
     pub(super) type_only: bool,
     /// `excludeLocalMeanings`
     pub(super) local: bool,
+}
+
+impl ExcludedMeanings {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            type_only: false,
+            local: false,
+        }
+    }
 }
 
 /// What `resolveAlias` gives.
@@ -108,11 +118,22 @@ pub struct IterationTypes {
 
 /// `IterationTypes`: the yield type, the return type and the next type. Any of them may be missing.
 /// All missing: the type is not iterable.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(super) struct Iter3 {
     pub y: Option<TypeId>,
     pub r: Option<TypeId>,
     pub n: Option<TypeId>,
+}
+
+impl Iter3 {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            y: None,
+            r: None,
+            n: None,
+        }
+    }
 }
 
 impl Iter3 {
@@ -278,7 +299,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Before the query is entered: `lateBindMember` resolves the names of the other members,
         // which may re-enter this query.
         let mut flags = self.files().flags(sym);
-        let (mut members, mut declarations) = (SmallVec::new(), List::default());
+        let (mut members, mut declarations) = (SmallVec::new(), List::new());
         if flags.intersects(SymFlags::CLASS_MEMBER) {
             (flags, value_declaration, declarations) = self.merged_symbol_of_property(sym);
             members = members_among(&declarations);
@@ -1198,7 +1219,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getSymbolFlags`
     pub(super) fn get_symbol_flags(&mut self, sym: Sym) -> SymFlags {
         let kept = self.files().symbol_flags(sym);
-        self.symbol_flags_by_types(sym, kept, ExcludedMeanings::default())
+        self.symbol_flags_by_types(sym, kept, ExcludedMeanings::new())
     }
 
     /// `getSymbolFlagsEx`
@@ -2164,8 +2185,8 @@ impl<'p, 's> Checker<'p, 's> {
             property_name,
             siblings,
             resolved_properties: None,
-            child_contexts: FxHashMap::default(),
-            widened_types: FxHashMap::default(),
+            child_contexts: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            widened_types: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         });
         self.widening_contexts.len() - 1
     }
@@ -2419,7 +2440,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Rc::clone(resolved);
         }
         let mut names: Vec<&'p Prop<'p>> = Vec::new();
-        let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
+        let mut places: FxHashMap<Atom, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for &t in self.get_siblings_of_context(context).iter() {
             if !self.is_closed_object_literal_type(t)
                 && !matches!(self.data(t), TypeData::Synth(shape) if shape.literal == Literalness::Partial)
@@ -2646,11 +2667,20 @@ impl<'p, 's> Checker<'p, 's> {
             // `checkDeclarationInitializer` finds no `links.resolvedType`: `checkExpressionCached`
             // checks the initializer again, with an empty `flowLoopStack` and `flowTypeCache`.
             let loops = std::mem::take(&mut self.flow_loops);
-            let cache = std::mem::take(&mut self.flow_type_cache);
+            let cache = std::mem::replace(
+                &mut self.flow_type_cache,
+                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            );
             let depth = std::mem::replace(&mut self.flow_type_cache_depth, self.stack.len());
             let found_outside = (
-                std::mem::take(&mut self.rechecked_exprs),
-                std::mem::take(&mut self.rechecked_members),
+                std::mem::replace(
+                    &mut self.rechecked_exprs,
+                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                ),
+                std::mem::replace(
+                    &mut self.rechecked_members,
+                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                ),
             );
             let mode = std::mem::replace(&mut self.mode_of_recheck, CheckMode::empty());
             let outer = self.begin_recheck();
@@ -5470,7 +5500,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(declared) if !self.is_any(declared) => {
                 self.generator_return_types(declared, is_async)
             }
-            _ => Iter3::default(),
+            _ => Iter3::new(),
         };
         let yield_expression_type = if value.is_some() {
             self.type_of_expr(file, value)
@@ -5606,7 +5636,7 @@ impl<'p, 's> Checker<'p, 's> {
         is_async: bool,
     ) -> Iter3 {
         if self.is_any(return_type) {
-            Iter3::default()
+            Iter3::new()
         } else {
             self.generator_return_types(return_type, is_async)
         }
@@ -5694,7 +5724,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let types = self.iterable_types_worker(part, usage, None);
                 if !types.has_types() {
                     self.report_type_not_iterable(error_node, ty, asynchronous, for_of, Vec::new());
-                    return Iter3::default();
+                    return Iter3::new();
                 }
                 all.push(types);
             }
@@ -5757,7 +5787,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.report_type_not_iterable(error_node, ty, asynchronous, for_of, diags);
-        Iter3::default()
+        Iter3::new()
     }
 
     /// FOR SPEED: the yield type of `ty`, an array, a tuple or a string-like type, as
@@ -5905,7 +5935,7 @@ impl<'p, 's> Checker<'p, 's> {
         is_async: bool,
     ) -> Iter3 {
         if !matches!(self.data(ty), TypeData::Ref { .. }) {
-            return Iter3::default();
+            return Iter3::new();
         }
         for name in names {
             if let Some(&[y, r, n]) = self.is_global_ref(ty, name, 3) {
@@ -5928,7 +5958,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return self.resolved_iteration_types(y, r, TypeId::UNKNOWN, is_async);
             }
         }
-        Iter3::default()
+        Iter3::new()
     }
 
     /// `getResolvedIterationTypes`: an async iterator awaits its yield type and its return type. A
@@ -6018,7 +6048,7 @@ impl<'p, 's> Checker<'p, 's> {
             known::sym_iterator
         };
         let Some((method, false)) = self.declared_property(ty, name) else {
-            return Iter3::default();
+            return Iter3::new();
         };
         if self.is_any(method) {
             return Iter3::any(method);
@@ -6047,7 +6077,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let output = Some(diagnostic_output);
                 self.check_type_assignable_to_ex(ty, iterable, error_node, None, output);
             }
-            return Iter3::default();
+            return Iter3::new();
         }
         let iterator = self.intersection(&iterators);
         self.iterator_types(iterator, is_async, error_node, Some(diagnostic_output))
@@ -6115,7 +6145,7 @@ impl<'p, 's> Checker<'p, 's> {
         let found = self.declared_property(ty, name);
         // `return` and `throw` may be missing.
         if found.is_none() && !is_next {
-            return Iter3::default();
+            return Iter3::new();
         }
         let mut method = TypeId::NEVER;
         if let Some((declared, is_optional)) = found
@@ -6143,7 +6173,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let diagnostic = self.new_diagnostic(error_node, code, &[Arg::Atom(name)]);
                 self.report_diagnostic(diagnostic, diagnostic_output);
             }
-            return Iter3::default();
+            return Iter3::new();
         }
         // The method of that name declared by the global `Generator` or `Iterator` itself uses
         // their type arguments, which do not include the `undefined` of an optional parameter.
@@ -6258,7 +6288,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return Iter3 {
                 y: Some(value),
-                ..Iter3::default()
+                ..Iter3::new()
             };
         }
         if let Some(name) = self.atoms().lookup(b"IteratorReturnResult")
@@ -6266,13 +6296,13 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return Iter3 {
                 r: Some(value),
-                ..Iter3::default()
+                ..Iter3::new()
             };
         }
         let yielded = self.value_of_iterator_results(ty, TypeId::FALSE);
         let returned = self.value_of_iterator_results(ty, TypeId::TRUE);
         if yielded.is_none() && returned.is_none() {
-            return Iter3::default();
+            return Iter3::new();
         }
         // An iterator that returns no value may omit `value` in its final result.
         Iter3 {

@@ -124,7 +124,7 @@ impl<'p, 's> Checker<'p, 's> {
         match declaration {
             _ if symbol.is_some() => files.decls_of(files.sym(file, symbol)),
             // "A symbol already exists, so don't add this as a declaration."
-            Decl::ThisProperty(_) => List::default(),
+            Decl::ThisProperty(_) => List::new(),
             _ => List::One((file, declaration)),
         }
     }
@@ -158,7 +158,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> (SymFlags, Option<(FileId, Decl)>, List<'p, (FileId, Decl)>) {
         let files = self.files();
         let Some(&(file, first)) = files.decls_of(sym).first() else {
-            return (files.flags(sym), None, List::default());
+            return (files.flags(sym), None, List::new());
         };
         match self.late_bound_symbol(file, first) {
             Some((late, symbol)) => {

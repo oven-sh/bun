@@ -2,7 +2,6 @@ use super::field_description::FieldDescription;
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
 
-#[derive(Default)]
 pub struct RowDescription {
     pub fields: Box<[FieldDescription]>,
 }

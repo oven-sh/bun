@@ -1,10 +1,19 @@
 use crate::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMachineSqlExt as _};
 
 #[repr(C)]
-#[derive(Default)]
 pub struct MySQLContext {
     pub(crate) on_query_resolve_fn: StrongOptional,
     pub(crate) on_query_reject_fn: StrongOptional,
+}
+
+impl MySQLContext {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            on_query_resolve_fn: StrongOptional::new(),
+            on_query_reject_fn: StrongOptional::new(),
+        }
+    }
 }
 
 // The binding object is built in Rust (`mysql.rs` registers this fn through

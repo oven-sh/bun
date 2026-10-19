@@ -22,13 +22,10 @@ pub(crate) struct Async {
     task: *mut crate::shell::dispatch_tasks::ShellAsyncTask,
 }
 
-#[derive(Default, strum::IntoStaticStr)]
+#[derive(strum::IntoStaticStr)]
 pub enum AsyncState {
-    #[default]
     Idle,
-    Exec {
-        child: Option<NodeId>,
-    },
+    Exec { child: Option<NodeId> },
     Done(ExitCode),
 }
 

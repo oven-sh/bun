@@ -2183,12 +2183,22 @@ fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
 ///
 /// This API does nothing on Linux (it has a size of zero). On Windows it
 /// holds a pooled path buffer.
-#[derive(Default)]
 pub struct PosixToWinNormalizer {
     #[cfg(windows)]
     _raw_bytes: crate::path_buffer_pool::Guard,
     #[cfg(not(windows))]
     _raw_bytes: (),
+}
+
+impl PosixToWinNormalizer {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            #[cfg(windows)]
+            #[cfg(not(windows))]
+            _raw_bytes: (),
+        }
+    }
 }
 
 #[cfg(windows)]

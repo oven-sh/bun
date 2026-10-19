@@ -826,7 +826,8 @@ impl<'a> Parser<'a, '_> {
         let is_top_level_script_or_style =
             matches!(name, b"script" | b"style") && self.stack.is_empty();
         // The kind and the name of those that may be there once.
-        let mut unique_names: FxHashSet<(u8, &'a [u8])> = FxHashSet::default();
+        let mut unique_names: FxHashSet<(u8, &'a [u8])> =
+            FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         let mut attributes: Vec<Id> = Vec::new();
         loop {
             let attribute = match is_top_level_script_or_style {
@@ -2253,7 +2254,7 @@ fn is_typescript(text: &[u8]) -> bool {
     let (mut at, mut has_comment_end) = (0, true);
     // A `<script` before this has some of the attributes of one before it, and no `lang=` among those is it.
     let mut checked_until = 0;
-    let mut failed = FxHashSet::default();
+    let mut failed = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     let (mut end_of_tag, mut end_of_name) = (Next::new(text, b">"), Next::new(text, b"=>'\"/"));
     let Some(last_end) = strings::last_index_of_char(text, b'>') else {
         return false;
@@ -2336,7 +2337,7 @@ fn behind_trivia(text: &[u8], mut at: usize) -> usize {
 pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
     let text = strings::trim_js_whitespace_end(text);
     js.start(is_typescript(text));
-    let mut tree = Tree::default();
+    let mut tree = Tree::new();
     // The first, which is what `tree.fragment` says.
     let fragment = tree.add_fragment();
     let mut parser = Parser {

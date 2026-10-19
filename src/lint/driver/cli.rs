@@ -436,7 +436,7 @@ impl Wildcard {
 }
 
 /// One entry of `[[lint.overrides]]`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Override {
     /// Globs matched against the path relative to the working directory. A glob without a slash matches the file name.
     pub files: Vec<Vec<u8>>,
@@ -447,6 +447,21 @@ pub struct Override {
     pub wildcards: Vec<Wildcard>,
     pub globals: Vec<(Vec<u8>, Json)>,
     pub settings: Vec<(Vec<u8>, Json)>,
+}
+
+impl Override {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            files: Vec::new(),
+            excluded: Vec::new(),
+            rules: Vec::new(),
+            places: Vec::new(),
+            wildcards: Vec::new(),
+            globals: Vec::new(),
+            settings: Vec::new(),
+        }
+    }
 }
 
 /// What the command line says. The fields are ESLint's `ParsedCLIOptions`, by their names.
@@ -586,8 +601,8 @@ pub struct Options {
     pub resolve_plugins_relative_to: Option<Vec<u8>>,
 }
 
-impl Default for Options {
-    fn default() -> Options {
+impl Options {
+    pub fn new() -> Options {
         Options {
             patterns: Vec::new(),
             config: None,
@@ -996,7 +1011,7 @@ impl Options {
 
     /// `args`: what follows `lint` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
-        Options::default().with(args)
+        Options::new().with(args)
     }
 
     /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts at

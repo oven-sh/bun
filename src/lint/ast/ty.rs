@@ -235,7 +235,7 @@ impl<'a> TypeNode<'a> {
     /// Without the parentheses around it.
     #[inline]
     pub fn span(self) -> Span {
-        (self.try_raw()).map_or_else(Span::default, |raw| Span::new(raw.pos, raw.end))
+        (self.try_raw()).map_or_else(Span::init, |raw| Span::new(raw.pos, raw.end))
     }
 
     /// With all the parentheses around it. The HIR does not record them: they are found in the
@@ -644,7 +644,7 @@ impl<'a> EntityName<'a> {
     pub fn span(self) -> Span {
         match (self.first(), self.last()) {
             (Some(first), Some(last)) => first.span().to(last.span()),
-            _ => Span::default(),
+            _ => Span::init(),
         }
     }
 }

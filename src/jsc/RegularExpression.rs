@@ -97,7 +97,7 @@ fn __bun_regex_compile(pattern: &BunString) -> Option<core::ptr::NonNull<()>> {
     // JSC themselves, and the defaults are right for them; every other command
     // has already initialized JSC with its own options by the time a matcher
     // first runs (see `bun_install_types::NodeLinker::RegularExpression`).
-    crate::initialize(crate::InitializeOptions::default());
+    crate::initialize(crate::InitializeOptions::new());
     match RegularExpression::init(pattern, Flags::None) {
         Ok(r) => core::ptr::NonNull::new(r.cast()),
         Err(_) => None,
@@ -122,5 +122,5 @@ fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
 #[unsafe(no_mangle)]
 fn __bun_yarr_initialize() {
     // Idempotent. `bun lint` and `bun fmt` reach this before anything else starts JSC, and the defaults are theirs.
-    crate::initialize(crate::InitializeOptions::default());
+    crate::initialize(crate::InitializeOptions::new());
 }

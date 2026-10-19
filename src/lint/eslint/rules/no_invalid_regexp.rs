@@ -76,7 +76,7 @@ impl NoInvalidRegexp {
             return;
         };
         let validate = |mode: regex::Mode| {
-            regex::validate_pattern(pattern.bytes(), mode, regex::Options::default(), &mut regex::Ignore).err()
+            regex::validate_pattern(pattern.bytes(), mode, regex::Options::new(), &mut regex::Ignore).err()
         };
         let mode = |unicode: bool, unicode_sets: bool| regex::Mode { unicode, unicode_sets };
         let error = match flags {
@@ -116,7 +116,7 @@ impl NoInvalidRegexp {
         if args.get(1).is_some() && flags.is_none() {
             return;
         }
-        let mut mode = regex::Mode::default();
+        let mut mode = regex::Mode::new();
         if let Some(flags) = flags {
             let text = strings::trim(strings::trim(flags.text(), b"'"), b"\"");
             let ends = strings::wtf8_codepoints(text).map(|it| it.0).skip(1).chain([text.len()]);
@@ -160,7 +160,7 @@ impl NoInvalidRegexp {
             return;
         };
         let Err(regex::SyntaxError { oxc: Some(found), .. }) =
-            regex::validate_pattern(pattern.text(), mode, regex::Options::default(), &mut regex::Ignore)
+            regex::validate_pattern(pattern.text(), mode, regex::Options::new(), &mut regex::Ignore)
         else {
             return;
         };

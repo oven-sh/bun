@@ -39,7 +39,7 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
     // `'static` storage so the returned `&mut` is valid for any caller-chosen
     // `'a`. Aliasing: each of the three callers borrows for a single
     // statement/block with no nested call to this fn.
-    unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
+    unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(InternalMsgHolder::new) }
 }
 
 pub(crate) fn on_internal_message_child<'a>(

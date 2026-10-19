@@ -768,7 +768,7 @@ impl BinaryExpressionVisitor {
 
         v.left_in = ExprIn {
             assign_target: Op::Code::binary_assign_target(e_.op),
-            ..ExprIn::default()
+            ..ExprIn::new()
         };
 
         None

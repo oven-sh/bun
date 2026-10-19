@@ -315,7 +315,7 @@ fn has_as_many_substitutions(
         &f.storage,
         source,
         printer_options,
-        &mut Default::default(),
+        &mut crate::ir::printer::PrinterBuffers::new(),
         &mut printed,
     )
     .is_ok()

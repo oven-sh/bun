@@ -208,7 +208,7 @@ impl Start {
                         return Ok(Start::Err(SysError {
                             errno: sys::SystemErrno::EINVAL as _,
                             syscall: sys::Tag::write,
-                            ..Default::default()
+                            ..SysError::init()
                         }));
                     }
 
@@ -216,14 +216,14 @@ impl Start {
                         input_path: crate::webcore::PathOrFileDescriptor::Path(
                             path.to_utf8(global_this)?,
                         ),
-                        ..Default::default()
+                        ..FileSinkOptions::new()
                     }));
                 } else if let Some(fd_value) = value.get_truthy(global_this, b"fd")? {
                     if !fd_value.is_any_int() {
                         return Ok(Start::Err(SysError {
                             errno: sys::SystemErrno::EBADF as _,
                             syscall: sys::Tag::write,
-                            ..Default::default()
+                            ..SysError::init()
                         }));
                     }
 
@@ -231,20 +231,20 @@ impl Start {
                     if let Some(fd) = Fd::from_js(fd_value) {
                         return Ok(Start::FileSink(FileSinkOptions {
                             input_path: crate::webcore::PathOrFileDescriptor::Fd(fd),
-                            ..Default::default()
+                            ..FileSinkOptions::new()
                         }));
                     } else {
                         return Ok(Start::Err(SysError {
                             errno: sys::SystemErrno::EBADF as _,
                             syscall: sys::Tag::write,
-                            ..Default::default()
+                            ..SysError::init()
                         }));
                     }
                 }
 
                 return Ok(Start::FileSink(FileSinkOptions {
                     input_path: crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
-                    ..Default::default()
+                    ..FileSinkOptions::new()
                 }));
             }
             StartTag::NetworkSink
@@ -370,8 +370,8 @@ pub struct WritablePending {
     pub(crate) state: PendingState,
 }
 
-impl Default for WritablePending {
-    fn default() -> Self {
+impl WritablePending {
+    pub fn new() -> Self {
         Self {
             future: WritableFuture::None,
             result: Writable::Done,
@@ -510,8 +510,8 @@ pub struct Pending {
     pub(crate) state: PendingState,
 }
 
-impl Default for Pending {
-    fn default() -> Self {
+impl Pending {
+    pub fn new() -> Self {
         Self {
             // A Handler with null ctx is the inert placeholder;
             // always overwritten before the future is invoked.
@@ -544,7 +544,7 @@ impl Pending {
         // SAFETY: VirtualMachine::get() returns the per-thread singleton VM; sole
         // `&`-borrow on this thread, outlives this call.
         let vm = VirtualMachine::get();
-        let clone = Box::new(core::mem::take(self));
+        let clone = Box::new(core::mem::replace(self, Pending::new()));
         // `mem::take` resets `state`/`result`/`future` via `Default`;
         // no reader observes `future` after this.
         // VM event loop is a singleton; temporary `&mut` is the sole borrow
@@ -835,8 +835,14 @@ pub(crate) mod controller_abi {
 }
 
 /// The one GC root a native sink keeps while a stream is piped into it: its controller cell, which holds the stream, the done-promise and the failure value.
-#[derive(Default)]
 pub(crate) struct PipeCell(::bun_jsc::strong::Optional);
+
+impl PipeCell {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(<::bun_jsc::strong::Optional>::new())
+    }
+}
 
 impl PipeCell {
     pub(crate) fn create(
@@ -983,10 +989,9 @@ impl UpstreamSource for crate::api::html_rewriter::RewriterPipe {
 
 /// Tagged handle a sink holds to its upstream source — a closed set of
 /// variants so native source↔sink pairs can pump without a JS round-trip.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub enum SourceHandle {
     /// No source attached.
-    #[default]
     None,
     /// The C++ controller cell of a JS-stream pump (`JSSink::assign_to_stream`).
     JSController(JSValue),
@@ -1212,18 +1217,18 @@ pub struct HTTPServerWritable<const SSL: bool> {
     pub(crate) auto_flusher: AutoFlusher,
 }
 
-impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
-    fn default() -> Self {
+impl<const SSL: bool> HTTPServerWritable<SSL> {
+    pub fn new() -> Self {
         Self {
             res: None,
-            buffer: Vec::<u8>::default(),
+            buffer: Vec::<u8>::new(),
             pooled_buffer: None,
             offset: 0,
             wrote: 0,
             state: HTTPServerWritableState::Writing,
-            source: SourceHandle::default(),
-            pipe: PipeCell::default(),
-            pending: WritablePending::default(),
+            source: SourceHandle::None,
+            pipe: PipeCell::new(),
+            pending: WritablePending::new(),
             wrote_at_start_of_flush: 0,
             global_this: None,
             high_water_mark: 2048,
@@ -1234,7 +1239,7 @@ impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
             ended_response: false,
             on_first_write: None,
             ctx: None,
-            auto_flusher: AutoFlusher::default(),
+            auto_flusher: AutoFlusher::new(),
         }
     }
 }
@@ -2285,15 +2290,15 @@ pub struct NetworkSink {
     pub(crate) writer_holders: core::cell::Cell<u8>,
 }
 
-impl Default for NetworkSink {
-    fn default() -> Self {
+impl NetworkSink {
+    pub fn init() -> Self {
         Self {
             task: None,
-            source: SourceHandle::default(),
+            source: SourceHandle::None,
             global_this: None,
-            flush_promise: JSPromiseStrong::default(),
-            pending: WritablePending::default(),
-            end_promise: JSPromiseStrong::default(),
+            flush_promise: JSPromiseStrong::new(),
+            pending: WritablePending::new(),
+            end_promise: JSPromiseStrong::new(),
             upstream_error: jsc::strong::Optional::empty(),
             ended: false,
             done: false,

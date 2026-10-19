@@ -90,7 +90,12 @@ impl Store {
 
     fn disk(&self) -> &Disk {
         self.disk.get_or_init(|| {
-            Disk::with_already_read(1, FxHashMap::default(), &self.cwd).started_in(&self.cwd)
+            Disk::with_already_read(
+                1,
+                FxHashMap::with_hasher(bun_sema::util::FxBuild),
+                &self.cwd,
+            )
+            .started_in(&self.cwd)
         })
     }
 }
@@ -107,12 +112,23 @@ struct Recorded<'h> {
     found_from_link: Vec<Vec<u8>>,
 }
 
-#[derive(Default)]
 struct Complete {
     ids: FxHashMap<Vec<u8>, ModuleId>,
     paths: Vec<Vec<u8>>,
     imports: Vec<Vec<Import>>,
     components: Vec<u32>,
+}
+
+impl Complete {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            ids: FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            paths: Vec::new(),
+            imports: Vec::new(),
+            components: Vec::new(),
+        }
+    }
 }
 
 /// The extensions that oxlint tries, in its order.
@@ -129,7 +145,6 @@ struct ProjectResolver<'h> {
 }
 
 /// What is found once and asked for often.
-#[derive(Default)]
 struct Known<'h> {
     /// By the path of the `tsconfig.json`. Empty: there is none.
     resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
@@ -152,6 +167,23 @@ struct Known<'h> {
     records: ShardedMap<Vec<u8>, Option<Record>>,
     /// [`Modules::facts`]: by the path and how it is parsed.
     facts: ShardedMap<Vec<u8>, Option<Box<dyn Any + Send + Sync>>>,
+}
+
+impl<'h> Known<'h> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            resolvers: ShardedMap::new(),
+            configs: ShardedMap::new(),
+            scopes: ShardedMap::new(),
+            typescript_configs: ShardedMap::new(),
+            not_relative: ShardedMap::new(),
+            real_paths: ShardedMap::new(),
+            packages: ShardedMap::new(),
+            records: ShardedMap::new(),
+            facts: ShardedMap::new(),
+        }
+    }
 }
 
 pub struct Graph<'h> {
@@ -341,7 +373,7 @@ impl<'h> Graph<'h> {
     }
 
     fn known(&self) -> &Known<'h> {
-        self.known.get_or_init(Box::default)
+        self.known.get_or_init(|| Box::new(Known::new()))
     }
 
     /// The path of a module as it is kept here: in the form of the checker, in which the root of a drive is `/C:`.
@@ -921,7 +953,7 @@ impl<'h> Graph<'h> {
             experimental_decorators: true,
             is_oxlint,
             refuses_what_parser_refuses: !is_oxlint,
-            ..LanguageOptions::default()
+            ..LanguageOptions::new()
         };
         with_file(path, &text, &language, None, |file| {
             // As eslint-plugin-import: nothing is known of a file that cannot be parsed.
@@ -982,7 +1014,7 @@ impl<'h> Graph<'h> {
         if pending.is_empty() {
             return Vec::new();
         }
-        let mut all = Complete::default();
+        let mut all = Complete::new();
         // Which modules are known, and which of them are linted and checked in any case.
         let (mut is_known, mut is_always_checked, mut linted_as) =
             (Vec::new(), Vec::new(), Vec::new());
@@ -992,7 +1024,8 @@ impl<'h> Graph<'h> {
                 let module = all.intern(&record.path);
                 let mut imports: Vec<Import> = Vec::new();
                 // Where each module is in `imports`, as soon as they are more than a few.
-                let mut positions: FxHashMap<ModuleId, usize> = FxHashMap::default();
+                let mut positions: FxHashMap<ModuleId, usize> =
+                    FxHashMap::with_hasher(bun_sema::util::FxBuild);
                 for (target, declaration, kind) in record.requests {
                     let target = all.intern(&target);
                     if imports.len() > 16 && positions.len() < imports.len() {

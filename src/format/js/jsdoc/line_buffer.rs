@@ -3,7 +3,6 @@
 use super::markers::list_marker;
 use bun_core::strings;
 
-#[derive(Default)]
 pub(super) struct LineBuffer {
     buf: Vec<u8>,
     /// At least one line has been pushed.
@@ -11,8 +10,18 @@ pub(super) struct LineBuffer {
 }
 
 impl LineBuffer {
+    #[inline]
+    pub(super) fn init() -> Self {
+        Self {
+            buf: Vec::new(),
+            has_content: false,
+        }
+    }
+}
+
+impl LineBuffer {
     pub(super) fn new() -> Self {
-        Self::default()
+        Self::init()
     }
 
     /// Pushes a line, or several if there are line breaks in it.

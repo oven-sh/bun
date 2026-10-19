@@ -25,7 +25,7 @@ impl Composes {
     pub fn parse(input: &mut Parser) -> css::Result<Composes> {
         let loc = input.position();
         let loc2 = input.current_source_location();
-        let mut names = CustomIdentList::default();
+        let mut names = CustomIdentList::new();
         while let Ok(name) = input.try_parse(Self::parse_one_ident) {
             names.append(name);
         }
@@ -81,7 +81,7 @@ impl Composes {
     pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         // `CustomIdent` is `Copy` (arena-ptr payload), so an element-wise copy
         // into a fresh `SmallList` is the deep clone.
-        let mut names = CustomIdentList::default();
+        let mut names = CustomIdentList::new();
         for name in self.names.slice() {
             names.append(*name);
         }

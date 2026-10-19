@@ -81,8 +81,8 @@ pub(crate) mod fallbacks_gated {
     {
         use css::css_values::color::ColorFallbackKind;
         // Determine what vendor prefixes and color fallbacks are needed.
-        let mut prefixes = css::VendorPrefix::default();
-        let mut fallbacks = ColorFallbackKind::default();
+        let mut prefixes = css::VendorPrefix::empty();
+        let mut fallbacks = ColorFallbackKind::empty();
         let mut res: Vec<SmallList<T, 1>> = Vec::new();
         for item in this.slice() {
             prefixes.insert(item.get_image().get_necessary_prefixes(targets));
@@ -111,7 +111,7 @@ pub(crate) mod fallbacks_gated {
             && css::prefixes::Feature::is_webkit_gradient(&targets.browsers.unwrap())
         {
             let images = 'images: {
-                let mut images = SmallList::<T, 1>::default();
+                let mut images = SmallList::<T, 1>::new();
                 for item in prefix_images.slice() {
                     if let Some(img) = item.get_image().get_legacy_webkit(arena) {
                         images.append(item.with_image(arena, img));
@@ -187,12 +187,12 @@ pub(crate) mod fallbacks_gated {
         arena: &bun_alloc::Arena,
         targets: &css::targets::Targets,
     ) -> SmallList<SmallList<TextShadow, 1>, 2> {
-        let mut fallbacks = css::ColorFallbackKind::default();
+        let mut fallbacks = css::ColorFallbackKind::empty();
         for shadow in this.slice() {
             fallbacks.insert(shadow.color.get_necessary_fallbacks(targets));
         }
 
-        let mut res = SmallList::<SmallList<TextShadow, 1>, 2>::default();
+        let mut res = SmallList::<SmallList<TextShadow, 1>, 2>::new();
         if fallbacks.contains(css::ColorFallbackKind::RGB) {
             let mut rgb = SmallList::<TextShadow, 1>::init_capacity(this.len());
             for shadow in this.slice() {

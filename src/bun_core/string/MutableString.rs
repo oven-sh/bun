@@ -3,9 +3,16 @@ use bun_alloc::AllocError;
 
 /// A growable byte buffer: a thin wrapper over `Vec<u8>` (the global mimalloc
 /// allocator is implicit).
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct MutableString {
     pub list: Vec<u8>,
+}
+
+impl MutableString {
+    #[inline]
+    pub fn new() -> Self {
+        Self { list: Vec::new() }
+    }
 }
 
 // The `bun_collections::pool::ObjectPoolType` impl
@@ -125,7 +132,7 @@ impl MutableString {
         }
 
         let mut iterator = strings::CodepointIterator::init(str);
-        let mut cursor = strings::Cursor::default();
+        let mut cursor = strings::Cursor::new();
 
         let mut has_needed_gap = false;
         let mut needs_gap;
@@ -168,7 +175,7 @@ impl MutableString {
 
             let items = &str[start_i..];
             iterator = strings::CodepointIterator::init(items);
-            cursor = strings::Cursor::default();
+            cursor = strings::Cursor::new();
 
             while iterator.next(&mut cursor) {
                 if js_lexer::is_identifier_continue(cursor.c as u32) {

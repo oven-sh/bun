@@ -89,7 +89,7 @@ pub(crate) fn set_pages(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
 /// object of a plugin, so that `bun bake` reports it as an error of `bake.config.ts`.
 pub(crate) fn check_framework(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [framework] = frame.arguments_as_array::<1>();
-    let mut bundler_options = crate::bake::SplitBundlerOptions::default();
+    let mut bundler_options = crate::bake::SplitBundlerOptions::new();
     let result = crate::bake::Framework::from_js(framework, global, &mut bundler_options);
     bundler_options.destroy_plugin();
     result?;

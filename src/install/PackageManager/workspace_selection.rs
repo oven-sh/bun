@@ -74,8 +74,14 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
 }
 
 /// The `!` entries of a `workspaces` array: one rule for `bun install` and `bun run --filter`.
-#[derive(Default)]
 pub struct NegatedWorkspaces(Vec<Box<[u8]>>);
+
+impl NegatedWorkspaces {
+    #[inline]
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+}
 
 impl NegatedWorkspaces {
     /// Whether `entry` is negated: it is kept, in the shape of a matched directory, and not walked.

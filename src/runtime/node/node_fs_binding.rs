@@ -169,9 +169,17 @@ where
 // codegen shim still emits `this: &mut NodeJSFS` — `&mut T` auto-coerces to
 // `&T` so the impls below compile against either.
 #[bun_jsc::JsClass(name = "NodeJSFS", no_constructor)]
-#[derive(Default)]
 pub(crate) struct Binding {
     pub(crate) node_fs: JsCell<NodeFS>,
+}
+
+impl Binding {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self {
+            node_fs: JsCell::new(NodeFS::new()),
+        }
+    }
 }
 
 impl Binding {
@@ -431,7 +439,7 @@ impl Binding {
 }
 
 pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
-    let module = Binding::new(Binding::default());
+    let module = Binding::new(Binding::init());
 
     let vm = global.bun_vm_ptr();
     // R-2: init-time write before the JS wrapper exists; `with_mut` here is

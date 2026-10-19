@@ -164,14 +164,13 @@ slices! {
 /// and if there are none it is empty.
 struct UnicodeEscapeRange(Cell<(u32, u32)>);
 
-impl Default for UnicodeEscapeRange {
-    fn default() -> Self {
+impl UnicodeEscapeRange {
+    fn new() -> Self {
         UnicodeEscapeRange(Cell::new((0, u32::MAX)))
     }
 }
 
 /// What is computed from a file on demand, once.
-#[derive(Default)]
 pub(crate) struct Lazy {
     pub(crate) lines: OnceCell<crate::source::Lines>,
     pub(crate) tokens: OnceCell<crate::tokens::TokenStore>,
@@ -202,6 +201,34 @@ pub(crate) struct Lazy {
     pub(crate) code_paths: crate::code_path::Store,
     pub(crate) linter: crate::linter::PerFile,
     extensions: [OnceCell<Box<dyn std::any::Any>>; 2],
+}
+
+impl Lazy {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            lines: core::cell::OnceCell::new(),
+            tokens: core::cell::OnceCell::new(),
+            parents: core::cell::OnceCell::new(),
+            jsdoc: core::cell::OnceCell::new(),
+            has_types_that_are_errors: core::cell::OnceCell::new(),
+            oxc_source_type: core::cell::OnceCell::new(),
+            backslashes: core::cell::OnceCell::new(),
+            unicode_escapes: core::cell::OnceCell::new(),
+            unicode_escape_range: UnicodeEscapeRange::new(),
+            parenthesized: core::cell::OnceCell::new(),
+            kind_index_offsets: core::cell::OnceCell::new(),
+            directives: core::cell::Cell::new(None),
+            last_assignment_target: core::cell::Cell::new(None),
+            sequence_roots: core::cell::OnceCell::new(),
+            jsx_tags_with_dots: core::cell::OnceCell::new(),
+            references: crate::semantic::ReferenceIndex::new(),
+            by_kind: crate::runner::ByKind::new(),
+            code_paths: crate::code_path::Store::new(),
+            linter: crate::linter::PerFile::new(),
+            extensions: core::array::from_fn(|_| core::cell::OnceCell::new()),
+        }
+    }
 }
 
 /// The file that is linted or formatted.
@@ -275,9 +302,9 @@ impl<'a> File<'a> {
             bound: Bound::new(bound),
             atoms,
             texts: atoms.own_texts(),
-            lazy: Lazy::default(),
+            lazy: Lazy::new(),
             types,
-            sink: crate::context::Sink::default(),
+            sink: crate::context::Sink::new(),
             modules: std::cell::Cell::new(None),
             formatter: std::cell::Cell::new(None),
             handed_back: std::cell::Cell::new(None),
@@ -309,7 +336,8 @@ impl<'a> File<'a> {
 
     #[inline]
     pub(crate) fn line_breaks(&self) -> crate::source::LineBreaks {
-        self.parsed.map_or_else(Default::default, |it| it.1)
+        self.parsed
+            .map_or_else(|| crate::source::LineBreaks::EcmaScript, |it| it.1)
     }
 
     /// It is a script in a `.vue`, `.svelte` or `.astro` file, and there is a script before it. oxlint lints each as a program of

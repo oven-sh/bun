@@ -176,11 +176,10 @@ impl<const SSL: bool> ActiveSocketExt<SSL> for ActiveSocket<SSL> {
 /// `rejectUnauthorized: false` request may take any), so a verdict from a JS
 /// `checkServerIdentity` callback is never inherited by a request relying on
 /// the native check, or vice versa.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum PeerVerification {
     /// Established with `rejectUnauthorized: false`; neither the chain nor
     /// the hostname was enforced.
-    #[default]
     None,
     /// Chain verified against the CA store; identity approved by a JS
     /// `checkServerIdentity` callback at handshake time (like Node's
@@ -287,7 +286,7 @@ impl<const SSL: bool> PooledSocket<SSL> {
     /// Centralises the intrusive-rc `deref` so each caller doesn't repeat the
     /// pair of `unsafe { …::deref(nn.as_ptr()) }`.
     fn release_parked_refs(&mut self) {
-        self.target_hostname = Box::default();
+        self.target_hostname = Box::new([]);
         self.proxy_tunnel = None;
         self.h2_session = None;
     }
@@ -586,7 +585,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 core::ptr::null()
             },
             request_cert: 1,
-            ..Default::default()
+            ..uws::SocketContext::BunSocketContextOptions::new()
         };
         self.init_with_opts(&opts)
     }
@@ -603,7 +602,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     request_cert: 1,
                     // we manually abort the connection if the hostname doesn't match
                     reject_unauthorized: 0,
-                    ..Default::default()
+                    ..uws::SocketContext::BunSocketContextOptions::new()
                 }
                 .create_ssl_context(&mut err)
                 .unwrap(),
@@ -681,7 +680,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 {
                     Box::<[u8]>::from(target_hostname)
                 } else {
-                    Box::default()
+                    Box::new([])
                 },
                 target_port,
                 proxy_auth_hash,
@@ -944,7 +943,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
                 // Transfer tunnel ownership (the parked strong ref) to the caller.
                 let tunnel: Option<RefPtr<ProxyTunnel>> = socket.proxy_tunnel.take();
-                socket.target_hostname = Box::default();
+                socket.target_hostname = Box::new([]);
                 let h2_session = socket.h2_session.take();
                 let verification = socket.verification;
                 // SAFETY: `socket_ptr` is a fully-initialized hive slot; the
@@ -1216,7 +1215,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     ssl_config: cfg,
                     verification: client.socket_verification(),
                     pool_id: client.pool.id,
-                    ..Default::default()
+                    ..h2::PendingConnect::init()
                 });
                 // `client.pending_h2 = pc` stores a *borrowed* backref into the
                 // Vec-owned allocation so `resolve_pending_h2` can dispatch

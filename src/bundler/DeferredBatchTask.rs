@@ -10,10 +10,18 @@ use crate::BundleV2;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, task_tag};
 
-#[derive(Default)]
 pub struct DeferredBatchTask {
     /// Intrusive node for the trip back to the bundle thread's Mini loop.
     returned: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
+}
+
+impl DeferredBatchTask {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            returned: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::new(),
+        }
+    }
 }
 
 impl bun_event_loop::Taskable for DeferredBatchTask {

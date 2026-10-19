@@ -18,8 +18,8 @@ pub struct Options {
     pub ecma_version: u32,
 }
 
-impl Default for Options {
-    fn default() -> Self {
+impl Options {
+    pub fn new() -> Self {
         Options {
             strict: false,
             ecma_version: 2025,
@@ -37,12 +37,22 @@ impl Options {
 }
 
 /// The flags that change how a pattern is parsed.
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Mode {
     /// The `u` flag.
     pub unicode: bool,
     /// The `v` flag.
     pub unicode_sets: bool,
+}
+
+impl Mode {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            unicode: false,
+            unicode_sets: false,
+        }
+    }
 }
 
 impl Mode {
@@ -383,11 +393,21 @@ struct BackreferenceName {
 const FEW_NAMES: usize = 16;
 
 /// `{ mayContainStrings }`
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct SetResult {
     may_contain_strings: bool,
     /// What oxc says if something follows the contents of a class that are made with `&&` or `--`.
     after_operation: Option<Said>,
+}
+
+impl SetResult {
+    #[inline]
+    fn init() -> Self {
+        Self {
+            may_contain_strings: false,
+            after_operation: None,
+        }
+    }
 }
 
 impl SetResult {
@@ -630,7 +650,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             disjunctions: Vec::new(),
             names: Vec::new(),
             group_names: Vec::new(),
-            last_group_of_name: FxHashMap::default(),
+            last_group_of_name: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             backreference_names: Vec::new(),
         }
     }
@@ -1735,7 +1755,7 @@ impl<'s, 'h> Validator<'s, 'h> {
                 self.last_int_value = -1;
                 self.handler
                     .on_escape_character_set(start - 1, self.pos(), set, negate);
-                return Ok(Some(SetResult::default()));
+                return Ok(Some(SetResult::init()));
             }
         }
 
@@ -1869,7 +1889,7 @@ impl<'s, 'h> Validator<'s, 'h> {
     fn consume_class_contents(&mut self) -> Consumed<SetResult> {
         if self.unicode_sets_mode() {
             if self.is(b']') {
-                return Ok(SetResult::default());
+                return Ok(SetResult::init());
             }
             return self.consume_class_set_expression();
         }
@@ -1913,7 +1933,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             self.handler
                 .on_character_class_range(range_start, self.pos(), min as u32, max as u32);
         }
-        Ok(SetResult::default())
+        Ok(SetResult::init())
     }
 
     fn consume_class_atom(&mut self) -> Consumed {
@@ -1984,8 +2004,8 @@ impl<'s, 'h> Validator<'s, 'h> {
         let mut may_contain_strings;
         if self.consume_class_set_character()? {
             if self.consume_class_set_range_from_operator(start)? {
-                self.consume_class_union_right(SetResult::default())?;
-                return Ok(SetResult::default());
+                self.consume_class_union_right(SetResult::init())?;
+                return Ok(SetResult::init());
             }
             may_contain_strings = false;
         } else if let Some(result) = self.consume_class_set_operand()? {
@@ -2105,7 +2125,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             return Ok(Some(result));
         }
         if self.consume_class_set_character()? {
-            return Ok(Some(SetResult::default()));
+            return Ok(Some(SetResult::init()));
         }
         Ok(None)
     }
@@ -2610,7 +2630,7 @@ impl<'s, 'h> Validator<'s, 'h> {
     }
 
     fn parse_flags(&mut self, start: usize, end: usize) -> Consumed<Flags> {
-        let mut flags = Flags::default();
+        let mut flags = Flags::new();
         let version = self.ecma_version();
         let mut i = start;
         while i < end {

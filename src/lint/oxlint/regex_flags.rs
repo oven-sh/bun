@@ -36,7 +36,7 @@ struct RegExpFlags {
 fn resolve_regex_flags(e: Expr) -> Option<(RegExpFlags, Span)> {
     let mut at = e;
     // `const a = b, b = a` goes in a circle.
-    let mut seen = rustc_hash::FxHashSet::default();
+    let mut seen = rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     while seen.insert(at) {
         let flags = match at.kind() {
             ExprKind::Regex(regex) => Some(RegExpFlags {

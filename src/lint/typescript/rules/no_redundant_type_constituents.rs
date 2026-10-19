@@ -81,8 +81,15 @@ impl Primitive {
 }
 
 /// A set of [`Primitive`]s.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Primitives([bool; 4]);
+
+impl Primitives {
+    #[inline]
+    fn new() -> Self {
+        Self([false; 4])
+    }
+}
 
 impl Primitives {
     fn add(&mut self, primitive: Primitive) {
@@ -118,15 +125,24 @@ impl TypeFlagsWithName<'_> {
 
 /// The constituents of a union or an intersection type as they are written, and for each which of
 /// `parts` its type consists of.
-#[derive(Default)]
 struct Constituents<'a> {
     parts: SmallVec<[TypeFlagsWithName<'a>; 8]>,
     type_nodes: SmallVec<[(TypeNode<'a>, Range<usize>); 8]>,
 }
 
 impl<'a> Constituents<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            parts: SmallVec::new(),
+            type_nodes: SmallVec::new(),
+        }
+    }
+}
+
+impl<'a> Constituents<'a> {
     fn of(types: List<'a, TypeNode<'a>>) -> Self {
-        let mut all = Constituents::default();
+        let mut all = Constituents::new();
         for type_node in types {
             let start = all.parts.len();
             get_type_node_type_part_flags(type_node, &mut all.parts);
@@ -374,7 +390,7 @@ impl NoRedundantTypeConstituents {
         };
         let constituents = Constituents::of(types);
         let (mut seen_literal_types, mut seen_primitive_types) =
-            (Primitives::default(), Primitives::default());
+            (Primitives::new(), Primitives::new());
         let mut has_seen_union_types = false;
 
         for (type_node, type_part_flags) in constituents.iter() {
@@ -461,7 +477,7 @@ impl NoRedundantTypeConstituents {
         let constituents = Constituents::of(types);
         // In the order in which they are seen: two of them can be reported at one constituent.
         let mut seen_literal_types = SmallVec::<[Primitive; 4]>::new();
-        let mut seen_primitive_types = Primitives::default();
+        let mut seen_primitive_types = Primitives::new();
 
         for (type_node, type_part_flags) in constituents.iter() {
             for &type_part in type_part_flags {

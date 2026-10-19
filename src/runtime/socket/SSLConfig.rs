@@ -86,11 +86,11 @@ fn read_from_blob(
         StoreData::File(f) => f,
         _ => return Err(ReadFromBlobError::NotAFile),
     };
-    let mut fs = node_fs::NodeFS::default();
+    let mut fs = node_fs::NodeFS::new();
     // `ReadFile` has a `Drop` impl (releases its `signal` ref), so functional
     // record update from `..Default::default()` would partially move out of a
     // `Drop` type. Mutate-after-default instead.
-    let mut read_args = node_fs::args::ReadFile::default();
+    let mut read_args = node_fs::args::ReadFile::new();
     read_args.path = file.pathlike.clone();
     let maybe = fs.read_file_with_options(
         &read_args,

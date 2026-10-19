@@ -26,8 +26,8 @@ pub struct PathPair {
     pub secondary: Option<Path>,
 }
 
-impl Default for PathPair {
-    fn default() -> Self {
+impl PathPair {
+    pub fn new() -> Self {
         Self {
             primary: Path::empty(),
             secondary: None,
@@ -108,24 +108,24 @@ pub struct Result {
     pub flags: ResultFlags,
 }
 
-impl Default for Result {
-    fn default() -> Self {
+impl Result {
+    pub fn new() -> Self {
         Self {
-            path_pair: PathPair::default(),
-            jsx: options::jsx::Pragma::default(),
+            path_pair: PathPair::new(),
+            jsx: options::jsx::Pragma::new(),
             package_json: None,
             primary_side_effects_data: SideEffects::HasSideEffects,
             module_type: options::ModuleType::Unknown,
             dirname_fd: FD::INVALID,
             file_fd: FD::INVALID,
             import_kind: ast::ImportKind::Stmt,
-            flags: ResultFlags::default(),
+            flags: ResultFlags::empty(),
         }
     }
 }
 
 bitflags::bitflags! {
-    #[derive(Default, Clone, Copy)]
+    #[derive(Clone, Copy)]
     pub struct ResultFlags: u8 {
         // Bits 0..=1 encode [`ExternalKind`]; write via `set_external_kind`.
         const IS_EXTERNAL = 1 << 0;
@@ -140,9 +140,8 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ExternalKind {
-    #[default]
     NotExternal,
     External,
     /// External, and the import specifier should be rewritten to the resolved path.
@@ -373,10 +372,10 @@ pub struct MatchResult {
     pub(crate) is_external: bool,
 }
 
-impl Default for MatchResult {
-    fn default() -> Self {
+impl MatchResult {
+    pub fn new() -> Self {
         Self {
-            path_pair: PathPair::default(),
+            path_pair: PathPair::new(),
             dirname_fd: FD::INVALID,
             file_fd: FD::INVALID,
             is_node_module: false,
@@ -417,11 +416,11 @@ pub struct PendingResolution {
     pub tag: PendingResolutionTag,
 }
 
-impl Default for PendingResolution {
-    fn default() -> Self {
+impl PendingResolution {
+    pub fn new() -> Self {
         Self {
-            esm: Default::default(),
-            dependency: Default::default(),
+            esm: crate::package_json::PackageExternal::new(),
+            dependency: bun_install_types::DependencyVersion::new(),
             root_dependency_id: Install::INVALID_PACKAGE_ID,
             import_record_id: u32::MAX,
             string_buf: Vec::new(),

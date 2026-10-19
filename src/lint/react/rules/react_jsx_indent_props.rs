@@ -24,10 +24,20 @@ const WRONG_INDENT: Message = Message::new(
 );
 
 /// `line`. Upstream keeps it from one element to the next, whose own `<` resets it.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Line {
     is_using_operator: bool,
     current_operator: bool,
+}
+
+impl Line {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            is_using_operator: false,
+            current_operator: false,
+        }
+    }
 }
 
 impl Rule for JsxIndentProps {
@@ -66,7 +76,7 @@ impl Rule for JsxIndentProps {
         ) {
             return;
         }
-        let mut line = Line::default();
+        let mut line = Line::new();
         let prop_indent = match self.indent.size() {
             None => i64::from(file.position(first_prop_node.span().start).column),
             Some(size) => self

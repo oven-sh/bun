@@ -88,7 +88,6 @@ pub(crate) fn count_cached_packages(base: &[u8]) -> usize {
 }
 
 /// bunx-specific options parsed from argv.
-#[derive(Default)]
 pub(crate) struct Options {
     /// CLI arguments to pass to the command being run.
     pub(crate) passthrough_list: Vec<Box<[u8]>>,
@@ -107,6 +106,23 @@ pub(crate) struct Options {
     pub(crate) trust: bool,
     /// Seconds, as typed: forwarded to `bun add` and part of the cache directory's name.
     pub(crate) minimum_release_age: Option<&'static [u8]>,
+}
+
+impl Options {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            passthrough_list: Vec::new(),
+            package_name: &[],
+            binary_name: None,
+            specified_package: None,
+            verbose_install: false,
+            silent_install: false,
+            no_install: false,
+            trust: false,
+            minimum_release_age: None,
+        }
+    }
 }
 
 impl Options {
@@ -143,7 +159,7 @@ impl Options {
         let mut has_revision = false;
         let mut i: usize = 0;
 
-        let mut opts = Options::default();
+        let mut opts = Options::new();
         opts.passthrough_list.reserve_exact(argv.len());
 
         // `BUN_OPTIONS` is for every command: what bunx does not know there is not for it.
@@ -267,7 +283,7 @@ impl Options {
 impl BunxCommand {
     pub(crate) fn add_create_prefix(input: &[u8]) -> Result<ZBox, AllocError> {
         if input.is_empty() {
-            return Ok(ZBox::default());
+            return Ok(ZBox::new());
         }
         let (at, infix) = if input[0] != b'@' {
             (0, b"create-")
@@ -1127,9 +1143,9 @@ impl BunxCommand {
                         None,
                     ),
                 ),
-                ..Default::default()
+                ..proc_sync::WindowsOptions::new()
             },
-            ..Default::default()
+            ..proc_sync::Options::new()
         }) {
             Err(err) => {
                 bun_core::pretty_errorln!(

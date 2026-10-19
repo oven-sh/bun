@@ -958,7 +958,7 @@ pub(super) fn format_description(
     let text = normalize_legacy_ordered_list_markers(text);
     let text = convert_star_list_markers(&text);
     let (protected, placeholders) = protect_jsdoc_links(&text);
-    let mut tree = Tree::default();
+    let mut tree = Tree::new();
     let Some(root) = crate::markdown::parse_plain(&protected, &mut tree) else {
         return super::text::join(lines(&text).map(strings::trim_unicode_whitespace), b"\n");
     };

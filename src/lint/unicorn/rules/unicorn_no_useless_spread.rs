@@ -130,7 +130,7 @@ fn check_useless_spread_in_list<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUseles
                     false => properties.push(property),
                 }
             }
-            let mut codegen = Codegen::default();
+            let mut codegen = Codegen::new();
             codegen.code.push(b'(');
             codegen.print_object_expression(&properties);
             codegen.code.push(b')');
@@ -147,7 +147,7 @@ fn check_useless_spread_in_list<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUseles
                 cx.state.insert(list);
                 return None;
             };
-            let mut codegen = Codegen::default();
+            let mut codegen = Codegen::new();
             codegen.code.push(b'[');
             for (i, element) in elements.iter().enumerate() {
                 let is_last = i + 1 == elements.len();

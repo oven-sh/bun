@@ -159,13 +159,24 @@ struct Open {
     requires_quotes: bool,
 }
 
-#[derive(Default)]
 pub(super) struct Tree {
     pub(super) nodes: Vec<Node>,
     pub(super) comments: Vec<Comment>,
     open: Vec<Open>,
     /// For a text that has to be made to know how wide it is.
     scratch: Vec<u8>,
+}
+
+impl Tree {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            comments: Vec::new(),
+            open: Vec::new(),
+            scratch: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug)]

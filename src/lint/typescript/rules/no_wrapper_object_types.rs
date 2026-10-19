@@ -43,7 +43,7 @@ impl Rule for NoWrapperObjectTypes {
         if !file.mentions_any(&["BigInt", "Boolean", "Number", "Object", "String", "Symbol"]) {
             return None;
         }
-        Some(GlobalFunctions::default())
+        Some(GlobalFunctions::with_hasher(rustc_hash::FxBuildHasher))
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {

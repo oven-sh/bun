@@ -21,12 +21,22 @@ pub use bun_resolver::node_fallbacks;
 
 bun_core::declare_scope!(ModuleLoader, hidden);
 
-#[derive(Default)]
 pub struct ModuleLoader {
     pub transpile_source_code_arena: Option<Box<ArenaAllocator>>,
     pub eval_source: Option<Box<bun_ast::Source>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: Option<Box<[u8]>>,
+}
+
+impl ModuleLoader {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            transpile_source_code_arena: None,
+            eval_source: None,
+            interactive_eval_script: None,
+        }
+    }
 }
 
 static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
@@ -216,7 +226,7 @@ unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> boo
 unsafe extern "C" fn ModuleLoader__builtinAliasIndex(data: *const u8, len: usize) -> i32 {
     // SAFETY: C++ guarantees `data[..len]` is a live 8-bit specifier slice.
     let str = unsafe { bun_core::ffi::slice(data, len) };
-    HardcodedModule::Alias::get(str, bun_ast::Target::Bun, Default::default())
+    HardcodedModule::Alias::get(str, bun_ast::Target::Bun, bun_resolve_builtins::Cfg::new())
         .and_then(|alias| crate::builtin_module_key_index::get(alias.path.as_bytes()))
         .map_or(-1, i32::from)
 }

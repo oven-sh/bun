@@ -127,7 +127,7 @@ impl Checker<'_, '_> {
                     kind: SpecifierKind::Import,
                     mode: self.files().module(file).default_mode,
                 };
-                let (site, location) = (SpecifierSite::default(), (file, start, end));
+                let (site, location) = (SpecifierSite::new(), (file, start, end));
                 self.resolve_external_module_at(file, specifier, site, location, Some(2875));
             }
             // `resolveName`, starting at `jsxFactoryLocation`: the tag name, or the opening fragment.

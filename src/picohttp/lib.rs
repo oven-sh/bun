@@ -29,7 +29,7 @@ mod c {
     /// client owns the storage and writes `consume_trailer` directly, so the
     /// layout must match C exactly.
     #[repr(C)]
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct phr_chunked_decoder {
         pub(crate) bytes_left_in_chunk: usize,
         /// Set to 1 to discard trailing headers after the terminal `0\r\n` chunk.
@@ -38,6 +38,20 @@ mod c {
         pub(crate) _state: core::ffi::c_char,
         pub(crate) _total_read: u64,
         pub(crate) _total_overhead: u64,
+    }
+
+    impl phr_chunked_decoder {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                bytes_left_in_chunk: 0,
+                consume_trailer: 0,
+                _hex_count: 0,
+                _state: 0,
+                _total_read: 0,
+                _total_overhead: 0,
+            }
+        }
     }
     unsafe extern "C" {
         pub(super) fn phr_parse_response(
@@ -77,13 +91,6 @@ pub struct Header {
     name_len: usize,
     value_ptr: *const u8,
     value_len: usize,
-}
-
-impl Default for Header {
-    #[inline]
-    fn default() -> Self {
-        Self::ZERO
-    }
 }
 
 impl Header {
@@ -225,9 +232,16 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
 // Header::List
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct HeaderList<'a> {
     pub list: &'a [Header],
+}
+
+impl<'a> HeaderList<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self { list: &[] }
+    }
 }
 
 impl<'a> HeaderList<'a> {

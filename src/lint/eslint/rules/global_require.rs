@@ -43,7 +43,7 @@ impl Rule for GlobalRequire {
         if !file.mentions("require") {
             return None;
         }
-        Some(AncestorMemo::default())
+        Some(AncestorMemo::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

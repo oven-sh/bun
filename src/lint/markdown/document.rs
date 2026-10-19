@@ -20,7 +20,7 @@ use std::sync::OnceLock;
 pub(crate) type Index = i64;
 
 /// A line and a column, both 1-based. The column counts UTF-16 code units.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(crate) struct Loc {
     pub(crate) line: i64,
     pub(crate) column: i64,
@@ -55,7 +55,7 @@ impl Mdast {
                 FrontMatter::Toml => Some(b'+'),
             },
         };
-        let mut tree = Tree::default();
+        let mut tree = Tree::new();
         let root = parse_to_mdast(text, with, &mut tree)?;
         Some(Mdast {
             tree,
@@ -365,7 +365,7 @@ impl<'d> Node<'d> {
     #[inline]
     pub(crate) fn span(self) -> Span {
         self.get()
-            .map_or_else(Span::default, |it| Span::new(it.start, it.end))
+            .map_or_else(Span::init, |it| Span::new(it.start, it.end))
     }
 
     /// `node.position.start.offset`

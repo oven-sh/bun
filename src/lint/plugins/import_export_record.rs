@@ -8,7 +8,6 @@ use smallvec::{SmallVec, smallvec};
 use std::sync::Arc;
 
 /// An `ExportMap`.
-#[derive(Default)]
 pub(crate) struct ExportRecord {
     pub(crate) path: Box<[u8]>,
     /// With one, all that follows is empty.
@@ -27,6 +26,23 @@ pub(crate) struct ExportRecord {
     pub(crate) star_exports: Vec<Box<[u8]>>,
     /// Every `captureDependency`, after every `processDynamicImport`.
     pub(crate) imports: Vec<Dependency>,
+}
+
+impl ExportRecord {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            path: Box::new([]),
+            errors: Vec::new(),
+            is_null: false,
+            is_module: false,
+            doc: None,
+            namespace: Vec::new(),
+            reexports: Vec::new(),
+            star_exports: Vec::new(),
+            imports: Vec::new(),
+        }
+    }
 }
 
 /// What the parser throws: `message`, `lineNumber`, `column`.
@@ -56,10 +72,20 @@ pub(crate) enum When {
 }
 
 /// `doc`, for each of `import/docstyle`.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct Docs {
     pub(crate) jsdoc: Option<Doc>,
     pub(crate) tomdoc: Option<Doc>,
+}
+
+impl Docs {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            jsdoc: None,
+            tomdoc: None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -345,7 +371,7 @@ impl<'a> Visitor<'a> {
         let name_of = |it: Ident<'a>| (!it.is_string()).then(|| it.name());
         let (local, exported) = (name_of(specifier.local()), specifier.exported());
         let Some(source) = nsource else {
-            let object = self.set(Some(exported.bytes()), Docs::default(), When::Always);
+            let object = self.set(Some(exported.bytes()), Docs::new(), When::Always);
             if let Some(local) = local {
                 self.add(object, local);
             }
@@ -366,7 +392,7 @@ impl<'a> Visitor<'a> {
         doc_of: &dyn Fn(VarDecl<'a>) -> Option<Docs>,
     ) {
         for d in declarations {
-            let doc = doc_of(d).unwrap_or_default();
+            let doc = doc_of(d).unwrap_or_else(Docs::new);
             recursive_pattern_capture(d.pat(), &mut |id| {
                 self.set(id.as_ident().map(Name::bytes), doc.clone(), when);
             });
@@ -378,7 +404,7 @@ impl<'a> Visitor<'a> {
         let (file, start) = (self.file, start_of(ast_node));
         match ast_node.kind() {
             StmtKind::ExportDefault(declaration) => {
-                let export_meta = capture_doc(file, start).unwrap_or_default();
+                let export_meta = capture_doc(file, start).unwrap_or_else(Docs::new);
                 let object = self.set(Some(DEFAULT), export_meta, When::Always);
                 if let Some(identifier) = declaration.as_ident() {
                     self.add(object, identifier);
@@ -389,7 +415,7 @@ impl<'a> Visitor<'a> {
                 self.capture_dependency(ast_node, Some(source), Vec::new());
                 self.export_map.star_exports.push(source.into());
                 if let Some(exported) = alias {
-                    self.set(Some(exported.bytes()), Docs::default(), When::Always);
+                    self.set(Some(exported.bytes()), Docs::new(), When::Always);
                 }
             }
             StmtKind::Import(import) => {
@@ -419,7 +445,7 @@ impl<'a> Visitor<'a> {
                 self.type_script_export(ast_node, Some(name), When::WithInterop);
             }
             _ if ast_node.is_default_export() => {
-                let doc = capture_doc(file, start).unwrap_or_default();
+                let doc = capture_doc(file, start).unwrap_or_else(Docs::new);
                 self.set(Some(DEFAULT), doc, When::Always);
             }
             StmtKind::Var(declarations) if ast_node.is_exported() => {
@@ -430,7 +456,7 @@ impl<'a> Visitor<'a> {
             }
             _ if ast_node.is_exported() => {
                 if let Some(name) = id_name(ast_node) {
-                    let doc = capture_doc(file, start).unwrap_or_default();
+                    let doc = capture_doc(file, start).unwrap_or_else(Docs::new);
                     self.set(name.map(Name::bytes), doc, When::Always);
                 }
             }
@@ -442,10 +468,12 @@ impl<'a> Visitor<'a> {
         let file = self.file;
         let declarations = self.declarations.get_or_insert_with(|| {
             let mut declarations: FxHashMap<Name<'a>, SmallVec<[Stmt<'a>; 1]>> =
-                FxHashMap::default();
+                FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for stmt in file.body().iter().filter(|it| !it.is_exported()) {
                 let declare = |name: Name<'a>| {
-                    let of_name = declarations.entry(name).or_default();
+                    let of_name = declarations
+                        .entry(name)
+                        .or_insert_with(smallvec::SmallVec::new);
                     if of_name.last() != Some(&stmt) {
                         of_name.push(stmt);
                     }
@@ -464,7 +492,7 @@ impl<'a> Visitor<'a> {
         declarations
             .get(&exported_name)
             .cloned()
-            .unwrap_or_default()
+            .unwrap_or_else(smallvec::SmallVec::new)
     }
 
     /// "This doesn't declare anything, but changes what's being exported."
@@ -485,17 +513,17 @@ impl<'a> Visitor<'a> {
         let Some((exported_name, exported_decls)) = exported_decls.filter(|it| !it.1.is_empty())
         else {
             // "Export is not referencing any local declaration, must be re-exporting"
-            let doc = capture_doc(file, ast_node.span().start).unwrap_or_default();
+            let doc = capture_doc(file, ast_node.span().start).unwrap_or_else(Docs::new);
             self.set(Some(DEFAULT), doc, when);
             return;
         };
         let (before, count) = (self.export_map.namespace.len(), exported_decls.len());
-        self.set(Some(DEFAULT), Docs::default(), When::WithInteropIfAbsent);
+        self.set(Some(DEFAULT), Docs::new(), When::WithInteropIfAbsent);
         for decl in exported_decls {
             let of_decl = capture_doc(file, decl.span().start);
             let StmtKind::Module(module) = decl.kind() else {
                 // "Export as default"
-                self.set(Some(DEFAULT), of_decl.unwrap_or_default(), when);
+                self.set(Some(DEFAULT), of_decl.unwrap_or_else(Docs::new), when);
                 continue;
             };
             for module_block_node in module.body() {
@@ -517,7 +545,7 @@ impl<'a> Visitor<'a> {
                         None => continue,
                     },
                 };
-                let doc = capture_doc(file, start).unwrap_or_default();
+                let doc = capture_doc(file, start).unwrap_or_else(Docs::new);
                 self.set(name.map(Name::bytes), doc, when);
             }
         }
@@ -552,7 +580,7 @@ fn process_dynamic_imports<'a>(file: &'a File<'a>, imports: &mut Vec<Dependency>
 pub(crate) fn read<'a>(file: &'a File<'a>) -> ExportRecord {
     let mut export_map = ExportRecord {
         path: file.path().into(),
-        ..ExportRecord::default()
+        ..ExportRecord::new()
     };
     if let Some(err) = bun_lint::linter::parse_error(file) {
         let message = err.message.strip_prefix(b"Parsing error: ");
@@ -579,19 +607,19 @@ pub(crate) fn read<'a>(file: &'a File<'a>) -> ExportRecord {
     let mut visitor = Visitor {
         file,
         export_map,
-        namespaces: FxHashMap::default(),
+        namespaces: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         getters: Vec::new(),
         declarations: None,
-        exported: FxHashMap::default(),
+        exported: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         said_again: 0,
-        imported: FxHashSet::default(),
+        imported: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
     };
     for ast_node in file.body() {
         visitor.visit(ast_node);
     }
     // With `esModuleInterop` the first entry is always set: `namespace.size > 0`.
     if !visitor.export_map.namespace.is_empty() {
-        visitor.set(Some(DEFAULT), Docs::default(), When::WithInteropIfAbsent);
+        visitor.set(Some(DEFAULT), Docs::new(), When::WithInteropIfAbsent);
     }
     for (object, identifier) in visitor.getters {
         if let Some(entry) = visitor.export_map.namespace.get_mut(object) {

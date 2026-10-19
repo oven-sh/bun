@@ -56,7 +56,7 @@ fn system_error(code: &'static str, message: &'static str) -> SystemError {
     SystemError {
         code: BunString::static_(code),
         message: BunString::static_(message),
-        ..Default::default()
+        ..SystemError::new()
     }
 }
 
@@ -266,11 +266,20 @@ struct EndTagSlot(u32);
 /// rewriter it spawns — `transform()` can run more than once, so
 /// [`build_settings`] re-derives fresh handler closures from it each time.
 /// Holds no JS values: the handlers name theirs by [`HandlerSlot`].
-#[derive(Default)]
 pub(crate) struct LOLHTMLContext {
     pub(crate) element_handlers: Vec<ElementHandlerEntry>,
     #[expect(clippy::vec_box)]
     pub(crate) document_handlers: Vec<Box<DocumentHandler>>,
+}
+
+impl LOLHTMLContext {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            element_handlers: Vec::new(),
+            document_handlers: Vec::new(),
+        }
+    }
 }
 
 /// What a JS content handler decided.
@@ -407,7 +416,7 @@ impl HTMLRewriter {
         _frame: &CallFrame,
     ) -> JsResult<*mut HTMLRewriter> {
         let rewriter = bun_core::heap::into_raw(Box::new(HTMLRewriter {
-            context: Rc::new(RefCell::new(LOLHTMLContext::default())),
+            context: Rc::new(RefCell::new(LOLHTMLContext::new())),
         }));
         bun_core::analytics::Features::HTML_REWRITER
             .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -513,7 +522,7 @@ impl HTMLRewriter {
             let resp = RefPtr::new(Response::init(
                 webcore::response::Init {
                     status_code: 200,
-                    ..Default::default()
+                    ..webcore::response::Init::new()
                 },
                 body_value,
                 BunString::EMPTY,
@@ -1085,7 +1094,7 @@ impl RewriterPipe {
             suspended_wrapper: JsCell::new(None),
             driving: Cell::new(false),
             free_end_tag_slots: JsCell::new(Vec::new()),
-            pending: JsCell::new(WritablePending::default()),
+            pending: JsCell::new(WritablePending::new()),
             done: Cell::new(false),
             ref_count: Cell::new(1),
             pump_controller_attached: Cell::new(false),
@@ -1127,7 +1136,7 @@ impl RewriterPipe {
         let result = bun_core::heap::alloc_nn(Response::init(
             webcore::response::Init {
                 status_code: 200,
-                ..Default::default()
+                ..webcore::response::Init::new()
             },
             webcore::Body::new({
                 let mut pv = webcore::body::PendingValue::new(cx.global());
@@ -1832,7 +1841,7 @@ impl RewriterPipe {
         if matches!(e, lol_html::errors::RewritingError::Suspended) {
             return self.begin_suspension();
         }
-        let leftover = self.pending_suspension.take();
+        let leftover = self.pending_suspension.replace(None);
         debug_assert!(
             leftover.is_none(),
             "lol-html returned a non-suspension error with a suspension armed"
@@ -1865,7 +1874,7 @@ impl RewriterPipe {
     fn begin_suspension(&self) {
         let wrapper = self
             .pending_suspension
-            .take()
+            .replace(None)
             .expect("lol-html suspended without a pending HTMLRewriter handler promise");
 
         self.rewriter.with_mut(|r| {
@@ -2579,7 +2588,7 @@ impl ElementHandler {
 
 // ───────────────────────── ContentOptions ────────────────────────────────
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct ContentOptions {
     pub(crate) html: bool,
 }

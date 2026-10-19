@@ -12,11 +12,21 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{Condition, Mutex};
 
-#[derive(Default)]
 pub struct WaitGroup {
     raw_count: AtomicUsize,
     mutex: Mutex,
     cond: Condition,
+}
+
+impl WaitGroup {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            raw_count: core::sync::atomic::AtomicUsize::new(0),
+            mutex: Mutex::init(),
+            cond: Condition::init(),
+        }
+    }
 }
 
 impl WaitGroup {
@@ -31,7 +41,7 @@ impl WaitGroup {
     pub fn init_with_count(count: usize) -> Self {
         Self {
             raw_count: AtomicUsize::new(count),
-            ..Self::default()
+            ..Self::new()
         }
     }
 

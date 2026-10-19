@@ -34,7 +34,6 @@ impl From<Error> for bun_errno::SystemErrno {
 /// live in `bun_jsc` as inherent extensions. The `#[repr(C)]` layout C++ reads
 /// is `bun_jsc::SystemError`; this struct is the Rust-side data shape and is
 /// marshalled field-by-field via `From<bun_sys::SystemError>` at the seam.
-#[derive(Default)]
 pub struct SystemError {
     pub errno: core::ffi::c_int,
     /// label for errno
@@ -46,6 +45,22 @@ pub struct SystemError {
     pub hostname: bun_core::String,
     pub fd: Option<core::ffi::c_int>,
     pub dest: bun_core::String,
+}
+
+impl SystemError {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            errno: 0,
+            code: bun_core::String::EMPTY,
+            message: bun_core::String::EMPTY,
+            path: bun_core::String::EMPTY,
+            syscall: bun_core::String::EMPTY,
+            hostname: bun_core::String::EMPTY,
+            fd: None,
+            dest: bun_core::String::EMPTY,
+        }
+    }
 }
 impl SystemError {
     /// (`Error::to_system_error` stores `errno` negated to match Node.)
@@ -859,7 +874,7 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
             path,
             WindowsOpenDirOptions {
                 iterable: true,
-                ..Default::default()
+                ..WindowsOpenDirOptions::new()
             },
         )
     }
@@ -1144,7 +1159,7 @@ impl RenameMode {
 // PORTING.md §Forbidden flags wrong-discriminants as a logic-bug.
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Tag(pub u8);
 pub mod syscall {
     pub use super::Tag;
@@ -2353,7 +2368,7 @@ mod posix_impl {
                 return Err(Error {
                     errno: raw_errno as _,
                     syscall,
-                    ..Default::default()
+                    ..Error::init()
                 });
             }
 
@@ -3636,7 +3651,7 @@ pub use bun_alloc::page_size;
 /// `bun.jsc.Node.TimeLike` — `timespec` shape, decoupled from JSC (T6).
 /// futimens/utimens take this; the JSC binding constructs it from
 /// JS Date/number. T1 owns the data shape.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct TimeLike {
     pub sec: i64,
@@ -4143,7 +4158,7 @@ mod windows_impl {
                 iterable: false,
                 can_rename_or_delete: true,
                 op: super::WindowsOpenDirOp::OnlyCreate,
-                ..Default::default()
+                ..super::WindowsOpenDirOptions::new()
             },
         )?;
         made.close();
@@ -5769,7 +5784,7 @@ pub mod darwin {
     /// `bun.darwin.COPYFILE` — packed-u32 set of <copyfile.h> flags.
     /// Kept as a plain struct + `.bits()` so call sites can use field-init
     /// syntax; convert to `u32` at the FFI boundary.
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     #[allow(non_snake_case)]
     pub struct COPYFILE {
         pub acl: bool,
@@ -5783,6 +5798,25 @@ pub mod darwin {
         pub unlink: bool,
         pub clone: bool,
         pub clone_force: bool,
+    }
+
+    impl COPYFILE {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                acl: false,
+                stat: false,
+                xattr: false,
+                data: false,
+                excl: false,
+                nofollow_src: false,
+                nofollow_dst: false,
+                move_: false,
+                unlink: false,
+                clone: false,
+                clone_force: false,
+            }
+        }
     }
     impl COPYFILE {
         #[inline]
@@ -5812,9 +5846,8 @@ pub mod darwin {
     // a plain struct + `.bits()` so Futex.rs can use field-init syntax
     // while the FFI boundary gets the packed u32.
     #[repr(u8)]
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub enum ULOp {
-        #[default]
         NONE = 0,
         COMPARE_AND_WAIT = 1,
         UNFAIR_LOCK = 2,
@@ -5823,7 +5856,7 @@ pub mod darwin {
         COMPARE_AND_WAIT64 = 5,
         COMPARE_AND_WAIT64_SHARED = 6,
     }
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct UL {
         pub op: ULOp,
         /// `ULF_WAKE_ALL` (bit 8).
@@ -5833,6 +5866,18 @@ pub mod darwin {
         /// `ULF_NO_ERRNO` (bit 24) — return `-errno` directly instead of
         /// setting thread-local errno.
         pub no_errno: bool,
+    }
+
+    impl UL {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                op: ULOp::NONE,
+                wake_all: false,
+                wake_thread: false,
+                no_errno: false,
+            }
+        }
     }
     impl UL {
         #[inline]
@@ -6376,7 +6421,7 @@ pub fn open_dir_no_renaming_or_deleting_windows(dir: Fd, path: &[u8]) -> Maybe<F
         WindowsOpenDirOptions {
             iterable: true,
             can_rename_or_delete: false,
-            ..Default::default()
+            ..WindowsOpenDirOptions::new()
         },
     )
 }
@@ -6392,17 +6437,29 @@ const FILE_SHARE: u32 = bun_windows_sys::FILE_SHARE_READ
     | bun_windows_sys::FILE_SHARE_DELETE;
 
 #[cfg(windows)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct WindowsOpenDirOptions {
     pub iterable: bool,
     pub no_follow: bool,
     pub can_rename_or_delete: bool,
     pub op: WindowsOpenDirOp,
 }
+
 #[cfg(windows)]
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+impl WindowsOpenDirOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            iterable: false,
+            no_follow: false,
+            can_rename_or_delete: false,
+            op: WindowsOpenDirOp::OnlyOpen,
+        }
+    }
+}
+#[cfg(windows)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WindowsOpenDirOp {
-    #[default]
     OnlyOpen,
     OnlyCreate,
     OpenOrCreate,
@@ -6418,8 +6475,8 @@ pub struct NtCreateFileOptions {
     pub sharing_mode: u32,
 }
 #[cfg(windows)]
-impl Default for NtCreateFileOptions {
-    fn default() -> Self {
+impl NtCreateFileOptions {
+    pub fn new() -> Self {
         Self {
             access_mask: 0,
             disposition: 0,
@@ -6440,8 +6497,8 @@ pub struct NormalizePathWindowsOpts {
     pub add_nt_prefix: bool,
 }
 #[cfg(windows)]
-impl Default for NormalizePathWindowsOpts {
-    fn default() -> Self {
+impl NormalizePathWindowsOpts {
+    pub fn new() -> Self {
         Self {
             add_nt_prefix: true,
         }
@@ -6512,7 +6569,7 @@ pub fn normalize_path_windows<'a>(
     path: &[u16],
     buf: &'a mut [u16],
 ) -> Maybe<&'a bun_core::WStr> {
-    normalize_path_windows_opts(dir_fd, path, buf, NormalizePathWindowsOpts::default())
+    normalize_path_windows_opts(dir_fd, path, buf, NormalizePathWindowsOpts::new())
 }
 
 /// Like [`normalize_path_windows`]; `opts.add_nt_prefix = false` makes the
@@ -7106,7 +7163,7 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
                 iterable: (flags & O::PATH) == 0,
                 no_follow: (flags & O::NOFOLLOW) != 0,
                 can_rename_or_delete: false,
-                ..Default::default()
+                ..WindowsOpenDirOptions::new()
             },
         );
     }
@@ -7169,7 +7226,7 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
             disposition,
             options: opts,
             attributes,
-            ..Default::default()
+            ..NtCreateFileOptions::new()
         },
     )
 }
@@ -7703,7 +7760,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         let mut wide_buf = bun_paths::w_path_buffer_pool::get();
         let wide_slice = match crate::windows::GetFinalPathNameByHandle(
             fd.native(),
-            Default::default(),
+            bun_windows_sys::GetFinalPathNameByHandleFormat::new(),
             &mut wide_buf.0[..],
         ) {
             Ok(p) => p,
@@ -7759,7 +7816,12 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
 /// crate.
 #[cfg(windows)]
 pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
-    crate::windows::GetFinalPathNameByHandle(fd.native(), Default::default(), out).map_err(|e| {
+    crate::windows::GetFinalPathNameByHandle(
+        fd.native(),
+        bun_windows_sys::GetFinalPathNameByHandleFormat::new(),
+        out,
+    )
+    .map_err(|e| {
         use crate::windows::GetFinalPathNameByHandleError as GE;
         Error::from_code(
             match e {
@@ -8141,7 +8203,7 @@ pub mod posix {
 
     #[cfg(windows)]
     #[repr(C)]
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct timespec {
         pub(crate) tv_sec: i64,
         pub(crate) tv_nsec: i64,
@@ -8626,7 +8688,7 @@ pub mod elf {
                     // Android libc uses NULL instead of an empty string to mark
                     // the main program.
                     let name = if info.dlpi_name.is_null() {
-                        Box::default()
+                        Box::new([])
                     } else {
                         // SAFETY: dlpi_name is a valid NUL-terminated C string.
                         unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }
@@ -8790,9 +8852,16 @@ pub mod make_path {
 /// junctions; on POSIX the flag is harmless dead state. Only the sticky bit
 /// is needed cross-platform (`PackageManager::init` sets it when
 /// `BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS` is on).
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct WindowsSymlinkOptions {
     pub directory: bool,
+}
+
+impl WindowsSymlinkOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self { directory: false }
+    }
 }
 pub(crate) static WINDOWS_SYMLINK_HAS_FAILED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
@@ -8973,7 +9042,7 @@ pub use make_path as MakePath;
 
 bitflags::bitflags! {
     /// Convenience flagset for `open_file*` helpers.
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct OpenFlags: i32 {
         const READ_ONLY  = O::RDONLY;
         const WRITE_ONLY = O::WRONLY;
@@ -9112,7 +9181,7 @@ pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr
 
 /// Option struct for [`renameat_concurrently`];
 /// callers can build it inline.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct RenameatConcurrentlyOptions {
     pub move_fallback: bool,
 }
@@ -9237,9 +9306,8 @@ pub enum WriteFileData<'a> {
     // T6 adds `String { value, encoding }` / `ArrayBuffer { .. }`.
 }
 /// Encoding tag (only `Buffer` is honoured at T1).
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub enum WriteFileEncoding {
-    #[default]
     Buffer,
 }
 /// Target — path (relative to `dirfd`) or an already-open fd.
@@ -9247,8 +9315,8 @@ pub enum PathOrFileDescriptor<'a> {
     Path(&'a [u8]),
     Fd(Fd),
 }
-impl Default for PathOrFileDescriptor<'_> {
-    fn default() -> Self {
+impl PathOrFileDescriptor<'_> {
+    pub fn new() -> Self {
         PathOrFileDescriptor::Fd(Fd::INVALID)
     }
 }
@@ -9260,13 +9328,13 @@ pub struct WriteFileArgs<'a> {
     pub file: PathOrFileDescriptor<'a>,
     pub mode: Mode,
 }
-impl<'a> Default for WriteFileArgs<'a> {
-    fn default() -> Self {
+impl<'a> WriteFileArgs<'a> {
+    pub fn new() -> Self {
         Self {
             data: WriteFileData::Buffer { buffer: &[] },
             encoding: WriteFileEncoding::Buffer,
             dirfd: Fd::cwd(),
-            file: PathOrFileDescriptor::default(),
+            file: PathOrFileDescriptor::new(),
             mode: 0o666,
         }
     }

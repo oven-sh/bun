@@ -492,7 +492,7 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         quote_strings: true,
         ordered_properties: false,
         single_line: true,
-        ..Default::default()
+        ..ConsoleObject::FormatOptions::new()
     };
     if arguments[2].is_object() {
         format_options.from_js(global_this, &arguments[2..])?;
@@ -565,7 +565,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         max_depth: 8,
         quote_strings: true,
         ordered_properties: false,
-        ..Default::default()
+        ..ConsoleObject::FormatOptions::new()
     };
     if arguments.len() > 1 {
         format_options.from_js(global_this, &arguments[1..])?;
@@ -607,7 +607,7 @@ pub(crate) fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValu
             quote_strings: true,
             ordered_properties: false,
             single_line: true,
-            ..Default::default()
+            ..ConsoleObject::FormatOptions::new()
         },
     )
     .is_err()
@@ -626,7 +626,7 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
         "inspect",
         __jsc_host_inspect,
         2,
-        Default::default(),
+        bun_jsc::js_function::CreateJSFunctionOptions::new(),
     );
     fun.put(
         global_object,
@@ -641,7 +641,7 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
             "table",
             __jsc_host_inspect_table,
             3,
-            Default::default(),
+            bun_jsc::js_function::CreateJSFunctionOptions::new(),
         ),
     );
     fun
@@ -669,7 +669,7 @@ pub(crate) fn register_macro<'a>(
     let get_or_put_result = VirtualMachine::get()
         .as_mut()
         .macros
-        .get_or_put(id)
+        .get_or_put(id, JSValue::new)
         .expect("unreachable");
     if get_or_put_result.found_existing {
         get_or_put_result.value_ptr.unprotect();
@@ -834,7 +834,7 @@ pub(crate) fn open_in_editor<'a>(
             let prev_name = edit.name;
 
             if !strings::eql_long(prev_name, name, true) {
-                let prev = core::mem::take(edit);
+                let prev = core::mem::replace(edit, crate::cli::open_full::EditorContext::new());
                 // Own the bytes in `name_storage` and
                 // hand back a thread-lifetime borrow.
                 let prev_storage = core::mem::replace(&mut slot.name_storage, name.to_vec());
@@ -1561,7 +1561,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
         crate::webcore::fetch::s3_credentials_from_env(unsafe { (*env_ptr).get_s3_credentials() });
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
-        Default::default(),
+        bun_s3_signing::MultiPartUploadOptions::new(),
         None,
         None,
         None,
@@ -1945,7 +1945,7 @@ pub(crate) mod JSZlib {
                         window_bits: options
                             .window_bits
                             .map_or(if is_gzip { 31 } else { -15 }, |bits| bits as i32),
-                        ..Default::default()
+                        ..zlib::Options::new()
                     },
                 )
                 .map_err(|err| init_error(heap, err))?;
@@ -2011,7 +2011,7 @@ pub(crate) mod JSZlib {
                         level,
                         mem_level: options.mem_level,
                         strategy: options.strategy,
-                        ..Default::default()
+                        ..zlib::Options::new()
                     },
                 )
                 .map_err(|err| init_error(heap, err))?;
@@ -2236,7 +2236,7 @@ pub(crate) mod JSZstd {
                 buffer,
                 is_compress,
                 level,
-                result: Ok(Box::default()),
+                result: Ok(Box::new([])),
             },
             promise,
         );
@@ -2293,11 +2293,11 @@ mod stdio_stores {
                 pathlike: PathOrFileDescriptor::Fd(fd),
                 is_atty: Some(is_atty),
                 mode,
-                ..Default::default()
+                ..FileStore::new()
             }),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
+            is_all_ascii: IsAllAscii::new(),
         })
     }
 

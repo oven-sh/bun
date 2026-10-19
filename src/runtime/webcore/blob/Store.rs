@@ -135,7 +135,7 @@ impl StoreExt for Store {
             data: Data::S3(S3::init(path, mime_type, credentials)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
+            is_all_ascii: IsAllAscii::new(),
         }))
     }
 
@@ -154,7 +154,7 @@ impl StoreExt for Store {
             data: Data::File(File::init(pathlike, mime_type)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
+            is_all_ascii: IsAllAscii::new(),
         }))
     }
 
@@ -166,7 +166,7 @@ impl StoreExt for Store {
             data: Data::Bytes(Bytes::init_mmap(slice)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
+            is_all_ascii: IsAllAscii::new(),
         })
     }
 
@@ -222,7 +222,7 @@ impl FileExt for File {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
                 // The `*Binding` arg is unused in `AsyncFSTask::create`.
-                let binding = node_fs::Binding::default();
+                let binding = node_fs::Binding::init();
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
                 // task is created on the JS thread that owns it.
                 Ok(node_fs::async_::Unlink::create(

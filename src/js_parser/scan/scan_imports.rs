@@ -10,11 +10,21 @@ use bun_crash_handler::handle_oom::handle_oom;
 
 // `stmts` is a sub-slice of the input `stmts` argument (in-place compacted),
 // so it borrows from the caller.
-#[derive(Default)]
 pub(crate) struct ImportScanner<'a> {
     pub stmts: &'a mut [Stmt],
     pub kept_import_equals: bool,
     pub removed_import_equals: bool,
+}
+
+impl<'a> ImportScanner<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            stmts: &mut [],
+            kept_import_equals: false,
+            removed_import_equals: false,
+        }
+    }
 }
 
 // `StoreStr` literal helper — keeps `Some(raw_str(b"…"))` ergonomic at the
@@ -45,7 +55,7 @@ impl<'a> ImportScanner<'a> {
             hot_module_reloading_context.is_some()
         );
 
-        let mut scanner = ImportScanner::default();
+        let mut scanner = ImportScanner::new();
         let mut stmts_end: usize = 0;
         // `arena` (p.arena) dropped — see §Allocators (AST crate).
         // Arena allocs below go through `p.arena` (a &Bump) where they persist.
@@ -707,9 +717,11 @@ impl<'a> ImportScanner<'a> {
                     // But only if it's anonymous
                     // This monomorphization is the parser `P` only (see fn-level TODO).
                     if !HOT_MODULE_RELOADING_TRANSFORMATIONS && will_transform_to_common_js {
-                        let expr = core::mem::take(&mut st.value).to_expr();
+                        let expr =
+                            core::mem::replace(&mut st.value, bun_ast::StmtOrExpr::new()).to_expr();
                         // Arena allocation that persists in the AST.
-                        let export_default_args = p.arena.alloc_slice_fill_default::<Expr>(2);
+                        let export_default_args =
+                            p.arena.alloc_slice_fill_with::<Expr, _>(2, |_| Expr::EMPTY);
                         export_default_args[0] = p.module_exports(expr.loc);
                         export_default_args[1] = expr;
                         let args = js_ast::ExprNodeList::from_arena_slice(export_default_args);

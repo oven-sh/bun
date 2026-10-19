@@ -35,11 +35,20 @@ impl SafeFileId {
 
 /// The page and layout files of a route whose router type also runs them in the browser
 /// (`client_pages`), as absolute paths. Empty for any other route.
-#[derive(Default)]
 pub(crate) struct ClientPageFiles {
     pub(crate) page: Option<Box<[u8]>>,
     /// From the inner-most layout to the root one.
     pub(crate) layouts: Vec<Box<[u8]>>,
+}
+
+impl ClientPageFiles {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            page: None,
+            layouts: Vec::new(),
+        }
+    }
 }
 
 impl ClientPageFiles {
@@ -82,7 +91,7 @@ impl DevServer {
     pub(super) fn client_page_files(&self, route_index: router::RouteIndex) -> ClientPageFiles {
         let mut route = self.router.route_ptr(route_index);
         if !self.router.type_ptr_const(route.r#type).client_pages {
-            return ClientPageFiles::default();
+            return ClientPageFiles::new();
         }
         let keys = self.server_graph.bundled_files.keys();
         let path = |id: OpaqueFileId| -> Box<[u8]> {

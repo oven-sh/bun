@@ -323,12 +323,6 @@ impl CompilerError {
     }
 }
 
-impl Default for CompilerError {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Allow `?` to convert a `CompilerError` into a `CompilerDiagnostic`
 /// when the enclosing function returns `Result<T, CompilerDiagnostic>`.
 ///

@@ -25,7 +25,7 @@ struct Text<'t> {
 fn thrown(message: Vec<u8>) -> LintResult {
     LintResult {
         thrown: Some(message),
-        ..LintResult::default()
+        ..LintResult::new()
     }
 }
 
@@ -34,7 +34,7 @@ fn thrown(message: Vec<u8>) -> LintResult {
 fn needs_eslint() -> LintResult {
     LintResult {
         is_unread: true,
-        ..LintResult::default()
+        ..LintResult::new()
     }
 }
 
@@ -89,7 +89,7 @@ impl Context<'_, '_> {
                 }
                 None => {
                     self.unread.lock().push(path.to_vec());
-                    LintResult::default()
+                    LintResult::new()
                 }
             })
     }
@@ -115,7 +115,7 @@ impl Context<'_, '_> {
             _ => loaded.config.get(registry, &path),
         };
         let FileConfig::Matched(own) = found else {
-            return LintResult::default();
+            return LintResult::new();
         };
         if text == file.text && paths::extname(&path) == paths::extname(file.path) {
             let path = &path;
@@ -130,7 +130,7 @@ impl Context<'_, '_> {
         // The other blocks of the file are still linted, so the warning names this one.
         if result.is_unread {
             self.needs_eslint.lock().push((path, loaded.flavor));
-            return LintResult::default();
+            return LintResult::new();
         }
         result
     }
@@ -209,7 +209,7 @@ impl Context<'_, '_> {
                 LintResult {
                     messages,
                     suppressed,
-                    ..LintResult::default()
+                    ..LintResult::new()
                 }
             }
             Err(message) => thrown(message),
@@ -224,7 +224,7 @@ impl Context<'_, '_> {
         config: &ResolvedConfig,
     ) -> (LintResult, Option<Vec<u8>>) {
         let Some(for_eslint) = &loaded.for_eslint else {
-            return (LintResult::default(), None);
+            return (LintResult::new(), None);
         };
         let path = paths::to_native(it.path.to_vec());
         let text = js_plugin::Text {
@@ -241,7 +241,7 @@ impl Context<'_, '_> {
                 LintResult {
                     messages: linted.messages,
                     suppressed: linted.suppressed,
-                    ..LintResult::default()
+                    ..LintResult::new()
                 },
                 Some(linted.deprecated),
             ),
@@ -264,7 +264,7 @@ impl Context<'_, '_> {
             (Route::Language, _) => self.verify_in_language_of(loaded, it, config),
             // A processor that finds a file for a processor in a file, and so on without end. ESLint overflows its stack.
             (Route::Processor, _) if !bun_core::StackCheck::init().is_safe_to_recurse() => {
-                LintResult::default()
+                LintResult::new()
             }
             (Route::Processor, Some(processor)) => {
                 self.verify_with_processor(loaded, it, config, processor)
@@ -274,7 +274,7 @@ impl Context<'_, '_> {
                 needs_eslint()
             }
             // As a file of that kind.
-            (Route::Unsupported | Route::Eslint, _) => LintResult::default(),
+            (Route::Unsupported | Route::Eslint, _) => LintResult::new(),
         }
     }
 

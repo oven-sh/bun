@@ -111,7 +111,7 @@ fn split_first_word(text: &[u8]) -> (&[u8], &[u8]) {
     text.split_at(text.iter().take_while(|b| !is_jsx_whitespace(**b)).count())
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct ChildrenMeta {
     /// There is an element or a fragment.
     contains_tag: bool,
@@ -119,6 +119,17 @@ struct ChildrenMeta {
     contains_multiple_expressions: bool,
     /// There is text that is not only white space with a line break, or `{" "}`.
     contains_text: bool,
+}
+
+impl ChildrenMeta {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            contains_tag: false,
+            contains_multiple_expressions: false,
+            contains_text: false,
+        }
+    }
 }
 
 /// Prettier's `printJsxChildren`, before anything is formatted.
@@ -255,7 +266,7 @@ impl<'a> Children<'a> {
             items: SmallVec::new(),
             parts: SmallVec::new(),
             is_facebook_translation_tag: jsx.tag().is_some_and(|tag| tag.text() == b"fbt"),
-            meta: ChildrenMeta::default(),
+            meta: ChildrenMeta::new(),
         };
         children.parts.push(Part::Content { start: 0, end: 0 });
 

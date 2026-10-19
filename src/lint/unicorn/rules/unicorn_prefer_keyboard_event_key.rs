@@ -25,7 +25,7 @@ impl Rule for PreferKeyboardEventKey {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let has = |name: &str| file.find_name(name).is_some();
         if has("addEventListener") && DEPRECATED_PROPERTIES.into_iter().any(has) {
-            Some(AncestorMemo::default())
+            Some(AncestorMemo::new())
         } else {
             None
         }

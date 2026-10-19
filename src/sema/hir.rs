@@ -85,12 +85,19 @@ impl From<u32> for Atom {
 }
 
 /// `core.TextRange`, the `Loc` of a node.
-#[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct TextRange {
     /// `node.Pos()`: the end of the token before the node.
     pub pos: u32,
     /// `node.End()`: the end of the last token of the node.
     pub end: u32,
+}
+
+impl TextRange {
+    #[inline]
+    pub fn new() -> Self {
+        Self { pos: 0, end: 0 }
+    }
 }
 
 /// A list of ids that are not contiguous: a range of [`File::ids`].
@@ -188,9 +195,9 @@ impl<'s, T> ArenaFew<'s, T> {
     }
 }
 
-impl<T> Default for ArenaFew<'_, T> {
+impl<T> ArenaFew<'_, T> {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         ArenaFew(None)
     }
 }
@@ -260,7 +267,6 @@ pub trait Storage {
 }
 
 /// While a file is parsed or bound: on the global heap, with room to grow.
-#[derive(Default)]
 pub struct Growable;
 
 impl Storage for Growable {
@@ -305,12 +311,6 @@ enum FixedIn<'s, T> {
     Arena(ArenaBox<'s, [T]>),
     Lent(&'s mut [T]),
     Shared(&'s [T]),
-}
-
-impl<T> Default for Fixed<'_, T> {
-    fn default() -> Self {
-        Fixed(FixedIn::Lent(&mut []))
-    }
 }
 
 impl<'s, T: Copy> Fixed<'s, T> {
@@ -379,7 +379,6 @@ pub struct Lazy<'s> {
 ///
 /// On the regular heap, and without a lifetime, so that a reference to them can be shortened: what is in a `OnceLock`
 /// cannot. Nothing drops a file of a program, so the session has the cells (`Session::keep`).
-#[derive(Default)]
 pub struct LazyCells {
     /// `node.Parent`, by `Node`: `File::parent`.
     pub(crate) parents: OnceLock<crate::node::Parents>,
@@ -393,6 +392,20 @@ pub struct LazyCells {
     pub(crate) class_extends_places: OnceLock<Places<Box<[TextRange]>>>,
     /// `File::keyword_identifiers`
     pub(crate) keyword_identifiers: OnceLock<Box<[Node]>>,
+}
+
+impl LazyCells {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            parents: std::sync::OnceLock::new(),
+            owners: std::sync::OnceLock::new(),
+            ambient_or_type_places: std::sync::OnceLock::new(),
+            type_query_places: std::sync::OnceLock::new(),
+            class_extends_places: std::sync::OnceLock::new(),
+            keyword_identifiers: std::sync::OnceLock::new(),
+        }
+    }
 }
 
 /// Those of every file without nodes: what is computed from one is the same for all.
@@ -418,7 +431,7 @@ pub(crate) fn few_to_arena<'s, T>(list: Vec<T>, arena: &'s Arena) -> ArenaFew<'s
 
 bitflags::bitflags! {
     /// Modifiers, for every kind of node that can have them.
-    #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub struct Flags: u32 {
         const EXPORT = 1 << 0;
         const DEFAULT = 1 << 1;
@@ -900,9 +913,8 @@ pub enum PropKind {
 }
 
 /// The syntactic form of a name whose text is in `PropKey::Name`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum NameKind {
-    #[default]
     Identifier,
     StringLiteral,
     NumericLiteral,
@@ -1537,9 +1549,8 @@ pub struct Module {
 }
 
 /// `core.ResolutionMode`. `None`: not specified; it is determined by the file and the syntax.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub enum ResolutionMode {
-    #[default]
     None,
     Import,
     Require,
@@ -1971,9 +1982,8 @@ pub enum ReferenceKind {
     Lib,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum FileKind {
-    #[default]
     Ts,
     Tsx,
     /// `.d.ts`, `.d.mts`, `.d.cts`, `.d.*.ts`
@@ -1992,8 +2002,8 @@ pub struct JsxPragmas {
     pub import_source: Atom,
 }
 
-impl Default for JsxPragmas {
-    fn default() -> Self {
+impl JsxPragmas {
+    pub fn new() -> Self {
         JsxPragmas {
             classic: None,
             factory: Atom::NONE,
@@ -2030,9 +2040,8 @@ pub struct Comment {
     pub following_node: NodeOrName,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum NodeOrName {
-    #[default]
     None,
     Node(NodeData),
     /// An identifier or a literal key, given by its start offset. The HIR stores names as fields of nodes. In ESTree they are
@@ -2256,7 +2265,7 @@ pub type FileBuilder = FileIn<Growable>;
 impl FileBuilder {
     pub fn new() -> Self {
         FileBuilder {
-            kind: FileKind::default(),
+            kind: FileKind::Ts,
             is_js: false,
             is_flow: false,
             check_directive: None,
@@ -2274,7 +2283,7 @@ impl FileBuilder {
             error_pos: 0,
             source_len: 0,
             text: Cow::Owned(Vec::new()),
-            body: IdList::default(),
+            body: IdList::EMPTY,
             references: Vec::new(),
             comment_directives: Vec::new(),
             comments: Vec::new(),
@@ -2296,7 +2305,7 @@ impl FileBuilder {
             parens: Vec::new(),
             non_null_ends: Vec::new(),
             jsx_expressions: Vec::new(),
-            jsx_pragmas: JsxPragmas::default(),
+            jsx_pragmas: JsxPragmas::new(),
             jsdoc_comments: Vec::new(),
             jsdoc_asterisks: Vec::new(),
             jsdoc_hosts: Vec::new(),
@@ -2339,7 +2348,7 @@ impl FileBuilder {
             modifiers: Vec::new(),
             names: Vec::new(),
             bases: NodeBases::default(),
-            lazy: LazyCells::default(),
+            lazy: LazyCells::new(),
             keyword_identifier_positions: Vec::new(),
         }
     }
@@ -2642,7 +2651,7 @@ impl FileBuilder {
         let stmt = self.add_stmt_node(Stmt {
             kind: StmtKind::Empty,
             start: pos,
-            loc: TextRange::default(),
+            loc: TextRange::new(),
             modifiers: Span::EMPTY,
         });
         self.set_stmt_kind(stmt, kind);
@@ -2845,7 +2854,7 @@ impl FileBuilder {
     /// The file with every list at its final size in `arena`, which is one of `session`. Also
     /// returns the long lists, emptied: the next file that the thread parses reuses their capacity.
     pub fn into_arena<'s>(self, arena: &'s Arena, session: &'s Session) -> (File<'s>, FileBuilder) {
-        self.into_arena_with(arena, session, session.keep(LazyCells::default()))
+        self.into_arena_with(arena, session, session.keep(LazyCells::new()))
     }
 
     fn into_arena_with<'s>(
@@ -2875,7 +2884,7 @@ impl FileBuilder {
     /// The file for as long as `self` is not touched: the long lists stay where they are. What else
     /// a `File` has is in `arena`, which is one of `session`.
     pub fn lend<'s>(&'s mut self, arena: &'s Arena, session: &'s Session) -> File<'s> {
-        self.lazy = LazyCells::default();
+        self.lazy = LazyCells::new();
         macro_rules! lent {
             ($list:expr) => {
                 Fixed(FixedIn::Lent(&mut $list[..]))

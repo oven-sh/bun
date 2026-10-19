@@ -99,10 +99,18 @@ fn get_es6_component_around<'a>(
     components.get(Node::Class(class))
 }
 
-#[derive(Default)]
 struct DefaultPropsInstructions<'a> {
     /// `component.defaultProps` of those that have one. `None`: `"unresolved"`.
     default_props: FxHashMap<ComponentId, Option<DeclaredPropTypes<'a>>>,
+}
+
+impl<'a> DefaultPropsInstructions<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            default_props: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl<'a> DefaultPropsInstructions<'a> {
@@ -140,7 +148,7 @@ impl<'a> DefaultPropsInstructions<'a> {
             true => self.default_props.remove(&component),
             false => self.default_props.get(&component).cloned(),
         };
-        let mut new_default_props = defaults.flatten().unwrap_or_default();
+        let mut new_default_props = defaults.flatten().unwrap_or_else(DeclaredPropTypes::new);
         for (name, node) in default_props {
             // `Object.assign` calls the setter: it becomes no property.
             if name == b"__proto__" {
@@ -149,7 +157,7 @@ impl<'a> DefaultPropsInstructions<'a> {
             let prop = DeclaredPropType {
                 name: Some(Cow::Borrowed(name)),
                 node: Some(node),
-                ..DeclaredPropType::default()
+                ..DeclaredPropType::new()
             };
             new_default_props.insert(Cow::Borrowed(name), prop);
         }
@@ -355,5 +363,5 @@ impl<'a> Instructions<'a> for DefaultPropsInstructions<'a> {
 
 /// `defaultPropsInstructions(context, components, utils)`
 pub(crate) fn defaults<'a>() -> Box<dyn Instructions<'a> + 'a> {
-    Box::new(DefaultPropsInstructions::default())
+    Box::new(DefaultPropsInstructions::new())
 }

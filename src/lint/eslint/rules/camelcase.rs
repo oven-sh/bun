@@ -17,7 +17,6 @@ const NOT_CAMEL_CASE: Message =
 const NOT_CAMEL_CASE_PRIVATE: Message =
     Message::new("notCamelCasePrivate", "#{{name}} is not in camel case.");
 
-#[derive(Default)]
 pub struct State {
     /// Where the reported identifiers start. The key and the value of a shorthand property are
     /// reported once.
@@ -25,6 +24,16 @@ pub struct State {
     /// Some name that is declared in a scope or refers to something is not good, so that it is
     /// worth looking at the variables.
     has_bad_variable_name: bool,
+}
+
+impl State {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            reported: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            has_bad_variable_name: false,
+        }
+    }
 }
 
 /// It contains an underscore, other than at its ends, and is not all upper case.
@@ -274,7 +283,7 @@ impl Rule for Camelcase {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

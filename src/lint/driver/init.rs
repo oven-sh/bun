@@ -104,13 +104,8 @@ impl Section {
         if bom == Some(BOM::Utf16Le) {
             added = added.iter().flat_map(|it| [*it, 0]).collect();
         }
-        fs::write_atomically(
-            &fs::Written::default(),
-            cwd,
-            &path,
-            &[before, added].concat(),
-        )
-        .map_err(|why| cannot("write", &why))?;
+        fs::write_atomically(&fs::Written::new(), cwd, &path, &[before, added].concat())
+            .map_err(|why| cannot("write", &why))?;
         Ok(format!("Added [{}] to bunfig.toml", self.name).into_bytes())
     }
 
@@ -123,7 +118,7 @@ impl Section {
         above: Option<&[u8]>,
         environment: &Environment,
     ) -> Outcome {
-        let mut out = Outcome::default();
+        let mut out = Outcome::new();
         match self.try_add(other, above, &environment.cwd) {
             Ok(done) => out.stdout = [&done[..], b"\n"].concat(),
             Err(why) => {

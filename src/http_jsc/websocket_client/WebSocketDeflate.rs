@@ -15,8 +15,8 @@ pub struct Params {
     pub(crate) client_no_context_takeover: u8,
 }
 
-impl Default for Params {
-    fn default() -> Self {
+impl Params {
+    pub fn new() -> Self {
         Self {
             server_max_window_bits: 15,
             client_max_window_bits: 15,

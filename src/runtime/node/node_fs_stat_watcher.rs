@@ -129,14 +129,14 @@ impl StatWatcherScheduler {
             work_pool_in_flight: AtomicBool::new(false),
             is_shutdown: AtomicBool::new(false),
             task: WorkPoolTask {
-                node: Default::default(),
+                node: bun_threading::thread_pool::Node::new(),
                 callback: Self::work_pool_callback,
             },
             main_thread: thread::current().id(),
             // JSC_BORROW: `vm` is the live per-thread VM (never null).
             vm: BackRef::from(core::ptr::NonNull::new(vm).expect("vm")),
             ticket: Cell::new(None),
-            watchers: WatcherQueue::default(),
+            watchers: WatcherQueue::new(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::StatWatcherScheduler),
             ref_count: ThreadSafeRefCount::init(),
         })
@@ -225,7 +225,7 @@ impl StatWatcherScheduler {
             || self.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running;
 
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        self.event_loop_timer.heap = Default::default();
+        self.event_loop_timer.heap = bun_io::heap::IntrusiveField::new();
 
         if has_been_cleared || self.is_shutdown.load(Ordering::Relaxed) {
             return;
@@ -844,7 +844,7 @@ impl StatWatcher {
             last_check: Cell::new(Instant::now()),
             global_this: args.global_this,
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: JsCell::new(KeepAlive::new()),
             // InitStatTask is responsible for setting this
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
             last_stat: Guarded::init(bun_core::ffi::zeroed::<PosixStat>()),
@@ -1030,7 +1030,7 @@ impl InitialStatTask {
             // The watcher is a JS-owned m_ctx; its VM waits for this ticket.
             // SAFETY: per fn contract; JS thread.
             ticket: unsafe { (*watcher).ctx.get() }.ticket(),
-            task: WorkPoolTask::default(),
+            task: WorkPoolTask::new(),
         });
     }
 

@@ -171,7 +171,7 @@ impl HostedGitInfo {
         host_provider: HostProvider,
         default_representation: Representation,
     ) -> Result<Self, HostedGitInfoError> {
-        let mut sb = StringBuilder::default();
+        let mut sb = StringBuilder::new();
 
         if let Some(u) = user {
             sb.count(u);
@@ -1013,7 +1013,7 @@ pub(crate) mod formatters {
             project: &[u8],
             committish: Option<&[u8]>,
         ) -> Result<ExtractResult, HostedGitInfoError> {
-            let mut sb = StringBuilder::default();
+            let mut sb = StringBuilder::new();
             if let Some(u) = user {
                 sb.count(u);
             }
@@ -1175,7 +1175,7 @@ pub(crate) mod formatters {
             let fragment_utf8 = fragment_str.to_utf8();
             let committish = fragment_utf8.slice();
 
-            let mut sb = StringBuilder::default();
+            let mut sb = StringBuilder::new();
             sb.count(user_part);
             sb.count(project);
             if !committish.is_empty() {

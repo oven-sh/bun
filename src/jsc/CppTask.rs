@@ -93,6 +93,6 @@ extern "C" fn ConcurrentCppTask__createAndRun(
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,
         ticket,
-        workpool_task: WorkPoolTask::default(),
+        workpool_task: WorkPoolTask::new(),
     });
 }

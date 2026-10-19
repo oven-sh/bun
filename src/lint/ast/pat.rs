@@ -60,7 +60,7 @@ impl<'a> Pat<'a> {
                 end,
             }) => Span::new(pos, self.file.end_of_identifier(pos, end)),
             Some(raw) => Span::new(raw.pos, raw.end),
-            None => Span::default(),
+            None => Span::init(),
         }
     }
 

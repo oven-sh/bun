@@ -80,7 +80,7 @@ pub(crate) fn prune_non_escaping_scopes(
     // Prune scopes that do not declare/reassign any escaping values
     let mut transform = PruneScopesTransform {
         env,
-        pruned_scopes: HashSet::default(),
+        pruned_scopes: HashSet::with_hasher(rustc_hash::FxBuildHasher),
         reassignments: IdMap::new(),
     };
     let mut memoized_state = memoized;
@@ -1133,8 +1133,8 @@ fn compute_memoized_identifiers(
         node.memoized = false;
         let level = node.level;
         // Nothing reads these of a node that is seen.
-        let dependencies = std::mem::take(&mut node.dependencies);
-        let scopes = std::mem::take(&mut node.scopes);
+        let dependencies = std::mem::replace(&mut node.dependencies, IndexSet::init());
+        let scopes = std::mem::replace(&mut node.scopes, IndexSet::init());
 
         // Visit dependencies
         let mut has_memoized_dependency = false;
@@ -1179,7 +1179,7 @@ fn compute_memoized_identifiers(
     }
 
     // Walk from the "roots" aka returned/escaping identifiers
-    for value in std::mem::take(&mut state.escaping_values) {
+    for value in std::mem::replace(&mut state.escaping_values, IndexSet::init()) {
         visit(value, false, &mut state, &mut memoized, env)?;
     }
 
@@ -1254,7 +1254,9 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
             }) if store_lvalue.kind == InstructionKind::Reassign => {
                 let decl_id =
                     self.env.identifiers[store_lvalue.place.identifier.0 as usize].declaration_id;
-                let ids = self.reassignments.entry(decl_id).or_default();
+                let ids = self.reassignments.entry(decl_id).or_insert_with(|| {
+                    rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher)
+                });
                 ids.insert(store_value.identifier);
             }
             ReactiveValue::Instruction(InstructionValue::LoadLocal { place, .. }) => {
@@ -1273,7 +1275,9 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
                 if has_scope && lvalue_no_scope {
                     if let Some(lv) = &instruction.lvalue {
                         let decl_id = self.env.identifiers[lv.identifier.0 as usize].declaration_id;
-                        let ids = self.reassignments.entry(decl_id).or_default();
+                        let ids = self.reassignments.entry(decl_id).or_insert_with(|| {
+                            rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher)
+                        });
                         ids.insert(place.identifier);
                     }
                 }

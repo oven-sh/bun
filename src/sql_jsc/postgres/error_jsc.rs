@@ -86,7 +86,7 @@ pub(crate) fn postgres_error_to_js_with_hint(
                 &PostgresErrorOptions {
                     code: b"ERR_POSTGRES_TOO_MANY_PARAMETERS",
                     hint: Some(b"Reduce the number of rows in your batch insert so that total_rows * columns_per_row does not exceed 65535."),
-                    ..Default::default()
+                    ..PostgresErrorOptions::new()
                 },
             ) {
                 Ok(v) => v,
@@ -133,7 +133,7 @@ pub(crate) fn postgres_error_to_js_with_hint(
         &PostgresErrorOptions {
             code,
             hint,
-            ..Default::default()
+            ..PostgresErrorOptions::new()
         },
     ) {
         Ok(v) => v,

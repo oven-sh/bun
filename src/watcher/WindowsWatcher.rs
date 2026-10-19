@@ -24,8 +24,8 @@ pub struct WindowsWatcher {
     pub(crate) base_idx: usize,
 }
 
-impl Default for WindowsWatcher {
-    fn default() -> Self {
+impl WindowsWatcher {
+    pub fn empty() -> Self {
         Self {
             iocp: w::INVALID_HANDLE_VALUE,
             watcher: DirWatcher {
@@ -209,7 +209,7 @@ impl WindowsWatcher {
     // into `Box::new(Watcher { .. })` in `Watcher::init`.
     #[allow(clippy::large_stack_frames)]
     pub(crate) fn new(root: &[u8]) -> crate::Result<Self> {
-        let mut this = Self::default();
+        let mut this = Self::empty();
         this.init(root)?;
         Ok(this)
     }
@@ -361,7 +361,7 @@ impl WindowsWatcher {
                 return Err(bun_sys::Error {
                     errno: bun_sys::SystemErrno::EINVAL as _,
                     syscall: bun_sys::Tag::watch,
-                    ..Default::default()
+                    ..bun_sys::Error::init()
                 });
             }
         }
@@ -542,6 +542,6 @@ fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
     WatchEvent {
         op,
         index,
-        ..Default::default()
+        ..WatchEvent::new()
     }
 }

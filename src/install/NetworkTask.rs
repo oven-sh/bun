@@ -115,7 +115,7 @@ pub enum Callback {
     LocalTarball,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct DedupeMapEntry {
     pub(crate) is_required: bool,
     /// Set once the download/extract for this task id has terminally failed so a
@@ -130,11 +130,23 @@ pub struct DedupeMapEntry {
     pub(crate) missing_until: u32,
 }
 
+impl DedupeMapEntry {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            is_required: false,
+            failed: false,
+            manifest: ManifestOrigin::Cache,
+            missed_in: None,
+            missing_until: 0,
+        }
+    }
+}
+
 /// A version that a cached copy of a manifest lacks may have been published since.
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ManifestOrigin {
     /// The disk cache, also after a 304.
-    #[default]
     Cache,
     /// `refetch_stale_manifest` asked for it again without conditional headers.
     Refetching,
@@ -663,7 +675,7 @@ impl NetworkTask {
 
         let authorization = scope.authorization_parts(&URL::parse(&self.url_buf));
 
-        let mut header_builder = HeaderBuilder::default();
+        let mut header_builder = HeaderBuilder::new();
 
         count_auth(&mut header_builder, authorization);
 
@@ -726,7 +738,7 @@ impl NetworkTask {
                 },
             })?;
             header_builder.header_count = 1;
-            self.header_buf = Box::default();
+            self.header_buf = Box::new([]);
             header_buf.as_bytes()
         };
 
@@ -748,7 +760,7 @@ impl NetworkTask {
                 http_proxy,
                 proxy_settings: pm.proxy_settings(),
                 idle_timeout_seconds: pm.idle_timeout_seconds(),
-                ..Default::default()
+                ..AsyncHTTPOptions::new()
             },
         );
         request.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
@@ -909,7 +921,7 @@ impl NetworkTask {
 
         self.response_buffer = MutableString::init_empty();
 
-        let mut header_builder = HeaderBuilder::default();
+        let mut header_builder = HeaderBuilder::new();
 
         // Configured credentials win over the URL's userinfo, as in npm.
         match (credentials, &url_authorization) {
@@ -940,7 +952,7 @@ impl NetworkTask {
             http_proxy: pm.http_proxy(&url),
             proxy_settings: pm.proxy_settings(),
             idle_timeout_seconds: pm.idle_timeout_seconds(),
-            ..Default::default()
+            ..AsyncHTTPOptions::new()
         };
 
         if extract_tarball::uses_streaming_extraction() {
@@ -961,7 +973,7 @@ impl NetworkTask {
             // would also publish `aborted`/`cert_errors`/etc., which makes
             // the HTTP client allocate an abort-tracker id and changes
             // keep-alive behaviour we don't want here.
-            self.signal_store = http::signals::Store::default();
+            self.signal_store = http::signals::Store::new();
             self.signal_store
                 .response_body_streaming
                 .store(true, Ordering::Relaxed);
@@ -969,7 +981,7 @@ impl NetworkTask {
                 response_body_streaming: Some(NonNull::from(
                     &self.signal_store.response_body_streaming,
                 )),
-                ..Default::default()
+                ..http::Signals::new()
             });
         }
 
@@ -1042,7 +1054,7 @@ impl NetworkTask {
                 ))
             });
         }
-        self.response = HTTPClientResult::default();
+        self.response = HTTPClientResult::new();
     }
 
     /// Initialize a freshly-vended pool slot in place — a full struct overwrite
@@ -1082,15 +1094,15 @@ impl NetworkTask {
             addr_of_mut!((*slot).package_manager)
                 .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
             // Struct-default fields.
-            addr_of_mut!((*slot).response).write(HTTPClientResult::default());
-            addr_of_mut!((*slot).url_buf).write(Box::default());
-            addr_of_mut!((*slot).header_buf).write(Box::default());
+            addr_of_mut!((*slot).response).write(HTTPClientResult::new());
+            addr_of_mut!((*slot).url_buf).write(Box::new([]));
+            addr_of_mut!((*slot).header_buf).write(Box::new([]));
             addr_of_mut!((*slot).retried).write(0);
             addr_of_mut!((*slot).next).write(bun_threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);
             addr_of_mut!((*slot).streaming_extract_task).write(ptr::null_mut());
             addr_of_mut!((*slot).streaming_committed).write(false);
-            addr_of_mut!((*slot).signal_store).write(http::signals::Store::default());
+            addr_of_mut!((*slot).signal_store).write(http::signals::Store::new());
             // Caller-initialized fields: write drop-safe placeholders so the
             // plain `=` in `for_manifest`/`for_tarball` drops a valid value.
             // (`unsafe_http_client` is `MaybeUninit` — left uninitialized.)

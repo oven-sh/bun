@@ -101,7 +101,7 @@ pub struct Resolved {
 
 /// What the rules of oxlint read of the module record of another file: what it imports and exports at its top level, without the
 /// places.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Record {
     /// It has an `import`, an `export` or an `import.meta`.
     pub has_module_syntax: bool,
@@ -463,7 +463,8 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
         return;
     }
     // The same for all the statements with a specifier.
-    let mut by_specifier: FxHashMap<Name<'a>, (bool, bool, bool)> = FxHashMap::default();
+    let mut by_specifier: FxHashMap<Name<'a>, (bool, bool, bool)> =
+        FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for &(specifier, has_names, has_values, exports_names) in &names {
         let all = by_specifier.entry(specifier).or_default();
         *all = (all.0 | has_names, all.1 | has_values, all.2 | exports_names);

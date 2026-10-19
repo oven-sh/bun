@@ -2243,7 +2243,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             func: FnId::NONE,
             name_pos: start.pos,
             start: start.pos,
-            loc: TextRange::default(),
+            loc: TextRange::new(),
             modifiers: Span::EMPTY,
         };
         let signature_kind = match self.token() {

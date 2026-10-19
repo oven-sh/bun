@@ -291,7 +291,7 @@ impl PreserveCaughtError {
                 (false, None) => return,
             };
 
-        let param_span = param.map_or_else(Span::default, |param| param.pat().span());
+        let param_span = param.map_or_else(Span::init, |param| param.pat().span());
         let caught = match param.map(|param| param.pat().kind()) {
             Some(PatKind::Ident(name)) => name,
             // oxlint goes on as with a name, which nothing is the value of, and points at the statement.
@@ -412,7 +412,7 @@ impl Rule for PreserveCaughtError {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<ParentCatches<'a>> {
-        Some(ParentCatches::default())
+        Some(ParentCatches::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

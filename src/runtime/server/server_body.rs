@@ -530,7 +530,7 @@ pub(crate) mod BunInfo {
         G::Property {
             key: Some(str_expr(key)),
             value: Some(value),
-            ..G::Property::default()
+            ..G::Property::new()
         }
     }
 
@@ -555,7 +555,7 @@ pub(crate) mod BunInfo {
             E::Object {
                 properties: platform_props,
                 is_single_line: false,
-                ..E::Object::default()
+                ..E::Object::new()
             },
             Loc::EMPTY,
         );
@@ -568,7 +568,7 @@ pub(crate) mod BunInfo {
             E::Object {
                 properties: root_props,
                 is_single_line: false,
-                ..E::Object::default()
+                ..E::Object::new()
             },
             Loc::EMPTY,
         ))
@@ -745,7 +745,7 @@ impl AnyRoute {
             super::static_route::InitFromBytesOptions {
                 server: None,
                 headers,
-                ..Default::default()
+                ..super::static_route::InitFromBytesOptions::new()
             },
         )))
     }
@@ -2524,7 +2524,7 @@ where
             &source,
             bun_js_printer::PrintJsonOptions {
                 mangled_props: None,
-                ..Default::default()
+                ..bun_js_printer::PrintJsonOptions::new()
             },
         );
 
@@ -2926,7 +2926,7 @@ where
                         producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
                             AnyRequestContext::init(ctx_slot),
                         ),
-                        ..Default::default()
+                        ..crate::webcore::body::PendingValue::init()
                     });
                 }
                 ctx.set_is_waiting_for_request_body(true);
@@ -3240,7 +3240,7 @@ where
             "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
             bun_fmt::format_json_string_utf8(
                 &self.dev_server.as_ref().unwrap().root,
-                Default::default()
+                bun_core::fmt::JSONFormatterUTF8Options::new()
             ),
             uuid,
         );

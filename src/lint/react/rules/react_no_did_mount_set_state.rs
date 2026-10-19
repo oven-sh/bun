@@ -49,12 +49,22 @@ const METHODS: [Method; 3] = [
 
 const NO_SET_STATE: Message = Message::new("noSetState", "Do not use setState in {{name}}");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// Those of the method that count.
     names: &'static [&'static str],
     function_count: LifecycleWalk<'a>,
     walks: Walks<'a>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            names: &[],
+            function_count: LifecycleWalk::new(),
+            walks: Walks::new(),
+        }
+    }
 }
 
 impl<const METHOD: usize> Rule for NoMethodSetState<METHOD> {
@@ -87,7 +97,7 @@ impl<const METHOD: usize> Rule for NoMethodSetState<METHOD> {
                 false => get_react_version_from_context(file) >= (16, 3, 0),
             };
         let names = if check_unsafe_prefix { method.names } else { &method.names[..1] };
-        Some(State { names, ..State::default() })
+        Some(State { names, ..State::new() })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

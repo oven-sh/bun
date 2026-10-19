@@ -9,8 +9,8 @@ pub struct AuthSwitchRequest {
     pub plugin_data: Data,
 }
 
-impl Default for AuthSwitchRequest {
-    fn default() -> Self {
+impl AuthSwitchRequest {
+    pub fn new() -> Self {
         Self {
             header: 0xfe,
             plugin_name: Data::Empty,

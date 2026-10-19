@@ -7,11 +7,20 @@ pub struct NoUnusedLabels;
 
 const UNUSED: Message = Message::new("unused", "'{{name}}:' is defined but never used.");
 
-#[derive(Default)]
 pub struct Labels<'a> {
     all: Vec<Stmt<'a>>,
     /// Where the `break` and `continue` statements with a label start, each with its label.
     jumps: Vec<(u32, Name<'a>)>,
+}
+
+impl<'a> Labels<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            all: Vec::new(),
+            jumps: Vec::new(),
+        }
+    }
 }
 
 /// Whether the label of `statement` can be removed: no comment is lost, `body` does not become a
@@ -64,7 +73,7 @@ impl Rule for NoUnusedLabels {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Labels<'a>> {
-        Some(Labels::default())
+        Some(Labels::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -81,7 +90,7 @@ impl Rule for NoUnusedLabels {
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let Labels { mut all, mut jumps } = std::mem::take(&mut cx.state);
+        let Labels { mut all, mut jumps } = std::mem::replace(&mut cx.state, Labels::new());
         utils::sort::sort_unstable_by_key(&mut all, |it| it.span().start);
         utils::sort::sort_unstable_by_key(&mut jumps, |it| it.0);
         let label_of = |statement: Stmt<'a>| match statement.kind() {
@@ -93,7 +102,7 @@ impl Rule for NoUnusedLabels {
         // The indexes of the labeled statements around the place, the outermost first, and of
         // those of them with each label.
         let mut around: Vec<usize> = Vec::new();
-        let mut with_label: FxHashMap<Name<'a>, Vec<usize>> = FxHashMap::default();
+        let mut with_label: FxHashMap<Name<'a>, Vec<usize>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut rest = all.iter().copied().enumerate().peekable();
         for (jump, name) in jumps {
             loop {
@@ -118,7 +127,7 @@ impl Rule for NoUnusedLabels {
                 *is_used = true;
             }
         }
-        let mut known = AncestorMemo::default();
+        let mut known = AncestorMemo::new();
         for (&statement, is_used) in all.iter().zip(is_used) {
             if is_used {
                 continue;

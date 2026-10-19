@@ -141,7 +141,7 @@ bun_collections::multi_array_columns! {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct Flags: u16 {
         // This is a list of CommonJS features. When a file uses CommonJS features,
         // it's not a candidate for "flat bundling" and must be wrapped in its own
@@ -168,7 +168,7 @@ impl<'arena> BundledAst<'arena> {
     pub(crate) fn empty_in(arena: &'arena bun_alloc::Arena) -> Self {
         Self {
             approximate_newline_count: 0,
-            nested_scope_slot_counts: SlotCounts::default(),
+            nested_scope_slot_counts: SlotCounts::new(),
             exports_kind: ExportsKind::None,
             module_type: ModuleType::Unknown,
             import_records: import_record::List::new_in(arena),
@@ -178,24 +178,24 @@ impl<'arena> BundledAst<'arena> {
             css: None,
             url_for_css: b"",
             symbols: symbol::List::new_in(arena),
-            module_scope: Scope::default(),
+            module_scope: Scope::EMPTY,
             char_freq: None,
             exports_ref: Ref::NONE,
             module_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
             require_ref: Ref::NONE,
             top_level_await_keyword: bun_ast::Range::NONE,
-            tla_check: TlaCheck::default(),
-            named_imports: NamedImports::default(),
-            named_exports: NamedExports::default(),
+            tla_check: TlaCheck::new(),
+            named_imports: NamedImports::new(),
+            named_exports: NamedExports::init(),
             export_star_import_records: bun_alloc::AstAlloc::vec(),
-            dynamic_import_aliases: Default::default(),
-            top_level_symbols_to_parts: TopLevelSymbolToParts::default(),
-            scope_uses: Default::default(),
-            commonjs_named_exports: CommonJSNamedExports::default(),
+            dynamic_import_aliases: bun_collections::ArrayHashMap::new(),
+            top_level_symbols_to_parts: TopLevelSymbolToParts::new(),
+            scope_uses: bun_ast::ast_result::ScopeUseList::new(),
+            commonjs_named_exports: CommonJSNamedExports::init(),
             redirect_import_record_index: u32::MAX,
             target: bun_ast::Target::Browser,
-            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            ts_enums: bun_ast::ast_result::TsEnumsMap::new(),
             flags: Flags::empty(),
         }
     }
@@ -258,7 +258,7 @@ impl<'arena> BundledAst<'arena> {
                 } else {
                     0
                 },
-                loc: bun_ast::Loc::default(),
+                loc: bun_ast::Loc::new(),
             },
             force_cjs_to_esm: self.flags.contains(Flags::FORCE_CJS_TO_ESM),
             commonjs_lifted_to_esm: self.flags.contains(Flags::COMMONJS_LIFTED_TO_ESM),
@@ -322,7 +322,7 @@ impl<'arena> BundledAst<'arena> {
             wrapper_ref: ast.wrapper_ref,
             require_ref: ast.require_ref,
             top_level_await_keyword: ast.top_level_await_keyword,
-            tla_check: TlaCheck::default(),
+            tla_check: TlaCheck::new(),
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
             // is conveniently fully parallelized.

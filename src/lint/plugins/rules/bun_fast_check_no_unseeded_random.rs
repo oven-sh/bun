@@ -60,7 +60,7 @@ impl Rule for FastCheckNoUnseededRandom {
         if !file.mentions(FAST_CHECK) {
             return None;
         }
-        Some(AncestorMemo::default())
+        Some(AncestorMemo::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

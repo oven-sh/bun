@@ -18,8 +18,14 @@ pub(crate) const FILE_NAME_OF_OXLINT: &[u8] = b"oxlint-suppressions.json";
 type ByRule = Vec<(Vec<u8>, u64)>;
 
 /// The content of the file: by path from the working directory.
-#[derive(Default)]
 pub(crate) struct Suppressions(Vec<(Vec<u8>, ByRule)>);
+
+impl Suppressions {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(Vec::new())
+    }
+}
 
 /// What the file calls the rule of `message`. `None`: it cannot be suppressed. `is_oxlint`: the file is oxlint's, which has the
 /// names of its diagnostics, `typescript/array-type` for `typescript(array-type)`, and nothing about what the type checker reports.
@@ -71,7 +77,7 @@ impl Suppressions {
     pub(crate) fn load(path: &[u8]) -> Result<Suppressions, Fatal> {
         let text = match fs::read(path) {
             Err(error) if error.get_errno() == bun_sys::E::ENOENT => {
-                return Ok(Suppressions::default());
+                return Ok(Suppressions::new());
             }
             read => read.ok(),
         };
@@ -148,7 +154,7 @@ impl Suppressions {
         cwd: &[u8],
         is_oxlint: bool,
     ) -> Suppressions {
-        let mut unused = Suppressions::default();
+        let mut unused = Suppressions::new();
         for result in results {
             let relative = paths::relative(cwd, &paths::from_native(&result.path));
             let Some((_, suppressed)) = self.0.iter().find(|it| it.0 == relative) else {

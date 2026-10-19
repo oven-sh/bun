@@ -31,12 +31,22 @@ pub struct Stream {
 }
 
 /// Decided by the producer before the request is queued; the HTTP thread only prints it.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct StreamFraming {
     /// `Some`: `Content-Length` framing, the buffer gets exactly this many raw bytes.
     pub content_length: Option<u64>,
     /// Caller value (in the client's `header_buf`) to send instead of plain `chunked`.
     pub transfer_encoding: Option<StringPointer>,
+}
+
+impl StreamFraming {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            content_length: None,
+            transfer_encoding: None,
+        }
+    }
 }
 
 pub struct InvalidFramingHeader<'a> {

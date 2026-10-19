@@ -221,7 +221,10 @@ impl Timings {
                 &mut out,
                 "{}\n    {}: {}",
                 if i > 0 { "," } else { "" },
-                bun_core::fmt::format_json_string_utf8(key, Default::default()),
+                bun_core::fmt::format_json_string_utf8(
+                    key,
+                    bun_core::fmt::JSONFormatterUTF8Options::new()
+                ),
                 ms
             );
         }

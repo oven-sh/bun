@@ -35,10 +35,19 @@ pub(crate) enum Params<'a> {
 }
 
 /// The selectors and the values of a node. Those of the next node take their place.
-#[derive(Default)]
 pub(crate) struct Parsed {
     pub(crate) selectors: Selectors,
     pub(crate) values: Values,
+}
+
+impl Parsed {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            selectors: Selectors::new(),
+            values: Values::new(),
+        }
+    }
 }
 
 /// A node, without what is in its block.
@@ -269,7 +278,7 @@ impl<'a> Context<'a> {
 
     /// The texts of `ranges`, one after the other.
     fn concat(&self, ranges: &[Range]) -> Cow<'a, [u8]> {
-        let mut all = Range::default();
+        let mut all = Range::init();
         for (index, &range) in ranges.iter().enumerate() {
             if all.is_empty() {
                 all = range;
@@ -529,7 +538,7 @@ impl<'a> Context<'a> {
                 }
                 (_, 0) => text_len,
                 (Kind::Root, last) => self.end_of(tree, last, parsed),
-                (_, last) => self.end_of(tree, last, &mut Parsed::default()),
+                (_, last) => self.end_of(tree, last, &mut Parsed::new()),
             },
         }
         .min(text_len);
@@ -655,13 +664,13 @@ impl<'a> Context<'a> {
             if has_text(raw.after_name) {
                 raw.after_name
             } else {
-                Range::default()
+                Range::init()
             },
             raw.params,
             if has_text(raw.between) {
                 raw.between
             } else {
-                Range::default()
+                Range::init()
             },
         ]));
         node.raw_params.clone_from(&params);

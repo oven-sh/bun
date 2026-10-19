@@ -48,7 +48,7 @@ pub struct State<'a> {
 }
 
 /// What is known of the value of `target` or `rel`.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Checked<'a> {
     /// `target` can be `_blank`. `rel` is always safe.
     holds: bool,
@@ -58,11 +58,33 @@ struct Checked<'a> {
     holds_in_alternate: bool,
 }
 
+impl<'a> Checked<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            holds: false,
+            test: None,
+            holds_in_consequent: false,
+            holds_in_alternate: false,
+        }
+    }
+}
+
 /// What is known of the attribute with the URL.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Href {
     is_external_link: bool,
     is_dynamic_link: bool,
+}
+
+impl Href {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            is_external_link: false,
+            is_dynamic_link: false,
+        }
+    }
 }
 
 /// What an element is checked as.
@@ -155,14 +177,14 @@ impl JsxNoTargetBlank {
             true => it.eq_ignore_ascii_case(b"_blank"),
             false => *text::to_lower_case(it) == *b"_blank",
         };
-        let (mut target_blank, mut rel_valid, mut href) = (Checked::default(), Checked::default(), Href::default());
+        let (mut target_blank, mut rel_valid, mut href) = (Checked::new(), Checked::new(), Href::new());
         let (mut target, mut spread_span) = (None, None);
         for attribute in jsx.attrs() {
             if attribute.kind() == PropKind::Spread {
                 if self.warn_on_spread_attributes {
                     spread_span = Some(attribute.span());
                     if is_as_configured {
-                        rel_valid = Checked::default();
+                        rel_valid = Checked::new();
                         href = Href { is_external_link: true, is_dynamic_link: href.is_dynamic_link && !is_oxlint };
                     }
                 }
@@ -353,13 +375,13 @@ fn check_value<'a>(attribute: Prop<'a>, is_rel: bool, is_oxlint: bool, holds: &d
         if is_rel { all } else { any }
     };
     let Some(value) = get_prop_value(attribute) else {
-        return Checked::default();
+        return Checked::new();
     };
     if let AttributeValue::StringLiteral(literal) = value {
-        return Checked { holds: holds(value_of(attribute, literal, is_oxlint)), ..Checked::default() };
+        return Checked { holds: holds(value_of(attribute, literal, is_oxlint)), ..Checked::new() };
     }
     let Some(expr) = value.as_expression() else {
-        return Checked::default();
+        return Checked::new();
     };
     match expr.kind() {
         ExprKind::Cond { test, yes, no } if !(is_oxlint && expr.is_parenthesized()) => {
@@ -372,9 +394,9 @@ fn check_value<'a>(attribute: Prop<'a>, is_rel: bool, is_oxlint: bool, holds: &d
         }
         // Upstream reads a template up to its first substitution.
         ExprKind::Template(template) if is_rel && !is_oxlint => {
-            Checked { holds: template.cooked(0).is_some_and(|it| holds(it.bytes())), ..Checked::default() }
+            Checked { holds: template.cooked(0).is_some_and(|it| holds(it.bytes())), ..Checked::new() }
         }
-        _ => Checked { holds: holds_in(expr), ..Checked::default() },
+        _ => Checked { holds: holds_in(expr), ..Checked::new() },
     }
 }
 
@@ -388,7 +410,7 @@ fn check_is_external_link(link: &[u8], is_oxlint: bool) -> bool {
 }
 
 fn check_href(attribute: Prop, is_oxlint: bool) -> Href {
-    let mut href = Href::default();
+    let mut href = Href::new();
     match get_prop_value(attribute) {
         Some(AttributeValue::StringLiteral(literal)) => {
             href.is_external_link = check_is_external_link(value_of(attribute, literal, is_oxlint), is_oxlint);

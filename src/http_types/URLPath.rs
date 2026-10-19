@@ -5,7 +5,6 @@ use bun_url::PercentEncoding;
 // either the `parse()` input slice or, when the input was percent-encoded, from
 // `_decoded_storage`. Add a
 // lifetime param to `URLPath` so the input-borrow case is checked.
-#[derive(Default)]
 pub struct URLPath {
     pub path: &'static [u8],
     pub pathname: &'static [u8],

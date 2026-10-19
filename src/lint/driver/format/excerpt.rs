@@ -64,7 +64,6 @@ fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
 }
 
 /// What is kept for the next problem, which is in the same file as a rule.
-#[derive(Default)]
 struct Place<'r> {
     /// The file that was asked about last, where its lines start, and [`display_path`] of it.
     file: Option<(&'r FileResult, LineStarts, Vec<u8>)>,
@@ -72,6 +71,17 @@ struct Place<'r> {
     helped: Option<(&'r FileResult, Vec<LintMessage>)>,
     /// The rules of the problems that are written, if those are few.
     written: Option<Vec<&'r RuleId>>,
+}
+
+impl<'r> Place<'r> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            file: None,
+            helped: None,
+            written: None,
+        }
+    }
 }
 
 impl<'r> Place<'r> {
@@ -229,9 +239,10 @@ fn rules_of<'r>(problems: impl Iterator<Item = Problem<'r>>) -> Option<Vec<&'r R
 /// groups of errors come before groups of warnings.
 fn grouped<'r>(problems: &[Problem<'r>], by_rule: bool) -> Vec<Vec<Problem<'r>>> {
     // A number for each rule, and that of a rule that is built in by where the rule is: its name is read once, not for each problem.
-    let mut numbers: FxHashMap<Rule, u32> = FxHashMap::default();
-    let mut numbers_by_address: FxHashMap<usize, u32> = FxHashMap::default();
-    let mut index: FxHashMap<(u32, &[u8]), usize> = FxHashMap::default();
+    let mut numbers: FxHashMap<Rule, u32> = FxHashMap::with_hasher(bun_sema::util::FxBuild);
+    let mut numbers_by_address: FxHashMap<usize, u32> =
+        FxHashMap::with_hasher(bun_sema::util::FxBuild);
+    let mut index: FxHashMap<(u32, &[u8]), usize> = FxHashMap::with_hasher(bun_sema::util::FxBuild);
     let mut groups: Vec<Vec<Problem>> = Vec::new();
     for problem in problems {
         let mut number_of = || {
@@ -352,7 +363,7 @@ fn write_said(
     let location = |line: u32, column: u32| bun_ast::Location {
         line: line as i32,
         column: column as i32,
-        ..Default::default()
+        ..bun_ast::Location::new()
     };
     let code = spot.map(|((_, line, column), lines)| {
         let gutter = bun_core::fmt::digit_count(line) + " | ".len();
@@ -372,9 +383,9 @@ fn write_said(
             text: text.into(),
             location: code,
         },
-        ..Default::default()
+        ..bun_ast::Msg::new()
     };
-    let place = spot.map_or_else(bun_ast::Location::default, |((file, line, column), _)| {
+    let place = spot.map_or_else(bun_ast::Location::new, |((file, line, column), _)| {
         bun_ast::Location {
             file: file.to_vec().into(),
             ..location(line, column)
@@ -470,7 +481,7 @@ fn write_pretty_problem<'r>(
 
 /// Prints `12 problems (3 errors, 9 warnings)` and how many of them `--fix` can fix. The last line gets no newline.
 fn write_pretty_summary(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    let mut counts = Counts::default();
+    let mut counts = Counts::new();
     results.iter().for_each(|it| counts.add(it.counts));
     let (errors, warnings) = (
         plural(counts.errors, "error"),
@@ -515,7 +526,7 @@ pub(super) fn write_pretty(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
 
 fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let problems = all(results);
-    let place = &mut Place::default();
+    let place = &mut Place::new();
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
         if problems.len() <= GROUP_THRESHOLD {
             place.written = rules_of(problems.iter().copied());
@@ -704,7 +715,7 @@ fn write_agent_problem<'r>(
 
 pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let problems = all(results);
-    let place = &mut Place::default();
+    let place = &mut Place::new();
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
         if problems.len() <= GROUP_THRESHOLD {
             place.written = rules_of(problems.iter().copied());

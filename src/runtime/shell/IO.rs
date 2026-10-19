@@ -10,11 +10,22 @@ use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::IOWriter;
 use crate::shell::shell_body::subproc::ShellIO;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct IO {
     pub(crate) stdin: InKind,
     pub(crate) stdout: OutKind,
     pub(crate) stderr: OutKind,
+}
+
+impl IO {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            stdin: InKind::Ignore,
+            stdout: OutKind::Ignore,
+            stderr: OutKind::Ignore,
+        }
+    }
 }
 
 impl IO {
@@ -38,20 +49,18 @@ impl IO {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) enum InKind {
     Fd(std::sync::Arc<IOReader>),
-    #[default]
     Ignore,
 }
 
 /// Write to a file descriptor (via `IOWriter`), tee into a captured buffer,
 /// pipe to a subprocess, or drop.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) enum OutKind {
     Fd(OutFd),
     Pipe,
-    #[default]
     Ignore,
 }
 

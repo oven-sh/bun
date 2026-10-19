@@ -62,7 +62,7 @@ pub(crate) fn validate_exhaustive_dependencies(
             false => bun_core::strings::locale_compare,
         },
         diagnostics: Vec::new(),
-        invalid_memo_ids: HashSet::default(),
+        invalid_memo_ids: HashSet::with_hasher(rustc_hash::FxBuildHasher),
     };
 
     let collected = collect_dependencies(
@@ -322,7 +322,7 @@ fn collect_reactive_identifiers(
     func: &HirFunction,
     functions: &[HirFunction],
 ) -> IdBitSet<IdentifierId> {
-    let mut reactive = IdBitSet::default();
+    let mut reactive = IdBitSet::init();
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
@@ -349,7 +349,7 @@ fn find_optional_places(
     func: &HirFunction,
 ) -> Result<IdMap<IdentifierId, bool>, CompilerDiagnostic> {
     let mut optionals: IdMap<IdentifierId, bool> = IdMap::new();
-    let mut visited: IdBitSet<BlockId> = IdBitSet::default();
+    let mut visited: IdBitSet<BlockId> = IdBitSet::init();
 
     for (_block_id, block) in &func.body.blocks {
         if visited.contains(block.id) {
@@ -545,7 +545,7 @@ fn collect_dependencies(
     }
 
     let optionals = find_optional_places(func)?;
-    let mut locals: IdBitSet<IdentifierId> = IdBitSet::default();
+    let mut locals: IdBitSet<IdentifierId> = IdBitSet::init();
 
     if is_function_expression {
         for param in &func.params {
@@ -860,7 +860,7 @@ fn collect_dependencies(
                         // dependencies/locals sets on StartMemoize
                         saved_dependencies = Some(std::mem::take(&mut dependencies.list));
                         dependencies.is_collected = true;
-                        saved_locals = Some(std::mem::take(&mut locals));
+                        saved_locals = Some(std::mem::replace(&mut locals, IdBitSet::init()));
                     }
                 }
                 InstructionValue::FinishMemoize {
@@ -913,7 +913,7 @@ fn collect_dependencies(
                             if let Some(saved) = saved_dependencies.take() {
                                 // Merge current memo-block deps into the restored outer deps
                                 let memo_deps = std::mem::replace(&mut dependencies.list, saved);
-                                locals = saved_locals.take().unwrap_or_default();
+                                locals = saved_locals.take().unwrap_or_else(IdBitSet::init);
                                 // Add memo deps to outer deps (they're still valid outer deps)
                                 for d in memo_deps {
                                     if !contains_dep(&dependencies.list, &d) {
@@ -930,7 +930,7 @@ fn collect_dependencies(
                         list: Vec::new(),
                         is_collected: true,
                     };
-                    let empty_locals = IdBitSet::default();
+                    let empty_locals = IdBitSet::init();
                     for place in operands(&instr.value, functions) {
                         // Visit with empty locals for manual deps
                         visit_candidate_dependency(
@@ -1329,7 +1329,7 @@ fn validate_dependencies(
     }
 
     // Validate manual deps
-    let mut matched: HashSet<usize> = HashSet::default(); // indices into manual_dependencies
+    let mut matched: HashSet<usize> = HashSet::with_hasher(rustc_hash::FxBuildHasher); // indices into manual_dependencies
     let mut missing: Vec<&InferredDependency> = Vec::new();
     let mut extra: Vec<&ManualMemoDependency> = Vec::new();
 

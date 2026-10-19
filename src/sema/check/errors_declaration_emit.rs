@@ -711,10 +711,9 @@ impl ModifiedNode {
 }
 
 /// Whether the declaration file text is requested, not only the diagnostics.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 enum Writes {
     /// All text is empty.
-    #[default]
     No,
     Yes {
         /// `detachedCommentsInfo`: `nodePos`, `detachedCommentEndPos`.
@@ -900,7 +899,7 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
             enclosing: top,
             suppresses_new_contexts: false,
             in_class_expression: false,
-            written: FxHashMap::default(),
+            written: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             writes: Writes::No,
             needs_declare: true,
             needs_scope_fix_marker: false,
@@ -913,8 +912,8 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
             cjs_export_assignment_name: None,
             cjs_export_members: Vec::new(),
             witnessed_cjs_exports: Vec::new(),
-            expando_hosts: FxHashMap::default(),
-            expando_members: FxHashMap::default(),
+            expando_hosts: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            expando_members: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 
@@ -929,7 +928,6 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
 
 /// What `isDeclarationVisible`, `getAccessibleSymbolChain`, `getAlternativeContainingModules`, `getExportsOfSymbol`,
 /// `getSymbolTableAliases` and `getSpecifierForModuleSymbol` memoize.
-#[derive(Default)]
 pub(super) struct EmitResolverLinks {
     /// `declarationLinks.isVisible`
     visibility: FxHashMap<(FileId, Decl), bool>,
@@ -946,6 +944,22 @@ pub(super) struct EmitResolverLinks {
     fake_locals: Vec<(Atom, SymFlags, Option<Sym>)>,
     /// `specifierCache`
     specifiers: FxHashMap<(Sym, FileId, ResolutionMode), Vec<u8>>,
+}
+
+impl EmitResolverLinks {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            visibility: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            chains: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            containing_modules: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            variable_matches: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            exports: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            global_aliases: None,
+            fake_locals: Vec::new(),
+            specifiers: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl EmitResolverLinks {
@@ -2210,7 +2224,7 @@ impl<'p, 's> Checker<'p, 's> {
             || flags.intersects(SymFlags::VALUE)
             || !flags.intersects(SymFlags::TYPE)
         {
-            return Rc::default();
+            return std::rc::Rc::new(Vec::new());
         }
         let key = (container, at.file, at.scope);
         if let Some(known) = self.emit_resolver_links.variable_matches.get(&key) {
@@ -2258,7 +2272,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // FOR SPEED: no module exports a member.
         let reexports = match at.is_none() || self.is_member_symbol(symbol) {
-            true => Rc::default(),
+            true => std::rc::Rc::new(Vec::new()),
             false => self.alternative_containing_modules(symbol, at),
         };
         let is_in_scope = !at.is_none()
@@ -5339,7 +5353,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 let saved = self.enclosing;
                 self.enter(bound.fns[f.idx()].scope);
                 // The text emitted for a type comes from the printer (`text_of`).
-                let writes = std::mem::take(&mut self.writes);
+                let writes = std::mem::replace(&mut self.writes, Writes::No);
                 for tp in hir[f].type_params.iter() {
                     self.visit_type_parameter(tp);
                 }
@@ -5351,7 +5365,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             TypeNodeKind::Object(members) => {
                 let saved = self.suppresses_new_contexts;
                 self.suppresses_new_contexts |= !is_alias_body;
-                let writes = std::mem::take(&mut self.writes);
+                let writes = std::mem::replace(&mut self.writes, Writes::No);
                 for m in members.iter() {
                     self.visit_member(m);
                 }
@@ -5373,7 +5387,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 self.visit_type(no, false);
             }
             TypeNodeKind::Infer(tp) => {
-                let writes = std::mem::take(&mut self.writes);
+                let writes = std::mem::replace(&mut self.writes, Writes::No);
                 self.visit_type_parameter(tp);
                 self.writes = writes;
             }
@@ -5383,7 +5397,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 self.enter(bound.type_param_scope[mapped.param.idx()]);
                 self.suppresses_new_contexts |= !is_alias_body;
                 self.visit_type(mapped.ty, false);
-                let writes = std::mem::take(&mut self.writes);
+                let writes = std::mem::replace(&mut self.writes, Writes::No);
                 self.visit_type_parameter(mapped.param);
                 self.writes = writes;
                 self.visit_type(mapped.name_ty, false);

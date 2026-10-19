@@ -131,7 +131,6 @@ arguments!(A B C D E F G H I J K L M N O P Q R S T U V W);
 arguments!(A B C D E F G H I J K L M N O P Q R S T U V W X);
 
 /// What elements refer to by index.
-#[derive(Default)]
 pub(crate) struct Storage {
     /// Every element of the document, in the order they are written. [`Interned`] is a range of
     /// it.
@@ -140,6 +139,17 @@ pub(crate) struct Storage {
     pub(crate) variants: Vec<Interned>,
     /// What [`FormatElement::OwnedText`] is a range of.
     pub(crate) text: Vec<u8>,
+}
+
+impl Storage {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            pool: Vec::new(),
+            variants: Vec::new(),
+            text: Vec::new(),
+        }
+    }
 }
 
 /// The first elements of every pool, which the printer needs to be somewhere.
@@ -225,7 +235,7 @@ impl Storage {
     fn summary_of_part(&self, part: Interned) -> (Flat, bool) {
         let flat = Flat {
             width: 0,
-            flags: FlatFlags::default().with(FlatFlags::EXPANDS, self.part_expands(part)),
+            flags: FlatFlags::new().with(FlatFlags::EXPANDS, self.part_expands(part)),
         };
         (flat, self.will_break(self.interned(part)))
     }
@@ -421,13 +431,25 @@ impl FormatElement {
 }
 
 /// The vectors of a [`Formatter`], which keep their capacity from one file to the next.
-#[derive(Default)]
 pub(crate) struct FormatterBuffers {
     pub(crate) storage: Storage,
     tracker: Tracker,
     odd_blocks: OddBlocks,
     spare: Vec<Vec<FormatElement>>,
     cleaned: FxHashMap<Interned, Interned>,
+}
+
+impl FormatterBuffers {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            storage: Storage::new(),
+            tracker: Tracker::new(),
+            odd_blocks: OddBlocks::new(),
+            spare: Vec::new(),
+            cleaned: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 /// Collects the elements of a document.
@@ -540,13 +562,16 @@ impl<'a> Formatter<'a> {
         context: JsFormatContext<'b>,
         source: &'b [u8],
     ) -> Formatter<'b> {
-        let mut odd_blocks = OddBlocks::default();
+        let mut odd_blocks = OddBlocks::new();
         odd_blocks.mark(source);
         Formatter {
-            storage: std::mem::take(&mut self.storage),
-            tracker: std::mem::take(&mut self.tracker),
+            storage: std::mem::replace(&mut self.storage, Storage::new()),
+            tracker: std::mem::replace(&mut self.tracker, Tracker::new()),
             spare: std::mem::take(&mut self.spare),
-            cleaned: std::mem::take(&mut self.cleaned),
+            cleaned: std::mem::replace(
+                &mut self.cleaned,
+                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ),
             next_group_id: Cell::new(self.next_group_id.get()),
             source,
             odd_blocks,
@@ -803,7 +828,10 @@ impl<'a> Formatter<'a> {
     /// Ends the content that `slot` started.
     pub(crate) fn end_capture(&mut self, slot: usize) -> Interned {
         let len = self.storage.pool.len().saturating_sub(slot + 1) as u32;
-        let (_, flat, will_break) = self.tracker.end_skipped().unwrap_or_default();
+        let (_, flat, will_break) = self
+            .tracker
+            .end_skipped()
+            .unwrap_or_else(|| (0, Flat::new(), false));
         match self.storage.pool.get_mut(slot) {
             Some(element) if len > 0 => {
                 *element = FormatElement::Skip(Skip {
@@ -1164,7 +1192,7 @@ impl<'a> Formatter<'a> {
             &self.storage,
             source,
             options,
-            &mut PrinterBuffers::default(),
+            &mut PrinterBuffers::new(),
             &mut out,
         )
         .is_err()

@@ -60,7 +60,7 @@ fn printed_key(key: &[u8]) -> Vec<u8> {
 
 /// The category of each rule that oxlint has, by the plugin that it is of there and its name.
 static CATEGORY_OF: LazyLock<FxHashMap<(Plugin, &[u8]), &str>> = LazyLock::new(|| {
-    let mut all = FxHashMap::default();
+    let mut all = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for (category, lists) in categories::CATEGORIES {
         for (prefix, names) in *lists {
             let Some(plugin) = Plugin::of_oxlint_prefix(prefix.as_bytes()) else {
@@ -147,7 +147,7 @@ const DANGEROUS_SUGGESTIONS: [&str; 3] = ["eqeqeq", "radix", "require-await"];
 
 /// What becomes of the fix and the suggestions of a rule for ESLint with a configuration of oxlint, so that `--fix`,
 /// `--fix-suggestions` and `--fix-dangerously` change what they change with oxlint.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct OxlintChanges {
     /// The rule of oxlint changes nothing, whatever the flags.
     pub(crate) are_dropped: bool,
@@ -157,10 +157,21 @@ pub(crate) struct OxlintChanges {
     pub(crate) suggestions: Option<SuggestionKind>,
 }
 
+impl OxlintChanges {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            are_dropped: false,
+            fix: None,
+            suggestions: None,
+        }
+    }
+}
+
 /// `meta`: what the rule is reported as.
 pub(crate) fn oxlint_changes(meta: &Meta, message_id: &str) -> OxlintChanges {
     if meta.follows_oxlint {
-        return OxlintChanges::default();
+        return OxlintChanges::new();
     }
     let is_in = |list: &[(&str, &str)]| {
         (list.iter())
@@ -345,7 +356,8 @@ fn merged(own: Vec<Written>, extended: Vec<Written>) -> Vec<Written> {
     // The first of each name, in the order in which they get into the table, and the hashes of the names.
     let mut firsts: Vec<(usize, bool)> = Vec::new();
     let mut hashes: Vec<u32> = Vec::new();
-    let mut places: FxHashMap<(&str, &str), usize> = FxHashMap::default();
+    let mut places: FxHashMap<(&str, &str), usize> =
+        FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for (at, it) in all.iter().flatten().enumerate() {
         let name = (text(&it.plugin), text(&it.name));
         match places.get(&name).and_then(|place| firsts.get_mut(*place)) {
@@ -577,7 +589,8 @@ impl Rc<'_, '_> {
     /// `no-shadow` and `@typescript-eslint/no-shadow` are two rules in the table of [`merged`] and one when they are applied, in
     /// the order of `rules`: the later counts.
     fn set_the_later_names(&mut self, rules: &[Written]) -> Result<(), ConfigError> {
-        let mut last: FxHashMap<Vec<u8>, (usize, usize)> = FxHashMap::default();
+        let mut last: FxHashMap<Vec<u8>, (usize, usize)> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for (at, it) in rules.iter().enumerate() {
             let known = last.entry(oxlint_rule_key(&it.id)).or_default();
             *known = (at, known.1 + 1 + usize::from(it.is_kept));
@@ -593,7 +606,7 @@ impl Rc<'_, '_> {
             let rules = self.rules(&json)?;
             self.reader.objects.push(ConfigObject {
                 rules,
-                ..ConfigObject::default()
+                ..ConfigObject::new()
             });
         }
         Ok(())
@@ -767,7 +780,7 @@ impl Rc<'_, '_> {
                 ignore_lines: Some(IgnoreLines::of_oxlint(&ignore_patterns)),
                 is_global_ignores: true,
                 ignores_inside_only: true,
-                ..ConfigObject::default()
+                ..ConfigObject::new()
             });
         }
         for (name, value) in (json.get(b"options").and_then(Json::as_object)).unwrap_or_default() {
@@ -790,7 +803,7 @@ impl Rc<'_, '_> {
         }
         let mut base = ConfigObject {
             rules: self.rules(json)?,
-            ..ConfigObject::default()
+            ..ConfigObject::new()
         };
         if passes_everything_on {
             base.language_options = self.language_options(json);
@@ -856,7 +869,7 @@ impl Rc<'_, '_> {
                 language_options: self.language_options(item),
                 settings: (item.get(b"settings").cloned()).and_then(ConfigObject::settings_of),
                 rules: self.rules(item)?,
-                ..ConfigObject::default()
+                ..ConfigObject::new()
             };
             self.overrides.push((object, plugins));
         }
@@ -917,7 +930,7 @@ impl Rc<'_, '_> {
                 };
                 settings.push(RuleSetting {
                     id: crate::linter::RuleId::Known(entry.meta).to_vec().into(),
-                    plugin: Box::default(),
+                    plugin: Box::new([]),
                     written_for: Some(plugin),
                     severity,
                     options: Vec::new(),
@@ -1025,7 +1038,8 @@ impl Rc<'_, '_> {
     /// rules that are on wherever no override is. `categories_at`: which object has the rules of the categories.
     fn printed(&self, json: &Json, categories_at: usize) -> Vec<(Vec<u8>, Json)> {
         let mut rules: Vec<(Vec<u8>, &RuleSetting)> = Vec::new();
-        let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut places: FxHashMap<Vec<u8>, usize> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for (at, object) in self.reader.objects.iter().enumerate() {
             let is_told = |it: &&RuleSetting| {
                 (at != categories_at || it.severity != Severity::Off)
@@ -1152,7 +1166,7 @@ impl Rc<'_, '_> {
             ConfigObject {
                 files: Some(vec![vec![Pattern::new(files)]]),
                 rules,
-                ..ConfigObject::default()
+                ..ConfigObject::new()
             }
         });
         objects.collect()
@@ -1228,7 +1242,7 @@ impl Config {
         };
         rc.reader.objects.push(ConfigObject {
             files: Some(vec![vec![Pattern::new(LINTED_FILES)]]),
-            ..ConfigObject::default()
+            ..ConfigObject::new()
         });
         // What it ignores by itself. Not `node_modules`: a `.gitignore` has that.
         let ignored: [&[u8]; 5] = [
@@ -1241,11 +1255,11 @@ impl Config {
         rc.reader.objects.push(ConfigObject {
             ignores: Some(ignored.iter().map(|it| Pattern::new(it)).collect()),
             is_global_ignores: true,
-            ..ConfigObject::default()
+            ..ConfigObject::new()
         });
         // The place of the rules of the categories, which are known when all files are read.
         let categories_at = rc.reader.objects.len();
-        rc.reader.objects.push(ConfigObject::default());
+        rc.reader.objects.push(ConfigObject::new());
         rc.file(json, &base_path, false)?;
         rc.reader.objects[categories_at].rules =
             rc.category_rules(&rc.categories, &|it| rc.has_plugin(it));

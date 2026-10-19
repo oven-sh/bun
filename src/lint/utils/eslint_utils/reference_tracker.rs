@@ -171,10 +171,9 @@ impl<'a> TrackedReference<'a, '_> {
 
 /// eslint-utils' `ReferenceTrackerOptions["mode"]`: how an `import` of a CommonJS module, one
 /// whose trace map has no `[ESM]`, is understood.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
     /// The module is the `default` export.
-    #[default]
     Strict,
     /// Its properties are named exports as well.
     Legacy,

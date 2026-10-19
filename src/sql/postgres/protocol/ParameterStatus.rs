@@ -2,7 +2,6 @@ use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
 use crate::shared::Data;
 
-#[derive(Default)]
 pub struct ParameterStatus {
     pub name: Data,
     pub value: Data,

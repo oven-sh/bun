@@ -36,7 +36,7 @@ pub(crate) type Id = u32;
 const NONE: Id = Id::MAX;
 
 bitflags::bitflags! {
-    #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
     pub(crate) struct Flags: u32 {
         const HAS_START_SPAN = 1;
         const HAS_END_SPAN = 1 << 1;
@@ -166,9 +166,9 @@ impl<'a> Node<'a> {
             last_child: NONE,
             parameters: NONE,
             span,
-            start_span: Span::default(),
-            end_span: Span::default(),
-            name_span: Span::default(),
+            start_span: Span::init(),
+            end_span: Span::init(),
+            name_span: Span::init(),
             attrs: (0, 0),
             start_tag_comments: (0, 0),
             name: Cow::Borrowed(b""),
@@ -204,7 +204,7 @@ impl<'a> Node<'a> {
     }
 
     pub(crate) fn set_end_span(&mut self, span: Option<Span>) {
-        self.end_span = span.unwrap_or_default();
+        self.end_span = span.unwrap_or_else(Span::init);
         self.flags.set(Flags::HAS_END_SPAN, span.is_some());
     }
 
@@ -246,12 +246,23 @@ impl<'a> Node<'a> {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct Tree<'a> {
     pub(crate) nodes: Vec<Node<'a>>,
     pub(crate) attrs: Vec<Attribute<'a>>,
     pub(crate) start_tag_comments: Vec<StartTagComment<'a>>,
     pub(crate) root: Id,
+}
+
+impl<'a> Tree<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            attrs: Vec::new(),
+            start_tag_comments: Vec::new(),
+            root: 0,
+        }
+    }
 }
 
 impl<'a> std::ops::Index<Id> for Tree<'a> {

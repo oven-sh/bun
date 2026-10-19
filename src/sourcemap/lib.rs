@@ -53,7 +53,7 @@ pub use internal_source_map::InternalSourceMap;
 /// reasons. When joining together chunks of a source map that were emitted
 /// in parallel for different parts of a file, we need to fix up the first
 /// segment of each chunk to be relative to the end of the previous chunk.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct SourceMapState {
     /// This isn't stored in the source map. It's only used by the bundler to join
     /// source map chunks together correctly.
@@ -63,6 +63,19 @@ pub struct SourceMapState {
     pub source_index: i32,
     pub original_line: i32,
     pub original_column: i32,
+}
+
+impl SourceMapState {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            generated_line: 0,
+            generated_column: 0,
+            source_index: 0,
+            original_line: 0,
+            original_column: 0,
+        }
+    }
 }
 
 /// For some sourcemap loading code, this enum is used as a hint if it should
@@ -77,9 +90,8 @@ pub enum SourceContentHandling {
 /// For some sourcemap loading code, this enum is used as a hint if we already
 /// know if the sourcemap is located on disk or inline in the source code.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SourceMapLoadHint {
-    #[default]
     None,
     IsInlineMap,
     IsExternalMap,
@@ -97,11 +109,21 @@ pub enum ParseUrlResultHint {
     },
 }
 
-#[derive(Default)]
 pub struct ParseUrl {
     pub map: Option<std::sync::Arc<ParsedSourceMap>>,
     pub mapping: Option<Mapping>,
     pub source_contents: Option<Box<[u8]>>,
+}
+
+impl ParseUrl {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            map: None,
+            mapping: None,
+            source_contents: None,
+        }
+    }
 }
 
 pub type ParseResult = core::result::Result<ParsedSourceMap, ParseFail>;
@@ -128,9 +150,9 @@ pub struct LineColumnOffset {
 
 // Field defaults are `START`, not invalid
 // (bun_core::Ordinal::default() is INVALID, so derive(Default) would be wrong).
-impl Default for LineColumnOffset {
+impl LineColumnOffset {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             lines: Ordinal::START,
             columns: Ordinal::START,
@@ -170,7 +192,7 @@ impl LineColumnOffset {
             let iter = strings::CodepointIterator::init(input);
             let mut cursor = strings::Cursor {
                 i,
-                ..Default::default()
+                ..strings::Cursor::new()
             };
             let _ = iter.next(&mut cursor);
 
@@ -232,7 +254,7 @@ impl LineColumnOffsetOptional {
     pub fn reset(&mut self) {
         match self {
             Self::Null => {}
-            Self::Value(_) => *self = Self::Value(LineColumnOffset::default()),
+            Self::Value(_) => *self = Self::Value(LineColumnOffset::new()),
         }
     }
 }
@@ -249,11 +271,21 @@ pub struct SourceMapShifts {
     pub after: LineColumnOffset,
 }
 
-#[derive(Default)]
 pub struct SourceMapPieces {
     pub prefix: Vec<u8>,
     pub mappings: Vec<u8>,
     pub suffix: Vec<u8>,
+}
+
+impl SourceMapPieces {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            prefix: Vec::new(),
+            mappings: Vec::new(),
+            suffix: Vec::new(),
+        }
+    }
 }
 
 /// This function is extremely hot.
@@ -315,7 +347,7 @@ pub(crate) fn append_mapping_to_buffer(
 }
 
 /// https://github.com/getsentry/rfcs/blob/main/text/0081-sourcemap-debugid.md
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct DebugIDFormatter {
     pub id: u64,
 }
@@ -703,7 +735,7 @@ pub mod SerializedSourceMap {
 
 impl SourceMapPieces {
     pub fn init() -> SourceMapPieces {
-        SourceMapPieces::default()
+        SourceMapPieces::new()
     }
 
     pub fn finalize(
@@ -720,13 +752,13 @@ impl SourceMapPieces {
         let mut shifts = shifts_;
         let mut start_of_run: usize = 0;
         let mut current: usize = 0;
-        let mut generated = LineColumnOffset::default();
+        let mut generated = LineColumnOffset::new();
         let mut prev_shift_column_delta: i32 = 0;
 
         // the joiner's node allocator contains string join nodes as well as some vlq encodings
         // it doesnt contain json payloads or source code, so 16kb is probably going to cover
         // most applications.
-        let mut j = bun_core::string_joiner::StringJoiner::default();
+        let mut j = bun_core::string_joiner::StringJoiner::new();
 
         j.push_static(&self.prefix);
         let mappings = &self.mappings;
@@ -839,7 +871,7 @@ pub(crate) fn parse_url(
                         let base64_data = &after[comma + 1..];
 
                         let len = bun_base64::decode_len(base64_data);
-                        let bytes = arena.alloc_slice_fill_default::<u8>(len);
+                        let bytes = arena.alloc_slice_fill_copy::<u8>(len, 0);
                         let decoded = bun_base64::decode(bytes, base64_data);
                         if !decoded.is_successful() {
                             return Err(crate::Error::InvalidBase64);

@@ -111,11 +111,11 @@ impl<'a> HTMLScanner<'a> {
             path: FsPath::init(owned),
             kind,
             range: Range::NONE,
-            tag: ImportRecordTag::default(),
+            tag: ImportRecordTag::None,
             loader: None,
-            source_index: AstIndex::default(),
+            source_index: AstIndex::INVALID,
             original_path: b"",
-            flags: ImportRecordFlags::default(),
+            flags: ImportRecordFlags::empty(),
         };
 
         self.import_records.push(record);

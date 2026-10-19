@@ -89,9 +89,9 @@ impl ScanOpts {
             Some(GlobScanArgument::Options(options)) => options,
             Some(GlobScanArgument::Cwd(cwd)) => GlobScanOptions {
                 cwd: Some(cwd),
-                ..Default::default()
+                ..GlobScanOptions::new()
             },
-            None => Default::default(),
+            None => GlobScanOptions::new(),
         };
         Ok(ScanOpts {
             cwd: match options.cwd {

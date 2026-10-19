@@ -126,7 +126,7 @@ impl ConsoleObject {
             error_writer_backing: Output::QuietWriterAdapter::uninit(),
             writer_backing: Output::QuietWriterAdapter::uninit(),
             default_indent: 0,
-            counts: Counter::default(),
+            counts: Counter::init(),
             _pin: core::marker::PhantomPinned,
         });
         let p: *mut ConsoleObject = out;
@@ -484,7 +484,7 @@ fn message_with_type_and_level_(
             MessageLevel::Warning => ErrorDisplayLevel::Warn,
             _ => ErrorDisplayLevel::Normal,
         },
-        ..FormatOptions::default()
+        ..FormatOptions::new()
     };
 
     // SAFETY: caller (JSC C++) guarantees `vals` points to `len` JSValues.
@@ -1177,8 +1177,8 @@ pub struct FormatOptions {
     pub error_display_level: ErrorDisplayLevel,
 }
 
-impl Default for FormatOptions {
-    fn default() -> Self {
+impl FormatOptions {
+    pub fn new() -> Self {
         Self {
             enable_colors: false,
             add_newline: false,
@@ -1469,10 +1469,20 @@ pub fn format2(
     Ok(())
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct CustomFormattedObject {
     function: JSValue,
     this: JSValue,
+}
+
+impl CustomFormattedObject {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            function: JSValue::new(),
+            this: JSValue::new(),
+        }
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1623,7 +1633,7 @@ pub mod formatter {
             Self {
                 global_this,
                 remaining_values: bun_ptr::RawSlice::EMPTY,
-                map: visited::Map::default(),
+                map: visited::Map::new(),
                 map_node: None,
                 hide_native: false,
                 indent: 0,
@@ -1637,12 +1647,12 @@ pub mod formatter {
                 always_newline_scope: false,
                 single_line: false,
                 ordered_properties: false,
-                custom_formatted_object: CustomFormattedObject::default(),
+                custom_formatted_object: CustomFormattedObject::new(),
                 disable_inspect_custom: false,
                 // `StackCheck::default()` has `cached_stack_end = 0` ⇒ the
                 // check always passes; callers that want a real bound
                 // overwrite with `StackCheck::init()` explicitly.
-                stack_check: StackCheck::default(),
+                stack_check: StackCheck::new(),
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
@@ -1662,7 +1672,7 @@ pub mod formatter {
             Self {
                 global_this: self.global_this,
                 remaining_values: self.remaining_values,
-                map: visited::Map::default(),
+                map: visited::Map::new(),
                 map_node: None,
                 hide_native: self.hide_native,
                 indent: self.indent,
@@ -1708,7 +1718,10 @@ pub mod formatter {
             if let Some(mut node) = self.map_node.take() {
                 // Move the working map back into the pooled node, shrink if it
                 // ballooned, then return the node to the thread-local pool.
-                let map = core::mem::take(&mut self.map);
+                let map = core::mem::replace(
+                    &mut self.map,
+                    crate::console_object::formatter::visited::Map::new(),
+                );
                 // `node_data_mut` is safe: `Map::INIT` is `Some`, so the
                 // pooled slot already holds an (empty, post-`take`) `Map`;
                 // assigning over it drops that empty value and moves `map` in.
@@ -1797,9 +1810,15 @@ pub mod formatter {
         /// `ObjectPoolType` (orphan rules forbid impl on the foreign
         /// `bun_collections::HashMap`). `Deref`/`DerefMut` keep all
         /// `self.map.*` call sites unchanged.
-        #[derive(Default)]
         #[repr(transparent)]
         pub struct Map(bun_collections::HashMap<JSValue, ()>);
+
+        impl Map {
+            #[inline]
+            pub fn new() -> Self {
+                Self(bun_collections::HashMap::init())
+            }
+        }
 
         impl core::ops::Deref for Map {
             type Target = bun_collections::HashMap<JSValue, ()>;
@@ -1818,7 +1837,7 @@ pub mod formatter {
         impl bun_collections::pool::ObjectPoolType for Map {
             // Fresh nodes start with an empty map so clearing retained
             // capacity on first use is well-defined.
-            const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(Map::default()));
+            const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(Map::new()));
         }
 
         // Thread-local free list, capped at 16 nodes.
@@ -2024,7 +2043,7 @@ pub mod formatter {
                 Tag::BigInt => TagPayload::BigInt,
                 Tag::Symbol => TagPayload::Symbol,
                 Tag::CustomFormattedObject => {
-                    TagPayload::CustomFormattedObject(CustomFormattedObject::default())
+                    TagPayload::CustomFormattedObject(CustomFormattedObject::new())
                 }
                 Tag::GlobalObject => TagPayload::GlobalObject,
                 Tag::Private => TagPayload::Private,
@@ -2048,8 +2067,8 @@ pub mod formatter {
         pub cell: jsc::JSType,
     }
 
-    impl Default for TagResult {
-        fn default() -> Self {
+    impl TagResult {
+        pub fn new() -> Self {
             Self {
                 tag: TagPayload::Undefined,
                 cell: jsc::JSType::Cell,
@@ -2060,7 +2079,7 @@ pub mod formatter {
     // It sounds silly to make this packed, but `Tag::get_advanced` is
     // extremely recursive.
     bitflags::bitflags! {
-        #[derive(Copy, Clone, Default)]
+        #[derive(Copy, Clone)]
         pub struct TagOptions: u8 {
             const HIDE_GLOBAL = 1 << 0;
             const DISABLE_INSPECT_CUSTOM = 1 << 1;
@@ -2080,37 +2099,37 @@ pub mod formatter {
             if value.is_empty() || value == JSValue::UNDEFINED {
                 return Ok(TagResult {
                     tag: TagPayload::Undefined,
-                    ..Default::default()
+                    ..TagResult::new()
                 });
             }
             if value == JSValue::NULL {
                 return Ok(TagResult {
                     tag: TagPayload::Null,
-                    ..Default::default()
+                    ..TagResult::new()
                 });
             }
 
             if value.is_int32() {
                 return Ok(TagResult {
                     tag: TagPayload::Integer,
-                    ..Default::default()
+                    ..TagResult::new()
                 });
             } else if value.is_number() {
                 return Ok(TagResult {
                     tag: TagPayload::Double,
-                    ..Default::default()
+                    ..TagResult::new()
                 });
             } else if value.is_boolean() {
                 return Ok(TagResult {
                     tag: TagPayload::Boolean,
-                    ..Default::default()
+                    ..TagResult::new()
                 });
             }
 
             if !value.is_cell() {
                 return Ok(TagResult {
                     tag: TagPayload::NativeCode,
-                    ..Default::default()
+                    ..TagResult::new()
                 });
             }
 
@@ -2139,7 +2158,7 @@ pub mod formatter {
                     Err(_) => {
                         return Ok(TagResult {
                             tag: TagPayload::RevokedProxy,
-                            ..Default::default()
+                            ..TagResult::new()
                         });
                     }
                     Ok(Some(callback_value)) if callback_value.is_callable() => {
@@ -3250,11 +3269,12 @@ pub mod formatter {
                     .expect("ObjectPool::get_node always returns a valid heap node");
                 let data = visited::node_data_mut(&mut node);
                 data.clear();
-                self.map = core::mem::take(data);
+                self.map =
+                    core::mem::replace(data, crate::console_object::formatter::visited::Map::new());
                 self.map_node = Some(node);
             }
 
-            let entry = self.map.get_or_put(value).expect("unreachable");
+            let entry = self.map.get_or_put(value, || ()).expect("unreachable");
             if entry.found_existing {
                 if writer_
                     .write_all(pfmt!("<r><cyan>[Circular]<r>", C).as_bytes())
@@ -5750,7 +5770,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
     // we don't want to store these strings, it will take too much memory
-    let counter = this.counts.get_or_put(hash).expect("unreachable");
+    let counter = this.counts.get_or_put(hash, || 0).expect("unreachable");
     let current: u32 = if counter.found_existing {
         *counter.value_ptr
     } else {
@@ -5798,7 +5818,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__countReset(
 
 type PendingTimers = bun_collections::HashMap<u64, Option<bun_core::time::Timer>>;
 thread_local! {
-    static PENDING_TIME_LOGS: RefCell<PendingTimers> = RefCell::new(PendingTimers::default());
+    static PENDING_TIME_LOGS: RefCell<PendingTimers> = RefCell::new(PendingTimers::init());
     static PENDING_TIME_LOGS_LOADED: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -5813,12 +5833,12 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
     // SAFETY: caller passes a valid (ptr, len) pair.
     let id = bun_wyhash::hash(unsafe { bun_core::ffi::slice(chars, len) });
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
-        PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
+        PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::init());
         PENDING_TIME_LOGS_LOADED.with(|c| c.set(true));
     }
 
     PENDING_TIME_LOGS.with_borrow_mut(|map| {
-        let result = map.get_or_put(id).expect("unreachable");
+        let result = map.get_or_put(id, || None).expect("unreachable");
         if !result.found_existing || result.value_ptr.is_none() {
             *result.value_ptr = Some(bun_core::time::Timer::start());
         }

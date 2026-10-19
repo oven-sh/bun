@@ -43,7 +43,7 @@ impl BuildMessage {
                 bun_ast::Msg {
                     data: note.clone(),
                     kind: bun_ast::Kind::Note,
-                    ..Default::default()
+                    ..bun_ast::Msg::new()
                 },
             )
         })

@@ -9,7 +9,6 @@ use crate::postgres::types::int_types::{Int4, int32};
 // protocol message structs avoid lifetime params, but none of Box / &'static /
 // raw fit a transient borrow-only message builder, so this struct carries an
 // explicit `'a`.
-#[derive(Default)]
 pub struct Parse<'a> {
     pub name: &'a [u8],
     pub query: &'a [u8],

@@ -42,7 +42,7 @@ impl EncodedPattern {
         arena: &Arena,
     ) -> Result<EncodedPattern, AllocError> {
         let len = Self::pattern_serialized_length(parts);
-        let slice = arena.alloc_slice_fill_default::<u8>(len);
+        let slice = arena.alloc_slice_fill_copy::<u8>(len, 0);
         {
             let mut fbs = bun_io::FixedBufferStream::new(&mut slice[..]);
             for part in parts {
@@ -205,7 +205,7 @@ impl<'a> Iterator for EncodedPatternIterator<'a> {
 }
 
 /// Hash context for DynamicRouteMap — hashes/compares by effective URL.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct EffectiveUrlContext;
 
 impl bun_alloc::Stateless for EffectiveUrlContext {

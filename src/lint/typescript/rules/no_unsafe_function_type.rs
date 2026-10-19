@@ -19,7 +19,7 @@ impl Rule for NoUnsafeFunctionType {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<GlobalFunctions<'a>> {
-        file.mentions("Function").then(GlobalFunctions::default)
+        file.mentions("Function").then(|| GlobalFunctions::with_hasher(rustc_hash::FxBuildHasher))
     }
 
     // Also what a class implements and what an interface extends.

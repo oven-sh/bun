@@ -7,13 +7,23 @@ use crate::tokens::skip_trivia;
 use crate::utils::estree_compat::is_assignment_target;
 
 /// eslint-utils' `HasSideEffectOptions`.
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct HasSideEffectOptions {
     /// Any member access may run a getter.
     pub consider_getters: bool,
     /// An operator whose operands are not all literals may run `valueOf`, `toString` or
     /// `[Symbol.toPrimitive]`, and so may a computed key.
     pub consider_implicit_type_conversion: bool,
+}
+
+impl HasSideEffectOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            consider_getters: false,
+            consider_implicit_type_conversion: false,
+        }
+    }
 }
 
 /// eslint-utils' `hasSideEffect`: whether evaluating `node` may have a side effect. An assignment,

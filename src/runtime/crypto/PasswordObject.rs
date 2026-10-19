@@ -309,7 +309,11 @@ impl PasswordObject {
     ) -> Result<bool, HashError> {
         match algorithm {
             Algorithm::Argon2id | Algorithm::Argon2d | Algorithm::Argon2i => {
-                match pwhash::argon2::str_verify(previous_hash, password, Default::default()) {
+                match pwhash::argon2::str_verify(
+                    previous_hash,
+                    password,
+                    crate::crypto::pwhash::argon2::VerifyOptions,
+                ) {
                     Ok(()) => Ok(true),
                     Err(crate::Error::PasswordVerificationFailed) => Ok(false),
                     Err(err) => Err(err),

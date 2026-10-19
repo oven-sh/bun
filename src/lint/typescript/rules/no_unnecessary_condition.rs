@@ -617,7 +617,7 @@ fn tsgolint_truncated(text: &[u8]) -> String {
 /// Of a union of which two parts are written the same, each text once: tsgolint names what each key of `a?.[k]` gives.
 fn tsgolint_distinct_type_names(ty: Type) -> String {
     let mut names: Vec<Vec<u8>> = union_constituents(ty).iter().map(|it| it.to_text()).collect();
-    let (count, mut seen) = (names.len(), rustc_hash::FxHashSet::default());
+    let (count, mut seen) = (names.len(), rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher));
     names.retain(|it| seen.insert(it.clone()));
     match names.len() == count {
         true => tsgolint_type_name(ty),
@@ -1235,7 +1235,7 @@ impl Rule for NoUnnecessaryCondition {
                 compiler_options,
                 CompilerOption::NoUncheckedIndexedAccess,
             ),
-            only_used_for_truthiness: AncestorMemo::default(),
+            only_used_for_truthiness: AncestorMemo::new(),
             is_assertion_argument_checked: file.language().is_oxlint && self.check_type_predicates,
         };
         Some(flags)

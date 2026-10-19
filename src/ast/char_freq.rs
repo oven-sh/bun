@@ -1,10 +1,21 @@
 pub(crate) const CHAR_FREQ_COUNT: usize = 64;
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct CharAndCount {
     pub char: u8,
     pub count: i32,
     pub index: usize,
+}
+
+impl CharAndCount {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            char: 0,
+            count: 0,
+            index: 0,
+        }
+    }
 }
 
 type CharAndCountArray = [CharAndCount; CHAR_FREQ_COUNT];
@@ -17,9 +28,9 @@ pub struct CharFreq {
     pub freqs: Buffer,
 }
 
-impl Default for CharFreq {
+impl CharFreq {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             freqs: [0i32; CHAR_FREQ_COUNT],
         }
@@ -52,8 +63,7 @@ impl CharFreq {
     pub fn compile(&self) -> crate::NameMinifier {
         use crate::NameMinifier;
         let array: CharAndCountArray = 'brk: {
-            let mut arr: [CharAndCount; CHAR_FREQ_COUNT] =
-                [CharAndCount::default(); CHAR_FREQ_COUNT];
+            let mut arr: [CharAndCount; CHAR_FREQ_COUNT] = [CharAndCount::new(); CHAR_FREQ_COUNT];
 
             debug_assert_eq!(NameMinifier::DEFAULT_TAIL.len(), CHAR_FREQ_COUNT);
             for (i, ((dest, &char), &freq)) in arr

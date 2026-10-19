@@ -382,7 +382,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.out.text(line);
             }
         } else {
-            self.out.start_group(Group::default());
+            self.out.start_group(Group::new());
             self.print_node(node, is_last_descendant);
             self.out.end_group();
         }
@@ -1305,7 +1305,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         // `conditionalGroup`
         self.out.start_group(Group {
             is_conditional: true,
-            ..Group::default()
+            ..Group::new()
         });
         // A key that is on one line for sure is implicit, however long it is.
         if self.is_absolutely_printed_as_single_line(key_content) && key_has_no_comments {
@@ -1324,7 +1324,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let group_id = self.last_group_id;
         self.out.start_group(Group {
             should_break,
-            ..Group::default()
+            ..Group::new()
         });
         self.out.start_if_break(0);
         self.out.token("? ");
@@ -1333,7 +1333,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         self.out.start_group(Group {
             id: group_id,
             should_break,
-            ..Group::default()
+            ..Group::new()
         });
         self.start_align(2);
         self.print_key(key_id, is_last_descendant);

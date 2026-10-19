@@ -68,7 +68,11 @@ fn run(args: &[String]) {
         // detecting whether a change to the front end changes any HIR.
         Some("hir") => {
             let mut files: Vec<String> = Vec::new();
-            let disk = bun_sema_driver::host::Disk::with_already_read(1, Default::default(), b"/");
+            let disk = bun_sema_driver::host::Disk::with_already_read(
+                1,
+                bun_sema::util::FxHashMap::with_hasher(bun_sema::util::FxBuild),
+                b"/",
+            );
             for arg in args[1..].iter().filter(|a| !a.starts_with("--")) {
                 if disk.is_dir(arg.as_bytes()) {
                     collect_sources(&disk, arg.trim_end_matches('/'), &mut files)
@@ -175,7 +179,7 @@ fn run(args: &[String]) {
             // instructions in place of its time (1 s = 1 G).
             let task_instructions = || bun_sema_standalone::instructions_and_cycles().0;
             let progress = (shows_progress || is_timed)
-                .then(|| std::sync::Arc::new(bun_sema_driver::Progress::default()));
+                .then(|| std::sync::Arc::new(bun_sema_driver::Progress::new()));
             // `--timing`: the instruction count of loading, so that checking can be measured
             // separately. Loading opens every file, and the operating system's work for that varies
             // between runs.
@@ -274,7 +278,7 @@ fn run(args: &[String]) {
                 let actual = args.iter().find_map(|a| a.strip_prefix(name));
                 actual.map_or(default, |n| n.parse().expect(name))
             };
-            let defaults = bun_sema_driver::PlanOptions::default();
+            let defaults = bun_sema_driver::PlanOptions::new();
             let plan_options = bun_sema_driver::PlanOptions {
                 step_growth: number("--step-growth=", defaults.step_growth),
                 warm_up_files: number("--warm-up-files=", defaults.warm_up_files),

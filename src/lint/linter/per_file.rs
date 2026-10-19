@@ -11,7 +11,6 @@ use std::borrow::Cow;
 use std::cell::{Cell, OnceCell};
 
 /// Computed on demand, once.
-#[derive(Default)]
 pub(crate) struct PerFile {
     /// Comments configure nothing: `noInlineConfig`, `--no-inline-config`.
     ignores_comments: Cell<bool>,
@@ -19,9 +18,20 @@ pub(crate) struct PerFile {
     variables: OnceCell<CommentVariables>,
 }
 
+impl PerFile {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            ignores_comments: core::cell::Cell::new(false),
+            comments: core::cell::OnceCell::new(),
+            variables: core::cell::OnceCell::new(),
+        }
+    }
+}
+
 /// The part of ESLint's `applyInlineConfig` that is about variables.
 fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
-    let mut variables = CommentVariables::default();
+    let mut variables = CommentVariables::new();
     for comment in comments {
         let value = file.slice(comment.value);
         match comment.label {

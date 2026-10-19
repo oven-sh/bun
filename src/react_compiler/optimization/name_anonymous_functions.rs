@@ -140,9 +140,10 @@ fn name_anonymous_functions_impl(func: &HirFunction, env: &Environment) -> Vec<N
     }
 
     // Functions that we track to generate names for
-    let mut functions: HashMap<IdentifierId, usize> = HashMap::default();
+    let mut functions: HashMap<IdentifierId, usize> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     // Tracks temporaries that read from variables/globals/properties
-    let mut names: HashMap<IdentifierId, String> = HashMap::default();
+    let mut names: HashMap<IdentifierId, String> = HashMap::with_hasher(rustc_hash::FxBuildHasher);
     // Tracks all function nodes
     let mut nodes: Vec<Node> = Vec::new();
 

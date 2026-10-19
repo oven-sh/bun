@@ -80,8 +80,14 @@ struct Used<'a> {
 }
 
 /// `exportList.get(file)`, once it is asked for. `None`: nothing is reported.
-#[derive(Default)]
 pub struct Usage(OnceCell<Option<Arc<Exports>>>);
+
+impl Usage {
+    #[inline]
+    pub fn new() -> Self {
+        Self(core::cell::OnceCell::new())
+    }
+}
 
 impl Context {
     fn of(language: &LanguageOptions) -> Context {
@@ -203,7 +209,7 @@ fn exports_something(stmt: Stmt) -> bool {
 /// has read it, did not import.
 fn imports_from_itself<'a>(file: &'a File<'a>, path: &[u8], is_prepared: bool) -> bool {
     let (Some(resolvers), Some(maps)) = (Resolvers::of(file.settings()), ExportMaps::of(file)) else { return false };
-    let (mut has_default, mut new_imports) = (false, FxHashMap::<&'a [u8], bool>::default());
+    let (mut has_default, mut new_imports) = (false, FxHashMap::<&'a [u8], bool>::with_hasher(rustc_hash::FxBuildHasher));
     for stmt in file.body() {
         let StmtKind::Import(import) = stmt.kind() else { continue };
         let resolved = resolvers.resolve(file, import.spec().bytes(), false);
@@ -215,7 +221,7 @@ fn imports_from_itself<'a>(file: &'a File<'a>, path: &[u8], is_prepared: bool) -
     if !has_default && !new_imports.values().any(|it| *it) {
         return false;
     }
-    let (mut had_default, mut old_imports) = (false, FxHashSet::<&'a [u8]>::default());
+    let (mut had_default, mut old_imports) = (false, FxHashSet::<&'a [u8]>::with_hasher(rustc_hash::FxBuildHasher));
     if let Some(current_exports) = is_prepared.then(|| maps.at(path)).flatten() {
         for reexported in maps.reexports(current_exports) {
             match (reexported.local, reexported.import) {
@@ -250,8 +256,8 @@ impl NoUnusedModules {
         let mut prepared = Prepared {
             context: Context::of(file.language()),
             is_listed: false,
-            ignored_files: FxHashSet::default(),
-            export_list: FxHashMap::default(),
+            ignored_files: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            export_list: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             next: OnceLock::new(),
         };
         let (Some(modules), Some(maps)) = (file.modules(), ExportMaps::of(file)) else { return prepared };
@@ -270,10 +276,10 @@ impl NoUnusedModules {
         };
         prepared.is_listed = true;
         prepared.ignored_files = ignored_files_list.into_iter().map(|it| it.path.into_boxed_slice()).collect();
-        let mut export_list: FxHashMap<Box<[u8]>, Exports> = FxHashMap::default();
+        let mut export_list: FxHashMap<Box<[u8]>, Exports> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut import_list: Vec<Used<'a>> = Vec::new();
         for listed in src_file_list.into_iter().filter(|it| !is_node_module(&it.path)) {
-            let mut exports = Exports::default();
+            let mut exports = Exports::with_hasher(rustc_hash::FxBuildHasher);
             if let Some(current_exports) = maps.at(&listed.path) {
                 for dependency in maps.dependencies(current_exports).into_iter().flatten() {
                     let names = smallvec![EXPORT_ALL_DECLARATION];
@@ -399,7 +405,7 @@ impl Rule for NoUnusedModules {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Usage> {
-        Some(Usage::default())
+        Some(Usage::new())
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

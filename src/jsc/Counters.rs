@@ -1,7 +1,7 @@
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 #[repr(C)]
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Counters {
     pub(crate) spawn_sync_blocking: i32,
     pub(crate) spawn_memfd: i32,

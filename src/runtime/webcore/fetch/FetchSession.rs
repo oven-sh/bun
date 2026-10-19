@@ -273,7 +273,7 @@ impl FetchSession {
             ssl_config: None,
             reject_unauthorized: None,
             proxy: None,
-            unix: Box::default(),
+            unix: Box::new([]),
             used: Cell::new(false),
             this_value: JsCell::new(JsRef::init_weak(this_value)),
             in_flight: Cell::new(0),
@@ -349,7 +349,7 @@ impl FetchSession {
                                 field_name: FIELD_NAME,
                                 min: 1,
                                 max: i64::from(u16::MAX),
-                                ..Default::default()
+                                ..jsc::RangeErrorOptions::new()
                             },
                         ));
                     }
@@ -385,7 +385,7 @@ impl FetchSession {
             "fetch",
             super::__jsc_host_session_fetch,
             1,
-            Default::default(),
+            bun_jsc::js_function::CreateJSFunctionOptions::new(),
         );
         target.bind(
             global,

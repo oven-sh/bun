@@ -281,8 +281,8 @@ impl Position {
     }
 }
 
-impl Default for Position {
-    fn default() -> Self {
+impl Position {
+    pub fn new() -> Self {
         Position {
             x: HorizontalPosition::Length(DimensionPercentage::Percentage(Percentage { v: 0.0 })),
             y: VerticalPosition::Length(DimensionPercentage::Percentage(Percentage { v: 0.0 })),

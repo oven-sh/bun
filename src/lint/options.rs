@@ -3,7 +3,7 @@
 pub use bun_sema::json::Json;
 
 /// The options of a rule, as the array that ESLint's `context.options` is.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub struct Options<'o> {
     values: &'o [Json],
 }
@@ -70,9 +70,16 @@ fn as_number(value: &Json) -> Option<f64> {
 }
 
 /// An object among the options.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub struct Object<'o> {
     entries: &'o [(Vec<u8>, Json)],
+}
+
+impl<'o> Object<'o> {
+    #[inline]
+    pub fn new() -> Self {
+        Self { entries: &[] }
+    }
 }
 
 impl<'o> Object<'o> {

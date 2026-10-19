@@ -9,7 +9,7 @@ use crate::postgres::error_jsc::create_postgres_error;
 use bun_sql::postgres::any_postgres_error::PostgresErrorOptions;
 
 pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
-    let mut b = StringBuilder::default();
+    let mut b = StringBuilder::new();
 
     for msg in this.messages.iter() {
         b.cap += msg.payload().utf8_byte_length() + 1;

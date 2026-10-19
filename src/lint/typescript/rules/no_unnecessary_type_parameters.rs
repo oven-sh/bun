@@ -108,11 +108,20 @@ fn is_type_parameter_repeated_in_ast<'a>(
 /// By the declaration of the type parameter.
 type Counts<'a> = FxHashMap<TsNode<'a>, u32>;
 
-#[derive(Default)]
 pub struct State<'a> {
     /// What has been counted in the type of a function.
     counts_by_type: IdMap<Type<'a>, Rc<Counts<'a>>>,
     without_type_parameters: TypesWithoutTypeParameters<'a>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            counts_by_type: IdMap::init(),
+            without_type_parameters: TypesWithoutTypeParameters::init(),
+        }
+    }
 }
 
 /// The types that have been gone through to the end, and no type parameter was found. To go through one again counts
@@ -341,7 +350,7 @@ fn collect_type_parameter_usage_counts<'a>(
         from_class,
         visited_symbol_lists: IdSet::new(),
         type_usages: IdMap::new(),
-        visited_constraints: FxHashSet::default(),
+        visited_constraints: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
         visited_default: false,
         without_type_parameters,
         found_or_left_out: 0,
@@ -508,7 +517,7 @@ impl Rule for NoUnnecessaryTypeParameters {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn func<'a>(&self, node: Func<'a>, cx: &mut Cx<'a, Self>) {
@@ -528,7 +537,7 @@ impl Rule for NoUnnecessaryTypeParameters {
             let ts_node = node.ts_node();
             let State { counts_by_type, without_type_parameters } = known;
             let mut count = || {
-                let mut counts = Counts::default();
+                let mut counts = Counts::with_hasher(rustc_hash::FxBuildHasher);
                 collect_type_parameter_usage_counts(ts_node, &mut counts, false, without_type_parameters);
                 Rc::new(counts)
             };
@@ -550,7 +559,7 @@ impl Rule for NoUnnecessaryTypeParameters {
         }
         let is_oxlint = cx.language().is_oxlint;
         check_node(cx, type_parameters, node.body_span().start, "class", |known| {
-            let (mut counts, known) = (Counts::default(), &mut known.without_type_parameters);
+            let (mut counts, known) = (Counts::with_hasher(rustc_hash::FxBuildHasher), &mut known.without_type_parameters);
             for type_parameter in type_parameters {
                 collect_type_parameter_usage_counts(type_parameter.ts_node(), &mut counts, true, known);
             }

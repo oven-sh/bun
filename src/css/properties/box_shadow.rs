@@ -176,10 +176,19 @@ impl BoxShadow {
     }
 }
 
-#[derive(Default)]
 pub struct BoxShadowHandler {
     pub(crate) box_shadows: Option<(SmallList<BoxShadow, 1>, VendorPrefix)>,
     pub(crate) flushed: bool,
+}
+
+impl BoxShadowHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            box_shadows: None,
+            flushed: false,
+        }
+    }
 }
 
 impl BoxShadowHandler {

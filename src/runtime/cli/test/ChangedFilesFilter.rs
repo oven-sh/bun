@@ -150,7 +150,7 @@ pub(crate) fn filter<'a>(
     // The module graph scan is best-effort. A test file that imports
     // something unresolved should still be considered, not abort --changed.
     scan_transpiler.options.ignore_module_resolution_errors = true;
-    scan_transpiler.options.output_dir = Box::default();
+    scan_transpiler.options.output_dir = Box::new([]);
     scan_transpiler.options.tree_shaking = false;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
@@ -158,7 +158,7 @@ pub(crate) fn filter<'a>(
     // fields we changed above.
     scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
     scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
-    scan_transpiler.resolver.opts.output_dir = Box::default();
+    scan_transpiler.resolver.opts.output_dir = Box::new([]);
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
@@ -592,9 +592,9 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
             // `init` takes the erased `*mut ()` event-loop pointer
             // directly, so unwrap it here.
             loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
-            ..Default::default()
+            ..spawn_sync::WindowsOptions::new()
         },
-        ..Default::default()
+        ..spawn_sync::Options::new()
     }) {
         Ok(p) => p,
         Err(err) => {

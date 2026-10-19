@@ -231,10 +231,20 @@ fn name_of_detected_component(node: Node<'_>) -> Option<Name<'_>> {
 
 /// What `isReturningJSX`, `isReturningJSXOrNull` and `isReturningOnlyNull` have said of a function:
 /// a bit for each question.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Returning {
     asked: u8,
     answers: u8,
+}
+
+impl Returning {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            asked: 0,
+            answers: 0,
+        }
+    }
 }
 
 /// What a rule gets from `Components.detect`: `components` and `utils`.
@@ -296,11 +306,11 @@ impl<'a> Components<'a> {
             file,
             pragmas: OnceCell::new(),
             wrapper_functions: OnceCell::new(),
-            list: ComponentList::default(),
-            detected: FxHashMap::default(),
-            related: Related::default(),
+            list: ComponentList::new(),
+            detected: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            related: Related::new(),
             returning: RefCell::new(IdMap::new()),
-            queue: Queue::default(),
+            queue: Queue::new(),
             stages: Vec::new(),
             is_started: false,
             is_finished: false,
@@ -308,7 +318,7 @@ impl<'a> Components<'a> {
             wrappers: IdMap::new(),
             wrapped: IdMap::new(),
             may_have_explicit: OnceCell::new(),
-            documented_at: AncestorMemo::default(),
+            documented_at: AncestorMemo::new(),
         }
     }
 
@@ -525,7 +535,10 @@ impl<'a> Components<'a> {
         if confidence >= 2
             && let Some(name) = name_of_detected_component(normalize(node))
         {
-            let detected = self.detected.entry(name).or_default();
+            let detected = self
+                .detected
+                .entry(name)
+                .or_insert_with(smallvec::SmallVec::new);
             if detected.last() != Some(&id) {
                 detected.push(id);
             }
@@ -579,7 +592,7 @@ impl<'a> Components<'a> {
         }
         let answer = ask(node);
         let mut returning = self.returning.borrow_mut();
-        let known = returning.get_or_insert_with(func, Returning::default);
+        let known = returning.get_or_insert_with(func, Returning::new);
         known.asked |= bit;
         known.answers |= u8::from(answer) << question;
         answer

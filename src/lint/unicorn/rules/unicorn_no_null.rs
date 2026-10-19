@@ -27,7 +27,7 @@ impl Rule for NoNull {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(RefCell::default())
+        Some(core::cell::RefCell::new(rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher)))
     }
 
     fn expr<'a>(&self, null_literal: Expr<'a>, cx: &mut Cx<'a, Self>) {

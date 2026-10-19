@@ -34,7 +34,6 @@ pub enum Usefulness {
 }
 
 /// What is kept while the certainty of one expression is collected.
-#[derive(Default)]
 struct Walk<'a> {
     /// The array and tuple types that are being looked into.
     visited: SmallVec<[Type<'a>; 4]>,
@@ -59,14 +58,41 @@ struct Walk<'a> {
     was_cut_off: bool,
 }
 
+impl<'a> Walk<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            visited: SmallVec::new(),
+            is_always: IdMap::init(),
+            assumed: None,
+            pending: Vec::new(),
+            looked_into: None,
+            come_across: Vec::new(),
+            found_other: false,
+            known: IdMap::init(),
+            first_revisited: None,
+            was_cut_off: false,
+        }
+    }
+}
+
 /// What has been found for the type of an expression, and whether that was for `join()`. For tsgolint, which keeps it for
 /// the whole file, for every type: its `toStringMemo` and `joinMemo`.
-#[derive(Default)]
 pub struct Certainties<'a> {
     /// The second is for `join()`.
     known: [IdMap<Type<'a>, Usefulness>; 2],
     /// tsgolint's `resolving`: the types whose entry of `toStringMemo` is being found.
     resolving: IdSet<Type<'a>>,
+}
+
+impl<'a> Certainties<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            known: core::array::from_fn(|_| IdMap::init()),
+            resolving: IdSet::init(),
+        }
+    }
 }
 
 /// tsgolint's `isBuiltInStringCall` asks for the type of the callee, not for what its scope declares.
@@ -548,7 +574,7 @@ impl NoBaseToString {
             return;
         }
         let certainty =
-            *cx.state.known[0].get_or_insert_with(ty, || self.collect_to_string_certainty(ty, &mut Walk::default()));
+            *cx.state.known[0].get_or_insert_with(ty, || self.collect_to_string_certainty(ty, &mut Walk::new()));
         Self::report(node, BASE_TO_STRING, certainty, cx);
     }
 
@@ -619,7 +645,7 @@ impl NoBaseToString {
             let certainty = match is_oxlint {
                 true => self.tsgolint_collect_join_certainty(ty, &mut cx.state),
                 false => {
-                    *cx.state.known[1].get_or_insert_with(ty, || self.collect_join_certainty(ty, &mut Walk::default()))
+                    *cx.state.known[1].get_or_insert_with(ty, || self.collect_join_certainty(ty, &mut Walk::new()))
                 }
             };
             Self::report(object, BASE_ARRAY_JOIN, certainty, cx);
@@ -676,7 +702,7 @@ impl Rule for NoBaseToString {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Certainties<'a>> {
-        Some(Certainties::default())
+        Some(Certainties::new())
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {

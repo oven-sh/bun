@@ -115,7 +115,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         #[allow(unused_mut)]
         let mut boxed = Box::new(Self {
             ref_count: RefCount::init(),
-            writer: IOWriter::<P>::default(),
+            writer: IOWriter::<P>::new(),
             stdio_result: result,
             source,
             process: subprocess,

@@ -68,12 +68,22 @@ pub(crate) struct UpgradedDuplex {
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
 
-#[derive(Default)]
 pub(crate) struct CertError {
     pub(crate) error_no: i32,
     // Owned NUL-terminated copies. `None` represents the default `""`.
     pub(crate) code: Option<Box<CStr>>,
     pub reason: Option<Box<CStr>>,
+}
+
+impl CertError {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            error_no: 0,
+            code: None,
+            reason: None,
+        }
+    }
 }
 // `Box<CStr>` drops automatically — no explicit Drop needed.
 
@@ -426,7 +436,7 @@ impl UpgradedDuplex {
 
         self.event_loop_timer.with_mut(|t| {
             t.state = EventLoopTimerState::FIRED;
-            t.heap = Default::default();
+            t.heap = bun_io::heap::IntrusiveField::new();
         });
 
         if has_been_cleared {
@@ -450,7 +460,7 @@ impl UpgradedDuplex {
             global: Some(GlobalRef::from(global)),
             wrapper: JsCell::new(None),
             handlers,
-            ssl_error: JsCell::new(CertError::default()),
+            ssl_error: JsCell::new(CertError::new()),
             on_data_callback: Cell::new(JSValue::ZERO),
             on_end_callback: Cell::new(JSValue::ZERO),
             on_writable_callback: Cell::new(JSValue::ZERO),
@@ -738,7 +748,7 @@ impl UpgradedDuplex {
                 cb.set(JSValue::ZERO);
             }
         }
-        self.ssl_error.set(CertError::default());
+        self.ssl_error.set(CertError::new());
         self.pending_data.set(Vec::new());
         self.pending_close.set(false);
         self.pending_shutdown.set(false);

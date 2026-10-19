@@ -93,7 +93,6 @@ fn is_simple_parameter_list(func: Func<'_>) -> bool {
 }
 
 /// What is around a function.
-#[derive(Default)]
 struct Surroundings {
     /// The body of a class.
     is_in_class: bool,
@@ -102,12 +101,23 @@ struct Surroundings {
     is_in_strict_function: bool,
 }
 
+impl Surroundings {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            is_in_class: false,
+            is_in_function: false,
+            is_in_strict_function: false,
+        }
+    }
+}
+
 /// By a node: the innermost function with a body, or class whose body it is in, around it.
 type Containers<'a> = AncestorMemo<'a, Node<'a>>;
 
 impl Surroundings {
     fn of<'a>(func: Func<'a>, containers: &mut Containers<'a>) -> Surroundings {
-        let mut around = Surroundings::default();
+        let mut around = Surroundings::new();
         let mut inner = Node::Func(func);
         while let Some(container) = containers.find(inner, |child, ancestor| match ancestor {
             Node::Func(outer) => ast_utils::is_function_with_body(outer).then_some(ancestor),
@@ -189,7 +199,7 @@ impl Rule for Strict {
         };
         Some(State {
             mode,
-            containers: Containers::default(),
+            containers: Containers::new(),
         })
     }
 

@@ -51,14 +51,14 @@ impl TimerObjectInternals {
     }
 }
 
-impl Default for TimerObjectInternals {
-    fn default() -> Self {
+impl TimerObjectInternals {
+    pub(crate) fn new() -> Self {
         Self {
             id: -1,
             interval: Cell::new(0),
             this_value: JsCell::new(JsRef::empty()),
-            flags: Cell::new(Flags::default()),
-            context: bun_jsc::ContextId::default(),
+            flags: Cell::new(Flags::new()),
+            context: bun_jsc::ContextId::new(),
             generation: 0,
         }
     }
@@ -296,7 +296,7 @@ impl TimerObjectInternals {
         *self = Self {
             id,
             flags: {
-                let mut f = Flags::default();
+                let mut f = Flags::new();
                 f.set_kind(kind);
                 // SAFETY: `state` is the boxed per-thread `RuntimeState`.
                 f.set_epoch(unsafe { (*state).timer.epoch });

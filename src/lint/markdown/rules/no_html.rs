@@ -27,7 +27,7 @@ impl Rule for NoHtml {
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         let mut rule = NoHtml {
-            allowed: FxHashSet::default(),
+            allowed: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             allowed_ignore_case: options.bool_or("allowedIgnoreCase", false),
         };
         let allowed = options.strings("allowed");

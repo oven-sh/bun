@@ -114,7 +114,7 @@ impl S3HttpDownloadStreamingTask {
             if has_more {
                 return;
             }
-            let empty = MutableString::default();
+            let empty = MutableString::new();
             let mut code: &[u8] = b"UnknownError";
             let mut message: &[u8] = b"an unexpected error has occurred";
             let parsed;
@@ -149,7 +149,9 @@ impl S3HttpDownloadStreamingTask {
             // `core::mem::take` transfers ownership of the buffer, leaving an
             // empty MutableString behind.
             // SAFETY: fn contract; the borrow ends with the statement.
-            let chunk = unsafe { core::mem::take(&mut (*this).reported_response_buffer) };
+            let chunk = unsafe {
+                core::mem::replace(&mut (*this).reported_response_buffer, MutableString::new())
+            };
             callback(&chunk, has_more, None, callback_context);
             // SAFETY: fn contract; the callback does not free the task, `on_response` does,
             // after this returns.
@@ -388,8 +390,8 @@ impl S3HttpDownloadStreamingTask {
         // SAFETY: `http` is always initialised before the task is scheduled / dropped.
         let http = unsafe { self.http.assume_init_mut() };
         http.clear_data();
-        http.request_headers = Default::default();
-        http.client.header_entries = Default::default();
+        http.request_headers = bun_collections::MultiArrayList::new();
+        http.client.header_entries = bun_collections::MultiArrayList::new();
     }
 }
 
@@ -448,8 +450,8 @@ impl State {
     }
 }
 
-impl Default for State {
-    fn default() -> Self {
+impl State {
+    pub(crate) fn new() -> Self {
         // status_code = 0, request_error = 0, has_more = true, _reserved = 0
         State(1u64 << State::HAS_MORE_SHIFT)
     }

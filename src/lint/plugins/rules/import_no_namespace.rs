@@ -155,7 +155,7 @@ fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span
     let members: Vec<Member<'a>> = namespace_variable.references().map(Member::around).collect::<Option<_>>()?;
 
     // `importNameConflicts`. In place of the names the scopes that have them: that of a member, and `scope.upper`.
-    let mut import_name_conflicts: FxHashMap<&[u8], Vec<(Scope<'a>, Scope<'a>)>> = FxHashMap::default();
+    let mut import_name_conflicts: FxHashMap<&[u8], Vec<(Scope<'a>, Scope<'a>)>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     let mut import_names: Vec<&[u8]> = Vec::new();
     for member in &members {
         let import_name = &*member.property;
@@ -180,7 +180,7 @@ fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span
     };
     utils::sort::sort_by_cached_key(&mut import_names, place);
 
-    let mut import_local_names: FxHashMap<&[u8], Vec<u8>> = FxHashMap::default();
+    let mut import_local_names: FxHashMap<&[u8], Vec<u8>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     let mut named_import_specifiers = Vec::new();
     for import_name in import_names {
         let conflicts = import_name_conflicts.get(import_name)?;

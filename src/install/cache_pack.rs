@@ -37,7 +37,6 @@ const MAX_PACK_PATH_LEN: usize = if bun_core::MAX_PATH_BYTES < 4096 {
 };
 const IO_BUFFER_LEN: usize = 1 << 20;
 
-#[derive(Default)]
 pub struct PackSummary {
     pub packages: u32,
     pub files: u64,
@@ -46,7 +45,18 @@ pub struct PackSummary {
     pub missing: u32,
 }
 
-#[derive(Default)]
+impl PackSummary {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            packages: 0,
+            files: 0,
+            bytes: 0,
+            missing: 0,
+        }
+    }
+}
+
 pub struct UnpackSummary {
     pub packages: u32,
     pub created: u32,
@@ -54,6 +64,19 @@ pub struct UnpackSummary {
     /// Something is at the entry's name that the installer would not accept; left as it is.
     pub incomplete: u32,
     pub bytes: u64,
+}
+
+impl UnpackSummary {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            packages: 0,
+            created: 0,
+            already_cached: 0,
+            incomplete: 0,
+            bytes: 0,
+        }
+    }
 }
 
 pub enum Error {
@@ -298,7 +321,7 @@ impl TempOutput {
     fn create(destination: &[u8]) -> sys::Maybe<Self> {
         let dir = Dir::cwd().make_open_path(
             bun_paths::dirname(destination).unwrap_or(b"."),
-            Default::default(),
+            bun_sys::OpenDirOptions::new(),
         )?;
         let name = tmpname(b"pack");
         let file = sys::openat(
@@ -523,7 +546,7 @@ pub fn pack(pm: &mut PackageManager, destination: &[u8]) -> Result<PackSummary, 
     } else {
         Some(TempOutput::create(destination)?)
     };
-    let mut summary = PackSummary::default();
+    let mut summary = PackSummary::new();
     {
         let mut w = Writer::new(output.as_ref().and_then(|output| output.file.as_ref()));
         w.write(MAGIC)?;
@@ -865,7 +888,7 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
             sys::WindowsOpenDirOptions {
                 can_rename_or_delete: true,
                 iterable: false,
-                ..Default::default()
+                ..sys::WindowsOpenDirOptions::new()
             },
         )?;
         let result = sys::windows::move_opened_file_at(dir, to_dir, to_w, false);
@@ -907,7 +930,7 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
     let mut r = Reader::open(pack_path)?;
     let cache_dir = pm.get_cache_directory();
     let staging = Staging::create(pm.get_temporary_directory().handle.fd())?;
-    let mut summary = UnpackSummary::default();
+    let mut summary = UnpackSummary::new();
     let mut staged: Vec<(ZBox, ResolutionTag)> = Vec::new();
     let mut staged_buf = [0u8; 21];
     let mut path: Vec<u8> = Vec::new();
@@ -1028,7 +1051,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
                     plural(summary.packages.into()),
                     summary.files,
                     plural(summary.files),
-                    bun_fmt::size(summary.bytes as usize, Default::default()),
+                    bun_fmt::size(summary.bytes as usize, crate::bun_output::fmt::SizeFormatterOptions::new()),
                     bun_fmt::escape_control_chars(file),
                     bun_fmt::fmt_duration_one_decimal(timer.read()),
                 );
@@ -1051,7 +1074,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
                     plural(summary.packages.into()),
                     summary.created,
                     summary.already_cached,
-                    bun_fmt::size(summary.bytes as usize, Default::default()),
+                    bun_fmt::size(summary.bytes as usize, crate::bun_output::fmt::SizeFormatterOptions::new()),
                     bun_fmt::fmt_duration_one_decimal(timer.read()),
                 );
             }

@@ -6,9 +6,8 @@ pub mod api {
     pub use bun_dotenv::DotEnvBehavior;
 
     #[repr(u32)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub enum MessageLevel {
-        #[default]
         _none = 0,
         Err = 1,
         Warn = 2,
@@ -18,14 +17,13 @@ pub mod api {
     }
 
     #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub enum UnhandledRejections {
         Strict = 0,
         Throw = 1,
         Warn = 2,
         None = 3,
         WarnWithErrorCode = 4,
-        #[default]
         Bun = 5,
     }
 
@@ -55,7 +53,7 @@ pub mod api {
     ///
     /// LIFECYCLE: `BundleOptions::from_api` parks this in an `Arc` whose final ref
     /// lives on the process-lifetime `Transpiler` (LSan-rooted in build_command.rs).
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug)]
     pub struct TransformOptions {
         /// jsx
         pub jsx: Option<Jsx>,
@@ -137,10 +135,61 @@ pub mod api {
         pub bunfig_path: Box<[u8]>,
     }
 
+    impl TransformOptions {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                jsx: None,
+                tsconfig_override: None,
+                origin: None,
+                absolute_working_dir: None,
+                define: None,
+                drop: Vec::new(),
+                feature_flags: Vec::new(),
+                preserve_symlinks: None,
+                entry_points: Vec::new(),
+                write: None,
+                inject: Vec::new(),
+                output_dir: None,
+                external: Vec::new(),
+                loaders: None,
+                main_fields: Vec::new(),
+                target: None,
+                serve: None,
+                env_files: Vec::new(),
+                disable_default_env_files: false,
+                extension_order: Vec::new(),
+                no_summary: None,
+                disable_hmr: false,
+                port: None,
+                log_level: None,
+                source_map: None,
+                conditions: Vec::new(),
+                packages: None,
+                ignore_dce_annotations: false,
+                serve_plugins: None,
+                serve_minify_syntax: None,
+                serve_minify_whitespace: None,
+                serve_minify_identifiers: None,
+                serve_env_behavior: DotEnvBehavior::_none,
+                serve_env_prefix: None,
+                serve_splitting: false,
+                serve_public_path: None,
+                serve_hmr: None,
+                serve_define: None,
+                serve_sourcemap: None,
+                allow_addons: None,
+                allow_ffi_cc: None,
+                unhandled_rejections: None,
+                bunfig_path: Box::new([]),
+            }
+        }
+    }
+
     // ─── BunInstall + supporting types ───────────────────────────────────────
 
     /// `Default` is empty slices.
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug)]
     pub struct NpmRegistry {
         /// url
         pub url: Box<[u8]>,
@@ -157,12 +206,26 @@ pub mod api {
     }
 
     impl NpmRegistry {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                url: Box::new([]),
+                username: Box::new([]),
+                password: Box::new([]),
+                token: Box::new([]),
+                auth: Box::new([]),
+                declared_in_npmrc: false,
+            }
+        }
+    }
+
+    impl NpmRegistry {
         /// Credentials in a URL are percent-encoded (RFC 3986 section 3.2.1); config keys are not.
         pub fn from_url(str: &[u8]) -> NpmRegistry {
             use bun_url::PercentEncoding;
 
             let url = bun_url::URL::parse(str);
-            let mut registry = NpmRegistry::default();
+            let mut registry = NpmRegistry::new();
 
             if !url.username.is_empty() && !url.password.is_empty() {
                 registry.username = PercentEncoding::decode_lenient_alloc(url.username);
@@ -211,13 +274,21 @@ pub mod api {
     }
 
     /// Per-scope npm registry overrides, keyed by scope name.
-    #[derive(Default)]
     pub struct NpmRegistryMap {
         pub scopes: bun_collections::StringArrayHashMap<NpmRegistry>,
     }
 
+    impl NpmRegistryMap {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                scopes: bun_collections::StringArrayHashMap::init(),
+            }
+        }
+    }
+
     /// The credential of one `.npmrc` key, to match against URLs learned after config loading.
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug)]
     pub struct NpmUrlAuth {
         /// npm's config key as written between `//` and `:<opt>=`, e.g. `host/path/`.
         pub key: Box<[u8]>,
@@ -244,7 +315,6 @@ pub mod api {
     ///
     /// No `Debug`/`Clone` derive: `NpmRegistryMap` wraps `StringArrayHashMap`
     /// which currently provides neither.
-    #[derive(Default)]
     pub struct BunInstall {
         /// default_registry
         pub default_registry: Option<NpmRegistry>,
@@ -308,6 +378,50 @@ pub mod api {
     }
 
     impl BunInstall {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                default_registry: None,
+                scoped: None,
+                url_auth: Vec::new(),
+                lockfile_path: None,
+                save_lockfile_path: None,
+                cache_directory: None,
+                dry_run: None,
+                force: None,
+                save_dev: None,
+                save_optional: None,
+                save_peer: None,
+                save_lockfile: None,
+                production: None,
+                save_yarn_lockfile: None,
+                disable_cache: None,
+                disable_manifest_cache: None,
+                global_dir: None,
+                global_bin_dir: None,
+                frozen_lockfile: None,
+                exact: None,
+                concurrent_scripts: None,
+                cafile: None,
+                save_text_lockfile: None,
+                ca: None,
+                ignore_scripts: None,
+                provenance: None,
+                link_workspace_packages: None,
+                node_linker: None,
+                global_store: None,
+                security_scanner: None,
+                minimum_release_age_ms: None,
+                minimum_release_age_excludes: None,
+                public_hoist_pattern: None,
+                hoist_pattern: None,
+                hoist: None,
+                offline: None,
+            }
+        }
+    }
+
+    impl BunInstall {
         /// Resolves `path` against `dir`, the directory of the config file that sets it or the
         /// directory it was typed in. As in npm, `~` and `~/<rest>` expand to the home directory.
         pub fn resolve_path(dir: &[u8], path: &[u8]) -> Box<[u8]> {
@@ -334,9 +448,8 @@ pub mod api {
     }
 
     #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub enum SourceMapMode {
-        #[default]
         None,
         Inline,
         External,
@@ -344,9 +457,8 @@ pub mod api {
     }
 
     #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub enum Target {
-        #[default]
         _none = 0,
         browser = 1,
         node = 2,
@@ -365,9 +477,8 @@ pub mod api {
     }
 
     #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub enum Loader {
-        #[default]
         _none = 254,
         jsx = 1,
         js = 2,
@@ -428,16 +539,15 @@ pub mod api {
     }
 
     #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub enum JsxRuntime {
-        #[default]
         _none = 0,
         Automatic = 1,
         Classic = 2,
     }
 
     /// JSX transform configuration (factory, fragment, runtime, …).
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug)]
     pub struct Jsx {
         pub factory: Box<[u8]>,
         pub runtime: JsxRuntime,
@@ -447,8 +557,22 @@ pub mod api {
         pub side_effects: bool,
     }
 
+    impl Jsx {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                factory: Box::new([]),
+                runtime: JsxRuntime::_none,
+                fragment: Box::new([]),
+                development: false,
+                import_source: Box::new([]),
+                side_effects: false,
+            }
+        }
+    }
+
     /// Parallel-array string→string map as transmitted on the wire.
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug)]
     pub struct StringMap {
         pub keys: Vec<Box<[u8]>>,
         pub values: Vec<Box<[u8]>>,
@@ -462,16 +586,25 @@ pub mod api {
     }
 
     /// Parallel-array map from file extension to [`Loader`].
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug)]
     pub struct LoaderMap {
         pub extensions: Vec<Box<[u8]>>,
         pub loaders: Vec<Loader>,
     }
 
+    impl LoaderMap {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                extensions: Vec::new(),
+                loaders: Vec::new(),
+            }
+        }
+    }
+
     #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub enum PackagesMode {
-        #[default]
         Bundle = 0,
         External = 1,
     }

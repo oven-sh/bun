@@ -292,7 +292,7 @@ fn write_js_function(
             {
                 return false;
             }
-            write_function(function, FormatFunctionOptions::default(), f);
+            write_function(function, FormatFunctionOptions::new(), f);
             true
         },
     )
@@ -345,7 +345,7 @@ fn write_js(js: &Js<'_>, out: &mut Writer<'_, '_>, how: &How<'_>) {
         },
         has_single_quotes: js.has_single_quotes,
         has_tree_of_babel: true,
-        ..InHtml::default()
+        ..InHtml::new()
     };
     let ends_with_line_comment = out.foreign(|f| match js.kind {
         JsKind::Expression => write_js_expression(f, js, in_html, how.is_typescript),
@@ -387,7 +387,7 @@ fn write_printed_text(
     let width = (options.line_width.value() as usize).saturating_sub(indentation);
     let in_html = InHtml {
         root: HtmlRoot::Program,
-        ..InHtml::default()
+        ..InHtml::new()
     };
     let options = FormatOptions {
         line_width: LineWidth(width.clamp(1, u32::MAX as usize) as u32),
@@ -443,7 +443,7 @@ fn write_body(
         let in_html = InHtml {
             root: HtmlRoot::Program,
             has_tree_of_babel: syntax == Syntax::BabelTs,
-            ..InHtml::default()
+            ..InHtml::new()
         };
         let (source_type, flavor) = (SourceType::Unknown, how.script_flavor);
         match out.foreign(|f| js::write_program(f, content, syntax, source_type, in_html, flavor)) {
@@ -453,7 +453,13 @@ fn write_body(
     };
     let style_sheet = |parser: crate::css::Parser, out: &mut Writer<'_, '_>| {
         write_printed_text(out, how.options, |options, printed| {
-            crate::css::format(content, parser, options, &mut Default::default(), printed)
+            crate::css::format(
+                content,
+                parser,
+                options,
+                &mut crate::css::Scratch::new(),
+                printed,
+            )
         })
         .map_err(in_words)
     };
@@ -462,7 +468,13 @@ fn write_body(
         Parser::BabelTs => program(Syntax::BabelTs, out),
         Parser::Json => write_printed_text(out, how.options, |options, printed| {
             let parser = crate::json::Parser::Json;
-            crate::json::format(content, parser, options, &mut Default::default(), printed)
+            crate::json::format(
+                content,
+                parser,
+                options,
+                &mut crate::json::Scratch::new(),
+                printed,
+            )
         })
         .map_err(in_words),
         Parser::Css => style_sheet(crate::css::Parser::Css, out),

@@ -112,7 +112,6 @@ impl<'a> Dependency<'a> {
 }
 
 /// What is known about `name.chain[0].chain[1]`.
-#[derive(Default)]
 struct Path {
     /// What it is a property of. 0 for a variable.
     base: u32,
@@ -126,6 +125,19 @@ struct Path {
     is_undeclared: bool,
 }
 
+impl Path {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            base: 0,
+            is_found: false,
+            is_found_within: false,
+            declared: 0,
+            is_undeclared: false,
+        }
+    }
+}
+
 /// The dependencies of one function, as a tree: a dependency is a property of another if that is above it.
 struct Paths<'a> {
     /// The first is above the variables.
@@ -134,11 +146,11 @@ struct Paths<'a> {
     properties: FxHashMap<(u32, Name<'a>), u32>,
 }
 
-impl Default for Paths<'_> {
-    fn default() -> Self {
+impl Paths<'_> {
+    fn new() -> Self {
         Paths {
-            list: vec![Path::default()],
-            properties: FxHashMap::default(),
+            list: vec![Path::new()],
+            properties: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 }
@@ -155,7 +167,7 @@ impl<'a> Paths<'a> {
             at = *self.properties.entry((at, *name)).or_insert_with(|| {
                 self.list.push(Path {
                     base: at,
-                    ..Path::default()
+                    ..Path::new()
                 });
                 self.list.len() as u32 - 1
             });
@@ -341,7 +353,6 @@ fn is_second_of_array_pattern<'a>(declarator: VarDecl<'a>, name: Name<'a>) -> bo
 }
 
 /// What is read in a function.
-#[derive(Default)]
 struct Found<'a> {
     /// In the order of the source, each with its number in `paths`.
     dependencies: Vec<(Dependency<'a>, u32)>,
@@ -353,6 +364,19 @@ struct Found<'a> {
     inserted: Vec<u32>,
     /// A function that `useState` or `useReducer` returns is named, outside the functions in the function.
     has_set_state_call: bool,
+}
+
+impl<'a> Found<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            dependencies: Vec::new(),
+            positions: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            paths: Paths::new(),
+            inserted: Vec::new(),
+            has_set_state_call: false,
+        }
+    }
 }
 
 impl<'a> Found<'a> {
@@ -385,8 +409,10 @@ fn order_in_table<'d, 'a>(
     inserted: &mut dyn Iterator<Item = (&'d Dependency<'a>, u32)>,
     symbols: &[(u32, u32)],
 ) -> Vec<u32> {
-    let (mut seen, mut table): (FxHashSet<Hashed>, HashOrder<u32>) =
-        (FxHashSet::default(), HashOrder::new());
+    let (mut seen, mut table): (FxHashSet<Hashed>, HashOrder<u32>) = (
+        FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+        HashOrder::new(),
+    );
     for (dependency, at) in inserted {
         let place = dependency.symbol.and_then(place_of_symbol);
         let hashed = Hashed {
@@ -586,8 +612,8 @@ fn find_dependencies<'a>(func: Func<'a>, with_parameters: bool) -> Found<'a> {
         scopes.extend(scope.children());
     }
     utils::sort::sort_unstable_by_key(&mut idents, |it| it.span().start);
-    let mut found = Found::default();
-    let mut enclosing_function = AncestorMemo::default();
+    let mut found = Found::new();
+    let mut enclosing_function = AncestorMemo::new();
     for ident in idents {
         let Some(name) = ident.as_ident() else {
             continue;
@@ -663,7 +689,6 @@ fn is_inside_effect_cleanup<'a>(
 }
 
 /// What is the same for all calls in a file.
-#[derive(Default)]
 pub(crate) struct Memo<'a> {
     /// Whether the value of a variable of a component is the same on every render.
     is_stable: IdMap<Symbol<'a>, bool>,
@@ -675,6 +700,19 @@ pub(crate) struct Memo<'a> {
     currents: Option<Vec<Expr<'a>>>,
     /// The function around something.
     function_around: AncestorMemo<'a, Func<'a>>,
+}
+
+impl<'a> Memo<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            is_stable: IdMap::init(),
+            is_current_written: IdMap::init(),
+            places_of_symbols: None,
+            currents: None,
+            function_around: AncestorMemo::new(),
+        }
+    }
 }
 
 struct Component<'a> {
@@ -796,7 +834,7 @@ impl<'a> Component<'a> {
         let mut stack: Vec<Frame<'a>> = Vec::new();
         // The functions that have been entered, and from which one in `stack` can be reached.
         let mut open: Vec<Symbol<'a>> = Vec::new();
-        let mut numbers: IdMap<Symbol<'a>, usize> = IdMap::default();
+        let mut numbers: IdMap<Symbol<'a>, usize> = IdMap::init();
         let mut entering = Some((symbol, declared));
         loop {
             if let Some((symbol, declared)) = entering.take() {
@@ -986,7 +1024,7 @@ fn print_array(array: Expr, removed: Option<Span>, appended: &[(Span, Vec<u8>)])
         .collect();
     let len = kept.len() + appended.len();
     let is_multi_line = len > 2;
-    let mut codegen = Codegen::default();
+    let mut codegen = Codegen::new();
     codegen.code.push(b'[');
     if is_multi_line {
         codegen.indent();
@@ -1391,7 +1429,7 @@ pub(crate) fn run<'a, R: Rule>(
                 labels.push(
                     declaration
                         .and_then(Declaration::name_span)
-                        .unwrap_or_default(),
+                        .unwrap_or_else(Span::init),
                     format!("`{name}` is declared here"),
                 );
             })
@@ -1421,7 +1459,7 @@ fn report_refs_in_cleanups<'a, R: Rule>(
         currents
     });
     let first = currents.partition_point(|it| it.span().start < within.start);
-    let mut inside_effect_cleanup = AncestorMemo::default();
+    let mut inside_effect_cleanup = AncestorMemo::new();
     for &member in currents[first..]
         .iter()
         .take_while(|it| it.span().start < within.end)

@@ -45,10 +45,19 @@ struct Braces<'a> {
 }
 
 /// Output buffer that never lets a line comment swallow the next piece.
-#[derive(Default)]
 struct Pieces {
     text: Vec<u8>,
     ends_in_line_comment: bool,
+}
+
+impl Pieces {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            text: Vec::new(),
+            ends_in_line_comment: false,
+        }
+    }
 }
 
 impl Pieces {
@@ -171,8 +180,8 @@ impl<'a> Tidy<'a> {
                 spec,
                 before_comma: Span::new(from, comma.unwrap_or(after)),
                 after_comma: Span::new(after, reached),
-                lead: Span::default(),
-                trail: Span::default(),
+                lead: Span::init(),
+                trail: Span::init(),
             });
             from = reached;
         }
@@ -298,7 +307,7 @@ impl<'a> Tidy<'a> {
             let texts = attributes.entries().iter().map(|entry| {
                 let key = entry.key().map(|key| key.span(self.file));
                 let value = entry.value().map(|value| value.span());
-                [key, value].map(|it| without_quotes(self.slice(it.unwrap_or_default())))
+                [key, value].map(|it| without_quotes(self.slice(it.unwrap_or_else(Span::init))))
             });
             let keyword = self.slice(attributes.keyword_span());
             Some((keyword, texts.collect::<Vec<_>>()))
@@ -383,7 +392,7 @@ impl<'a> Tidy<'a> {
 
     /// Rewrites `target` to import `default` and `chunks`.
     fn rewrite(&mut self, target: &Entry<'a>, default: Option<Span>, chunks: &[Chunk<'a>]) {
-        let mut names = Pieces::default();
+        let mut names = Pieces::new();
         match (&target.braces, target.import.default()) {
             (Some(braces), own_default) => {
                 // These comments are part of `chunks` now.
@@ -407,7 +416,7 @@ impl<'a> Tidy<'a> {
             (None, Some(default)) if !chunks.is_empty() => {
                 // Insert after any comments that belong to the default import.
                 let default = default.span();
-                let source = target.import.spec_span().unwrap_or_default();
+                let source = target.import.spec_span().unwrap_or_else(Span::init);
                 let from = self.find(default.between(source), b'f');
                 let about_default = Span::after(default, from.unwrap_or(default.end));
                 let last = self.file.comments_in(about_default).last();

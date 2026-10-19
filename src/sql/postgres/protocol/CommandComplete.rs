@@ -5,8 +5,8 @@ pub struct CommandComplete {
     pub command_tag: Data,
 }
 
-impl Default for CommandComplete {
-    fn default() -> Self {
+impl CommandComplete {
+    pub fn new() -> Self {
         Self {
             command_tag: Data::Empty,
         }

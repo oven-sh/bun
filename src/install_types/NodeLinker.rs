@@ -2,12 +2,11 @@
 //! without depending on the full package manager.
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum NodeLinker {
     // If workspaces are used: isolated
     // If not: hoisted
     // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
-    #[default]
     Auto,
 
     Hoisted,
@@ -212,7 +211,7 @@ impl PnpmMatcher {
                                 loc: pattern_expr.loc,
                                 redact_sensitive_information: true,
                                 source: Some(source),
-                                ..Default::default()
+                                ..bun_ast::AddErrorOptions::new()
                             },
                         );
                         return Err(FromExprError::UnexpectedExpr);
@@ -226,7 +225,7 @@ impl PnpmMatcher {
                         loc: expr.loc,
                         redact_sensitive_information: true,
                         source: Some(source),
-                        ..Default::default()
+                        ..bun_ast::AddErrorOptions::new()
                     },
                 );
                 return Err(FromExprError::UnexpectedExpr);

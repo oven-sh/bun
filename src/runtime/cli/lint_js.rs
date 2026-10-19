@@ -47,7 +47,6 @@ pub(crate) struct LintVm {
 
 /// Answers that native code has spans into. Each is written once, and its bytes stay where they are until the call is over:
 /// pushing to `all` moves the `Vec`s, not what they point to.
-#[derive(Default)]
 struct Kept {
     all: Vec<Vec<u8>>,
     /// Which of them answers a kind that was asked for without details.
@@ -56,13 +55,24 @@ struct Kept {
     is_lent: bool,
 }
 
+impl Kept {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            all: Vec::new(),
+            plain: Vec::new(),
+            is_lent: false,
+        }
+    }
+}
+
 /// Clears `LintVm::call` when the call is over.
 struct Lent<'v>(&'v LintVm, &'v JSGlobalObject);
 
 impl Drop for Lent<'_> {
     fn drop(&mut self) {
         self.0.call.set(None);
-        let kept = core::mem::take(&mut *self.0.kept.borrow_mut());
+        let kept = core::mem::replace(&mut *self.0.kept.borrow_mut(), Kept::new());
         // The program does this itself, unless it was cut short.
         if kept.is_lent {
             Bun__Lint__endFile(self.1);
@@ -207,7 +217,7 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
             Ok(LintVm {
                 handle: Strong::create(handle, global),
                 call: Cell::new(None),
-                kept: RefCell::default(),
+                kept: core::cell::RefCell::new(Kept::new()),
             })
         }
         Err(error) => Err(message_of(global, global.take_exception(error))),
@@ -227,7 +237,7 @@ fn start_vm() -> Result<(), Vec<u8>> {
     bun_ast::initialize_store();
     let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
         is_main_thread: false,
-        ..Default::default()
+        ..jsc::VirtualMachineInitOptions::new()
     })
     .map_err(|error| failed(error.name()))?;
     debug_assert!(core::ptr::eq(vm, VirtualMachine::get_mut_ptr()));
@@ -401,12 +411,22 @@ fn end_vm(frees: bool) {
 }
 
 /// Startup state that all VMs share.
-#[derive(Default)]
 struct Start {
     initialize: std::sync::Once,
     /// Set if the run won't have more than a few VMs. Stays unset if a VM starts before the files are known.
     is_for_few: AtomicBool,
     memory: std::sync::OnceLock<usize>,
+}
+
+impl Start {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            initialize: std::sync::Once::new(),
+            is_for_few: core::sync::atomic::AtomicBool::new(false),
+            memory: std::sync::OnceLock::new(),
+        }
+    }
 }
 
 impl Start {
@@ -420,7 +440,7 @@ impl Start {
         let mut first = None;
         self.initialize.call_once(|| {
             // A no-op if a regular expression in a config has already started JSC (`bun_yarr`).
-            jsc::initialize(jsc::InitializeOptions::default());
+            jsc::initialize(jsc::InitializeOptions::new());
             if !self.is_for_few.load(Ordering::Relaxed) {
                 jsc::expect_vm_per_thread();
             }
@@ -465,7 +485,6 @@ struct Vms {
 }
 
 /// Tracks how much memory the VMs of a run use.
-#[derive(Default)]
 struct Memory {
     /// RSS of the process before the first VM started.
     before: usize,
@@ -481,6 +500,22 @@ struct Memory {
     /// How many files the VMs have finished, and what that count was when a VM was last freed.
     given_back: u32,
     freed_at: u32,
+}
+
+impl Memory {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            before: 0,
+            taken: 0,
+            most: 0,
+            most_for_one: 0,
+            looked_at: (0, 0),
+            grows_by: None,
+            given_back: 0,
+            freed_at: 0,
+        }
+    }
 }
 
 impl Memory {
@@ -560,10 +595,19 @@ struct Posted {
 unsafe impl Send for Posted {}
 
 /// What the thread that has posted a job waits for.
-#[derive(Default)]
 struct Ticket {
     is_done: Guarded<bool>,
     changed: Condition,
+}
+
+impl Ticket {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            is_done: Guarded::init(false),
+            changed: Condition::init(),
+        }
+    }
 }
 
 impl Ticket {
@@ -602,7 +646,6 @@ impl Shared {
 }
 
 /// A thread with a VM.
-#[derive(Default)]
 struct Member {
     /// `None` until it runs.
     thread: Option<ThreadId>,
@@ -623,6 +666,22 @@ struct Member {
 }
 
 impl Member {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            thread: None,
+            failure: None,
+            calls: 0,
+            is_in_use: false,
+            is_idle: false,
+            is_freed: false,
+            is_gone: false,
+            done_with: 0,
+        }
+    }
+}
+
+impl Member {
     fn is_loaded(&self) -> bool {
         !self.is_freed && self.calls >= 2
     }
@@ -633,7 +692,6 @@ impl Member {
     }
 }
 
-#[derive(Default)]
 struct CrewState {
     all: Vec<Member>,
     posted: VecDeque<Posted>,
@@ -647,6 +705,22 @@ struct CrewState {
     /// Which member is told to run its `exit` handlers.
     ends: Option<usize>,
     memory: Memory,
+}
+
+impl CrewState {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            all: Vec::new(),
+            posted: std::collections::VecDeque::new(),
+            shared: None,
+            calls: 0,
+            pending: 0,
+            is_done_with_heavy: false,
+            ends: None,
+            memory: Memory::new(),
+        }
+    }
 }
 
 impl CrewState {
@@ -672,7 +746,6 @@ enum Next {
 }
 
 /// The threads that have a VM. None is started before it is needed.
-#[derive(Default)]
 struct Crew {
     start: Start,
     demand: Demand,
@@ -683,6 +756,20 @@ struct Crew {
     is_posted: Condition,
     /// `pending` is 0, or a member is gone.
     is_over: Condition,
+}
+
+impl Crew {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            start: Start::new(),
+            demand: Demand::new(),
+            state: Guarded::init(CrewState::new()),
+            busy: core::sync::atomic::AtomicUsize::new(0),
+            is_posted: Condition::init(),
+            is_over: Condition::init(),
+        }
+    }
 }
 
 /// The VM of the member `at`, on its thread.
@@ -740,7 +827,7 @@ impl Crew {
             if state.all.is_empty() {
                 state.memory.begin(crew.demand.left());
             }
-            state.all.push(Member::default());
+            state.all.push(Member::new());
             if state.shared.is_some() {
                 state.pending += 1;
                 crew.busy.store(state.pending, Ordering::Relaxed);
@@ -896,7 +983,7 @@ impl Crew {
         then: &mut (dyn FnMut(&mut dyn Vm) + Send),
     ) -> Result<(), Vec<u8>> {
         let mut job = Job(then);
-        let ticket = Arc::<Ticket>::default();
+        let ticket = std::sync::Arc::new(Ticket::new());
         let mut state = crew.state.lock();
         state.posted.push_back(Posted {
             job: NonNull::from(&mut job).cast(),
@@ -965,8 +1052,14 @@ impl Crew {
 }
 
 /// The VMs of a run.
-#[derive(Default)]
 pub(crate) struct Engines(Arc<Crew>);
+
+impl Engines {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(std::sync::Arc::new(Crew::new()))
+    }
+}
 
 impl Engines {
     /// Runs the `exit` handlers of every VM. Nothing is being linted any more.

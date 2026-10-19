@@ -25,11 +25,11 @@ pub(crate) fn options_from_js(
     global: &JSGlobalObject,
 ) -> Result<Options, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
-        return Ok(Options::default());
+        return Ok(Options::new());
     }
 
     if value.is_object() {
-        let mut options = Options::default();
+        let mut options = Options::new();
 
         if let Some(family) = js(value.get(global, "family"))? {
             options.family = family_from_js(family, global)?;

@@ -72,7 +72,6 @@ impl Writes {
 }
 
 /// What has been found out about a file.
-#[derive(Default)]
 pub struct Known<'a> {
     /// Where the loops are that are in no other loop, in the order of the source.
     loops: SmallVec<[Span; 4]>,
@@ -84,6 +83,20 @@ pub struct Known<'a> {
     assignments: FxHashMap<usize, Vec<u32>>,
     /// Where the functions start that are reported as oxlint does.
     reported_as_oxlint: FxHashSet<u32>,
+}
+
+impl<'a> Known<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            loops: SmallVec::new(),
+            containing_loops: AncestorMemo::new(),
+            writes_to_variables: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            writes_to_globals: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            assignments: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            reported_as_oxlint: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl<'a> Known<'a> {
@@ -104,7 +117,7 @@ impl<'a> Known<'a> {
         });
         Some(Known {
             loops,
-            ..Known::default()
+            ..Known::new()
         })
     }
 
@@ -296,7 +309,7 @@ fn check_in_loop<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Di
         return;
     }
     utils::sort::sort_by_key(&mut unsafe_refs, |it| it.ident().start());
-    let mut named = FxHashSet::default();
+    let mut named = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     let names = unsafe_refs.iter().map(|it| it.name());
     let mut var_names = Vec::new();
     for name in names.filter(|name| dialect == Dialect::TypeScript || named.insert(*name)) {

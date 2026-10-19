@@ -26,7 +26,7 @@ impl Config {
                 .filter(move |it| it.files.is_some() == are_of_overrides)
                 .flat_map(|it| &it.rules)
         };
-        let mut on: FxHashSet<(&[u8], bool)> = FxHashSet::default();
+        let mut on: FxHashSet<(&[u8], bool)> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for setting in settings(false) {
             match setting.severity {
                 Severity::Off => on.remove(&key(setting)),

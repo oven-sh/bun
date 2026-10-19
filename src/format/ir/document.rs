@@ -43,7 +43,7 @@ const NO_TEXT: u32 = u32::MAX;
 /// What has been seen so far of everything on one line. The fields that are an index say where
 /// something has last been seen: it is in a frame if that is after the start of the frame.
 /// Index 0 is not part of any document.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct State {
     /// The columns of all texts, and of the spaces between them. It wraps around.
     width: u32,
@@ -66,12 +66,42 @@ struct State {
     last_group_id: u32,
 }
 
-#[derive(Default)]
+impl State {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            width: 0,
+            is_space_pending: false,
+            is_space_element_pending: false,
+            is_in_line_suffix: false,
+            without_text: 0,
+            last_break: 0,
+            last_will_break: 0,
+            last_unknown: 0,
+            last_boundary: 0,
+            last_line: 0,
+            last_space: 0,
+            last_group_id: 0,
+        }
+    }
+}
+
 pub(crate) struct Tracker {
     state: State,
     frames: Vec<Frame>,
     /// The state before each frame whose content is apart from what encloses it.
     saved: Vec<State>,
+}
+
+impl Tracker {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            state: State::new(),
+            frames: Vec::new(),
+            saved: Vec::new(),
+        }
+    }
 }
 
 pub(crate) type PropagateBuffers = Tracker;
@@ -122,7 +152,7 @@ pub(crate) fn propagate_expand(root: Interned, storage: &mut Storage, tracker: &
 
 impl Tracker {
     pub(crate) fn clear(&mut self) {
-        self.state = State::default();
+        self.state = State::new();
         self.frames.clear();
         self.saved.clear();
     }
@@ -236,7 +266,7 @@ impl Tracker {
     fn open(&mut self, kind: FrameKind, start: u32) {
         self.frames.push(Frame {
             kind,
-            start_flags: FlatFlags::default(),
+            start_flags: FlatFlags::new(),
             start,
             first_text: NO_TEXT,
         });
@@ -299,7 +329,7 @@ impl Tracker {
             if group.mode().is_flat() {
                 group.set_flat(self.flat_of_frame(frame), index);
             } else {
-                group.set_flat(Flat::default(), index);
+                group.set_flat(Flat::new(), index);
                 self.state.last_break = index;
             }
             if group.id().is_some() {
@@ -359,7 +389,7 @@ impl Tracker {
         } else if is_balanced {
             self.flat_of_frame(frame)
         } else {
-            Flat::default()
+            Flat::new()
         };
         let will_break = self.state.last_will_break > frame.start;
         self.state = self.saved.pop()?;
@@ -395,7 +425,7 @@ impl Tracker {
             .unwrap_or_default()
         {
             frame.first_text = start;
-            frame.start_flags = FlatFlags::default()
+            frame.start_flags = FlatFlags::new()
                 .with(FlatFlags::STARTS_WITH_LINE, state.last_line > frame.start)
                 .with(FlatFlags::STARTS_WITH_SPACE, state.last_space > frame.start);
         }
@@ -460,7 +490,7 @@ impl Tracker {
     fn flat_of_frame(&self, frame: Frame) -> Flat {
         let state = &self.state;
         if state.last_unknown > frame.start {
-            return Flat::default();
+            return Flat::new();
         }
         let flags = FlatFlags::MEASURED
             .with(
@@ -487,7 +517,7 @@ impl Tracker {
                         state.is_space_element_pending,
                     ),
             },
-            Err(_) => Flat::default(),
+            Err(_) => Flat::new(),
         }
     }
 }

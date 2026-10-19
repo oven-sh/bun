@@ -17,14 +17,6 @@ pub(crate) struct SendWindow {
     pub remaining: i64,
 }
 
-impl Default for SendWindow {
-    fn default() -> Self {
-        SendWindow {
-            remaining: DEFAULT_WINDOW_SIZE as i64,
-        }
-    }
-}
-
 impl SendWindow {
     pub(crate) fn new(initial: u32) -> Self {
         SendWindow {
@@ -73,15 +65,6 @@ impl SendWindow {
 pub(crate) struct RecvWindow {
     pub size: i64,
     pub consumed: i64,
-}
-
-impl Default for RecvWindow {
-    fn default() -> Self {
-        RecvWindow {
-            size: DEFAULT_WINDOW_SIZE as i64,
-            consumed: 0,
-        }
-    }
 }
 
 impl RecvWindow {

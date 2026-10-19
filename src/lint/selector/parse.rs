@@ -894,7 +894,7 @@ pub(super) fn parse(source: &[u8]) -> Result<(Program, Id), Error> {
         max_fail_at: 0,
         expected: 0,
         error: None,
-        program: Program::default(),
+        program: Program::new(),
         stack: bun_core::StackCheck::init()
             .with_at_most(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize),
     };

@@ -1000,7 +1000,7 @@ impl Checker<'_, '_> {
         }
         let declarations = match prop.source {
             PropSource::Symbol(sym) => self.declarations_of_property(sym),
-            _ => List::default(),
+            _ => List::new(),
         };
         // `localPropDeclaration`
         let local_prop = declarations.iter().find_map(|&(f, decl)| match decl {

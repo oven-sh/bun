@@ -55,7 +55,7 @@ impl Rule for ReactNoLocalRenderHelpers {
         if !file.has_exprs([ExprTag::Jsx]) {
             return None;
         }
-        Some(AncestorMemo::default())
+        Some(AncestorMemo::new())
     }
 
     fn symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {

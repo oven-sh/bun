@@ -118,14 +118,14 @@ pub fn reverse_postorder_blocks(
     hir: &mut HIR,
 ) -> Result<IndexMap<BlockId, BasicBlock>, crate::diagnostics::CompilerDiagnostic> {
     let order = postorder(hir)?;
-    let mut old = std::mem::take(&mut hir.blocks);
+    let mut old = std::mem::replace(&mut hir.blocks, IndexMap::init());
     for block_id in order.blocks.into_iter().rev() {
         let block = old.get_mut(&block_id).unwrap();
         if order.used.contains(block_id) {
             let left = unreachable_block(block, IndexSet::new());
             hir.blocks.insert(block_id, std::mem::replace(block, left));
         } else if order.used_fallthroughs.contains(block_id) {
-            let preds = std::mem::take(&mut block.preds);
+            let preds = std::mem::replace(&mut block.preds, IndexSet::init());
             hir.blocks.insert(block_id, unreachable_block(block, preds));
         }
         // otherwise this block is unreachable and is dropped

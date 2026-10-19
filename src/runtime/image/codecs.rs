@@ -207,7 +207,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-#[derive(Default)]
 pub(crate) struct Decoded {
     pub(crate) rgba: Vec<u8>, // global allocator (mimalloc)
     pub(crate) width: u32,
@@ -258,11 +257,21 @@ pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 /// decode at the smallest factor that still ≥ the target — skipping most of
 /// the IDCT work AND shrinking the RGBA buffer the resize pass touches. This
 /// is the same trick Sharp/libvips use and is where most of the perf gap was.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct DecodeHint {
     /// Final output dims (after rotate). 0 = "no resize, full decode".
     pub(crate) target_w: u32,
     pub(crate) target_h: u32,
+}
+
+impl DecodeHint {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            target_w: 0,
+            target_h: 0,
+        }
+    }
 }
 
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
@@ -451,8 +460,8 @@ pub(crate) struct EncodeOptions {
     pub(crate) icc_profile: Option<NonNull<[u8]>>,
 }
 
-impl Default for EncodeOptions {
-    fn default() -> Self {
+impl EncodeOptions {
+    pub(crate) fn new() -> Self {
         Self {
             format: Format::Png, // arbitrary; callers set it at construction
             quality: 80,

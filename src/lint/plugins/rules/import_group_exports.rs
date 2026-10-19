@@ -23,10 +23,19 @@ const COMMONJS: Message = Message::new(
 
 type Spans = SmallVec<[Span; 4]>;
 
-#[derive(Default)]
 pub struct State<'a> {
     commonjs_exports: Spans,
     assignment_targets: AssignmentTargets<'a>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            commonjs_exports: Spans::new(),
+            assignment_targets: AssignmentTargets::new(),
+        }
+    }
 }
 
 impl Rule for GroupExports {
@@ -47,7 +56,7 @@ impl Rule for GroupExports {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -68,7 +77,7 @@ impl Rule for GroupExports {
         let mut nodes: [Spans; 2] = [Spans::new(), Spans::new()];
         // Those of each source, in the order in which the sources come, and where each source is.
         let mut source_records: [Vec<(Name<'a>, Spans)>; 2] = [Vec::new(), Vec::new()];
-        let mut places: FxHashMap<(usize, Name<'a>), usize> = FxHashMap::default();
+        let mut places: FxHashMap<(usize, Name<'a>), usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let is_oxlint = cx.language().is_oxlint;
         for stmt in module_items(cx.file()) {
             match stmt.kind() {
@@ -99,7 +108,7 @@ impl Rule for GroupExports {
         for span in nodes.iter().filter(|it| it.len() > 1).flatten() {
             cx.report(*span, ES_MODULE);
         }
-        let mut commonjs_exports = std::mem::take(&mut cx.state.commonjs_exports);
+        let mut commonjs_exports = std::mem::replace(&mut cx.state.commonjs_exports, smallvec::SmallVec::new());
         utils::sort::sort_unstable_by_key(&mut commonjs_exports, |it| it.start);
         for span in commonjs_exports
             .iter()

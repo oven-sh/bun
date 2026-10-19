@@ -465,13 +465,24 @@ enum Element {
 }
 
 /// What a group is started with.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct Group {
     pub(crate) should_break: bool,
     /// Not 0: what an `ifBreak` can ask about it by.
     pub(crate) id: u32,
     /// `conditionalGroup([contents])`
     pub(crate) is_conditional: bool,
+}
+
+impl Group {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            should_break: false,
+            id: 0,
+            is_conditional: false,
+        }
+    }
 }
 
 /// A document: its parts, one after the other. It is written from the first to the last.
@@ -492,8 +503,8 @@ pub(crate) struct Elements {
     is_nested_too_deeply: bool,
 }
 
-impl Default for Elements {
-    fn default() -> Self {
+impl Elements {
+    pub(crate) fn new() -> Self {
         Elements {
             list: vec![Element::Line(Line::Hard)],
             texts: Vec::new(),
@@ -1749,7 +1760,7 @@ pub(crate) fn print(
     text: &[u8],
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    let mut elements = Elements::default();
+    let mut elements = Elements::new();
     elements.document(&doc);
     drop(doc);
     let mut printer = Printer::new(options, text, out);

@@ -212,7 +212,7 @@ impl QueryState {
     pub(crate) fn new(protocol: DNSServiceProtocol) -> Self {
         Self {
             sd_refs: [ptr::null_mut(); 2],
-            results: Default::default(),
+            results: Vec::new(),
             saw_timeout: false,
             awaiting_more: false,
             pending_proto: protocol,
@@ -453,7 +453,7 @@ impl SharedConnection {
         let poll_ptr = FilePoll::init(
             ctx,
             fd,
-            Default::default(),
+            enumset::EnumSet::empty(),
             Async::Owner::new(
                 Async::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
                 (&raw mut *this).cast(),

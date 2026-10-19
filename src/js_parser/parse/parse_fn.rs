@@ -96,7 +96,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Only allow omitting the body if we're parsing TypeScript
                 allow_missing_body_for_type_script: Self::IS_TYPESCRIPT_ENABLED,
-                ..Default::default()
+                ..FnOrArrowDataParse::new()
             },
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
@@ -180,7 +180,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             flags: initial_flags,
             arguments_ref: js_ast::Ref::NONE,
             open_parens_loc: p.lexer.loc(),
-            ..Default::default()
+            ..G::Fn::new()
         };
         p.lexer.expect(T::TOpenParen)?;
 
@@ -244,8 +244,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut is_typescript_ctor_field = false;
             let is_identifier = p.lexer.token == T::TIdentifier;
             let mut text = p.lexer.identifier;
-            let mut arg = p.parse_binding(Default::default())?;
-            let mut ts_metadata = bun_ast::ts::Metadata::default();
+            let mut arg = p.parse_binding(super::ParseBindingOptions::new())?;
+            let mut ts_metadata = bun_ast::ts::Metadata::MNone;
 
             if Self::IS_TYPESCRIPT_ENABLED {
                 if is_identifier && opts.is_constructor {
@@ -268,7 +268,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 text = p.lexer.identifier;
 
                                 // Re-parse the binding (the current binding is the TypeScript keyword)
-                                arg = p.parse_binding(Default::default())?;
+                                arg = p.parse_binding(super::ParseBindingOptions::new())?;
                             }
                             _ => {
                                 break;
@@ -303,7 +303,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            let parse_stmt_opts = ParseStatementOptions::default();
+            let parse_stmt_opts = ParseStatementOptions::new();
             p.declare_binding(js_ast::symbol::Kind::Hoisted, &mut arg, &parse_stmt_opts)
                 .expect("unreachable");
 
@@ -471,7 +471,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     AwaitOrYield::AllowIdent
                 },
-                ..Default::default()
+                ..FnOrArrowDataParse::new()
             },
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
@@ -501,7 +501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.expect(T::TOpenBrace)?;
-        let mut opts = ParseStatementOptions::default();
+        let mut opts = ParseStatementOptions::new();
         let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut opts)?;
         p.lexer.next()?;
 
@@ -538,7 +538,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TEqualsGreaterThan)?;
 
         for arg in args.iter_mut() {
-            let opts = ParseStatementOptions::default();
+            let opts = ParseStatementOptions::new();
             p.declare_binding(js_ast::symbol::Kind::Hoisted, &mut arg.binding, &opts)?;
         }
 
@@ -561,7 +561,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 args: args_slice,
                 body,
                 has_react_hooks_suppression,
-                ..Default::default()
+                ..E::Arrow::new()
             });
         }
 
@@ -604,7 +604,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts: bun_ast::StoreSlice::new_mut(stmts),
             },
             has_react_hooks_suppression,
-            ..Default::default()
+            ..E::Arrow::new()
         })
     }
 }

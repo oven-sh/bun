@@ -161,8 +161,8 @@ pub struct SymbolSlot {
     pub(crate) pinned: bool,
 }
 
-impl Default for SymbolSlot {
-    fn default() -> Self {
+impl SymbolSlot {
+    pub fn new() -> Self {
         SymbolSlot {
             name: TinyString::String(name_str_empty()),
             count: 0,
@@ -174,17 +174,27 @@ impl Default for SymbolSlot {
 
 pub(crate) type SymbolSlotList = EnumMap<symbol::SlotNamespace, Vec<SymbolSlot>>;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct InlineString {
     pub(crate) bytes: [u8; 15],
     pub(crate) len: u8,
 }
 
 impl InlineString {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            bytes: [0; 15],
+            len: 0,
+        }
+    }
+}
+
+impl InlineString {
     fn init(str_: &[u8]) -> InlineString {
         let mut this = InlineString {
             len: u8::try_from(str_.len().min(15)).expect("int cast"),
-            ..Default::default()
+            ..InlineString::new()
         };
         for (b, c) in this.bytes[0..this.len as usize]
             .iter_mut()
@@ -268,7 +278,7 @@ impl MinifyRenamer {
         for (ns, &count) in first_top_level_slots.slots.iter() {
             let count = count as usize;
             let mut v = Vec::with_capacity(count);
-            v.resize(count, SymbolSlot::default());
+            v.resize(count, SymbolSlot::new());
             slots[ns] = v;
         }
 
@@ -280,7 +290,7 @@ impl MinifyRenamer {
             owns_symbols: false,
             reserved_names,
             slots,
-            top_level_symbol_to_slot: TopLevelSymbolSlotMap::default(),
+            top_level_symbol_to_slot: TopLevelSymbolSlotMap::init(),
             arena: Bump::new(),
             name_minifier: None,
         }))
@@ -376,7 +386,9 @@ impl MinifyRenamer {
             let must_start_with_capital = symbol.must_start_with_capital_letter_for_jsx();
             let slots = &mut self.slots[ns];
 
-            let gpe = self.top_level_symbol_to_slot.get_or_put(stable.ref_)?;
+            let gpe = self
+                .top_level_symbol_to_slot
+                .get_or_put(stable.ref_, || 0)?;
             if gpe.found_existing {
                 let slot = &mut slots[*gpe.value_ptr];
                 slot.count += stable.count;
@@ -1257,7 +1269,6 @@ pub struct ScopeUses<'a> {
 
 /// Scopes are numbered in pre-order (`Scope::visit_span`), so a scope
 /// together with everything inside it is the span `[first, last]`.
-#[derive(Default)]
 struct ScopeUseIndex {
     /// `scope_indices[offsets[i]..offsets[i + 1]]`: the scopes that reference
     /// this file's symbol `i`, ascending.
@@ -1270,6 +1281,18 @@ struct ScopeUseIndex {
     /// differ (linked import items, hoisted duplicates, namespace members).
     /// Sorted.
     aliases: Vec<(u64, u32)>,
+}
+
+impl ScopeUseIndex {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            offsets: Vec::new(),
+            scope_indices: Vec::new(),
+            everywhere: HashMap::init(),
+            aliases: Vec::new(),
+        }
+    }
 }
 
 impl<'a> ScopeUses<'a> {
@@ -1349,7 +1372,7 @@ impl<'a> ScopeUses<'a> {
 
 impl ScopeUseIndex {
     fn build(file: &ScopeUses<'_>) -> ScopeUseIndex {
-        let mut index = ScopeUseIndex::default();
+        let mut index = ScopeUseIndex::new();
 
         for (part_index, part) in file.parts.iter().enumerate() {
             if !file.parts_live.is_set(part_index) {
@@ -1417,7 +1440,7 @@ pub fn compute_initial_reserved_names(
         unreachable!();
     }
 
-    let mut names = StringHashMap::<u32>::default();
+    let mut names = StringHashMap::<u32>::init();
 
     /// Globals the linker or printer reference by name in generated code. A
     /// user binding with one of these names is renamed so the reference

@@ -26,7 +26,7 @@ impl Rule for NoCallbackInPromise {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (file.mentions_any(&["then", "catch"]) && file.mentions_any(&self.callbacks)).then(AncestorMemo::default)
+        (file.mentions_any(&["then", "catch"]) && file.mentions_any(&self.callbacks)).then(AncestorMemo::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

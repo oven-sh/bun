@@ -830,7 +830,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         };
         configs.push(ScriptConfig {
             label,
-            name: Box::default(),
+            name: Box::new([]),
             command: command_z,
             cwd: Box::from(cwd),
             path: Box::from(path),
@@ -1124,7 +1124,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let use_colors = Output::enable_ansi_colors_stderr();
 
     let mut state = State {
-        handles: Box::default(),
+        handles: Box::new([]),
         event_loop,
         event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
@@ -1177,10 +1177,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions {
                     loop_: EventLoopHandle::init_mini(event_loop),
-                    ..Default::default()
+                    ..spawn::WindowsOptions::new()
                 },
                 stream: true,
-                ..Default::default()
+                ..SpawnOptions::new()
             },
         });
     }

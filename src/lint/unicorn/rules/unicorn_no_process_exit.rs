@@ -29,7 +29,7 @@ impl Rule for NoProcessExit {
         let exit = file.find_name("exit")?;
         (file.find_name("process").is_some() && !file.text().starts_with(b"#!")).then(|| State {
             exit,
-            process_event_handlers: AncestorMemo::default(),
+            process_event_handlers: AncestorMemo::new(),
             is_worker_threads_imported: None,
         })
     }

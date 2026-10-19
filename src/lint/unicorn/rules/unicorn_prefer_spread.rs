@@ -71,7 +71,7 @@ impl Rule for PreferSpread {
         let report = cx.report(e, PREFER_SPREAD).data("bad_method", bad_method);
         if let Some(expr_to_spread) = spread {
             report.fix(|fixer| {
-                let mut codegen = Codegen::default();
+                let mut codegen = Codegen::new();
                 codegen.code.extend_from_slice(if could_be_asi_hazard(e) { ";[..." } else { "[..." }.as_bytes());
                 // The parentheses around it are not printed.
                 match expr_to_spread.is_parenthesized() && expr_to_spread.tag() == ExprTag::Fn {
@@ -100,7 +100,7 @@ fn is_typed_array_or_buffer_construction(expr: Expr) -> bool {
 fn is_not_array(expr: Expr) -> bool {
     let (mut at, mut is_parenthesized) = (expr, false);
     // `var a = b, b = a` goes in a circle.
-    let mut seen = rustc_hash::FxHashSet::default();
+    let mut seen = rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     loop {
         let name = match at.kind() {
             ExprKind::Template(_) => return true,

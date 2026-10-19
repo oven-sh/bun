@@ -84,7 +84,7 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     let this = Box::new(JSSourceMap {
         sourcemap: source_map,
         sources: fake_sources_array,
-        names: Box::default(),
+        names: Box::new([]),
     });
     Ok(JSSourceMap::to_js(this, global))
 }
@@ -98,7 +98,7 @@ impl JSSourceMap {
         let payload_arg = frame.argument(0);
         let options_arg = frame.argument(1);
 
-        global.validate_object("payload", payload_arg, Default::default())?;
+        global.validate_object("payload", payload_arg, bun_jsc::ValidateObjectOpts::new())?;
 
         let mut line_lengths = JSValue::ZERO;
         if options_arg.is_object() {

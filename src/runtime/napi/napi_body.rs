@@ -1938,10 +1938,10 @@ impl napi_async_work {
 
         bun_core::heap::into_raw(Box::new(napi_async_work {
             task: WorkPoolTask {
-                node: bun_threading::thread_pool::Node::default(),
+                node: bun_threading::thread_pool::Node::new(),
                 callback: Self::run_from_thread_pool,
             },
-            concurrent_task: ConcurrentTask::default(),
+            concurrent_task: ConcurrentTask::init(),
             global: GlobalRef::from(global),
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
@@ -1951,7 +1951,7 @@ impl napi_async_work {
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
             scheduled: false,
-            poll_ref: KeepAlive::default(),
+            poll_ref: KeepAlive::new(),
             context: global.bun_vm().context_of_caller_no_frame().id(),
         }))
     }
@@ -2038,7 +2038,7 @@ impl napi_async_work {
         // Note: the "this" value here may already be freed by the user in `complete`
         // Note: KeepAlive is not `Copy`, so move it out (the original slot may
         // be freed under us by `complete`).
-        let mut poll_ref = core::mem::take(&mut self.poll_ref);
+        let mut poll_ref = core::mem::replace(&mut self.poll_ref, KeepAlive::new());
         // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
         // generically; this is a genuine one-off cleanup.
         scopeguard::defer! { poll_ref.unref(bun_io::js_vm_ctx()); }
@@ -3364,7 +3364,7 @@ extern "C" fn napi_create_threadsafe_function(
         has_queued_finalizer: false,
         lock: Mutex::new(),
         dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
-        blocking_condvar: Condvar::default(),
+        blocking_condvar: Condvar::init(),
         closing: AtomicU8::new(ClosingState::NotClosing as u8),
         env_dead: AtomicBool::new(false),
         resources_released: AtomicBool::new(false),

@@ -1,10 +1,17 @@
 //! Positions in the source text.
 
 /// A range of the source text, in bytes.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct Span {
     pub start: u32,
     pub end: u32,
+}
+
+impl Span {
+    #[inline]
+    pub fn init() -> Self {
+        Self { start: 0, end: 0 }
+    }
 }
 
 impl Span {
@@ -129,7 +136,7 @@ impl<T: Spanned> Spanned for &T {
 }
 
 /// A line and a column, as ESLint counts them: lines from 1, columns from 0 in UTF-16 code units.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Position {
     pub line: u32,
     pub column: u32,

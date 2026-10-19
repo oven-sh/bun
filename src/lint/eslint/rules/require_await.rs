@@ -30,7 +30,7 @@ impl<'a> State<'a> {
         (!candidates.is_empty()).then(|| State {
             has_await: vec![false; candidates.len()],
             candidates,
-            functions: AncestorMemo::default(),
+            functions: AncestorMemo::new(),
         })
     }
 }

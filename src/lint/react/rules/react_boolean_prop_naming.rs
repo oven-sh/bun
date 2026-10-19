@@ -76,7 +76,7 @@ impl Rule for BooleanPropNaming {
             rule,
             file,
             components: Components::new(file),
-            invalid_props: FxHashMap::default(),
+            invalid_props: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             object_type_annotations: OnceCell::new(),
         };
         for node in listened(file) {
@@ -95,7 +95,7 @@ impl Rule for BooleanPropNaming {
         for id in walk.components.list() {
             let node = walk.components.component(id).node;
             let prop_type = get_component_type_annotation(node).map(|it| walk.prop_type(it));
-            for members in prop_type.unwrap_or_default() {
+            for members in prop_type.unwrap_or_else(smallvec::SmallVec::new) {
                 walk.validate_prop_naming(node, PropTypes::Members(members));
             }
             for prop_node in walk.invalid_props.get(&id).into_iter().flatten() {
@@ -244,13 +244,13 @@ fn object_type_annotations<'a>(file: &'a File<'a>) -> FxHashMap<Name<'a>, Object
     let declarations = [StmtTag::TypeAlias, StmtTag::Interface].map(|tag| file.stmts_of_kind(tag));
     let mut declarations: Vec<Stmt<'a>> = declarations.into_iter().flatten().collect();
     sort::sort_by_key(&mut declarations, |it| it.span().start);
-    let mut all: FxHashMap<Name<'a>, ObjectTypes<'a>> = FxHashMap::default();
+    let mut all: FxHashMap<Name<'a>, ObjectTypes<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for declaration in declarations {
         match declaration.kind() {
             StmtKind::TypeAlias(alias) => {
-                find_all_type_annotations(alias.ty(), all.entry(alias.name().name()).or_default());
+                find_all_type_annotations(alias.ty(), all.entry(alias.name().name()).or_insert_with(smallvec::SmallVec::new));
             }
-            StmtKind::Interface(interface) => all.entry(interface.name().name()).or_default().push(interface.members()),
+            StmtKind::Interface(interface) => all.entry(interface.name().name()).or_insert_with(smallvec::SmallVec::new).push(interface.members()),
             _ => {}
         }
     }

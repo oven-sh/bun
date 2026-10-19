@@ -111,7 +111,7 @@ impl Worker {
             // backref from `&mut` so the stored `*const` keeps write provenance
             // (on_read_chunk mutates `captured` through it).
             let self_ptr: *const Worker = std::ptr::from_mut::<Worker>(this).cast_const();
-            this.ipc = Channel::default();
+            this.ipc = Channel::new();
             this.out = WorkerPipe::new(self_ptr);
             this.err = WorkerPipe::new(self_ptr);
         });
@@ -135,7 +135,7 @@ impl Worker {
                 linux_pdeathsig: Some(libc::SIGKILL as u8),
                 #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 linux_pdeathsig: None,
-                ..Default::default()
+                ..SpawnOptions::new()
             };
             // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
             // C-string arrays with argv[0] non-null; valid for this call.
@@ -215,10 +215,10 @@ impl Worker {
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
                     loop_: jsc::EventLoopHandle::init(coord.vm.event_loop().cast()),
-                    ..Default::default()
+                    ..spawn::WindowsOptions::new()
                 },
                 stream: true,
-                ..Default::default()
+                ..SpawnOptions::new()
             };
             // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
             // C-string arrays with argv[0] non-null; valid for this call.

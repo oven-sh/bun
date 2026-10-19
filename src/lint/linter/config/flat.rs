@@ -511,7 +511,7 @@ impl Reader<'_> {
                 }
                 // One more instance of a rule of ESLint, which is of no plugin.
                 None if !is_foreign && self.registry.base_of(id).is_some() => {
-                    setting.plugin = Box::default();
+                    setting.plugin = Box::new([]);
                 }
                 None if is_about_layout => {}
                 None => {
@@ -617,7 +617,7 @@ impl Reader<'_> {
     pub(super) fn object(&mut self, json: &Json) -> Result<ConfigObject, ConfigError> {
         self.validate_base(json)?;
         let entries = json.as_object().unwrap_or_default();
-        let mut object = ConfigObject::default();
+        let mut object = ConfigObject::new();
         if let Some(base_path) = json.get(b"basePath").and_then(Json::as_str) {
             let base_path = paths::portable(&self.base_path, base_path);
             object.base_path = Some(paths::resolve(&self.base_path, &base_path));
@@ -1062,7 +1062,7 @@ impl Reader<'_> {
             js_plugin_places: self.js_plugin_places,
             has_twins: (self.js_locations.iter()).any(|it| it.1.get(b"twin").is_some()),
             js_locations: self.js_locations,
-            cache: Default::default(),
+            cache: super::Cache::new(),
         }
     }
 }

@@ -42,10 +42,19 @@ impl Rule for InlineScriptId {
     }
 }
 
-#[derive(Default)]
 struct PropNames {
     has_id: bool,
     has_dangerously_set_inner_html: bool,
+}
+
+impl PropNames {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            has_id: false,
+            has_dangerously_set_inner_html: false,
+        }
+    }
 }
 
 impl PropNames {
@@ -59,7 +68,7 @@ impl PropNames {
 
 /// `None` if something other than an object literal is spread.
 fn prop_names(jsx: Jsx) -> Option<PropNames> {
-    let mut names = PropNames::default();
+    let mut names = PropNames::new();
     for attribute in jsx.attrs() {
         if attribute.kind() != PropKind::Spread {
             names.insert(attribute.key());

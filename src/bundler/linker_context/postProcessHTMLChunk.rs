@@ -14,10 +14,10 @@ pub(crate) fn post_process_html_chunk(
     // This is where we split output into pieces
     let c = ctx.c();
     // E0509: StringJoiner has Drop, so FRU `..Default::default()` is illegal — assign field instead.
-    let mut j = StringJoiner::default();
+    let mut j = StringJoiner::new();
     j.watcher = Watcher {
         input: chunk.unique_key,
-        ..Default::default()
+        ..Watcher::new()
     };
 
     let compile_results = &chunk.compile_results_for_chunk;

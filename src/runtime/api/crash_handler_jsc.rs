@@ -37,7 +37,13 @@ pub(crate) mod js_bindings {
             obj.put(
                 global,
                 name,
-                JSFunction::create(global, name, func, 1, Default::default()),
+                JSFunction::create(
+                    global,
+                    name,
+                    func,
+                    1,
+                    bun_jsc::js_function::CreateJSFunctionOptions::new(),
+                ),
             );
         }
         obj

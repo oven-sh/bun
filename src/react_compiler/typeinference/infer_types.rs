@@ -419,7 +419,8 @@ fn generate(
     // &mut env, but generate_instruction_types takes split borrows on env fields.
     // The key is (function_key, InstructionId) where function_key is u32::MAX
     // for the outer function and FunctionId.0 for inner functions.
-    let mut global_types: HashMap<(u32, InstructionId), Type> = HashMap::default();
+    let mut global_types: HashMap<(u32, InstructionId), Type> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     pre_resolve_globals(func, u32::MAX, env, &mut global_types);
     // Also pre-resolve inner functions recursively
     for &instr_id in func.body.blocks.values().flat_map(|b| &b.instructions) {
@@ -1097,7 +1098,9 @@ impl Unifier {
     ) -> Self {
         Unifier {
             substitutions: IdMap::new(),
-            resolved: RefCell::default(),
+            resolved: core::cell::RefCell::new(rustc_hash::FxHashMap::with_hasher(
+                rustc_hash::FxBuildHasher,
+            )),
             enable_treat_ref_like_identifiers_as_refs,
             enable_treat_set_identifiers_as_state_setters,
             custom_hook_type,
@@ -1331,7 +1334,8 @@ impl Unifier {
         }
 
         if self.occurs_check(&v, &ty) {
-            let resolved_type = self.try_resolve_type(&v, &ty, &mut OfPhis::default());
+            let resolved_type =
+                self.try_resolve_type(&v, &ty, &mut OfPhis::with_hasher(rustc_hash::FxBuildHasher));
             if let Some(resolved) = resolved_type {
                 self.substitute(v_id, resolved);
                 return Ok(());
@@ -1439,13 +1443,15 @@ impl Unifier {
     fn occurs_check(&self, v: &Type, ty: &Type) -> bool {
         match ty {
             Type::Phi { operands } => {
-                let seen = &mut FxHashSet::default();
+                let seen = &mut FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
                 let may_go_on = self.has_stack();
                 may_go_on && operands.iter().any(|o| self.occurs_in(v, o, seen))
             }
-            Type::Function { .. } | Type::TypeVar { .. } => {
-                self.occurs_in(v, ty, &mut FxHashSet::default())
-            }
+            Type::Function { .. } | Type::TypeVar { .. } => self.occurs_in(
+                v,
+                ty,
+                &mut FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            ),
             _ => false,
         }
     }

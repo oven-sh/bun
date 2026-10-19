@@ -21,7 +21,6 @@ struct Context {
     at_rule: (u32, u32),
 }
 
-#[derive(Default)]
 pub(crate) struct Memo {
     bytes: Vec<u8>,
     contexts: Vec<Context>,
@@ -31,6 +30,19 @@ pub(crate) struct Memo {
     /// For each hash, by its low bits or in one of the places that follow, the index of its entry plus one. Its
     /// length is a power of two.
     table: Vec<u32>,
+}
+
+impl Memo {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            contexts: Vec::new(),
+            first_context: 0,
+            entries: Vec::new(),
+            table: Vec::new(),
+        }
+    }
 }
 
 /// With more than that, it starts anew.
@@ -66,7 +78,7 @@ impl Memo {
         {
             *self = Memo {
                 first_context: self.first_context.wrapping_add(self.contexts.len() as u32),
-                ..Memo::default()
+                ..Memo::new()
             };
         }
         let known = self

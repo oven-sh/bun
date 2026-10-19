@@ -7,14 +7,18 @@ use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
 pub(crate) struct Cd {
     state: State,
 }
 
-#[derive(Default)]
+impl Cd {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { state: State::Idle }
+    }
+}
+
 enum State {
-    #[default]
     Idle,
     WaitingIo,
     Done,

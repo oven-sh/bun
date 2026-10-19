@@ -118,8 +118,8 @@ impl InternalStateFlags {
     }
 }
 
-impl Default for InternalState<'_> {
-    fn default() -> Self {
+impl InternalState<'_> {
+    pub fn new() -> Self {
         Self {
             response_message_buffer: MutableString::init_empty(),
             cloned_metadata: None,
@@ -127,7 +127,7 @@ impl Default for InternalState<'_> {
             transfer_encoding: Encoding::Identity,
             encoding: Encoding::Identity,
             content_encoding_i: u8::MAX,
-            chunked_decoder: bun_picohttp::phr_chunked_decoder::default(),
+            chunked_decoder: bun_picohttp::phr_chunked_decoder::new(),
             decompressor: Decompressor::None,
             stage: Stage::Pending,
             decoded_body: MutableString::init_empty(),
@@ -159,7 +159,7 @@ impl<'a> InternalState<'a> {
             response_message_buffer: MutableString::init_empty(),
             decoded_body: MutableString::init_empty(),
             stage: Stage::Pending,
-            ..Default::default()
+            ..InternalState::new()
         }
     }
 
@@ -171,7 +171,7 @@ impl<'a> InternalState<'a> {
         // Preserve `decoded_body` across the reset so the progress-update path
         // can deliver its bytes after calling `reset()`; clearing happens in
         // the caller after `callback.run()`.
-        let decoded_body = core::mem::take(&mut self.decoded_body);
+        let decoded_body = core::mem::replace(&mut self.decoded_body, MutableString::new());
         // `*self = ...` below drops every field via drop glue. Only
         // `original_request_body` needs an explicit `deinit()` because
         // `HTTPRequestBody` deliberately has no `Drop` (see HTTPRequestBody.rs).
@@ -185,7 +185,7 @@ impl<'a> InternalState<'a> {
             certificate_info: None,
             flags: InternalStateFlags::new(),
             total_body_received: 0,
-            ..Default::default()
+            ..InternalState::new()
         };
     }
 

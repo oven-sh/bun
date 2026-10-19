@@ -111,16 +111,15 @@ impl Suppression {
     pub fn file() -> Suppression {
         Suppression {
             kind: SuppressionKind::File,
-            justification: Box::default(),
+            justification: Box::new([]),
         }
     }
 }
 
 /// A suggestion's `data`, which ESLint passes through to its output.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub enum Data {
     /// The rule gave none.
-    #[default]
     None,
     /// Values for the placeholders in a built-in rule's message.
     Texts(Vec<(&'static str, Vec<u8>)>),
@@ -277,14 +276,24 @@ impl LintMessage {
 
 /// Whether a rule written in JavaScript gave something other than a number for `line` or `column`. ESLint keeps such a report.
 /// The field is 0 then, which is what ESLint's `stylish` prints, and `null` in JSON.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NotNumbers {
     pub line: bool,
     pub column: bool,
 }
 
+impl NotNumbers {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            line: false,
+            column: false,
+        }
+    }
+}
+
 /// [`Details`](crate::context::Details) of a report, with lines and columns as the message has them.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Details {
     pub first_label: Cow<'static, str>,
     /// Where each starts, where it ends, and what it says.
@@ -295,10 +304,23 @@ pub struct Details {
     pub typescript_code: u16,
 }
 
-impl Default for LintMessage {
+impl Details {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            first_label: Cow::Owned(String::new()),
+            labels: Vec::new(),
+            help: Cow::Owned(String::new()),
+            note: Cow::Owned(String::new()),
+            typescript_code: 0,
+        }
+    }
+}
+
+impl LintMessage {
     /// An error of the linter itself, without a text and without a place. For `..LintMessage::default()`, with which code that
     /// makes a message goes on compiling when there are more fields.
-    fn default() -> LintMessage {
+    pub fn new() -> LintMessage {
         LintMessage {
             rule_id: None,
             severity: Severity::Error,
@@ -313,7 +335,7 @@ impl Default for LintMessage {
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
-            not_numbers: NotNumbers::default(),
+            not_numbers: NotNumbers::new(),
             details: None,
             constant_help: None,
             reported: 0,
@@ -367,7 +389,7 @@ impl<'a> Locator<'a> {
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
-            not_numbers: NotNumbers::default(),
+            not_numbers: NotNumbers::new(),
             details: None,
             constant_help: None,
             reported: 0,
@@ -609,7 +631,7 @@ impl LintMessage {
         let place = self.place();
         (self.line, self.column) = place;
         self.end = self.end.filter(|end| signed(*end) >= signed(place));
-        self.not_numbers = NotNumbers::default();
+        self.not_numbers = NotNumbers::new();
     }
 
     /// As ESLint's `json` formatter prints it.

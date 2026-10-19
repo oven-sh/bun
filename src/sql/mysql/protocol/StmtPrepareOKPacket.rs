@@ -1,12 +1,23 @@
 use super::any_mysql_error::Error as AnyMySQLError;
 use super::stack_reader::PacketReader;
 
-#[derive(Default)]
 pub struct StmtPrepareOKPacket {
     pub status: u8,
     pub statement_id: u32,
     pub num_columns: u16,
     pub num_params: u16,
+}
+
+impl StmtPrepareOKPacket {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            status: 0,
+            statement_id: 0,
+            num_columns: 0,
+            num_params: 0,
+        }
+    }
 }
 
 impl StmtPrepareOKPacket {

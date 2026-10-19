@@ -156,7 +156,7 @@ impl Finalize {
                         git_clone: ManuallyDrop::new(Fd::invalid()),
                     },
                     _ => Task::Data {
-                        git_checkout: ManuallyDrop::new(ExtractData::default()),
+                        git_checkout: ManuallyDrop::new(ExtractData::new()),
                     },
                 };
             }
@@ -461,7 +461,7 @@ fn read_package_json(
                 return Ok(ExtractData {
                     url,
                     resolved,
-                    ..Default::default()
+                    ..ExtractData::new()
                 });
             }
             task.log.add_error_fmt(
@@ -509,7 +509,7 @@ fn read_package_json(
             path: path?.into(),
             buf: json_buf,
         }),
-        ..Default::default()
+        ..ExtractData::new()
     })
 }
 
@@ -1146,7 +1146,10 @@ impl GitSubprocess {
         staging.expect("`new_staging` has set it").create()?;
         // `git restore` fails when no path matches, so an empty tree skips it.
         if tree.is_empty() {
-            let staging = this.staging.take().expect("`new_staging` has set it");
+            let staging = this
+                .staging
+                .replace(None)
+                .expect("`new_staging` has set it");
             Self::finish_on_pool(this, Finalize::PublishCheckout(staging, tree));
             return Ok(());
         }
@@ -1244,13 +1247,13 @@ impl GitSubprocess {
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
                 loop_: this.event_loop,
-                ..Default::default()
+                ..bun_spawn::WindowsOptions::new()
             },
             stream: false,
             // The kernel kills the child when bun dies, so no git outlives the install.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             linux_pdeathsig: Some(bun_sys::SignalCode::SIGKILL.0),
-            ..Default::default()
+            ..SpawnOptions::new()
         };
         #[cfg(windows)]
         let mut spawn_options = spawn_options;
@@ -1371,7 +1374,7 @@ impl GitSubprocess {
         if this.remaining_fds.get() != 0 {
             return;
         }
-        let Some(status) = this.exit_status.take() else {
+        let Some(status) = this.exit_status.replace(None) else {
             return;
         };
         let stdout = this.stdout.with_mut(|r| core::mem::take(r.final_buffer()));
@@ -1439,7 +1442,7 @@ impl GitSubprocess {
                 } else if !this.urls.get().is_empty() {
                     Self::fetch_next(this, repo)
                 } else {
-                    this.report_failure(status, &this.clone_output.take());
+                    this.report_failure(status, &this.clone_output.replace(Vec::new()));
                     this.log_failure(format_args!("\"git fetch\" for \"{}\" failed", name));
                     Err(Error::InstallFailed)
                 };
@@ -1449,7 +1452,10 @@ impl GitSubprocess {
             }
             Step::Clone { url, replaces } => {
                 if ok {
-                    let staging = this.staging.take().expect("clone has a staging folder");
+                    let staging = this
+                        .staging
+                        .replace(None)
+                        .expect("clone has a staging folder");
                     Self::finish_on_pool(this, Finalize::PublishRepo(staging, url, replaces));
                     return;
                 }
@@ -1458,7 +1464,7 @@ impl GitSubprocess {
                     // Try the next URL form (ssh after https), even after "not found": hosts also
                     // say that about a private repository that the login cannot access.
                     this.staging
-                        .take()
+                        .replace(None)
                         .expect("clone has a staging folder")
                         .discard();
                     this.reset_polls();
@@ -1466,7 +1472,7 @@ impl GitSubprocess {
                         Self::fail(this, err);
                     }
                 } else {
-                    this.report_failure(status, &this.clone_output.take());
+                    this.report_failure(status, &this.clone_output.replace(Vec::new()));
                     this.log_failure(format_args!("\"git clone\" for \"{}\" failed", name));
                     Self::fail(
                         this,
@@ -1501,7 +1507,10 @@ impl GitSubprocess {
             }
             Step::Checkout(tree) => {
                 if ok {
-                    let staging = this.staging.take().expect("checkout has a staging folder");
+                    let staging = this
+                        .staging
+                        .replace(None)
+                        .expect("checkout has a staging folder");
                     Self::finish_on_pool(this, Finalize::PublishCheckout(staging, tree));
                 } else {
                     // An older git prints "git: 'restore' is not a git command."
@@ -1522,7 +1531,7 @@ impl GitSubprocess {
         if !is_required && self.manager().options.log_level.is_silent() {
             return;
         }
-        let cause = match (status, self.read_error.take()) {
+        let cause = match (status, self.read_error.replace(None)) {
             (_, Some(err)) => format!("reading the output of git failed: {err}"),
             (Status::Exited(exit), None) => format!("git failed with exit code {}", exit.code),
             (Status::Signaled(sig), None) => format!("git failed with signal {sig}"),
@@ -1554,7 +1563,7 @@ impl GitSubprocess {
         if this.tag == Tag::GitCommit {
             Self::finish_commit(this, Err(err));
         } else {
-            let staging = this.staging.take();
+            let staging = this.staging.replace(None);
             Self::finish_on_pool(this, Finalize::Failed { staging, err });
         }
     }
@@ -1612,7 +1621,7 @@ impl Drop for GitSubprocess {
         self.process.set(None);
         self.stdout.with_mut(|r| r.deinit());
         self.stderr.with_mut(|r| r.deinit());
-        if let Some(staging) = self.staging.take() {
+        if let Some(staging) = self.staging.replace(None) {
             staging.discard();
         }
     }

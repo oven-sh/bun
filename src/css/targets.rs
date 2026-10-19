@@ -5,7 +5,7 @@ use bun_core;
 use bun_core::strings;
 
 /// Target browsers and features to compile.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct Targets {
     /// Browser targets to compile the CSS for.
     pub browsers: Option<Browsers>,
@@ -16,11 +16,22 @@ pub struct Targets {
 }
 
 impl Targets {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            browsers: None,
+            include: Features::empty(),
+            exclude: Features::empty(),
+        }
+    }
+}
+
+impl Targets {
     /// Set a sane default for bundler
     pub(crate) fn browser_default() -> Targets {
         Targets {
             browsers: Some(*BROWSER_DEFAULT),
-            ..Default::default()
+            ..Targets::new()
         }
     }
 
@@ -28,7 +39,7 @@ impl Targets {
     pub(crate) fn runtime_default() -> Targets {
         Targets {
             browsers: None,
-            ..Default::default()
+            ..Targets::new()
         }
     }
 
@@ -75,7 +86,7 @@ impl Targets {
     pub fn for_bundler_target(target: bun_ast::Target) -> Targets {
         #[cfg(debug_assertions)]
         {
-            let mut browsers = Browsers::default();
+            let mut browsers = Browsers::new();
             let mut has_any = false;
             macro_rules! check_field {
                 ($field:ident, $env:literal) => {
@@ -97,7 +108,7 @@ impl Targets {
             if has_any {
                 return Targets {
                     browsers: Some(browsers),
-                    ..Default::default()
+                    ..Targets::new()
                 };
             }
         }
@@ -173,7 +184,7 @@ impl Targets {
 ///   ..Browsers::default()
 /// }
 /// ```
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Browsers {
     pub android: Option<u32>,
     pub chrome: Option<u32>,
@@ -184,6 +195,23 @@ pub struct Browsers {
     pub opera: Option<u32>,
     pub safari: Option<u32>,
     pub samsung: Option<u32>,
+}
+
+impl Browsers {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            android: None,
+            chrome: None,
+            edge: None,
+            firefox: None,
+            ie: None,
+            ios_saf: None,
+            opera: None,
+            safari: None,
+            samsung: None,
+        }
+    }
 }
 
 // convert_from_string is not const-evaluable; compute once lazily.
@@ -202,7 +230,7 @@ impl Browsers {
     /// Ported from here:
     /// https://github.com/vitejs/vite/blob/ac329685bba229e1ff43e3d96324f817d48abe48/packages/vite/src/node/plugins/css.ts#L3335
     pub(crate) fn convert_from_string(esbuild_target: &[&[u8]]) -> crate::CrateResult<Browsers> {
-        let mut browsers = Browsers::default();
+        let mut browsers = Browsers::new();
 
         for &str in esbuild_target {
             let mut entries_buf: [&[u8]; 5] = [b""; 5];
@@ -452,12 +480,6 @@ bitflags::bitflags! {
             | Self::P3_COLORS.bits()
             | Self::HEX_ALPHA_COLORS.bits()
             | Self::SPACE_SEPARATED_COLOR_NOTATION.bits();
-    }
-}
-
-impl Default for Features {
-    fn default() -> Self {
-        Features::empty()
     }
 }
 

@@ -21,8 +21,8 @@ pub(super) struct Cache {
     globals: RwLock<Vec<(Option<Json>, Option<Json>, GlobalsOfOptions)>>,
 }
 
-impl Default for Cache {
-    fn default() -> Self {
+impl Cache {
+    pub(super) fn new() -> Self {
         Cache {
             resolved: RwLock::new(Vec::new()),
             js_rules: RwLock::new(Vec::new()),
@@ -48,7 +48,7 @@ impl Cache {
             match find(&all) {
                 Ok(at) => Arc::clone(&all[at].1),
                 Err(at) => {
-                    let place = Arc::default();
+                    let place = std::sync::Arc::new(std::sync::OnceLock::new());
                     all.insert(at, (indices.into(), Arc::clone(&place)));
                     place
                 }

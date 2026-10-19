@@ -125,7 +125,7 @@ impl Refused {
 }
 
 /// How a text is read.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct Options {
     /// `.d.ts` and the like.
     pub is_declaration_file: bool,
@@ -152,6 +152,25 @@ pub struct Options {
     /// Records what a formatter needs to attach comments to nodes: `enclosing_node`, `preceding_node` and `following_node` of
     /// `hir::Comment`, and the HTML-like comments of a script.
     pub attach_comments: bool,
+}
+
+impl Options {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            is_declaration_file: false,
+            is_jsx: false,
+            is_javascript: false,
+            is_json: false,
+            await_is_a_name: false,
+            is_module_or_script: false,
+            recovers: false,
+            reads_jsdoc: false,
+            dialect: bun_sema::resolve::Dialect::new(),
+            part: None,
+            attach_comments: false,
+        }
+    }
 }
 
 /// A part of a text, as acorn's `parseExpressionAt` reads one: nothing is said about what follows it, and nothing of that

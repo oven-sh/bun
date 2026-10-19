@@ -109,7 +109,7 @@ bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, _cause| {
     Listener::do_stop(unsafe { &*this }, true)
 });
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) enum ListenerType {
     Uws(*mut uws_sys::ListenSocket),
     /// Raw heap pointer (not `Box`) to a `WindowsNamedPipeListeningContext`.
@@ -120,7 +120,6 @@ pub(crate) enum ListenerType {
     /// is still unique; freed via `close_pipe_and_deinit` → `on_pipe_closed` → `deinit`.
     #[cfg(windows)]
     NamedPipe(NonNull<WindowsNamedPipeListeningContext>),
-    #[default]
     None,
 }
 
@@ -305,9 +304,12 @@ impl Listener {
                 // Move the hostname bytes into `connection`; `socket_config`
                 // drops the emptied slice.
                 let connection = UnixOrHost::Unix(
-                    core::mem::take(&mut socket_config.hostname_or_unix)
-                        .into_vec()
-                        .into_boxed_slice(),
+                    core::mem::replace(
+                        &mut socket_config.hostname_or_unix,
+                        bun_core::Utf8Bytes::EMPTY,
+                    )
+                    .into_vec()
+                    .into_boxed_slice(),
                 );
 
                 vm.event_loop_ref().ensure_waker();
@@ -330,7 +332,7 @@ impl Listener {
                     ),
                     pause_on_connect,
                     poll_ref: JsCell::new(KeepAlive::init()),
-                    group: JsCell::new(uws::SocketGroup::default()),
+                    group: JsCell::new(uws::SocketGroup::new()),
                     secure_ctx: JsCell::new(None),
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
@@ -392,7 +394,7 @@ impl Listener {
                                         syscall: bun_core::String::static_("listen").into(),
                                         path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len])
                                             .into(),
-                                        ..Default::default()
+                                        ..jsc::SystemError::new()
                                     };
                                     return Err(cx
                                         .global()
@@ -438,9 +440,12 @@ impl Listener {
         let handlers = Rc::clone(&socket_config.handlers);
         let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
         let default_data = socket_config.default_data;
-        let hostname_owned: Box<[u8]> = core::mem::take(&mut socket_config.hostname_or_unix)
-            .into_vec()
-            .into_boxed_slice();
+        let hostname_owned: Box<[u8]> = core::mem::replace(
+            &mut socket_config.hostname_or_unix,
+            bun_core::Utf8Bytes::EMPTY,
+        )
+        .into_vec()
+        .into_boxed_slice();
         let fd_opt = socket_config.fd;
         let ssl_cfg_taken = socket_config.ssl.take();
 
@@ -459,7 +464,7 @@ impl Listener {
             pause_on_connect,
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
-            group: JsCell::new(uws::SocketGroup::default()),
+            group: JsCell::new(uws::SocketGroup::new()),
             secure_ctx: JsCell::new(None),
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
@@ -701,7 +706,7 @@ impl Listener {
             connection: JsCell::new(None),
             local_binding: JsCell::new(None),
             server_name: JsCell::new(None),
-            buffered_data_for_node_net: Default::default(),
+            buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
@@ -748,7 +753,7 @@ impl Listener {
             connection: JsCell::new(None),
             local_binding: JsCell::new(None),
             server_name: JsCell::new(None),
-            buffered_data_for_node_net: Default::default(),
+            buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
@@ -1153,9 +1158,12 @@ impl Listener {
             }
             // Move the hostname bytes into `host`; `socket_config` drops the
             // emptied slice.
-            let host: Box<[u8]> = core::mem::take(&mut socket_config.hostname_or_unix)
-                .into_vec()
-                .into_boxed_slice();
+            let host: Box<[u8]> = core::mem::replace(
+                &mut socket_config.hostname_or_unix,
+                bun_core::Utf8Bytes::EMPTY,
+            )
+            .into_vec()
+            .into_boxed_slice();
             if let Some(port_) = port {
                 UnixOrHost::Host { host, port: port_ }
             } else {
@@ -1274,11 +1282,11 @@ impl Listener {
                                 ssl_taken.as_mut().and_then(|s| s.take_server_name()),
                             ),
                             owned_ssl_ctx: JsCell::new(None),
-                            flags: Cell::new(SocketFlags::default()),
+                            flags: Cell::new(SocketFlags::OWNED_PROTOS),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
-                            buffered_data_for_node_net: Default::default(),
+                            buffered_data_for_node_net: JsCell::new(Vec::new()),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
@@ -1368,11 +1376,11 @@ impl Listener {
                             protos: JsCell::new(None),
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: JsCell::new(None),
-                            flags: Cell::new(SocketFlags::default()),
+                            flags: Cell::new(SocketFlags::OWNED_PROTOS),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
-                            buffered_data_for_node_net: Default::default(),
+                            buffered_data_for_node_net: JsCell::new(Vec::new()),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
@@ -1613,11 +1621,11 @@ fn connect_finish<const IS_SSL: bool>(
             protos: JsCell::new(ssl.as_mut().and_then(|s| s.take_protos())),
             server_name: JsCell::new(ssl.as_mut().and_then(|s| s.take_server_name())),
             owned_ssl_ctx: JsCell::new(owned_ssl_ctx),
-            flags: Cell::new(SocketFlags::default()),
+            flags: Cell::new(SocketFlags::OWNED_PROTOS),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
-            buffered_data_for_node_net: Default::default(),
+            buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),

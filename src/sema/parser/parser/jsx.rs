@@ -160,7 +160,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         // `parseJsxChildren` of the native parser asks the scanner and leaves `p.token` as it was: a `<<` or a `<=`.
         if self.token() == T::LessThan
             && before != T::LessThan
-            && self.options.dialect == Default::default()
+            && self.options.dialect == bun_sema::resolve::Dialect::new()
         {
             self.jsx_child_after_other_token = self.pos();
         }

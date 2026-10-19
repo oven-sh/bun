@@ -3,12 +3,23 @@ use crate::mysql::StatusFlags;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::stack_reader::PacketReader;
 
-#[derive(Default)]
 pub struct OKPacket {
     pub header: u8,
     pub affected_rows: u64,
     pub last_insert_id: u64,
     pub status_flags: StatusFlags,
+}
+
+impl OKPacket {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            header: 0,
+            affected_rows: 0,
+            last_insert_id: 0,
+            status_flags: StatusFlags::new(),
+        }
+    }
 }
 
 impl OKPacket {

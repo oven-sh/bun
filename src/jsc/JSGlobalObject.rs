@@ -222,7 +222,7 @@ impl JSGlobalObject {
 
     fn ms_to_gregorian_date_time_impl(&self, ms: f64, local: bool) -> GregorianDateTime {
         crate::mark_binding();
-        let mut dt = GregorianDateTime::default();
+        let mut dt = GregorianDateTime::new();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; out-param pointers are to live
         // stack locals (`dt` fields) and remain valid for the duration of the call.
         unsafe {
@@ -252,7 +252,7 @@ impl JSGlobalObject {
 
     pub fn ms_to_gregorian_date_time_in_zone(&self, ms: f64, tz_id: u32) -> GregorianDateTime {
         crate::mark_binding();
-        let mut dt = GregorianDateTime::default();
+        let mut dt = GregorianDateTime::new();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; out-param pointers are to live
         // stack locals (`dt` fields) and remain valid for the duration of the call.
         unsafe {
@@ -855,8 +855,8 @@ impl JSGlobalObject {
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
         self.queue_microtask_job(
             function,
-            args.first().copied().unwrap_or_default(),
-            args.get(1).copied().unwrap_or_default(),
+            args.first().copied().unwrap_or_else(JSValue::new),
+            args.get(1).copied().unwrap_or_else(JSValue::new),
         );
     }
 
@@ -1225,7 +1225,7 @@ impl JSGlobalObject {
                         field_name,
                         min,
                         max,
-                        ..Default::default()
+                        ..bun_fmt::OutOfRangeOptions::new()
                     },
                 ));
             }
@@ -1252,7 +1252,7 @@ impl JSGlobalObject {
                     field_name,
                     min,
                     max,
-                    ..Default::default()
+                    ..bun_fmt::OutOfRangeOptions::new()
                 },
             ));
         }

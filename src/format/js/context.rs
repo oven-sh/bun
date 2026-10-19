@@ -84,7 +84,7 @@ impl<'a> JsFormatContext<'a> {
             comments: Comments::new(None, options.flavor, comments),
             options,
             skip_trailing_comments: false,
-            cached_elements: FxHashMap::default(),
+            cached_elements: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             quote_needed_stack: Vec::new(),
             tailwind_contexts: of_plugin.into_iter().collect(),
             is_quiet: false,

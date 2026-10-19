@@ -31,8 +31,8 @@ pub struct RuntimeTranspilerCache {
     pub r#impl: Option<TranspilerCacheImplKind>,
 }
 
-impl Default for RuntimeTranspilerCache {
-    fn default() -> Self {
+impl RuntimeTranspilerCache {
+    pub fn new() -> Self {
         Self {
             input_hash: None,
             input_byte_length: None,

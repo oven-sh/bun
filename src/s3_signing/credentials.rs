@@ -72,8 +72,8 @@ impl MultiPartUploadOptions {
     pub const MAX_QUEUE_SIZE: u8 = 64;
 }
 
-impl Default for MultiPartUploadOptions {
-    fn default() -> Self {
+impl MultiPartUploadOptions {
+    pub fn new() -> Self {
         Self {
             queue_size: 5,
             part_size: Self::DEFAULT_PART_SIZE as u64,
@@ -95,13 +95,28 @@ use bun_core::Mutex;
 /// Memoised SigV4 derived signing key, keyed by `(numeric_day,
 /// sha256(region, service, secret))`. The lock owns the data — the mutex
 /// wraps both `cache` and `date`.
-#[derive(Default)]
 struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
 
-#[derive(Default)]
+impl AWSSignatureCache {
+    #[inline]
+    fn new() -> Self {
+        Self(Mutex::new(AWSSignatureCacheInner::new()))
+    }
+}
+
 struct AWSSignatureCacheInner {
     cache: StringArrayHashMap<[u8; DIGESTED_HMAC_256_LEN]>,
     date: u64,
+}
+
+impl AWSSignatureCacheInner {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            cache: StringArrayHashMap::init(),
+            date: 0,
+        }
+    }
 }
 
 impl AWSSignatureCache {
@@ -138,7 +153,7 @@ impl AWSSignatureCache {
 /// `StringArrayHashMap::new` is not `const`, so lazy-init the inner on first
 /// use; the outer `Mutex` itself is const-constructible.
 static AWS_SIGNATURE_CACHE: std::sync::LazyLock<AWSSignatureCache> =
-    std::sync::LazyLock::new(AWSSignatureCache::default);
+    std::sync::LazyLock::new(AWSSignatureCache::new);
 
 #[inline]
 fn aws_cache_get(day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
@@ -200,16 +215,16 @@ impl Clone for S3Credentials {
     }
 }
 
-impl Default for S3Credentials {
-    fn default() -> Self {
+impl S3Credentials {
+    pub fn new() -> Self {
         Self {
             ref_count: RefCount::init(),
-            access_key_id: Box::default(),
-            secret_access_key: Box::default(),
-            region: Box::default(),
-            endpoint: Box::default(),
-            bucket: Box::default(),
-            session_token: Box::default(),
+            access_key_id: Box::new([]),
+            secret_access_key: Box::new([]),
+            region: Box::new([]),
+            endpoint: Box::new([]),
+            bucket: Box::new([]),
+            session_token: Box::new([]),
             storage_class: None,
             insecure_http: false,
             virtual_hosted_style: false,
@@ -795,7 +810,7 @@ impl S3Credentials {
         if sign_query {
             // SignResult implements Drop, so struct-update `..default()`
             // is forbidden; mutate a default in place instead.
-            let mut r = SignResult::default();
+            let mut r = SignResult::new();
             r.acl = sign_options.acl;
             r.url = authorization;
             r.storage_class = sign_options.storage_class;
@@ -827,7 +842,7 @@ impl S3Credentials {
         .into_boxed_slice();
 
         // SignResult implements Drop, so struct-update `..default()` is forbidden.
-        let mut result = SignResult::default();
+        let mut result = SignResult::new();
         result.amz_date = amz_date;
         result.host = host;
         result.authorization = authorization;
@@ -1006,17 +1021,17 @@ impl SignResult {
     }
 }
 
-impl Default for SignResult {
-    fn default() -> Self {
+impl SignResult {
+    pub fn new() -> Self {
         Self {
-            amz_date: Box::default(),
-            host: Box::default(),
-            authorization: Box::default(),
-            url: Box::default(),
-            content_disposition: Box::default(),
-            content_encoding: Box::default(),
-            content_md5: Box::default(),
-            session_token: Box::default(),
+            amz_date: Box::new([]),
+            host: Box::new([]),
+            authorization: Box::new([]),
+            url: Box::new([]),
+            content_disposition: Box::new([]),
+            content_encoding: Box::new([]),
+            content_md5: Box::new([]),
+            session_token: Box::new([]),
             acl: None,
             storage_class: None,
             request_payer: false,
@@ -1213,8 +1228,8 @@ pub enum SignError {
     NoSpaceLeft,
 }
 
-impl<'a> Default for SignOptions<'a> {
-    fn default() -> Self {
+impl<'a> SignOptions<'a> {
+    pub fn new() -> Self {
         Self {
             path: b"",
             method: Method::GET,
@@ -1235,7 +1250,6 @@ impl<'a> Default for SignOptions<'a> {
 // S3CredentialsWithOptions
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct S3CredentialsWithOptions {
     pub credentials: S3Credentials,
     pub options: MultiPartUploadOptions,
@@ -1250,12 +1264,29 @@ pub struct S3CredentialsWithOptions {
     pub changed_credentials: bool,
 }
 
+impl S3CredentialsWithOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            credentials: S3Credentials::new(),
+            options: MultiPartUploadOptions::new(),
+            acl: None,
+            storage_class: None,
+            content_disposition: None,
+            content_type: None,
+            content_encoding: None,
+            request_payer: false,
+            changed_credentials: false,
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // SignedHeaders
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Headers must be in alphabetical order per AWS Signature V4 spec.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct SignedHeadersKey {
     pub content_disposition: bool,
     pub content_encoding: bool,

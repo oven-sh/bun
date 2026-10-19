@@ -79,7 +79,7 @@ impl Rule for NoEnvAtModuleScope {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         file.mentions("env").then(|| State {
-            runs_later: RunsLater::default(),
+            runs_later: RunsLater::new(),
             mentions_module: file.mentions_any(&PROCESS_MODULES),
         })
     }

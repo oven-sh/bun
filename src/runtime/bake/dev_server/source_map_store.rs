@@ -18,8 +18,15 @@ use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
 
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub(crate) struct Key(pub(crate) u64);
+
+impl Key {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(0)
+    }
+}
 impl Key {
     #[inline]
     pub(crate) const fn init(v: u64) -> Self {
@@ -60,7 +67,6 @@ const WEAK_REF_ENTRY_MAX: usize = 16;
 /// IncrementalGraph stores partial source maps for each file. A
 /// `SourceMapStore.Entry` is the information + refcount holder to
 /// construct the actual JSON file associated with a bundle/hot update.
-#[derive(Default)]
 pub(crate) struct Entry {
     /// Sum of:
     /// - How many active sockets have code that could reference this source map?
@@ -82,9 +88,21 @@ pub(crate) struct Entry {
 }
 
 impl Entry {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            ref_count: 0,
+            paths: Box::new([]),
+            files: Vec::new(),
+            overlapping_memory_cost: 0,
+        }
+    }
+}
+
+impl Entry {
     /// `SourceMapStore.Entry.renderMappings`.
     pub(crate) fn render_mappings(&self, kind: ChunkKind) -> crate::Result<Vec<u8>> {
-        let mut j = StringJoiner::default();
+        let mut j = StringJoiner::new();
         j.push_static(b"AAAA");
         self.join_vlq(kind, &mut j, Side::Client)?;
         Ok(j.done()?.into_vec())
@@ -100,7 +118,7 @@ impl Entry {
         let map_files = self.files.as_slice();
         let paths = &self.paths;
 
-        let mut j = StringJoiner::default();
+        let mut j = StringJoiner::new();
 
         j.push_static(br#"{"version":3,"sources":["bun://Bun/Bun HMR Runtime""#);
 
@@ -334,7 +352,7 @@ impl Entry {
     pub(crate) fn deinit(&mut self) {
         debug_assert_eq!(self.ref_count, 0);
         self.files.clear();
-        self.paths = Box::default();
+        self.paths = Box::new([]);
     }
 }
 
@@ -426,8 +444,8 @@ pub(crate) struct SourceMapStore {
 
 bun_event_loop::impl_timer_owner!(SourceMapStore; from_timer_ptr => weak_ref_sweep_timer);
 
-impl Default for SourceMapStore {
-    fn default() -> Self {
+impl SourceMapStore {
+    pub(crate) fn new() -> Self {
         Self {
             entries: ArrayHashMap::new(),
             weak_refs: LinearFifo::<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>::init(),
@@ -447,7 +465,7 @@ impl SourceMapStore {
     /// this in lieu of a `const`.
     #[inline]
     pub(crate) fn empty() -> Self {
-        Self::default()
+        Self::new()
     }
 
     #[inline]
@@ -460,14 +478,14 @@ impl SourceMapStore {
         script_id: Key,
         ref_count: u32,
     ) -> Result<PutOrIncrementRefCount<'_>, bun_alloc::AllocError> {
-        let gop = self.entries.get_or_put(script_id)?;
+        let gop = self.entries.get_or_put(script_id, Entry::new)?;
         if !gop.found_existing {
             debug_assert!(ref_count > 0); // invalid state
             *gop.value_ptr = Entry {
                 ref_count,
                 // Caller fills these.
                 overlapping_memory_cost: 0,
-                paths: Box::default(),
+                paths: Box::new([]),
                 files: Vec::new(),
             };
             Ok(PutOrIncrementRefCount::Uninitialized(gop.value_ptr))
@@ -676,14 +694,17 @@ impl SourceMapStore {
             None,
             i32::try_from(entry.paths.len()).expect("int cast"),
             0, // unused
-            Default::default(),
+            bun_sourcemap::mapping::ParseOptions::new(),
         ) {
             Err(fail) => {
                 bun_core::debug_warn!("Failed to re-parse source map: {}", fail.err.message());
                 None
             }
             Ok(mut psm) => Some(GetResult {
-                mappings: core::mem::take(&mut psm.mappings),
+                mappings: core::mem::replace(
+                    &mut psm.mappings,
+                    bun_sourcemap::mapping::List::new(),
+                ),
                 file_paths: &entry.paths,
                 entry_files: &entry.files,
             }),

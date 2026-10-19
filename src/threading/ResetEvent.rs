@@ -15,8 +15,8 @@ pub struct ResetEvent {
     state: AtomicU32,
 }
 
-impl Default for ResetEvent {
-    fn default() -> Self {
+impl ResetEvent {
+    pub fn init() -> Self {
         Self::new()
     }
 }

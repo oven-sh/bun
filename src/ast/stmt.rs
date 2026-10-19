@@ -28,7 +28,7 @@ impl Stmt {
         Stmt::alloc(
             S::SExpr {
                 value: Expr::assign(a, b),
-                ..Default::default()
+                ..S::SExpr::new()
             },
             a.loc,
         )
@@ -55,7 +55,7 @@ impl Stmt {
     pub fn empty() -> Stmt {
         Stmt {
             data: Data::SEmpty(NONE),
-            loc: crate::Loc::default(),
+            loc: crate::Loc::new(),
         }
     }
 
@@ -67,14 +67,14 @@ impl Stmt {
     }
 }
 
-impl Default for Stmt {
+impl Stmt {
     /// Used to zero-init `loop_body` and bulk-fill stmt slices before
     /// population.
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Stmt {
             data: Data::SEmpty(NONE),
-            loc: crate::Loc::default(),
+            loc: crate::Loc::new(),
         }
     }
 }
@@ -148,7 +148,7 @@ impl Stmt {
             bump,
             S::SExpr {
                 value: expr,
-                ..Default::default()
+                ..S::SExpr::new()
             },
             expr.loc,
         )

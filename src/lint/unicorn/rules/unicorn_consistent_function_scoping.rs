@@ -18,7 +18,6 @@ const CONSISTENT_FUNCTION_SCOPING: Message = Message::new(
     "Function `{{name}}` does not capture any variables from its parent scope",
 );
 
-#[derive(Default)]
 pub struct State<'a> {
     /// [`arrows_with_lexical_capture`], once that is asked.
     arrows_with_lexical_capture: Option<IdSet<Func<'a>>>,
@@ -30,6 +29,19 @@ pub struct State<'a> {
     captures: Option<Captures<'a>>,
     /// [`functions_with_private_names`], once that is asked.
     with_private_names: Option<IdSet<Scope<'a>>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            arrows_with_lexical_capture: None,
+            is_module: None,
+            is_strict: IdMap::init(),
+            captures: None,
+            with_private_names: None,
+        }
+    }
 }
 
 /// Up to three variables, those first that are declared furthest out.
@@ -54,7 +66,7 @@ impl Rule for ConsistentFunctionScoping {
         if file.is_declaration_file() {
             return None;
         }
-        Some(State::default())
+        Some(State::new())
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
@@ -513,7 +525,7 @@ fn declares_in_its_head(statement: Stmt) -> bool {
 /// By the scope of the function that they are directly in: the statements that have a scope for oxlint only, without
 /// those that are in another of them, in the order of the file.
 fn scopes_of_oxlint_only<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Span>> {
-    let mut found: FxHashMap<Scope<'a>, Vec<Span>> = FxHashMap::default();
+    let mut found: FxHashMap<Scope<'a>, Vec<Span>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for tag in [
         StmtTag::For,
         StmtTag::ForIn,
@@ -580,7 +592,7 @@ fn functions_with_private_names<'a>(file: &'a File<'a>) -> IdSet<Scope<'a>> {
         return found;
     }
     // The scopes of the classes of `path` that declare a private name, and where their bodies start.
-    let mut declaring: FxHashMap<Name<'a>, SmallVec<[(Scope<'a>, u32); 1]>> = FxHashMap::default();
+    let mut declaring: FxHashMap<Name<'a>, SmallVec<[(Scope<'a>, u32); 1]>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     // From the global scope to the current one.
     let mut path: Vec<Scope<'a>> = Vec::new();
     for scope in file.scopes() {
@@ -592,7 +604,7 @@ fn functions_with_private_names<'a>(file: &'a File<'a>) -> IdSet<Scope<'a>> {
             let body_start = class.body_span().start;
             for member in class.members() {
                 if let Some(KeyKind::Private(name)) = member.key().map(Key::kind) {
-                    let classes = declaring.entry(name).or_default();
+                    let classes = declaring.entry(name).or_insert_with(smallvec::SmallVec::new);
                     while classes.last().is_some_and(|it| !it.0.contains(scope)) {
                         classes.pop();
                     }
@@ -651,7 +663,7 @@ fn outermost_captures<'a>(
     // What the scopes in a scope refer to and is declared outside it: all, and what is in the region of the function.
     let mut from_inside: IdMap<Scope<'a>, (Outermost<'a>, Outermost<'a>)> = IdMap::new();
     for &scope in scopes.iter().rev() {
-        let (mut all, mut in_region) = from_inside.remove(scope).unwrap_or_default();
+        let (mut all, mut in_region) = from_inside.remove(scope).unwrap_or_else(|| (smallvec::SmallVec::new(), smallvec::SmallVec::new()));
         let region = regions.get(scope);
         for reference in scope.references_with_names_of_patterns_first() {
             let counts = |it: &Symbol<'a>| {
@@ -677,7 +689,7 @@ fn outermost_captures<'a>(
             .get(parent)
             .is_some_and(|it| it.contains(scope.span().start));
         let (all_of_parent, in_region_of_parent) =
-            from_inside.get_or_insert_with(parent, Default::default);
+            from_inside.get_or_insert_with(parent, || (smallvec::SmallVec::new(), smallvec::SmallVec::new()));
         for referenced in all.into_iter().filter(|it| it.scope() != parent) {
             add_outermost(all_of_parent, referenced);
             if is_in_region {
@@ -806,7 +818,7 @@ fn is_value_of_assignment_or_property(e: Expr) -> bool {
 fn arrows_with_lexical_capture<'a>(file: &'a File<'a>) -> IdSet<Func<'a>> {
     let mut found = IdSet::new();
     // The function that a node is in. `Some(None)`: it is in the initializer of a field, which has a `this` of its own.
-    let mut owners: AncestorMemo<'a, Option<Func<'a>>> = AncestorMemo::default();
+    let mut owners: AncestorMemo<'a, Option<Func<'a>>> = AncestorMemo::new();
     let mut owner_of = |node: Node<'a>| {
         let owner = owners.find(node, |child, parent| match (parent, child) {
             (Node::Func(func), _) => Some(Some(func)),

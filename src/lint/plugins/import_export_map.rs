@@ -58,7 +58,8 @@ struct Table {
 impl Table {
     /// `is_set`: whether a `set` is reached, where the `Map` has its key or has it not.
     fn new<T: Keyed>(sets: &[T], is_set: &dyn Fn(&T, bool) -> bool) -> Table {
-        let mut places: FxHashMap<Key<'_>, usize> = FxHashMap::default();
+        let mut places: FxHashMap<Key<'_>, usize> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut in_order: Vec<u32> = Vec::new();
         for (index, it) in sets.iter().enumerate() {
             let place = places.get(&it.key()).copied();
@@ -307,7 +308,9 @@ impl<'a> ExportMaps<'a> {
             resolvers: Resolvers::of(file.settings())?,
             interop: OnceCell::new(),
             languages: [OnceCell::new(), OnceCell::new()],
-            dependencies: RefCell::default(),
+            dependencies: core::cell::RefCell::new(rustc_hash::FxHashMap::with_hasher(
+                rustc_hash::FxBuildHasher,
+            )),
         })
     }
 
@@ -397,7 +400,7 @@ impl<'a> ExportMaps<'a> {
         if let Some(known) = self.dependencies.borrow().get(&map.id()) {
             return Rc::clone(known);
         }
-        let mut seen = FxHashSet::default();
+        let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         let mut dependencies = Vec::new();
         for source in star_exports {
             if let Some(p) = self.remote_path(map, source)
@@ -431,7 +434,7 @@ impl<'a> ExportMaps<'a> {
             size: this.own_size(interop),
         };
         // What has returned. Of a call that is running: nothing.
-        let mut known: FxHashMap<Id, usize> = FxHashMap::default();
+        let mut known: FxHashMap<Id, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         known.insert(map.id(), 0);
         let mut running = vec![call(map)];
         let mut returned = 0;
@@ -461,7 +464,7 @@ impl<'a> ExportMaps<'a> {
         let (interop, name) = (self.is_es_module_interop(), Some(name));
         // The calls that are to come, the next last.
         let mut pending: SmallVec<[ExportMap<'a>; 8]> = smallvec![map];
-        let mut asked = FxHashSet::default();
+        let mut asked = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         while let Some(this) = pending.pop() {
             if this.entry(interop, name).is_some() || this.reexport(name).is_some() {
                 return true;
@@ -485,7 +488,7 @@ impl<'a> ExportMaps<'a> {
     pub(crate) fn has_deep(&self, map: ExportMap<'a>, name: &[u8]) -> (bool, Vec<ExportMap<'a>>) {
         let interop = self.is_es_module_interop();
         let mut running: Vec<HasDeep<'a, '_>> = Vec::new();
-        let mut asked = FxHashSet::default();
+        let mut asked = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         let mut call = Some((map, Some(name)));
         loop {
             if let Some((this, name)) = call.take() {
@@ -512,7 +515,7 @@ impl<'a> ExportMaps<'a> {
                     top.rest = Some(if has_rest {
                         self.rest_of(this)
                     } else {
-                        Rest::default()
+                        Rest::new()
                     });
                 }
             }
@@ -543,7 +546,7 @@ impl<'a> ExportMaps<'a> {
         let interop = self.is_es_module_interop();
         // The calls that are to come, the next last. All return what the first that is not `undefined` returns.
         let mut pending: SmallVec<[(ExportMap<'a>, Key<'_>); 8]> = smallvec![(map, name)];
-        let mut asked = FxHashSet::default();
+        let mut asked = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         while let Some((this, name)) = pending.pop() {
             if let Some(entry) = this.entry(interop, name) {
                 return Got::Meta(Exported { map: this, entry });
@@ -587,7 +590,7 @@ impl<'a> ExportMaps<'a> {
         let interop = self.is_es_module_interop();
         // The calls that are to come, the next last.
         let mut pending: SmallVec<[ExportMap<'a>; 8]> = smallvec![map];
-        let mut asked = FxHashSet::default();
+        let mut asked = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         while let Some(this) = pending.pop() {
             if !asked.insert(this.id()) {
                 continue;
@@ -669,7 +672,8 @@ impl<'a> ExportMaps<'a> {
 
     /// `imports`: the path as the resolver gives it, and `declarations`.
     pub(crate) fn imports(&self, map: ExportMap<'a>) -> Vec<(Vec<u8>, Vec<&'a Dependency>)> {
-        let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut places: FxHashMap<Vec<u8>, usize> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut imports: Vec<(Vec<u8>, Vec<&'a Dependency>)> = Vec::new();
         for declaration in &map.facts.record.imports {
             let Some(p) = self.remote_path(map, &declaration.specifier) else {

@@ -37,8 +37,8 @@ pub(crate) struct ParsedShellScript {
     pub(crate) estimated_size_for_gc: usize,
 }
 
-impl Default for ParsedShellScript {
-    fn default() -> Self {
+impl ParsedShellScript {
+    pub(crate) fn new() -> Self {
         Self {
             args: JsCell::new(None),
             jsobjs: JsCell::new(Vec::new()),
@@ -138,7 +138,7 @@ impl ParsedShellScript {
             JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,
-                ..Default::default()
+                ..JSPropertyIteratorOptions::init()
             },
         )?;
         // `defer object_iter.deinit()` — handled by Drop.
@@ -279,7 +279,7 @@ fn create_parsed_shell_script_impl(
     let mut parsed_shell_script = Box::new(ParsedShellScript {
         args: JsCell::new(Some(shargs)),
         jsobjs: JsCell::new(jsobjs),
-        ..Default::default()
+        ..ParsedShellScript::new()
     });
     parsed_shell_script.estimated_size_for_gc = parsed_shell_script.compute_estimated_size_for_gc();
     let parsed_shell_script_ptr = bun_core::heap::into_raw(parsed_shell_script);

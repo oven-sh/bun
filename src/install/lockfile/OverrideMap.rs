@@ -121,10 +121,19 @@ fn cmp_range_text(l: &ScopedOverride, r: &ScopedOverride, buf: &[u8]) -> Orderin
 }
 
 /// dependency id -> owning package id, filled lazily. Checked on use: a package's rows can move.
-#[derive(Default)]
 struct OwnerIndex {
     by_dep: Vec<PackageID>,
     packages_indexed: usize,
+}
+
+impl OwnerIndex {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            by_dep: Vec::new(),
+            packages_indexed: 0,
+        }
+    }
 }
 
 impl OwnerIndex {
@@ -138,13 +147,24 @@ impl OwnerIndex {
     }
 }
 
-#[derive(Default)]
 pub struct OverrideMap {
     // `ArrayHashMap` defaults to identity hashing for integer keys.
     pub(crate) map: ArrayHashMap<PackageNameHash, Dependency>,
     pub(crate) scoped: Vec<ScopedOverride>,
     scoped_names: ArrayHashMap<PackageNameHash, ()>,
     owner_index: RefCell<OwnerIndex>,
+}
+
+impl OverrideMap {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            map: ArrayHashMap::new(),
+            scoped: Vec::new(),
+            scoped_names: ArrayHashMap::new(),
+            owner_index: core::cell::RefCell::new(OwnerIndex::new()),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -591,7 +611,7 @@ impl OverrideMap {
         old_string_bytes: &[u8],
         new_builder: &mut StringBuilder,
     ) -> Result<OverrideMap, Error> {
-        let mut new = OverrideMap::default();
+        let mut new = OverrideMap::new();
         new.map.ensure_total_capacity(self.map.count())?;
 
         for (k, v) in self.map.keys().iter().zip(self.map.values()) {
@@ -616,7 +636,7 @@ impl OverrideMap {
                 let target_range = if rule.has_target_range() {
                     clone_range(&dep, &rule.target_range, old_string_bytes, new_builder)
                 } else {
-                    dependency::Version::default()
+                    dependency::Version::new()
                 };
                 new.push_scoped(
                     ScopedOverride {
@@ -695,7 +715,7 @@ impl OverrideMap {
                     name: parent_name,
                     name_hash: parent_name_hash,
                     version,
-                    behavior: Behavior::default(),
+                    behavior: Behavior::empty(),
                 })
             }
         };
@@ -711,7 +731,7 @@ impl OverrideMap {
             name,
             name_hash,
             version,
-            behavior: Behavior::default(),
+            behavior: Behavior::empty(),
         };
 
         if is_flat {
@@ -1087,7 +1107,7 @@ fn lockfile_range(
     log: &mut bun_ast::Log,
 ) -> Result<Option<dependency::Version>, Error> {
     if range.is_empty() {
-        return Ok(Some(dependency::Version::default()));
+        return Ok(Some(dependency::Version::new()));
     }
     let range = buf.append(range)?;
     let sliced = range.sliced(buf.bytes.as_slice());
@@ -1124,7 +1144,7 @@ fn clone_range(
         None,
         None,
     )
-    .unwrap_or_default()
+    .unwrap_or_else(bun_install_types::DependencyVersion::new)
 }
 
 /// Installing with no rule applied would hide the typo.
@@ -1193,7 +1213,7 @@ fn parse_parent(
         name,
         name_hash,
         version,
-        behavior: Behavior::default(),
+        behavior: Behavior::empty(),
     })
 }
 
@@ -1206,7 +1226,7 @@ fn parse_range(
     is_target: bool,
 ) -> Option<dependency::Version> {
     if range.is_empty() {
-        return Some(dependency::Version::default());
+        return Some(dependency::Version::new());
     }
     let appended = ctx.builder.append::<SemverString>(range);
     let sliced = appended.sliced(ctx.builder.string_bytes.as_slice());
@@ -1358,7 +1378,7 @@ fn parse_override_value(
         name,
         name_hash,
         version,
-        behavior: Behavior::default(),
+        behavior: Behavior::empty(),
     }))
 }
 
@@ -1423,7 +1443,7 @@ fn workspace_ref_literal(
             GetJSONOptions {
                 init_reset_store: false,
                 guess_indentation: true,
-                ..Default::default()
+                ..GetJSONOptions::new()
             },
         ) else {
             continue;

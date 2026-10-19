@@ -23,7 +23,7 @@ pub(crate) mod js_bindings {
                     fmt::HighlighterOptions {
                         enable_colors: true,
                         check_for_unhighlighted_write: false,
-                        ..Default::default()
+                        ..fmt::HighlighterOptions::new()
                     },
                 );
                 write!(writer, "{}", formatter).map_err(|_| JsError::OutOfMemory)?;

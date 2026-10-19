@@ -339,7 +339,7 @@ impl Plugin {
 bitflags::bitflags! {
     /// Frameworks and test runners that have their own lint plugin. `bun lint` detects them from package.json, so that
     /// `[lint.categories]` doesn't enable Next.js rules in a project that doesn't use Next.js.
-    #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub struct Frameworks: u8 {
         const REACT = 1 << 0;
         const NEXT = 1 << 1;
@@ -1128,8 +1128,15 @@ impl On {
 ///
 /// An [`ExprTag`], a [`StmtTag`], a [`TypeTag`] or an array of them converts to one, and `|`
 /// combines them: `NodeTags::FUNC | StmtTag::Block.into()`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct NodeTags(u128);
+
+impl NodeTags {
+    #[inline]
+    pub fn init() -> Self {
+        Self(0)
+    }
+}
 
 const STMTS: u32 = ExprTag::COUNT as u32;
 const TYPES: u32 = STMTS + StmtTag::COUNT as u32;

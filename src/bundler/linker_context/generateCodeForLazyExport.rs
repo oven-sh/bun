@@ -73,7 +73,7 @@ pub(crate) fn generate_code_for_lazy_export(
             if css_ast.local_scope.count() == 0 {
                 break 'out;
             }
-            let mut exports = E::Object::default();
+            let mut exports = E::Object::new();
 
             let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
             let all_import_records = this.graph.ast.items_import_records();
@@ -131,7 +131,7 @@ pub(crate) fn generate_code_for_lazy_export(
                         value: Expr::init(
                             E::NameOfSymbol {
                                 ref_: real_ref,
-                                ..Default::default()
+                                ..E::NameOfSymbol::new()
                             },
                             self.loc,
                         ),
@@ -161,7 +161,7 @@ pub(crate) fn generate_code_for_lazy_export(
 
                     self.log.add_range_error_fmt_with_note(
                         Some(&self.all_sources[idx as usize]),
-                        bun_ast::Range { loc: compose_loc, ..Default::default() },
+                        bun_ast::Range { loc: compose_loc, ..bun_ast::Range::new() },
                         format_args!(
                             "The composes property cannot be used with {}, because it is not a single class name.",
                             bun_fmt::quote(name),
@@ -170,7 +170,7 @@ pub(crate) fn generate_code_for_lazy_export(
                             "The definition of {} is here.",
                             bun_fmt::quote(name),
                         ),
-                        bun_ast::Range { loc, ..Default::default() },
+                        bun_ast::Range { loc, ..bun_ast::Range::new() },
                     );
                 }
 
@@ -307,7 +307,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 let mut value = Expr::init(
                     E::NameOfSymbol {
                         ref_: ref_.to_real_ref(source_index),
-                        ..Default::default()
+                        ..E::NameOfSymbol::new()
                     },
                     stmt.loc,
                 );
@@ -387,7 +387,7 @@ pub(crate) fn generate_code_for_lazy_export(
                         target: Expr::init_identifier(module_ref, stmt.loc),
                         name: b"exports".as_slice().into(),
                         name_loc: stmt.loc,
-                        ..Default::default()
+                        ..E::Dot::new()
                     },
                     stmt.loc,
                 ),
@@ -466,7 +466,7 @@ pub(crate) fn generate_code_for_lazy_export(
                                     ),
                                     value: Some(value),
                                 }]),
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             key.loc,
                         )));

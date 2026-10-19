@@ -172,7 +172,7 @@ fn message_of(json: &Json, offsets: &Utf16OffsetTable, find_rule: &FindRule) -> 
             line: matches!(json.get(b"line"), Some(Json::Null)),
             column: matches!(json.get(b"column"), Some(Json::Null)),
         },
-        ..LintMessage::default()
+        ..LintMessage::new()
     }
 }
 

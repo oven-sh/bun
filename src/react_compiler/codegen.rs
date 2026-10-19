@@ -121,7 +121,7 @@ impl<'h> Codegen<'h> {
             arena,
             id_to_ref: IdMap::new(),
             well_known: [None; WellKnown::COUNT],
-            name_to_ref: HashMap::default(),
+            name_to_ref: HashMap::with_hasher(rustc_hash::FxBuildHasher),
             label_to_ref: IdMap::new(),
         }
     }
@@ -268,7 +268,7 @@ pub(crate) fn codegen_function(
                     E::Number::new(cache_count as f64),
                     loc,
                 )]),
-                ..Default::default()
+                ..E::Call::new()
             },
             loc,
         );
@@ -282,7 +282,7 @@ pub(crate) fn codegen_function(
                     binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: cache_ref }, loc),
                     value: Some(call),
                 }]),
-                ..Default::default()
+                ..S::Local::new()
             },
             loc,
         ));
@@ -340,7 +340,7 @@ pub(crate) fn codegen_function(
                             Loc::EMPTY,
                         ),
                     ]),
-                    ..Default::default()
+                    ..E::Call::new()
                 },
                 Loc::EMPTY,
             );
@@ -412,11 +412,11 @@ impl<'a, 'h> Context<'a, 'h> {
             env,
             cg,
             next_cache_index: 0,
-            declarations: HashSet::default(),
+            declarations: HashSet::with_hasher(rustc_hash::FxBuildHasher),
             temp: IdMap::new(),
             object_methods: IdMap::new(),
             unique_identifiers,
-            synthesized_names: HashMap::default(),
+            synthesized_names: HashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 
@@ -549,7 +549,7 @@ fn convert_parameter(
             Ok(G::Arg {
                 binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: r }, loc),
                 default: None,
-                ..Default::default()
+                ..G::Arg::new()
             })
         }
         ParamPattern::Spread(spread) => {
@@ -558,7 +558,7 @@ fn convert_parameter(
             Ok(G::Arg {
                 binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: r }, loc),
                 default: None,
-                ..Default::default()
+                ..G::Arg::new()
             })
         }
     }
@@ -764,7 +764,7 @@ fn codegen_reactive_scope(
             S::Local {
                 kind: S::Kind::KLet,
                 decls: decl_list(output_declarators),
-                ..Default::default()
+                ..S::Local::new()
             },
             loc,
         ));
@@ -1193,7 +1193,7 @@ fn codegen_for_in(
                         binding: lval,
                         value: None,
                     }]),
-                    ..Default::default()
+                    ..S::Local::new()
                 },
                 stmt_loc,
             ),
@@ -1269,7 +1269,7 @@ fn codegen_for_of(
                         binding: lval,
                         value: None,
                     }]),
-                    ..Default::default()
+                    ..S::Local::new()
                 },
                 stmt_loc,
             ),
@@ -1392,7 +1392,7 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
             S::Local {
                 kind,
                 decls: declarators,
-                ..Default::default()
+                ..S::Local::new()
             },
             Loc::EMPTY,
         )))
@@ -1556,7 +1556,7 @@ fn emit_store(
                         binding: lval,
                         value,
                     }]),
-                    ..Default::default()
+                    ..S::Local::new()
                 },
                 stmt_loc,
             )))
@@ -1589,7 +1589,7 @@ fn emit_store(
                             stmts: func_expr.func.body.stmts,
                         },
                         flags: func_expr.func.flags,
-                        ..Default::default()
+                        ..G::Fn::new()
                     };
                     func.flags &= !flags::FunctionSet::from(flags::Function::IsExport);
                     Ok(Some(Stmt::alloc(S::Function { func }, stmt_loc)))
@@ -1616,7 +1616,7 @@ fn emit_store(
                         binding: lval,
                         value,
                     }]),
-                    ..Default::default()
+                    ..S::Local::new()
                 },
                 stmt_loc,
             )))
@@ -1689,7 +1689,7 @@ fn codegen_instruction(
                     binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: r }, l),
                     value: Some(value),
                 }]),
-                ..Default::default()
+                ..S::Local::new()
             },
             stmt_loc,
         ))
@@ -1924,7 +1924,7 @@ fn codegen_base_instruction_value(
                 E::Call {
                     target: callee_expr,
                     args: arguments,
-                    ..Default::default()
+                    ..E::Call::new()
                 },
                 loc,
             );
@@ -1945,7 +1945,7 @@ fn codegen_base_instruction_value(
                 E::Call {
                     target: member_expr,
                     args: arguments,
-                    ..Default::default()
+                    ..E::Call::new()
                 },
                 loc,
             );
@@ -1958,7 +1958,7 @@ fn codegen_base_instruction_value(
                 E::New {
                     target: callee_expr,
                     args: arguments,
-                    ..Default::default()
+                    ..E::New::new()
                 },
                 loc,
             ))
@@ -1980,7 +1980,7 @@ fn codegen_base_instruction_value(
             Ok(Expr::init(
                 E::Array {
                     items: elems,
-                    ..Default::default()
+                    ..E::Array::new()
                 },
                 loc,
             ))
@@ -2376,7 +2376,7 @@ fn codegen_function_expression(
                         args,
                         body,
                         flags: fn_flags,
-                        ..Default::default()
+                        ..G::Fn::new()
                     },
                 },
                 loc,
@@ -2392,14 +2392,14 @@ fn codegen_function_expression(
             kind: G::PropertyKind::Normal,
             key: Some(key),
             value: Some(value),
-            ..Default::default()
+            ..G::Property::new()
         });
         let wrapped = Expr::init(
             E::Index {
                 target: Expr::init(
                     E::Object {
                         properties: props,
-                        ..Default::default()
+                        ..E::Object::new()
                     },
                     loc,
                 ),
@@ -2453,7 +2453,7 @@ fn codegen_object_expression(
                             flags: prop_flags,
                             key: Some(key),
                             value: Some(value),
-                            ..Default::default()
+                            ..G::Property::new()
                         });
                     }
                     ObjectPropertyType::Method => {
@@ -2497,7 +2497,7 @@ fn codegen_object_expression(
                                         stmts: leak_stmts(fn_result.body),
                                     },
                                     flags: fn_flags,
-                                    ..Default::default()
+                                    ..G::Fn::new()
                                 },
                             },
                             loc,
@@ -2511,7 +2511,7 @@ fn codegen_object_expression(
                             flags: prop_flags,
                             key: Some(key),
                             value: Some(value),
-                            ..Default::default()
+                            ..G::Property::new()
                         });
                     }
                 }
@@ -2522,7 +2522,7 @@ fn codegen_object_expression(
                     kind: G::PropertyKind::Spread,
                     flags: flags::Property::IsSpread.into(),
                     value: Some(arg),
-                    ..Default::default()
+                    ..G::Property::new()
                 });
             }
         }
@@ -2530,7 +2530,7 @@ fn codegen_object_expression(
     Ok(Expr::init(
         E::Object {
             properties: ast_properties,
-            ..Default::default()
+            ..E::Object::new()
         },
         loc,
     ))
@@ -2675,7 +2675,7 @@ fn codegen_create_element_call(
         Expr::init(
             E::Object {
                 properties,
-                ..Default::default()
+                ..E::Object::new()
             },
             loc,
         )
@@ -2689,7 +2689,7 @@ fn codegen_create_element_call(
             can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
             was_jsx_element: true,
             close_paren_loc: close_loc,
-            ..Default::default()
+            ..E::Call::new()
         },
         loc,
     )
@@ -2722,17 +2722,17 @@ fn codegen_jsx_call(
                 E::Array {
                     items: children,
                     is_single_line,
-                    ..Default::default()
+                    ..E::Array::new()
                 },
                 close_loc,
             )),
-            ..Default::default()
+            ..G::Property::new()
         });
     } else if children.len() == 1 {
         properties.push(G::Property {
             key: Some(children_key),
             value: Some(children[0]),
-            ..Default::default()
+            ..G::Property::new()
         });
     }
 
@@ -2746,7 +2746,7 @@ fn codegen_jsx_call(
     args.push(Expr::init(
         E::Object {
             properties,
-            ..Default::default()
+            ..E::Object::new()
         },
         loc,
     ));
@@ -2785,7 +2785,7 @@ fn codegen_jsx_call(
             can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
             was_jsx_element: true,
             close_paren_loc: close_loc,
-            ..Default::default()
+            ..E::Call::new()
         },
         loc,
     )
@@ -2804,7 +2804,7 @@ fn codegen_jsx_attribute(
                 kind: G::PropertyKind::Normal,
                 key: Some(key),
                 value: Some(inner_value),
-                ..Default::default()
+                ..G::Property::new()
             })
         }
         JsxAttribute::SpreadAttribute { argument } => {
@@ -2813,7 +2813,7 @@ fn codegen_jsx_attribute(
                 kind: G::PropertyKind::Spread,
                 flags: flags::Property::IsSpread.into(),
                 value: Some(expr),
-                ..Default::default()
+                ..G::Property::new()
             })
         }
     }
@@ -2871,7 +2871,7 @@ fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Ex
                 Ok(Expr::init(
                     E::Array {
                         items,
-                        ..Default::default()
+                        ..E::Array::new()
                     },
                     loc,
                 ))
@@ -2895,7 +2895,7 @@ fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Ex
                                 flags: prop_flags,
                                 key: Some(key),
                                 value: Some(value),
-                                ..Default::default()
+                                ..G::Property::new()
                             }
                         }
                         ObjectPropertyOrSpread::Spread(spread) => {
@@ -2908,7 +2908,7 @@ fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Ex
                                 kind: G::PropertyKind::Spread,
                                 flags: flags::Property::IsSpread.into(),
                                 value: Some(inner),
-                                ..Default::default()
+                                ..G::Property::new()
                             }
                         }
                     });
@@ -2916,7 +2916,7 @@ fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Ex
                 Ok(Expr::init(
                     E::Object {
                         properties,
-                        ..Default::default()
+                        ..E::Object::new()
                     },
                     loc,
                 ))
@@ -3332,7 +3332,7 @@ fn property_access_expr(
                 name: *s,
                 name_loc: loc,
                 optional_chain,
-                ..Default::default()
+                ..E::Dot::new()
             },
             loc,
         ),
@@ -3586,7 +3586,7 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
                 E::Call {
                     target: Expr::init_identifier(guard_ref, loc),
                     args: AstAlloc::vec_from_iter([Expr::init(E::Number::new(kind as f64), loc)]),
-                    ..Default::default()
+                    ..E::Call::new()
                 },
                 loc,
             ),
@@ -3622,7 +3622,7 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
                     loc,
                     stmts: leak_stmts(vec![try_stmt]),
                 },
-                ..Default::default()
+                ..G::Fn::new()
             },
         },
         loc,
@@ -3632,7 +3632,7 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
         E::Call {
             target: iife,
             args: AstAlloc::vec(),
-            ..Default::default()
+            ..E::Call::new()
         },
         loc,
     )
@@ -3651,7 +3651,7 @@ fn create_function_body_hook_guard(
                 E::Call {
                     target: Expr::init_identifier(guard_ref, loc),
                     args: AstAlloc::vec_from_iter([Expr::init(E::Number::new(kind as f64), loc)]),
-                    ..Default::default()
+                    ..E::Call::new()
                 },
                 loc,
             ),

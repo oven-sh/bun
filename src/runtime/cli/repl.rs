@@ -851,10 +851,17 @@ enum InputMode {
 }
 
 /// A terminal cell, in rows below the row that holds the prompt.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct ScreenPos {
     row: usize,
     col: usize,
+}
+
+impl ScreenPos {
+    #[inline]
+    fn new() -> Self {
+        Self { row: 0, col: 0 }
+    }
 }
 
 impl ScreenPos {
@@ -925,8 +932,8 @@ impl Drawing {
     fn new() -> Drawing {
         Drawing {
             width: 80,
-            cursor: ScreenPos::default(),
-            end: ScreenPos::default(),
+            cursor: ScreenPos::new(),
+            end: ScreenPos::new(),
         }
     }
 
@@ -940,8 +947,8 @@ impl Drawing {
 
     /// The input is gone from the screen; the next redraw starts where the cursor is.
     fn erased(&mut self) {
-        self.cursor = ScreenPos::default();
-        self.end = ScreenPos::default();
+        self.cursor = ScreenPos::new();
+        self.end = ScreenPos::new();
     }
 }
 
@@ -2049,7 +2056,7 @@ impl<'a> Repl<'a> {
                 quote_strings: true,
                 ordered_properties: false,
                 max_depth: 4,
-                ..Default::default()
+                ..jsc::ConsoleObject::FormatOptions::new()
             },
         )?;
         Ok(Some(array.into_boxed_slice()))
@@ -2221,7 +2228,7 @@ impl<'a> Repl<'a> {
             &source,
             bun_js_printer::Options {
                 mangled_props: None,
-                ..Default::default()
+                ..bun_js_printer::Options::new()
             },
         )
         .is_err()
@@ -2265,7 +2272,7 @@ impl<'a> Repl<'a> {
                 quote_strings: true,
                 ordered_properties: false,
                 max_depth: 4,
-                ..Default::default()
+                ..jsc::ConsoleObject::FormatOptions::new()
             },
         )
         .is_err()
@@ -2299,7 +2306,7 @@ impl<'a> Repl<'a> {
                 quote_strings: true,
                 ordered_properties: false,
                 max_depth: 4,
-                ..Default::default()
+                ..jsc::ConsoleObject::FormatOptions::new()
             },
         ) {
             // A getter on the value threw during inspection — show that error.

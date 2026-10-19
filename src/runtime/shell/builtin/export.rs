@@ -5,14 +5,18 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use bun_collections::index_sort;
 
-#[derive(Default)]
 pub(crate) struct Export {
     state: State,
 }
 
-#[derive(Default)]
+impl Export {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { state: State::Idle }
+    }
+}
+
 enum State {
-    #[default]
     Idle,
     WaitingIo,
     Done,

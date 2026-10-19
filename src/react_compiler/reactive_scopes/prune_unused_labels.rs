@@ -25,7 +25,7 @@ pub(crate) fn prune_unused_labels(
     env: &Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {
     let mut transform = Transform { env };
-    let mut labels: HashSet<BlockId> = HashSet::default();
+    let mut labels: HashSet<BlockId> = HashSet::with_hasher(rustc_hash::FxBuildHasher);
     transform_reactive_function(func, &mut transform, &mut labels)
 }
 

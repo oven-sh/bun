@@ -32,8 +32,15 @@ pub struct Linted {
 }
 
 /// Categories of what the compiler says.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Categories(u32);
+
+impl Categories {
+    #[inline]
+    pub fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl Categories {
     pub const ALL: Categories = Categories(u32::MAX);
@@ -124,12 +131,12 @@ pub fn lint_function(
     for (ref_, binding) in import_bindings {
         bindings.insert(*ref_, binding.clone());
     }
-    let mut context = ProgramContext::new(ReactCompilerOptions::default(), None, None, false);
+    let mut context = ProgramContext::new(ReactCompilerOptions::new(), None, None, false);
     context.output_mode = OutputMode::Lint;
     let mut env = Environment::with_config(config);
     env.fn_type = fn_type;
     env.output_mode = OutputMode::Lint;
-    env.seed_uid_known_names(&HashSet::default());
+    env.seed_uid_known_names(&HashSet::with_hasher(rustc_hash::FxBuildHasher));
     let result = run(
         func,
         host,

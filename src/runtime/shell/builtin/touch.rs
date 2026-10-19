@@ -7,14 +7,18 @@ use crate::shell::interpreter::{
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
 pub(crate) struct Touch {
     pub(crate) state: State,
 }
 
-#[derive(Default)]
+impl Touch {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { state: State::Idle }
+    }
+}
+
 pub(crate) enum State {
-    #[default]
     Idle,
     Exec(ExecState),
     WaitingWriteErr,
@@ -38,7 +42,7 @@ pub(crate) struct ExecState {
 
 impl Touch {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let mut opts = Opts::default();
+        let mut opts = Opts::new();
         let args_start = {
             let args = Builtin::of(interp, cmd).args_slice();
             match parse_flags(&mut opts, args) {
@@ -350,8 +354,15 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct Opts {}
+
+impl Opts {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {}
+    }
+}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult> {

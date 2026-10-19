@@ -6,9 +6,8 @@ use crate::regex::{Ignore, Mode, Options, validate_pattern};
 pub const REGEXPP_LATEST_ECMA_VERSION: u32 = 2025;
 
 /// The `flag` of [`is_valid_with_unicode_flag`].
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UnicodeFlag {
-    #[default]
     U,
     V,
 }

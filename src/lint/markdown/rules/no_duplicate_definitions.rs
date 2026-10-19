@@ -17,10 +17,19 @@ const DUPLICATE_FOOTNOTE_DEFINITION: Message = Message::new(
 );
 
 /// The first definition with each identifier.
-#[derive(Default)]
 pub(crate) struct Seen<'d> {
     definitions: FxHashMap<&'d [u8], Node<'d>>,
     footnote_definitions: FxHashMap<&'d [u8], Node<'d>>,
+}
+
+impl<'d> Seen<'d> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            definitions: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            footnote_definitions: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl Rule for NoDuplicateDefinitions {
@@ -45,7 +54,7 @@ impl Listens for NoDuplicateDefinitions {
     type Seen<'d> = Seen<'d>;
 
     fn seen<'d>(&self) -> Self::Seen<'d> {
-        Seen::default()
+        Seen::new()
     }
 
     fn on<'d>(

@@ -44,13 +44,13 @@ pub struct Tree {
     pub(crate) dependencies: DependencyIDSlice,
 }
 
-impl Default for Tree {
-    fn default() -> Self {
+impl Tree {
+    pub fn new() -> Self {
         Self {
             id: INVALID_ID,
             dependency_id: invalid_dependency_id,
             parent: INVALID_ID,
-            dependencies: DependencyIDSlice::default(),
+            dependencies: DependencyIDSlice::empty(),
         }
     }
 }
@@ -585,8 +585,14 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
 }
 
 /// The hoisted package's required peers (does staying put find it in range?); who has any.
-#[derive(Default)]
 pub(crate) struct PeerProbes(Vec<(DependencyID, bool)>, Option<DynamicBitSet>);
+
+impl PeerProbes {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(Vec::new(), None)
+    }
+}
 
 impl PeerProbes {
     /// `package_id` is about to be hoisted out of the package with `owner_deps`.
@@ -921,7 +927,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 }
 
 /// Hashes a `(tree, name hash)` key cheaply, because the name hash is already well distributed.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct PlaceContext;
 
 impl bun_collections::HashContext<(Id, PackageNameHash)> for PlaceContext {
@@ -950,7 +956,7 @@ impl RowMap {
     fn new(rows: usize) -> RowMap {
         RowMap {
             first: vec![None; rows],
-            more: Default::default(),
+            more: super::BunHashMap::init(),
         }
     }
 
@@ -1412,9 +1418,9 @@ impl Tree {
                 parent: self.id,
                 id: builder.list.len() as Id, // @truncate
                 dependency_id,
-                dependencies: DependencyIDSlice::default(),
+                dependencies: DependencyIDSlice::empty(),
             },
-            dependencies: DependencyIDList::default(),
+            dependencies: Vec::new(),
         })?;
 
         let next_id = (builder.list.len() - 1) as Id;
@@ -1643,9 +1649,11 @@ impl Tree {
                 HoistDependencyResult::ResolveLater => {
                     // an unresolved peer that deduplicated with another one. save it to resolve it
                     // later if it's possible to resolve it.
-                    let entry = builder.pending_peers.get_or_put(dependency.name_hash)?;
+                    let entry = builder
+                        .pending_peers
+                        .get_or_put(dependency.name_hash, ArrayHashMap::new)?;
                     if !entry.found_existing {
-                        *entry.value_ptr = ArrayHashMap::default();
+                        *entry.value_ptr = ArrayHashMap::new();
                     }
 
                     entry.value_ptr.put(dep_id, ())?;
@@ -1700,7 +1708,9 @@ impl Tree {
                         continue 'dep;
                     }
                     builder.list.items_dependencies_mut()[id as usize].push(dep_id);
-                    let placed = builder.placed.get_or_put((id, dependency.name_hash))?;
+                    let placed = builder
+                        .placed
+                        .get_or_put((id, dependency.name_hash), || 0)?;
                     if !placed.found_existing {
                         *placed.value_ptr = dep_id;
                     }
@@ -2109,10 +2119,10 @@ pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     if trees.is_empty() {
         return served;
     }
-    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
+    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::init();
 
     // The `node_modules` folder of the package placed in `parent` under a name, if it has one.
-    let mut own_folder: HashMap<(Id, PackageNameHash), Id> = HashMap::default();
+    let mut own_folder: HashMap<(Id, PackageNameHash), Id> = HashMap::init();
     for tree in &trees[1..] {
         if tree.is_unlinked_member(trees, hoisted, dependencies) {
             continue;
@@ -2121,7 +2131,7 @@ pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
         own_folder.insert((tree.parent, name_hash), tree.id);
     }
 
-    let mut placed: HashMap<(Id, PackageNameHash), PackageID> = HashMap::default();
+    let mut placed: HashMap<(Id, PackageNameHash), PackageID> = HashMap::init();
     for (tree_id, tree) in trees.iter().enumerate() {
         for &dep_id in tree.dependencies.get(hoisted) {
             placed

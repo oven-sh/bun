@@ -128,7 +128,8 @@ impl CopyFile {
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
-        let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
+        let mut system_error: SystemError =
+            self.system_error.take().unwrap_or_else(SystemError::new);
         if matches!(
             self.source_file_store.pathlike,
             PathOrFileDescriptor::Path(_)
@@ -468,7 +469,7 @@ impl CopyFile {
                             // bare `as` is lossless here (E repr == Error.Int).
                             errno: bun_sys::E::EINVAL as bun_sys::ErrorInt,
                             syscall: USE.tag(),
-                            ..Default::default()
+                            ..bun_sys::Error::init()
                         }
                         .to_system_error(),
                     );
@@ -480,7 +481,7 @@ impl CopyFile {
                             // bare `as` is lossless here (E repr == Error.Int).
                             errno: errno as bun_sys::ErrorInt,
                             syscall: USE.tag(),
-                            ..Default::default()
+                            ..bun_sys::Error::init()
                         }
                         .to_system_error(),
                     );
@@ -530,7 +531,7 @@ impl CopyFile {
             self.destination_fd,
             bun_sys::darwin::COPYFILE {
                 data: true,
-                ..Default::default()
+                ..bun_sys::darwin::COPYFILE::new()
             }
             .bits(),
         ) {
@@ -1090,8 +1091,8 @@ pub(crate) struct ReadWriteLoop {
 }
 
 #[cfg(windows)]
-impl Default for ReadWriteLoop {
-    fn default() -> Self {
+impl ReadWriteLoop {
+    pub(crate) fn new() -> Self {
         Self {
             source_fd: Fd::INVALID,
             must_close_source_fd: false,
@@ -1378,7 +1379,7 @@ impl<'a> CopyFileWindows<'a> {
             size: size_,
             written_bytes: 0,
             err: None,
-            read_write_loop: ReadWriteLoop::default(),
+            read_write_loop: ReadWriteLoop::new(),
         }));
         // SAFETY: result was just allocated above
         let result_ref = unsafe { &mut *result };
@@ -1415,7 +1416,7 @@ impl<'a> CopyFileWindows<'a> {
                             errno: bun_sys::SystemErrno::EMFILE as u16,
                             syscall: bun_sys::Tag::open,
                             path: path.slice().into(),
-                            ..Default::default()
+                            ..bun_sys::Error::init()
                         });
                     }
                 },
@@ -1733,7 +1734,7 @@ impl<'a> CopyFileWindows<'a> {
     fn truncate(&mut self) {
         // TODO: optimize this
 
-        let mut node_fs_ = node_fs::NodeFS::default();
+        let mut node_fs_ = node_fs::NodeFS::new();
         let _ = node_fs_.truncate(
             &node_fs::args::Truncate {
                 path: self.destination_file_store.data.as_file().pathlike.clone(),
@@ -1769,7 +1770,7 @@ impl<'a> CopyFileWindows<'a> {
                 self.throw(bun_sys::Error {
                     errno: bun_sys::SystemErrno::EINVAL as u16,
                     syscall: bun_sys::Tag::mkdir,
-                    ..Default::default()
+                    ..bun_sys::Error::init()
                 });
                 return;
             }
@@ -1788,7 +1789,7 @@ impl<'a> CopyFileWindows<'a> {
             completion_ctx: core::ptr::from_mut(self).cast::<()>(),
             path,
             ticket: jsc::VirtualMachine::VirtualMachine::get().ticket(),
-            task: Default::default(),
+            task: bun_threading::WorkPoolTask::new(),
         });
     }
 
@@ -1972,7 +1973,7 @@ fn unsupported_directory_error() -> SystemError {
         errno: bun_sys::SystemErrno::EISDIR as i32,
         message: bun_core::String::static_("That doesn't work on folders"),
         syscall: bun_core::String::static_("fstat"),
-        ..SystemError::default()
+        ..SystemError::new()
     }
 }
 
@@ -1982,7 +1983,7 @@ fn unsupported_non_regular_file_error() -> SystemError {
         errno: bun_sys::SystemErrno::ENOTSUP as i32,
         message: bun_core::String::static_("Non-regular files aren't supported yet"),
         syscall: bun_core::String::static_("fstat"),
-        ..SystemError::default()
+        ..SystemError::new()
     }
 }
 // `SystemError` contains `bun_core::String`, which is not const-constructible,

@@ -1021,7 +1021,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         // What is still to be added, sorted by `made_at`.
         let mut late = VecDeque::from(self.references_to_const());
         let mut is_first_to_const = true;
-        let mut seen = FxHashSet::default();
+        let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for reference in file.references_with_names_of_patterns_first() {
             // A rule can't see a reference whose identifier isn't in the tree.
             let identifier = id(identifier(reference));
@@ -1216,7 +1216,7 @@ impl<'t, 'a> Builder<'t, 'a> {
             return;
         }
         // By the variable around the class: the scopes of the classes that declare it.
-        let mut outer: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
+        let mut outer: FxHashMap<u32, Vec<u32>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for variable in 0..self.declared {
             let record = &self.variables[variable as usize];
             let (text, definitions) = (record.text, record.first_definition..record.end_definition);
@@ -1450,7 +1450,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         let mut named = GlobalNames {
             configured,
             of_configured: vec![NONE; configured.list.len()],
-            others: FxHashMap::default(),
+            others: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         };
         for &variable in variables.iter() {
             *named.slot(self.variables[variable as usize].text) = variable;
@@ -1459,7 +1459,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         let mut flags_of = GlobalNames {
             configured,
             of_configured: vec![0; configured.list.len()],
-            others: FxHashMap::default(),
+            others: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         };
         for &(reference, flags) in &self.referred {
             *flags_of.slot(self.references[reference as usize].name) = flags;
@@ -1597,7 +1597,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         let mut named = GlobalNames {
             configured,
             of_configured: vec![NONE; configured.list.len()],
-            others: FxHashMap::default(),
+            others: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         };
         for &variable in variables.iter() {
             *named.slot(self.variables[variable as usize].text) = variable;
@@ -1809,7 +1809,8 @@ impl<'t, 'a> Builder<'t, 'a> {
     }
 
     fn implicit_globals_among(&mut self, references: impl Iterator<Item = u32>) -> Vec<u32> {
-        let mut by_name: FxHashMap<&[u8], usize> = FxHashMap::default();
+        let mut by_name: FxHashMap<&[u8], usize> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut variables: Vec<Vec<u32>> = Vec::new();
         for reference in references.map(|it| &self.references[it as usize]) {
             let only_writes = reference.flags & 3 == u32::from(ReferenceFlags::WRITE.bits());
@@ -1863,7 +1864,7 @@ impl Builder<'_, '_> {
     /// Sets [`HAS_THIS`] and [`HAS_ARGUMENTS`].
     fn find_this_and_arguments(&mut self) {
         // By its block: the innermost scope that `this` can belong to.
-        let mut by_block: FxHashMap<u32, usize> = FxHashMap::default();
+        let mut by_block: FxHashMap<u32, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for (index, scope) in self.scopes.iter_mut().enumerate() {
             if scope.variable_scope as usize == index {
                 by_block.insert(scope.block, index);
@@ -1957,7 +1958,7 @@ impl Builder<'_, '_> {
         by_name(&mut definitions[first_implicit..]);
 
         let (mut keys, mut values) = (Vec::new(), Vec::new());
-        let mut seen = FxHashSet::default();
+        let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for (_, node, parent, variable) in definitions {
             for node in [node, parent] {
                 if node != NONE && seen.insert((node, variable)) {
@@ -1990,7 +1991,7 @@ pub(super) fn write<'t, 'a>(
         definitions: Vec::new(),
         references: Vec::new(),
         referred: Vec::new(),
-        inner_class_names: FxHashMap::default(),
+        inner_class_names: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         taints: Vec::new(),
         lists: vec![0],
     };

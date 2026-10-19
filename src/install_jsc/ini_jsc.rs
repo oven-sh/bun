@@ -79,7 +79,7 @@ impl IniTestingAPIs {
             env_storage.insert(dotenv::Loader::init_with_map(dotenv::Map { map: envmap }))
         };
 
-        let mut install = Box::new(BunInstall::default());
+        let mut install = Box::new(BunInstall::new());
         if load_npmrc(&mut install, env, &mut log, &source).is_err() {
             return log.to_js(global, format_args!("error"));
         }
@@ -95,7 +95,7 @@ impl IniTestingAPIs {
         if let Some(found) = found {
             let registry = install.default_registry.get_or_insert_with(|| NpmRegistry {
                 url: default_url,
-                ..Default::default()
+                ..NpmRegistry::new()
             });
             if !registry.has_credentials() || registry.declared_in_npmrc {
                 registry.token = found.token;

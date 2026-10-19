@@ -12,10 +12,10 @@ impl Parser<'_> {
     pub(crate) fn process_doc(&mut self) -> Result<(), parser::Error> {
         let dummy_blank = Line {
             r#type: LineType::Blank,
-            ..Line::default()
+            ..Line::new()
         };
         let mut pivot_line = dummy_blank;
-        let mut line_buf: [Line; 2] = [Line::default(), Line::default()];
+        let mut line_buf: [Line; 2] = [Line::new(), Line::new()];
         let mut line_idx: usize = 0;
         let mut off: OFF = 0;
 
@@ -62,7 +62,7 @@ impl Parser<'_> {
         let mut n_parents: u32 = 0;
         let mut n_brothers: u32 = 0;
         let mut n_children: u32 = 0;
-        let mut container = Container::default();
+        let mut container = Container::new();
         let prev_line_has_list_loosening_effect = self.last_line_has_list_loosening_effect;
         // The line before is the marker of a list item and nothing else.
         let follows_empty_item = self.last_header_opens_list_item
@@ -72,7 +72,7 @@ impl Parser<'_> {
         // Nothing is on the line but the markers of containers that were open before it.
         let mut is_empty = false;
 
-        *line = Line::default();
+        *line = Line::new();
         line.enforce_new_block = false;
 
         // Eat indentation and match containers
@@ -878,7 +878,7 @@ impl Parser<'_> {
             self.end_current_block()?;
             *pivot_line = Line {
                 r#type: LineType::Blank,
-                ..Line::default()
+                ..Line::new()
             };
             return Ok(());
         }
@@ -917,7 +917,7 @@ impl Parser<'_> {
             self.end_current_block()?;
             *pivot_line = Line {
                 r#type: LineType::Blank,
-                ..Line::default()
+                ..Line::new()
             };
             return Ok(());
         }
@@ -935,7 +935,7 @@ impl Parser<'_> {
             self.end_current_block()?;
             *pivot_line = Line {
                 r#type: LineType::Blank,
-                ..Line::default()
+                ..Line::new()
             };
             return Ok(());
         }
@@ -960,7 +960,7 @@ impl Parser<'_> {
                         end: last_line.end,
                         indent: last_line.indent,
                         data: line.data,
-                        ..Line::default()
+                        ..Line::new()
                     };
                     self.start_new_block(&header_as_line)?;
                     self.add_line_to_current_block(&header_as_line)?;

@@ -421,11 +421,21 @@ struct Row {
     downgrade: bool,
 }
 
-#[derive(Default)]
 pub(crate) struct Report {
     rows: Vec<Row>,
     kept: Vec<Box<[u8]>>,
     checked: usize,
+}
+
+impl Report {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            rows: Vec::new(),
+            kept: Vec::new(),
+            checked: 0,
+        }
+    }
 }
 
 fn plural(n: usize) -> &'static str {
@@ -484,7 +494,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
     if groups.is_empty() {
         return Report {
             checked,
-            ..Report::default()
+            ..Report::new()
         };
     }
 
@@ -802,7 +812,7 @@ pub fn dedupe_before_install(
             manager,
             &Report {
                 checked: manager.lockfile.packages.len(),
-                ..Report::default()
+                ..Report::new()
             },
         );
     }
@@ -814,23 +824,23 @@ fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Re
     let log = manager.log_mut();
     // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
     let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
-    let (source, json) =
-        match manager
-            .workspace_package_json_cache
-            .get_with_path(log, path, Default::default())
-        {
-            GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
-            GetJsonResult::ReadErr(err) | GetJsonResult::ParseErr(err) => {
-                if !quiet {
-                    print_log_errors(log);
-                    Output::err(err, "failed to read {s}", (BStr::new(path),));
-                }
-                Global::exit(1);
+    let (source, json) = match manager.workspace_package_json_cache.get_with_path(
+        log,
+        path,
+        super::GetJsonOptions::new(),
+    ) {
+        GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
+        GetJsonResult::ReadErr(err) | GetJsonResult::ParseErr(err) => {
+            if !quiet {
+                print_log_errors(log);
+                Output::err(err, "failed to read {s}", (BStr::new(path),));
             }
-        };
+            Global::exit(1);
+        }
+    };
 
-    let mut lockfile = Lockfile::default();
-    let mut root = Package::default();
+    let mut lockfile = Lockfile::new();
+    let mut root = Package::new();
     let mut resolver: () = ();
     if let Err(err) = root.parse_with_json(
         &mut lockfile,

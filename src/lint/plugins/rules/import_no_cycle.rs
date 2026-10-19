@@ -220,7 +220,7 @@ fn oxlint_finds_within(
         entries.dedup();
         entries.into_iter()
     };
-    let mut traversed = FxHashSet::default();
+    let mut traversed = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     let (mut stack, mut way) = (vec![entries_of(start)], Vec::new());
     while let Some(entries) = stack.last_mut() {
         let Some((specifier, module, is_followed)) = entries.next() else {
@@ -274,7 +274,7 @@ impl NoCycle {
             return;
         }
         let requests = requests_of(file, Flavor::Oxlint);
-        let mut seen = FxHashSet::default();
+        let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for request in &requests {
             if !seen.insert(request.specifier) || self.ignore_types && request.is_only_importing_types {
                 continue;
@@ -360,7 +360,7 @@ impl NoCycle {
         let has_components = has_export_map(&search.settings, file.path(), file.text())
             && requests_of(file, Flavor::EslintPluginImport).iter().any(imports_value);
         let uses_components = !self.disable_scc && self.ignore_types && has_components;
-        let mut traversed = FxHashSet::default();
+        let mut traversed = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for check in self.checks(file) {
             if search.ignores(check.specifier, check.is_require)
                 || self.allow_unsafe_dynamic_cyclic_dependency && check.is_dynamic

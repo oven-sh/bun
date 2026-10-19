@@ -47,7 +47,7 @@ fn options_of(line: &[u8], flavor: &[u8]) -> Option<FormatOptions> {
     // `bun fmt` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
     let mut options = FormatOptions {
         embedded_html: true,
-        ..FormatOptions::default()
+        ..FormatOptions::new()
     };
     options.set(b"flavor", flavor).ok()?;
     for option in strings::split(strings::trim(line, b"{} "), b", ") {
@@ -66,8 +66,7 @@ fn options_of(line: &[u8], flavor: &[u8]) -> Option<FormatOptions> {
 /// Prints `FAIL <judge> <input> <options>` for each output that is not the expected one, and how
 /// many are, as Prettier prints them and, in the flavor of oxfmt, as oxfmt prints them.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
-    let (mut as_prettier, mut as_oxfmt, mut other_options) =
-        (Count::default(), Count::default(), 0);
+    let (mut as_prettier, mut as_oxfmt, mut other_options) = (Count::new(), Count::new(), 0);
     let snapshots = bundle.paths().filter(|it| it.ends_with(b".prettier.snap"));
     for snapshot in snapshots
         .skip(flags.first % flags.every)

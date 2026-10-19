@@ -34,12 +34,24 @@ fn tokenToString_get(token: T) -> &'static [u8] {
     tokenToString[token]
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct JSXPragma {
     pub(crate) _jsx: js_ast::Span,
     pub(crate) _jsx_frag: js_ast::Span,
     pub(crate) _jsx_runtime: js_ast::Span,
     pub(crate) _jsx_import_source: js_ast::Span,
+}
+
+impl JSXPragma {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            _jsx: js_ast::Span::new(),
+            _jsx_frag: js_ast::Span::new(),
+            _jsx_runtime: js_ast::Span::new(),
+            _jsx_import_source: js_ast::Span::new(),
+        }
+    }
 }
 
 impl JSXPragma {
@@ -86,9 +98,8 @@ pub enum Error {
 bun_core::impl_tag_error!(Error);
 bun_core::oom_from_alloc!(Error);
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StringLiteralRawFormat {
-    #[default]
     Ascii,
     Utf16,
     NeedsDecode,
@@ -96,7 +107,7 @@ pub enum StringLiteralRawFormat {
 
 /// `packed struct(u8) { suffix_len: u2, needs_decode: bool, _padding: u5 = 0 }`
 #[repr(transparent)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct InnerStringLiteral(pub(crate) u8);
 impl InnerStringLiteral {
     #[inline]
@@ -427,7 +438,7 @@ impl<'a> Lexer<'a> {
         buf: &mut Vec<u16>,
     ) -> Result<(), Error> {
         let iterator = CodepointIterator::init(text);
-        let mut iter = strings::Cursor::default();
+        let mut iter = strings::Cursor::new();
         while iterator.next(&mut iter) {
             let width = iter.width;
             match iter.c {
@@ -1869,7 +1880,7 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     pub(crate) fn expected_string(&mut self, text: &[u8]) -> Result<(), Error> {
         if self.prev_token_was_await_keyword {
-            let mut notes: [bun_ast::Data; 1] = [bun_ast::Data::default()];
+            let mut notes: [bun_ast::Data; 1] = [bun_ast::Data::new()];
             if !self.fn_or_arrow_start_loc.is_empty() {
                 notes[0] = bun_ast::range_data(
                     Some(self.source),
@@ -2271,7 +2282,7 @@ impl<'a> Lexer<'a> {
             comments_to_preserve_before: Vec::new(),
             code_point: -1,
             identifier: b"",
-            jsx_pragma: JSXPragma::default(),
+            jsx_pragma: JSXPragma::new(),
             source_mapping_url: None,
             number: 0.0,
             rescan_close_brace_as_template_token: false,
@@ -2332,7 +2343,7 @@ impl<'a> Lexer<'a> {
                     let dup = self.arena.alloc_slice_copy(&tmp);
                     js_ast::E::String::init_utf16(dup)
                 } else {
-                    let result = self.arena.alloc_slice_fill_default::<u8>(tmp.len());
+                    let result = self.arena.alloc_slice_fill_copy::<u8>(tmp.len(), 0);
                     strings::copy_utf16_into_utf8(result, &tmp);
                     js_ast::E::String::init(result)
                 };
@@ -2784,7 +2795,7 @@ impl<'a> Lexer<'a> {
         let mut first_non_whitespace: Option<u32> = Some(0);
 
         let iterator = CodepointIterator::init(text);
-        let mut cursor = strings::Cursor::default();
+        let mut cursor = strings::Cursor::new();
 
         while iterator.next(&mut cursor) {
             match cursor.c {
@@ -2903,7 +2914,7 @@ impl<'a> Lexer<'a> {
         out: &mut Vec<u16>,
     ) -> Result<(), Error> {
         let iterator = CodepointIterator::init(text);
-        let mut cursor = strings::Cursor::default();
+        let mut cursor = strings::Cursor::new();
 
         while iterator.next(&mut cursor) {
             if cursor.c == 0x26 {
@@ -3085,7 +3096,7 @@ impl<'a> Lexer<'a> {
             // Integer literal;
             let mut is_first = true;
             let mut is_invalid_legacy_octal_literal = false;
-            let mut integer = bun_core::fmt::RadixInteger::default();
+            let mut integer = bun_core::fmt::RadixInteger::new();
             let bits_per_digit: u32 = if base == 2.0 {
                 1
             } else if base == 8.0 {
@@ -3174,7 +3185,7 @@ impl<'a> Lexer<'a> {
                 if underscore_count > 0 {
                     let bytes = self
                         .arena
-                        .alloc_slice_fill_default::<u8>(text.len() - underscore_count);
+                        .alloc_slice_fill_copy::<u8>(text.len() - underscore_count, 0);
                     let mut i: usize = 0;
                     for &char in text {
                         if char != b'_' {
@@ -3303,7 +3314,7 @@ impl<'a> Lexer<'a> {
                 let mut i: usize = 0;
                 let bytes = self
                     .arena
-                    .alloc_slice_fill_default::<u8>(text.len() - underscore_count);
+                    .alloc_slice_fill_copy::<u8>(text.len() - underscore_count, 0);
                 for &char in text {
                     if char != b'_' {
                         bytes[i] = char;
@@ -3379,7 +3390,7 @@ pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
     }
 
     let iter = CodepointIterator::init(&contents[loc.to_usize()..]);
-    let mut cursor = strings::Cursor::default();
+    let mut cursor = strings::Cursor::new();
 
     let mut r = Range { loc, len: 0 };
     if iter.bytes.is_empty() {
@@ -3527,7 +3538,7 @@ impl PragmaArg {
         let mut text = &text_[pragma.len()..];
         let mut iter = CodepointIterator::init(text);
 
-        let mut cursor = strings::Cursor::default();
+        let mut cursor = strings::Cursor::new();
         if !iter.next(&mut cursor) {
             return None;
         }
@@ -3544,7 +3555,7 @@ impl PragmaArg {
         }
         let start: u32 = cursor.i;
         text = &text[cursor.i as usize..];
-        cursor = strings::Cursor::default();
+        cursor = strings::Cursor::new();
         iter = CodepointIterator::init(text);
         let _ = iter.next(&mut cursor);
 

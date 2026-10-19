@@ -51,14 +51,14 @@ impl Host for Tester<'_> {
                 _ => None,
             },
             threads: 1,
-            ..Options::default()
+            ..Options::new()
         };
         let environment = Environment {
             cwd: directory.to_vec(),
             ..*self.environment
         };
         let names = Session::new();
-        let (store, timing, pool) = (Store::new(directory), Timing::default(), Pool::new(1));
+        let (store, timing, pool) = (Store::new(directory), Timing::new(), Pool::new(1));
         let modules = Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
             let of_the_run = (&self.linter, &environment, &self.js_plugins);
@@ -91,14 +91,14 @@ impl Host for Tester<'_> {
             handed_back: &bun_threading::Guarded::new(Vec::new()),
             unread: &bun_threading::Guarded::new(Vec::new()),
             needs_eslint: &bun_threading::Guarded::new(Vec::new()),
-            invalid_tsconfigs: &bun_threading::Guarded::new(Default::default()),
+            invalid_tsconfigs: &bun_threading::Guarded::new(crate::typed::InvalidTsconfigs::new()),
         };
         let config = Arc::new(case.config.clone());
         match case.place {
             Place::Nowhere => Some(match Framework::of(case.path) {
                 _ if let Some(dialect) = &config.dialect => {
                     let of_the_file = (&*config, dialect);
-                    let fixes = Fixes::default();
+                    let fixes = Fixes::IfRead;
                     let linted =
                         context.verify_in_language(case.path, None, case.code, of_the_file, fixes);
                     linted.messages

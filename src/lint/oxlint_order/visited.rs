@@ -179,7 +179,7 @@ static KNOWN: LazyLock<Known> = LazyLock::new(|| {
     ] {
         stmts[tag as usize] = kind(name);
     }
-    let mut declarations = Kinds::default();
+    let mut declarations = Kinds::new();
     for name in [
         "VariableDeclaration",
         "VariableDeclarator",
@@ -188,7 +188,7 @@ static KNOWN: LazyLock<Known> = LazyLock::new(|| {
     ] {
         declarations.insert(kind(name));
     }
-    let mut leaves = Kinds::default();
+    let mut leaves = Kinds::new();
     for name in [
         "IdentifierReference",
         "BindingIdentifier",
@@ -209,7 +209,7 @@ static KNOWN: LazyLock<Known> = LazyLock::new(|| {
     ] {
         leaves.insert(kind(name));
     }
-    let mut parts = Kinds::default();
+    let mut parts = Kinds::new();
     for name in [
         "FunctionBody",
         "ClassBody",
@@ -548,7 +548,7 @@ impl<'a> Places<'a> {
             has_no_jsx: file.hir.jsx.is_empty(),
             last: Node::File(file),
             last_start: 0,
-            far: FxHashMap::default(),
+            far: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 
@@ -716,7 +716,7 @@ impl<'a> Places<'a> {
             .or_else(|| known.one_of(parent, kinds, &around))
             .or_else(|| value(parent))
             .or_else(|| {
-                let far = self.far.entry(rule).or_default();
+                let far = self.far.entry(rule).or_insert_with(AncestorMemo::new);
                 far.find_with(parent, estree_parent, |child, node| {
                     known.one_of(node, kinds, &|it| it.contains(estree_span(child)))
                 })

@@ -76,7 +76,7 @@ fn get_candidate_package_patterns<'a>(
 
             // Note: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_ast::to_source`
             // (T1 cannot name T2 — see src/sys/File.rs:446).
-            let json_source = match bun_ast::to_source(json_path, Default::default()) {
+            let json_source = match bun_ast::to_source(json_path, bun_ast::ToSourceOptions::new()) {
                 Err(err) => match err.get_errno() {
                     bun_sys::Errno::ENOENT | bun_sys::Errno::EACCES | bun_sys::Errno::EPERM => {
                         break 'body;
@@ -169,7 +169,7 @@ pub(crate) fn select_packages(
     };
 
     let mut glob_patterns: Vec<Box<[u8]>> = Vec::new();
-    let mut negated = NegatedWorkspaces::default();
+    let mut negated = NegatedWorkspaces::new();
     let mut root_buf = bun_paths::path_buffer_pool::get();
     let root_dir: Box<[u8]> = get_candidate_package_patterns(
         // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded and no other `&mut Log` is live.

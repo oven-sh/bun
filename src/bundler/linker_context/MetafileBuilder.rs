@@ -50,7 +50,7 @@ use crate::{Chunk, Index, LinkerContext};
 
 #[inline]
 fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
-    bfmt::size(bytes as usize, Default::default())
+    bfmt::size(bytes as usize, bun_core::fmt::SizeFormatterOptions::new())
 }
 
 /// Generates the JSON fragment for a single output chunk.
@@ -202,7 +202,7 @@ fn generate_chunk_json(
 /// The caller is responsible for freeing the returned slice.
 pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
-    let mut j = StringJoiner::default();
+    let mut j = StringJoiner::new();
     // errdefer j.deinit() — handled by Drop
 
     j.push_static(b"{\n  \"inputs\": {");
@@ -236,7 +236,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
 
     // A split `import()` / `require()` record names its target's chunk
     // (`compute_cross_chunk_dependencies`); "entryPoint" adds the input.
-    let mut entry_of_chunk: StringHashMap<u32> = StringHashMap::default();
+    let mut entry_of_chunk: StringHashMap<u32> = StringHashMap::init();
     for chunk in chunks.iter() {
         if chunk.entry_point.is_entry_point() && !chunk.unique_key.is_empty() {
             entry_of_chunk.put(chunk.unique_key, chunk.entry_point.source_index())?;
@@ -281,7 +281,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
             write!(
                 buf,
                 "{}",
-                bfmt::format_json_string_utf8(path, Default::default())
+                bfmt::format_json_string_utf8(path, bun_core::fmt::JSONFormatterUTF8Options::new())
             )?;
             j.push_owned(buf.into_boxed_slice());
         }
@@ -329,7 +329,10 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                     write!(
                         buf,
                         "{}",
-                        bfmt::format_json_string_utf8(import_path, Default::default())
+                        bfmt::format_json_string_utf8(
+                            import_path,
+                            bun_core::fmt::JSONFormatterUTF8Options::new()
+                        )
                     )?;
                     j.push_owned(buf.into_boxed_slice());
                 }
@@ -344,7 +347,10 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                     write!(
                         buf,
                         "{}",
-                        bfmt::format_json_string_utf8(record.original_path, Default::default())
+                        bfmt::format_json_string_utf8(
+                            record.original_path,
+                            bun_core::fmt::JSONFormatterUTF8Options::new()
+                        )
                     )?;
                     j.push_owned(buf.into_boxed_slice());
                 }
@@ -475,7 +481,7 @@ fn write_json_string(writer: &mut impl Write, str: &[u8]) -> std::io::Result<()>
     write!(
         writer,
         "{}",
-        bfmt::format_json_string_utf8(str, Default::default())
+        bfmt::format_json_string_utf8(str, bun_core::fmt::JSONFormatterUTF8Options::new())
     )
 }
 
@@ -500,9 +506,17 @@ enum JsonValue {
     Object(JsonObject),
 }
 
-#[derive(Default)]
 struct JsonObject {
     entries: Vec<(Box<[u8]>, JsonValue)>,
+}
+
+impl JsonObject {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
 }
 
 impl JsonObject {
@@ -597,7 +611,7 @@ impl<'a> JsonParser<'a> {
 
     fn parse_object(&mut self) -> Result<JsonValue, ()> {
         self.expect(b'{')?;
-        let mut obj = JsonObject::default();
+        let mut obj = JsonObject::new();
         self.skip_ws();
         if self.peek() == Some(b'}') {
             self.pos += 1;
@@ -840,7 +854,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
 
     // Build a map of module path -> bytesInOutput (bytes contributed to output)
     // This aggregates from all outputs since a module may appear in multiple chunks
-    let mut bytes_in_output: StringHashMap<u64> = StringHashMap::default();
+    let mut bytes_in_output: StringHashMap<u64> = StringHashMap::init();
 
     // First pass through outputs to collect bytesInOutput for each module
     for (_, out_value) in outputs_obj.iter() {
@@ -855,7 +869,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                         if let Some(bio) = mi_obj.get(b"bytesInOutput") {
                             if let JsonValue::Integer(bio_int) = bio {
                                 let bytes_val: u64 = u64::try_from(*bio_int).expect("int cast");
-                                let gop = bytes_in_output.get_or_put(module_path)?;
+                                let gop = bytes_in_output.get_or_put(module_path, || 0)?;
                                 if gop.found_existing {
                                     *gop.value_ptr += bytes_val;
                                 } else {
@@ -873,7 +887,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     // Also collect input file data for sorting
     let mut input_files: Vec<InputFileInfo> = Vec::new();
 
-    let mut imported_by: StringHashMap<Vec<&[u8]>> = StringHashMap::default();
+    let mut imported_by: StringHashMap<Vec<&[u8]>> = StringHashMap::init();
 
     // Second pass: collect all input file info and build reverse dependency map
     for (path, input) in inputs_obj.iter() {
@@ -967,7 +981,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                                 }
 
                                 if let Some(key) = matched_key {
-                                    let gop = imported_by.get_or_put(key)?;
+                                    let gop = imported_by.get_or_put(key, Vec::new)?;
                                     if !gop.found_existing {
                                         *gop.value_ptr = Vec::new();
                                     }

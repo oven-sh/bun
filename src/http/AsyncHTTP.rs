@@ -166,7 +166,7 @@ fn make_client<'a>(
         header_entries,
         header_buf,
         url,
-        connected_url: URL::default(),
+        connected_url: URL::new(),
         verbose: HTTPVerboseLevel::None,
         // Note: DEFAULT_REDIRECT_COUNT (= 127) is crate-private in lib.rs;
         // duplicated as a literal here.
@@ -177,9 +177,9 @@ fn make_client<'a>(
         redirect: Vec::new(),
         prev_redirect: Vec::new(),
         progress_node: None,
-        flags: Flags::default(),
+        flags: Flags::new(),
         idle_timeout_seconds: None,
-        state: InternalState::default(),
+        state: InternalState::new(),
         tls_props: None,
         custom_ssl_ctx: None,
         result_callback: noop_callback(),
@@ -200,7 +200,7 @@ fn make_client<'a>(
         compress: None,
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
-        pool: crate::PoolOptions::default(),
+        pool: crate::PoolOptions::new(),
     }
 }
 
@@ -244,7 +244,6 @@ pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
 // Options
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct Options<'a> {
     pub http_proxy: Option<URL<'a>>,
     pub proxy_settings: Option<Box<crate::ProxySettings>>,
@@ -264,6 +263,30 @@ pub struct Options<'a> {
     pub compress: Option<crate::compress_body::CompressOption>,
     pub pool: crate::PoolOptions,
     pub bypass_pool: bool,
+}
+
+impl<'a> Options<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            http_proxy: None,
+            proxy_settings: None,
+            proxy_headers: None,
+            signals: None,
+            unix_socket_path: None,
+            disable_timeout: None,
+            idle_timeout_seconds: None,
+            verbose: None,
+            disable_keepalive: None,
+            disable_decompression: None,
+            max_redirects: None,
+            reject_unauthorized: None,
+            tls_props: None,
+            compress: None,
+            pool: crate::PoolOptions::new(),
+            bypass_pool: false,
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -375,7 +398,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
     // fields) if `fetch.preconnect()` is the process's first HTTP operation.
     // `init` is idempotent (`Once`) and every other JS-side entry point
     // (`send_sync`, `FetchTasklet::start`, S3) passes default opts too.
-    crate::http_thread::init(&Default::default());
+    crate::http_thread::init(&crate::http_thread::InitOpts::new());
 
     let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
         async_http: None,
@@ -391,12 +414,12 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
         let async_http = (*this).async_http.insert(AsyncHTTP::init(
             Method::GET,
             url,
-            headers::EntryList::default(),
+            headers::EntryList::new(),
             b"",
             b"",
             HTTPClientResultCallback::new::<Preconnect>(this, Preconnect::on_result),
             FetchRedirect::Manual,
-            Options::default(),
+            Options::new(),
         ));
         async_http.client.flags.is_preconnect_only = true;
 
@@ -430,7 +453,7 @@ impl<'a> AsyncHTTP<'a> {
             0
         };
 
-        let signals = options.signals.unwrap_or_default();
+        let signals = options.signals.unwrap_or_else(Signals::new);
 
         let client = make_client(
             method,
@@ -455,7 +478,7 @@ impl<'a> AsyncHTTP<'a> {
             real: None,
             next: bun_threading::Link::new(),
             task: thread_pool::Task {
-                node: thread_pool::Node::default(),
+                node: thread_pool::Node::new(),
                 callback: start_async_http,
             },
             result_callback: callback,
@@ -534,7 +557,7 @@ impl<'a> AsyncHTTP<'a> {
             Options {
                 http_proxy,
                 proxy_settings,
-                ..Options::default()
+                ..Options::new()
             },
         )
     }
@@ -635,7 +658,7 @@ impl<'a> AsyncHTTP<'a> {
             return Err(crate::Error::UnsupportedProtocol);
         }
 
-        crate::http_thread::init(&Default::default());
+        crate::http_thread::init(&crate::http_thread::InitOpts::new());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
         // allocate via `heap::alloc` and reclaim once
@@ -646,7 +669,7 @@ impl<'a> AsyncHTTP<'a> {
         self.result_callback =
             HTTPClientResultCallback::new::<SingleHTTPChannel>(ctx.as_ptr(), send_sync_callback);
 
-        let mut batch = Batch::default();
+        let mut batch = Batch::new();
         self.schedule(&mut batch);
         crate::HTTPThread::schedule(batch);
 
@@ -755,7 +778,7 @@ impl<'a> AsyncHTTP<'a> {
                     let original_client = &(*this).real.expect("unreachable").as_ref().client;
                     let client = &mut (*this).client;
                     client.url = original_url;
-                    client.connected_url = URL::default();
+                    client.connected_url = URL::new();
                     client.method = original_method;
                     // Each redirect also decrements the redirect count and picks a proxy for the
                     // new URL, so restore both from the original.
@@ -772,7 +795,7 @@ impl<'a> AsyncHTTP<'a> {
                     // `state` was `Default` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it
                     // owns the decompressor / compressed_body buffers.
-                    drop(core::mem::take(&mut client.state));
+                    drop(core::mem::replace(&mut client.state, InternalState::new()));
                 }
                 let elapsed = (*this).elapsed;
                 bun_core::scoped_log!(AsyncHTTP, "onAsyncHTTPCallback: {:?}", elapsed);

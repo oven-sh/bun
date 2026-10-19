@@ -227,11 +227,11 @@ pub(crate) struct Response {
     abort_listener: JsCell<Option<Box<BodyAbortListener>>>,
 }
 
-impl Default for Response {
-    fn default() -> Self {
+impl Response {
+    pub(crate) fn new() -> Self {
         Self {
-            body: JsCell::new(Body::default()),
-            init: JsCell::new(Init::default()),
+            body: JsCell::new(Body::init()),
+            init: JsCell::new(Init::new()),
             url: JsCell::new(BunString::EMPTY),
             redirected: Cell::new(false),
             ref_count: Cell::new(1),
@@ -317,7 +317,7 @@ impl Response {
             body: JsCell::new(body),
             url: JsCell::new(url),
             redirected: Cell::new(redirected),
-            ..Default::default()
+            ..Response::new()
         }
     }
 
@@ -646,7 +646,7 @@ impl Response {
             Some(len) => writeln!(
                 writer,
                 "Response ({}) {{",
-                bun_core::fmt::size(len, Default::default())
+                bun_core::fmt::size(len, bun_core::fmt::SizeFormatterOptions::new())
             )?,
             None => writeln!(writer, "Response {{")?,
         }
@@ -797,7 +797,7 @@ impl Response {
             init: JsCell::new(init),
             url: JsCell::new(self.url.get().clone()),
             redirected: Cell::new(self.redirected.get()),
-            ..Default::default()
+            ..Response::new()
         })
     }
 
@@ -820,7 +820,7 @@ impl Response {
             //   would leak refcounted payloads (WTFStringImpl, Blob store).
             // - `url` — assignment drops the old value (WTF deref).
             // - `JsRef` — assignment drops the `Strong` arm (block slot released).
-            (*this).init.set(Init::default());
+            (*this).init.set(Init::new());
             (*this).body.get_mut().reset();
             (*this).url.set(BunString::EMPTY);
             (*this).js_ref.set(JsRef::empty());
@@ -862,13 +862,13 @@ impl Response {
                 body: JsCell::new(Body::new(BodyValue::Empty)),
                 init: JsCell::new(Init {
                     status_code: 200,
-                    ..Default::default()
+                    ..Init::new()
                 }),
-                ..Default::default()
+                ..Response::new()
             },
             |r| r.body.get().reset(),
         );
-        let json_value = args.next_eat().unwrap_or_default();
+        let json_value = args.next_eat().unwrap_or_else(JSValue::new);
 
         if !json_value.is_empty() {
             // Validate top-level values that are not JSON serializable (Node.js compatibility)
@@ -971,13 +971,13 @@ impl Response {
             let response = Response {
                 init: JsCell::new(Init {
                     status_code: 302,
-                    ..Default::default()
+                    ..Init::new()
                 }),
                 body: JsCell::new(Body::new(BodyValue::Null)),
-                ..Default::default()
+                ..Response::new()
             };
 
-            let url_string_value = args.next_eat().unwrap_or_default();
+            let url_string_value = args.next_eat().unwrap_or_else(JSValue::new);
             url_string = if url_string_value.is_empty() {
                 BunString::EMPTY
             } else {
@@ -1027,10 +1027,10 @@ impl Response {
         let response = bun_core::heap::into_raw(Box::new(Response {
             init: JsCell::new(Init {
                 status_code: 0,
-                ..Default::default()
+                ..Init::new()
             }),
             body: JsCell::new(Body::new(BodyValue::Null)),
-            ..Default::default()
+            ..Response::new()
         }));
 
         // SAFETY: `response` is freshly boxed and uniquely owned here.
@@ -1063,11 +1063,11 @@ impl Response {
                     let response = Response {
                         init: JsCell::new(Init {
                             status_code: 302,
-                            ..Default::default()
+                            ..Init::new()
                         }),
                         body: JsCell::new(Body::new(BodyValue::Null)),
                         js_ref: JsCell::new(JsRef::init_weak(js_this)),
-                        ..Default::default()
+                        ..Response::new()
                     };
 
                     let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
@@ -1114,7 +1114,7 @@ impl Response {
                 break 'brk Init {
                     status_code: 200,
                     headers: None,
-                    ..Default::default()
+                    ..Init::new()
                 };
             }
             if arguments[1].is_object() {
@@ -1166,7 +1166,7 @@ impl Response {
             body: JsCell::new(body),
             init: JsCell::new(init),
             js_ref: JsCell::new(JsRef::init_weak(js_this)),
-            ..Default::default()
+            ..Response::new()
         }));
         // SAFETY: `response` is freshly boxed and uniquely owned by this fn
         // until returned; reborrow for the trailing (infallible) setup.
@@ -1189,8 +1189,8 @@ pub(crate) struct Init {
     pub method: Method,
 }
 
-impl Default for Init {
-    fn default() -> Self {
+impl Init {
+    pub(crate) fn new() -> Self {
         Self {
             headers: None,
             status_code: 0,
@@ -1223,7 +1223,7 @@ impl Init {
     ) -> JsResult<Option<Init>> {
         let mut result = Init {
             status_code: 200,
-            ..Default::default()
+            ..Init::new()
         };
 
         if !response_init.is_cell() {

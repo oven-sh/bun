@@ -155,7 +155,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let in_html = |root: HtmlRoot| InHtml {
             root,
             is_in_attribute: true,
-            ..InHtml::default()
+            ..InHtml::new()
         };
         let expression = in_html(HtmlRoot::JsExpression);
         if name == b"v-for" {

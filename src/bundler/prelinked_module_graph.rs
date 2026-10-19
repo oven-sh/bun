@@ -137,7 +137,8 @@ pub(crate) fn build(
     string_table: &crate::bundle_v2::dispatch::EncoderStringTableHandle,
 ) -> Option<Vec<u8>> {
     let slot_for = |s: &[u8]| string_table.slot(s);
-    let mut path_to_module: bun_collections::HashMap<Vec<u8>, u32> = Default::default();
+    let mut path_to_module: bun_collections::HashMap<Vec<u8>, u32> =
+        bun_collections::HashMap::init();
     for (index, module) in modules.iter().enumerate() {
         path_to_module.insert(module.path.to_vec(), index as u32);
     }
@@ -164,8 +165,8 @@ pub(crate) fn build(
     let mut resolver = Resolver {
         graph: &graph,
         default_sid,
-        memo: Default::default(),
-        in_progress: Default::default(),
+        memo: bun_collections::HashMap::init(),
+        in_progress: bun_collections::HashMap::init(),
     };
     let mut resolutions: Vec<(Vec<Resolution>, Vec<Resolution>)> = Vec::with_capacity(graph.len());
     for (index, module) in graph.iter().enumerate() {
@@ -297,7 +298,8 @@ fn parse_module(
     // Requested modules, in the record's order. An entry references its request by (specifier, type), as
     // hostResolveImportedModule would look it up.
     let mut requests: Vec<Request> = Vec::with_capacity(info.requested_modules_keys.len());
-    let mut request_index: bun_collections::HashMap<(u32, u8), u32> = Default::default();
+    let mut request_index: bun_collections::HashMap<(u32, u8), u32> =
+        bun_collections::HashMap::init();
     let mut all_in_graph = true;
     for ((&specifier, &value), &phase) in info
         .requested_modules_keys
@@ -421,7 +423,7 @@ fn parse_module(
         flags |= module_flags::HAS_STAR_EXPORTS;
     }
     // First declaration wins, as in AbstractModuleRecord::addExportEntry.
-    let mut export_by_name: bun_collections::HashMap<u32, u32> = Default::default();
+    let mut export_by_name: bun_collections::HashMap<u32, u32> = bun_collections::HashMap::init();
     for (index, export) in exports.iter().enumerate() {
         export_by_name
             .entry(export.name)

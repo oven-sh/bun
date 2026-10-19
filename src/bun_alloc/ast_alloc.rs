@@ -309,7 +309,7 @@ impl Drop for ScopedAstAlloc {
 ///
 /// Use as `Vec<T, AstAlloc>` (see [`AstVec`]). The ZST means the `Vec` stays
 /// 24 bytes — same size as `Vec<T>` — so AST node layouts are unchanged.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct AstAlloc;
 
 impl crate::Stateless for AstAlloc {

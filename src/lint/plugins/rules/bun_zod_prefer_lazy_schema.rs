@@ -86,7 +86,7 @@ impl Rule for ZodPreferLazySchema {
         let mut names = self.roots.iter().chain(self.methods.iter());
         let may_build_one =
             self.factory_suffix.is_some() || names.any(|it| file.mentions_bit(mention_bit(it)));
-        may_build_one.then(|| (0, RunsLater::default()))
+        may_build_one.then(|| (0, RunsLater::new()))
     }
 
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {

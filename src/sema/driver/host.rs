@@ -111,7 +111,6 @@ impl Entry {
 }
 
 /// The entries of a directory.
-#[derive(Default)]
 struct Listing {
     /// The names, one after the other.
     names: Box<[u8]>,
@@ -119,11 +118,30 @@ struct Listing {
     entries: Box<[Entry]>,
 }
 
+impl Listing {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            names: Box::new([]),
+            entries: Box::new([]),
+        }
+    }
+}
+
 /// A [`Listing`] that is being made.
-#[derive(Default)]
 struct Entries {
     names: Vec<u8>,
     entries: Vec<Entry>,
+}
+
+impl Entries {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            names: Vec::new(),
+            entries: Vec::new(),
+        }
+    }
 }
 
 /// What a [`Listing`] has under a name.
@@ -295,7 +313,6 @@ pub type BeforeRead = Box<dyn Fn(&[u8]) + Send + Sync>;
 pub type ScriptsOfPage = Box<dyn Fn(&[u8]) -> Vec<Vec<u8>> + Send + Sync>;
 
 /// What the caller of a check has for its host.
-#[derive(Default)]
 pub struct Provided {
     pub already_read: AlreadyRead,
     pub before_read: Option<BeforeRead>,
@@ -305,13 +322,34 @@ pub struct Provided {
     pub keeps_byte_order_marks: bool,
 }
 
+impl Provided {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            already_read: AlreadyRead::with_hasher(bun_sema::util::FxBuild),
+            before_read: None,
+            scripts_of_page: None,
+            keeps_byte_order_marks: false,
+        }
+    }
+}
+
 /// The names in one directory of the files of `AlreadyRead` and of the directories that lead to
 /// them. Such a file need not be on the disk (`files` of `Bun.build`), and it is found, listed and
 /// resolved to like one that is.
-#[derive(Default)]
 struct InMemory {
     files: Vec<Vec<u8>>,
     directories: Vec<Vec<u8>>,
+}
+
+impl InMemory {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            files: Vec::new(),
+            directories: Vec::new(),
+        }
+    }
 }
 
 impl InMemory {
@@ -319,12 +357,13 @@ impl InMemory {
         already_read: &AlreadyRead,
         is_case_sensitive: bool,
     ) -> FxHashMap<Vec<u8>, InMemory> {
-        let mut by_directory: FxHashMap<Vec<u8>, InMemory> = FxHashMap::default();
+        let mut by_directory: FxHashMap<Vec<u8>, InMemory> =
+            FxHashMap::with_hasher(bun_sema::util::FxBuild);
         for path in already_read.keys() {
             let Split { mut parent, name } = split(path);
             let key = to_path(parent, is_case_sensitive).into_owned();
             let mut is_new = !by_directory.contains_key(&key);
-            let names = by_directory.entry(key).or_default();
+            let names = by_directory.entry(key).or_insert_with(InMemory::new);
             names.files.push(name.to_vec());
             // A directory is entered in its parent when it gets its first entry.
             while is_new {
@@ -334,7 +373,7 @@ impl InMemory {
                 }
                 let key = to_path(directory.parent, is_case_sensitive).into_owned();
                 is_new = !by_directory.contains_key(&key);
-                let names = by_directory.entry(key).or_default();
+                let names = by_directory.entry(key).or_insert_with(InMemory::new);
                 names.directories.push(directory.name.to_vec());
                 parent = directory.parent;
             }
@@ -344,13 +383,23 @@ impl InMemory {
 }
 
 /// Reusable state for reading files. Owned by the [`Disk`], so every directory handle is closed when it is dropped.
-#[derive(Default)]
 struct Reader {
     /// The directory of the most recently read file.
     directory: Vec<u8>,
     /// Opened when a second file is read from `directory`.
     handle: Option<bun_sys::Dir>,
     buffer: Vec<u8>,
+}
+
+impl Reader {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            directory: Vec::new(),
+            handle: None,
+            buffer: Vec::new(),
+        }
+    }
 }
 
 /// The maximum number of idle readers, and so of open directories, that are retained.
@@ -485,16 +534,20 @@ impl Disk {
                     .collect(),
             },
             keeps_byte_order_marks: false,
-            extended_configs: Default::default(),
-            paths: Default::default(),
-            caches: Default::default(),
+            extended_configs: bun_threading::guarded::GuardedBy::init(
+                bun_sema::util::FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            ),
+            paths: bun_threading::guarded::GuardedBy::init(bun_sema::util::FxHashSet::with_hasher(
+                bun_sema::util::FxBuild,
+            )),
+            caches: super::ThreadCaches::new(),
             is_of_a_thread_of_the_pool: !bun_threading::thread_pool::Thread::current().is_null(),
             case_sensitive,
-            directories: ShardedMap::default(),
+            directories: ShardedMap::new(),
             working_directory: Vec::new(),
-            real_directories: ShardedMap::default(),
+            real_directories: ShardedMap::new(),
             reading: cfg!(target_os = "macos").then(|| {
-                let places = bun_threading::Semaphore::default();
+                let places = bun_threading::Semaphore::init();
                 for _ in 0..READERS {
                     places.post();
                 }
@@ -505,7 +558,7 @@ impl Disk {
                 .then(|| bun_threading::io_thread_pool::acquire().into()),
             idle_readers: bun_threading::Guarded::new(Vec::new()),
             unreadable: bun_threading::Guarded::new(Vec::new()),
-            times: Default::default(),
+            times: core::array::from_fn(|_| core::sync::atomic::AtomicU64::new(0)),
             bundled_libs: None,
             script_kinds: Vec::new(),
             script_kinds_by_extension: Vec::new(),
@@ -529,7 +582,7 @@ impl Disk {
         match idle.iter().position(|r| r.directory == directory) {
             Some(i) => idle.remove(i),
             None if idle.len() >= MAX_IDLE_READERS => idle.remove(0),
-            None => Reader::default(),
+            None => Reader::new(),
         }
     }
 
@@ -600,7 +653,7 @@ impl Disk {
         match (list(path), self.added_to(path)) {
             (read, None) | (read @ Directory::Unreadable, _) => read,
             (Directory::Listed(listing), Some(more)) => Directory::Listed(listing.with(more)),
-            (Directory::Missing, Some(more)) => Directory::Listed(Listing::default().with(more)),
+            (Directory::Missing, Some(more)) => Directory::Listed(Listing::new().with(more)),
         }
     }
 
@@ -786,7 +839,7 @@ fn list(path: &[u8]) -> Directory {
         }
         Err(_) => return Directory::Unreadable,
     };
-    let mut listing = Entries::default();
+    let mut listing = Entries::new();
     let mut entries = bun_sys::iterate_dir(directory.fd());
     while let Ok(Some(entry)) = entries.next() {
         let name = entry.name.slice_u8();
@@ -1059,13 +1112,24 @@ fn unmarshal_map(
 }
 
 /// `packagejson.Expected[T]`
-#[derive(Default)]
 struct Expected {
     /// A value of `actualJSONType` that is no `T`.
     actual: Option<Json>,
     null: bool,
     valid: bool,
     value: Option<Json>,
+}
+
+impl Expected {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            actual: None,
+            null: false,
+            valid: false,
+            value: None,
+        }
+    }
 }
 
 impl Expected {
@@ -1076,7 +1140,7 @@ impl Expected {
                 *self = Expected {
                     actual: Some(Json::Null),
                     null: true,
-                    ..Default::default()
+                    ..Expected::new()
                 };
                 return;
             }
@@ -1177,7 +1241,7 @@ fn unmarshal_fields(object: &ObjectJSON, has_duplicates: bool) -> Option<Json> {
         };
         let known = has_duplicates.then(|| expected.iter().position(|it| it.0 == name));
         let at = known.flatten().unwrap_or_else(|| {
-            expected.push((name, Expected::default()));
+            expected.push((name, Expected::new()));
             expected.len() - 1
         });
         expected[at].1.unmarshal_json(data, is_map, has_duplicates);
@@ -1387,7 +1451,7 @@ impl Host for Disk {
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         self.read(path).unwrap_or_else(|| {
             self.unreadable.lock().push(path.to_vec());
-            Cow::default()
+            Cow::Owned(Vec::new())
         })
     }
     fn take_unreadable(&self) -> Vec<Vec<u8>> {

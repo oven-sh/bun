@@ -223,7 +223,7 @@ fn claim_hidden_hoist(
     Ok(manager.options.hoist
         && (manager.options.hoist_pattern.as_ref())
             .is_none_or(|hoist_pattern| hoist_pattern.is_match(dep_name))
-        && !hidden_hoisted.get_or_put(dep_name)?.found_existing)
+        && !hidden_hoisted.get_or_put(dep_name, || ())?.found_existing)
 }
 
 /// Every `(peer edge, package)` pair the isolated store wires, one per peer context of the owner.
@@ -286,7 +286,7 @@ fn peers_served_in(
     let pkg_dependencies = lockfile.packages.items_dependencies();
 
     let mut served: Vec<(DependencyID, PackageID)> = Vec::new();
-    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
+    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::init();
     for node in (0..nodes.len()).filter(|&node| only.is_none_or(|only| only.is_set(node))) {
         let wired = &node_dependencies[node];
         let deps = pkg_dependencies[node_pkg_ids[node] as usize];
@@ -534,9 +534,9 @@ fn build_store(
 
     let (contained, nested_folders) = contained_folders(lockfile)?;
     let is_contained_folder = |dep_id: DependencyID| contained.is_set(dep_id as usize);
-    let mut linked = lockfile::reachable::Linked::default();
+    let mut linked = lockfile::reachable::Linked::new();
 
-    let mut nodes: store::node::List = store::node::List::default();
+    let mut nodes: store::node::List = store::node::List::new();
 
     // DFS so a deduplicated node's full subtree (and therefore its `peers`)
     // is finalized before any later sibling encounters it.
@@ -562,7 +562,7 @@ fn build_store(
     // The universe of distinct peer-dependency names is small even in large
     // lockfiles, so each per-package set is a bitset over that universe and the
     // fixpoint is bitwise OR/ANDNOT on a contiguous buffer.
-    let mut peer_name_idx: ArrayHashMap<PackageNameHash, ()> = ArrayHashMap::default();
+    let mut peer_name_idx: ArrayHashMap<PackageNameHash, ()> = ArrayHashMap::new();
     for dep in dependencies {
         if dep.behavior.is_peer() {
             peer_name_idx.put(dep.name_hash, ())?;
@@ -666,7 +666,7 @@ fn build_store(
     // Two would-be nodes with the same (pkg_id, ctx_hash) will end up with the
     // same `peers` set and therefore become the same entry in the second pass.
     // ctx_hash is 0 when the package has no leaking peers (or is a workspace).
-    let mut early_dedupe: HashMap<EarlyDedupeKey, store::node::Id> = HashMap::default();
+    let mut early_dedupe: HashMap<EarlyDedupeKey, store::node::Id> = HashMap::init();
 
     let mut root_declares_workspace = DynamicBitSet::init_empty(lockfile.packages.len())?;
     for dep_idx in pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end() {
@@ -713,7 +713,7 @@ fn build_store(
 
     let mut peer_dep_ids: Vec<DependencyID> = Vec::new();
 
-    let mut first_named = FirstNamed::default();
+    let mut first_named = FirstNamed::init();
 
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
 
@@ -859,10 +859,13 @@ fn build_store(
                         }
                     };
 
-                let dedupe_entry = early_dedupe.get_or_put(EarlyDedupeKey {
-                    pkg_id: entry.pkg_id,
-                    ctx_hash,
-                })?;
+                let dedupe_entry = early_dedupe.get_or_put(
+                    EarlyDedupeKey {
+                        pkg_id: entry.pkg_id,
+                        ctx_hash,
+                    },
+                    crate::isolated_install::store::NewId::new,
+                )?;
                 if dedupe_entry.found_existing {
                     let dedupe_node_id = *dedupe_entry.value_ptr;
 
@@ -944,7 +947,7 @@ fn build_store(
             } else {
                 Vec::with_capacity(pkg_deps.len as usize)
             },
-            ..Default::default()
+            ..StoreNode::new()
         })?;
 
         let mut nodes_slice = nodes.slice();
@@ -1217,7 +1220,7 @@ fn build_store(
         for (i, ids) in list.iter().enumerate().filter(|_| list.len() > SHORT_LIST) {
             let name_hash = dependencies[ids.dep_id as usize].name_hash;
             if peer_name_idx.contains(&name_hash) {
-                let first = first_named.get_or_put((node_id, name_hash))?;
+                let first = first_named.get_or_put((node_id, name_hash), || 0)?;
                 if !first.found_existing {
                     *first.value_ptr = i;
                 }
@@ -1238,7 +1241,7 @@ fn build_store(
         );
     }
 
-    let mut dedupe: HashMap<PackageID, Vec<DedupeInfo>> = HashMap::default();
+    let mut dedupe: HashMap<PackageID, Vec<DedupeInfo>> = HashMap::init();
 
     let mut res_fmt_buf: Vec<u8> = Vec::new();
 
@@ -1248,7 +1251,7 @@ fn build_store(
     let node_peers: &[store::node::Peers] = nodes_slice.items_peers();
     let node_nodes = nodes_slice.items_nodes();
 
-    let mut store_entries: store::entry::List = store::entry::List::default();
+    let mut store_entries: store::entry::List = store::entry::List::new();
 
     let mut entry_queue: LinearFifo<QueuedEntry, DynamicBuffer<QueuedEntry>> =
         LinearFifo::<QueuedEntry, DynamicBuffer<QueuedEntry>>::init();
@@ -1258,16 +1261,16 @@ fn build_store(
         entry_parent_id: store::entry::Id::INVALID,
     })?;
 
-    let mut public_hoisted: StringArrayHashMap<()> = StringArrayHashMap::default();
+    let mut public_hoisted: StringArrayHashMap<()> = StringArrayHashMap::init();
 
-    let mut hidden_hoisted: StringArrayHashMap<()> = StringArrayHashMap::default();
+    let mut hidden_hoisted: StringArrayHashMap<()> = StringArrayHashMap::init();
     let mut hidden_hoist_keys: Vec<store::entry::DependenciesItem> = Vec::new();
 
     // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
     'next_entry: while let Some(entry) = entry_queue.read_item() {
         let pkg_id = node_pkg_ids[entry.node_id.get() as usize];
 
-        let dedupe_entry = dedupe.get_or_put(pkg_id)?;
+        let dedupe_entry = dedupe.get_or_put(pkg_id, Vec::new)?;
         if !dedupe_entry.found_existing {
             *dedupe_entry.value_ptr = Vec::new();
         } else {
@@ -1382,7 +1385,7 @@ fn build_store(
 
         let new_entry_dependencies: store::entry::Dependencies =
             if dedupe_entry.found_existing && new_entry_is_workspace {
-                store::entry::Dependencies::default()
+                store::entry::Dependencies::new()
             } else {
                 store::entry::Dependencies::init_capacity(
                     node_nodes[entry.node_id.get() as usize].len(),
@@ -1436,7 +1439,7 @@ fn build_store(
             } else if !new_entry_nested_folder
                 && (manager.options.public_hoist_pattern.as_ref())
                     .is_some_and(|pattern| pattern.is_match(dep_name))
-                && !public_hoisted.get_or_put(dep_name)?.found_existing
+                && !public_hoisted.get_or_put(dep_name, || ())?.found_existing
             {
                 // transitive dependencies (also direct dependencies of workspaces!)
                 entry_dependencies[0].insert(item, &dependencies_ctx)?;
@@ -1792,8 +1795,7 @@ pub(crate) fn install_isolated_packages(
 
             let mut trusted_entries: Vec<usize> = Vec::new();
 
-            let mut types_pkg_name_hashes: ArrayHashMap<PackageNameHash, ()> =
-                ArrayHashMap::default();
+            let mut types_pkg_name_hashes: ArrayHashMap<PackageNameHash, ()> = ArrayHashMap::new();
             for (name, &name_hash) in pkg_names.iter().zip(pkgs.items_name_hash()) {
                 if name.slice(string_buf).starts_with(b"@types/") {
                     types_pkg_name_hashes.put(name_hash, ())?;
@@ -2137,7 +2139,7 @@ pub(crate) fn install_isolated_packages(
 
     {
         let mut download_node: ProgressNode;
-        let mut install_node: ProgressNode = ProgressNode::default();
+        let mut install_node: ProgressNode = ProgressNode::new();
         let mut scripts_node: ProgressNode;
         let progress: *mut Progress = &raw mut manager.progress;
         // SAFETY: `progress` aliases `manager.progress`; reborrows below are
@@ -2177,7 +2179,7 @@ pub(crate) fn install_isolated_packages(
         let pkg_resolutions = pkgs.items_resolution();
 
         // TODO: delete
-        let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::default();
+        let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::init();
 
         let tasks_in_flight = bun_threading::WaitGroup::init();
 
@@ -2221,19 +2223,19 @@ pub(crate) fn install_isolated_packages(
             ),
             is_new_bun_modules,
             linked,
-            staging_lock: Default::default(),
+            staging_lock: std::sync::OnceLock::new(),
             global_store_path: global_store_path
                 .as_deref()
                 .map(bun_core::ZStr::from_slice_with_nul),
             global_store_tmp_suffix: fast_random(),
             summary: crate::package_install::Summary {
                 old_modules,
-                ..Default::default()
+                ..crate::package_install::Summary::new()
             },
-            task_queue: Default::default(),
+            task_queue: bun_threading::UnboundedQueue::new(),
             held_members: Some(Vec::new()),
             left_out_entries: Vec::new(),
-            pending_lifecycle_scripts: Default::default(),
+            pending_lifecycle_scripts: std::collections::VecDeque::new(),
         };
         // From here on no `&mut PackageManager` is held across a call on `installer`: it would alias.
 
@@ -2315,7 +2317,7 @@ pub(crate) fn install_isolated_packages(
                 ResolutionTag::Workspace => {
                     // if injected=true this might be false
                     if !lockfile_ro.is_member_outside(pkg_id)
-                        && !seen_workspace_ids.get_or_put(pkg_id)?.found_existing
+                        && !seen_workspace_ids.get_or_put(pkg_id, || ())?.found_existing
                     {
                         installer.set_step(entry_id, Step::SymlinkDependencies);
                         installer.start_task(entry_id);
@@ -2416,7 +2418,7 @@ pub(crate) fn install_isolated_packages(
                             store_path.append(b"node_modules").assume_ok();
                             store_path.append(pkg_name.slice(string_buf)).assume_ok();
                             let package_len = store_path.len();
-                            let mut hash_buf: install::BuntagHashBuf = Default::default();
+                            let mut hash_buf: install::BuntagHashBuf = [0; 26];
                             store_path
                                 .append(installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf))
                                 .assume_ok();
@@ -2657,15 +2659,21 @@ pub(crate) fn install_isolated_packages(
 
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();
-            *progress = Progress::default();
+            *progress = Progress::new();
         }
         // Defensive: clear the stack-local progress-node pointers so the
         // accessors can't observe dangling pointers after this frame returns.
         installer.manager_mut().scripts_node = None;
         installer.manager_mut().downloads_node = None;
 
-        let mut summary = core::mem::take(&mut installer.summary);
-        summary.successfully_installed = Some(core::mem::take(&mut installer.installed));
+        let mut summary = core::mem::replace(
+            &mut installer.summary,
+            crate::package_install::Summary::new(),
+        );
+        summary.successfully_installed = Some(core::mem::replace(
+            &mut installer.installed,
+            DynamicBitSet::new(),
+        ));
 
         return Ok(summary);
     }

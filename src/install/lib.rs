@@ -336,9 +336,8 @@ pub use package_manager_real::package_manager_options::{Access, AuthType};
 #[allow(non_snake_case)]
 pub mod ShellCompletions {
     #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub enum Shell {
-        #[default]
         Unknown,
         Bash,
         Zsh,
@@ -731,7 +730,7 @@ impl RunCommand {
                             }
                             let _ = win::DeleteFileBun(
                                 &target_path_buffer[..link_len],
-                                win::DeleteFileOptions::default(),
+                                win::DeleteFileOptions::new(),
                             );
                             replaced = true;
                         }
@@ -751,7 +750,7 @@ impl RunCommand {
                                     "failed to create <b>node<r> alias in {}, scripts that run <b>node<r> will not find it",
                                     bun_core::fmt::fmt_os_path(
                                         &target_path_buffer[prefix.len()..dir_slice_len],
-                                        Default::default(),
+                                        crate::bun_output::fmt::PathFormatOptions::new(),
                                     ),
                                 );
                             }}
@@ -1007,9 +1006,8 @@ impl Aligner {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Origin {
-    #[default]
     Local = 0,
     Npm = 1,
     Tarball = 2,
@@ -1021,13 +1019,11 @@ pub enum Origin {
 // edge. Re-exported here for existing `crate::Features` callers.
 pub use bun_install_types::resolver_hooks::{Features, PreinstallState};
 
-#[derive(Default)]
 pub struct ExtractDataJson {
     pub(crate) path: Box<[u8]>,
     pub(crate) buf: Vec<u8>,
 }
 
-#[derive(Default)]
 pub struct ExtractData {
     pub(crate) url: Box<[u8]>,
     pub(crate) resolved: Box<[u8]>,
@@ -1038,11 +1034,23 @@ pub struct ExtractData {
     pub(crate) integrity: Integrity,
 }
 
+impl ExtractData {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            url: Box::new([]),
+            resolved: Box::new([]),
+            json: None,
+            integrity: Integrity::new(),
+        }
+    }
+}
+
 /// `path` is an owned, growable buffer. An earlier draft modelled it as a
 /// borrowed `*const [u8]` raw slice with `Copy` semantics, which broke
 /// ownership: callers push into this buffer; the raw-ptr version cannot grow
 /// and aliases caller memory with no lifetime. Own the buffer.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct DependencyInstallContext {
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) path: Vec<u8>,

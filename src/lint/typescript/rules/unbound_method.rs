@@ -394,12 +394,21 @@ fn property_of_key<'a>(
     Some((name, property))
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// [`is_safe_use`]
     safe_uses: AncestorMemo<'a, bool>,
     /// [`is_node_inside_type_declaration`]
     type_declarations: AncestorMemo<'a, ()>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            safe_uses: AncestorMemo::new(),
+            type_declarations: AncestorMemo::new(),
+        }
+    }
 }
 
 /// An `ObjectPattern`.
@@ -675,7 +684,7 @@ impl Rule for UnboundMethod {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {

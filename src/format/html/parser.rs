@@ -731,7 +731,7 @@ pub(crate) fn parse<'a>(
         is_tag_name_case_sensitive: is_case_sensitive,
         is_nested_too_deeply: false,
         stack_check: crate::stack::check_for_tree(),
-        case_ends: FxHashMap::default(),
+        case_ends: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
     };
     builder.build();
     errors.append(&mut builder.errors);

@@ -82,7 +82,8 @@ pub(crate) fn propagate_scope_dependencies_hir(
     )?;
 
     // Derive the minimal set of hoistable dependencies for each scope.
-    let mut trees: HashMap<&NodeSet, ReactiveScopeDependencyTreeHIR> = HashMap::default();
+    let mut trees: HashMap<&NodeSet, ReactiveScopeDependencyTreeHIR> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     for (scope_id, deps) in &scope_deps {
         if deps.is_empty() {
             continue;
@@ -423,8 +424,8 @@ enum ProcessedInstr {
 
 fn collect_optional_chain_sidemap(func: &HirFunction, env: &Environment) -> OptionalChainSidemap {
     let mut ctx = OptionalTraversalContext {
-        seen_optionals: HashSet::default(),
-        processed_instrs_in_optional: HashSet::default(),
+        seen_optionals: HashSet::with_hasher(rustc_hash::FxBuildHasher),
+        processed_instrs_in_optional: HashSet::with_hasher(rustc_hash::FxBuildHasher),
         temporaries_read_in_optional: IdMap::new(),
         hoistable_objects: IdMap::new(),
     };
@@ -811,7 +812,7 @@ impl PropertyPathRegistry {
         Self {
             nodes: Vec::new(),
             roots: IdMap::new(),
-            optional_nodes: NodeSet::default(),
+            optional_nodes: NodeSet::new(),
         }
     }
 
@@ -826,8 +827,8 @@ impl PropertyPathRegistry {
         }
         let idx = self.nodes.len();
         self.nodes.push(PropertyPathNode {
-            properties: HashMap::default(),
-            optional_properties: HashMap::default(),
+            properties: HashMap::with_hasher(rustc_hash::FxBuildHasher),
+            optional_properties: HashMap::with_hasher(rustc_hash::FxBuildHasher),
             full_path: ReactiveScopeDependency {
                 identifier: identifier_id,
                 reactive,
@@ -863,8 +864,8 @@ impl PropertyPathRegistry {
         let mut new_path = parent_full_path.path.clone();
         new_path.push(entry.clone());
         self.nodes.push(PropertyPathNode {
-            properties: HashMap::default(),
-            optional_properties: HashMap::default(),
+            properties: HashMap::with_hasher(rustc_hash::FxBuildHasher),
+            optional_properties: HashMap::with_hasher(rustc_hash::FxBuildHasher),
             full_path: ReactiveScopeDependency {
                 identifier: parent_full_path.identifier,
                 reactive: parent_full_path.reactive,
@@ -896,9 +897,16 @@ impl PropertyPathRegistry {
 }
 
 /// Indices into `PropertyPathRegistry::nodes`, ascending. The last word is never 0: `==` compares sets.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct NodeSet {
     words: Vec<u64>,
+}
+
+impl NodeSet {
+    #[inline]
+    fn new() -> Self {
+        Self { words: Vec::new() }
+    }
 }
 
 impl NodeSet {
@@ -1104,10 +1112,10 @@ fn get_assumed_invoked_functions_impl(
     temporaries: &mut IdMap<IdentifierId, (FunctionId, HashSet<FunctionId>)>,
 ) -> HashSet<FunctionId> {
     if !env.has_stack() {
-        return HashSet::default();
+        return HashSet::with_hasher(rustc_hash::FxBuildHasher);
     }
 
-    let mut hoistable: HashSet<FunctionId> = HashSet::default();
+    let mut hoistable: HashSet<FunctionId> = HashSet::with_hasher(rustc_hash::FxBuildHasher);
 
     // Step 1: Collect identifier to function expression mappings
     for (_block_id, block) in &func.body.blocks {
@@ -1117,7 +1125,10 @@ fn get_assumed_invoked_functions_impl(
                 InstructionValue::FunctionExpression { lowered_func, .. } => {
                     temporaries.insert(
                         instr.lvalue.identifier,
-                        (lowered_func.func, HashSet::default()),
+                        (
+                            lowered_func.func,
+                            HashSet::with_hasher(rustc_hash::FxBuildHasher),
+                        ),
                     );
                 }
                 InstructionValue::StoreLocal {
@@ -1244,11 +1255,11 @@ fn collect_non_nulls_in_blocks(
     registry: &mut PropertyPathRegistry,
 ) -> IdMap<BlockId, BlockInfo> {
     if !env.has_stack() {
-        return IdMap::default();
+        return IdMap::init();
     }
 
     // Known non-null identifiers (e.g. component props)
-    let mut known_non_null = NodeSet::default();
+    let mut known_non_null = NodeSet::new();
     if func.fn_type == ReactFunctionType::Component && !func.params.is_empty() {
         if let ParamPattern::Place(place) = &func.params[0] {
             let node_idx = registry.get_or_create_identifier(place.identifier, true, place.loc);
@@ -1331,7 +1342,9 @@ fn collect_non_nulls_in_blocks(
                     let inner_assumed = get_assumed_invoked_functions(inner_func, env);
                     let inner_ctx = CollectHoistableContext {
                         temporaries: ctx.temporaries,
-                        known_immutable_identifiers: &HashSet::default(),
+                        known_immutable_identifiers: &HashSet::with_hasher(
+                            rustc_hash::FxBuildHasher,
+                        ),
                         hoistable_from_optionals: ctx.hoistable_from_optionals,
                         nested_fn_immutable_context: Some(&nested_fn_immutable_context),
                         assumed_invoked_fns: &inner_assumed,
@@ -1533,13 +1546,16 @@ impl<'a> NonNullPropagation<'a> {
             .map(|n| self.index_of(*n))
             .filter(|&n| self.traversal_state[n] == Some(TraversalState::Done))
             .filter_map(|n| self.working[n].as_ref());
-        let mut merged = done_neighbor_sets.next().cloned().unwrap_or_default();
+        let mut merged = done_neighbor_sets
+            .next()
+            .cloned()
+            .unwrap_or_else(NodeSet::new);
         for set in done_neighbor_sets {
             merged.intersect_with(set);
         }
 
         let index = self.index_of(node_id);
-        let prev_objects = self.working[index].take().unwrap_or_default();
+        let prev_objects = self.working[index].take().unwrap_or_else(NodeSet::new);
         merged.union_with(&prev_objects);
         reduce_maybe_optional_chains(&mut merged, registry);
 
@@ -1572,7 +1588,7 @@ fn collect_hoistable_and_propagate(
             })
             .collect()
     } else {
-        HashSet::default()
+        HashSet::with_hasher(rustc_hash::FxBuildHasher)
     };
 
     let ctx = CollectHoistableContext {
@@ -1684,7 +1700,7 @@ impl ReactiveScopeDependencyTreeHIR {
                 };
                 (
                     HoistableNode {
-                        properties: HashMap::default(),
+                        properties: HashMap::with_hasher(rustc_hash::FxBuildHasher),
                         access_type,
                     },
                     dep.reactive,
@@ -1704,7 +1720,7 @@ impl ReactiveScopeDependencyTreeHIR {
                     .or_insert_with(|| {
                         Box::new(HoistableNodeEntry {
                             node: HoistableNode {
-                                properties: HashMap::default(),
+                                properties: HashMap::with_hasher(rustc_hash::FxBuildHasher),
                                 access_type,
                             },
                         })

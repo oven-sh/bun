@@ -30,8 +30,8 @@ pub(crate) struct Reader {
     bytes: [u64; 256],
 }
 
-impl Default for Reader {
-    fn default() -> Reader {
+impl Reader {
+    pub(crate) fn new() -> Reader {
         Reader {
             structure: FxHasher::default(),
             bytes: [0; 256],
@@ -199,9 +199,9 @@ impl Reader {
 #[optimize(size)]
 fn signature(text: &[u8], parser: Parser) -> Option<Signature> {
     let (content, front_matter_len) = super::without_front_matter(text);
-    let mut tree = Tree::default();
+    let mut tree = Tree::new();
     parse::parse(&content, front_matter_len, parser, &mut tree).ok()?;
-    let mut reader = Reader::default();
+    let mut reader = Reader::new();
     // What is in a node comes behind it.
     let root = tree.root;
     let mut next = tree.first_child(root);

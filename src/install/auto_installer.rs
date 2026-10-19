@@ -458,7 +458,7 @@ unsafe fn __bun_resolver_init_package_manager(
     // both sides byte-identical or the `Result` layout diverges.
     //
     // Idempotent.
-    bun_http::http_thread::init(&Default::default());
+    bun_http::http_thread::init(&bun_http::http_thread::InitOpts::new());
 
     // SAFETY: when `Some`, `install` points at a live `Api::BunInstall`
     // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.
@@ -474,7 +474,7 @@ unsafe fn __bun_resolver_init_package_manager(
         bun_install,
         &crate::package_manager::CommandLineArguments {
             prefer_offline,
-            ..Default::default()
+            ..crate::package_manager::CommandLineArguments::new()
         },
         env_ref,
         importer_dir,

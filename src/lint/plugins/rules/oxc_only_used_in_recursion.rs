@@ -8,10 +8,18 @@ pub struct OnlyUsedInRecursion;
 
 const ONLY_USED_IN_RECURSION: Message = Message::new("", "Parameter `{{param_name}}` is only used in recursive calls");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The names under which the module exports something. Looked for when there is something to report.
     exported_bindings: Option<FxHashSet<Name<'a>>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            exported_bindings: None,
+        }
+    }
 }
 
 impl Rule for OnlyUsedInRecursion {
@@ -24,7 +32,7 @@ impl Rule for OnlyUsedInRecursion {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
@@ -105,7 +113,7 @@ impl<'a> State<'a> {
 }
 
 fn exported_bindings<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
-    let mut names = FxHashSet::default();
+    let mut names = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     for statement in file.body() {
         match statement.kind() {
             StmtKind::ExportNamed(export) => names.extend(export.items().iter().map(|it| it.exported().name())),

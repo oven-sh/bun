@@ -30,7 +30,7 @@ impl Rule for Unambiguous {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         if cx.language().is_oxlint {
             // oxlint points at the start of the file.
-            cx.report(Span::default(), OXLINT);
+            cx.report(Span::init(), OXLINT);
         } else if cx.uses_typescript_parser() {
             cx.report(cx.program_span(), AMBIGUOUS);
         } else {

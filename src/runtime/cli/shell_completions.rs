@@ -41,12 +41,12 @@ pub(crate) struct ShellCompletions {
     pub shell: Shell,
 }
 
-impl Default for ShellCompletions {
-    fn default() -> Self {
+impl ShellCompletions {
+    pub(crate) fn new() -> Self {
         Self {
             commands: std::borrow::Cow::Borrowed(&[]),
             descriptions: std::borrow::Cow::Borrowed(&[]),
-            shell: Shell::default(),
+            shell: Shell::Unknown,
         }
     }
 }

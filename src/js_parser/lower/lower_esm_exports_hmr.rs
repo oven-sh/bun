@@ -23,10 +23,16 @@ pub(crate) struct ConvertESMExportsForHmr<'a> {
 // global-heap `Vec<T>`. Kept as `Vec` so callers can construct via
 // `Default::default()` without needing `&'a Bump`.
 
-#[derive(Default)]
 pub(crate) struct ImportRef {
     /// Index into ConvertESMExportsForHmr.stmts
     pub stmt_index: u32,
+}
+
+impl ImportRef {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { stmt_index: 0 }
+    }
 }
 
 struct DeduplicatedImportResult {
@@ -84,7 +90,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                         binding.loc,
                                     )),
                                     value: Some(value),
-                                    ..Default::default()
+                                    ..G::Property::new()
                                 });
                             } else {
                                 st.decls[new_len] = G::Decl {
@@ -135,7 +141,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             self.export_props.push(G::Property {
                                 key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
                                 value: Some(Expr::init_identifier(symbol.ref_, stmt.loc)),
-                                ..Default::default()
+                                ..G::Property::new()
                             });
                             break 'stmt *s;
                         }
@@ -177,7 +183,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     self.export_props.push(G::Property {
                         key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
                         value: Some(value),
-                        ..Default::default()
+                        ..G::Property::new()
                     });
                     // no statement emitted
                     return Ok(());
@@ -202,7 +208,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         self.export_props.push(G::Property {
                             key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
                             value: Some(Expr::init_identifier(temp_id, stmt.loc)),
-                            ..Default::default()
+                            ..G::Property::new()
                         });
 
                         // SAFETY: as above — POD-shaped read out of arena.
@@ -223,7 +229,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             S::Local {
                                 kind: js_ast::LocalKind::KConst,
                                 decls,
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             stmt.loc,
                         );
@@ -243,7 +249,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         self.export_props.push(G::Property {
                             key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
                             value: Some(Expr::init_identifier(ref_, stmt.loc)),
-                            ..Default::default()
+                            ..G::Property::new()
                         });
                         break 'stmt *s;
                     }
@@ -268,7 +274,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         stmt.loc,
                     )),
                     value: Some(Expr::init_identifier(class_name_ref, stmt.loc)),
-                    ..Default::default()
+                    ..G::Property::new()
                 });
 
                 st.is_export = false;
@@ -318,7 +324,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         namespace_ref: deduped.namespace_ref,
                         alias: item.original_name,
                         import_record_index: deduped.import_record_index,
-                        ..Default::default()
+                        ..G::NamespaceAlias::new()
                     }));
                     self.visit_ref_to_export(
                         p,
@@ -357,14 +363,14 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             stmt.loc,
                         )),
                         value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
-                        ..Default::default()
+                        ..G::Property::new()
                     });
                 } else {
                     // 'export * from' creates a spread, hoisted at the top.
                     self.export_star_props.push(G::Property {
                         kind: G::PropertyKind::Spread,
                         value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
-                        ..Default::default()
+                        ..G::Property::new()
                     });
                 }
                 return Ok(());
@@ -406,7 +412,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         let path_text = p.import_records.items()[import_record_index as usize]
             .path
             .text;
-        let gop = self.imports_seen.get_or_put(path_text)?;
+        let gop = self.imports_seen.get_or_put(path_text, ImportRef::new)?;
         if gop.found_existing {
             let stmt_index = gop.value_ptr.stmt_index;
             // Disable this one since an older record is getting used.  It isn't
@@ -435,9 +441,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // Allocate the concatenated slice in the arena.
                     // ClauseItem fields are all bitwise-copyable; copy raw to avoid Clone bound.
                     let prev_len = stmt.items.len();
-                    let concat = p.arena.alloc_slice_fill_with(prev_len + items_len, |_| {
-                        js_ast::ClauseItem::default()
-                    });
+                    let concat = p
+                        .arena
+                        .alloc_slice_fill_with(prev_len + items_len, |_| js_ast::ClauseItem::new());
                     // SAFETY: src/dst non-overlapping arena allocations of correct length;
                     // ClauseItem is POD-shaped.
                     unsafe {
@@ -556,7 +562,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             Expr::init(
                 E::ImportIdentifier {
                     ref_,
-                    ..Default::default()
+                    ..E::ImportIdentifier::init()
                 },
                 loc,
             )
@@ -611,12 +617,12 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                 stmts: bun_ast::StoreSlice::new_mut(body_stmts),
                                 loc,
                             },
-                            ..Default::default()
+                            ..G::Fn::new()
                         },
                     },
                     loc,
                 )),
-                ..Default::default()
+                ..G::Property::new()
             });
             // no setter is added since live bindings are read-only
         } else {
@@ -627,7 +633,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     loc,
                 )),
                 value: Some(id),
-                ..Default::default()
+                ..G::Property::new()
             });
         }
         Ok(())
@@ -656,7 +662,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     properties: G::PropertyList::move_from_list(core::mem::take(
                         &mut self.export_props,
                     )),
-                    ..Default::default()
+                    ..E::Object::new()
                 },
                 bun_ast::Loc::EMPTY,
             );
@@ -670,13 +676,13 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                 target: Expr::init_identifier(p.hmr_api_ref, bun_ast::Loc::EMPTY),
                                 name: b"exports".into(),
                                 name_loc: bun_ast::Loc::EMPTY,
-                                ..Default::default()
+                                ..E::Dot::new()
                             },
                             bun_ast::Loc::EMPTY,
                         ),
                         obj,
                     ),
-                    ..Default::default()
+                    ..S::SExpr::new()
                 },
                 bun_ast::Loc::EMPTY,
             ));
@@ -706,16 +712,16 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                     ),
                                     name: b"reactRefreshAccept".into(),
                                     name_loc: bun_ast::Loc::EMPTY,
-                                    ..Default::default()
+                                    ..E::Dot::new()
                                 },
                                 bun_ast::Loc::EMPTY,
                             ),
                             args: bun_alloc::AstAlloc::vec(),
-                            ..Default::default()
+                            ..E::Call::new()
                         },
                         bun_ast::Loc::EMPTY,
                     ),
-                    ..Default::default()
+                    ..S::SExpr::new()
                 },
                 bun_ast::Loc::EMPTY,
             ));
@@ -726,7 +732,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         for part in head_parts.iter_mut() {
             self.last_part
                 .declared_symbols
-                .append_list(&core::mem::take(&mut part.declared_symbols))?;
+                .append_list(&core::mem::replace(
+                    &mut part.declared_symbols,
+                    bun_ast::DeclaredSymbolList::new(),
+                ))?;
             self.last_part
                 .import_record_indices
                 .append_slice(part.import_record_indices.slice());
@@ -735,7 +744,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             for i in 0..part.symbol_uses.count() {
                 let k = part.symbol_uses.keys()[i];
                 let v = part.symbol_uses.values()[i];
-                let gop = self.last_part.symbol_uses.get_or_put(k)?;
+                let gop = self
+                    .last_part
+                    .symbol_uses
+                    .get_or_put(k, bun_ast::symbol::Use::new)?;
                 if !gop.found_existing {
                     *gop.value_ptr = v;
                 } else {

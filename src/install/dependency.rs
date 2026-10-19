@@ -226,7 +226,7 @@ impl DependencyExt for Dependency {
                 None,
                 Some(package_manager as &mut dyn NpmAliasRegistry),
             )
-            .unwrap_or_default()
+            .unwrap_or_else(Version::new)
         };
 
         Ok(Dependency {
@@ -688,7 +688,7 @@ impl VersionExt for Version {
         if !slice.is_inline() {
             let ptr = slice.ptr();
             if (ptr.off as usize).saturating_add(ptr.len as usize) > ctx.buffer.len() {
-                return Version::default();
+                return Version::new();
             }
         }
         // bytes[0] was written by `to_external` from a valid `Tag`; decode by
@@ -724,7 +724,7 @@ impl VersionExt for Version {
             Some(ctx.log),
             None,
         )
-        .unwrap_or_default()
+        .unwrap_or_else(Version::new)
     }
 
     #[inline]
@@ -1337,7 +1337,7 @@ pub(crate) fn parse_with_tag(
                         } else {
                             String::from(b"")
                         },
-                        ..Default::default()
+                        ..Repository::new()
                     }),
                 },
                 tag: Tag::Git,
@@ -1354,13 +1354,13 @@ pub(crate) fn parse_with_tag(
                 strings::split_once_char(dependency, b'#').unwrap_or((dependency, b""));
             let find = |part: &[u8]| {
                 if part.is_empty() {
-                    return Some(String::default());
+                    return Some(String::new());
                 }
                 let at = strings::index_of(before_fragment, part)?;
                 Some(sliced.sub(&before_fragment[at..at + part.len()]).value())
             };
             let committish = match info.committish() {
-                None => String::default(),
+                None => String::new(),
                 // `/tree/<committish>`
                 Some(in_path) if fragment.is_empty() => find(in_path)?,
                 // The URL parser drops these; they must not reach the request either.
@@ -1376,7 +1376,7 @@ pub(crate) fn parse_with_tag(
                         owner: find(info.user().unwrap_or(b""))?,
                         repo: find(info.project())?,
                         committish,
-                        ..Default::default()
+                        ..Repository::new()
                     }),
                 },
                 tag: Tag::Github,
@@ -1390,7 +1390,7 @@ pub(crate) fn parse_with_tag(
                     value: Value {
                         tarball: TarballInfo {
                             uri: URI::Remote(sliced.sub(dependency).value()),
-                            package_name: String::default(),
+                            package_name: String::new(),
                         },
                     },
                 });
@@ -1401,7 +1401,7 @@ pub(crate) fn parse_with_tag(
                     value: Value {
                         tarball: TarballInfo {
                             uri: URI::Local(sliced.sub(&dependency[7..]).value()),
-                            package_name: String::default(),
+                            package_name: String::new(),
                         },
                     },
                 });
@@ -1412,7 +1412,7 @@ pub(crate) fn parse_with_tag(
                     value: Value {
                         tarball: TarballInfo {
                             uri: URI::Local(sliced.sub(&dependency[5..]).value()),
-                            package_name: String::default(),
+                            package_name: String::new(),
                         },
                     },
                 });
@@ -1436,7 +1436,7 @@ pub(crate) fn parse_with_tag(
                 value: Value {
                     tarball: TarballInfo {
                         uri: URI::Local(sliced.sub(dependency).value()),
-                        package_name: String::default(),
+                        package_name: String::new(),
                     },
                 },
             })
@@ -1564,7 +1564,7 @@ pub(crate) fn parse_with_tag(
         Tag::Uninitialized => Some(Version {
             tag: Tag::Uninitialized,
             literal: sliced.value(),
-            value: Value::default(),
+            value: Value::new(),
         }),
         Tag::Symlink => {
             if let Some(colon) = strings::index_of_char(dependency, b':') {

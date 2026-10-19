@@ -6,10 +6,17 @@ pub(crate) type NodeId = u32;
 pub(crate) const NOTHING: NodeId = 0;
 
 /// Bytes of the template, or of `Tree::owned` where the tree has what the template has not.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct Text {
     start: u32,
     len: u32,
+}
+
+impl Text {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { start: 0, len: 0 }
+    }
 }
 
 const OWNED: u32 = 1 << 31;
@@ -47,10 +54,17 @@ impl Text {
 }
 
 /// A part of `Tree::lists` or of `Tree::names`.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct Range {
     pub(crate) start: u32,
     pub(crate) len: u32,
+}
+
+impl Range {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { start: 0, len: 0 }
+    }
 }
 
 impl Range {
@@ -189,8 +203,8 @@ pub(crate) struct Tree {
     pub(crate) has_lost_text: bool,
 }
 
-impl Default for Tree {
-    fn default() -> Self {
+impl Tree {
+    pub(crate) fn new() -> Self {
         let mut tree = Tree {
             nodes: Vec::new(),
             lists: Vec::new(),

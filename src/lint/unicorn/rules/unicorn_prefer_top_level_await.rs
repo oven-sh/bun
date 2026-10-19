@@ -13,10 +13,18 @@ const OVER_ASYNC_FUNCTION_CALL: Message = Message::new("", "Prefer top-level awa
 
 const PROMISE_METHODS: [&str; 3] = ["then", "catch", "finally"];
 
-#[derive(Default)]
 pub struct State<'a> {
     /// What is in the body of a function or of a class, or anywhere in an arrow function.
     bodies: AncestorMemo<'a, ()>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            bodies: AncestorMemo::new(),
+        }
+    }
 }
 
 impl Rule for PreferTopLevelAwait {
@@ -54,7 +62,7 @@ impl Rule for PreferTopLevelAwait {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

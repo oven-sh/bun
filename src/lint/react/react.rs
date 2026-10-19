@@ -97,11 +97,20 @@ pub(crate) fn callee_of_this_set_state(call: Expr<'_>) -> Option<Expr<'_>> {
 }
 
 /// For [`function_count_before_lifecycle_component`], with the same names each time.
-#[derive(Default)]
 pub(crate) struct LifecycleWalk<'a> {
     /// The method with one of the names around a node, and how many functions are between the two.
     methods: FxHashMap<Node<'a>, Option<(u32, Node<'a>)>>,
     components: AncestorMemo<'a, ()>,
+}
+
+impl<'a> LifecycleWalk<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            methods: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            components: AncestorMemo::new(),
+        }
+    }
 }
 
 /// How many functions are between `node` and the method of a component around it that has one of these names. The
@@ -284,8 +293,15 @@ pub(crate) fn is_hoc_call(callee_name: &[u8], component_wrapper_functions: &[Jso
 }
 
 /// What a function can return.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct FunctionReturns(u8);
+
+impl FunctionReturns {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl FunctionReturns {
     const JSX: u8 = 1 << 0;
@@ -315,9 +331,17 @@ struct Visited<'a> {
 
 /// Flags of the variables of a file, where a variable has those of its declaration and those of the variables that it
 /// is declared with: `const a = b || c`. One of these is for one meaning of the flags.
-#[derive(Default)]
 pub(crate) struct FlagsOfVariables<'a> {
     known: IdMap<Symbol<'a>, u8>,
+}
+
+impl<'a> FlagsOfVariables<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            known: IdMap::init(),
+        }
+    }
 }
 
 impl<'a> FlagsOfVariables<'a> {
@@ -422,9 +446,17 @@ fn add_expression<'a>(expression: Expr<'a>, variables: &mut Variables<'a>) -> u8
 }
 
 /// What the variables of a file can be, for [`function_returns`].
-#[derive(Default)]
 pub(crate) struct Returns<'a> {
     of_variables: FlagsOfVariables<'a>,
+}
+
+impl<'a> Returns<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            of_variables: FlagsOfVariables::new(),
+        }
+    }
 }
 
 impl<'a> Returns<'a> {
@@ -450,7 +482,7 @@ impl<'a> Returns<'a> {
 /// Also `arrow_function_returns`. What the `return` statements that can be reached return, where oxlint goes by its
 /// control flow graph, in which what follows a loop can always be reached.
 pub(crate) fn function_returns<'a>(function: Func<'a>, known: &mut Returns<'a>) -> FunctionReturns {
-    let mut returns = FunctionReturns::default();
+    let mut returns = FunctionReturns::new();
     match function.body() {
         FnBody::None => {}
         FnBody::Expr(expression) => known.add_expression(expression, &mut returns),
@@ -479,7 +511,7 @@ pub(crate) fn expression_returns<'a>(
     expression: Expr<'a>,
     known: &mut Returns<'a>,
 ) -> FunctionReturns {
-    as_function_expression(expression).map_or_else(FunctionReturns::default, |function| {
+    as_function_expression(expression).map_or_else(FunctionReturns::new, |function| {
         function_returns(function, known)
     })
 }
@@ -529,7 +561,7 @@ impl<'a> FunctionsWithJsx<'a> {
     pub(crate) fn new(file: &'a File<'a>) -> Self {
         let mut functions = IdSet::new();
         // The function around something. `None` in a parameter, which is in the body of no function.
-        let mut around: AncestorMemo<'a, Option<Func<'a>>> = AncestorMemo::default();
+        let mut around: AncestorMemo<'a, Option<Func<'a>>> = AncestorMemo::new();
         let mut add = |e: Expr<'a>| {
             let is_in_body = |child: Node<'a>| !matches!(child, Node::Param(_));
             let function = around.find(Node::Expr(e), |child, parent| {
@@ -571,10 +603,10 @@ pub(crate) struct AncestorWalk<'a, S, T> {
     known: FxHashMap<(Node<'a>, S), T>,
 }
 
-impl<S, T> Default for AncestorWalk<'_, S, T> {
-    fn default() -> Self {
+impl<S, T> AncestorWalk<'_, S, T> {
+    pub(crate) fn new() -> Self {
         AncestorWalk {
-            known: FxHashMap::default(),
+            known: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 }

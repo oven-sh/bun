@@ -73,7 +73,7 @@ impl<'a> Command<'a> {
 
     pub(crate) fn byte_length(&self) -> usize {
         // DiscardingWriter is bun_io's byte-counting null sink.
-        let mut counter = bun_io::DiscardingWriter::default();
+        let mut counter = bun_io::DiscardingWriter::init();
         self.write(&mut counter).expect("unreachable");
         counter.count
     }
@@ -120,13 +120,6 @@ bitflags::bitflags! {
         const RETURN_AS_BUFFER        = 1 << 2;
         const SUBSCRIPTION_REQUEST    = 1 << 3;
         // bits 4..8 are padding
-    }
-}
-
-impl Default for Meta {
-    fn default() -> Self {
-        // supports_auto_pipelining defaults to true, rest false.
-        Meta::SUPPORTS_AUTO_PIPELINING
     }
 }
 

@@ -311,7 +311,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
             crate::server::static_route::InitFromBytesOptions {
                 server: dev.server,
                 mime_type: Some(&MimeType::JSON),
-                ..Default::default()
+                ..crate::server::static_route::InitFromBytesOptions::new()
             },
         );
         StaticRoute::on_request(response.this_ptr(), bun_uws::AnyRequest::H1(req), resp);
@@ -375,7 +375,7 @@ fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
 }
 
 fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> JsResult<()> {
-    let mut params: router::MatchedParams = Default::default();
+    let mut params: router::MatchedParams = crate::bake::router::MatchedParams::new();
     if let Some(route_index) = dev.router.match_slow(req.url(), &mut params) {
         let route_bundle_index = dev
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))

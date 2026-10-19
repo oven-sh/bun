@@ -332,7 +332,7 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
     )?;
     protocol::Execute {
         p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
-        ..Default::default()
+        ..protocol::Execute::new()
     }
     .write_internal(&mut writer)?;
     writer.write(&protocol::SYNC)

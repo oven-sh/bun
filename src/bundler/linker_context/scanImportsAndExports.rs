@@ -444,7 +444,7 @@ pub(crate) fn scan_imports_and_exports(
                     import_records: &*import_records_list,
                     exports_kind: &mut *exports_kind,
                     entry_point_kinds: &*entry_point_kinds,
-                    export_star_map: HashMap::default(),
+                    export_star_map: HashMap::init(),
                     export_star_records: &*export_star_import_records,
                     output_format,
                     wrap_stack: Vec::new(),
@@ -544,9 +544,9 @@ pub(crate) fn scan_imports_and_exports(
                     data: ImportTracker {
                         source_index: Index::source(source_index),
                         import_ref: col_ref!(exports_refs)[id],
-                        ..Default::default()
+                        ..ImportTracker::new()
                     },
-                    ..Default::default()
+                    ..ExportData::new()
                 };
             }
         }
@@ -560,8 +560,7 @@ pub(crate) fn scan_imports_and_exports(
         {
             this.cycle_detector.clear();
             let _trace = perf::trace("Bundler.MatchImportsWithExports");
-            let mut member_resolutions =
-                crate::linker_context_mod::ImportMemberResolutions::default();
+            let mut member_resolutions = crate::linker_context_mod::ImportMemberResolutions::init();
             for source_index_ in &reachable {
                 let source_index = source_index_.get() as usize;
 
@@ -808,7 +807,7 @@ pub(crate) fn scan_imports_and_exports(
             let string_buffer: &mut [u8] = this
                 .graph
                 .arena()
-                .alloc_slice_fill_default::<u8>(string_buffer_len);
+                .alloc_slice_fill_copy::<u8>(string_buffer_len, 0);
             // `StringBuilder::drop` reconstructs a `Box<[u8]>` from
             // `ptr`/`cap` and frees it via the global arena. Here the
             // backing buffer is arena-owned (bumpalo), so dropping would hand
@@ -1063,7 +1062,7 @@ pub(crate) fn scan_imports_and_exports(
                     Part {
                         dependencies,
                         can_be_removed_if_unused: false,
-                        ..Default::default()
+                        ..Part::new()
                     },
                 )?;
 
@@ -1467,7 +1466,7 @@ impl DependencyWrapper<'_> {
         // Avoid infinite loops due to cycles in the export star graph
         let has_visited = self
             .export_star_map
-            .get_or_put(source_index)
+            .get_or_put(source_index, || ())
             .expect("unreachable");
         if has_visited.found_existing {
             return false;
@@ -1618,7 +1617,7 @@ impl<'a> ExportStarContext<'a> {
                 }
 
                 let gop = col!(resolved_exports)[target_id]
-                    .get_or_put(alias_slice)
+                    .get_or_put(alias_slice, ExportData::new)
                     .expect("oom");
                 if !gop.found_existing {
                     // Initialize the re-export
@@ -1628,7 +1627,7 @@ impl<'a> ExportStarContext<'a> {
                             source_index: Index::source(other_source_index),
                             name_loc: name.alias_loc,
                         },
-                        ..Default::default()
+                        ..ExportData::new()
                     };
 
                     // Make sure the symbol is marked as imported so that code splitting
@@ -1640,9 +1639,9 @@ impl<'a> ExportStarContext<'a> {
                                 data: ImportTracker {
                                     import_ref: name.ref_,
                                     source_index: Index::source(other_source_index),
-                                    ..Default::default()
+                                    ..ImportTracker::new()
                                 },
-                                ..Default::default()
+                                ..ImportData::new()
                             },
                         )
                         .expect("oom");
@@ -1656,7 +1655,7 @@ impl<'a> ExportStarContext<'a> {
                                 import_ref: name.ref_,
                                 name_loc: name.alias_loc,
                             },
-                            ..Default::default()
+                            ..ImportData::new()
                         });
                 }
             }
@@ -1773,10 +1772,19 @@ mod __css_validation {
         import_records_list: *mut [ImportRecordList<'_>],
         all_css_asts: *mut [CssCol],
     ) {
-        #[derive(Default)]
         struct PropertyInFile {
             source_index: IndexInt,
             range: bun_ast::Range,
+        }
+
+        impl PropertyInFile {
+            #[inline]
+            fn new() -> Self {
+                Self {
+                    source_index: 0,
+                    range: bun_ast::Range::new(),
+                }
+            }
         }
 
         struct Visitor<'a, 'bump> {
@@ -1797,7 +1805,10 @@ mod __css_validation {
                 source_index: IndexInt,
                 range: bun_ast::Range,
             ) {
-                let entry = self.properties.get_or_put(property_name).expect("oom");
+                let entry = self
+                    .properties
+                    .get_or_put(property_name, PropertyInFile::new)
+                    .expect("oom");
 
                 if !entry.found_existing {
                     *entry.value_ptr = PropertyInFile {
@@ -1861,11 +1872,11 @@ mod __css_validation {
                                     );
                                     std::borrow::Cow::Owned(v)
                                 },
-                                ..Default::default()
+                                ..bun_ast::Data::new()
                             },
                         ][..],
                     ),
-                    ..Default::default()
+                    ..bun_ast::Msg::new()
                 });
                 // Don't warn more than once
                 entry.value_ptr.source_index = Index::INVALID.get();
@@ -1970,8 +1981,8 @@ mod __css_validation {
         // SAFETY: parse_graph backref valid for link step. Read-only.
         let input = this.parse_graph().input_files.split_raw();
         let mut visitor = Visitor {
-            visited: ArrayHashMap::<bun_ast::Ref, ()>::default(),
-            properties: StringArrayHashMap::<PropertyInFile>::default(),
+            visited: ArrayHashMap::<bun_ast::Ref, ()>::new(),
+            properties: StringArrayHashMap::<PropertyInFile>::init(),
             all_import_records: import_records_list,
             all_css_asts,
             all_symbols: &this.graph.symbols,

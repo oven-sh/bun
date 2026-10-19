@@ -273,7 +273,7 @@ fn find_ref_controlled_blocks(
     identifiers: &[Identifier],
     types: &[Type],
 ) -> Result<IdBitSet<BlockId>, CompilerDiagnostic> {
-    let mut controlled = IdBitSet::default();
+    let mut controlled = IdBitSet::init();
     let tests_ref_derived_value = |block: &BasicBlock| {
         tests_ref_derived_value(&block.terminal, ref_derived_values, identifiers, types)
     };
@@ -348,7 +348,7 @@ fn get_set_state_call(
     next_block_id_counter: u32,
     source_code: Option<&str>,
 ) -> Result<Option<SetStateInfo>, CompilerDiagnostic> {
-    let mut ref_derived_values: IdBitSet<IdentifierId> = IdBitSet::default();
+    let mut ref_derived_values: IdBitSet<IdentifierId> = IdBitSet::init();
 
     // First pass: collect ref-derived values (needed before building control dominator checker)
     // We do a pre-pass to seed ref_derived_values so the control dominator checker has them.
@@ -385,7 +385,7 @@ fn get_set_state_call(
             types,
         )?
     } else {
-        IdBitSet::default()
+        IdBitSet::init()
     };
 
     let is_ref_controlled_block =

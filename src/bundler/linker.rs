@@ -76,7 +76,7 @@ fn relative_paths_list_ptr() -> *mut ImportPathsList {
 // `import_record::Tag`, so no bridge is needed.
 mod hardcoded_module {
     use super::*;
-    #[derive(Default, Clone, Copy)]
+    #[derive(Clone, Copy)]
     pub(super) struct AliasOptions {
         pub rewrite_jest_for_tests: bool,
     }

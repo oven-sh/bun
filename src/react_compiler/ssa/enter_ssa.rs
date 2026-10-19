@@ -57,7 +57,7 @@ mod definitions {
         pub(super) fn new(num_blocks: usize, num_identifiers: usize) -> Self {
             Definitions {
                 newest: vec![NOTHING; num_identifiers],
-                others: FxHashMap::default(),
+                others: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
                 in_others: vec![0; num_blocks],
                 phis_in_the_making: Vec::new(),
             }
@@ -193,7 +193,7 @@ impl SSABuilder {
             unsealed_preds: vec![None; num_blocks],
             block_preds: vec![(0, 0); num_blocks],
             preds: Vec::with_capacity(num_blocks),
-            unknown: HashSet::default(),
+            unknown: HashSet::with_hasher(rustc_hash::FxBuildHasher),
             pending_phis: vec![Vec::new(); num_blocks],
             processed_functions: Vec::new(),
             lookups: Vec::new(),

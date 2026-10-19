@@ -233,8 +233,8 @@ pub(crate) struct Loc {
 
 const NONE: u32 = u32::MAX;
 
-impl Default for Loc {
-    fn default() -> Self {
+impl Loc {
+    pub(crate) fn new() -> Self {
         Loc {
             source_index: NONE,
             start_line: NONE,
@@ -366,7 +366,7 @@ impl ValueNode {
             close: 0,
             groups: (0, 0),
             selector: 0,
-            loc: Loc::default(),
+            loc: Loc::new(),
             has_end: false,
             first_child: 0,
             last_child: 0,
@@ -466,7 +466,6 @@ struct OpenParen {
 }
 
 /// The values that have been parsed, and what it takes to parse the next one.
-#[derive(Default)]
 pub(crate) struct Values {
     /// The texts of the values, and the strings that are not a part of them.
     text: Vec<u8>,
@@ -480,6 +479,23 @@ pub(crate) struct Values {
     open_parens: Vec<OpenParen>,
     groups: Vec<ValueId>,
     group: Vec<ValueId>,
+}
+
+impl Values {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            text: Vec::new(),
+            nodes: Vec::new(),
+            lists: Vec::new(),
+            tokens: Vec::new(),
+            unclosed_parens: Vec::new(),
+            cache: Vec::new(),
+            open_parens: Vec::new(),
+            groups: Vec::new(),
+            group: Vec::new(),
+        }
+    }
 }
 
 /// `/^[+-]?((\d+(\.\d*)?)|(\.\d+))([eE][+-]?\d+)?/`: the length of the match.
@@ -1340,7 +1356,7 @@ impl Values {
             ..if loc.start_offset != NONE && loc.end_offset != NONE {
                 loc
             } else {
-                Loc::default()
+                Loc::new()
             }
         };
         self.nodes[container as usize].group = group;

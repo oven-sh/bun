@@ -95,7 +95,10 @@ pub(crate) fn write_events(
         if write!(
             writer,
             "{}",
-            bun_fmt::format_json_string_utf8(file_path, Default::default())
+            bun_fmt::format_json_string_utf8(
+                file_path,
+                bun_core::fmt::JSONFormatterUTF8Options::new()
+            )
         )
         .is_err()
         {
@@ -151,7 +154,10 @@ pub(crate) fn write_events(
                 if write!(
                     writer,
                     "{}",
-                    bun_fmt::format_json_string_utf8(name.as_bytes(), Default::default())
+                    bun_fmt::format_json_string_utf8(
+                        name.as_bytes(),
+                        bun_core::fmt::JSONFormatterUTF8Options::new()
+                    )
                 )
                 .is_err()
                 {

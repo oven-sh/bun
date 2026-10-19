@@ -89,8 +89,8 @@ impl Rule for RequireRenderReturn {
         {
             return;
         }
-        let mut queue = Queue::default();
-        let mut is_in_render = AncestorMemo::default();
+        let mut queue = Queue::new();
+        let mut is_in_render = AncestorMemo::new();
         for func in file.funcs().filter(|it| ast_utils::is_function_with_body(*it)) {
             let node = Node::Func(func);
             if matches!(func.body(), FnBody::Expr(_)) {
@@ -104,7 +104,7 @@ impl Rule for RequireRenderReturn {
             }
         }
         let mut components = Components::new(file);
-        let mut has_return_statement: FxHashSet<ComponentId> = FxHashSet::default();
+        let mut has_return_statement: FxHashSet<ComponentId> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         while let Some(event) = queue.pop_until(At::END) {
             components.advance(event.at);
             has_return_statement.extend(components.set(event.node));
@@ -167,7 +167,6 @@ enum Jump<'a> {
 
 /// The way through a function that oxlint takes in its control flow graph: it does not go into a `catch` or a
 /// `finally`, nor past a `try` with a `finally`, and it goes on after every `while` and `for`.
-#[derive(Default)]
 struct Walk<'a> {
     /// It got to a `return` with a value.
     found: bool,
@@ -175,10 +174,20 @@ struct Walk<'a> {
     jumps: SmallVec<[Jump<'a>; 4]>,
 }
 
+impl<'a> Walk<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            found: false,
+            jumps: SmallVec::new(),
+        }
+    }
+}
+
 fn contains_return_statement(func: Func) -> bool {
     match func.body() {
         FnBody::Block(statements) => {
-            let mut walk = Walk::default();
+            let mut walk = Walk::new();
             walk.list(statements);
             walk.found
         }

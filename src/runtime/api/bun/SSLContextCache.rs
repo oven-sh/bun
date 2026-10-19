@@ -32,11 +32,21 @@ use bun_uws::create_bun_socket_error_t;
 // `jsc.API.ServerConfig.SSLConfig` — re-exported from src/runtime/socket/SSLConfig.rs
 use crate::api::server::server_config::SSLConfig;
 
-#[derive(Default)]
 pub(crate) struct SSLContextCache {
     map: ArrayHashMap<Digest, *mut Entry, DigestContext>,
     mutex: Mutex,
     ops_since_compact: u32,
+}
+
+impl SSLContextCache {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            map: ArrayHashMap::new(),
+            mutex: Mutex::init(),
+            ops_since_compact: 0,
+        }
+    }
 }
 
 pub(crate) type Digest = [u8; 32];
@@ -45,7 +55,7 @@ pub(crate) type Digest = [u8; 32];
 /// bucket hash — no need to re-Wyhash 32 bytes (what AutoContext would do).
 /// `eql` still compares the full digest. `store_hash = false` since recompute
 /// is a single load.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct DigestContext;
 
 impl bun_alloc::Stateless for DigestContext {
@@ -137,7 +147,7 @@ impl SSLContextCache {
 
         // Re-check: another caller may have inserted while we were building.
         // Prefer the already-cached one and drop ours so callers converge.
-        let gop = bun_core::handle_oom(self.map.get_or_put(d));
+        let gop = bun_core::handle_oom(self.map.get_or_put(d, || core::ptr::null_mut()));
         if gop.found_existing {
             // SAFETY: existing map value is a live heap Entry (see above).
             let entry = unsafe { &mut **gop.value_ptr };

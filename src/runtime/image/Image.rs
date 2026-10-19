@@ -80,11 +80,11 @@ pub(crate) struct Image {
     pending_tasks: Cell<u32>,
 }
 
-impl Default for Image {
-    fn default() -> Self {
+impl Image {
+    pub(crate) fn new() -> Self {
         Self {
             source: JsCell::new(Source::JsBuffer),
-            pipeline: Cell::new(Pipeline::default()),
+            pipeline: Cell::new(Pipeline::new()),
             max_pixels: codecs::DEFAULT_MAX_PIXELS,
             auto_orient: true,
             last_width: Cell::new(-1),
@@ -178,8 +178,8 @@ pub(crate) struct Resize {
     pub(crate) without_enlargement: bool,
 }
 
-impl Default for Resize {
-    fn default() -> Self {
+impl Resize {
+    pub(crate) fn new() -> Self {
         Self {
             w: 0,
             h: 0,
@@ -198,7 +198,7 @@ impl Default for Resize {
 /// Execution order matches Sharp: (autoOrient) → rotate → flip/flop → resize
 /// → modulate. Rotate precedes resize so the target box is interpreted in
 /// upright space; modulate runs last so it operates on the fewest pixels.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct Pipeline {
     pub(crate) rotate: u16, // 0/90/180/270
     pub(crate) flip: bool,  // vertical
@@ -210,6 +210,20 @@ pub(crate) struct Pipeline {
     pub(crate) output: Option<codecs::EncodeOptions>,
 }
 
+impl Pipeline {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            rotate: 0,
+            flip: false,
+            flop: false,
+            resize: None,
+            modulate: None,
+            output: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct Modulate {
     /// Multiplier; 1.0 = identity.
@@ -218,8 +232,8 @@ pub(crate) struct Modulate {
     pub(crate) saturation: f32,
 }
 
-impl Default for Modulate {
-    fn default() -> Self {
+impl Modulate {
+    pub(crate) fn new() -> Self {
         Self {
             brightness: 1.0,
             saturation: 1.0,
@@ -293,7 +307,7 @@ impl Image {
         blob_value: JSValue,
         options: JSValue,
     ) -> JsResult<JSValue> {
-        let mut img = Box::<Image>::default();
+        let mut img = Box::new(Image::new());
         // errdefer img.finalize() — `Box` drops on `?` automatically.
         apply_options(&mut img, global, options)?;
         // For Blob receivers `source_from_js` either dupes (in-memory blob) or
@@ -326,7 +340,7 @@ fn from_input_js(
     options: JSValue,
     this_value: JSValue,
 ) -> JsResult<Box<Image>> {
-    let mut img = Box::<Image>::default();
+    let mut img = Box::new(Image::new());
     // `opt.get` can throw (Proxy/getter); without this the heap-allocated
     // *Image and the duplicated source bytes leak. (Handled by `Box` Drop on `?`.)
     img.source.set(source_from_js(global, input, this_value)?);
@@ -461,7 +475,7 @@ impl Image {
             } else {
                 0
             },
-            ..Default::default()
+            ..Resize::new()
         };
         if args.len() > 2 && args[2].is_object() {
             let opt = args[2];
@@ -522,7 +536,7 @@ impl Image {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let args = callframe.arguments();
-        let mut m: Modulate = self.pipeline.get().modulate.unwrap_or_default();
+        let mut m: Modulate = self.pipeline.get().modulate.unwrap_or_else(Modulate::new);
         if args.len() > 0 && args[0].is_object() {
             let opt = args[0];
             // Clamp finite + bounded so Infinity doesn't reach ModulateImpl as
@@ -564,7 +578,7 @@ impl Image {
                 .output
                 .unwrap_or_else(|| codecs::EncodeOptions {
                     format: fmt,
-                    ..Default::default()
+                    ..codecs::EncodeOptions::new()
                 });
         enc.format = fmt;
         let args = callframe.arguments();
@@ -745,7 +759,7 @@ impl Image {
                             Ok((
                                 Input {
                                     copied: Some(copied),
-                                    ..Default::default()
+                                    ..Input::new()
                                 },
                                 Pin::NONE,
                             ))
@@ -767,7 +781,7 @@ impl Image {
                             Ok((
                                 Input {
                                     bytes: bun_ptr::RawSlice::new(bytes),
-                                    ..Default::default()
+                                    ..Input::new()
                                 },
                                 if kind == 2 { Pin(v) } else { Pin::NONE },
                             ))
@@ -781,14 +795,14 @@ impl Image {
             Source::Owned(b) => Ok((
                 Input {
                     bytes: bun_ptr::RawSlice::new(b.as_slice()),
-                    ..Default::default()
+                    ..Input::new()
                 },
                 Pin::NONE,
             )),
             Source::Path(p) => Ok((
                 Input {
                     path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())),
-                    ..Default::default()
+                    ..Input::new()
                 },
                 Pin::NONE,
             )),
@@ -866,7 +880,7 @@ impl Image {
             };
             let img = Box::new(Image {
                 source: JsCell::new(Source::Owned(bytes)),
-                ..Default::default()
+                ..Image::new()
             });
             return Ok(img.to_js(global));
         }
@@ -1086,7 +1100,7 @@ impl Image {
                     | codecs::Format::Avif => {
                         output = Some(codecs::EncodeOptions {
                             format: f,
-                            ..Default::default()
+                            ..codecs::EncodeOptions::new()
                         });
                     }
                     _ => {}
@@ -1474,8 +1488,8 @@ pub(crate) struct Input {
     copied: Option<Vec<u8>>,
 }
 
-impl Default for Input {
-    fn default() -> Self {
+impl Input {
+    pub(crate) fn new() -> Self {
         Self {
             bytes: bun_ptr::RawSlice::EMPTY,
             path: None,
@@ -1586,7 +1600,7 @@ impl PipelineTask {
                     errno: sys::E::ENODEV as _,
                     syscall: sys::Tag::read,
                     path: p.as_bytes().to_vec().into_boxed_slice(),
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
                 return;
             }
@@ -1661,7 +1675,7 @@ impl PipelineTask {
                 target_h: th,
             }
         } else {
-            codecs::DecodeHint::default()
+            codecs::DecodeHint::new()
         };
 
         let mut decoded = match codecs::decode(input, self.max_pixels, hint) {
@@ -1725,7 +1739,7 @@ impl PipelineTask {
                 }
                 f => f,
             },
-            ..Default::default()
+            ..codecs::EncodeOptions::new()
         });
         // Carry the source ICC profile through to the encoder unless the
         // caller already set one (reserved for a future `.withIccProfile()`
@@ -1910,7 +1924,7 @@ impl PipelineTask {
                             cx,
                             &mut path_or_blob,
                             data,
-                            Default::default(),
+                            crate::webcore::blob::WriteFileOptions::new(),
                         ) {
                             Ok(p) => p,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),

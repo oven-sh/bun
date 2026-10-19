@@ -545,7 +545,7 @@ impl<'a> Installer<'a> {
             return;
         }
 
-        match self.is_task_blocked(entry_id, &mut ArrayHashMap::default()) {
+        match self.is_task_blocked(entry_id, &mut ArrayHashMap::new()) {
             None => {
                 self.set_step(entry_id, Step::SymlinkDependencyBinaries);
                 self.start_task(entry_id);
@@ -692,7 +692,7 @@ impl<'a> Installer<'a> {
                 .summary
                 .packages_with_blocked_scripts
                 .entry(dependencies[dep_id as usize].name_hash as TruncatedPackageNameHash)
-                .or_default() += usize::from(blocked_scripts);
+                .or_insert_with(|| 0) += usize::from(blocked_scripts);
         }
     }
 
@@ -737,7 +737,7 @@ impl<'a> Installer<'a> {
         if is_link(path.slice_z()) == Some(false)
             && let Ok(patch_info) = self.package_patch_info(self.store.ids(entry_id).pkg_id)
         {
-            let mut hash_buf = install::BuntagHashBuf::default();
+            let mut hash_buf = [0; 26];
             let tag = self.resolution(entry_id).tag;
             let _ = path.append(installed_marker(tag, &patch_info, &mut hash_buf));
             let _ = sys::unlink(path.slice_z());
@@ -852,7 +852,7 @@ impl<'a> Installer<'a> {
         let trusted = manager
             .lockfile
             .trusted_dependencies
-            .get_or_insert_with(Default::default);
+            .get_or_insert_with(ArrayHashMap::new);
         for name in &names {
             trusted.insert(
                 bun_semver::semver_string::Builder::string_hash(name) as TruncatedPackageNameHash,
@@ -873,7 +873,7 @@ impl<'a> Installer<'a> {
             );
         }
 
-        let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
+        let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::new();
 
         let mut waiter = core::mem::replace(
             &mut self.waiters_head[completed.get() as usize],
@@ -1145,7 +1145,7 @@ impl Task {
 
                     if is_held
                         || installer
-                            .is_task_blocked(entry_id, &mut ArrayHashMap::default())
+                            .is_task_blocked(entry_id, &mut ArrayHashMap::new())
                             .is_some()
                     {
                         return Ok(Result::Blocked);
@@ -1462,7 +1462,7 @@ impl<'a> Installer<'a> {
                         "the hash of patch file {} was not calculated before install, this is a bug in Bun",
                         bun_core::fmt::quote(patch.path.slice(string_buf)),
                     ),
-                    Default::default(),
+                    bun_ast::AddErrorOptions::new(),
                 );
                 return Err(TaskError::Patching(log));
             };
@@ -1923,7 +1923,7 @@ impl<'a> Installer<'a> {
         let pkgs = lockfile.packages.slice();
         let pkg_info = postinstall_optimizer::PkgInfo {
             name_hash: pkgs.items_name_hash()[pkg_id as usize],
-            ..postinstall_optimizer::PkgInfo::default()
+            ..postinstall_optimizer::PkgInfo::new()
         };
         let Some(PostinstallOptimizer::NativeBinlink) =
             manager.postinstall_optimizer.get(&pkg_info)
@@ -2228,7 +2228,7 @@ impl<'a> Installer<'a> {
         let parent_dependencies = if is_importer {
             pkgs.items_dependencies()[store.ids(parent_entry_id).pkg_id as usize]
         } else {
-            Default::default()
+            super::super::ExternalSlice::empty()
         };
         // Match by name, not by dependency id. A store entry keeps the id of whichever dependency
         // reached it first, which may be another package's peer dependency.
@@ -2298,7 +2298,7 @@ impl<'a> Installer<'a> {
         BinLinks {
             node_modules_path,
             is_behind_link,
-            seen: StringHashMap::default(),
+            seen: StringHashMap::init(),
             abs_target_buf: paths::path_buffer_pool::get(),
             abs_dest_buf: paths::path_buffer_pool::get(),
             rel_buf: paths::path_buffer_pool::get(),

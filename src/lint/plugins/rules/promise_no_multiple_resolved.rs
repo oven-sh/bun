@@ -84,10 +84,19 @@ struct BlockResolvedInfo<'a> {
 }
 
 /// What is found in the expression statements that start in a segment.
-#[derive(Default)]
 struct Found<'a> {
     resolved: SmallVec<[Expr<'a>; 2]>,
     last_throwable_expr_span: Option<Span>,
+}
+
+impl<'a> Found<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            resolved: SmallVec::new(),
+            last_throwable_expr_span: None,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -153,7 +162,6 @@ struct TryBlock<'a> {
 }
 
 /// What going through the code path of a function tells.
-#[derive(Default)]
 struct Walk<'a> {
     code_path: Option<CodePath<'a>>,
     /// A segment, and another that it is gone through side by side with, in a `finally` block.
@@ -167,9 +175,22 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
+    #[inline]
+    fn init() -> Self {
+        Self {
+            code_path: None,
+            side_by_side: Vec::new(),
+            catch_starts: Vec::new(),
+            in_try_block: IdSet::init(),
+            found: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
+}
+
+impl<'a> Walk<'a> {
     fn new(func: Func<'a>, resolve_finder: ResolveFinder<'a>) -> Walk<'a> {
         let root = Node::Func(func);
-        let mut walk = Walk::default();
+        let mut walk = Walk::init();
         let mut current_segments: SmallVec<[Segment<'a>; 4]> = SmallVec::new();
         let mut try_blocks: Vec<TryBlock<'a>> = Vec::new();
         // How many of them have a `catch`.
@@ -211,7 +232,7 @@ impl<'a> Walk<'a> {
                     }
                     StmtKind::Expr(e) => {
                         if let Some(segment) = current_segments.first() {
-                            resolve_finder.visit_expression(e, try_block_depth > 0, walk.found.entry(segment.id()).or_default());
+                            resolve_finder.visit_expression(e, try_block_depth > 0, walk.found.entry(segment.id()).or_insert_with(Found::new));
                         }
                     }
                     _ => {}
@@ -372,7 +393,7 @@ impl<'a> Blocks<'a> {
 
         // Where each set leads, by the number of the segment that stands for it.
         let mut leads_to: Vec<Numbers> = vec![Numbers::new(); segments.len()];
-        let mut edges: FxHashSet<(usize, usize)> = FxHashSet::default();
+        let mut edges: FxHashSet<(usize, usize)> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         let mut lead = |sets: &mut [usize], from: usize, to: usize| {
             let (from, to) = (find(sets, from), find(sets, to));
             if from != to
@@ -401,7 +422,7 @@ impl<'a> Blocks<'a> {
         let mut postorder: Vec<usize> = Vec::new();
         // Of each set: one of the two, or where it is in the postorder.
         let mut state: Vec<usize> = vec![NOT_SEEN; segments.len()];
-        let mut leads_back: FxHashSet<(usize, usize)> = FxHashSet::default();
+        let mut leads_back: FxHashSet<(usize, usize)> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         let first = find(&mut sets, 0);
         let mut stack: Vec<(usize, usize)> = vec![(first, 0)];
         if let Some(slot) = state.get_mut(first) {
@@ -443,7 +464,7 @@ impl<'a> Blocks<'a> {
             leads_on: vec![false; len],
             is_catch_start: vec![false; len],
             is_in_try_block: vec![false; len],
-            found: std::iter::repeat_with(Found::default).take(len).collect(),
+            found: std::iter::repeat_with(Found::new).take(len).collect(),
         };
         // What leads to each block, and what leads back to it.
         let mut forward: Vec<Numbers> = vec![Numbers::new(); len];

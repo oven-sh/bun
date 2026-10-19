@@ -19,12 +19,21 @@ pub mod token {
 /// "^1 ^2"
 /// ----|-----
 /// That is two Query
-#[derive(Default)]
 pub struct Query {
     pub range: Range,
 
     // AND
     pub next: Option<Box<Query>>,
+}
+
+impl Query {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            range: Range::new(),
+            next: None,
+        }
+    }
 }
 
 impl Clone for Query {
@@ -160,7 +169,6 @@ impl Query {
 /// "^1 || ^2"
 /// ----|-----
 /// That is two List
-#[derive(Default)]
 pub struct List {
     pub head: Query,
     // BACKREF: alias into self.head.next chain
@@ -168,6 +176,17 @@ pub struct List {
 
     // OR
     pub next: Option<Box<List>>,
+}
+
+impl List {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            head: Query::new(),
+            tail: None,
+            next: None,
+        }
+    }
 }
 
 // SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
@@ -400,10 +419,10 @@ impl Clone for Group {
     }
 }
 
-impl Default for Group {
-    fn default() -> Self {
+impl Group {
+    pub fn new() -> Self {
         Self {
-            head: List::default(),
+            head: List::new(),
             tail: None,
             input: std::ptr::from_ref::<[u8]>(b""),
             flags: FlagsBitSet::init_empty(),
@@ -459,14 +478,14 @@ impl Group {
                 head: Query {
                     range: Range {
                         left,
-                        ..Default::default()
+                        ..Range::new()
                     },
                     next: None,
                 },
                 tail: None,
                 next: None,
             },
-            ..Default::default()
+            ..Group::new()
         }
     }
 
@@ -522,7 +541,7 @@ impl Group {
             return Ok(());
         }
 
-        let mut new_tail = Box::new(List::default());
+        let mut new_tail = Box::new(List::new());
         new_tail.head.range = *range;
 
         let new_tail_ptr = NonNull::from(&mut *new_tail);
@@ -571,15 +590,24 @@ impl Group {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Token {
     pub(crate) tag: TokenTag,
     pub(crate) wildcard: Wildcard,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+impl Token {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            tag: TokenTag::None,
+            wildcard: Wildcard::None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TokenTag {
-    #[default]
     None,
     Gt,
     Gte,
@@ -590,9 +618,8 @@ pub enum TokenTag {
     Caret,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Wildcard {
-    #[default]
     None,
     Major,
     Minor,
@@ -609,7 +636,7 @@ impl Token {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
                 // https://github.com/npm/node-semver/blob/3a8a4309ae986c1967b3073ba88c9e69433d44cb/classes/range.js#L302-L353
-                let mut range = Range::default();
+                let mut range = Range::new();
                 'done: {
                     let Some(major) = version.major else {
                         if wildcard_is_written {
@@ -622,7 +649,7 @@ impl Token {
                         version: Version {
                             major,
                             tag: floor,
-                            ..Default::default()
+                            ..Version::new()
                         },
                     };
                     if let Some(minor) = version.minor {
@@ -652,7 +679,7 @@ impl Token {
             }
             TokenTag::Tilda => {
                 // https://github.com/npm/node-semver/blob/3a8a4309ae986c1967b3073ba88c9e69433d44cb/classes/range.js#L261-L287
-                let mut range = Range::default();
+                let mut range = Range::new();
                 'done: {
                     let Some(major) = version.major else {
                         if wildcard_is_written {
@@ -664,7 +691,7 @@ impl Token {
                         op: RangeOp::Gte,
                         version: Version {
                             major,
-                            ..Default::default()
+                            ..Version::new()
                         },
                     };
                     if let Some(minor) = version.minor {
@@ -691,7 +718,7 @@ impl Token {
                         op: RangeOp::Eql,
                         version: version.min(),
                     },
-                    ..Default::default()
+                    ..Range::new()
                 };
             }
             _ => {}
@@ -712,7 +739,7 @@ impl Token {
                 major,
                 minor,
                 tag,
-                ..Default::default()
+                ..Version::new()
             },
         };
         let left = match (op, self.wildcard) {
@@ -736,7 +763,7 @@ impl Token {
         };
         Range {
             left,
-            ..Default::default()
+            ..Range::new()
         }
     }
 }
@@ -756,15 +783,15 @@ impl Range {
                     patch: Some(version.patch),
                     tag: version.tag,
                 },
-                ..Default::default()
+                ..version::ParseResult::new()
             },
-            Tag::default(),
+            Tag::new(),
         )
     }
 }
 
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
-    parse_with(input, sliced, Tag::default())
+    parse_with(input, sliced, Tag::new())
 }
 
 /// `parse` with node-semver's `includePrerelease`, for `satisfies_including_prerelease`: `1.x` starts at `1.0.0-0` and `>1` at `2.0.0-0`.
@@ -776,12 +803,12 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
     let mut i: usize = 0;
     let mut list = Group {
         input: std::ptr::from_ref::<[u8]>(input),
-        head: List::default(),
+        head: List::new(),
         tail: None,
         flags: FlagsBitSet::init_empty(),
     };
 
-    let mut token = Token::default();
+    let mut token = Token::new();
 
     let mut skip_round;
     let mut is_or = false;
@@ -978,7 +1005,7 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
                     },
                     right: match second_parsed.wildcard {
                         // "1.0.0 - x" --> ">=1.0.0"
-                        Wildcard::Major => Comparator::default(),
+                        Wildcard::Major => Comparator::new(),
                         // "1.0.0 - 1.x" --> ">=1.0.0 <2.0.0-0"
                         Wildcard::Minor => Comparator::lt_next_major(second_version.major),
                         // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0-0"

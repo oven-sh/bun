@@ -21,7 +21,7 @@ pub(crate) fn validate_no_set_state_in_render(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
-    let mut unconditional_set_state_functions: IdBitSet<IdentifierId> = IdBitSet::default();
+    let mut unconditional_set_state_functions: IdBitSet<IdentifierId> = IdBitSet::init();
     let next_block_id = env.next_block_id().0;
     let diagnostics = validate_impl(
         func,

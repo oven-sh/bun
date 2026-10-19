@@ -25,10 +25,19 @@ use core::mem::ManuallyDrop;
 // `ArrayHashContext` carrying the `arg_buf`/`existing_buf` pair.
 pub type Map = ArrayHashMap<String, Dependency>;
 
-#[derive(Default)]
 pub struct CatalogMap {
     pub default: Map,
     pub groups: ArrayHashMap<String, Map>,
+}
+
+impl CatalogMap {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            default: Map::new(),
+            groups: ArrayHashMap::new(),
+        }
+    }
 }
 
 /// The lockfile's string buffer for both arg & existing sides.
@@ -215,7 +224,7 @@ impl CatalogMap {
             dep.version = DependencyVersion {
                 tag: DependencyVersionTag::Uninitialized,
                 literal,
-                value: DependencyVersionValue::default(),
+                value: DependencyVersionValue::new(),
             };
             return;
         }
@@ -251,10 +260,12 @@ impl CatalogMap {
         buf: &[u8],
         catalog_name: String,
     ) -> Result<&'a mut Map, AllocError> {
-        let entry = groups.get_or_put_adapted(&catalog_name, &ctx(buf))?;
+        let entry = groups.get_or_put_adapted(&catalog_name, &ctx(buf), || {
+            (String::new(), ArrayHashMap::new())
+        })?;
         if !entry.found_existing {
             *entry.key_ptr = catalog_name;
-            *entry.value_ptr = Map::default();
+            *entry.value_ptr = Map::new();
         }
         Ok(entry.value_ptr)
     }
@@ -376,7 +387,8 @@ impl CatalogMap {
             };
 
             let buf = builder.string_bytes.as_slice();
-            let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
+            let entry = group
+                .get_or_put_adapted(&dep_name, &ctx(buf), || (String::new(), Dependency::new()))?;
 
             if entry.found_existing {
                 log.add_error(Some(source), key_loc, b"Duplicate catalog");
@@ -388,7 +400,7 @@ impl CatalogMap {
                 name: dep_name,
                 name_hash: dep_name_hash,
                 version,
-                ..Dependency::default()
+                ..Dependency::new()
             };
             Ok(())
         })
@@ -492,7 +504,7 @@ impl CatalogMap {
         old_buf: &[u8],
         builder: &mut StringBuilder,
     ) -> Result<CatalogMap, crate::Error> {
-        let mut new_catalog = CatalogMap::default();
+        let mut new_catalog = CatalogMap::new();
 
         new_catalog
             .default
@@ -518,7 +530,7 @@ impl CatalogMap {
             .ensure_total_capacity(self.groups.count())?;
 
         for (catalog_name, deps) in self.groups.keys().iter().zip(self.groups.values()) {
-            let mut new_group = Map::default();
+            let mut new_group = Map::new();
             new_group.ensure_total_capacity(deps.count())?;
 
             for (dep_name, dep) in deps.keys().iter().zip(deps.values()) {
@@ -590,7 +602,8 @@ fn put_entries_from_pnpm_lockfile(
         };
 
         let buf = string_buf.bytes.as_slice();
-        let entry = catalog_map.get_or_put_adapted(&dep_name, &ctx(buf))?;
+        let entry = catalog_map
+            .get_or_put_adapted(&dep_name, &ctx(buf), || (String::new(), Dependency::new()))?;
 
         if entry.found_existing {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
@@ -637,7 +650,8 @@ fn put_declared_entries(
             }
         };
         let buf = string_buf.bytes.as_slice();
-        let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
+        let entry = group
+            .get_or_put_adapted(&dep_name, &ctx(buf), || (String::new(), Dependency::new()))?;
         *entry.key_ptr = dep_name;
         *entry.value_ptr = dep;
         Ok(())
@@ -668,6 +682,6 @@ fn parse_entry(
         name: dep_name,
         name_hash: dep_name_hash,
         version,
-        ..Dependency::default()
+        ..Dependency::new()
     }))
 }

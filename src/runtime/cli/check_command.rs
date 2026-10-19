@@ -18,7 +18,6 @@ use core::time::Duration;
 
 pub(crate) struct CheckCommand;
 
-#[derive(Default)]
 struct Options {
     /// The paths, `--project`, `--build`, `--strict`, `--target es2022` and so on.
     command_line: CommandLine,
@@ -28,6 +27,19 @@ struct Options {
     /// `--all`: never group identical errors.
     all: bool,
     timing: bool,
+}
+
+impl Options {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            command_line: CommandLine::new(),
+            threads: 0,
+            pretty: None,
+            all: false,
+            timing: false,
+        }
+    }
 }
 
 fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
@@ -86,14 +98,14 @@ fn names_build(args: &[&ZStr]) -> bool {
 
 /// `args`: what follows `check`.
 fn parse(args: &[&ZStr]) -> Options {
-    let mut diagnostic = clap::Diagnostic::default();
+    let mut diagnostic = clap::Diagnostic::new();
     let parsed = clap::parse_with_table::<clap::Help>(
         TABLE,
         clap::ParseOptions {
             diagnostic: Some(&mut diagnostic),
             short_aliases: bun_sema_driver::SHORT_OPTION_NAMES,
             unknown_long_flags_are_positional: true,
-            ..Default::default()
+            ..clap::ParseOptions::new()
         },
     );
     let parsed = match parsed {
@@ -123,7 +135,7 @@ fn parse(args: &[&ZStr]) -> Options {
     let mut options = Options {
         all: parsed.flag(b"--all"),
         timing: parsed.flag(b"--timing"),
-        ..Default::default()
+        ..Options::new()
     };
     if let Some(threads) = parsed.option(b"--threads") {
         match bun_core::fmt::parse_decimal::<usize>(threads) {
@@ -233,12 +245,24 @@ enum Paths<'a> {
 }
 
 /// See the fields of `Request` by these names.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct Entries<'a> {
     paths: &'a [Vec<u8>],
     script_kinds: &'a [(Vec<u8>, ScriptKind)],
     script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     conditions: &'a [Box<[u8]>],
+}
+
+impl<'a> Entries<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            paths: &[],
+            script_kinds: &[],
+            script_kinds_by_extension: &[],
+            conditions: &[],
+        }
+    }
 }
 
 fn run(
@@ -263,7 +287,7 @@ fn run(
             then,
         );
     }
-    let (progress, is_done) = (Progress::default(), AtomicBool::new(false));
+    let (progress, is_done) = (Progress::new(), AtomicBool::new(false));
     let style = style_for(cwd, Some(true), Destination::stderr(), false);
     std::thread::scope(|scope| {
         let shown = scope.spawn(|| show_progress(&progress, &is_done, &style));
@@ -329,7 +353,7 @@ fn request<'a>(
         Paths::Arguments(command_line) => {
             let paths = Entries {
                 paths: &command_line.paths,
-                ..Default::default()
+                ..Entries::new()
             };
             (paths, Some(command_line))
         }
@@ -354,7 +378,7 @@ fn request<'a>(
         order: 1,
         digests: false,
         task_clock: None,
-        plan_options: bun_sema_driver::PlanOptions::default(),
+        plan_options: bun_sema_driver::PlanOptions::new(),
         retains_everything: false,
         stops_like_tsc: true,
         uses_typescript_wording: false,
@@ -444,9 +468,9 @@ impl CheckCommand {
         Self::exec_with(&Options {
             command_line: CommandLine {
                 project: tsconfig_override().map(<[u8]>::to_vec),
-                ..Default::default()
+                ..CommandLine::new()
             },
-            ..Default::default()
+            ..Options::new()
         })
     }
 
@@ -458,7 +482,7 @@ impl CheckCommand {
             &Paths::Arguments(command_line),
             &command_line.compiler_options,
             options.threads,
-            Provided::default(),
+            Provided::new(),
             // The process exits without freeing what was loaded. Under leak detection, everything
             // is freed first.
             |report| match bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
@@ -556,7 +580,9 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
     let loaders = args.and_then(|args| args.loaders.as_ref());
     let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun);
-    let by_extension = script_kinds_by_extension(&loaders.unwrap_or_default());
+    let by_extension = script_kinds_by_extension(
+        &loaders.unwrap_or_else(bun_collections::StringArrayHashMap::init),
+    );
     let Some((paths, script_kinds)) = what_to_check(&cwd, entry_points, &by_extension) else {
         return true;
     };
@@ -564,7 +590,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     let provided = Provided {
         already_read: already_read(&cwd, &mut in_memory),
         before_read,
-        ..Default::default()
+        ..Provided::new()
     };
     let entries = Entries {
         paths: &paths,
@@ -665,7 +691,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     });
     let provided = Provided {
         already_read: already_read(cwd, &mut sources),
-        ..Default::default()
+        ..Provided::new()
     };
     // Not `App.svelte`, which a plugin turns into TypeScript.
     let is_source = |path: &&[u8]| {
@@ -704,7 +730,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
             data: log_data_of(reported),
             metadata: format::metadata_of(reported),
             notes: reported.related.iter().map(log_data_of).collect(),
-            ..Default::default()
+            ..bun_ast::Msg::new()
         });
     }
     for file in &report.incomplete {
@@ -742,7 +768,7 @@ fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
             offset: reported.start as usize,
             line: reported.line as i32,
             column: reported.column as i32,
-            ..Default::default()
+            ..bun_ast::Location::new()
         }),
     }
 }
@@ -843,9 +869,9 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
     let provided = Provided {
         before_read,
-        ..Default::default()
+        ..Provided::new()
     };
-    check_and_report(&Paths::EntryPoints(Entries::default()), provided)
+    check_and_report(&Paths::EntryPoints(Entries::new()), provided)
 }
 
 /// `--tsconfig-override` of `bun`: what is run is resolved with it, in place of every other.

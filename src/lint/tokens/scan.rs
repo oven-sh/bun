@@ -52,10 +52,19 @@ enum Dialect {
 }
 
 /// Positions in ascending order, which are asked for in ascending order.
-#[derive(Default)]
 struct Positions {
     list: Vec<u32>,
     next: usize,
+}
+
+impl Positions {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            list: Vec::new(),
+            next: 0,
+        }
+    }
 }
 
 impl Positions {
@@ -83,7 +92,6 @@ impl Positions {
 }
 
 /// What the text does not tell.
-#[derive(Default)]
 struct Marks {
     /// The regular expressions: the start and the end.
     regexes: Vec<(u32, u32)>,
@@ -103,6 +111,21 @@ struct Marks {
     accesses: Positions,
 }
 
+impl Marks {
+    #[inline]
+    fn init() -> Self {
+        Self {
+            regexes: Vec::new(),
+            next_regex: 0,
+            elements: Positions::new(),
+            shifts: Positions::new(),
+            names: Positions::new(),
+            keywords: Positions::new(),
+            accesses: Positions::new(),
+        }
+    }
+}
+
 /// The start of the operator after an operand that ends at `at`, not counting its parentheses.
 fn operator_after(text: &[u8], mut at: u32) -> u32 {
     loop {
@@ -119,7 +142,7 @@ impl Marks {
         let (hir, text) = (&file.hir, file.text());
         let is_typescript = !matches!(dialect, Dialect::Espree { .. });
         let marks_accesses = dialect == Dialect::TypeScript && !hir.jsx.is_empty();
-        let mut marks = Marks::default();
+        let mut marks = Marks::init();
         let end_of = |e: hir::ExprId| hir.exprs.get(e.idx()).map_or(0, |e| e.end);
         for e in hir.exprs {
             match e.kind {
@@ -565,7 +588,7 @@ struct Scanner<'a> {
 /// The tokens and the comments of `file`.
 pub(super) fn scan<'a>(file: &'a File<'a>) -> (Vec<RawToken>, Vec<RawToken>) {
     let dialect = Dialect::of(file);
-    let mut stops = ScannerStopsBuffer::default();
+    let mut stops = ScannerStopsBuffer::new();
     let stops = stops.find(file.text());
     let scanner = Scanner::run(file, stops, dialect, Marks::new(file, stops, dialect));
     (scanner.tokens, scanner.comments)

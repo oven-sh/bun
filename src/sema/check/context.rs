@@ -420,7 +420,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut has_computed_names = false;
                 // Where the property of a name is in `shape.props`, if the pattern has many.
                 let has_many = props.len() > 16;
-                let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
+                let mut places: FxHashMap<Atom, usize> =
+                    FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
                 for p in props.iter() {
                     let prop = &hir[p];
                     if prop.is_rest {
@@ -962,8 +963,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Results computed under what is pushed are not valid here, nor these there.
         let found_outside = (
-            std::mem::take(&mut self.rechecked_exprs),
-            std::mem::take(&mut self.rechecked_members),
+            std::mem::replace(
+                &mut self.rechecked_exprs,
+                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ),
+            std::mem::replace(
+                &mut self.rechecked_members,
+                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ),
         );
         let outer = self.begin_recheck();
         let ty = self.check_expression_ex(file, initializer, CheckMode::empty());

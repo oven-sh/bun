@@ -862,7 +862,7 @@ impl ScopeBlockTraversal {
     pub fn new() -> Self {
         ScopeBlockTraversal {
             active_scopes: Vec::new(),
-            block_infos: HashMap::default(),
+            block_infos: HashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 

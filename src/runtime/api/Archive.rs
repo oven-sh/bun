@@ -20,9 +20,8 @@ use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 const FILETYPE_REGULAR: u32 = 0o100000;
 
 /// Compression options for the archive
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) enum Compression {
-    #[default]
     None,
     Gzip(GzipOptions),
 }
@@ -81,7 +80,7 @@ impl Archive {
         writeln!(
             writer,
             "Archive ({}) {{",
-            bun_core::fmt::size(data.len(), bun_core::fmt::SizeFormatterOptions::default()),
+            bun_core::fmt::size(data.len(), bun_core::fmt::SizeFormatterOptions::new()),
         )
         .map_err(fmt_err)?;
 
@@ -1313,7 +1312,7 @@ fn extract_to_disk_filtered(
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    let mut write_strategy = lib::WriteStrategy::default();
+    let mut write_strategy = lib::WriteStrategy::new();
 
     loop {
         match archive.read_next_header(&mut entry) {

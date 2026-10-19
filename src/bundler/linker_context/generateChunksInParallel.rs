@@ -115,7 +115,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         debug!(" START {} source maps (line offset)", chunks.len());
         c.source_maps.line_offset_wait_group.wait();
         // `c.arena().free(...)` + `.len = 0` → Vec drop semantics.
-        c.source_maps.line_offset_tasks = Box::default();
+        c.source_maps.line_offset_tasks = Box::new([]);
         debug!("  DONE {} source maps (line offset)", chunks.len());
     }
 
@@ -137,7 +137,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug!(" START {} prepare CSS ast (total count)", total_count);
 
             let group = bun_threading::WaitGroup::init_with_count(total_count);
-            let mut batch = ThreadPoolLib::Batch::default();
+            let mut batch = ThreadPoolLib::Batch::new();
             let mut tasks: Vec<PrepareCssAstTask> = Vec::with_capacity(total_count);
             for chunk in chunks.iter_mut() {
                 if chunk.content.is_css() {
@@ -213,7 +213,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // batch holds raw pointers into this buffer.
             let group = bun_threading::WaitGroup::init_with_count(total_count);
             let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
-            let mut batch = ThreadPoolLib::Batch::default();
+            let mut batch = ThreadPoolLib::Batch::new();
             for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
                 match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
@@ -242,7 +242,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     crate::chunk::Content::Css(css) => {
                         for i in 0..css.imports_in_chunk_in_order.len() as usize {
                             combined_part_ranges.push(PendingPartRange {
-                                part_range: Default::default(),
+                                part_range: super::super::PartRange::new(),
                                 i: u32::try_from(i).expect("int cast"),
                                 task: ThreadPoolLib::CountedTask::new(
                                     generate_compile_result_for_css_chunk,
@@ -264,7 +264,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     }
                     crate::chunk::Content::Html => {
                         combined_part_ranges.push(PendingPartRange {
-                            part_range: Default::default(),
+                            part_range: super::super::PartRange::new(),
                             i: 0,
                             task: ThreadPoolLib::CountedTask::new(
                                 generate_compile_result_for_html_chunk,
@@ -294,7 +294,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         if c.source_maps.quoted_contents_tasks.len() > 0 {
             debug!(" START {} source maps (quoted contents)", chunks.len());
             c.source_maps.quoted_contents_wait_group.wait();
-            c.source_maps.quoted_contents_tasks = Box::default();
+            c.source_maps.quoted_contents_tasks = Box::new([]);
             debug!("  DONE {} source maps (quoted contents)", chunks.len());
         }
 
@@ -389,16 +389,24 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // TODO: enforceNoCyclicChunkImports()
     {
-        let mut path_names_map: StringHashMap<u32> = StringHashMap::default();
+        let mut path_names_map: StringHashMap<u32> = StringHashMap::init();
 
-        #[derive(Default)]
         struct DuplicateEntry {
             // `BackRef` (not `*mut`) — entries point at elements of the
             // stack-owned `chunks: &mut [Chunk]` above, which outlives the
             // `duplicates_map`; reads go through safe `Deref`.
             sources: Vec<bun_ptr::BackRef<Chunk>>,
         }
-        let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
+
+        impl DuplicateEntry {
+            #[inline]
+            fn new() -> Self {
+                Self {
+                    sources: Vec::new(),
+                }
+            }
+        }
+        let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::init();
 
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk.
@@ -426,12 +434,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 rel_path.drain(i..i + 2);
             }
 
-            let claimed = path_names_map.get_or_put(&rel_path)?;
+            let claimed = path_names_map.get_or_put(&rel_path, || 0)?;
             if claimed.found_existing {
                 let first = *claimed.value_ptr as usize;
-                let dup = duplicates_map.get_or_put(&rel_path)?;
+                let dup = duplicates_map.get_or_put(&rel_path, DuplicateEntry::new)?;
                 if !dup.found_existing {
-                    *dup.value_ptr = DuplicateEntry::default();
+                    *dup.value_ptr = DuplicateEntry::new();
                     dup.value_ptr
                         .sources
                         .push(bun_ptr::BackRef::new(&chunks[first]));
@@ -517,9 +525,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     kind: bun_ast::Kind::Note,
                     data: bun_ast::Data {
                         text: Cow::Owned(text),
-                        ..Default::default()
+                        ..bun_ast::Data::new()
                     },
-                    ..Default::default()
+                    ..bun_ast::Msg::new()
                 });
             }
 
@@ -544,7 +552,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     };
     // (chunk index, its `Bytecode` output file, the URL its bytecode is keyed on), for `bytecode_order`.
     let mut linked_bytecode_chunks: Vec<(usize, u32, BunString)> = Vec::new();
-    let mut module_info_strings = analyze_transpiled_module::ModuleInfoSlotTableBuilder::default();
+    let mut module_info_strings = analyze_transpiled_module::ModuleInfoSlotTableBuilder::new();
     // (`prelinked_module_graph` blob, chunk index of each graph module), when one was built.
     let mut prelinked_graph: Option<(Vec<u8>, Vec<u32>)> = None;
     if c.options.generates_module_info() {
@@ -555,7 +563,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 =
             unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
-        let mut unique_key_to_path: StringHashMap<Box<[u8]>> = StringHashMap::default();
+        let mut unique_key_to_path: StringHashMap<Box<[u8]>> = StringHashMap::init();
         for ch in chunks.iter() {
             if ch.unique_key.len() > 0 && ch.final_rel_path.len() > 0 {
                 // Use the per-chunk public_path to match what IntermediateOutput.code()
@@ -657,7 +665,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 chunk_indices.binary_search(&(chunk_index as u32)).is_ok()
             }) {
                 // Keeps the chunk's (empty) module_info output slot so output-file indices stay dense.
-                js.module_info_bytes = Some(Box::default());
+                js.module_info_bytes = Some(Box::new([]));
                 continue;
             }
             js.module_info_bytes = Some(bun_js_printer::serialize_module_info_body(
@@ -704,7 +712,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // shared borrow doesn't conflict with `c.log_disjoint()` inside
         // the chunk loop below. `c` outlives `static_route_visitor`.
         c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
-        cache: bun_collections::ArrayHashMap::default(),
+        cache: bun_collections::ArrayHashMap::new(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
     };
 
@@ -740,7 +748,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // Sibling JS/CSS chunks may still be null at this point; `.chunk` pieces fall
             // back to file paths when their entry in `scc` is null, matching the previous
             // behavior for inter-chunk imports.
-            let mut intermediate_output = core::mem::take(&mut chunks[ci].intermediate_output);
+            let mut intermediate_output = core::mem::replace(
+                &mut chunks[ci].intermediate_output,
+                crate::chunk::IntermediateOutput::Empty,
+            );
             let code_result = intermediate_output.code_standalone(
                 None,
                 c.parse_graph(),
@@ -913,7 +924,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             side: None,
                             entry_point_index: None,
                             is_executable: false,
-                            ..Default::default()
+                            ..options::OutputFileInit::new()
                         }),
                     )?)
                 } else {
@@ -922,25 +933,23 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
                 let _ = output_files.insert_for_chunk(options::OutputFile::init(
                     options::OutputFileInit {
-                        data: options::OutputFileData::Buffer {
-                            data: Box::default(),
-                        },
+                        data: options::OutputFileData::Buffer { data: Box::new([]) },
                         hash: None,
                         loader: chunks[chunk_index_in_chunks_list].content.loader(),
-                        input_path: Box::default(),
+                        input_path: Box::new([]),
                         display_size: 0,
                         output_kind: options::OutputKind::Chunk,
                         input_loader: Loader::Js,
-                        output_path: Box::default(),
+                        output_path: Box::new([]),
                         is_executable: false,
                         source_map_index,
                         bytecode_index: None,
                         module_info_index: None,
                         side: Some(options::Side::Client),
                         entry_point_index: None,
-                        referenced_css_chunks: Box::default(),
-                        bake_extra: BakeExtra::default(),
-                        ..Default::default()
+                        referenced_css_chunks: Box::new([]),
+                        bake_extra: BakeExtra::new(),
+                        ..options::OutputFileInit::new()
                     },
                 ));
                 continue;
@@ -962,8 +971,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             // Take `intermediate_output` by value so the `&mut self` it provides
             // to `code()` is disjoint from the `&chunks[i]` / `&[Chunk]` reads.
-            let mut intermediate_output =
-                core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
+            let mut intermediate_output = core::mem::replace(
+                &mut chunks[chunk_index_in_chunks_list].intermediate_output,
+                crate::chunk::IntermediateOutput::Empty,
+            );
             let _code_result = if is_standalone
                 && matches!(
                     chunks[chunk_index_in_chunks_list].content,
@@ -1061,7 +1072,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             side: None,
                             entry_point_index: None,
                             is_executable: false,
-                            ..Default::default()
+                            ..options::OutputFileInit::new()
                         }));
                 }
                 SourceMapOption::Inline => {
@@ -1121,7 +1132,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // With a payload order file the chunk's code is in the link's one payload, and the file says
                         // where (`bytecode_entry_offset`) once that is encoded (below).
                         let bytecode = if bytecode_order.is_some() {
-                            Some(Box::default())
+                            Some(Box::new([]))
                         } else {
                             crate::bundle_v2::dispatch::generate_cached_bytecode(
                                 c.options.output_format,
@@ -1171,7 +1182,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 side: Some(side),
                                 entry_point_index: None,
                                 is_executable: false,
-                                ..Default::default()
+                                ..options::OutputFileInit::new()
                             }));
                         } else {
                             // an error
@@ -1228,7 +1239,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                         side: Some(side),
                                         entry_point_index: None,
                                         is_executable: false,
-                                        ..Default::default()
+                                        ..options::OutputFileInit::new()
                                     },
                                 ));
                             }
@@ -1308,22 +1319,22 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             .iter()
                             .map(|&i| crate::output_file::Index::init(i))
                             .collect(),
-                        crate::chunk::Content::Css(_) => Box::default(),
-                        crate::chunk::Content::Html => Box::default(),
+                        crate::chunk::Content::Css(_) => Box::new([]),
+                        crate::chunk::Content::Html => Box::new([]),
                     },
                     bake_extra: 'brk: {
                         if c.framework.is_none() || IS_DEV_SERVER {
-                            break 'brk BakeExtra::default();
+                            break 'brk BakeExtra::new();
                         }
                         if !c.framework.unwrap().is_built_in_react {
-                            break 'brk BakeExtra::default();
+                            break 'brk BakeExtra::new();
                         }
 
                         let mut extra = BakeExtra {
                             bake_is_runtime: chunk
                                 .files_with_parts_in_chunk
                                 .contains(&Index::RUNTIME.get()),
-                            ..Default::default()
+                            ..BakeExtra::new()
                         };
                         if output_kind == options::OutputKind::EntryPoint
                             && side == options::Side::Server
@@ -1339,7 +1350,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
                         break 'brk extra;
                     },
-                    ..Default::default()
+                    ..options::OutputFileInit::new()
                 }));
 
             // We want the chunk index to remain the same in `output_files` so the indices in `OutputFile.referenced_css_chunks` work
@@ -1596,7 +1607,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
         result.push(options::OutputFile::init(options::OutputFileInit {
             output_path: b".prelinked-module-graph".to_vec().into_boxed_slice(),
-            input_path: Box::default(),
+            input_path: Box::new([]),
             input_loader: Loader::File,
             hash: None,
             output_kind: options::OutputKind::PrelinkedModuleGraph,
@@ -1609,7 +1620,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             side: None,
             entry_point_index: None,
             is_executable: false,
-            ..Default::default()
+            ..options::OutputFileInit::new()
         }));
     }
     if c.options.generates_module_info() {
@@ -1621,7 +1632,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         );
         result.push(options::OutputFile::init(options::OutputFileInit {
             output_path: b".module-info-strings".to_vec().into_boxed_slice(),
-            input_path: Box::default(),
+            input_path: Box::new([]),
             input_loader: Loader::File,
             hash: None,
             output_kind: options::OutputKind::ModuleInfoStringTable,
@@ -1634,13 +1645,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             side: None,
             entry_point_index: None,
             is_executable: false,
-            ..Default::default()
+            ..options::OutputFileInit::new()
         }));
     }
     if let Some(bytes) = linked_bytecode_payload {
         result.push(options::OutputFile::init(options::OutputFileInit {
             output_path: b".bytecode-payload".to_vec().into_boxed_slice(),
-            input_path: Box::default(),
+            input_path: Box::new([]),
             input_loader: Loader::File,
             hash: None,
             output_kind: options::OutputKind::BytecodePayload,
@@ -1651,7 +1662,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             side: None,
             entry_point_index: None,
             is_executable: false,
-            ..Default::default()
+            ..options::OutputFileInit::new()
         }));
     }
     if let Some(table) = external_string_table {
@@ -1663,7 +1674,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         debug!("Bytecode external string table: {} bytes", bytes.len());
         result.push(options::OutputFile::init(options::OutputFileInit {
             output_path: b".bytecode-strings".to_vec().into_boxed_slice(),
-            input_path: Box::default(),
+            input_path: Box::new([]),
             input_loader: Loader::File,
             hash: None,
             output_kind: options::OutputKind::BytecodeStringTable,
@@ -1674,7 +1685,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             side: None,
             entry_point_index: None,
             is_executable: false,
-            ..Default::default()
+            ..options::OutputFileInit::new()
         }));
     }
     debug_assert_no_placeholder_left(c, &result);
@@ -1742,7 +1753,7 @@ fn wanted_internal_modules(
             let alias = bun_resolve_builtins::HardcodedModule::Alias::get(
                 text,
                 crate::options::Target::Bun,
-                Default::default(),
+                bun_resolve_builtins::Cfg::new(),
             );
             let canonical: &[u8] = match &alias {
                 // The one aliased npm specifier whose registry name is not the specifier (bundle-modules.ts).
@@ -1826,7 +1837,7 @@ fn append_internal_module_bytecode(
                         );
                     }
                     linked.output_files.push(output_files.len() as u32);
-                    Box::default()
+                    Box::new([])
                 })
         } else {
             match target_section {
@@ -1851,7 +1862,7 @@ fn append_internal_module_bytecode(
         debug!("Internal module bytecode {}: {} bytes", id, bytecode.len());
         output_files.push(options::OutputFile::init(options::OutputFileInit {
             output_path: id.to_string().into_bytes().into_boxed_slice(),
-            input_path: Box::default(),
+            input_path: Box::new([]),
             input_loader: Loader::Js,
             hash: None,
             output_kind: options::OutputKind::BuiltinBytecode,
@@ -1862,7 +1873,7 @@ fn append_internal_module_bytecode(
             side: None,
             entry_point_index: None,
             is_executable: false,
-            ..Default::default()
+            ..options::OutputFileInit::new()
         }));
     }
     for name in without_names {

@@ -1,7 +1,6 @@
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum OfflineMode {
-    #[default]
     Online,
     Latest,
     Offline,

@@ -17,12 +17,23 @@ struct Problem<'a> {
 }
 
 /// The problems of a file, printed.
-#[derive(Default)]
 struct File {
     name: Vec<u8>,
     problems: Vec<u8>,
     all: usize,
     errors: usize,
+}
+
+impl File {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            name: Vec::new(),
+            problems: Vec::new(),
+            all: 0,
+            errors: 0,
+        }
+    }
 }
 
 /// The files that have problems. `write_problem` prints one problem.
@@ -35,9 +46,9 @@ fn group(
     write_problem: &dyn Fn(&mut Vec<u8>, &Problem),
 ) -> Vec<File> {
     let mut files = Vec::new();
-    let mut nameless = File::default();
+    let mut nameless = File::new();
     for result in results.iter().filter(|it| !it.messages.is_empty()) {
-        let mut file = File::default();
+        let mut file = File::new();
         let mut add = |name: &[u8], problem: &Problem| {
             let to = if name.is_empty() {
                 &mut nameless

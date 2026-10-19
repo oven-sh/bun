@@ -61,10 +61,20 @@ const PROP_TYPES: [&str; 22] = [
 const STATIC_CLASS_PROPERTIES: [&str; 4] = ["propTypes", "contextTypes", "childContextTypes", "defaultProps"];
 
 /// `propTypesPackageName` and `reactPackageName`
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Packages<'a> {
     prop_types: Option<Name<'a>>,
     react: Option<Name<'a>>,
+}
+
+impl<'a> Packages<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            prop_types: None,
+            react: None,
+        }
+    }
 }
 
 /// What the imports up to the one that starts at `start` make of the two names.
@@ -221,7 +231,7 @@ impl<'a> State<'a> {
     fn packages_at(&self, file: &'a File<'a>, position: u32) -> Packages<'a> {
         let imports = self.imports.get_or_init(|| imports_of(file));
         let before = imports.partition_point(|it| it.start < position);
-        before.checked_sub(1).and_then(|last| imports.get(last)).map(|it| it.packages).unwrap_or_default()
+        before.checked_sub(1).and_then(|last| imports.get(last)).map(|it| it.packages).unwrap_or_else(Packages::new)
     }
 }
 
@@ -232,7 +242,7 @@ fn imports_of<'a>(file: &'a File<'a>) -> SmallVec<[Imported<'a>; 2]> {
         .filter(|it| matches!(it.kind(), StmtKind::Import(import) if import.spec().is_any(&["prop-types", "react"])))
         .collect();
     sort::sort_unstable_by_key(&mut statements, |it| it.span().start);
-    let mut packages = Packages::default();
+    let mut packages = Packages::new();
     let mut imports = SmallVec::new();
     for statement in statements {
         let StmtKind::Import(import) = statement.kind() else {

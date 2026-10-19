@@ -12,7 +12,7 @@
 //! delegates to `gregorian_date_time_to_ms_utc`.
 
 /// Components of a parsed wall-clock timestamp.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct DateTimeText {
     /// Astronomical: 1 BC is 0.
     pub(crate) year: i32,
@@ -23,6 +23,21 @@ pub struct DateTimeText {
     pub(crate) second: u8,
     /// Fractional seconds right-padded to microseconds (`.5` → 500_000).
     pub(crate) microsecond: u32,
+}
+
+impl DateTimeText {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            year: 0,
+            month: 0,
+            day: 0,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            microsecond: 0,
+        }
+    }
 }
 
 /// Which bytes may separate the date from the time.
@@ -106,7 +121,7 @@ fn parse(text: &[u8], separator: Separator) -> Option<(DateTimeText, usize)> {
         year: i32::try_from(parse_u(year)?).ok()?,
         month: u8::try_from(parse_u(&text[1..3])?).ok()?,
         day: u8::try_from(parse_u(&text[4..6])?).ok()?,
-        ..Default::default()
+        ..DateTimeText::new()
     };
     if text.len() == 6 {
         return Some((result, year_len + 6));

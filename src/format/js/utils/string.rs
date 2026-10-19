@@ -125,7 +125,7 @@ impl<'a> FormatLiteralStringToken<'a> {
                 .first()
                 .copied()
                 .and_then(QuoteStyle::from_byte)
-                .unwrap_or_default(),
+                .unwrap_or(QuoteStyle::Double),
             preferred_quote: match chosen_quote_count > alternate_quote_count {
                 true => chosen_quote.other(),
                 false => chosen_quote,
@@ -237,7 +237,7 @@ impl<'a> FormatLiteralStringToken<'a> {
             .first()
             .copied()
             .and_then(QuoteStyle::from_byte)
-            .unwrap_or_default();
+            .unwrap_or(QuoteStyle::Double);
 
         let count = |quote: u8, entity: &[u8]| {
             let mut count = bun_core::strings::count_char(content, quote);

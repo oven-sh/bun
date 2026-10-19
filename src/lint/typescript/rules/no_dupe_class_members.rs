@@ -16,11 +16,11 @@ impl Rule for NoDupeClassMembers {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Seen<'a>> {
-        Some(Seen::default())
+        Some(Seen::new())
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        let mut seen = std::mem::take(&mut cx.state);
+        let mut seen = std::mem::replace(&mut cx.state, Seen::new());
         // oxlint, where this is ESLint's rule, looks at the names in brackets as ESLint does.
         check(class, !cx.language().is_oxlint, &mut seen, cx);
         cx.state = seen;

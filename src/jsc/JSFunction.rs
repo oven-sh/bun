@@ -8,9 +8,8 @@ bun_opaque::opaque_ffi! {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ImplementationVisibility {
-    #[default]
     Public = 0,
     Private = 1,
     PrivateRecursive = 2,
@@ -28,17 +27,28 @@ impl Intrinsic {
     const NONE: Intrinsic = Intrinsic(0);
 }
 
-impl Default for Intrinsic {
-    fn default() -> Self {
+impl Intrinsic {
+    pub fn new() -> Self {
         Intrinsic::NONE
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct CreateJSFunctionOptions {
     pub implementation_visibility: ImplementationVisibility,
     pub intrinsic: Intrinsic,
     pub constructor: Option<JSHostFn>,
+}
+
+impl CreateJSFunctionOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            implementation_visibility: ImplementationVisibility::Public,
+            intrinsic: Intrinsic::new(),
+            constructor: None,
+        }
+    }
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; the remaining

@@ -32,7 +32,7 @@ use crate::IndexInt;
 fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
     match r {
         PrintResult::Result(ok) => core::mem::take(&mut ok.code),
-        PrintResult::Err(_) => Box::default(),
+        PrintResult::Err(_) => Box::new([]),
     }
 }
 
@@ -198,7 +198,7 @@ pub(crate) fn post_process_js_chunk(
         // via FRU at each call site.
         let make_print_options = || js_printer::Options {
             bundling: true,
-            indent: Default::default(),
+            indent: bun_ast::Indentation::new(),
             has_run_symbol_renamer: true,
 
             require_ref: runtime_require_ref,
@@ -210,7 +210,7 @@ pub(crate) fn post_process_js_chunk(
             mangled_props: Some(&c.mangled_props),
             module_info: None,
             // .const_values = c.graph.const_values,
-            ..Default::default()
+            ..js_printer::Options::new()
         };
 
         let mut cross_chunk_import_records: Vec<ImportRecord> =
@@ -229,7 +229,7 @@ pub(crate) fn post_process_js_chunk(
                 loader: None,
                 source_index: Index::INVALID,
                 original_path: b"",
-                flags: ImportRecordFlags::default(),
+                flags: ImportRecordFlags::empty(),
             });
         }
 
@@ -278,7 +278,7 @@ pub(crate) fn post_process_js_chunk(
             cross_chunk_import_records.as_slice(),
             &[Part {
                 stmts: prefix_stmts,
-                ..Default::default()
+                ..Part::new()
             }],
             chunk.renamer.as_renamer(),
         );
@@ -306,7 +306,7 @@ pub(crate) fn post_process_js_chunk(
             &[],
             &[Part {
                 stmts: suffix_stmts,
-                ..Default::default()
+                ..Part::new()
             }],
             chunk.renamer.as_renamer(),
         );
@@ -362,7 +362,7 @@ pub(crate) fn post_process_js_chunk(
         break 'brk CompileResult::Javascript {
             source_index: Index::INVALID.value(),
             result: PrintResult::Result(js_printer::PrintResultSuccess {
-                code: Box::default(),
+                code: Box::new([]),
                 source_map: None,
             }),
             module_info: None,
@@ -377,17 +377,17 @@ pub(crate) fn post_process_js_chunk(
         chunk.content.javascript_mut().module_info = Some(mi);
     }
 
-    let mut j = StringJoiner::default();
+    let mut j = StringJoiner::new();
     j.watcher = Watcher {
         input: chunk.unique_key,
-        ..Default::default()
+        ..Watcher::new()
     };
     // errdefer j.deinit() — deleted; StringJoiner has Drop
     let output_format = c.options.output_format;
 
     let mut line_offset: SourceMap::LineColumnOffsetOptional =
         if c.options.source_maps != options::SourceMapOption::None {
-            SourceMap::LineColumnOffsetOptional::Value(Default::default())
+            SourceMap::LineColumnOffsetOptional::Value(bun_sourcemap::LineColumnOffset::new())
         } else {
             SourceMap::LineColumnOffsetOptional::Null
         };
@@ -543,7 +543,7 @@ pub(crate) fn post_process_js_chunk(
     let mut prev_filename_comment: IndexInt = 0;
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
-        MultiArrayList::default();
+        MultiArrayList::new();
     bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
     let show_comments = c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
@@ -666,7 +666,9 @@ pub(crate) fn post_process_js_chunk(
                             source_map_chunk: unsafe { source_map_chunk.alias() },
                             generated_offset: match line_offset {
                                 SourceMap::LineColumnOffsetOptional::Value(v) => v,
-                                SourceMap::LineColumnOffsetOptional::Null => Default::default(),
+                                SourceMap::LineColumnOffsetOptional::Null => {
+                                    bun_sourcemap::LineColumnOffset::new()
+                                }
                             },
                             source_index: compile_result.source_index(),
                         },
@@ -811,7 +813,7 @@ pub(crate) fn post_process_js_chunk(
 
     // Free the renamer now that printing is done; nothing reads it after
     // post-processing.
-    chunk.renamer = Default::default();
+    chunk.renamer = crate::chunk::bun_renamer::ChunkRenamer::None;
 
     Ok(())
 }
@@ -855,7 +857,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                         ast.wrapper_ref,
                                         bun_ast::Loc::EMPTY,
                                     ),
-                                    ..Default::default()
+                                    ..E::Call::new()
                                 },
                                 bun_ast::Loc::EMPTY,
                             )),
@@ -877,14 +879,14 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                                         ast.wrapper_ref,
                                                         bun_ast::Loc::EMPTY,
                                                     ),
-                                                    ..Default::default()
+                                                    ..E::Call::new()
                                                 },
                                                 bun_ast::Loc::EMPTY,
                                             ),
                                         },
                                         bun_ast::Loc::EMPTY,
                                     ),
-                                    ..Default::default()
+                                    ..S::SExpr::new()
                                 },
                                 bun_ast::Loc::EMPTY,
                             ));
@@ -898,11 +900,11 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                                 ast.wrapper_ref,
                                                 bun_ast::Loc::EMPTY,
                                             ),
-                                            ..Default::default()
+                                            ..E::Call::new()
                                         },
                                         bun_ast::Loc::EMPTY,
                                     ),
-                                    ..Default::default()
+                                    ..S::SExpr::new()
                                 },
                                 bun_ast::Loc::EMPTY,
                             ));
@@ -1018,12 +1020,12 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                             value: Some(Expr::init(
                                                 E::ImportIdentifier {
                                                     ref_: resolved_export_data.import_ref,
-                                                    ..Default::default()
+                                                    ..E::ImportIdentifier::init()
                                                 },
                                                 bun_ast::Loc::EMPTY,
                                             )),
                                         }]),
-                                        ..Default::default()
+                                        ..S::Local::new()
                                     },
                                     bun_ast::Loc::EMPTY,
                                 ));
@@ -1035,7 +1037,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                     },
                                     alias: bun_ast::StoreStr::new(alias),
                                     alias_loc: bun_ast::Loc::EMPTY,
-                                    ..Default::default()
+                                    ..bun_ast::ClauseItem::new()
                                 });
                             } else {
                                 // Local identifiers can be exported using an export clause. This is done
@@ -1068,7 +1070,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                     },
                                     alias: bun_ast::StoreStr::new(alias),
                                     alias_loc: resolved_export_data.name_loc,
-                                    ..Default::default()
+                                    ..bun_ast::ClauseItem::new()
                                 });
                             }
                         }
@@ -1102,7 +1104,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         {
                             let mut properties = G::PropertyList::init_capacity(items.len());
                             let getter_fn_body: &mut [Stmt] =
-                                arena.alloc_slice_fill_default(items.len());
+                                arena.alloc_slice_fill_with(items.len(), |_| Stmt::new());
                             let mut remain_getter_fn_body = &mut getter_fn_body[..];
                             for export_item in items.iter() {
                                 let (fn_body, rest) = remain_getter_fn_body.split_at_mut(1);
@@ -1112,7 +1114,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                         value: Some(Expr::init(
                                             E::Identifier {
                                                 ref_: export_item.name.ref_,
-                                                ..Default::default()
+                                                ..E::Identifier::new()
                                             },
                                             export_item.name.loc,
                                         )),
@@ -1127,7 +1129,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                                 // SAFETY: alias is an arena `*const [u8]`; never null.
                                                 data: export_item.alias.slice().into(),
                                                 is_utf16: false,
-                                                ..Default::default()
+                                                ..E::String::new()
                                             },
                                             export_item.alias_loc,
                                         )),
@@ -1140,14 +1142,14 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                                             fn_body,
                                                         ),
                                                     },
-                                                    ..Default::default()
+                                                    ..G::Fn::new()
                                                 },
                                             },
                                             export_item.alias_loc,
                                         )),
                                         kind: G::PropertyKind::Get,
                                         flags: bun_ast::Flags::Property::IsMethod.into(),
-                                        ..Default::default()
+                                        ..G::Property::new()
                                     },
                                 );
                             }
@@ -1160,7 +1162,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                     value: StmtOrExpr::Expr(Expr::init(
                                         E::Object {
                                             properties,
-                                            ..Default::default()
+                                            ..E::Object::new()
                                         },
                                         bun_ast::Loc::EMPTY,
                                     )),
@@ -1211,14 +1213,14 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                 ),
                                 name: b"exports".into(),
                                 name_loc: bun_ast::Loc::EMPTY,
-                                ..Default::default()
+                                ..E::Dot::new()
                             },
                             bun_ast::Loc::EMPTY,
                         ),
                         Expr::init(
                             E::Call {
                                 target: Expr::init_identifier(ast.wrapper_ref, bun_ast::Loc::EMPTY),
-                                ..Default::default()
+                                ..E::Call::new()
                             },
                             bun_ast::Loc::EMPTY,
                         ),
@@ -1236,11 +1238,11 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                         ast.wrapper_ref,
                                         bun_ast::Loc::EMPTY,
                                     ),
-                                    ..Default::default()
+                                    ..E::Call::new()
                                 },
                                 bun_ast::Loc::EMPTY,
                             ),
-                            ..Default::default()
+                            ..S::SExpr::new()
                         },
                         bun_ast::Loc::EMPTY,
                     ));
@@ -1261,7 +1263,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
         return CompileResult::Javascript {
             source_index,
             result: PrintResult::Result(js_printer::PrintResultSuccess {
-                code: Box::default(),
+                code: Box::new([]),
                 source_map: None,
             }),
             module_info: None,
@@ -1270,7 +1272,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
 
     let print_options = js_printer::Options {
         // TODO: IIFE indent
-        indent: Default::default(),
+        indent: bun_ast::Indentation::new(),
         has_run_symbol_renamer: true,
 
         to_esm_ref,
@@ -1285,7 +1287,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
         mangled_props: Some(&c.mangled_props),
         module_info,
         // .const_values = c.graph.const_values,
-        ..Default::default()
+        ..js_printer::Options::new()
     };
 
     let ast_view = core::mem::ManuallyDrop::new(core::mem::ManuallyDrop::into_inner(ast).to_ast());
@@ -1305,7 +1307,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
             import_records,
             &[Part {
                 stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
-                ..Default::default()
+                ..Part::new()
             }],
             r,
         ),

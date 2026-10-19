@@ -55,7 +55,7 @@ fn end_of_first_resource(statement: Stmt) -> Option<u32> {
 type Resources<'a> = FxHashMap<Node<'a>, u32>;
 
 fn resources_of<'a>(file: &'a File<'a>) -> Resources<'a> {
-    let mut resources = Resources::default();
+    let mut resources = Resources::with_hasher(rustc_hash::FxBuildHasher);
     for statement in file.stmts_of_kind(StmtTag::Var) {
         let Some(end) = end_of_first_resource(statement) else {
             continue;

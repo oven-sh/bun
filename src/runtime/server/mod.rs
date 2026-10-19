@@ -200,7 +200,7 @@ pub(crate) use server_body::ServePlugins;
 
 // ─── ServerFlags ─────────────────────────────────────────────────────────────
 bitflags::bitflags! {
-    #[derive(Default, Clone, Copy)]
+    #[derive(Clone, Copy)]
     pub struct ServerFlags: u8 {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
@@ -911,7 +911,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
                                 AnyRequestContext::init(ctx),
                             ),
-                            ..Default::default()
+                            ..crate::webcore::body::PendingValue::init()
                         });
                 }
                 ctx_ref.flags.set_is_waiting_for_request_body(true);
@@ -2045,7 +2045,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             )),
                             code: bun_core::String::static_("EACCES"),
                             syscall: bun_core::String::static_("listen"),
-                            ..Default::default()
+                            ..jsc::SystemError::new()
                         };
                         let _ = global.throw_value(err.to_error_instance(global));
                         return;
@@ -2069,7 +2069,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     )),
                     code: bun_core::String::static_("EADDRINUSE"),
                     syscall: bun_core::String::static_("listen"),
-                    ..Default::default()
+                    ..jsc::SystemError::new()
                 }
                 .to_error_instance(global)
             }
@@ -2083,7 +2083,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         )),
                         code: bun_core::String::static_("EADDRINUSE"),
                         syscall: bun_core::String::static_("listen"),
-                        ..Default::default()
+                        ..jsc::SystemError::new()
                     }
                     .to_error_instance(global),
                     e => jsc::SystemError::from(
@@ -2183,7 +2183,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Set below, once the server has its final (stable) heap address.
             any_server_packed: 0,
             method_name_cache: [const { core::cell::Cell::new(JSValue::ZERO) }; N_HTTP_METHODS],
-            config: core::mem::take(config),
+            config: core::mem::replace(config, ServerConfig::new()),
             base_url_string_for_joining: base_url,
             vm: bun_ptr::BackRef::new(jsc::VirtualMachine::get()),
             dev_server: None,
@@ -2192,7 +2192,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_app: None,
             h2_app: None,
             h3_listener: None,
-            h3_alt_svc: Box::<[u8]>::default(),
+            h3_alt_svc: Box::new([]),
             js_value: jsc::JsRef::empty(),
             pending_requests: core::cell::Cell::new(0),
             active_connection_count: core::cell::Cell::new(0),
@@ -2200,14 +2200,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             active_websocket_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
-            context: core::cell::Cell::new(jsc::ContextId::default()),
+            context: core::cell::Cell::new(jsc::ContextId::new()),
             request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
             // Servers that enable neither HTTP/2 nor HTTP/3 never allocate the
             // ~816 KB mux pool; `listen()` materializes it on demand.
             mux_request_pool: core::ptr::null_mut(),
-            all_closed_promise: jsc::JSPromiseStrong::default(),
-            poll_ref: KeepAlive::default(),
-            flags: ServerFlags::default(),
+            all_closed_promise: jsc::JSPromiseStrong::new(),
+            poll_ref: KeepAlive::new(),
+            flags: ServerFlags::empty(),
             plugins: None,
             user_routes: Vec::new(),
             on_clienterror: JSValue::ZERO,
@@ -2244,8 +2244,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 root: bake_options.root.as_zstr(),
                 // SAFETY: per-thread VM singleton; STATIC lifetime.
                 vm: jsc::VirtualMachine::get(),
-                framework: core::mem::take(&mut bake_options.framework),
-                bundler_options: core::mem::take(&mut bake_options.bundler_options),
+                framework: core::mem::replace(
+                    &mut bake_options.framework,
+                    crate::bake::config::framework::Framework::new(),
+                ),
+                bundler_options: core::mem::replace(
+                    &mut bake_options.bundler_options,
+                    crate::bake::config::bundler::SplitBundlerOptions::new(),
+                ),
                 broadcast_console_log_from_browser_to_server: broadcast,
             }) {
                 Ok(d) => d,
@@ -2307,7 +2313,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 self.user_routes.push(UserRoute {
                     id: i as u32,
                     server: self_ptr,
-                    route: core::mem::take(&mut builder.route),
+                    route: core::mem::replace(
+                        &mut builder.route,
+                        crate::server::server_config::RouteDeclaration::new(),
+                    ),
                 });
             }
             // Scratch array for the C++ factory; borrows the route paths now
@@ -3056,8 +3065,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let _ = unsafe { (*this).set_routes() };
             }
         } else {
-            app = match uws_sys::NewApp::<SSL>::create(&uws_sys::BunSocketContextOptions::default())
-            {
+            app = match uws_sys::NewApp::<SSL>::create(&uws_sys::BunSocketContextOptions::new()) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() {
@@ -4318,7 +4326,7 @@ pub(crate) mod http_server_agent {
                     route_id: user_route.id as i32,
                     path: BunString::from_bytes(user_route.route.path.as_bytes()),
                     r#type: RouteType::Api,
-                    ..Default::default()
+                    ..Route::new()
                 });
             }
         });
@@ -4337,7 +4345,7 @@ pub(crate) mod http_server_agent {
                     AnyRoute::Html(r) => BunString::from_bytes(&r.bundle.path),
                     _ => BunString::EMPTY,
                 },
-                ..Default::default()
+                ..Route::new()
             });
         }
 

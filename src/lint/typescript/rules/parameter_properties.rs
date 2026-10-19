@@ -115,7 +115,7 @@ impl ParameterProperties {
                 .filter(|it| it.kind() == MemberKind::Constructor)
                 .filter_map(Member::func)
         };
-        let mut assigned: FxHashSet<Name<'a>> = FxHashSet::default();
+        let mut assigned: FxHashSet<Name<'a>> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for constructor in constructors() {
             let statements = constructor.body_statements().into_iter().flatten();
             assigned.extend(statements.map_while(assigned_name));
@@ -128,7 +128,7 @@ impl ParameterProperties {
             .flat_map(Func::params)
             .filter_map(|it| Some((plain_name(it)?, it)))
             .collect();
-        let mut properties: FxHashMap<Name<'a>, Member<'a>> = FxHashMap::default();
+        let mut properties: FxHashMap<Name<'a>, Member<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for member in class.members() {
             if member.kind() == MemberKind::Property
                 && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)

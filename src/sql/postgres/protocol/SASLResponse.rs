@@ -3,7 +3,6 @@ use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::int32;
 use crate::shared::Data;
 
-#[derive(Default)]
 pub struct SASLResponse {
     pub data: Data,
 }

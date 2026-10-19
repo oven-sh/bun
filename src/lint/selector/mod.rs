@@ -189,7 +189,7 @@ impl Selector {
         if let Some(name) = unknown_class {
             return Err(Error::unknown_class(name.of(&program.bytes)));
         }
-        let mut analysis = compile::Analysis::default();
+        let mut analysis = compile::Analysis::new();
         let looked_up = analysis.analyze(&program, root);
         if analysis.is_too_deep {
             return Err(Error::too_deep());

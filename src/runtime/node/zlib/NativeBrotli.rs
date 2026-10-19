@@ -35,8 +35,8 @@ pub(crate) struct Context {
     pub(crate) prepared_dictionary: Option<NonNull<c::BrotliEncoderPreparedDictionary>>,
 }
 
-impl Default for Context {
-    fn default() -> Self {
+impl Context {
+    pub(crate) fn new() -> Self {
         Self {
             mode: bun_zlib::NodeMode::NONE,
             state: None,
@@ -133,7 +133,7 @@ mod _impl {
                         field_name: b"mode",
                         min: 8,
                         max: 9,
-                        ..Default::default()
+                        ..RangeErrorOptions::new()
                     },
                 ));
             }
@@ -141,14 +141,14 @@ mod _impl {
             let mode = bun_zlib::NodeMode::from_int(mode_int as u8);
             let stream = Context {
                 mode,
-                ..Default::default()
+                ..Context::new()
             };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 global_this: bun_ptr::BackRef::new(global_this),
                 ticket: Cell::new(None),
                 stream: JsCell::new(stream),
-                poll_ref: JsCell::new(CountedKeepAlive::default()),
+                poll_ref: JsCell::new(CountedKeepAlive::new()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pinned_buffers: Cell::new(0),
@@ -156,7 +156,7 @@ mod _impl {
                 closed: Cell::new(false),
                 // .callback = undefined — overwritten before WorkPool::schedule()
                 task: JsCell::new(WorkPoolTask {
-                    node: Default::default(),
+                    node: bun_threading::thread_pool::Node::new(),
                     callback: noop_task_callback,
                 }),
                 estimated_external_size: Self::external_size_for(mode),

@@ -14,15 +14,22 @@ use crate::shell::interpreter::{
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
 pub(crate) struct Ls {
     pub(crate) opts: Opts,
     pub(crate) state: State,
 }
 
-#[derive(Default)]
+impl Ls {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            opts: Opts::new(),
+            state: State::Idle,
+        }
+    }
+}
+
 pub(crate) enum State {
-    #[default]
     Idle,
     Exec(ExecState),
     WaitingWriteErr,
@@ -799,9 +806,8 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
 }
 
 /// `-a` vs `-A`; the last one on the command line wins (GNU coreutils).
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DotfileMode {
-    #[default]
     Hide,
     /// `-A`, `--almost-all` — show dotfiles but skip `.` and `..`.
     AlmostAll,
@@ -811,7 +817,7 @@ pub(crate) enum DotfileMode {
 
 /// Only the fields actually consulted are kept; the rest are recognised by
 /// `parse_flag` but not stored.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct Opts {
     pub(crate) dotfiles: DotfileMode,
     /// `-d`, `--directory` — list directories themselves, not their contents
@@ -820,4 +826,16 @@ pub(crate) struct Opts {
     pub(crate) long_listing: bool,
     /// `-R`, `--recursive` — list subdirectories recursively
     pub(crate) recursive: bool,
+}
+
+impl Opts {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            dotfiles: DotfileMode::Hide,
+            list_directories: false,
+            long_listing: false,
+            recursive: false,
+        }
+    }
 }

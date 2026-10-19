@@ -16,12 +16,23 @@ const UNUSED_FOOTNOTE_DEFINITION: Message = Message::new(
     "Unexpected unused footnote definition `{{ identifier }}` (label: `{{ label }}`) found.",
 );
 
-#[derive(Default)]
 pub(crate) struct Seen<'d> {
     used_identifiers: FxHashSet<&'d [u8]>,
     used_footnote_identifiers: FxHashSet<&'d [u8]>,
     definitions: Vec<Node<'d>>,
     footnote_definitions: Vec<Node<'d>>,
+}
+
+impl<'d> Seen<'d> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            used_identifiers: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            used_footnote_identifiers: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            definitions: Vec::new(),
+            footnote_definitions: Vec::new(),
+        }
+    }
 }
 
 impl Rule for NoUnusedDefinitions {
@@ -50,7 +61,7 @@ impl Listens for NoUnusedDefinitions {
     type Seen<'d> = Seen<'d>;
 
     fn seen<'d>(&self) -> Self::Seen<'d> {
-        Seen::default()
+        Seen::new()
     }
 
     fn on<'d>(

@@ -83,14 +83,24 @@ impl Outlines {
         };
         Outlines {
             host,
-            extended: Default::default(),
-            majors: Default::default(),
+            extended: bun_threading::guarded::GuardedBy::init(
+                bun_sema::util::FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            ),
+            majors: bun_threading::guarded::GuardedBy::init(
+                bun_sema::util::FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            ),
             cwd,
             listed_below: listed_below.iter().map(|it| from_native(it)).collect(),
             listed: listed.iter().map(as_it_is_asked_for).collect(),
-            nearest: Default::default(),
-            above: Default::default(),
-            projects: Default::default(),
+            nearest: bun_threading::guarded::GuardedBy::init(
+                bun_sema::util::FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            ),
+            above: bun_threading::guarded::GuardedBy::init(bun_sema::util::FxHashMap::with_hasher(
+                bun_sema::util::FxBuild,
+            )),
+            projects: bun_threading::guarded::GuardedBy::init(
+                bun_sema::util::FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            ),
         }
     }
 

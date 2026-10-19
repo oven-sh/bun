@@ -1020,12 +1020,6 @@ impl crate::OptionsEnvArg for String {
     }
 }
 
-impl Default for String {
-    #[inline]
-    fn default() -> Self {
-        Self::EMPTY
-    }
-}
 // SAFETY: `String` is a tag + raw ptr to a `WTF::StringImpl` (or a borrowed
 // `EncodedSlice` slice / static / dead sentinel). All non-WTF tags are trivially
 // `Send + Sync` (no interior mutability, no refcount). A `WTF::StringImpl`'s
@@ -1485,12 +1479,6 @@ pub enum Utf8Bytes<'a> {
     /// 8-bit all-ASCII `Tag::WTFStringImpl` string; the bytes are its buffer.
     Shared(String),
 }
-impl Default for Utf8Bytes<'_> {
-    #[inline]
-    fn default() -> Self {
-        Self::EMPTY
-    }
-}
 impl<'a> Utf8Bytes<'a> {
     pub const EMPTY: Self = Self::Borrowed(b"");
     /// Detach from any `'a` borrow: `Borrowed` is copied; `Owned`/`Shared`
@@ -1543,7 +1531,7 @@ impl AsRef<[u8]> for Utf8Bytes<'_> {
 /// A UTF-8 view of `string`: `utf8` holds a transcoded copy when
 /// `string` is not already UTF-8 (or when there is no `string`);
 /// otherwise the bytes are read from `string` on demand.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Utf8WithString {
     utf8: Option<Vec<u8>>,
     string: String,
@@ -1646,9 +1634,8 @@ pub use string_builder::StringBuilder;
 // ──────────────────────────────────────────────────────────────────────────
 pub mod encoding {
     #[repr(u8)]
-    #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub enum Encoding {
-        #[default]
         Utf8 = 0,
         Ucs2,
         Utf16le,

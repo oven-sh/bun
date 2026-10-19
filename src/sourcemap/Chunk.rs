@@ -29,7 +29,7 @@ impl Chunk {
     pub fn init_empty() -> Chunk {
         Chunk {
             buffer: MutableString::init_empty(),
-            end_state: SourceMapState::default(),
+            end_state: SourceMapState::new(),
             final_generated_column: 0,
             should_ignore: true,
         }
@@ -198,8 +198,8 @@ pub struct VLQSourceMap {
     pub(crate) offset: usize,
 }
 
-impl Default for VLQSourceMap {
-    fn default() -> Self {
+impl VLQSourceMap {
+    pub fn new() -> Self {
         Self {
             data: MutableString::init_empty(),
             internal: None,
@@ -215,13 +215,13 @@ impl SourceMapFormatCtx for VLQSourceMap {
             return VLQSourceMap {
                 data: MutableString::init_empty(),
                 internal: Some(internal_source_map::Builder::init()),
-                ..Default::default()
+                ..VLQSourceMap::new()
             };
         }
 
         VLQSourceMap {
             data: MutableString::init_empty(),
-            ..Default::default()
+            ..VLQSourceMap::new()
         }
     }
 
@@ -386,14 +386,14 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub prepend_count: bool,
 }
 
-impl<T: SourceMapFormatCtx> Default for NewBuilder<'_, T> {
+impl<T: SourceMapFormatCtx> NewBuilder<'_, T> {
     /// `get_source_map_builder` returns this when source maps are disabled, so
     /// it only needs to be inert (never read) — but we zero everything for sanity.
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             source_map: SourceMapFormat::init(false),
             line_offset_tables: LineOffsetTables::None,
-            prev_state: SourceMapState::default(),
+            prev_state: SourceMapState::new(),
             last_generated_update: 0,
             generated_column: 0,
             prev_loc: Loc::EMPTY,
@@ -640,7 +640,8 @@ impl NewBuilder<'_, VLQSourceMap> {
         } = self.line_offset_tables
         {
             self.line_offset_tables = LineOffsetTables::Owned(OwnedLineOffsetTables(
-                LineOffsetTable::generate(contents, approximate_line_count).unwrap_or_default(),
+                LineOffsetTable::generate(contents, approximate_line_count)
+                    .unwrap_or_else(|_| bun_collections::MultiArrayList::new()),
             ));
         }
 

@@ -27,8 +27,15 @@ use crate::{
 // because leaf modules pattern-match on `.0` with pointer/unsigned arithmetic.
 // `from_raw` is the signed view where sign-correct math matters.
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JSValue(pub usize, PhantomData<*const ()>);
+
+impl JSValue {
+    #[inline]
+    pub fn new() -> Self {
+        Self(0, core::marker::PhantomData)
+    }
+}
 
 const _: () = assert!(
     core::mem::size_of::<JSValue>() == core::mem::size_of::<i64>(),
@@ -902,7 +909,7 @@ impl JSValue {
         view
     }
     pub fn as_array_buffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        let mut out = ArrayBuffer::default();
+        let mut out = ArrayBuffer::new();
         if JSC__JSValue__asArrayBuffer(self, global, &mut out) {
             out.value = self;
             Some(out)
@@ -2184,7 +2191,7 @@ pub enum TemporalType {
 }
 
 /// `JSValue.SerializedFlags`.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct SerializedFlags {
     pub for_cross_process_transfer: bool,
     pub for_storage: bool,
@@ -2342,7 +2349,7 @@ impl JSValue {
     // ── Reflection / naming. ───────────────
     /// `JSValue.getName` — function/class display name.
     pub fn get_name(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
-        let mut ret = bun_core::String::default();
+        let mut ret = bun_core::String::EMPTY;
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__getName(self, global, &mut ret)
         })?;

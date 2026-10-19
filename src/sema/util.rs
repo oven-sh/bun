@@ -84,12 +84,12 @@ pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
 
 /// A number for each key that occurs more than once: 0, 1, .. in order of first occurrence.
 pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<K, usize> {
-    let mut numbers: FxHashMap<K, usize> = FxHashMap::default();
+    let mut numbers: FxHashMap<K, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     // Nearly always every key occurs once.
     if keys.len() <= 32 && (1..keys.len()).all(|i| !keys[..i].contains(&keys[i])) {
         return numbers;
     }
-    let mut times: FxHashMap<K, usize> = FxHashMap::default();
+    let mut times: FxHashMap<K, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for &key in keys {
         *times.entry(key).or_default() += 1;
     }
@@ -133,9 +133,9 @@ impl<T: Clone> List<'_, T> {
     }
 }
 
-impl<T> Default for List<'_, T> {
+impl<T> List<'_, T> {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         List::Kept(&[])
     }
 }
@@ -380,8 +380,8 @@ pub(crate) struct GrowingPlaces<A: Allocator + Clone = Global> {
     len: Guarded<usize>,
 }
 
-impl<A: Allocator + Stateless> Default for GrowingPlaces<A> {
-    fn default() -> Self {
+impl<A: Allocator + Stateless> GrowingPlaces<A> {
+    pub(crate) fn new() -> Self {
         Self::new_in(A::INSTANCE)
     }
 }
@@ -474,8 +474,8 @@ pub struct ShardedMap<K, V, A: Allocator + Clone = Global> {
     shards: Box<[MapShard<K, V, A>; MAP_SHARDS], A>,
 }
 
-impl<K, V, A: Allocator + Stateless> Default for ShardedMap<K, V, A> {
-    fn default() -> Self {
+impl<K, V, A: Allocator + Stateless> ShardedMap<K, V, A> {
+    pub fn new() -> Self {
         Self::new_in(A::INSTANCE)
     }
 }

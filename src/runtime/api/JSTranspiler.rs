@@ -56,7 +56,7 @@ fn default_transform_options() -> api::TransformOptions {
     api::TransformOptions {
         disable_hmr: true,
         target: Some(api::Target::Browser),
-        ..Default::default()
+        ..api::TransformOptions::new()
     }
 }
 
@@ -80,19 +80,19 @@ pub(crate) struct Config {
     pub(crate) repl_mode: bool,
 }
 
-impl Default for Config {
-    fn default() -> Self {
+impl Config {
+    pub(crate) fn new() -> Self {
         Self {
             transform: default_transform_options(),
             default_loader: Loader::Jsx,
-            macro_map: MacroMap::default(),
+            macro_map: MacroMap::init(),
             tsconfig: None,
-            tsconfig_buf: Box::default(),
-            macros_buf: Box::default(),
-            log: bun_ast::Log::default(), // overwritten at construction
+            tsconfig_buf: Box::new([]),
+            macros_buf: Box::new([]),
+            log: bun_ast::Log::empty(), // overwritten at construction
             runtime: Runtime::Features {
                 top_level_await: true,
-                ..Default::default()
+                ..Runtime::Features::new()
             },
             tree_shaking: false,
             trim_unused_imports: None,
@@ -132,7 +132,7 @@ fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun
 /// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
 /// is needed wherever the map is assigned by value.
 fn clone_macro_map(src: &MacroMap) -> MacroMap {
-    let mut out = MacroMap::default();
+    let mut out = MacroMap::init();
     bun_core::handle_oom(out.ensure_unused_capacity(src.count()));
     for (k, v) in src.keys().iter().zip(src.values().iter()) {
         // inner map: `StringArrayHashMap<&'static [u8]>` — `&[u8]: Clone` ⇒ inherent `clone()` works.
@@ -456,7 +456,7 @@ impl Config {
                 );
             }
 
-            let mut replacements = bun_ast::runtime::ReplaceableExportMap::default();
+            let mut replacements = bun_ast::runtime::ReplaceableExportMap::new();
             // errdefer replacements.clearAndFree(allocator) → Drop on error path
 
             if let Some(eliminate) = exports.get_truthy(global, "eliminate")? {
@@ -787,7 +787,7 @@ impl TransformTask {
             remove_cjs_module_wrapper: false,
             dont_bundle_twice: false,
             allow_commonjs: false,
-            module_type: Default::default(),
+            module_type: bun_options_types::ModuleType::Unknown,
             runtime_transpiler_cache: None,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: false,
@@ -847,9 +847,9 @@ impl TransformTask {
                             bun_ast::Msg {
                                 data: bun_ast::Data {
                                     text: err.name().as_bytes().to_vec().into(),
-                                    ..Default::default()
+                                    ..bun_ast::Data::new()
                                 },
-                                ..Default::default()
+                                ..bun_ast::Msg::new()
                             },
                         );
                     }
@@ -868,7 +868,7 @@ impl TransformTask {
     fn finish(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
         promise.settle(
             global,
-            core::mem::take(&mut self.output_code).into_js(global),
+            core::mem::replace(&mut self.output_code, BunString::EMPTY).into_js(global),
         )
     }
 }
@@ -947,7 +947,7 @@ impl JSTranspiler {
         // needed.
         let mut config = Config {
             log: bun_ast::Log::init(),
-            ..Default::default()
+            ..Config::new()
         };
         let arena = Box::new(Arena::new());
         // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
@@ -1250,7 +1250,7 @@ impl JSTranspiler {
             remove_cjs_module_wrapper: false,
             dont_bundle_twice: false,
             allow_commonjs: false,
-            module_type: Default::default(),
+            module_type: bun_options_types::ModuleType::Unknown,
             runtime_transpiler_cache: None,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: false,

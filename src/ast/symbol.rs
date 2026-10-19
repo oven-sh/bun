@@ -107,7 +107,7 @@ pub struct Symbol {
 }
 
 bitflags::bitflags! {
-    #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub struct SymbolFlags: u8 {
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;
 
@@ -167,8 +167,8 @@ const _: () = assert!(core::mem::size_of::<Symbol>() <= 48);
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
 
-impl Default for Symbol {
-    fn default() -> Self {
+impl Symbol {
+    pub fn new() -> Self {
         Self {
             original_name: crate::StoreStr::EMPTY,
             namespace_alias: None,
@@ -367,8 +367,15 @@ impl Kind {
 /// linker or a transform), in which case the renamer must assume the symbol
 /// may be printed in any scope of the part. Packed into one word because
 /// every part holds one per referenced symbol.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Use(u32);
+
+impl Use {
+    #[inline]
+    pub fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl Use {
     const UNSCOPED: u32 = 1 << 31;
@@ -429,7 +436,6 @@ impl Symbol {
     }
 }
 
-#[derive(Default)]
 pub struct Map {
     // This could be represented as a "map[Ref]Symbol" but a two-level array was
     // more efficient in profiles. This appears to be because it doesn't involve
@@ -439,6 +445,15 @@ pub struct Map {
     // single outer array containing all of the inner arrays. See the comment on
     // "Ref" for more detail.
     pub symbols_for_source: NestedList,
+}
+
+impl Map {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            symbols_for_source: Vec::new(),
+        }
+    }
 }
 
 impl Map {

@@ -104,13 +104,23 @@ fn has_self_reference_in_tdz(declarator: VarDecl<'_>) -> bool {
 }
 
 /// What the fixes of a file find out.
-#[derive(Default)]
 pub struct State<'a> {
     /// Where a function is called first.
     first_calls: RefCell<IdMap<Symbol<'a>, u32>>,
     /// ESLint's `isInLoop`
     loops: RefCell<AncestorMemo<'a, bool>>,
     ambient: AmbientAncestors<'a>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            first_calls: core::cell::RefCell::new(IdMap::init()),
+            loops: core::cell::RefCell::new(AncestorMemo::new()),
+            ambient: AmbientAncestors::new(),
+        }
+    }
 }
 
 impl<'a> State<'a> {
@@ -342,7 +352,7 @@ impl Rule for NoVar {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

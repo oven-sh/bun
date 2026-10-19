@@ -286,7 +286,7 @@ impl<'a> Classes<'a> {
         Classes {
             file,
             known: Vec::new(),
-            others: FxHashMap::default(),
+            others: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 
@@ -438,7 +438,6 @@ impl ByName {
 /// The expressions, statements, types and patterns of a file by kind, each grouped the first time a rule listens for one. Left
 /// out are the nodes that are not part of the tree, which the parser leaves behind where it has backtracked, and those that are
 /// synthesized from JSDoc comments.
-#[derive(Default)]
 pub(crate) struct ByKind {
     exprs: OnceCell<Exprs>,
     stmts: OnceCell<Grouped<{ StmtTag::COUNT + 1 }>>,
@@ -472,6 +471,42 @@ pub(crate) struct ByKind {
     pub(crate) nearby_line: crate::source::NearbyLine,
     pub(crate) string_literals: OnceCell<Vec<crate::literal::RawLiteral>>,
     pub(crate) number_literals: OnceCell<Vec<crate::literal::RawLiteral>>,
+}
+
+impl ByKind {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            exprs: core::cell::OnceCell::new(),
+            stmts: core::cell::OnceCell::new(),
+            types: core::cell::OnceCell::new(),
+            pats: core::cell::OnceCell::new(),
+            present_stmts: core::cell::OnceCell::new(),
+            present_types: core::cell::OnceCell::new(),
+            present_pats: core::cell::OnceCell::new(),
+            binaries: core::cell::OnceCell::new(),
+            unaries: core::cell::OnceCell::new(),
+            calls_by_name: core::cell::OnceCell::new(),
+            members_by_name: core::cell::OnceCell::new(),
+            other_calls: core::cell::OnceCell::new(),
+            other_members: core::cell::OnceCell::new(),
+            spare: core::cell::Cell::new(Vec::new()),
+            fns: core::cell::OnceCell::new(),
+            classes: core::cell::OnceCell::new(),
+            members: core::cell::OnceCell::new(),
+            props: core::cell::OnceCell::new(),
+            params: core::cell::OnceCell::new(),
+            type_params: core::cell::OnceCell::new(),
+            var_decls: core::cell::OnceCell::new(),
+            cases: core::cell::OnceCell::new(),
+            enum_members: core::cell::OnceCell::new(),
+            import_specs: core::cell::OnceCell::new(),
+            export_specs: core::cell::OnceCell::new(),
+            nearby_line: crate::source::NearbyLine::new(),
+            string_literals: core::cell::OnceCell::new(),
+            number_literals: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 impl File<'_> {
@@ -1336,7 +1371,6 @@ pub trait Running<'a> {
 // ───────────────────────────── the walk ─────────────────────────────
 
 /// The rules that listen for each kind of node.
-#[derive(Default)]
 struct ByTag {
     /// In the order of the rules.
     registered: Vec<(NodeTags, u16)>,
@@ -1344,6 +1378,18 @@ struct ByTag {
     starts: Vec<u16>,
     listeners: Vec<u16>,
     tags: NodeTags,
+}
+
+impl ByTag {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            registered: Vec::new(),
+            starts: Vec::new(),
+            listeners: Vec::new(),
+            tags: NodeTags::init(),
+        }
+    }
 }
 
 impl ByTag {
@@ -1886,7 +1932,7 @@ fn run_rules<'r, 'a: 'r, S: RuleSet, const MIXED: bool>(
         }
     }
 
-    let (mut enter, mut exit) = (ByTag::default(), ByTag::default());
+    let (mut enter, mut exit) = (ByTag::new(), ByTag::new());
     for (i, rule) in running.iter().enumerate() {
         let (entered, left) = rule.walks();
         if !entered.is_empty() {

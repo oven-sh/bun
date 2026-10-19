@@ -47,9 +47,17 @@ use bun_collections::ArrayHashMap;
 // `AutoFlusher::erase_flush_callback`).
 pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 
-#[derive(Default)]
 pub struct DeferredTaskQueue {
     pub(crate) map: ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>,
+}
+
+impl DeferredTaskQueue {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            map: ArrayHashMap::new(),
+        }
+    }
 }
 
 impl DeferredTaskQueue {

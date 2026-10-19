@@ -89,7 +89,7 @@ impl State {
     fn new(env: &Environment) -> Self {
         State {
             identifiers: IdBitSet::with_ids(env.identifiers.len()),
-            named: HashSet::default(),
+            named: HashSet::with_hasher(rustc_hash::FxBuildHasher),
             has_unmarked_instruction: false,
         }
     }
@@ -512,7 +512,7 @@ fn pruneable_value(value: &InstructionValue, state: &State, env: &Environment) -
 
 /// Check if the CFG has any back edges (indicating loops).
 fn has_back_edge(func: &HirFunction) -> bool {
-    let mut visited: IdBitSet<BlockId> = IdBitSet::default();
+    let mut visited: IdBitSet<BlockId> = IdBitSet::init();
     for (block_id, block) in &func.body.blocks {
         for &pred_id in &block.preds {
             if !visited.contains(pred_id) {

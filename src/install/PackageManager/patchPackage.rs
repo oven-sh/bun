@@ -61,7 +61,6 @@ fn patch_key_of(lockfile: &Lockfile, pkg: &Package) -> Vec<u8> {
     key
 }
 
-#[derive(Default)]
 pub struct PatchCommitResult {
     pub(crate) patch_key: Box<[u8]>,
     pub(crate) patchfile_path: Box<[u8]>,
@@ -117,11 +116,20 @@ impl PatchCommitResult {
 
 /// The file system changes of `bun patch --commit`. They are deferred until its install has passed
 /// every check that can abort it.
-#[derive(Default)]
 pub(crate) struct PendingCommit {
     new_patch: Option<NewPatch>,
     /// A folder to delete so that the install creates the package there again.
     stale_folder: Option<Vec<u8>>,
+}
+
+impl PendingCommit {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            new_patch: None,
+            stale_folder: None,
+        }
+    }
 }
 
 struct NewPatch {
@@ -333,7 +341,7 @@ fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, V
     let package_json_path =
         resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[folder, b"package.json"]);
     let package_json_source: bun_ast::Source =
-        match bun_ast::to_source(package_json_path, Default::default()) {
+        match bun_ast::to_source(package_json_path, bun_ast::ToSourceOptions::new()) {
             Ok(s) => s,
             Err(e) => {
                 Output::err(
@@ -459,7 +467,7 @@ pub fn do_patch_commit(
     manager: &mut PackageManager,
     log_level: LogLevel,
 ) -> Result<Option<PatchCommitResult>, crate::Error> {
-    let mut lockfile: Box<Lockfile> = Box::default();
+    let mut lockfile: Box<Lockfile> = Box::new(Lockfile::new());
     let log = manager.log_mut();
     let load_result = lockfile.load_from_cwd::<true>(Some(manager), log);
     let linker = load_result.node_linker(manager.options.node_linker);
@@ -722,7 +730,7 @@ fn patch_applies(
         return false;
     }
     let applied = Dir::cwd()
-        .open_dir(&scratch.0, Default::default())
+        .open_dir(&scratch.0, bun_sys::OpenDirOptions::new())
         .map_err(bun_patch::ApplyError::Sys)
         .and_then(|dir| patchfile.apply(dir.fd));
     if let Err(e) = applied {
@@ -858,7 +866,7 @@ impl HiddenFromDiff {
         // The bundled dependencies, which are part of the package.
         let bundled = match Dir::cwd().open_dir(
             resolve_path::join::<platform::Auto>(&[cache_entry, b"node_modules"]),
-            Default::default(),
+            bun_sys::OpenDirOptions::new(),
         ) {
             Ok(dir) => Some(dir),
             Err(e) if e.get_errno() == sys::E::ENOENT => None,
@@ -866,7 +874,7 @@ impl HiddenFromDiff {
         };
         let stash = self
             .stash
-            .make_open_path(b"node_modules", Default::default())?;
+            .make_open_path(b"node_modules", bun_sys::OpenDirOptions::new())?;
         move_entries_absent_from(&nested, bundled.as_ref(), &stash, true)
     }
 
@@ -874,7 +882,7 @@ impl HiddenFromDiff {
         if let Ok(stash) = self.stash.open_dir(b"node_modules", ITERATE) {
             let nested = self
                 .folder
-                .make_open_path(b"node_modules", Default::default())?;
+                .make_open_path(b"node_modules", bun_sys::OpenDirOptions::new())?;
             move_entries_absent_from(&stash, Some(&nested), &nested, true)?;
         }
         move_entries_absent_from(&self.stash, Some(&self.folder), &self.folder, false)
@@ -924,8 +932,10 @@ fn move_entries_absent_from(
                 if merge_groups && is_package_group(name.as_bytes()) =>
             {
                 let from_group = from.open_dir(name.as_bytes(), ITERATE)?;
-                let reference_group = reference.open_dir(name.as_bytes(), Default::default())?;
-                let to_group = to.make_open_path(name.as_bytes(), Default::default())?;
+                let reference_group =
+                    reference.open_dir(name.as_bytes(), bun_sys::OpenDirOptions::new())?;
+                let to_group =
+                    to.make_open_path(name.as_bytes(), bun_sys::OpenDirOptions::new())?;
                 move_entries_absent_from(&from_group, Some(&reference_group), &to_group, false)?;
             }
             Ok(_) => {}
@@ -967,7 +977,8 @@ fn escape_patch_filename(name: &[u8]) -> Vec<u8> {
 /// 4. Print to user
 pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // Moved out so that `resolve_target` can borrow it next to `&mut PackageManager`.
-    let lockfile: Box<Lockfile> = core::mem::take(&mut manager.lockfile);
+    let lockfile: Box<Lockfile> =
+        core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::new()));
     let target = resolve_target(manager, &lockfile, "bun patch");
     manager.lockfile = lockfile;
 
@@ -1409,7 +1420,7 @@ fn move_aside(folder: &ZStr, aside: &ZStr) -> sys::Result<()> {
     let move_all = |from: &ZStr, to: &ZStr| -> sys::Result<()> {
         move_entries(
             &cwd.open_dir(from.as_bytes(), ITERATE)?,
-            &cwd.make_open_path(to.as_bytes(), Default::default())?,
+            &cwd.make_open_path(to.as_bytes(), bun_sys::OpenDirOptions::new())?,
         )?;
         sys::rmdir(from)
     };
@@ -1437,7 +1448,7 @@ fn move_entries(from: &Dir, to: &Dir) -> sys::Result<()> {
         }
         move_entries(
             &from.open_dir(name.as_bytes(), ITERATE)?,
-            &to.make_open_path(name.as_bytes(), Default::default())?,
+            &to.make_open_path(name.as_bytes(), bun_sys::OpenDirOptions::new())?,
         )?;
         sys::rmdirat(from.fd, &name)?;
     }

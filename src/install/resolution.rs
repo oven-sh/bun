@@ -75,8 +75,8 @@ pub struct ResolutionType<SemverInt: VersionInt> {
 /// `Value { npm: NpmVersionInfo { .. } }` initializers keep resolving.
 pub(crate) type NpmVersionInfo = VersionedURLType<u64>;
 
-impl<SemverInt: VersionInt> Default for ResolutionType<SemverInt> {
-    fn default() -> Self {
+impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
+    pub fn new() -> Self {
         Self {
             tag: Tag::Uninitialized,
             _padding: [0; 7],
@@ -224,7 +224,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                             version: parsed.version.min(),
 
                             // will fill this later
-                            url: String::default(),
+                            url: String::new(),
                         },
                     },
                 })
@@ -286,7 +286,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 // `resolved` names the cache folder. As in the package-lock.json migration, it is
                 // the full commit hash.
                 resolved: committish,
-                ..Default::default()
+                ..Repository::new()
             })));
         }
 
@@ -339,7 +339,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 Ok(Resolution::init(TaggedValue::Npm(VersionedURLType {
                     version: parsed.version.min(),
                     // set afterwards
-                    url: String::default(),
+                    url: String::new(),
                 })))
             }
 
@@ -683,7 +683,7 @@ impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
                     res.local_tarball().slice(buf),
                     PathFormatOptions {
                         path_sep: PathSep::Posix,
-                        ..Default::default()
+                        ..PathFormatOptions::new()
                     },
                 )
             ),
@@ -726,7 +726,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for URLFormatter<'a, SemverInt> {
                 res.local_tarball().slice(buf),
                 PathFormatOptions {
                     path_sep: PathSep::Posix,
-                    ..Default::default()
+                    ..PathFormatOptions::new()
                 },
             )
             .fmt(writer),
@@ -779,7 +779,7 @@ impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
                     res.local_tarball().slice(buf),
                     PathFormatOptions {
                         path_sep: self.path_sep,
-                        ..Default::default()
+                        ..PathFormatOptions::new()
                     },
                 )
             ),
@@ -790,7 +790,7 @@ impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
                     res.folder().slice(buf),
                     PathFormatOptions {
                         path_sep: self.path_sep,
-                        ..Default::default()
+                        ..PathFormatOptions::new()
                     },
                 )
             ),
@@ -806,7 +806,7 @@ impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
                         res.workspace().slice(buf),
                         PathFormatOptions {
                             path_sep: self.path_sep,
-                            ..Default::default()
+                            ..PathFormatOptions::new()
                         },
                     )
                 )
@@ -820,7 +820,7 @@ impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
                         res.symlink().slice(buf),
                         PathFormatOptions {
                             path_sep: self.path_sep,
-                            ..Default::default()
+                            ..PathFormatOptions::new()
                         },
                     )
                 )
@@ -846,7 +846,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
                 res.local_tarball().slice(buf),
                 PathFormatOptions {
                     path_sep: self.path_sep,
-                    ..Default::default()
+                    ..PathFormatOptions::new()
                 },
             )
             .fmt(writer),
@@ -854,7 +854,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
                 res.folder().slice(buf),
                 PathFormatOptions {
                     path_sep: self.path_sep,
-                    ..Default::default()
+                    ..PathFormatOptions::new()
                 },
             )
             .fmt(writer),
@@ -870,7 +870,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
                     res.workspace().slice(buf),
                     PathFormatOptions {
                         path_sep: self.path_sep,
-                        ..Default::default()
+                        ..PathFormatOptions::new()
                     },
                 )
             ),
@@ -881,7 +881,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
                     res.symlink().slice(buf),
                     PathFormatOptions {
                         path_sep: self.path_sep,
-                        ..Default::default()
+                        ..PathFormatOptions::new()
                     },
                 )
             ),

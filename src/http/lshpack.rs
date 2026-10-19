@@ -10,8 +10,8 @@ struct lshpack_header {
     hpack_index: u16,
 }
 
-impl Default for lshpack_header {
-    fn default() -> Self {
+impl lshpack_header {
+    fn new() -> Self {
         Self {
             name: core::ptr::null(),
             name_len: 0,
@@ -52,7 +52,7 @@ impl HPACK {
     /// `name` and `value` point into a thread-local buffer that every `HPACK` on this thread decodes and encodes
     /// through. The borrow only stops this instance from overwriting them.
     pub fn decode<'a>(&'a mut self, src: &[u8]) -> Result<DecodeResult<'a>, HpackError> {
-        let mut header = lshpack_header::default();
+        let mut header = lshpack_header::new();
         // SAFETY: genuine FFI — only the `(src.as_ptr(), src.len())` pair carries
         // an obligation here (in-bounds read), discharged by `src: &[u8]`. The
         // `self`/`output` preconditions are type-discharged via `&mut` in the

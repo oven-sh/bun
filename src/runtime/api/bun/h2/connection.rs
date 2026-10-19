@@ -363,7 +363,7 @@ impl Connection {
         Connection {
             is_server,
             local_settings: local,
-            remote_settings: Settings::default(),
+            remote_settings: Settings::new(),
             local_settings_acked: false,
             max_header_list_pairs: 128,
             frames_received: 0,
@@ -2124,7 +2124,6 @@ mod tests {
 
     use std::cell::{Cell, RefCell};
 
-    #[derive(Default)]
     struct CaptureSink {
         out: RefCell<Vec<u8>>,
         pings: RefCell<Vec<(Vec<u8>, bool)>>,
@@ -2141,6 +2140,28 @@ mod tests {
         pushes: RefCell<Vec<(u32, u32)>>,
         altsvc: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         origins: RefCell<Vec<Vec<u8>>>,
+    }
+
+    impl CaptureSink {
+        #[inline]
+        fn new() -> Self {
+            Self {
+                out: core::cell::RefCell::new(Vec::new()),
+                pings: core::cell::RefCell::new(Vec::new()),
+                remote_settings: core::cell::Cell::new(0),
+                goaway: core::cell::Cell::new(None),
+                local_error: core::cell::Cell::new(None),
+                opens: core::cell::RefCell::new(Vec::new()),
+                headers: core::cell::RefCell::new(Vec::new()),
+                headers_done: core::cell::RefCell::new(Vec::new()),
+                data: core::cell::RefCell::new(Vec::new()),
+                ended: core::cell::RefCell::new(Vec::new()),
+                resets: core::cell::RefCell::new(Vec::new()),
+                pushes: core::cell::RefCell::new(Vec::new()),
+                altsvc: core::cell::RefCell::new(Vec::new()),
+                origins: core::cell::RefCell::new(Vec::new()),
+            }
+        }
     }
     impl Sink for CaptureSink {
         fn write(&self, bytes: &[u8]) -> WriteResult {
@@ -2224,8 +2245,8 @@ mod tests {
 
     #[test]
     fn ping_is_acked_with_echo() {
-        let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let sink = CaptureSink::new();
+        let mut c = Connection::new(true, Settings::new());
         c.preface_received = wire::CONNECTION_PREFACE.len(); // skip preface
         let payload = [1u8, 2, 3, 4, 5, 6, 7, 8];
         let f = frame(FrameType::Ping, 0, 0, &payload);
@@ -2244,8 +2265,8 @@ mod tests {
 
     #[test]
     fn window_update_zero_increment_on_conn_is_goaway() {
-        let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let sink = CaptureSink::new();
+        let mut c = Connection::new(true, Settings::new());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         let f = frame(FrameType::WindowUpdate, 0, 0, &[0, 0, 0, 0]);
         let fed = c.receive(&sink, &f);
@@ -2255,8 +2276,8 @@ mod tests {
 
     #[test]
     fn settings_value_out_of_range_is_goaway() {
-        let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let sink = CaptureSink::new();
+        let mut c = Connection::new(true, Settings::new());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         // ENABLE_PUSH = 2 (invalid)
         let payload = [0u8, 0x02, 0, 0, 0, 2];
@@ -2268,8 +2289,8 @@ mod tests {
 
     #[test]
     fn headers_decode_and_open_stream() {
-        let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let sink = CaptureSink::new();
+        let mut c = Connection::new(true, Settings::new());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         let block = encode_block(&[
             (b":method", b"GET"),
@@ -2305,8 +2326,8 @@ mod tests {
 
     #[test]
     fn data_after_headers_is_delivered() {
-        let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let sink = CaptureSink::new();
+        let mut c = Connection::new(true, Settings::new());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         let block = encode_block(&[
             (b":method", b"POST"),
@@ -2332,8 +2353,8 @@ mod tests {
 
     #[test]
     fn rst_stream_on_idle_is_goaway() {
-        let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let sink = CaptureSink::new();
+        let mut c = Connection::new(true, Settings::new());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         let f = frame(
             FrameType::RstStream,
@@ -2349,8 +2370,8 @@ mod tests {
     #[test]
     fn headers_roundtrip_client_to_server() {
         // Client engine encodes + emits a HEADERS frame...
-        let csink = CaptureSink::default();
-        let mut client = Connection::new(false, Settings::default());
+        let csink = CaptureSink::new();
+        let mut client = Connection::new(false, Settings::new());
         client.begin_header_block();
         assert!(client.encode_header(b":method", b"GET", false));
         assert!(client.encode_header(b":scheme", b"http", false));
@@ -2364,8 +2385,8 @@ mod tests {
         );
 
         // ...and a server engine decodes the exact same bytes back to the original fields.
-        let ssink = CaptureSink::default();
-        let mut server = Connection::new(true, Settings::default());
+        let ssink = CaptureSink::new();
+        let mut server = Connection::new(true, Settings::new());
         server.preface_received = wire::CONNECTION_PREFACE.len();
         let fed = server.receive(&ssink, &wire_bytes);
         assert!(!fed.fatal);
@@ -2390,8 +2411,8 @@ mod tests {
     #[test]
     fn push_promise_roundtrip_server_to_client() {
         // Server stages the promised request headers and emits PUSH_PROMISE on parent stream 1.
-        let ssink = CaptureSink::default();
-        let mut server = Connection::new(true, Settings::default());
+        let ssink = CaptureSink::new();
+        let mut server = Connection::new(true, Settings::new());
         server.begin_header_block();
         assert!(server.encode_header(b":method", b"GET", false));
         assert!(server.encode_header(b":scheme", b"http", false));
@@ -2405,8 +2426,8 @@ mod tests {
         );
 
         // Client receives it: on_push_promise(parent=1, promised=2) then the request headers.
-        let csink = CaptureSink::default();
-        let mut client = Connection::new(false, Settings::default());
+        let csink = CaptureSink::new();
+        let mut client = Connection::new(false, Settings::new());
         client.preface_received = wire::CONNECTION_PREFACE.len();
         let fed = client.receive(&csink, &bytes);
         assert!(!fed.fatal);
@@ -2427,8 +2448,8 @@ mod tests {
 
     #[test]
     fn server_rejects_inbound_push_promise() {
-        let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let sink = CaptureSink::new();
+        let mut c = Connection::new(true, Settings::new());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         // promised id + empty block
         let f = frame(
@@ -2444,8 +2465,8 @@ mod tests {
 
     #[test]
     fn send_data_respects_flow_control_window() {
-        let sink = CaptureSink::default();
-        let mut c = Connection::new(false, Settings::default());
+        let sink = CaptureSink::new();
+        let mut c = Connection::new(false, Settings::new());
         // Open a stream (send side) with a tiny peer window.
         c.begin_header_block();
         assert!(c.encode_header(b":method", b"POST", false));

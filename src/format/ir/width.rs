@@ -216,8 +216,14 @@ const BLOCK: usize = 64;
 
 /// Which blocks of a text have something in them that takes a closer look: a character whose width
 /// is not 1, other than a tab or a line break, or a backslash.
-#[derive(Default)]
 pub(crate) struct OddBlocks(Vec<u64>);
+
+impl OddBlocks {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(Vec::new())
+    }
+}
 
 impl OddBlocks {
     pub(crate) fn mark(&mut self, source: &[u8]) {

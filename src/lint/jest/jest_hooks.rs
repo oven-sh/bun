@@ -118,9 +118,9 @@ pub(crate) mod prefer_hooks_in_order {
         utils::sort::sort_unstable_by_key(&mut calls, |it| {
             (it.span().start, std::cmp::Reverse(it.span().end))
         });
-        let mut scopes = Scopes::default();
+        let mut scopes = Scopes::new();
         let mut previous_hook_orders: FxHashMap<Option<Node<'a>>, (usize, Span)> =
-            FxHashMap::default();
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for node in calls {
             let hook_name = (node.callee().and_then(first_identifier_of_chain))
                 .filter(is_name)
@@ -172,9 +172,10 @@ pub(crate) mod prefer_hooks_on_top {
     const NO_HOOK_ON_TOP: Message = Message::new("", "Suggest having hooks before any test cases.");
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
-        let mut scopes = Scopes::default();
+        let mut scopes = Scopes::new();
         // The scopes in which there has been a test.
-        let mut hooks_context: FxHashSet<Option<Node<'a>>> = FxHashSet::default();
+        let mut hooks_context: FxHashSet<Option<Node<'a>>> =
+            FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             let node = possible_jest_node.node;
             match parse_general_jest_fn_call(ctx.file, possible_jest_node).map(|it| it.kind) {

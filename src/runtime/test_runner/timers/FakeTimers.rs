@@ -18,7 +18,6 @@ unsafe extern "C" {
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
 }
 
-#[derive(Default)]
 pub(crate) struct FakeTimers {
     active: bool,
     /// Depth of [`FakeTimers::fire`] calls on the stack; each covers the callback and its microtask drain.
@@ -28,6 +27,17 @@ pub(crate) struct FakeTimers {
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
     /// - count (cannot be implemented efficiently with TimerHeap)
     pub(crate) timers: TimerHeap,
+}
+
+impl FakeTimers {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            active: false,
+            firing: 0,
+            timers: TimerHeap::new(),
+        }
+    }
 }
 
 // `date_now_offset` is stored as `AtomicU64` (f64 bits) so the static is `Sync`
@@ -133,7 +143,6 @@ fn from_el_timespec(t: &ElTimespec) -> Timespec {
 /// timer is gone. Released only once the `FakeTimers` borrow has ended: these
 /// paths re-enter `timer::All` (`TimerObjectInternals::cancel` → `All::remove`,
 /// `Timeout` deinit → `timer_remove`).
-#[derive(Default)]
 #[must_use]
 struct ClearedTimers {
     /// Marking `state = CANCELLED` alone strands the `Box<TimeoutObject>`: its
@@ -148,6 +157,17 @@ struct ClearedTimers {
     signal_timeouts: Vec<*mut AbortSignalTimeout>,
     /// A `Bun.cron()` job keeps the event loop alive until it is stopped.
     cron_jobs: Vec<*mut CronJob>,
+}
+
+impl ClearedTimers {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            pinned: Vec::new(),
+            signal_timeouts: Vec::new(),
+            cron_jobs: Vec::new(),
+        }
+    }
 }
 
 impl ClearedTimers {
@@ -206,7 +226,7 @@ impl FakeTimers {
     /// Pop every fake timer. Popping only unlinks the nodes; the owners that
     /// need to hear about it are returned for the caller to release.
     fn clear(&mut self) -> ClearedTimers {
-        let mut cleared = ClearedTimers::default();
+        let mut cleared = ClearedTimers::new();
         while let Some(timer) = self.timers.delete_min() {
             // SAFETY: `delete_min` returned a live node; the owner it belongs
             // to stays live until the caller's release pass.
@@ -530,7 +550,7 @@ pub(crate) const TIMER_FNS_COUNT: usize = FAKE_TIMERS_FNS.len();
 
 pub(crate) fn put_timers_fns(global: &JSGlobalObject, jest: JSValue, vi: JSValue) {
     for &(name, arity, func) in FAKE_TIMERS_FNS {
-        let jsvalue = JSFunction::create(global, name, func, arity, Default::default());
+        let jsvalue = JSFunction::create(global, name, func, arity, bun_jsc::js_function::CreateJSFunctionOptions::new());
         vi.put(global, name.as_bytes(), jsvalue);
         jest.put(global, name.as_bytes(), jsvalue);
     }

@@ -114,8 +114,8 @@ pub(crate) struct AnchorAlias {
     name: AnchorAliasName,
 }
 
-impl Default for AnchorAlias {
-    fn default() -> Self {
+impl AnchorAlias {
+    pub(crate) fn new() -> Self {
         // Exists only because `HashMap::get_or_put` requires `V: Default` to
         // fill the freshly-inserted slot; the value is immediately overwritten
         // by the caller (see `find_anchors_and_aliases`).
@@ -203,7 +203,7 @@ impl<'a> Stringifier<'a> {
         space_value: JSValue,
         known_collection_roots: &'a mut MarkedArgumentBuffer,
     ) -> JsResult<Stringifier<'a>> {
-        let mut prop_names: StringHashMap<usize> = StringHashMap::default();
+        let mut prop_names: StringHashMap<usize> = StringHashMap::init();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
         prop_names.put(b"root", 0)?;
@@ -213,7 +213,7 @@ impl<'a> Stringifier<'a> {
             builder: wtf::StringBuilder::init(),
             indent: 0,
             item_offset: 0,
-            known_collections: HashMap::default(),
+            known_collections: HashMap::init(),
             known_collection_roots,
             array_item_counter: 0,
             prop_names,
@@ -257,7 +257,9 @@ impl<'a> Stringifier<'a> {
 
         debug_assert!(unwrapped.is_object());
 
-        let object_entry = self.known_collections.get_or_put(unwrapped)?;
+        let object_entry = self
+            .known_collections
+            .get_or_put(unwrapped, AnchorAlias::new)?;
         if object_entry.found_existing {
             // this will become an alias. increment counters here because
             // now the anchor/alias is confirmed used.
@@ -284,7 +286,7 @@ impl<'a> Stringifier<'a> {
                     } else {
                         b"value"
                     };
-                    let name_entry = self.prop_names.get_or_put(key)?;
+                    let name_entry = self.prop_names.get_or_put(key, || 0)?;
                     if name_entry.found_existing {
                         *name_entry.value_ptr += 1;
                     } else {
@@ -319,7 +321,7 @@ impl<'a> Stringifier<'a> {
             JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,
-                ..Default::default()
+                ..JSPropertyIteratorOptions::init()
             },
         )?;
 
@@ -536,7 +538,7 @@ impl<'a> Stringifier<'a> {
             JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,
-                ..Default::default()
+                ..JSPropertyIteratorOptions::init()
             },
         )?;
 
@@ -1121,7 +1123,7 @@ fn parse_to_values(
             };
 
         let mut ctx = ParserCtx {
-            seen_objects: HashMap::default(),
+            seen_objects: HashMap::init(),
             stack_check: StackCheck::init(),
             global,
             pending,

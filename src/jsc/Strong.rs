@@ -50,9 +50,15 @@ impl Drop for Strong {
 // `#[repr(transparent)]` over a single nullable pointer keeps this FFI-safe
 // when embedded in `extern "C"` structs.
 #[repr(transparent)]
-#[derive(Default)]
 pub struct Optional {
     handle: Option<NonNull<Impl>>,
+}
+
+impl Optional {
+    #[inline]
+    pub fn new() -> Self {
+        Self { handle: None }
+    }
 }
 
 impl Optional {

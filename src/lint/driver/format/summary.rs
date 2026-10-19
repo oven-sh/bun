@@ -126,9 +126,9 @@ pub(crate) fn about_suppressions(has_unused: bool, has_new: bool) -> Option<File
         message: text.to_vec(),
         details: Some(Box::new(Details {
             help: help.into(),
-            ..Details::default()
+            ..Details::new()
         })),
-        ..LintMessage::default()
+        ..LintMessage::new()
     };
     let unused = has_unused.then(|| {
         error(

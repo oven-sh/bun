@@ -23,13 +23,25 @@ use std::cell::Cell;
 use std::ops::Range;
 
 /// Prettier's `enclosingNode`, `precedingNode` and `followingNode`.
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) struct SurroundingNodes<'a> {
     pub(super) enclosing_node: Option<Owner<'a>>,
     pub(super) preceding_node: Option<Owner<'a>>,
     pub(super) following_node: Option<Owner<'a>>,
     /// See [`AttachContext::list_elements_around`]. `enclosing_node` is not set.
     pub(super) is_before_list_element: bool,
+}
+
+impl<'a> SurroundingNodes<'a> {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            enclosing_node: None,
+            preceding_node: None,
+            following_node: None,
+            is_before_list_element: false,
+        }
+    }
 }
 
 pub(super) struct AttachContext<'a, 'c> {
@@ -53,8 +65,14 @@ pub(super) struct AttachContext<'a, 'c> {
 /// The last answer to a question about a node that has the same answer for its parent, for the parent of that, and so on up to
 /// the node that decides it. `a()()()..` can be thousands of calls in each other with a comment in each, so the way up is gone
 /// once for all of them and not once for each.
-#[derive(Default)]
 pub(super) struct AnswerForAncestors(Cell<Option<(Span, Span, bool)>>);
+
+impl AnswerForAncestors {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self(core::cell::Cell::new(None))
+    }
+}
 
 impl AnswerForAncestors {
     /// `step` returns the parent of a node if that has the same answer, or else the answer.
@@ -84,7 +102,7 @@ impl AnswerForAncestors {
 
 /// What the rules ask about all the comments between two tokens. There can be thousands of them, so this is found once for all
 /// of them and not once for each.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(super) struct CommentsBetweenTokens {
     pub(super) first_id: u32,
     /// The id after the last one.
@@ -96,6 +114,20 @@ pub(super) struct CommentsBetweenTokens {
     pub(super) last_without_line_break_before: Option<u32>,
     /// The first comment that is the last thing on its line, if it is on the line of the token before the comments.
     pub(super) first_that_ends_line_of_prev_token: Option<u32>,
+}
+
+impl CommentsBetweenTokens {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            first_id: 0,
+            end_id: 0,
+            has_line_break_before_one: false,
+            first_without_line_break_before: None,
+            last_without_line_break_before: None,
+            first_that_ends_line_of_prev_token: None,
+        }
+    }
 }
 
 impl CommentsBetweenTokens {
@@ -408,12 +440,14 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             source: SourceText::new(file.text()),
             options,
             cast_parens,
-            last_comments_between_tokens: Cell::default(),
-            last_search_for_bracket: Cell::default(),
-            last_start_of_chain: Cell::default(),
-            is_name_of_type_query_or_jsx_element: AnswerForAncestors::default(),
-            is_link_of_member_chain: AnswerForAncestors::default(),
-            has_following_node: AnswerForAncestors::default(),
+            last_comments_between_tokens: core::cell::Cell::new(core::array::from_fn(|_| {
+                CommentsBetweenTokens::new()
+            })),
+            last_search_for_bracket: core::cell::Cell::new((Span::init(), false)),
+            last_start_of_chain: core::cell::Cell::new(None),
+            is_name_of_type_query_or_jsx_element: AnswerForAncestors::new(),
+            is_link_of_member_chain: AnswerForAncestors::new(),
+            has_following_node: AnswerForAncestors::new(),
         }
     }
 
@@ -679,7 +713,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         let mut all = CommentsBetweenTokens {
             first_id,
             end_id: after.last().unwrap_or(id) + 1,
-            ..CommentsBetweenTokens::default()
+            ..CommentsBetweenTokens::new()
         };
         for id in all.ids() {
             let it = self.file.comment(id);
@@ -826,7 +860,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                     enclosing_node: parent,
                     preceding_node: Some(preceding_node),
                     following_node: Some(following_node),
-                    ..SurroundingNodes::default()
+                    ..SurroundingNodes::new()
                 }
             }
             // The two parents differ, so one is inside the other, as in `class A { /* comment */ b() {} }`, where the
@@ -838,18 +872,18 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 SurroundingNodes {
                     enclosing_node: parent,
                     preceding_node: Some(preceding_node),
-                    ..SurroundingNodes::default()
+                    ..SurroundingNodes::new()
                 }
             }
             (_, Some((following_node, parent))) => SurroundingNodes {
                 enclosing_node: parent,
                 following_node: Some(following_node),
-                ..SurroundingNodes::default()
+                ..SurroundingNodes::new()
             },
             (Some((preceding_node, parent)), None) => SurroundingNodes {
                 enclosing_node: parent,
                 preceding_node: Some(preceding_node),
-                ..SurroundingNodes::default()
+                ..SurroundingNodes::new()
             },
             (None, None) => {
                 let mut node = match enclosing_node {
@@ -861,7 +895,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 }
                 SurroundingNodes {
                     enclosing_node: Some(Owner::Node(node)),
-                    ..SurroundingNodes::default()
+                    ..SurroundingNodes::new()
                 }
             }
         };
@@ -977,7 +1011,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         if span.contains(comment) {
             *nodes = SurroundingNodes {
                 enclosing_node: body,
-                ..SurroundingNodes::default()
+                ..SurroundingNodes::new()
             };
         } else if span.start >= comment.end {
             if nodes.following_node.is_none() {

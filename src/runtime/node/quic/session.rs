@@ -106,8 +106,8 @@ pub(crate) struct StoredAddr {
     len: u8,
 }
 
-impl Default for StoredAddr {
-    fn default() -> Self {
+impl StoredAddr {
+    pub(crate) fn new() -> Self {
         Self {
             bytes: [0; SOCKADDR_IN6_LEN],
             len: 0,
@@ -117,7 +117,7 @@ impl Default for StoredAddr {
 
 impl StoredAddr {
     pub(super) fn from_raw(ptr: *const u8, len: usize) -> Self {
-        let mut out = Self::default();
+        let mut out = Self::new();
         let n = len.min(out.bytes.len());
         if !ptr.is_null() && n > 0 {
             // SAFETY: caller guarantees `ptr[..len]` is a live sockaddr.
@@ -408,8 +408,8 @@ impl QuicSession {
             endpoint: Cell::new(null_mut()),
             endpoint_js: JsCell::new(None),
             is_server: Cell::new(false),
-            local_addr: Cell::new(StoredAddr::default()),
-            remote_addr: Cell::new(StoredAddr::default()),
+            local_addr: Cell::new(StoredAddr::new()),
+            remote_addr: Cell::new(StoredAddr::new()),
             state: Cell::new(null_mut()),
             stats: Cell::new(null_mut()),
             events: JsCell::new(Vec::new()),

@@ -490,7 +490,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             PropSource::Symbol(symbol) => self.push_declarations_of_sym(*symbol, out),
             // `propSet` has a symbol once.
             PropSource::Intersected(_, parts) if parts.len() > MANY => {
-                let mut seen = crate::util::FxHashSet::default();
+                let mut seen = crate::util::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
                 for part in parts.iter().filter(|&part| seen.insert(part)) {
                     self.push_declarations_of_prop(part, depth + 1, out);
                 }

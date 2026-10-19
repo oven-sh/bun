@@ -188,9 +188,9 @@ fn run_bun(argv: &mut [&[u8]], failure: &str) -> Result<(), crate::Error> {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
                 None, None,
             )),
-            ..Default::default()
+            ..bun_process::WindowsOptions::new()
         },
-        ..Default::default()
+        ..spawn_sync::Options::new()
     }) {
         Ok(Ok(spawn_result)) => spawn_result.status,
         Ok(Err(err)) => {

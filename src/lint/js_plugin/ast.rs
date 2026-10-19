@@ -150,7 +150,6 @@ const HEADER: usize = 8;
 /// In the start of a pair of `strings`: it is in `extra`.
 const IN_EXTRA: u32 = 1 << 31;
 
-#[derive(Default)]
 struct Tree {
     numbers: Vec<f64>,
     starts: Vec<u32>,
@@ -165,6 +164,24 @@ struct Tree {
     types: Vec<u8>,
     /// UTF-8.
     extra: Vec<u8>,
+}
+
+impl Tree {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            numbers: Vec::new(),
+            starts: Vec::new(),
+            ends: Vec::new(),
+            parents: Vec::new(),
+            fields: Vec::new(),
+            lists: Vec::new(),
+            strings: Vec::new(),
+            twice: Vec::new(),
+            types: Vec::new(),
+            extra: Vec::new(),
+        }
+    }
 }
 
 /// Where the number of a node goes.
@@ -546,7 +563,7 @@ pub(super) fn walk<'a, 's>(
         selectors,
         matches: vec![Vec::new(); selectors.len()],
         nodes: Vec::new(),
-        tree: Tree::default(),
+        tree: Tree::new(),
         extra_units: 0,
         open: Vec::new(),
     };

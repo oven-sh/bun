@@ -23,7 +23,7 @@ fn type_in_message<R: Rule>(kind: &'static str, cx: &Cx<'_, R>) -> &'static str 
 }
 
 /// Which kinds of destructuring are enforced for a kind of node.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct Enabled {
     pub array: bool,
     pub object: bool,

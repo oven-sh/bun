@@ -179,7 +179,7 @@ impl Rule for AdjacentOverloadSignatures {
 
     /// The statements of the file, of each block, of each function and of each namespace, where two of them are functions.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let (mut with_one, mut with_two) = (FxHashSet::default(), FxHashSet::default());
+        let (mut with_one, mut with_two) = (FxHashSet::with_hasher(rustc_hash::FxBuildHasher), FxHashSet::with_hasher(rustc_hash::FxBuildHasher));
         for function in cx.file().stmts_of_kind(StmtTag::Fn) {
             let parent = function.parent();
             if with_one.insert(parent) || !with_two.insert(parent) {

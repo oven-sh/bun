@@ -72,7 +72,7 @@ impl KnownGlobal {
             args: bun_alloc::AstAlloc::take(&mut e.args),
             close_paren_loc: e.close_parens_loc,
             can_be_unwrapped_if_unused: e.can_be_unwrapped_if_unused,
-            ..Default::default()
+            ..E::Call::new()
         };
         js_ast::Expr::init(call, loc)
     }
@@ -121,7 +121,7 @@ impl KnownGlobal {
 
                 if n == 0 {
                     // new Object() -> {}
-                    return Some(js_ast::Expr::init(E::Object::default(), loc));
+                    return Some(js_ast::Expr::init(E::Object::new(), loc));
                 }
 
                 if n == 1 {
@@ -135,7 +135,7 @@ impl KnownGlobal {
                         js_ast::ExprData::ENull(_) | js_ast::ExprData::EUndefined(_) => {
                             // new Object(null) -> {}
                             // new Object(undefined) -> {}
-                            return Some(js_ast::Expr::init(E::Object::default(), loc));
+                            return Some(js_ast::Expr::init(E::Object::new(), loc));
                         }
                         _ => {}
                     }
@@ -151,7 +151,7 @@ impl KnownGlobal {
                 match n {
                     0 => {
                         // new Array() -> []
-                        Some(js_ast::Expr::init(E::Array::default(), loc))
+                        Some(js_ast::Expr::init(E::Array::new(), loc))
                     }
                     1 => {
                         // For single argument, only convert to literal if we're SURE it's not a number
@@ -165,7 +165,7 @@ impl KnownGlobal {
                                 return Some(js_ast::Expr::init(
                                     E::Array {
                                         items: bun_alloc::AstAlloc::take(&mut e.args),
-                                        ..Default::default()
+                                        ..E::Array::new()
                                     },
                                     loc,
                                 ));
@@ -187,7 +187,7 @@ impl KnownGlobal {
                                 Some(js_ast::Expr::init(
                                     E::Array {
                                         items: bun_alloc::AstAlloc::take(&mut e.args),
-                                        ..Default::default()
+                                        ..E::Array::new()
                                     },
                                     loc,
                                 ))
@@ -226,7 +226,7 @@ impl KnownGlobal {
                                     return Some(js_ast::Expr::init(
                                         E::Array {
                                             items: Vec::move_from_list(list),
-                                            ..Default::default()
+                                            ..E::Array::new()
                                         },
                                         loc,
                                     ));
@@ -255,7 +255,7 @@ impl KnownGlobal {
                         Some(js_ast::Expr::init(
                             E::Array {
                                 items: bun_alloc::AstAlloc::take(&mut e.args),
-                                ..Default::default()
+                                ..E::Array::new()
                             },
                             loc,
                         ))

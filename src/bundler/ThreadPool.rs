@@ -105,7 +105,7 @@ impl ThreadPool {
                 let pool = bun_core::heap::into_raw(Box::new(ThreadPoolLib::ThreadPool::init(
                     ThreadPoolLib::Config {
                         max_threads: u32::from(cpu_count),
-                        ..Default::default()
+                        ..ThreadPoolLib::Config::new()
                     },
                 )));
                 bun_core::scoped_log!(ThreadPool, "{} workers", cpu_count);
@@ -131,7 +131,7 @@ impl ThreadPool {
             // BACKREF: lifetime erased behind the raw pointer.
             v2: std::ptr::from_ref(v2).cast::<BundleV2<'static>>(),
             worker_pool_is_owned: false,
-            workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
+            workers_assignments: bun_threading::Guarded::new(ArrayHashMap::new()),
             generation: POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -357,10 +357,10 @@ impl ThreadPool {
                 thread: NonNull::new(ThreadPoolLib::Thread::current())
                     .map(bun_ptr::ParentRef::from),
                 data: None,
-                ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
+                ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::init()),
                 has_created: false,
                 deinit_task: ThreadPoolLib::Task {
-                    node: ThreadPoolLib::Node::default(),
+                    node: ThreadPoolLib::Node::new(),
                     callback: Worker::deinit_callback,
                 },
                 temporary_arena: None,

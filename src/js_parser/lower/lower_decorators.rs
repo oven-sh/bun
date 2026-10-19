@@ -136,7 +136,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(
             E::Identifier {
                 ref_,
-                ..Default::default()
+                ..E::Identifier::new()
             },
             l,
         )
@@ -171,7 +171,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 target,
                 args: bun_alloc::AstAlloc::vec(),
                 close_parens_loc: l,
-                ..Default::default()
+                ..E::New::new()
             },
             l,
         )
@@ -188,7 +188,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Property {
             kind: PropertyKind::ClassStaticBlock,
             class_static_block: Some(js_ast::StoreRef::from_bump(sb)),
-            ..Default::default()
+            ..Property::new()
         }
     }
 
@@ -222,7 +222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     target: desc,
                     name: b"get".into(),
                     name_loc: l,
-                    ..Default::default()
+                    ..E::Dot::new()
                 },
                 l,
             );
@@ -256,7 +256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     target: desc,
                     name: b"set".into(),
                     name_loc: l,
-                    ..Default::default()
+                    ..E::Dot::new()
                 },
                 l,
             );
@@ -355,7 +355,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     target: private_access,
                                     name: b"call".into(),
                                     name_loc: expr_loc,
-                                    ..Default::default()
+                                    ..E::Dot::new()
                                 },
                                 expr_loc,
                             );
@@ -538,7 +538,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(self.s(
             S::Local {
                 decls: DeclList::from_bump_vec(capture_decls),
-                ..Default::default()
+                ..S::Local::new()
             },
             loc,
         ))
@@ -798,7 +798,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // accessors, static fields, instance fields.
         let mut next_initializer = [0usize; 4];
         let mut has_member_decorators = false;
-        let mut lowered_names: HashMap<u32, ()> = HashMap::default();
+        let mut lowered_names: HashMap<u32, ()> = HashMap::init();
         for prop in class.properties.slice() {
             if prop.ts_decorators.len_u32() == 0 {
                 continue;
@@ -843,10 +843,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BumpVec::new_in(bump),
             BumpVec::new_in(bump),
         ];
-        let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
+        let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::init();
 
         for slot in class.properties.slice_mut().iter_mut() {
-            let mut prop = core::mem::take(slot);
+            let mut prop = core::mem::replace(slot, Property::new());
             if prop.kind == PropertyKind::ClassStaticBlock {
                 members.push(prop);
                 continue;
@@ -884,7 +884,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let list = p.new_expr(
                     E::Array {
                         items: decorators,
-                        ..Default::default()
+                        ..E::Array::new()
                     },
                     loc,
                 );
@@ -1008,7 +1008,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     value: Some(getter),
                     kind: PropertyKind::Get,
                     flags: getter_flags,
-                    ..Default::default()
+                    ..Property::new()
                 });
                 // `__decorateElement` defines a decorated accessor itself: the
                 // getter only holds the key.
@@ -1019,7 +1019,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         value: Some(setter),
                         kind: PropertyKind::Set,
                         flags: setter_flags,
-                        ..Default::default()
+                        ..Property::new()
                     });
                 }
 
@@ -1130,14 +1130,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 flags.insert(Flags::Property::IsComputed);
                 members.push(Property {
                     key: Some(Expr::join_all_with_comma(&key_effects)),
-                    value: Some(p.new_expr(
-                        E::Function {
-                            func: G::Fn::default(),
-                        },
-                        loc,
-                    )),
+                    value: Some(p.new_expr(E::Function { func: G::Fn::new() }, loc)),
                     flags,
-                    ..Default::default()
+                    ..Property::new()
                 });
                 let this = p.new_expr(E::This {}, loc);
                 let member = p.new_expr(
@@ -1181,7 +1176,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let list = p.new_expr(
                     E::Array {
                         items: class_decorators,
-                        ..Default::default()
+                        ..E::Array::new()
                     },
                     loc,
                 );
@@ -1425,14 +1420,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         key: Some(key),
                         value: Some(value),
                         flags,
-                        ..Default::default()
+                        ..Property::new()
                     },
                 );
                 let object = self.new_expr(
                     E::Object {
                         properties,
                         is_single_line: true,
-                        ..Default::default()
+                        ..E::Object::new()
                     },
                     value.loc,
                 );
@@ -1510,7 +1505,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts: bun_ast::StoreSlice::new_mut(body),
                 loc,
             },
-            ..Default::default()
+            ..G::Fn::new()
         };
         self.new_expr(E::Function { func }, loc)
     }
@@ -1525,7 +1520,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let body = self.effect_stmts(&[set], loc);
         let arg = self.arena.alloc(G::Arg {
             binding: self.b(B::Identifier { r#ref: param }, loc),
-            ..Default::default()
+            ..G::Arg::new()
         });
         let func = G::Fn {
             args: bun_ast::StoreSlice::new_mut(core::slice::from_mut(arg)),
@@ -1533,7 +1528,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts: bun_ast::StoreSlice::from_bump(body),
                 loc,
             },
-            ..Default::default()
+            ..G::Fn::new()
         };
         self.new_expr(E::Function { func }, loc)
     }
@@ -1542,7 +1537,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.s(
             S::SExpr {
                 value,
-                ..Default::default()
+                ..S::SExpr::new()
             },
             loc,
         )
@@ -1554,7 +1549,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmts.push(self.s(
                 S::SExpr {
                     value: *effect,
-                    ..Default::default()
+                    ..S::SExpr::new()
                 },
                 loc,
             ));
@@ -1579,14 +1574,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 E::Call {
                     target,
                     args: ExprNodeList::init_one(spread),
-                    ..Default::default()
+                    ..E::Call::new()
                 },
                 loc,
             );
             stmts.push(self.s(
                 S::SExpr {
                     value: call,
-                    ..Default::default()
+                    ..S::SExpr::new()
                 },
                 loc,
             ));
@@ -1597,13 +1592,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc,
                 stmts: bun_ast::StoreSlice::from_bump(stmts),
             },
-            ..Default::default()
+            ..G::Fn::new()
         };
         Property {
             flags: Flags::Property::IsMethod.into(),
             key: Some(self.new_expr(E::EString::from_static(b"constructor"), loc)),
             value: Some(self.new_expr(E::Function { func }, loc)),
-            ..Default::default()
+            ..Property::new()
         }
     }
 }

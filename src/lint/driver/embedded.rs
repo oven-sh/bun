@@ -398,7 +398,7 @@ impl Context<'_, '_> {
         config: &ResolvedConfig,
         outer: Option<&RuleFilter>,
     ) -> LintResult {
-        let mut all = LintResult::default();
+        let mut all = LintResult::new();
         let scripts = scripts_of(framework, text);
         for (index, &script) in scripts.iter().enumerate() {
             let is_typescript = matches!(script.kind, ScriptKind::Ts | ScriptKind::Tsx);

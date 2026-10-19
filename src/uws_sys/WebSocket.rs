@@ -283,8 +283,8 @@ pub struct WebSocketBehavior {
     pub close: uws_websocket_close_handler,
 }
 
-impl Default for WebSocketBehavior {
-    fn default() -> Self {
+impl WebSocketBehavior {
+    pub fn new() -> Self {
         Self {
             compression: 0,
             max_payload_length: u32::MAX,
@@ -491,7 +491,7 @@ where
             ping: Some(Self::on_ping),
             pong: Some(Self::on_pong),
             close: Some(Self::on_close),
-            ..Default::default()
+            ..WebSocketBehavior::new()
         }
     }
 }

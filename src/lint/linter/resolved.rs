@@ -22,9 +22,9 @@ pub struct LinterOptions {
     pub report_unused_inline_configs: Severity,
 }
 
-impl Default for LinterOptions {
+impl LinterOptions {
     /// As in ESLint's default configuration.
-    fn default() -> Self {
+    pub fn new() -> Self {
         LinterOptions {
             no_inline_config: false,
             report_unused_disable_directives: Severity::Warn,
@@ -224,9 +224,8 @@ pub(crate) fn needs_resolver(meta: &Meta) -> bool {
 }
 
 /// [`ResolvedConfig::skipped`]
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Skipped {
-    #[default]
     None,
     /// Only rules of oxlint's `jsdoc` plugin, which report nothing in a file without a `/**` comment.
     OnlyJsdoc,
@@ -234,7 +233,7 @@ pub enum Skipped {
 }
 
 /// The configuration of a file: what ESLint's `configs.getConfig(path)` returns.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ResolvedConfig {
     /// `languageOptions` and `settings`.
     pub language: LanguageOptions,
@@ -309,6 +308,46 @@ pub struct ResolvedConfig {
     pub for_eslint: Option<Arc<js_plugin::Configuration>>,
     /// The configuration is invalid, and ESLint would refuse to run: its message.
     pub error: Option<Vec<u8>>,
+}
+
+impl ResolvedConfig {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            language: LanguageOptions::new(),
+            linter: LinterOptions::new(),
+            rules: Vec::new(),
+            prepared: std::sync::OnceLock::new(),
+            has_named_rules: false,
+            may_hand_back: false,
+            package_module: None,
+            has_unknown_resolver: false,
+            js_rules: Vec::new(),
+            formatting_rules: Vec::new(),
+            plugins_without_rules: Vec::new(),
+            js_settings: None,
+            js_plugins: Vec::new(),
+            foreign_plugins: Vec::new(),
+            printed_plugins: Vec::new(),
+            skips_unknown_rules: false,
+            skipped: Skipped::None,
+            missing_rules: Vec::new(),
+            prefers_typescript_rules: false,
+            has_every_rule: false,
+            understands_oxlint_comments: false,
+            plugins: None,
+            language_name: None,
+            options_of_other_language: None,
+            dialect: None,
+            line_breaks: LineBreaks::EcmaScript,
+            processor: None,
+            processor_location: None,
+            parser_name: None,
+            changes_linter: false,
+            for_eslint: None,
+            error: None,
+        }
+    }
 }
 
 impl ResolvedConfig {
@@ -574,7 +613,7 @@ impl ResolvedConfig {
                 json.get(b"languageOptions").unwrap_or(&null),
                 json.get(b"settings").unwrap_or(&null),
             ),
-            ..ResolvedConfig::default()
+            ..ResolvedConfig::new()
         };
         config.validate_language_options(json.get(b"languageOptions").unwrap_or(&null));
         if let Some(linter) = json.get(b"linterOptions") {

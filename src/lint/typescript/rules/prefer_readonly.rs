@@ -511,7 +511,7 @@ impl PreferReadonly {
             class,
             class_type: None,
             private_modifiables: SmallVec::new(),
-            positions: FxHashMap::default(),
+            positions: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         };
         for member in class.members() {
             if member.kind() == MemberKind::Property {

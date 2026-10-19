@@ -45,7 +45,7 @@ pub struct Diagnostic {
 
 /// What few diagnostics have: what one of oxlint has besides its message and its place, where a text that is empty is not there,
 /// and a place that is not that of `span`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Details {
     /// The start that is reported in place of that of `span`: [`Report::start_at`].
     pub start_position: Option<Position>,
@@ -63,6 +63,23 @@ pub struct Details {
     pub labels: Vec<(Span, Cow<'static, str>)>,
     pub help: Cow<'static, str>,
     pub note: Cow<'static, str>,
+}
+
+impl Details {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            start_position: None,
+            end_position: None,
+            comments_apply_at: None,
+            claim: None,
+            listened_on: None,
+            first_label: Cow::Owned(String::new()),
+            labels: Vec::new(),
+            help: Cow::Owned(String::new()),
+            note: Cow::Owned(String::new()),
+        }
+    }
 }
 
 impl Details {
@@ -88,7 +105,6 @@ pub struct Suggestion {
 }
 
 /// Collects what the rules report about one file.
-#[derive(Default)]
 pub(crate) struct Sink {
     pub(crate) diagnostics: RefCell<Vec<Diagnostic>>,
     /// Whether anything reads `Diagnostic::fix` and `Diagnostic::suggestions`. If not, they are
@@ -110,6 +126,23 @@ pub(crate) struct Sink {
     /// The rules of the [pairs](crate::rule_set::Pairs) that are at work on the file, by [`CxBase::rule`], each with the number
     /// of its pair in the file and whether it is the rule with types.
     pub(crate) paired: RefCell<SmallVec<[(u16, u8, bool); 8]>>,
+}
+
+impl Sink {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            diagnostics: core::cell::RefCell::new(Vec::new()),
+            wants_fixes: core::cell::Cell::new(false),
+            drops_texts_of_fixes: core::cell::Cell::new(false),
+            wants_help: core::cell::Cell::new(false),
+            drops_messages: core::cell::Cell::new(false),
+            thrown: core::cell::RefCell::new(None),
+            calls_in_turns: core::cell::OnceCell::new(),
+            asks_about_modules: core::cell::Cell::new(false),
+            paired: core::cell::RefCell::new(smallvec::SmallVec::new()),
+        }
+    }
 }
 
 /// The node that a rule of a [pair](crate::rule_set::Pairs) reports a problem in, by its span. Nodes in each other can start
@@ -538,7 +571,11 @@ impl<'a> Report<'a> {
 
     fn details(&mut self) -> Option<&mut Details> {
         let diagnostic = self.diagnostic.as_mut()?;
-        Some(&mut **diagnostic.details.get_or_insert_default())
+        Some(
+            &mut **diagnostic
+                .details
+                .get_or_insert_with(|| Box::new(Details::new())),
+        )
     }
 
     /// For a port of a rule of oxlint: what oxlint says at the place of the report. Like [`Report::label`], [`Report::help`]
@@ -828,7 +865,9 @@ impl Drop for Report<'_> {
             diagnostic.message = interpolate(self.message, data);
         }
         if let Some(texts) = diagnostic.constant_help.filter(|it| it.has_values()) {
-            let details = &mut **diagnostic.details.get_or_insert_default();
+            let details = &mut **diagnostic
+                .details
+                .get_or_insert_with(|| Box::new(Details::new()));
             let parts = [
                 (Part::Help, &mut details.help),
                 (Part::FirstLabel, &mut details.first_label),

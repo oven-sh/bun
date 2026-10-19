@@ -17,9 +17,7 @@ use super::{StdioKind, StdioResult, Subprocess};
 
 pub(crate) type IOReader = BufferedReader;
 
-#[derive(Default)]
 pub(crate) enum State {
-    #[default]
     Pending,
     Done(Vec<u8>),
     /// The read failed. The bytes read before the error come first.
@@ -318,9 +316,10 @@ impl PipeReader {
                 ReadableStream::from_owned_slice(cx, bytes, 0)
             }
             State::Err(..) => {
-                let State::Err(bytes, err) =
-                    core::mem::replace(&mut self.state, State::Err(Vec::new(), Default::default()))
-                else {
+                let State::Err(bytes, err) = core::mem::replace(
+                    &mut self.state,
+                    State::Err(Vec::new(), bun_sys::Error::init()),
+                ) else {
                     unreachable!()
                 };
                 ReadableStream::from_bytes_then_error(cx, bytes, err)

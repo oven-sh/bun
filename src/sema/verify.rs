@@ -148,10 +148,9 @@ pub(crate) fn parse_isolated_entity_name(text: &[u8]) -> Option<Vec<Cow<'_, [u8]
 }
 
 /// The location in the configuration file at which an options diagnostic is reported.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Place {
     /// `NewCompilerDiagnostic`
-    #[default]
     Nowhere,
     /// `createCompilerOptionsDiagnostic`: at the property name `compilerOptions`.
     CompilerOptions,
@@ -180,7 +179,7 @@ pub enum Place {
 }
 
 /// A diagnostic about the options.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Problem {
     pub code: u32,
     pub args: Vec<Vec<u8>>,
@@ -199,7 +198,7 @@ pub fn spans_of_top_elements(
     file: &TsConfigSourceFile,
     name: &[u8],
 ) -> FxHashMap<Vec<u8>, (u32, u32)> {
-    let mut spans = FxHashMap::default();
+    let mut spans = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     let root = file.object_literal_expression();
     let list = root.and_then(|root| file.property(root, name, None));
     for e in list

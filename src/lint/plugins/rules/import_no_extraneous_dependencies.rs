@@ -107,12 +107,22 @@ fn read_json(modules: &dyn Modules, json_path: &[u8]) -> Result<Json, Option<Fai
 }
 
 /// `packageContent`
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct DepFields {
     /// The fields that a name is in.
     fields: FxHashMap<Box<[u8]>, u8>,
     /// How long the longest name is.
     longest: usize,
+}
+
+impl DepFields {
+    #[inline]
+    fn init() -> Self {
+        Self {
+            fields: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            longest: 0,
+        }
+    }
 }
 
 impl DepFields {
@@ -123,7 +133,7 @@ impl DepFields {
 
     /// `extractDepFields` of each of `packages`, assigned to one object in that order.
     fn new(packages: &[Json]) -> DepFields {
-        let mut all = DepFields::default();
+        let mut all = DepFields::init();
         for name in INHERITED {
             all.add(name, IN_DEPS | IN_DEV_DEPS | IN_OPT_DEPS | IN_PEER_DEPS);
         }
@@ -260,7 +270,7 @@ impl Rule for NoExtraneousDependencies {
             include_types: options.bool_or("includeTypes", false),
             visitor: Visitor::of(Systems { esmodule: true, commonjs: true, amd: false }),
             in_package_dir: OnceLock::new(),
-            closest: Default::default(),
+            closest: core::array::from_fn(|_| std::sync::OnceLock::new()),
         }
     }
 

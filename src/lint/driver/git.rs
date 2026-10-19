@@ -151,8 +151,8 @@ impl<'e> Files<'e> {
             only,
             environment,
             top: Vec::new(),
-            named: FxHashSet::default(),
-            partly_staged: FxHashSet::default(),
+            named: FxHashSet::with_hasher(bun_sema::util::FxBuild),
+            partly_staged: FxHashSet::with_hasher(bun_sema::util::FxBuild),
         };
         let flag = only.flag();
         // `--show-toplevel` is only here to fail where there's no work tree, like inside `.git`. `--show-cdup` is the

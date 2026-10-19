@@ -307,7 +307,7 @@ pub(crate) fn check<'a, R: Rule>(
     };
     match own_name(func) {
         Some(name) if !is_component_or_hook_name(name.bytes()) => {
-            let outer_function = func.name().map(Ident::span).unwrap_or_default();
+            let outer_function = func.name().map(Ident::span).unwrap_or_else(Span::init);
             return function_error(name.bytes(), outer_function);
         }
         // oxlint does not look for loops and conditions in a callback. The plugin reports a hook in a loop wherever it is.

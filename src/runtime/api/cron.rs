@@ -848,7 +848,7 @@ pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
-        poll: JsCell::new(KeepAlive::default()),
+        poll: JsCell::new(KeepAlive::new()),
         bun_exe,
         abs_path,
         schedule: ZString::from_bytes(normalized_schedule),
@@ -1299,7 +1299,7 @@ pub(crate) fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
-        poll: JsCell::new(KeepAlive::default()),
+        poll: JsCell::new(KeepAlive::new()),
         title: ZString::from_bytes(title_slice.slice()),
         state: Cell::new(RemoveState::ReadingCrontab),
         process: JsCell::new(None),
@@ -1820,7 +1820,7 @@ impl CronJob {
             global: GlobalRef::from(global),
             parsed,
             tz,
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: JsCell::new(KeepAlive::new()),
             this_value: JsCell::new(JsRef::empty()),
             stopped: Cell::new(false),
             last_next_ms: Cell::new(0.0),
@@ -1930,21 +1930,21 @@ pub(crate) fn get_cron_object(global_this: &JSGlobalObject, _obj: &JSObject) -> 
         "cron",
         __jsc_host_cron_register,
         3,
-        Default::default(),
+        bun_jsc::js_function::CreateJSFunctionOptions::new(),
     );
     let remove_fn = JSFunction::create(
         global_this,
         "remove",
         __jsc_host_cron_remove,
         1,
-        Default::default(),
+        bun_jsc::js_function::CreateJSFunctionOptions::new(),
     );
     let parse_fn = JSFunction::create(
         global_this,
         "parse",
         __jsc_host_cron_parse,
         1,
-        Default::default(),
+        bun_jsc::js_function::CreateJSFunctionOptions::new(),
     );
     cron_fn.put(global_this, b"remove", remove_fn);
     cron_fn.put(global_this, b"parse", parse_fn);
@@ -2188,9 +2188,9 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
             loop_: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
-            ..Default::default()
+            ..spawn::WindowsOptions::new()
         },
-        ..SpawnOptions::default()
+        ..SpawnOptions::new()
     };
     // `mut` only for the Windows error-path `spawn_options.stderr.deinit()`.
     #[cfg(windows)]

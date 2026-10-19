@@ -39,7 +39,7 @@ impl NoAsyncEndpointHandlers {
         let mut at = get_inner_expression(arg);
         let mut registered_at = None;
         // `const a = b, b = a` goes in a circle.
-        let mut seen = rustc_hash::FxHashSet::default();
+        let mut seen = rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         let handler = loop {
             match at.kind() {
                 ExprKind::Ident(_) => {

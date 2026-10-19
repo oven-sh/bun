@@ -73,7 +73,7 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
     pub(crate) fn new(context: Blob, global_this: &'a JSGlobalObject) -> Self {
         Self {
             context,
-            promise: JSPromiseStrong::default(),
+            promise: JSPromiseStrong::new(),
             global_this,
             _f: PhantomData,
         }
@@ -106,7 +106,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         // `&mut self`, but the promise is GC-heap-owned and outlives `handler`.
         // Decay to a raw pointer so `handler` can be dropped before resolution.
         let promise: *mut jsc::JSPromise = handler.promise.swap();
-        let blob = core::mem::take(&mut handler.context);
+        let blob = core::mem::replace(&mut handler.context, Blob::empty());
         let global_this = handler.global_this;
         drop(handler);
         match maybe_bytes {
@@ -384,13 +384,13 @@ impl ReadFile {
             size: 0,
             buffer: Vec::new(),
             task: WorkPoolTask {
-                node: Default::default(),
+                node: bun_threading::thread_pool::Node::new(),
                 callback: Self::do_read_loop_task,
             },
             system_error: None,
             errno: None,
             io_task: None,
-            io_poll: io::Poll::default(),
+            io_poll: io::Poll::new(),
             io_request: io::Request {
                 next: bun_threading::Link::new(),
                 callback: Self::on_request_readable,
@@ -414,7 +414,7 @@ impl ReadFile {
             return;
         }
         self.task = WorkPoolTask {
-            node: Default::default(),
+            node: bun_threading::thread_pool::Node::new(),
             callback: Self::do_read_loop_task,
         };
         // On kqueue platforms we use one-shot mode, so:
@@ -437,7 +437,7 @@ impl ReadFile {
         self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         self.system_error = Some(err.to_system_error().into());
         self.task = WorkPoolTask {
-            node: Default::default(),
+            node: bun_threading::thread_pool::Node::new(),
             callback: Self::do_read_loop_task,
         };
         // On kqueue platforms we use one-shot mode, so:
@@ -616,7 +616,7 @@ impl ReadFile {
                 code: BunString::static_("INTERNAL_ERROR"),
                 message: BunString::static_("assertion failure - store should not be null"),
                 syscall: BunString::static_("read"),
-                ..Default::default()
+                ..SystemError::new()
             }));
         }
 
@@ -716,7 +716,7 @@ impl ReadFile {
                 },
                 message: BunString::static_("Directories cannot be read like files"),
                 syscall: BunString::static_("read"),
-                ..Default::default()
+                ..SystemError::new()
             });
             return;
         }
@@ -1067,7 +1067,7 @@ impl<'a> ReadFileUV<'a> {
             loop_: event_loop.uv_loop().cast(),
             event_loop,
             file_store,
-            byte_store: ByteStore::default(),
+            byte_store: ByteStore::new(),
             store, // store.ref() — Arc clone owned here
             offset: off,
             max_length: max_len,
@@ -1114,7 +1114,8 @@ impl<'a> ReadFileUV<'a> {
             // `is_temporary` consumer (Body.rs / Blob.rs) can soundly reclaim
             // via `heap::take` — handing out `(ptr, len)` from a ByteStore
             // whose `cap > len` would be a layout-mismatched dealloc.
-            let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
+            let boxed =
+                core::mem::replace(&mut this_box.byte_store, ByteStore::new()).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead {
                 buf: bun_core::heap::into_raw(boxed),
             })
@@ -1230,7 +1231,7 @@ impl<'a> ReadFileUV<'a> {
                 .into(),
                 message: BunString::static_("Directories cannot be read like files").into(),
                 syscall: BunString::static_("read").into(),
-                ..Default::default()
+                ..SystemError::new()
             });
             this.on_finish();
             return;

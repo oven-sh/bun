@@ -644,7 +644,7 @@ fn write_grouped_arguments<'a>(
             {
                 Some(ExprOptions::Arrow(FormatJsArrowFunctionExpressionOptions {
                     cache_mode: FunctionCacheMode::Cache,
-                    ..FormatJsArrowFunctionExpressionOptions::default()
+                    ..FormatJsArrowFunctionExpressionOptions::new()
                 }))
             }
             _ => None,
@@ -870,7 +870,7 @@ impl<'a> Format<'a> for FormatGroupedFirstArgument<'a> {
                 ExprOptions::Arrow(FormatJsArrowFunctionExpressionOptions {
                     cache_mode: FunctionCacheMode::Cache,
                     call_argument_layout: Some(GroupedCallArgumentLayout::GroupedFirstArgument),
-                    ..FormatJsArrowFunctionExpressionOptions::default()
+                    ..FormatJsArrowFunctionExpressionOptions::new()
                 }),
             )
             .fmt(f),
@@ -895,7 +895,7 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a> {
                 ExprOptions::Arrow(FormatJsArrowFunctionExpressionOptions {
                     cache_mode: FunctionCacheMode::Cache,
                     call_argument_layout: layout,
-                    ..FormatJsArrowFunctionExpressionOptions::default()
+                    ..FormatJsArrowFunctionExpressionOptions::new()
                 }),
             )
             .fmt(f),

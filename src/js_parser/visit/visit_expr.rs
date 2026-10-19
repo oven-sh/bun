@@ -37,7 +37,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run visit_expr",
         );
-        self.visit_expr_in_out(e, ExprIn::default())
+        self.visit_expr_in_out(e, ExprIn::new())
     }
 
     pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
@@ -216,7 +216,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         Some(p.source),
                         js_lexer::range_of_identifier(p.source, result.declare_loc.unwrap()),
                     ),
-                    ..Default::default()
+                    ..bun_ast::Data::new()
                 }]);
 
                 let is_error = p.const_values.contains_key(&result.r#ref) || p.options.bundle;
@@ -322,7 +322,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             expr.loc,
             e_,
             original_name,
-            IdentifierOpts::default()
+            IdentifierOpts::init()
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)
                 .with_is_call_target(
@@ -406,7 +406,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.new_expr(
                                 E::Object {
                                     properties: bun_alloc::AstAlloc::take(&mut e_.properties),
-                                    ..Default::default()
+                                    ..E::Object::new()
                                 },
                                 expr.loc,
                             ),
@@ -454,7 +454,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             },
                             was_jsx_element: true,
                             close_paren_loc: e_.close_tag_loc,
-                            ..Default::default()
+                            ..E::Call::new()
                         },
                         expr.loc,
                     );
@@ -553,17 +553,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 E::Array {
                                     items: bun_alloc::AstAlloc::take(&mut e_.children),
                                     is_single_line: children_single_line,
-                                    ..Default::default()
+                                    ..E::Array::new()
                                 },
                                 e_.close_tag_loc,
                             )),
-                            ..Default::default()
+                            ..G::Property::new()
                         });
                     } else if e_.children.len_u32() == 1 {
                         props.push(G::Property {
                             key: Some(children_key),
                             value: Some(e_.children.slice()[0]),
-                            ..Default::default()
+                            ..G::Property::new()
                         });
                     }
 
@@ -583,7 +583,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.new_expr(
                             E::Object {
                                 properties: bun_alloc::AstAlloc::take(props),
-                                ..Default::default()
+                                ..E::Object::new()
                             },
                             expr.loc,
                         ),
@@ -641,7 +641,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             },
                             was_jsx_element: true,
                             close_paren_loc: e_.close_tag_loc,
-                            ..Default::default()
+                            ..E::Call::new()
                         },
                         expr.loc,
                     );
@@ -786,7 +786,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut v: BinaryExpressionVisitor = BinaryExpressionVisitor {
             e: e_,
             loc: expr.loc,
-            left_in: ExprIn::default(),
+            left_in: ExprIn::new(),
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -833,7 +833,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             v = BinaryExpressionVisitor {
                 e: left_binary.unwrap(),
                 loc: left.loc,
-                left_in: ExprIn::default(),
+                left_in: ExprIn::new(),
             };
         }
 
@@ -865,7 +865,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             name_loc: e_.index.loc,
                             target: e_.target,
                             optional_chain: e_.optional_chain,
-                            ..Default::default()
+                            ..E::Dot::new()
                         },
                         expr.loc,
                     );
@@ -891,7 +891,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             &mut e_.target,
             ExprIn {
                 is_property_access_target: !is_delete_target,
-                ..Default::default()
+                ..ExprIn::new()
             },
         );
 
@@ -992,7 +992,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     name_loc: unwrapped.loc,
                                     target: e_.target,
                                     optional_chain: e_.optional_chain,
-                                    ..Default::default()
+                                    ..E::Dot::new()
                                 },
                                 expr.loc,
                             );
@@ -1014,7 +1014,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Reminder that this can only be done after
                         // `target` is visited.
                         if e_.optional_chain.is_none() {
-                            let opts = IdentifierOpts::default()
+                            let opts = IdentifierOpts::init()
                                 .with_is_call_target(is_call_target)
                                 .with_is_template_tag(is_template_tag)
                                 .with_is_delete_target(is_delete_target)
@@ -1062,7 +1062,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 *e = p.new_expr(
                                     E::String {
                                         data: E::Str::new(&literal[num..num + 1]),
-                                        ..Default::default()
+                                        ..E::String::new()
                                     },
                                     expr.loc,
                                 );
@@ -1158,7 +1158,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut e_.value,
                     ExprIn {
                         assign_target,
-                        ..Default::default()
+                        ..ExprIn::new()
                     },
                 );
                 let id_after = matches!(e_.value.data, Data::EIdentifier(..));
@@ -1190,7 +1190,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     *e = p.new_expr(
                         E::String {
                             data: b"function".into(),
-                            ..Default::default()
+                            ..E::String::new()
                         },
                         expr.loc,
                     );
@@ -1201,7 +1201,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     *e = p.new_expr(
                         E::String {
                             data: typeof_.into(),
-                            ..Default::default()
+                            ..E::String::new()
                         },
                         expr.loc,
                     );
@@ -1210,7 +1210,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             Op::UnDelete => {
                 p.delete_target = e_.value.data;
-                p.visit_expr_in_out(&mut e_.value, ExprIn::default());
+                p.visit_expr_in_out(&mut e_.value, ExprIn::new());
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);
@@ -1218,7 +1218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut e_.value,
                     ExprIn {
                         assign_target,
-                        ..Default::default()
+                        ..ExprIn::new()
                     },
                 );
 
@@ -1405,7 +1405,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 property_access_for_method_call_maybe_should_replace_with_undefined: in_
                     .property_access_for_method_call_maybe_should_replace_with_undefined,
                 is_property_access_target: !is_delete_target,
-                ..Default::default()
+                ..ExprIn::new()
             },
         );
 
@@ -1441,7 +1441,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if e_.optional_chain.is_none() {
-            let opts = IdentifierOpts::default()
+            let opts = IdentifierOpts::init()
                 .with_is_call_target(is_call_target)
                 .with_is_template_tag(is_template_tag)
                 .with_assign_target(in_.assign_target)
@@ -1572,7 +1572,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         &mut spread.value,
                         ExprIn {
                             assign_target: in_.assign_target,
-                            ..Default::default()
+                            ..ExprIn::new()
                         },
                     );
 
@@ -1610,7 +1610,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             &mut e2.left,
                             ExprIn {
                                 assign_target: js_ast::AssignTarget::Replace,
-                                ..Default::default()
+                                ..ExprIn::new()
                             },
                         );
                         p.visit_expr(&mut e2.right);
@@ -1637,7 +1637,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             item,
                             ExprIn {
                                 assign_target: in_.assign_target,
-                                ..Default::default()
+                                ..ExprIn::new()
                             },
                         );
                     }
@@ -1647,7 +1647,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         item,
                         ExprIn {
                             assign_target: in_.assign_target,
-                            ..Default::default()
+                            ..ExprIn::new()
                         },
                     );
                 }
@@ -1756,7 +1756,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     value,
                     ExprIn {
                         assign_target: in_.assign_target,
-                        ..Default::default()
+                        ..ExprIn::new()
                     },
                 );
                 p.decorator_class_name = None;
@@ -1858,7 +1858,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 import_options: e_.options,
                 loc: e_.expr.loc,
                 import_loader: e_.import_record_loader(),
-                ..Default::default()
+                ..TransposeState::new()
             };
 
             p.should_fold_typescript_constant_expressions =
@@ -1888,7 +1888,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             &mut e_.target,
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: true,
-                ..Default::default()
+                ..ExprIn::new()
             },
         );
 
@@ -2171,7 +2171,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let state = TransposeState {
                     is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
                         && matches!(first.data, Data::EString(..)),
-                    ..Default::default()
+                    ..TransposeState::new()
                 };
                 match &first.data {
                     Data::EString(..) => {
@@ -2576,7 +2576,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The struct is `Copy`, so save/restore is a plain copy.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit {
-            ..Default::default()
+            ..FnOrArrowDataVisit::new()
         };
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
@@ -2608,7 +2608,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut stmts_list = bun_alloc::vec_from_iter_in(dupe.iter().copied(), p.arena);
         let mut temp_opts = PrependTempRefsOpts {
             kind: crate::parser::StmtsKind::FnBody,
-            ..Default::default()
+            ..PrependTempRefsOpts::new()
         };
         let rc_binding = p.react_compiler_candidate_name.take();
         if rc_binding.is_some() {
@@ -2718,7 +2718,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // For function *expressions* the .function_args scope is pushed at the
         // `function` keyword loc, not at open_parens_loc. (s_function correctly
         // uses open_parens_loc.)
-        e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc, true);
+        e_.func = p.visit_func(
+            core::mem::replace(&mut e_.func, bun_ast::g::Fn::new()),
+            expr.loc,
+            true,
+        );
 
         // Restore now so the stack-local pointer never escapes this frame.
         p.react_refresh.hook_ctx_storage = prev_hook_ctx;

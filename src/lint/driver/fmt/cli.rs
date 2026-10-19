@@ -242,10 +242,9 @@ pub(crate) const PARAMS: &[Param] = clap::concat_params!(
 );
 
 /// `--config-precedence`
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Precedence {
     /// The command line overrides the configuration file.
-    #[default]
     CliOverride,
     FileOverride,
     /// The command line counts only if there is no configuration file.
@@ -253,24 +252,34 @@ pub enum Precedence {
 }
 
 /// `--log-level`
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum LogLevel {
     Silent,
     Error,
     Warn,
-    #[default]
     Log,
     Debug,
 }
 
 /// One entry of `[[fmt.overrides]]`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Override {
     /// Globs matched against the path relative to where bunfig.toml is. A glob without a slash matches the file name.
     pub files: Vec<Vec<u8>>,
     pub excluded: Vec<Vec<u8>>,
     /// Same format as [`Options::format`].
     pub format: Vec<(&'static [u8], Vec<u8>)>,
+}
+
+impl Override {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            files: Vec::new(),
+            excluded: Vec::new(),
+            format: Vec::new(),
+        }
+    }
 }
 
 impl Override {
@@ -358,8 +367,8 @@ pub struct Options {
     pub list_files: bool,
 }
 
-impl Default for Options {
-    fn default() -> Options {
+impl Options {
+    pub fn new() -> Options {
         Options {
             patterns: Vec::new(),
             check: false,
@@ -372,7 +381,7 @@ impl Default for Options {
             config_lookup: true,
             disable_nested_config: false,
             editorconfig: true,
-            config_precedence: Precedence::default(),
+            config_precedence: Precedence::CliOverride,
             ignore_path: None,
             ignore_pattern: Vec::new(),
             ignore_patterns_of_bunfig: 0,
@@ -389,7 +398,7 @@ impl Default for Options {
             doctor: false,
             as_json: false,
             find_config_path: None,
-            log_level: LogLevel::default(),
+            log_level: LogLevel::Log,
             format: Vec::new(),
             overrides: Vec::new(),
             plugins: Vec::new(),
@@ -619,7 +628,7 @@ impl Options {
 
     /// `args`: what follows `format` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
-        Options::default().with(args)
+        Options::new().with(args)
     }
 
     /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts at

@@ -62,7 +62,7 @@ fn report<'a>(place: Span, value: Value<'a>, cx: &mut Cx<'a, NoDuplicateEnumValu
 /// oxlint looks at the numbers and the strings that are written as such, and points at the value that is repeated: the
 /// first of the numbers, the string before this one.
 fn check_as_oxlint<'a>(declaration: Enum<'a>, cx: &mut Cx<'a, NoDuplicateEnumValues>) {
-    let mut seen: FxHashMap<(bool, u64), Span> = FxHashMap::default();
+    let mut seen: FxHashMap<(bool, u64), Span> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for member in declaration.members() {
         let Some(initializer) = member.init().filter(|it| !it.is_parenthesized()) else {
             continue;

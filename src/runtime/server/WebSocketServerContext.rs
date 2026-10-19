@@ -50,7 +50,7 @@ pub(crate) struct Handler {
 
 bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct HandlerFlags: u8 {
         const SSL             = 1 << 0;
         const PUBLISH_TO_SELF = 1 << 1;
@@ -173,7 +173,7 @@ impl WebSocketServerContext {
             max_lifetime: self.max_lifetime,
             reset_idle_timeout_on_send: self.reset_idle_timeout_on_send,
             close_on_backpressure_limit: self.close_on_backpressure_limit,
-            ..Default::default()
+            ..uws::WebSocketBehavior::new()
         }
     }
 }

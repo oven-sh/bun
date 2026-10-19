@@ -11,12 +11,21 @@ use smallvec::SmallVec;
 
 /// The `componentPath`s of `getRelatedComponent`, so that many of one long `a.b.b.b` take no
 /// longer than one.
-#[derive(Default)]
 struct ComponentPaths<'a> {
     /// The names in each row of member accesses, from the innermost on.
     rows: Vec<Vec<Name<'a>>>,
     /// In which row a member access is, and how many of the names of that row are its path.
     places: IdMap<Expr<'a>, (usize, usize)>,
+}
+
+impl<'a> ComponentPaths<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            rows: Vec::new(),
+            places: IdMap::init(),
+        }
+    }
 }
 
 impl<'a> ComponentPaths<'a> {
@@ -127,12 +136,22 @@ fn ref_id_of(reference: Reference<'_>) -> (&[u8], Option<Expr<'_>>) {
 type ReferencesByText<'a> = FxHashMap<&'a [u8], Option<Expr<'a>>>;
 
 /// What `getRelatedComponent` finds, without the list.
-#[derive(Default)]
 pub(crate) struct Related<'a> {
     paths: ComponentPaths<'a>,
     references: FxHashMap<Variable<'a>, ReferencesByText<'a>>,
     /// Of an object literal that is looked into: the first property of each name.
     properties: IdMap<Expr<'a>, FxHashMap<&'a [u8], Prop<'a>>>,
+}
+
+impl<'a> Related<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            paths: ComponentPaths::new(),
+            references: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            properties: IdMap::init(),
+        }
+    }
 }
 
 impl<'a> Related<'a> {
@@ -157,7 +176,7 @@ impl<'a> Related<'a> {
         };
         if is_short {
             let references = self.references.entry(variable_in_scope).or_insert_with(|| {
-                let mut references = ReferencesByText::default();
+                let mut references = ReferencesByText::with_hasher(rustc_hash::FxBuildHasher);
                 for reference in variable_in_scope.references() {
                     let (text_of_ref_id, component_node) = ref_id_of(reference);
                     references.entry(text_of_ref_id).or_insert(component_node);
@@ -184,7 +203,7 @@ impl<'a> Related<'a> {
                 break;
             };
             let by_name = self.properties.get_or_insert_with(component_node, || {
-                let mut by_name = FxHashMap::default();
+                let mut by_name = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
                 for property in properties {
                     if let Some(name) = property.key().and_then(name_of_key) {
                         by_name.entry(name).or_insert(property);

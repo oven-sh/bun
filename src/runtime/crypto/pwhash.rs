@@ -93,7 +93,7 @@ pub(crate) mod argon2 {
     }
 
     /// Options for `str_verify`.
-    #[derive(Copy, Clone, Default)]
+    #[derive(Copy, Clone)]
     pub(crate) struct VerifyOptions;
 
     fn map_err(e: &vendor::Error) -> Error {

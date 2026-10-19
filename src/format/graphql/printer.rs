@@ -160,7 +160,7 @@ impl<'t> Builder<'t, '_, '_> {
             .comments
             .get(attached.comment as usize)
             .copied()
-            .unwrap_or_default()
+            .unwrap_or_else(Span::init)
     }
 
     /// Prettier's `printComment`

@@ -93,7 +93,7 @@ fn kinds_of_tokens_around<'a>(file: &'a File<'a>, places: &[Span]) -> Vec<Option
     if file.has_exprs([ExprTag::Jsx]) {
         return kinds;
     }
-    let mut piece = Span::default();
+    let mut piece = Span::init();
     let mut pending = vec![(Node::File(file), 0..places.len())];
     while let Some((node, within)) = pending.pop() {
         // In `node` and in none of its children.

@@ -469,7 +469,7 @@ impl<'p, 's> Checker<'p, 's> {
                     Decl::Expando(e) | Decl::ThisProperty(e) | Decl::ExportsProperty(e),
                 )) => {
                     let key = self.key_of_assignment_declaration(file, e);
-                    (file, (key, Default::default()))
+                    (file, (key, NameKind::Identifier))
                 }
                 // An alias: `export { x as "0" }`.
                 None if !text.starts_with(crate::atom::SYMBOL_NAME_PREFIX) => {
@@ -1489,7 +1489,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut tail_count = 0;
         // The roots that the loop has reached through a type reference.
         let mut tail_roots: crate::util::FxHashSet<(FileId, TypeNodeId, MapperId)> =
-            Default::default();
+            rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         // Whether each of their nodes is the body of a type alias.
         let mut has_alias: SmallVec<[((FileId, TypeNodeId), bool); 4]> = SmallVec::new();
         let result = loop {
@@ -2557,7 +2557,7 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = self.begin_scope();
         let parts = self.parts(ty);
         let mut shape = Shape::new_in(self.arena);
-        let mut checked = crate::util::FxHashSet::default();
+        let mut checked = crate::util::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for &part in parts {
             // `getPropertiesOfType`. The apparent type of an intersection with a conditional type is a union if the constraint of the
             // conditional type is one.
@@ -2900,7 +2900,7 @@ impl<'p, 's> Checker<'p, 's> {
                 None => true,
             };
         // The index of each name in `shape.props`, once there are many.
-        let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
+        let mut places: FxHashMap<Atom, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for key in keys {
             let with_key = self.mapper_with_pair(mapper, param, key);
             let names = match name_declared {

@@ -102,9 +102,9 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                             },
                                             stmt.loc,
                                         ),
-                                        value: Some(Expr::init(E::Object::default(), stmt.loc)),
+                                        value: Some(Expr::init(E::Object::new(), stmt.loc)),
                                     }]),
-                                    ..Default::default()
+                                    ..S::Local::new()
                                 },
                                 stmt.loc,
                             ))?;
@@ -132,7 +132,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                             b"builtin".into()
                                         },
                                         name_loc: stmt.loc,
-                                        ..Default::default()
+                                        ..E::Dot::new()
                                     },
                                     stmt.loc,
                                 ),
@@ -143,11 +143,11 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                         } else {
                                             record.path.pretty.into()
                                         },
-                                        ..Default::default()
+                                        ..E::String::new()
                                     },
                                     record.range.loc,
                                 )]),
-                                ..Default::default()
+                                ..E::Call::new()
                             },
                             stmt.loc,
                         );
@@ -168,7 +168,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                         ),
                                         value: Some(call),
                                     }]),
-                                    ..Default::default()
+                                    ..S::Local::new()
                                 },
                                 stmt.loc,
                             ))?;
@@ -205,7 +205,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                     },
                                     Loc::EMPTY,
                                 ),
-                                ..Default::default()
+                                ..G::Arg::new()
                             })));
                         esm_callbacks.push(Expr::init(
                             E::Arrow {
@@ -228,7 +228,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                         Loc::EMPTY,
                                     ),
                                 )?,
-                                ..Default::default()
+                                ..E::Arrow::new()
                             },
                             Loc::EMPTY,
                         ));
@@ -265,12 +265,12 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                 target: hmr_api_id,
                                 name: b"imports".into(),
                                 name_loc: Loc::EMPTY,
-                                ..Default::default()
+                                ..E::Dot::new()
                             },
                             Loc::EMPTY,
                         )),
                     }]),
-                    ..Default::default()
+                    ..S::Local::new()
                 },
                 Loc::EMPTY,
             ))?;
@@ -289,7 +289,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                     target: hmr_api_id,
                                     name: b"updateImport".into(),
                                     name_loc: Loc::EMPTY,
-                                    ..Default::default()
+                                    ..E::Dot::new()
                                 },
                                 Loc::EMPTY,
                             ),
@@ -297,14 +297,14 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                 E::Array {
                                     items: ExprNodeList::move_from_list(esm_callbacks),
                                     is_single_line: callbacks_len <= 2,
-                                    ..Default::default()
+                                    ..E::Array::new()
                                 },
                                 Loc::EMPTY,
                             ),
                         },
                         Loc::EMPTY,
                     ),
-                    ..Default::default()
+                    ..S::SExpr::new()
                 },
                 Loc::EMPTY,
             ))?;

@@ -54,7 +54,7 @@ impl OutputFile {
             loader: Loader::File,
             input_loader: Loader::Js,
             src_path: fs::Path::init(b""),
-            owned_src_path_text: Box::default(),
+            owned_src_path_text: Box::new([]),
             value: Value::Noop,
             size: 0,
             size_without_sourcemap: 0,
@@ -64,12 +64,12 @@ impl OutputFile {
             bytecode_index: u32::MAX,
             module_info_index: u32::MAX,
             output_kind: OutputKind::Chunk,
-            dest_path: Box::default(),
+            dest_path: Box::new([]),
             side: None,
             entry_point_index: None,
-            referenced_css_chunks: Box::default(),
+            referenced_css_chunks: Box::new([]),
             source_index: IndexOptional::NONE,
-            bake_extra: BakeExtra::default(),
+            bake_extra: BakeExtra::new(),
             load_order: u32::MAX,
             loads_at_startup: false,
             prelinked_module_index: u32::MAX,
@@ -78,15 +78,24 @@ impl OutputFile {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct BakeExtra {
     pub route: BakeRouteKind,
     pub bake_is_runtime: bool,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+impl BakeExtra {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            route: BakeRouteKind::NotRoute,
+            bake_is_runtime: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BakeRouteKind {
-    #[default]
     NotRoute,
     Route,
     /// Route with no transitive `"use client"` boundary.
@@ -156,8 +165,15 @@ impl Value {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct SavedFile {}
+
+impl SavedFile {
+    #[inline]
+    pub fn new() -> Self {
+        Self {}
+    }
+}
 
 pub enum OptionsData {
     Buffer {
@@ -215,7 +231,7 @@ impl OutputFile {
             is_executable: options.is_executable,
             value: match options.data {
                 OptionsData::Buffer { data } => Value::Buffer { bytes: data },
-                OptionsData::Saved(_) => Value::Saved(SavedFile::default()),
+                OptionsData::Saved(_) => Value::Saved(SavedFile::new()),
             },
             side: options.side,
             entry_point_index: options.entry_point_index,

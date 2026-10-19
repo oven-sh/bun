@@ -123,7 +123,7 @@ fn label(labels: &mut Details, count: usize, bodies: &Bodies<'_>, reverse: bool)
     for body in bodies {
         let skipped = if reverse { body.len().saturating_sub(count) } else { 0 };
         let mut duplicated = body.iter().skip(skipped).take(count).map(Stmt::span);
-        let first = duplicated.next().unwrap_or_default();
+        let first = duplicated.next().unwrap_or_else(Span::init);
         labels.push(Span::new(first.start, duplicated.last().unwrap_or(first).end), "");
     }
 }

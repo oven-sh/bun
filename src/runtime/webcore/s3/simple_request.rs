@@ -26,7 +26,6 @@ use crate::webcore::s3::{list_objects, xml_response};
 // after the callback). They take an explicit `<'a>` because they are ephemeral stack-only
 // callback payloads (never heap-stored) — the borrow lifetime accurately models ownership.
 
-#[derive(Default)]
 pub(crate) struct S3StatSuccess<'a> {
     pub(crate) size: usize,
     /// etag is not owned and need to be copied if used after this callback
@@ -369,7 +368,7 @@ impl S3HttpSimpleTask {
             },
             Callback::Download(callback) => match response.status_code {
                 200 | 204 | 206 => {
-                    let body = core::mem::take(&mut this.response_buffer);
+                    let body = core::mem::replace(&mut this.response_buffer, MutableString::new());
                     callback(
                         S3DownloadResult::Success(S3DownloadSuccess { body }),
                         this.callback_context,
@@ -487,8 +486,8 @@ impl S3HttpSimpleTask {
         // `execute_simple_s3_request`).
         let http = unsafe { self.http.assume_init_mut() };
         http.clear_data();
-        http.request_headers = Default::default();
-        http.client.header_entries = Default::default();
+        http.request_headers = bun_collections::MultiArrayList::new();
+        http.client.header_entries = bun_collections::MultiArrayList::new();
     }
 }
 
@@ -538,8 +537,8 @@ pub(crate) struct S3SimpleRequestOptions<'a> {
     pub(crate) request_payer: bool,
 }
 
-impl<'a> Default for S3SimpleRequestOptions<'a> {
-    fn default() -> Self {
+impl<'a> S3SimpleRequestOptions<'a> {
+    pub(crate) fn new() -> Self {
         Self {
             path: b"",
             method: Method::GET,
@@ -668,15 +667,15 @@ pub(crate) fn execute_simple_s3_request(
         callback,
         headers,
         http_ticket: None,
-        response_buffer: MutableString::default(),
-        result: HTTPClientResult::default(),
-        concurrent_task: ConcurrentTask::default(),
+        response_buffer: MutableString::new(),
+        result: HTTPClientResult::new(),
+        concurrent_task: ConcurrentTask::init(),
         proxy_url,
         body: Box::<[u8]>::from(options.body),
         poll_ref,
-        signal_store: Default::default(),
+        signal_store: bun_http::signals::Store::new(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
-        context: Default::default(),
+        context: bun_event_loop::ContextId::new(),
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
     // the scoped exclusive `http` writes below.
@@ -728,15 +727,15 @@ pub(crate) fn execute_simple_s3_request(
             // SAFETY: `task_ptr` outlives the request; the store is only read
             // through these pointers by the HTTP client.
             signals: Some(unsafe { (*task_ptr).signal_store.to() }),
-            ..Default::default()
+            ..HttpOptions::new()
         },
     );
     // SAFETY: `task_ptr` is still the sole pointer (the HTTP thread only sees it after
     // `schedule` below); scoped exclusive write of the `http` field.
     unsafe { (*task_ptr).http.write(async_http) };
     // queue http request
-    bun_http::http_thread::init(&Default::default());
-    let mut batch = thread_pool::Batch::default();
+    bun_http::http_thread::init(&bun_http::http_thread::InitOpts::new());
+    let mut batch = thread_pool::Batch::new();
     // SAFETY: `http` was initialised immediately above; scoped exclusive access.
     unsafe { (*task_ptr).http.assume_init_mut() }.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: its context aborts it

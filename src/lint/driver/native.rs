@@ -44,7 +44,7 @@ impl Mistake {
                 line: strings::count_char(before, b'\n') as i32 + 1,
                 column: strings::utf8_decoded_len_utf16(before.get(start..)?) as i32 + 1,
                 line_text: Some(line.get(..end)?.to_vec().into()),
-                ..Default::default()
+                ..bun_ast::Location::new()
             })
         });
         let message = bun_ast::Msg {
@@ -53,7 +53,7 @@ impl Mistake {
                 text: self.message.clone().into(),
                 location,
             },
-            ..Default::default()
+            ..bun_ast::Msg::new()
         };
         let mut printed = String::new();
         let _ = match colors {

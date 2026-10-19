@@ -1162,7 +1162,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         };
         let (files, bound, file) = (self.c.files(), self.c.bound(node.file), node.file);
         let meaning = SymFlags::from(meaning);
-        let (mut seen, mut found) = (FxHashMap::<Atom, ()>::default(), Vec::new());
+        let (mut seen, mut found) = (
+            FxHashMap::<Atom, ()>::with_hasher(rustc_hash::FxBuildHasher),
+            Vec::new(),
+        );
         // `copySymbol`, `symbolsToArray`
         let mut copy = |name: Atom, symbol: Sym, meaning: SymFlags| {
             // `getCombinedLocalAndExportSymbolFlags`

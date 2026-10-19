@@ -79,10 +79,9 @@ pub(crate) const fn meta_for_gfm(name: &'static str) -> Meta {
 }
 
 /// `languageOptions.frontmatter`
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum FrontMatter {
     /// `false`
-    #[default]
     None,
     Yaml,
     Toml,
@@ -90,12 +89,23 @@ pub(crate) enum FrontMatter {
 }
 
 /// One of the plugin's languages, with its options.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Dialect {
     /// True for `markdown/gfm`, false for `markdown/commonmark`.
     pub(crate) is_gfm: bool,
     pub(crate) front_matter: FrontMatter,
     pub(crate) math: bool,
+}
+
+impl Dialect {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self {
+            is_gfm: false,
+            front_matter: FrontMatter::None,
+            math: false,
+        }
+    }
 }
 
 /// `` `${value}` ``
@@ -124,7 +134,7 @@ impl Dialect {
     pub(crate) fn new(name: &[u8], options: &Json) -> Result<Dialect, Vec<u8>> {
         let mut dialect = Dialect {
             is_gfm: name == b"gfm",
-            ..Dialect::default()
+            ..Dialect::init()
         };
         let invalid = |value: &Json, rest: &str| {
             let mut message = b"Invalid language option value `".to_vec();
@@ -180,7 +190,7 @@ impl bun_lint::languages::Language for Markdown {
     fn parse(&self, text: &[u8], configured: &Configured) -> Result<Parsed, Vec<SyntaxError>> {
         let dialect = configured.downcast_ref::<Dialect>().copied();
         // Any text is valid Markdown, so the parser's size and depth limits are the only way to fail.
-        let Some(mdast) = Mdast::parse(text, dialect.unwrap_or_default()) else {
+        let Some(mdast) = Mdast::parse(text, dialect.unwrap_or_else(Dialect::init)) else {
             return Err(vec![SyntaxError {
                 message: b"The file is too large or nested too deeply.".to_vec(),
                 line: 1,

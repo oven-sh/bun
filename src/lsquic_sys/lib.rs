@@ -680,7 +680,6 @@ impl Drop for HeaderSet {
 
 /// Mirrors `struct lsquic_conn_info` (lsquic.h).
 #[repr(C)]
-#[derive(Default)]
 pub struct ConnInfo {
     pub cwnd: u32,
     pub(crate) pmtu: u32,
@@ -698,9 +697,31 @@ pub struct ConnInfo {
     pub(crate) pacing_rate: u64,
 }
 
+impl ConnInfo {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            cwnd: 0,
+            pmtu: 0,
+            rtt: 0,
+            rttvar: 0,
+            rtt_min: 0,
+            bytes_rcvd: 0,
+            bytes_sent: 0,
+            pkts_rcvd: 0,
+            pkts_sent: 0,
+            pkts_lost: 0,
+            pkts_retx: 0,
+            bw_estimate: 0,
+            max_pacing_rate: 0,
+            pacing_rate: 0,
+        }
+    }
+}
+
 impl Conn {
     pub fn info(&self) -> Option<ConnInfo> {
-        let mut out = ConnInfo::default();
+        let mut out = ConnInfo::new();
         // SAFETY: `self.0` is live; `out` is a stack out-param.
         if unsafe { lsquic_conn_get_info(self.0, core::ptr::from_mut(&mut out)) } == 0 {
             Some(out)
@@ -749,8 +770,8 @@ impl NqTransportParams {
     }
 }
 
-impl Default for NqTransportParams {
-    fn default() -> Self {
+impl NqTransportParams {
+    pub fn new() -> Self {
         // SAFETY: `#[repr(C)]` POD (u64 / c_int / byte arrays); all-zero is a valid
         // bit pattern for every field.
         unsafe { core::mem::MaybeUninit::zeroed().assume_init() }
@@ -759,7 +780,7 @@ impl Default for NqTransportParams {
 
 impl Conn {
     pub fn peer_transport_params(&self) -> Option<NqTransportParams> {
-        let mut out = NqTransportParams::default();
+        let mut out = NqTransportParams::new();
         // SAFETY: `self.0` is live; `out` is a stack out-param.
         if unsafe { us_nq_conn_transport_params(self.0, 1, core::ptr::from_mut(&mut out)) } == 1 {
             Some(out)

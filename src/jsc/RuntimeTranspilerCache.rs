@@ -84,9 +84,8 @@ static BUN_DEBUG_RESTORE_FROM_CACHE: AtomicBool = AtomicBool::new(false);
 const SEED: u64 = 42;
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ModuleType {
-    #[default]
     None = 0,
     Esm = 1,
     Cjs = 2,
@@ -95,7 +94,7 @@ pub enum ModuleType {
 /// Represented as a transparent u8 so unknown
 /// values round-trip until validated in `decode`.
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Encoding(u8);
 
 impl Encoding {
@@ -131,8 +130,8 @@ pub struct Metadata {
     pub(crate) esm_record_hash: u64,
 }
 
-impl Default for Metadata {
-    fn default() -> Self {
+impl Metadata {
+    pub fn new() -> Self {
         Self {
             cache_version: EXPECTED_VERSION,
             output_encoding: Encoding::NONE,
@@ -233,12 +232,23 @@ impl Metadata {
     }
 }
 
-#[derive(Default)]
 pub struct Entry {
     pub metadata: Metadata,
     pub output_code: BunString,
     pub sourcemap: Box<[u8]>,
     pub esm_record: Box<[u8]>,
+}
+
+impl Entry {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            metadata: Metadata::new(),
+            output_code: BunString::EMPTY,
+            sourcemap: Box::new([]),
+            esm_record: Box::new([]),
+        }
+    }
 }
 
 impl Entry {
@@ -300,7 +310,7 @@ impl Entry {
                     esm_record_byte_offset: (Metadata::SIZE + output_bytes.len() + sourcemap.len())
                         as u64,
                     esm_record_byte_length: esm_record.len() as u64,
-                    ..Default::default()
+                    ..Metadata::new()
                 };
 
                 metadata.output_hash = hash(output_bytes);
@@ -317,7 +327,7 @@ impl Entry {
                 {
                     let mut reader =
                         bun_io::FixedBufferStream::new(&metadata_buf[0..Metadata::SIZE]);
-                    let mut metadata2 = Metadata::default();
+                    let mut metadata2 = Metadata::new();
                     if let Err(err) = metadata2.decode(&mut reader) {
                         bun_core::Output::panic(format_args!(
                             "Metadata did not roundtrip encode -> decode  successfully: {}",
@@ -769,7 +779,7 @@ impl RuntimeTranspilerCache {
         }
         let mut reader = bun_io::FixedBufferStream::new(&metadata_bytes_buf[0..metadata_bytes]);
 
-        let mut entry = Entry::default();
+        let mut entry = Entry::new();
         entry.metadata.decode(&mut reader)?;
         if entry.metadata.input_hash != input_hash
             || entry.metadata.input_byte_length != input_stat_size
@@ -815,8 +825,7 @@ impl RuntimeTranspilerCache {
         let cache_dir_fd: Fd = 'brk: {
             let dirname = path_handler::dirname::<platform::Auto>(cache_file_path.as_bytes());
             if !dirname.is_empty() {
-                let dir =
-                    sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
+                let dir = sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::new())?;
                 let dfd = dir.into_raw();
                 break 'brk match dfd.make_lib_uv_owned() {
                     Ok(f) => f,

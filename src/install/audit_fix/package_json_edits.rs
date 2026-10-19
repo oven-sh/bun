@@ -51,7 +51,7 @@ impl OverrideSelector {
         let OverrideRule::Scoped(rule) = rule else {
             return OverrideSelector {
                 parent: None,
-                target_range: Box::default(),
+                target_range: Box::new([]),
             };
         };
         let text = |s: &bun_semver::String| Box::from(s.slice(buf));

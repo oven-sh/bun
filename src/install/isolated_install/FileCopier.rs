@@ -66,7 +66,7 @@ impl FileCopier {
         let dest_dir = match bun_sys::make_path::make_open_path(
             &Dir::cwd(),
             dest_subpath_u8,
-            Default::default(),
+            bun_sys::OpenDirOptions::new(),
         ) {
             Ok(d) => d,
             Err(e) => {
@@ -87,7 +87,7 @@ impl FileCopier {
         };
 
         #[cfg(not(windows))]
-        let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
+        let mut copy_file_state = bun_sys::copy_file::CopyFileState::empty();
 
         while let Some(entry) = self.walker.next()? {
             #[cfg(windows)]
@@ -176,7 +176,7 @@ impl FileCopier {
                 let src = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)?;
                 let src = bun_sys::File::from_fd(src);
 
-                let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
+                let dest = match dest_dir.create_file_z(entry.path, bun_sys::CreateFlags::new()) {
                     Ok(f) => f,
                     Err(_) => {
                         if let Some(entry_dirname) =
@@ -188,7 +188,7 @@ impl FileCopier {
                             );
                         }
 
-                        dest_dir.create_file_z(entry.path, Default::default())?
+                        dest_dir.create_file_z(entry.path, bun_sys::CreateFlags::new())?
                     }
                 };
 

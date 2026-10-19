@@ -91,7 +91,7 @@ impl Rule for NoAwaitInLoop {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let loops = [StmtTag::For, StmtTag::ForIn, StmtTag::ForOf, StmtTag::While, StmtTag::DoWhile];
-        file.has_stmts(loops).then(AncestorMemo::default)
+        file.has_stmts(loops).then(AncestorMemo::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

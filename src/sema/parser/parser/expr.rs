@@ -2283,7 +2283,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn unterminated_template_again(&mut self) {
-        if self.options.dialect != Default::default() {
+        if self.options.dialect != bun_sema::resolve::Dialect::new() {
             return;
         }
         self.take_errors_of_scanner();

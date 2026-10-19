@@ -41,7 +41,7 @@ impl Rule for VarsOnTop {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(AmbientAncestors::default())
+        Some(AmbientAncestors::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

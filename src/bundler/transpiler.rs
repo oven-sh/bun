@@ -251,12 +251,12 @@ impl<'a> Transpiler<'a> {
             log,
             arena,
             // Per-worker scratch — workers never read the parent's accumulated state.
-            result: options::TransformResult::default(),
+            result: options::TransformResult::new(),
             resolver,
             fs: from.fs,
             output_files: Vec::new(),
-            resolve_results: Box::new(ResolveResults::default()),
-            resolve_queue: ResolveQueue::default(),
+            resolve_results: Box::new(ResolveResults::init()),
+            resolve_queue: std::collections::VecDeque::new(),
             elapsed: 0,
             // Self-referential — wired by `wire_after_move`. Null back-pointers
             // for now (matches `Transpiler::init`; never derefed before then).
@@ -593,7 +593,10 @@ fn jsx_pragma_from_resolver(
 /// `TSConfigJSON::merge_jsx` (5-field conditional copy keyed on `jsx_flags`).
 #[inline]
 fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_impl::jsx::Pragma) {
-    *out = tsconfig.merge_jsx(core::mem::take(out));
+    *out = tsconfig.merge_jsx(core::mem::replace(
+        out,
+        bun_options_types::jsx::Pragma::new(),
+    ));
 }
 
 impl<'a> Transpiler<'a> {
@@ -746,9 +749,7 @@ use bun_sys::Fd as FD;
 
 /// How a parsed source was found to be pre-bundled (plain source vs. cached
 /// bytecode, ESM vs. CJS).
-#[derive(Default)]
 pub enum AlreadyBundled {
-    #[default]
     None,
     SourceCode,
     SourceCodeCjs,
@@ -766,7 +767,7 @@ impl AlreadyBundled {
     pub fn into_bytecode(self) -> Box<[u8]> {
         match self {
             AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => bytes,
-            _ => Box::default(),
+            _ => Box::new([]),
         }
     }
 }
@@ -814,18 +815,18 @@ impl<'a> ParseResult<'a> {
     /// boundary; see `AsyncModule::resume_loading_module`.
     pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
         ParseResult {
-            source: Default::default(),
+            source: bun_ast::Source::new(),
             // `options::Loader` has no `Default`.
             // `File` is the resolver's neutral fallback
             // (BundleEnums.rs:353), and `Default` here exists only for
             // `mem::take` in `AsyncModule::resume_loading_module`.
             loader: options::Loader::File,
             ast: bun_ast::Ast::empty_in(arena),
-            already_bundled: Default::default(),
+            already_bundled: AlreadyBundled::None,
             empty: true,
-            pending_imports: Default::default(),
+            pending_imports: Vec::new(),
             runtime_transpiler_cache: None,
-            source_contents_backing: Default::default(),
+            source_contents_backing: bun_resolver::cache::Contents::Empty,
         }
     }
 }
@@ -844,7 +845,7 @@ impl<'a> ParseResult<'a> {
             ast: bun_ast::Ast::empty_in(arena),
             already_bundled: AlreadyBundled::None,
             empty: true,
-            pending_imports: Default::default(),
+            pending_imports: Vec::new(),
             runtime_transpiler_cache: None,
             source_contents_backing,
         }
@@ -1017,7 +1018,7 @@ fn resolver_bundle_options_subset(
             // former predates the TYPE_ONLY move-down); convert variant-wise.
             use crate::bake_types::BuiltInModule as B;
             use bun_options_types::BuiltInModule as R;
-            let mut m = bun_collections::StringArrayHashMap::default();
+            let mut m = bun_collections::StringArrayHashMap::init();
             for (k, v) in f
                 .built_in_modules
                 .keys()
@@ -1196,7 +1197,7 @@ impl<'a> Transpiler<'a> {
         let resolver_opts = resolver_bundle_options_subset(&bundle_options);
 
         let outbase = bundle_options.output_dir.clone();
-        let resolve_results = Box::new(ResolveResults::default());
+        let resolve_results = Box::new(ResolveResults::init());
 
         // Construct directly into the caller-owned storage instead of building a
         // stack temporary and returning it. All fallible work is done; every
@@ -1213,7 +1214,7 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!((*p).arena).write(arena);
             core::ptr::addr_of_mut!((*p).result).write(options::TransformResult {
                 outbase,
-                ..Default::default()
+                ..options::TransformResult::new()
             });
             core::ptr::addr_of_mut!((*p).resolver).write(Resolver::init1(
                 log_nn,
@@ -1223,7 +1224,7 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!((*p).fs).write(fs);
             core::ptr::addr_of_mut!((*p).output_files).write(Vec::new());
             core::ptr::addr_of_mut!((*p).resolve_results).write(resolve_results);
-            core::ptr::addr_of_mut!((*p).resolve_queue).write(ResolveQueue::default());
+            core::ptr::addr_of_mut!((*p).resolve_queue).write(std::collections::VecDeque::new());
             core::ptr::addr_of_mut!((*p).elapsed).write(0);
             // .thread_pool = pool,
             core::ptr::addr_of_mut!((*p).linker).write(crate::linker::Linker::init(
@@ -1390,7 +1391,8 @@ impl<'a> Transpiler<'a> {
             // provenance-tagged backing alongside the `ParseResult` so it
             // drops when the result is recycled — no `mem::forget`
             // (PORTING.md §Forbidden patterns).
-            source_backing = core::mem::take(&mut entry.contents);
+            source_backing =
+                core::mem::replace(&mut entry.contents, bun_resolver::cache::Contents::Empty);
             // SAFETY: `source_backing` outlives every read through
             // `source.contents` (it is moved into the returned `ParseResult`,
             // and the only consumers are the parser/printer which run before
@@ -1468,7 +1470,7 @@ impl<'a> Transpiler<'a> {
                     preserve_unused_imports_ts: false,
                     use_define_for_class_fields: this_parse.use_define_for_class_fields,
                     suppress_warnings_about_weird_code: true,
-                    features: js_ast::RuntimeFeatures::default(),
+                    features: js_ast::RuntimeFeatures::new(),
                     tree_shaking: self.options.tree_shaking,
                     bundle: false,
                     code_splitting: false,
@@ -1608,7 +1610,7 @@ impl<'a> Transpiler<'a> {
                         loader,
                         runtime_transpiler_cache: rtc_ptr,
                         already_bundled: AlreadyBundled::None,
-                        pending_imports: Default::default(),
+                        pending_imports: Vec::new(),
                         empty: false,
                         source_contents_backing: source_backing,
                     },
@@ -1618,7 +1620,7 @@ impl<'a> Transpiler<'a> {
                         source: source.clone(),
                         loader,
                         already_bundled: AlreadyBundled::None,
-                        pending_imports: Default::default(),
+                        pending_imports: Vec::new(),
                         empty: false,
                         source_contents_backing: source_backing,
                     },
@@ -1687,7 +1689,7 @@ impl<'a> Transpiler<'a> {
                         },
                         source: source.clone(),
                         loader,
-                        pending_imports: Default::default(),
+                        pending_imports: Vec::new(),
                         runtime_transpiler_cache: None,
                         empty: false,
                         source_contents_backing: source_backing,
@@ -1836,14 +1838,14 @@ fn parse_data_loader<'a>(
                 arena,
                 bun_ast::S::SExpr {
                     value: expr,
-                    ..Default::default()
+                    ..bun_ast::S::SExpr::new()
                 },
                 bun_ast::Loc { start: 0 },
             );
             let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
             break 'parts Box::new([bun_ast::Part {
                 stmts,
-                ..Default::default()
+                ..bun_ast::Part::new()
             }]);
         }
 
@@ -1858,15 +1860,18 @@ fn parse_data_loader<'a>(
                 // observed (truncate/into_boxed_slice/index-assign),
                 // so pre-fill every slot with `Default` instead of
                 // `set_len`.
-                let mut decls: Vec<bun_ast::G::Decl> = vec![bun_ast::G::Decl::default(); n];
+                let mut decls: Vec<bun_ast::G::Decl> = vec![bun_ast::G::Decl::new(); n];
 
-                symbols.resize_with(n, Default::default);
+                symbols.resize_with(n, bun_ast::Symbol::new);
                 // `S::ExportClause.items: *mut [ClauseItem]`
                 // is arena-owned; `ClauseItem: Default` so
                 // `alloc_slice_fill_default` is fine.
-                let export_clauses = arena.alloc_slice_fill_default::<bun_ast::ClauseItem>(n);
+                let export_clauses = arena
+                    .alloc_slice_fill_with::<bun_ast::ClauseItem, _>(n, |_| {
+                        bun_ast::ClauseItem::new()
+                    });
                 let mut duplicate_key_checker: bun_collections::StringHashMap<u32> =
-                    bun_collections::StringHashMap::default();
+                    bun_collections::StringHashMap::init();
                 // duplicate_key_checker drops at end of scope (defer .deinit())
                 let mut count: usize = 0;
                 // reshaped for borrowck — cannot zip 4
@@ -1888,7 +1893,7 @@ fn parse_data_loader<'a>(
                         continue;
                     }
 
-                    let visited = match duplicate_key_checker.get_or_put(name) {
+                    let visited = match duplicate_key_checker.get_or_put(name, || 0) {
                         Ok(v) => v,
                         Err(_) => continue,
                     };
@@ -1917,7 +1922,7 @@ fn parse_data_loader<'a>(
                             Ok(boxed) => bun_ast::StoreStr::new(arena.alloc_slice_copy(&boxed)),
                             Err(_) => return None,
                         },
-                        ..Default::default()
+                        ..bun_ast::Symbol::new()
                     };
 
                     let ref_ = bun_ast::Ref::init(count as u32, 0, false);
@@ -1933,7 +1938,7 @@ fn parse_data_loader<'a>(
                         name: bun_ast::LocRef { ref_, loc: key_loc },
                         alias: bun_ast::StoreStr::new(name),
                         alias_loc: key_loc,
-                        ..Default::default()
+                        ..bun_ast::ClauseItem::new()
                     };
                     let value_loc = prop.value.expect("infallible: prop has value").loc;
                     prop.value = Some(bun_ast::Expr::init_identifier(ref_, value_loc));
@@ -1945,7 +1950,7 @@ fn parse_data_loader<'a>(
                     bun_ast::S::Local {
                         decls: bun_ast::G::DeclList::move_from_list(decls),
                         kind: bun_ast::S::Kind::KVar,
-                        ..Default::default()
+                        ..bun_ast::S::Local::new()
                     },
                     bun_ast::Loc { start: 0 },
                 );
@@ -1960,7 +1965,7 @@ fn parse_data_loader<'a>(
                     bun_ast::S::ExportDefault {
                         value: bun_ast::StmtOrExpr::Expr(expr),
                         default_name: bun_ast::LocRef {
-                            loc: bun_ast::Loc::default(),
+                            loc: bun_ast::Loc::new(),
                             ref_: bun_ast::Ref::NONE,
                         },
                     },
@@ -1971,7 +1976,7 @@ fn parse_data_loader<'a>(
                     bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
                 break 'parts Box::new([bun_ast::Part {
                     stmts,
-                    ..Default::default()
+                    ..bun_ast::Part::new()
                 }]);
             }
         }
@@ -1981,7 +1986,7 @@ fn parse_data_loader<'a>(
                 bun_ast::S::ExportDefault {
                     value: bun_ast::StmtOrExpr::Expr(expr),
                     default_name: bun_ast::LocRef {
-                        loc: bun_ast::Loc::default(),
+                        loc: bun_ast::Loc::new(),
                         ref_: bun_ast::Ref::NONE,
                     },
                 },
@@ -1991,7 +1996,7 @@ fn parse_data_loader<'a>(
             let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
             break 'parts Box::new([bun_ast::Part {
                 stmts,
-                ..Default::default()
+                ..bun_ast::Part::new()
             }]);
         }
     };
@@ -2003,7 +2008,7 @@ fn parse_data_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
+        pending_imports: Vec::new(),
         runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
@@ -2026,7 +2031,7 @@ fn parse_text_loader<'a>(
         bun_ast::S::ExportDefault {
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
-                loc: bun_ast::Loc::default(),
+                loc: bun_ast::Loc::new(),
                 ref_: bun_ast::Ref::NONE,
             },
         },
@@ -2035,7 +2040,7 @@ fn parse_text_loader<'a>(
     let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
     let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
         stmts,
-        ..Default::default()
+        ..bun_ast::Part::new()
     }]);
 
     return Some(ParseResult {
@@ -2043,7 +2048,7 @@ fn parse_text_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
+        pending_imports: Vec::new(),
         runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
@@ -2082,7 +2087,7 @@ fn parse_md_loader<'a>(
         bun_ast::S::ExportDefault {
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
-                loc: bun_ast::Loc::default(),
+                loc: bun_ast::Loc::new(),
                 ref_: bun_ast::Ref::NONE,
             },
         },
@@ -2091,7 +2096,7 @@ fn parse_md_loader<'a>(
     let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
     let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
         stmts,
-        ..Default::default()
+        ..bun_ast::Part::new()
     }]);
 
     return Some(ParseResult {
@@ -2099,7 +2104,7 @@ fn parse_md_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
+        pending_imports: Vec::new(),
         runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
@@ -2135,7 +2140,7 @@ fn parse_wasm_loader<'a>(
             source: source.clone(),
             loader,
             already_bundled: AlreadyBundled::None,
-            pending_imports: Default::default(),
+            pending_imports: Vec::new(),
             runtime_transpiler_cache: None,
             empty: false,
             source_contents_backing: source_backing,
@@ -2340,7 +2345,7 @@ impl<'a> Transpiler<'a> {
             runtime_transpiler_cache,
             hmr_ref: ast.wrapper_ref,
             mangled_props: None,
-            ..Default::default()
+            ..js_printer::Options::new()
         };
         js_printer::print_ast::<_, false, ENABLE_SOURCE_MAP>(
             writer,
@@ -2433,7 +2438,7 @@ impl<'a> Transpiler<'a> {
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed
             // oven-sh/bun#15738.
             target: to_bundle_enums_target(self.options.target),
-            ..Default::default()
+            ..js_printer::Options::new()
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
             writer,
@@ -2707,13 +2712,14 @@ impl<'a> Transpiler<'a> {
     fn reject_duplicate_output_paths(&mut self) -> crate::Result<()> {
         use std::io::Write as _;
 
-        let mut by_dest_path: bun_collections::StringArrayHashMap<Vec<usize>> = Default::default();
+        let mut by_dest_path: bun_collections::StringArrayHashMap<Vec<usize>> =
+            bun_collections::StringArrayHashMap::init();
         let mut has_duplicates = false;
         for (index, file) in self.output_files.iter().enumerate() {
             if file.dest_path.is_empty() {
                 continue;
             }
-            let entry = by_dest_path.get_or_put(&file.dest_path)?;
+            let entry = by_dest_path.get_or_put(&file.dest_path, Vec::new)?;
             has_duplicates |= entry.found_existing;
             entry.value_ptr.push(index);
         }
@@ -2745,11 +2751,11 @@ impl<'a> Transpiler<'a> {
         )?;
         self.log_mut().add_range_error_with_notes(
             None,
-            Default::default(),
+            bun_ast::Range::new(),
             msg,
             Box::new([bun_ast::Data {
                 text: note.into(),
-                ..Default::default()
+                ..bun_ast::Data::new()
             }]),
         );
         Ok(())
@@ -2834,7 +2840,7 @@ impl<'a> Transpiler<'a> {
                 // each inner map (fallible), matching the build-command
                 // conversion.
                 let macro_remappings = {
-                    let mut m = MacroRemap::default();
+                    let mut m = MacroRemap::init();
                     for (k, v) in self.options.macro_remap.iter() {
                         let inner = v
                             .clone()
@@ -2858,7 +2864,7 @@ impl<'a> Transpiler<'a> {
                     experimental_decorators,
                     use_define_for_class_fields,
                     virtual_source: None,
-                    replace_exports: Default::default(),
+                    replace_exports: bun_collections::StringArrayHashMap::init(),
                     inject_jest_globals: false,
                     set_breakpoint_on_first_line: false,
                     remove_cjs_module_wrapper: false,
@@ -3048,7 +3054,7 @@ impl<'a> Transpiler<'a> {
             );
         if enable_css_modules {
             opts.filename = file_path_pretty;
-            opts.css_modules = Some(bun_css::CssModuleConfig::default());
+            opts.css_modules = Some(bun_css::CssModuleConfig::new());
         }
 
         // SAFETY: `self.arena` is the per-transpile arena;
@@ -3076,7 +3082,7 @@ impl<'a> Transpiler<'a> {
                 return None;
             }
         };
-        if let Err(e) = sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra) {
+        if let Err(e) = sheet.minify(alloc, &bun_css::MinifyOptions::new(), &extra) {
             self.log_mut().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,

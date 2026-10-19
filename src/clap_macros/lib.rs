@@ -30,17 +30,36 @@ enum Values {
     OneOptional,
 }
 
-#[derive(Default)]
 struct Names {
     short: Option<u8>,
     long: Option<String>,
     long_aliases: Vec<String>,
 }
 
-#[derive(Default)]
+impl Names {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            short: None,
+            long: None,
+            long_aliases: Vec::new(),
+        }
+    }
+}
+
 struct Help {
     msg: String,
     value: String,
+}
+
+impl Help {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            msg: String::new(),
+            value: String::new(),
+        }
+    }
 }
 
 struct Param {
@@ -49,11 +68,11 @@ struct Param {
     takes_value: Values,
 }
 
-impl Default for Param {
-    fn default() -> Self {
+impl Param {
+    fn new() -> Self {
         Self {
-            id: Help::default(),
-            names: Names::default(),
+            id: Help::new(),
+            names: Names::new(),
             takes_value: Values::None,
         }
     }
@@ -190,10 +209,10 @@ fn parse_long_names(param_str: &[u8]) -> Names {
         if param_str.starts_with(b"--") {
             return Names {
                 long: Some(to_string(&param_str[2..])),
-                ..Default::default()
+                ..Names::new()
             };
         }
-        return Names::default();
+        return Names::new();
     }
 
     let mut primary: Option<String> = None;
@@ -212,7 +231,7 @@ fn parse_long_names(param_str: &[u8]) -> Names {
     Names {
         long: primary,
         long_aliases: aliases,
-        ..Default::default()
+        ..Names::new()
     }
 }
 
@@ -240,16 +259,16 @@ fn parse_param_rest(line: &[u8]) -> Param {
                 msg: to_string(trim(&line[help_start..])),
                 value: to_string(&line[1..len]),
             },
-            ..Default::default()
+            ..Param::new()
         };
     }
 
     Param {
         id: Help {
             msg: to_string(trim(line)),
-            ..Default::default()
+            ..Help::new()
         },
-        ..Default::default()
+        ..Param::new()
     }
 }
 

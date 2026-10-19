@@ -129,7 +129,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             waker: Async::Waker::placeholder(),
             queue: UnboundedQueue::new(),
             generation: 0,
-            ready_event: ResetEvent::default(),
+            ready_event: ResetEvent::init(),
         }
     }
 

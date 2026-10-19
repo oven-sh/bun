@@ -58,7 +58,7 @@ pub(crate) fn to_be_empty(
                         // that sees enumerable Symbol keys, so count them too.
                         include_symbols: true,
                         // FIXME: can we do this?
-                        ..Default::default()
+                        ..JSPropertyIteratorOptions::init()
                     },
                 )?;
                 // `defer props_iter.deinit()` — handled by Drop.

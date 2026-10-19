@@ -16,7 +16,7 @@ use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 fn e_string_init(data: &[u8]) -> E::EString {
     E::EString {
         data: data.into(),
-        ..Default::default()
+        ..E::EString::new()
     }
 }
 
@@ -59,7 +59,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.current_scope == p.module_scope {
             return RelocateVars {
                 ok: false,
-                ..Default::default()
+                ..RelocateVars::new()
             };
         }
 
@@ -75,7 +75,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if scope != p.module_scope {
             return RelocateVars {
                 ok: false,
-                ..Default::default()
+                ..RelocateVars::new()
             };
         }
 
@@ -96,7 +96,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if matches!(value.data, js_ast::ExprData::EMissing(_)) {
             return RelocateVars {
                 ok: true,
-                ..Default::default()
+                ..RelocateVars::new()
             };
         }
 
@@ -288,7 +288,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     name_loc,
                                     E::Identifier {
                                         ref_,
-                                        ..Default::default()
+                                        ..E::Identifier::new()
                                     },
                                     Some(name),
                                     IdentifierOpts::new()
@@ -504,7 +504,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 },
                                                 needs_decl: true,
                                                 assign_count: 0,
-                                                decl_value: Default::default(),
+                                                decl_value:
+                                                    bun_ast::ast_result::CommonJSExportValue::Other,
                                             },
                                         )
                                         .expect("unreachable");
@@ -522,7 +523,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return Some(p.new_expr(
                                     E::CommonJSExportIdentifier {
                                         ref_,
-                                        ..Default::default()
+                                        ..E::CommonJSExportIdentifier::init()
                                     },
                                     name_loc,
                                 ));
@@ -647,7 +648,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             name: name_static,
                             name_loc,
                             can_be_removed_if_unused: true,
-                            ..Default::default()
+                            ..E::Dot::new()
                         },
                         target.loc,
                     ));
@@ -718,7 +719,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                     },
                                                     needs_decl: true,
                                                     assign_count: 0,
-                                                    decl_value: Default::default(),
+                                                    decl_value: bun_ast::ast_result::CommonJSExportValue::Other,
                                                 },
                                             )
                                             .expect("unreachable");
@@ -757,7 +758,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     loc,
                                 }
                             } else {
-                                Expr::init(E::Object::default(), loc)
+                                Expr::init(E::Object::new(), loc)
                             });
                         }
                         if name == b"accept" {
@@ -791,7 +792,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         target: Expr::init_identifier(p.hmr_api_ref, target.loc),
                                         name: name_static,
                                         name_loc,
-                                        ..Default::default()
+                                        ..E::Dot::new()
                                     },
                                     loc,
                                 ));
@@ -870,7 +871,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             target: *target,
                             name: name_static,
                             name_loc,
-                            ..Default::default()
+                            ..E::Dot::new()
                         },
                         loc,
                     );

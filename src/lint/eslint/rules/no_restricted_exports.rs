@@ -117,7 +117,7 @@ impl NoRestrictedExports {
             }
             StmtKind::Var(declarations) => {
                 // A name is reported where it is bound first.
-                let mut reported: FxHashSet<Name<'a>> = FxHashSet::default();
+                let mut reported: FxHashSet<Name<'a>> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
                 for declaration in declarations {
                     declaration.pat().for_each_binding(&mut |binding| {
                         let Some(name) = binding.as_ident() else {

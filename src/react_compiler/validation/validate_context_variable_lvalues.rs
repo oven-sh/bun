@@ -91,7 +91,7 @@ pub(crate) fn validate_context_variable_lvalues_with_errors(
     identifiers: &[Identifier],
     errors: &mut CompilerError,
 ) -> Result<(), CompilerDiagnostic> {
-    let mut context = IdBitSet::default();
+    let mut context = IdBitSet::init();
     let is_context_complete = collect_context_identifiers(func, functions, &mut context);
     if is_context_complete && context.is_empty() && !cfg!(debug_assertions) {
         return Ok(());

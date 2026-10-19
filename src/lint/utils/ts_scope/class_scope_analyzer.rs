@@ -183,7 +183,7 @@ struct ClassScopeResult<'a> {
 }
 
 /// What typescript-eslint's `analyzeClassMemberUsage` returns.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ClassMemberUsage<'a> {
     /// By `ClassId`.
     classes: Vec<ClassScopeResult<'a>>,
@@ -192,6 +192,18 @@ pub struct ClassMemberUsage<'a> {
     keys: Vec<MemberKey>,
     /// Where they are in `members`, by the class and the key.
     places: FxHashMap<(u32, MemberKey), u32>,
+}
+
+impl<'a> ClassMemberUsage<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            classes: Vec::new(),
+            members: Vec::new(),
+            keys: Vec::new(),
+            places: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 /// Upstream's `Key`, and which of the two maps of the class it is a key of.
@@ -247,7 +259,8 @@ impl<'a> ClassMemberUsage<'a> {
         let file = class.file();
         candidates.clear();
         // Where each is among the candidates.
-        let mut places: FxHashMap<MemberKey, usize> = FxHashMap::default();
+        let mut places: FxHashMap<MemberKey, usize> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut add = |node: MemberNode<'a>, flags: Flags| {
             let (name, is_private, extracted) = match plain_name(node) {
                 Some((name, is_private)) => (name.atom(), is_private, None),
@@ -298,7 +311,7 @@ impl<'a> ClassMemberUsage<'a> {
                 name: candidate.name.unwrap_or_else(|| ExtractedName {
                     code_name: Cow::Borrowed(file.name(candidate.key.name).bytes()),
                     is_private: candidate.key.is_private,
-                    name_span: Span::default(),
+                    name_span: Span::init(),
                 }),
                 write_count: 0,
                 read_count: 0,
@@ -309,7 +322,7 @@ impl<'a> ClassMemberUsage<'a> {
             if is_plain {
                 member.name.name_span = match candidate.node {
                     MemberNode::Member(it) => {
-                        it.key().map_or_else(Span::default, |key| key.span(file))
+                        it.key().map_or_else(Span::init, |key| key.span(file))
                     }
                     MemberNode::ParameterProperty(it) => estree_span(Node::Pat(it.pat())),
                 };
@@ -738,7 +751,7 @@ pub fn analyze_class_member_usage<'a>(
     file: &'a File<'a>,
     is_tracked: impl Fn(&ClassMember<'a>) -> bool,
 ) -> ClassMemberUsage<'a> {
-    let mut usage = ClassMemberUsage::default();
+    let mut usage = ClassMemberUsage::new();
     let mut candidates = Vec::new();
     for id in 0..file.hir.classes.len() {
         usage.add_class(

@@ -150,16 +150,16 @@ pub(crate) struct Type {
     pub(crate) server_file_string: StrongOptional,
 }
 
-impl Default for Type {
-    fn default() -> Self {
+impl Type {
+    pub(crate) fn new() -> Self {
         Self {
-            abs_root: Box::default(),
+            abs_root: Box::new([]),
             ignore_underscores: false,
             ignore_dirs: Box::new([
                 Box::<[u8]>::from(b".git".as_slice()),
                 Box::<[u8]>::from(b"node_modules".as_slice()),
             ]),
-            extensions: Box::default(),
+            extensions: Box::new([]),
             style: Style::NextjsPages,
             allow_layouts: false,
             client_pages: false,
@@ -209,8 +209,8 @@ impl FrameworkRouter {
             root: strings::paths::without_trailing_slash_windows_path(root).into(),
             types,
             routes,
-            dynamic_routes: DynamicRouteMap::default(),
-            static_routes: StaticRouteMap::default(),
+            dynamic_routes: DynamicRouteMap::new(),
+            static_routes: StaticRouteMap::init(),
             pattern_string_arena: Arena::new(),
         })
     }
@@ -384,7 +384,9 @@ impl FrameworkRouter {
                     } else {
                         p.route_path()
                     };
-                    let gop = self.static_routes.get_or_put(key)?;
+                    let gop = self
+                        .static_routes
+                        .get_or_put(key, || bun_core::GenericIndex::init(0))?;
                     if gop.found_existing {
                         Some(*gop.value_ptr)
                     } else {
@@ -393,7 +395,9 @@ impl FrameworkRouter {
                     }
                 }
                 InsertPattern::Dynamic(p) => {
-                    let gop = self.dynamic_routes.get_or_put(p)?;
+                    let gop = self
+                        .dynamic_routes
+                        .get_or_put(p, || bun_core::GenericIndex::init(0))?;
                     if gop.found_existing {
                         Some(*gop.value_ptr)
                     } else {
@@ -415,9 +419,17 @@ impl FrameworkRouter {
 }
 
 /// An enforced upper bound of 64 unique patterns allows routing to use no heap allocation
-#[derive(Default)]
 pub(crate) struct MatchedParams {
     pub(crate) params: BoundedArray<MatchedParamEntry, { MatchedParams::MAX_COUNT }>,
+}
+
+impl MatchedParams {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            params: BoundedArray::new(),
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -462,7 +474,7 @@ impl FrameworkRouter {
     /// complicated data structure that production uses to efficiently map
     /// urls to routes instead of this tree-traversal algorithm.
     pub(crate) fn match_slow(&self, path: &[u8], params: &mut MatchedParams) -> Option<RouteIndex> {
-        params.params = BoundedArray::default();
+        params.params = BoundedArray::new();
 
         debug_assert!(path[0] == b'/');
         if let Some(static_route) = self.static_routes.get(path) {
@@ -590,7 +602,7 @@ impl FrameworkRouter {
                 Box<[u8]>,
                 *mut bun_resolver::fs::Entry,
                 ZigStringHashContext,
-            > = Default::default();
+            > = bun_collections::HashMap::init();
             {
                 // Copy under `entries_mutex`: other threads rewrite the cached
                 // `DirEntry` map in place under that lock. Dropped before the
@@ -757,7 +769,7 @@ impl FrameworkRouter {
                         } else {
                             let allocation = self
                                 .pattern_string_arena
-                                .alloc_slice_fill_default::<u8>(static_total_len);
+                                .alloc_slice_fill_copy::<u8>(static_total_len, 0);
                             let mut pos = 0usize;
                             for part in parsed.parts {
                                 match part {

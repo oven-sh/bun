@@ -125,7 +125,7 @@ impl SSLConfig {
 
     #[inline]
     pub fn zero() -> Self {
-        Self::default()
+        Self::new()
     }
 
     /// What was assigned to `tls.DEFAULT_CIPHERS`, for a config without `ciphers`. It then needs a context of its own, like one with `ciphers`.
@@ -183,7 +183,7 @@ impl SSLConfig {
     }
 
     pub fn as_usockets(&self) -> uws::socket_context::BunSocketContextOptions {
-        let mut ctx_opts = uws::socket_context::BunSocketContextOptions::default();
+        let mut ctx_opts = uws::socket_context::BunSocketContextOptions::new();
 
         if !self.key_file_name.is_null() {
             ctx_opts.key_file_name = self.key_file_name;
@@ -460,8 +460,8 @@ impl SSLConfig {
     }
 }
 
-impl Default for SSLConfig {
-    fn default() -> Self {
+impl SSLConfig {
+    pub fn new() -> Self {
         Self::ZERO
     }
 }

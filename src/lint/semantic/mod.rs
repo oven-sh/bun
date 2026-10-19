@@ -144,7 +144,6 @@ pub use variable::{Variable, VariableKind};
 use variables::Variables;
 
 /// What is known about the scopes of a file.
-#[derive(Default)]
 pub(crate) struct ReferenceIndex {
     /// The analysis that the configuration is for.
     analysis: Analysis,
@@ -158,15 +157,26 @@ pub(crate) struct ReferenceIndex {
 }
 
 impl ReferenceIndex {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            analysis: Analysis::new(),
+            of_eslint: core::cell::OnceCell::new(),
+            asks_eslint: core::cell::Cell::new(false),
+            globals: core::cell::RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl ReferenceIndex {
     #[cold]
     #[inline(never)]
     fn analysis_of_eslint(&self) -> &Analysis {
-        self.of_eslint.get_or_init(Box::default)
+        self.of_eslint.get_or_init(|| Box::new(Analysis::new()))
     }
 }
 
 /// Each part is computed the first time it is needed.
-#[derive(Default)]
 struct Analysis {
     scopes: OnceCell<ScopeTree>,
     variables: OnceCell<Variables>,
@@ -176,6 +186,21 @@ struct Analysis {
     marks: RefCell<Vec<u8>>,
     /// See [`File::mark_global_used`].
     marked_globals: RefCell<FxHashSet<Box<[u8]>>>,
+}
+
+impl Analysis {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            scopes: core::cell::OnceCell::new(),
+            variables: core::cell::OnceCell::new(),
+            references: core::cell::OnceCell::new(),
+            marks: core::cell::RefCell::new(Vec::new()),
+            marked_globals: core::cell::RefCell::new(rustc_hash::FxHashSet::with_hasher(
+                rustc_hash::FxBuildHasher,
+            )),
+        }
+    }
 }
 
 /// While it lives, what asks about the scopes of the file gets the answers of typescript-eslint:

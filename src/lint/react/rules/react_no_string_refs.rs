@@ -21,11 +21,20 @@ const OXLINT_THIS_REFS_DEPRECATED: Message = Message::new("", "Using this.refs i
 const OXLINT_STRING_IN_REF_DEPRECATED: Message =
     Message::new("", "Using string literals in ref attributes is deprecated.");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The component that something is in, as oxlint finds it.
     component_around: AncestorMemo<'a, Node<'a>>,
     pragmas: OnceCell<Pragmas<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            component_around: AncestorMemo::new(),
+            pragmas: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 impl Rule for NoStringRefs {
@@ -55,7 +64,7 @@ impl Rule for NoStringRefs {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         // oxlint passes over a file that cannot have JSX.
-        (!file.language().is_oxlint || is_jsx(file)).then(State::default)
+        (!file.language().is_oxlint || is_jsx(file)).then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

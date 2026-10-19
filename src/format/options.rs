@@ -22,7 +22,7 @@
 
 use crate::ir::prelude::*;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct FormatOptions {
     pub indent_style: IndentStyle,
     pub indent_width: IndentWidth,
@@ -103,9 +103,62 @@ pub struct FormatOptions {
     pub debug_comments: DebugComments,
 }
 
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+impl FormatOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            indent_style: IndentStyle::Space,
+            indent_width: IndentWidth::new(),
+            line_ending: LineEnding::Lf,
+            line_width: LineWidth::new(),
+            quote_style: QuoteStyle::Double,
+            jsx_quote_style: QuoteStyle::Double,
+            quote_properties: QuoteProperties::AsNeeded,
+            trailing_commas: TrailingCommas::All,
+            semicolons: Semicolons::Always,
+            arrow_parentheses: ArrowParentheses::Always,
+            bracket_spacing: BracketSpacing::new(),
+            bracket_same_line: BracketSameLine::new(),
+            attribute_position: AttributePosition::Auto,
+            expand: Expand::Auto,
+            experimental_operator_position: OperatorPosition::End,
+            experimental_ternaries: false,
+            embedded_language_formatting: EmbeddedLanguageFormatting::Auto,
+            prose_wrap: ProseWrap::Preserve,
+            html_whitespace_sensitivity: HtmlWhitespaceSensitivity::Css,
+            vue_indent_script_and_style: false,
+            svelte: SvelteOptions::new(),
+            filepath: None,
+            parser: None,
+            range_start: None,
+            range_end: None,
+            cursor_offset: None,
+            insert_pragma: false,
+            require_pragma: false,
+            check_ignore_pragma: false,
+            is_in_markdown: false,
+            is_mdx_jsx: false,
+            is_mdx_es_syntax: false,
+            embedded_html: false,
+            html_template_depth: 0,
+            is_in_html_file: false,
+            format_javascript: None,
+            parse_javascript: None,
+            parse_parts: None,
+            in_html: InHtml::new(),
+            flavor: Flavor::Prettier,
+            sort_package_json: None,
+            sort_imports: None,
+            jsdoc: None,
+            tailwind: None,
+            toml: false,
+            debug_comments: DebugComments::Off,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum DebugComments {
-    #[default]
     Off,
     /// Every comment and the node that owns it.
     Owners,
@@ -178,7 +231,7 @@ pub type ParseParts = fn(&[u8], &mut dyn FnMut(ParsePart<'_>));
 
 /// What Prettier tells the formatter of code that is in HTML: the options whose names start with `__`, and the parsers for
 /// what is less than a program.
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct InHtml {
     pub root: HtmlRoot,
     /// `__isInHtmlAttribute`: the code is between double quotes.
@@ -197,11 +250,26 @@ pub struct InHtml {
     pub has_tree_of_babel: bool,
 }
 
+impl InHtml {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            root: HtmlRoot::None,
+            is_in_attribute: false,
+            is_in_interpolation: false,
+            is_inline_event_handler: false,
+            is_style_attribute: false,
+            quote_style: QuoteStyle::Double,
+            has_single_quotes: false,
+            has_tree_of_babel: false,
+        }
+    }
+}
+
 /// What the code is.
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum HtmlRoot {
     /// It is not in HTML.
-    #[default]
     None,
     /// `babel`, `typescript`, `css`, ..
     Program,
@@ -283,8 +351,8 @@ pub struct SvelteOptions {
     pub is_on: bool,
 }
 
-impl Default for SvelteOptions {
-    fn default() -> Self {
+impl SvelteOptions {
+    pub fn new() -> Self {
         SvelteOptions {
             sort_order: Some([
                 SveltePart::Options,
@@ -469,14 +537,19 @@ impl FormatOptions {
             b"requirePragma" => self.require_pragma = boolean()?,
             b"checkIgnorePragma" => self.check_ignore_pragma = boolean()?,
             // oxfmt's: `true`, `false` or `{ "sortScripts": true }`.
-            b"sortPackageJson" => self.sort_package_json = boolean()?.then(Default::default),
+            b"sortPackageJson" => {
+                self.sort_package_json =
+                    boolean()?.then(crate::json::sort_package_json::SortPackageJson::new)
+            }
             b"sortPackageJson.sortScripts" => {
-                self.sort_package_json.get_or_insert_default().sort_scripts = boolean()?;
+                self.sort_package_json
+                    .get_or_insert_with(crate::json::sort_package_json::SortPackageJson::new)
+                    .sort_scripts = boolean()?;
             }
             // oxfmt's: `true`, `false` or an object, whose properties come as `jsdoc.<name>`.
-            b"jsdoc" => self.jsdoc = (value == b"{}" || boolean()?).then(Default::default),
+            b"jsdoc" => self.jsdoc = (value == b"{}" || boolean()?).then(JsdocOptions::new),
             _ if name.starts_with(b"jsdoc.") => {
-                let jsdoc = self.jsdoc.get_or_insert_default();
+                let jsdoc = self.jsdoc.get_or_insert_with(JsdocOptions::new);
                 match &name[b"jsdoc.".len()..] {
                     b"capitalizeDescriptions" => jsdoc.capitalize_descriptions = boolean()?,
                     b"commentLineStrategy" => {
@@ -546,8 +619,8 @@ pub struct JsdocOptions {
     pub keep_unparsable_example_indent: bool,
 }
 
-impl Default for JsdocOptions {
-    fn default() -> Self {
+impl JsdocOptions {
+    pub fn new() -> Self {
         JsdocOptions {
             capitalize_descriptions: true,
             comment_line_strategy: CommentLineStrategy::SingleLine,
@@ -565,10 +638,9 @@ impl Default for JsdocOptions {
 }
 
 /// Whether a JSDoc comment is on one line.
-#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum CommentLineStrategy {
     /// If it can be.
-    #[default]
     SingleLine,
     /// Never.
     Multiline,
@@ -577,20 +649,18 @@ pub enum CommentLineStrategy {
 }
 
 /// How descriptions in JSDoc comments are broken into lines.
-#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum LineWrappingStyle {
     /// As much on each line as fits.
-    #[default]
     Greedy,
     /// The lines stay as they are if all of them fit.
     Balance,
 }
 
 /// Which white space in HTML counts.
-#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum HtmlWhitespaceSensitivity {
     /// What the default value of the CSS property `display` says.
-    #[default]
     Css,
     /// All of it.
     Strict,
@@ -599,22 +669,20 @@ pub enum HtmlWhitespaceSensitivity {
 }
 
 /// How a paragraph is divided into lines.
-#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum ProseWrap {
     /// At the print width.
     Always,
     /// Not at all.
     Never,
     /// As it is.
-    #[default]
     Preserve,
 }
 
 /// oxfmt follows an older Prettier (3.8) in a few places, and has a few rules of its own. Whoever
 /// has an `.oxfmtrc.json` gets no diff from switching.
-#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum Flavor {
-    #[default]
     Prettier,
     Oxfmt,
 }
@@ -631,10 +699,9 @@ impl Flavor {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum IndentStyle {
     Tab,
-    #[default]
     Space,
 }
 
@@ -648,9 +715,8 @@ impl IndentStyle {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum LineEnding {
-    #[default]
     Lf,
     Crlf,
     Cr,
@@ -691,8 +757,8 @@ impl IndentWidth {
     }
 }
 
-impl Default for IndentWidth {
-    fn default() -> Self {
+impl IndentWidth {
+    pub fn new() -> Self {
         Self(2)
     }
 }
@@ -707,15 +773,14 @@ impl LineWidth {
     }
 }
 
-impl Default for LineWidth {
-    fn default() -> Self {
+impl LineWidth {
+    pub fn new() -> Self {
         Self(80)
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum QuoteStyle {
-    #[default]
     Double,
     Single,
 }
@@ -756,9 +821,8 @@ impl QuoteStyle {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum QuoteProperties {
-    #[default]
     AsNeeded,
     Preserve,
     Consistent,
@@ -770,9 +834,8 @@ impl QuoteProperties {
     }
 }
 
-#[derive(Clone, Copy, Default, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TrailingCommas {
-    #[default]
     All,
     Es5,
     None,
@@ -788,9 +851,8 @@ impl TrailingCommas {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Semicolons {
-    #[default]
     Always,
     AsNeeded,
 }
@@ -805,9 +867,8 @@ impl Semicolons {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ArrowParentheses {
-    #[default]
     Always,
     AsNeeded,
 }
@@ -828,10 +889,9 @@ pub enum FormatTrailingCommas {
     ES5,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TrailingSeparator {
     /// Written if the enclosing group breaks.
-    #[default]
     Allowed,
     /// A syntax error, after a rest element for example.
     Disallowed,
@@ -867,16 +927,14 @@ impl<'a> Format<'a> for FormatTrailingCommas {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AttributePosition {
-    #[default]
     Auto,
     Multiline,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Expand {
-    #[default]
     Auto,
     Never,
 }
@@ -891,14 +949,21 @@ impl BracketSpacing {
     }
 }
 
-impl Default for BracketSpacing {
-    fn default() -> Self {
+impl BracketSpacing {
+    pub fn new() -> Self {
         Self(true)
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct BracketSameLine(pub bool);
+
+impl BracketSameLine {
+    #[inline]
+    pub fn new() -> Self {
+        Self(false)
+    }
+}
 
 impl BracketSameLine {
     #[inline]
@@ -907,10 +972,9 @@ impl BracketSameLine {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum OperatorPosition {
     Start,
-    #[default]
     End,
 }
 
@@ -920,9 +984,8 @@ impl OperatorPosition {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum EmbeddedLanguageFormatting {
-    #[default]
     Auto,
     Off,
 }

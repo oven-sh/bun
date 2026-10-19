@@ -100,7 +100,7 @@ pub struct Chunk {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct Flags: u8 {
         const IS_EXECUTABLE = 1 << 0;
         const HAS_HTML_CHUNK = 1 << 1;
@@ -109,9 +109,9 @@ bitflags::bitflags! {
     }
 }
 
-impl Default for Content {
-    fn default() -> Self {
-        Content::Javascript(JavaScriptChunk::default())
+impl Content {
+    pub fn new() -> Self {
+        Content::Javascript(JavaScriptChunk::new())
     }
 }
 
@@ -156,9 +156,15 @@ unsafe impl Sync for Chunk {}
 /// slot in `UnsafeCell` makes the per-task write sound through a shared view —
 /// worker callbacks never need to materialize an aliased `&mut Chunk` or
 /// `&mut [CompileResult]` to publish their result.
-#[derive(Default)]
 #[repr(transparent)]
 pub struct CompileResultSlots(Box<[UnsafeCell<CompileResult>]>);
+
+impl CompileResultSlots {
+    #[inline]
+    pub fn init() -> Self {
+        Self(Box::new([]))
+    }
+}
 
 // SAFETY: writes target disjoint slots (unique `i` per task); reads happen
 // only after the pool join (happens-before via the batch's `group.wait()`).
@@ -168,7 +174,7 @@ unsafe impl Sync for CompileResultSlots {}
 impl CompileResultSlots {
     pub(crate) fn new(len: usize) -> Self {
         let mut v = Vec::with_capacity(len);
-        v.resize_with(len, || UnsafeCell::new(CompileResult::default()));
+        v.resize_with(len, || UnsafeCell::new(CompileResult::new()));
         Self(v.into_boxed_slice())
     }
 
@@ -193,26 +199,26 @@ impl CompileResultSlots {
     }
 }
 
-impl Default for Chunk {
-    fn default() -> Self {
+impl Chunk {
+    pub fn new() -> Self {
         Chunk {
             unique_key: b"",
             id_key: b"",
             files_with_parts_in_chunk: ArrayHashMap::new(),
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
-            final_rel_path: Box::default(),
-            template: PathTemplate::default(),
+            final_rel_path: Box::new([]),
+            template: PathTemplate::new(),
             cross_chunk_imports: Vec::new(),
-            content: Content::default(),
-            entry_point: EntryPoint::default(),
-            output_source_map: source_map::SourceMapPieces::default(),
-            intermediate_output: IntermediateOutput::default(),
+            content: Content::new(),
+            entry_point: EntryPoint::new(),
+            output_source_map: source_map::SourceMapPieces::new(),
+            intermediate_output: IntermediateOutput::Empty,
             isolated_hash: u64::MAX,
-            renamer: bun_renamer::ChunkRenamer::default(),
+            renamer: bun_renamer::ChunkRenamer::None,
             nested_scopes_to_rename: Vec::new(),
-            compile_results_for_chunk: CompileResultSlots::default(),
+            compile_results_for_chunk: CompileResultSlots::init(),
             final_output_size: 0,
-            flags: Flags::default(),
+            flags: Flags::empty(),
         }
     }
 }
@@ -375,7 +381,6 @@ impl Chunk {
 /// This implementation is just slow.
 /// Can we make the JSPrinter itself track this without increasing
 /// complexity a lot?
-#[derive(Default)]
 pub enum IntermediateOutput {
     /// If the chunk has references to other chunks, then "pieces" contains
     /// the contents of the chunk. Another joiner will have to be
@@ -389,7 +394,6 @@ pub enum IntermediateOutput {
     /// because it avoids doing a join operation twice.
     Joiner(StringJoiner<'static>),
 
-    #[default]
     Empty,
 }
 
@@ -692,8 +696,8 @@ impl IntermediateOutput {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
 
                 let mut shift = source_map::SourceMapShifts {
-                    after: Default::default(),
-                    before: Default::default(),
+                    after: bun_sourcemap::LineColumnOffset::new(),
+                    before: bun_sourcemap::LineColumnOffset::new(),
                 };
                 let mut shifts: Vec<source_map::SourceMapShifts> = if ENABLE_SOURCE_MAP_SHIFTS {
                     Vec::with_capacity(pieces.len() as usize + 1)
@@ -848,7 +852,7 @@ impl IntermediateOutput {
                     let data = piece.data();
 
                     if ENABLE_SOURCE_MAP_SHIFTS {
-                        let mut data_offset = source_map::LineColumnOffset::default();
+                        let mut data_offset = source_map::LineColumnOffset::new();
                         data_offset.advance(data);
                         shift.before.add(data_offset);
                         shift.after.add(data_offset);
@@ -1105,7 +1109,7 @@ impl IntermediateOutput {
                 })
             }
             IntermediateOutput::Empty => Ok(CodeResult {
-                buffer: Box::default(),
+                buffer: Box::new([]),
                 shifts: Vec::new(),
             }),
         }
@@ -1265,8 +1269,15 @@ impl fmt::Display for UniqueKey {
 
 /// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, _: u1 }
 #[repr(transparent)]
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct EntryPoint(u64);
+
+impl EntryPoint {
+    #[inline]
+    pub fn new() -> Self {
+        Self(0)
+    }
+}
 
 /// so `EntryPoint` can be a u64
 pub(crate) type EntryPointId = u32;
@@ -1312,7 +1323,6 @@ impl EntryPoint {
     }
 }
 
-#[derive(Default)]
 pub struct JavaScriptChunk {
     pub(crate) files_in_chunk_order: Box<[IndexInt]>,
     pub parts_in_chunk_in_order: Box<[PartRange]>,
@@ -1341,6 +1351,24 @@ pub struct JavaScriptChunk {
     pub(crate) module_info_bytes: Option<Box<[u8]>>,
     /// Unserialized ModuleInfo for deferred serialization (after chunk paths are resolved)
     pub(crate) module_info: Option<Box<analyze_transpiled_module::ModuleInfo>>,
+}
+
+impl JavaScriptChunk {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            files_in_chunk_order: Box::new([]),
+            parts_in_chunk_in_order: Box::new([]),
+            reached_chunks_in_order: Box::new([]),
+            exports_to_other_chunks: ArrayHashMap::new(),
+            imports_from_other_chunks: ImportsFromOtherChunks::new(),
+            cross_chunk_prefix_stmts: Vec::new(),
+            cross_chunk_suffix_stmts: Vec::new(),
+            css_chunks: Box::new([]),
+            module_info_bytes: None,
+            module_info: None,
+        }
+    }
 }
 
 pub struct CssChunk {
@@ -1551,12 +1579,11 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
 
 pub(crate) type ImportsFromOtherChunks = ArrayHashMap<IndexInt, cross_chunk_import::ItemList>;
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct CrossChunkImportItem {
     pub(crate) r#ref: Ref,
 }
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
-#[derive(Default)]
 pub struct CrossChunkImport {
     pub(crate) chunk_index: IndexInt,
     pub(crate) sorted_import_items: core::mem::ManuallyDrop<CrossChunkImportItemList>,
@@ -1669,9 +1696,7 @@ impl Content {
 pub mod bun_renamer {
     pub use bun_js_printer::renamer::*;
 
-    #[derive(Default)]
     pub enum ChunkRenamer {
-        #[default]
         None,
         Number(Box<bun_js_printer::renamer::NumberRenamer>),
         Minify(Box<bun_js_printer::renamer::MinifyRenamer>),

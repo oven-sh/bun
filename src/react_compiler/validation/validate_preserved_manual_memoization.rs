@@ -64,8 +64,8 @@ pub(crate) fn validate_preserved_manual_memoization(
     let mut state = VisitorState {
         env,
         manual_memo_state: None,
-        scopes: IdBitSet::default(),
-        pruned_scopes: IdBitSet::default(),
+        scopes: IdBitSet::init(),
+        pruned_scopes: IdBitSet::init(),
         temporaries: IdMap::new(),
     };
     visit_block(&func.body, &mut state);
@@ -202,7 +202,7 @@ fn visit_instruction(instr: &ReactiveInstruction, state: &mut VisitorState) {
 
             state.manual_memo_state = Some(ManualMemoBlockState {
                 loc: instr.loc,
-                decls: IdBitSet::default(),
+                decls: IdBitSet::init(),
                 deps_from_source,
                 manual_memo_id: *manual_memo_id,
                 reassignments: IdMap::new(),
@@ -286,7 +286,9 @@ fn visit_instruction(instr: &ReactiveInstruction, state: &mut VisitorState) {
                     .unwrap()
                     .reassignments
                     .entry(decl_id)
-                    .or_default()
+                    .or_insert_with(|| {
+                        rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher)
+                    })
                     .insert(value.identifier);
             }
         }
@@ -302,7 +304,9 @@ fn visit_instruction(instr: &ReactiveInstruction, state: &mut VisitorState) {
                             .unwrap()
                             .reassignments
                             .entry(lvalue_ident.declaration_id)
-                            .or_default()
+                            .or_insert_with(|| {
+                                rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher)
+                            })
                             .insert(place.identifier);
                     }
                 }

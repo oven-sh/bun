@@ -72,7 +72,7 @@ fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
 /// `1234` as `1,234`.
 fn with_commas(n: usize) -> BString {
     let digits = alloc_print!("{n}");
-    let mut out = BString::default();
+    let mut out = BString::new(Vec::new());
     for (i, &c) in digits.iter().enumerate() {
         if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(b',');
@@ -124,7 +124,7 @@ fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_
         line: d.line as i32,
         column: d.column as i32,
         line_text: Some(strings::replace_owned(&bstr::join("\n", lines), b"\t", b" ").into()),
-        ..Default::default()
+        ..bun_ast::Location::new()
     });
     bun_ast::Data {
         text: text.into(),
@@ -161,7 +161,7 @@ fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
                 to_data(note, style, false, usize::from(!is_shown))
             })
             .collect(),
-        ..Default::default()
+        ..bun_ast::Msg::new()
     }
 }
 
@@ -249,7 +249,7 @@ fn write_occurrences(
 fn count_by_file<'a>(
     diagnostics: impl Iterator<Item = &'a Diagnostic>,
 ) -> Vec<(&'a Diagnostic, usize)> {
-    let mut index: FxHashMap<(u32, &[u8]), usize> = FxHashMap::default();
+    let mut index: FxHashMap<(u32, &[u8]), usize> = FxHashMap::with_hasher(bun_sema::util::FxBuild);
     let mut by_file: Vec<(&Diagnostic, usize)> = Vec::new();
     for d in diagnostics {
         let at = *index.entry((d.project, &d.path[..])).or_insert_with(|| {
@@ -298,7 +298,7 @@ fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
 
 /// An attribute value, without the quotes.
 fn attribute(text: &[u8]) -> BString {
-    let mut out = BString::default();
+    let mut out = BString::new(Vec::new());
     for c in text {
         out.extend_from_slice(
             strings::xml_escape_entity(*c).unwrap_or_else(|| std::slice::from_ref(c)),
@@ -527,7 +527,7 @@ fn should_group(report: &Report, style: &Style) -> bool {
 /// Groups diagnostics by (code, message) and prints the largest groups first, each once with its number of occurrences per file.
 /// A project with thousands of errors usually has a few root causes, and this puts them at the top.
 fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
-    let mut index: FxHashMap<(u32, &[u8]), usize> = FxHashMap::default();
+    let mut index: FxHashMap<(u32, &[u8]), usize> = FxHashMap::with_hasher(bun_sema::util::FxBuild);
     let mut groups: Vec<Vec<&Diagnostic>> = Vec::new();
     for d in &report.diagnostics {
         let at = *index.entry((d.code, d.text.as_slice())).or_insert_with(|| {
@@ -716,7 +716,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         };
         let manifest = relative_path(&it.manifest, style.cwd, style);
         let elsewhere = match it.is_of_working_directory {
-            true => BString::default(),
+            true => BString::new(Vec::new()),
             false => alloc_print!(" --cwd={}", BStr::new(dirname::<Posix>(&manifest))),
         };
         pretty!(
@@ -784,7 +784,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
     };
     let took = alloc_print!(" {took}");
     let projects = match report.projects_checked {
-        0 => BString::default(),
+        0 => BString::new(Vec::new()),
         n => alloc_print!(" across {}", plural(n, b"project", b"projects")),
     };
     let checked = plural(report.files_checked, b"file", b"files");

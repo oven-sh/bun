@@ -204,7 +204,7 @@ pub struct Recording<'a> {
 pub fn write(modules: &[Option<&CodeNames>], recording: &Recording<'_>) -> (Vec<u8>, usize) {
     use std::io::Write;
     let mut text = format!("{VERSION}\n").into_bytes();
-    let mut seen = bun_collections::HashMap::<(u8, u64), ()>::default();
+    let mut seen = bun_collections::HashMap::<(u8, u64), ()>::init();
     let mut line = |seen_as: u8, kind: u8, hash: u64| {
         if seen.insert((seen_as, hash), ()).is_none() {
             let _ = writeln!(text, "{} {hash:016x}", kind as char);
@@ -278,7 +278,6 @@ impl Unusable {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct BytecodeOrder {
     pub hot_functions: Vec<u64>,
     /// With `hot_functions`, every function the recorded build had: one of this build in neither is new or changed.
@@ -286,6 +285,19 @@ pub(crate) struct BytecodeOrder {
     pub hot_strings: Vec<u64>,
     pub evaluated_modules: Vec<u64>,
     pub not_evaluated_modules: Vec<u64>,
+}
+
+impl BytecodeOrder {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            hot_functions: Vec::new(),
+            known_functions: Vec::new(),
+            hot_strings: Vec::new(),
+            evaluated_modules: Vec::new(),
+            not_evaluated_modules: Vec::new(),
+        }
+    }
 }
 
 const MAX_FILE_SIZE: usize = 64 * 1024 * 1024;
@@ -337,7 +349,7 @@ impl BytecodeOrder {
     /// front made its startup read the functions it only needs later. A module is evaluated if any file says so.
     pub(crate) fn merge(profiles: &[Self]) -> Self {
         fn merge_ranked(lists: Vec<&[u64]>) -> Vec<u64> {
-            let mut seen = bun_collections::HashMap::<u64, ()>::default();
+            let mut seen = bun_collections::HashMap::<u64, ()>::init();
             lists
                 .into_iter()
                 .flatten()
@@ -373,7 +385,7 @@ impl BytecodeOrder {
     }
 
     pub(crate) fn parse(text: &[u8]) -> Result<Self, Unusable> {
-        let mut order = Self::default();
+        let mut order = Self::new();
         if text.starts_with(&[0xff, 0xfe]) || text.starts_with(&[0xfe, 0xff]) {
             return Err(Unusable::Utf16);
         }

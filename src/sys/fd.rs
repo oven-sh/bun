@@ -112,7 +112,7 @@ impl FdExt for Fd {
                         errno: sys::E::EBADF as _,
                         syscall: sys::Tag::close,
                         fd: self,
-                        ..Default::default()
+                        ..sys::Error::init()
                     }),
                     _ => None,
                 }
@@ -138,7 +138,7 @@ impl FdExt for Fd {
                         errno: sys::E::EBADF as _,
                         syscall: sys::Tag::close,
                         fd: self,
-                        ..Default::default()
+                        ..sys::Error::init()
                     }),
                     _ => None,
                 }
@@ -153,7 +153,7 @@ impl FdExt for Fd {
                         errno: sys::E::EBADF as _,
                         syscall: sys::Tag::CloseHandle,
                         fd: self,
-                        ..Default::default()
+                        ..sys::Error::init()
                     }),
                     DecodeWindows::Uv(file_number) => {
                         let mut req = uv::fs_t::uninitialized();
@@ -197,7 +197,7 @@ impl FdExt for Fd {
                         bun_core::DumpStackTraceOptions {
                             frame_count: 4,
                             stop_at_jsc_llint: true,
-                            ..Default::default()
+                            ..bun_core::DumpStackTraceOptions::new()
                         },
                     );
                 } else {
@@ -253,7 +253,7 @@ impl FdExt for Fd {
                     Err(sys::Error {
                         errno: sys::E::EMFILE as _,
                         syscall: syscall_tag,
-                        ..Default::default()
+                        ..sys::Error::init()
                     })
                 }
             }

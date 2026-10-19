@@ -409,7 +409,7 @@ fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
 /// version the lockfile resolved for it. `name` may be an alias of that package.
 fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     // Detach the lockfile while it loads so it and the manager are not borrowed through each other.
-    let mut lockfile = core::mem::take(&mut pm.lockfile);
+    let mut lockfile = core::mem::replace(&mut pm.lockfile, Box::new(bun_install::Lockfile::new()));
     let mut log = bun_ast::Log::init();
     let log_level = pm.options.log_level;
     let loaded = match lockfile.load_from_cwd::<true>(Some(pm), &mut log) {
@@ -814,7 +814,10 @@ fn with_published_versions(
         let _ = write!(
             out,
             "{}",
-            bun_fmt::format_json_string_utf8(published, Default::default())
+            bun_fmt::format_json_string_utf8(
+                published,
+                bun_core::fmt::JSONFormatterUTF8Options::new()
+            )
         );
         copied = *end;
     }
@@ -1012,7 +1015,7 @@ fn registry_get(
     accept: Option<&[u8]>,
     for_error: Option<(&[u8], &[u8])>,
 ) -> Result<MutableString, crate::Error> {
-    let mut headers = http::HeaderBuilder::default();
+    let mut headers = http::HeaderBuilder::new();
     if let Some(accept) = accept {
         headers.count(b"Accept", accept);
     }
@@ -1065,9 +1068,8 @@ fn registry_get(
     Ok(response_buf)
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Semantic {
-    #[default]
     Text,
     /// Both sides parse and print identically: whitespace/quotes/semicolons only.
     FormattingOnly,
@@ -1086,7 +1088,6 @@ enum Semantic {
     Projected,
 }
 
-#[derive(Default)]
 struct FileChange<'a> {
     path: &'a [u8],
     highlight: bool,
@@ -1112,6 +1113,31 @@ struct FileChange<'a> {
     /// Un-minified view: per printed line, where it came from in the original (`line:col`, 1-based), per side.
     origin: Option<[Vec<(u32, u32)>; 2]>,
     hunks: Vec<u8>,
+}
+
+impl<'a> FileChange<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            path: &[],
+            highlight: false,
+            semantic: Semantic::Text,
+            formatting_only: false,
+            mode_change: None,
+            not_normalized: None,
+            new_imports: Vec::new(),
+            signal_deltas: Vec::new(),
+            old: None,
+            new: None,
+            added: 0,
+            removed: 0,
+            binary: false,
+            sourcemap: false,
+            hidden: 0,
+            origin: None,
+            hunks: Vec::new(),
+        }
+    }
 }
 
 fn is_js_like(path: &[u8]) -> bool {
@@ -1218,7 +1244,12 @@ fn is_binary(path: &[u8], bytes: &[u8]) -> bool {
         && !path.ends_with(b".sh")
         && match bun_bundler::options::DEFAULT_LOADERS.get(bun_paths::extension(path)) {
             Some(loader) => matches!(loader, Loader::Wasm | Loader::Napi),
-            None => normalize::normalize(b"as.js", bytes, Default::default()).is_none(),
+            None => normalize::normalize(
+                b"as.js",
+                bytes,
+                crate::cli::pm_diff_normalize::Options::new(),
+            )
+            .is_none(),
         }
 }
 
@@ -1305,7 +1336,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             old,
             new,
             mode_change,
-            ..Default::default()
+            ..FileChange::new()
         };
         if old == new {
             change.semantic = Semantic::ModeOnly;
@@ -1973,7 +2004,7 @@ fn collect_notes(
 /// `--json`: one document with both labels, per-file status/counts/patch text, the notes as plain strings, and totals.
 fn print_json(left: &Tree, right: &Tree, changes: &[FileChange<'_>], flags: DiffFlags) {
     fn js(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
-        bun_core::fmt::format_json_string_utf8(s, Default::default())
+        bun_core::fmt::format_json_string_utf8(s, bun_core::fmt::JSONFormatterUTF8Options::new())
     }
     let mut out: Vec<u8> = Vec::with_capacity(4096);
     let _ = write!(
@@ -2496,7 +2527,7 @@ fn json_text(e: &bun_ast::Expr, minify_whitespace: bool) -> Vec<u8> {
         bun_js_printer::PrintJsonOptions {
             mangled_props: None,
             minify_whitespace,
-            ..Default::default()
+            ..bun_js_printer::PrintJsonOptions::new()
         },
     );
     printer.ctx.get_written().to_vec()
@@ -2800,7 +2831,7 @@ impl Style {
             bun_core::fmt::HighlighterOptions {
                 enable_colors: true,
                 check_for_unhighlighted_write: false,
-                ..Default::default()
+                ..bun_core::fmt::HighlighterOptions::new()
             },
         );
         if !highlight || text.len() > 4096 || write!(out, "{hl}").is_err() {
@@ -3064,8 +3095,7 @@ fn rebase_key_onto(
     shown: &Shown,
     display: &normalize::Normalized,
 ) {
-    let mut at: bun_collections::HashMap<(u32, u32), (u32, u32)> =
-        bun_collections::HashMap::default();
+    let mut at: bun_collections::HashMap<(u32, u32), (u32, u32)> = bun_collections::HashMap::init();
     at.reserve(display.map.len());
     for m in display.map.iter().rev() {
         if m.gen_line >= shown.skipped {

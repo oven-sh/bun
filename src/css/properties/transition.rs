@@ -140,13 +140,25 @@ pub enum ViewTransitionGroup {
     Custom(CustomIdent),
 }
 
-#[derive(Default)]
 pub struct TransitionHandler {
     pub(crate) properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)>,
     pub(crate) durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
     pub(crate) has_any: bool,
+}
+
+impl TransitionHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            properties: None,
+            durations: None,
+            delays: None,
+            timing_functions: None,
+            has_any: false,
+        }
+    }
 }
 
 // Passing both `&mut self` and `&mut self.<field>` to a generic fn trips

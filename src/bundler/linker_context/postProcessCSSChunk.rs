@@ -16,15 +16,15 @@ pub(crate) fn post_process_css_chunk(
 ) -> Result<(), crate::Error> {
     let c = ctx.c();
     // Avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
-    let mut j = StringJoiner::default();
+    let mut j = StringJoiner::new();
     j.watcher = Watcher {
         input: chunk.unique_key,
-        ..Default::default()
+        ..Watcher::new()
     };
 
     let mut line_offset: LineColumnOffsetOptional =
         if c.options.source_maps != options::SourceMapOption::None {
-            LineColumnOffsetOptional::Value(LineColumnOffset::default())
+            LineColumnOffsetOptional::Value(LineColumnOffset::new())
         } else {
             LineColumnOffsetOptional::Null
         };
@@ -50,7 +50,7 @@ pub(crate) fn post_process_css_chunk(
     let compile_results = &chunk.compile_results_for_chunk;
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
-        MultiArrayList::default();
+        MultiArrayList::new();
     bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();

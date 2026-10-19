@@ -66,12 +66,12 @@ pub(crate) struct Field<'a> {
     pub(crate) zero_count: u8,
 }
 
-impl Default for Field<'_> {
-    fn default() -> Self {
+impl Field<'_> {
+    pub(crate) fn new() -> Self {
         Field {
             value: b"",
-            filename: bun_semver::String::default(),
-            content_type: bun_semver::String::default(),
+            filename: bun_semver::String::new(),
+            content_type: bun_semver::String::new(),
             is_file: false,
             zero_count: 0,
         }
@@ -284,8 +284,8 @@ pub(crate) fn for_each_multipart_entry<C>(
         let header = &remain[..header_end + 2];
         remain = &remain[header_end + 4..];
 
-        let mut field = Field::default();
-        let mut name = bun_semver::String::default();
+        let mut field = Field::new();
+        let mut name = bun_semver::String::new();
         let mut filename: Option<bun_semver::String> = None;
         let mut header_chunk = header;
         let mut is_file = false;
@@ -386,7 +386,7 @@ pub(crate) fn for_each_multipart_entry<C>(
             body = &body[..body.len() - 2];
         }
         field.value = body;
-        field.filename = filename.unwrap_or_default();
+        field.filename = filename.unwrap_or_else(bun_semver::String::new);
         field.is_file = is_file;
 
         iterator(ctx, name, &field, input);

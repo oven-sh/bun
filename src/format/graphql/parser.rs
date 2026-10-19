@@ -103,7 +103,6 @@ pub(crate) const SUBSCRIPTION: u8 = 2;
 /// Of an `OperationDefinition`: it is only a selection set.
 pub(crate) const IS_SHORTHAND: u8 = 3;
 
-#[derive(Default)]
 pub(crate) struct Tree {
     pub(crate) nodes: Vec<Node>,
     children: Vec<NodeId>,
@@ -111,6 +110,18 @@ pub(crate) struct Tree {
     pub(crate) comments: Vec<Span>,
     /// The nodes that wait for their parent.
     pending: Vec<NodeId>,
+}
+
+impl Tree {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            children: Vec::new(),
+            comments: Vec::new(),
+            pending: Vec::new(),
+        }
+    }
 }
 
 impl Tree {
@@ -138,7 +149,7 @@ impl Tree {
     }
 
     pub(crate) fn span(&self, id: NodeId) -> Span {
-        self.node(id).map_or_else(Span::default, |node| node.span)
+        self.node(id).map_or_else(Span::init, |node| node.span)
     }
 }
 
@@ -253,7 +264,7 @@ pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> std::result::Result<(), Syn
     let mut parser = Parser {
         text,
         tree,
-        refusal: Refusal::default(),
+        refusal: Refusal::new(),
         token: Token {
             kind: TokenKind::StartOfFile,
             start: 0,

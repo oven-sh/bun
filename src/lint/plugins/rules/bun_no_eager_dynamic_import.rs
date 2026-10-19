@@ -31,7 +31,7 @@ impl Rule for NoEagerDynamicImport {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<RunsLater<'a>> {
-        Some(RunsLater::default())
+        Some(RunsLater::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

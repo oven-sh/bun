@@ -279,7 +279,7 @@ impl<'a> Subprocess<'a> {
 
 bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
@@ -878,7 +878,7 @@ impl Subprocess<'_> {
         #[cfg(windows)]
         this.stdio_pipes.with_mut(|pipes| {
             for slot in pipes.iter_mut() {
-                let buffer = match core::mem::take(slot) {
+                let buffer = match core::mem::replace(slot, bun_spawn::SpawnedStdio::Unavailable) {
                     StdioResult::Buffer(buffer) => buffer,
                     other => {
                         *slot = other;
@@ -950,7 +950,7 @@ impl Subprocess<'_> {
     /// duration of the call).
     pub(crate) fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
-        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
+        let this_jsvalue = self.this_value.get().try_get().unwrap_or_else(JSValue::new);
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
         // (mirrors the original `&'a` return — the global outlives `self`).
         let global_this = self.global_this;
@@ -1357,7 +1357,7 @@ impl Subprocess<'_> {
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
         self.stderr_maxbuf.set(mb);
 
-        if let Some(ipc_data) = self.ipc_data.take() {
+        if let Some(ipc_data) = self.ipc_data.replace(None) {
             // In normal operation the socket is already `.closed` by the time we
             // get here (that is what allowed `compute_has_pending_activity` to drop
             // to false and let GC collect us). Detach and release our ref; any
@@ -1430,7 +1430,7 @@ impl Subprocess<'_> {
             }
             IPC::DecodedIPCMessage::Data(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC message from child");
-                let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
+                let this_jsvalue = self.this_value.get().try_get().unwrap_or_else(JSValue::new);
                 let _keep = jsc::EnsureStillAlive(this_jsvalue);
                 if !this_jsvalue.is_empty() {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
@@ -1465,7 +1465,7 @@ impl Subprocess<'_> {
 
     pub(crate) fn handle_ipc_close(&self) {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCClose");
-        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
+        let this_jsvalue = self.this_value.get().try_get().unwrap_or_else(JSValue::new);
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
         let global_this = self.global_this;
         let global_this = global_this.get();

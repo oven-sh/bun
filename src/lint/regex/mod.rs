@@ -205,12 +205,12 @@ impl Regex {
 
     /// `new RegExp(pattern, flags)`
     pub fn from_bytes(pattern: &[u8], flags: &[u8]) -> Result<Regex, SyntaxError> {
-        let flags = parse_flags(flags, Options::default())?;
+        let flags = parse_flags(flags, Options::new())?;
         let mode = Mode {
             unicode: flags.unicode,
             unicode_sets: flags.unicode_sets,
         };
-        let ast = parse_pattern(pattern, mode, Options::default())?;
+        let ast = parse_pattern(pattern, mode, Options::new())?;
         Ok(Regex {
             compiled: compile(pattern, flags)?,
             flags,

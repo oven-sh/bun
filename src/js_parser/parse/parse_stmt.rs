@@ -155,7 +155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 kind: js_ast::s::Kind::KVar,
                 decls,
                 is_export: opts.is_export,
-                ..Default::default()
+                ..S::Local::new()
             },
             loc,
         ))
@@ -190,7 +190,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 kind: js_ast::s::Kind::KConst,
                 decls,
                 is_export: opts.is_export,
-                ..Default::default()
+                ..S::Local::new()
             },
             loc,
         ))
@@ -213,7 +213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TCloseParen)?;
             let mut stmt_opts = ParseStatementOptions {
                 lexical_decl: LexicalDecl::AllowFnInsideIf,
-                ..Default::default()
+                ..ParseStatementOptions::new()
             };
             let yes = p.parse_stmt(&mut stmt_opts)?;
 
@@ -255,7 +255,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token != T::TIf {
                 stmt_opts = ParseStatementOptions {
                     lexical_decl: LexicalDecl::AllowFnInsideIf,
-                    ..Default::default()
+                    ..ParseStatementOptions::new()
                 };
                 // current_if was set just above in this iteration; `StoreRef` `DerefMut`.
                 let no = p.parse_stmt(&mut stmt_opts)?;
@@ -273,7 +273,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     fn t_do(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
-        let mut stmt_opts = ParseStatementOptions::default();
+        let mut stmt_opts = ParseStatementOptions::new();
         let body = p.parse_stmt(&mut stmt_opts)?;
         p.lexer.expect(T::TWhile)?;
         p.lexer.expect(T::TOpenParen)?;
@@ -296,7 +296,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let test = p.parse_expr(Level::Lowest)?;
         p.lexer.expect(T::TCloseParen)?;
 
-        let mut stmt_opts = ParseStatementOptions::default();
+        let mut stmt_opts = ParseStatementOptions::new();
         let body = p.parse_stmt(&mut stmt_opts)?;
 
         Ok(p.s(S::While { body, test }, loc))
@@ -315,7 +315,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // within the body from being renamed. Renaming them might change the
         // semantics of the code.
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::With, body_loc)?;
-        let mut stmt_opts = ParseStatementOptions::default();
+        let mut stmt_opts = ParseStatementOptions::new();
         let body = p.parse_stmt(&mut stmt_opts)?;
         p.pop_scope();
 
@@ -378,7 +378,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         _ => {
                             let mut stmt_opts = ParseStatementOptions {
                                 lexical_decl: LexicalDecl::AllowAll,
-                                ..Default::default()
+                                ..ParseStatementOptions::new()
                             };
                             body.push(p.parse_stmt(&mut stmt_opts)?);
                         }
@@ -410,7 +410,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let body_loc = p.lexer.loc();
         p.lexer.expect(T::TOpenBrace)?;
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
-        let mut stmt_opts = ParseStatementOptions::default();
+        let mut stmt_opts = ParseStatementOptions::new();
         let body = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
         p.pop_scope();
         p.lexer.next()?;
@@ -427,7 +427,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // The catch binding is optional, and can be omitted
             if p.lexer.token != T::TOpenBrace {
                 p.lexer.expect(T::TOpenParen)?;
-                let mut value = p.parse_binding(Default::default())?;
+                let mut value = p.parse_binding(super::ParseBindingOptions::new())?;
 
                 // Skip over types
                 if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
@@ -553,7 +553,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TVar => {
                     is_var = true;
                     p.lexer.next()?;
-                    let mut stmt_opts = ParseStatementOptions::default();
+                    let mut stmt_opts = ParseStatementOptions::new();
                     let decls =
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
                     decls_ptr = bun_ast::StoreSlice::new(decls.slice());
@@ -561,7 +561,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         S::Local {
                             kind: js_ast::s::Kind::KVar,
                             decls,
-                            ..Default::default()
+                            ..S::Local::new()
                         },
                         init_loc,
                     ));
@@ -569,7 +569,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // for (const )
                 T::TConst => {
                     p.lexer.next()?;
-                    let mut stmt_opts = ParseStatementOptions::default();
+                    let mut stmt_opts = ParseStatementOptions::new();
                     let decls =
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?;
                     decls_ptr = bun_ast::StoreSlice::new(decls.slice());
@@ -577,7 +577,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         S::Local {
                             kind: js_ast::s::Kind::KConst,
                             decls,
-                            ..Default::default()
+                            ..S::Local::new()
                         },
                         init_loc,
                     ));
@@ -588,7 +588,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut stmt_opts = ParseStatementOptions {
                         lexical_decl: LexicalDecl::AllowAll,
                         is_for_loop_init: true,
-                        ..Default::default()
+                        ..ParseStatementOptions::new()
                     };
 
                     let res = p.parse_expr_or_let_stmt(&mut stmt_opts)?;
@@ -608,7 +608,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             init_ = Some(p.s(
                                 S::SExpr {
                                     value: expr,
-                                    ..Default::default()
+                                    ..S::SExpr::new()
                                 },
                                 init_loc,
                             ));
@@ -657,7 +657,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Comma)?;
                 p.lexer.expect(T::TCloseParen)?;
-                let mut stmt_opts = ParseStatementOptions::default();
+                let mut stmt_opts = ParseStatementOptions::new();
                 let body = p.parse_stmt(&mut stmt_opts)?;
                 return Ok(p.s(
                     S::ForOf {
@@ -676,7 +676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Lowest)?;
                 p.lexer.expect(T::TCloseParen)?;
-                let mut stmt_opts = ParseStatementOptions::default();
+                let mut stmt_opts = ParseStatementOptions::new();
                 let body = p.parse_stmt(&mut stmt_opts)?;
                 return Ok(p.s(
                     S::ForIn {
@@ -712,7 +712,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             p.lexer.expect(T::TCloseParen)?;
-            let mut stmt_opts = ParseStatementOptions::default();
+            let mut stmt_opts = ParseStatementOptions::new();
             let body = p.parse_stmt(&mut stmt_opts)?;
             Ok(p.s(
                 S::For {
@@ -805,7 +805,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // its `Result`, covering every `?` early-exit.
         let result: Result<Stmt> = (|| {
             p.lexer.next()?;
-            let mut stmt_opts = ParseStatementOptions::default();
+            let mut stmt_opts = ParseStatementOptions::new();
             let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
             let close_brace_loc = p.lexer.loc();
             p.lexer.next()?;
@@ -939,7 +939,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let mut skipper = ParseStatementOptions {
                                     scope: opts.scope,
                                     is_export: true,
-                                    ..Default::default()
+                                    ..ParseStatementOptions::new()
                                 };
                                 p.skip_type_script_type_stmt(&mut skipper)?;
                                 return Ok(p.s(S::TypeScript {}, loc));
@@ -996,7 +996,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let mut stmt_opts = ParseStatementOptions {
                             is_name_optional: true,
                             lexical_decl: LexicalDecl::AllowAll,
-                            ..Default::default()
+                            ..ParseStatementOptions::new()
                         };
                         let stmt = p.parse_fn_stmt(loc, &mut stmt_opts, Some(async_range))?;
                         if matches!(stmt.data, js_ast::StmtData::STypeScript(_)) {
@@ -1051,7 +1051,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ts_decorators: opts.ts_decorators.take(),
                         is_name_optional: true,
                         lexical_decl: LexicalDecl::AllowAll,
-                        ..Default::default()
+                        ..ParseStatementOptions::new()
                     };
                     let stmt = p.parse_stmt(&mut _opts)?;
 
@@ -1127,7 +1127,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut stmt_opts = ParseStatementOptions {
                         ts_decorators: opts.ts_decorators.take(),
                         is_name_optional: true,
-                        ..Default::default()
+                        ..ParseStatementOptions::new()
                     };
                     let stmt: Stmt = p.parse_class_stmt(loc, &mut stmt_opts)?;
 
@@ -1403,7 +1403,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut stmt: S::Import = S::Import {
             namespace_ref: Ref::NONE,
             import_record_index: u32::MAX,
-            ..Default::default()
+            ..S::Import::new()
         };
         let mut was_originally_bare_import = false;
 
@@ -1425,7 +1425,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(p.s(
                     S::SExpr {
                         value: expr,
-                        ..Default::default()
+                        ..S::SExpr::new()
                     },
                     loc,
                 ));
@@ -1451,7 +1451,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     namespace_ref: p.store_name_in_ref(p.lexer.identifier),
                     star_name_loc: p.lexer.loc(),
                     import_record_index: u32::MAX,
-                    ..Default::default()
+                    ..S::Import::new()
                 };
                 p.lexer.expect(T::TIdentifier)?;
                 p.lexer.expect_contextual_keyword(b"from")?;
@@ -1479,7 +1479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // moved into the AST node here; no other &mut alias exists.
                     items: import_clause.items.into(),
                     is_single_line: import_clause.is_single_line,
-                    ..Default::default()
+                    ..S::Import::new()
                 };
                 p.lexer.expect_contextual_keyword(b"from")?;
             }
@@ -1500,7 +1500,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc: p.lexer.loc(),
                         ref_: p.store_name_in_ref(default_name),
                     }),
-                    ..Default::default()
+                    ..S::Import::new()
                 };
                 p.lexer.next()?;
 
@@ -1534,7 +1534,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         star_name_loc: p.lexer.loc(),
                         import_record_index: u32::MAX,
                         phase_defer: true,
-                        ..Default::default()
+                        ..S::Import::new()
                     };
                     p.lexer.expect(T::TIdentifier)?;
                     p.lexer.expect_contextual_keyword(b"from")?;
@@ -1690,7 +1690,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc: label_loc,
             ref_: label_ref,
         };
-        let mut nested_opts = ParseStatementOptions::default();
+        let mut nested_opts = ParseStatementOptions::new();
 
         match opts.lexical_decl {
             LexicalDecl::AllowAll | LexicalDecl::AllowFnInsideLabel => {
@@ -1762,7 +1762,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(
             S::SExpr {
                 value: expr,
-                ..Default::default()
+                ..S::SExpr::new()
             },
             loc,
         ))
@@ -1786,7 +1786,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "type Foo = any"
                     let mut stmt_opts = ParseStatementOptions {
                         scope: opts.scope,
-                        ..Default::default()
+                        ..ParseStatementOptions::new()
                     };
                     p.skip_type_script_type_stmt(&mut stmt_opts)?;
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
@@ -1813,7 +1813,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before || opts.is_name_optional {
                     let mut stmt_opts = ParseStatementOptions {
                         scope: opts.scope,
-                        ..Default::default()
+                        ..ParseStatementOptions::new()
                     };
 
                     p.skip_type_script_interface_stmt(&mut stmt_opts)?;
@@ -1963,7 +1963,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 kind: js_ast::LocalKind::KVar,
                                 is_export: true,
                                 decls,
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             loc,
                         )));

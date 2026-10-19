@@ -152,10 +152,19 @@ const PARENT_PROPERTY: Property = (b"parent", PARENT);
 const LOC_PROPERTY: Property = (b"loc", LOC);
 
 /// Names, each once, one after the other.
-#[derive(Default)]
 struct Names {
     bytes: Vec<u8>,
     known: FxHashMap<&'static [u8], u32>,
+}
+
+impl Names {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            known: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl Names {
@@ -297,7 +306,7 @@ fn visitor_key_order_of_oxlint(mut all: Vec<(&'static [u8], u32)>) -> Vec<(&'sta
 /// what [`visitor_key_order`] returns, behind its length. Then the bytes of the names. A name is where it starts in these,
 /// above its length in the low 8 bits.
 pub(super) fn write(out: &mut Vec<u8>) {
-    let mut names = Names::default();
+    let mut names = Names::new();
     let mut words = vec![
         NodeType::ALL.len() as u32,
         STRINGS.len() as u32,

@@ -169,8 +169,9 @@ fn validate_effect(
         }
     }
 
-    let mut seen_blocks: HashSet<BlockId> = HashSet::default();
-    let mut dep_values: HashMap<IdentifierId, Vec<IdentifierId>> = HashMap::default();
+    let mut seen_blocks: HashSet<BlockId> = HashSet::with_hasher(rustc_hash::FxBuildHasher);
+    let mut dep_values: HashMap<IdentifierId, Vec<IdentifierId>> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     for dep in effect_deps {
         dep_values.insert(*dep, vec![*dep]);
     }
@@ -185,7 +186,8 @@ fn validate_effect(
         }
 
         for phi in &block.phis {
-            let mut aggregate: HashSet<IdentifierId> = HashSet::default();
+            let mut aggregate: HashSet<IdentifierId> =
+                HashSet::with_hasher(rustc_hash::FxBuildHasher);
             for operand in phi.operands.values() {
                 if let Some(deps) = dep_values.get(&operand.identifier) {
                     for d in deps {
@@ -215,7 +217,8 @@ fn validate_effect(
                 | InstructionValue::TemplateLiteral { .. }
                 | InstructionValue::CallExpression { .. }
                 | InstructionValue::MethodCall { .. } => {
-                    let mut aggregate: HashSet<IdentifierId> = HashSet::default();
+                    let mut aggregate: HashSet<IdentifierId> =
+                        HashSet::with_hasher(rustc_hash::FxBuildHasher);
                     for operand in value_operands(&instr.value) {
                         if let Some(deps) = dep_values.get(&operand) {
                             for d in deps {

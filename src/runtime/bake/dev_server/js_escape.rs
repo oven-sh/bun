@@ -13,7 +13,7 @@ pub(crate) fn decode_js_escape_sequences<'a>(
 ) -> Result<(), crate::Error> {
     let syntax_error = || crate::Error::SyntaxError;
     let iterator = strings::CodepointIterator::init(text);
-    let mut iter = strings::Cursor::default();
+    let mut iter = strings::Cursor::new();
     while iterator.next(&mut iter) {
         match iter.c {
             c if c == '\r' as CodePoint => {

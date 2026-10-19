@@ -162,14 +162,14 @@ pub struct Options<'a> {
     pub is_entry_point: bool,
 }
 
-impl<'a> Default for Options<'a> {
-    fn default() -> Self {
+impl<'a> Options<'a> {
+    pub fn new() -> Self {
         // `macro_context` is `None`; caller must set
         // before use. This impl exists so `_parse` can `core::mem::take` the
         // real options out of `Parser` (moving the heap-owning `jsx: Pragma`
         // by value) instead of bitwise-copying it and double-freeing on drop.
         Options {
-            jsx: options::JSX::Pragma::default(),
+            jsx: options::JSX::Pragma::new(),
             ts: false,
             keep_names: true,
             ignore_dce_annotations: false,
@@ -177,7 +177,7 @@ impl<'a> Default for Options<'a> {
             preserve_unused_imports_ts: false,
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
-            features: RuntimeFeatures::default(),
+            features: RuntimeFeatures::new(),
             tree_shaking: false,
             bundle: false,
             code_splitting: false,
@@ -251,7 +251,7 @@ impl<'a> Options<'a> {
                 set_breakpoint_on_first_line: f.set_breakpoint_on_first_line,
                 trim_unused_imports: f.trim_unused_imports,
                 auto_polyfill_require: f.auto_polyfill_require,
-                replace_exports: Default::default(),
+                replace_exports: bun_ast::runtime::ReplaceableExportMap::new(),
                 dont_bundle_twice: f.dont_bundle_twice,
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,
                 commonjs_at_runtime: f.commonjs_at_runtime,
@@ -337,7 +337,7 @@ impl<'a> Options<'a> {
             preserve_unused_imports_ts: false,
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
-            features: RuntimeFeatures::default(),
+            features: RuntimeFeatures::new(),
             tree_shaking: false,
             bundle: false,
             code_splitting: false,
@@ -438,17 +438,17 @@ impl<'a> Parser<'a> {
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
-                self.bump.alloc(bun_ast::Log::default()),
+                self.bump.alloc(bun_ast::Log::empty()),
                 self.source,
                 self.bump,
             ),
         );
-        let options = core::mem::take(&mut self.options);
+        let options = core::mem::replace(&mut self.options, Options::new());
         let mut __p = init_p!(Pi<'_>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
-        p.starts_for_parse_only = Some(Default::default());
+        p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::new());
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;
         }
@@ -457,7 +457,7 @@ impl<'a> Parser<'a> {
         }
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
-            ..Default::default()
+            ..ParseStatementOptions::new()
         };
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
         // What the parser only logs is still an error: the statements are its best guess.
@@ -500,12 +500,12 @@ impl<'a> Parser<'a> {
             js_lexer::Lexer::init_without_reading(
                 // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
                 // placeholder is never read after this point.
-                self.bump.alloc(bun_ast::Log::default()),
+                self.bump.alloc(bun_ast::Log::empty()),
                 self.source,
                 self.bump,
             ),
         );
-        let options = core::mem::take(&mut self.options);
+        let options = core::mem::replace(&mut self.options, Options::new());
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
@@ -533,7 +533,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
-            ..Default::default()
+            ..ParseStatementOptions::new()
         };
 
         // Parsing seems to take around 2x as much time as visiting.
@@ -641,12 +641,12 @@ impl<'a> Parser<'a> {
             js_lexer::Lexer::init_without_reading(
                 // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
                 // placeholder is never read after this point.
-                self.bump.alloc(bun_ast::Log::default()),
+                self.bump.alloc(bun_ast::Log::empty()),
                 self.source,
                 self.bump,
             ),
         );
-        let options = core::mem::take(&mut self.options);
+        let options = core::mem::replace(&mut self.options, Options::new());
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
@@ -688,7 +688,7 @@ impl<'a> Parser<'a> {
 
         let ns_export_part = js_ast::Part {
             can_be_removed_if_unused: true,
-            ..Default::default()
+            ..js_ast::Part::new()
         };
 
         let lazy_data = js_ast::StoreRef::from_bump(p.arena.alloc(final_expr.data));
@@ -699,7 +699,7 @@ impl<'a> Parser<'a> {
         let part = js_ast::Part {
             stmts: stmts.into(),
             symbol_uses: p.take_symbol_uses()?,
-            ..Default::default()
+            ..js_ast::Part::new()
         };
         let mut parts = BumpVec::with_capacity_in(2, p.arena);
         parts.push(ns_export_part);
@@ -794,7 +794,7 @@ fn lower_one_date_time_literal<'a>(
                     name: E::Str::new(class),
                     name_loc: loc,
                     can_be_removed_if_unused: true,
-                    ..Default::default()
+                    ..E::Dot::new()
                 },
                 loc,
             );
@@ -804,7 +804,7 @@ fn lower_one_date_time_literal<'a>(
                     name: E::Str::new(b"from"),
                     name_loc: loc,
                     can_be_removed_if_unused: true,
-                    ..Default::default()
+                    ..E::Dot::new()
                 },
                 loc,
             );
@@ -815,7 +815,7 @@ fn lower_one_date_time_literal<'a>(
                     target: from_dot,
                     args: Vec::from_arena_slice(args_slice),
                     can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
-                    ..Default::default()
+                    ..E::Call::new()
                 },
                 loc,
             );
@@ -919,7 +919,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
-            ..Default::default()
+            ..ParseStatementOptions::new()
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
 
@@ -976,7 +976,7 @@ impl<'a> Parser<'a> {
                     .react_compiler
                     .is_ssr()
                     .then(|| "ssr".to_owned()),
-                ..Default::default()
+                ..bun_react_compiler::ReactCompilerOptions::new()
             };
             let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
             let import_bindings = bun_react_compiler::collect_import_bindings(
@@ -999,18 +999,18 @@ impl<'a> Parser<'a> {
         if p.options.bundle {
             // The bundler requires a part for generated module wrappers. This
             // part must be at the start as it is referred to by index.
-            before.push(js_ast::Part::default());
+            before.push(js_ast::Part::new());
         }
 
         // --inspect-brk
         if p.options.features.set_breakpoint_on_first_line {
             let debugger_stmts = p.arena.alloc_slice_fill_with(1, |_| Stmt {
-                data: js_ast::StmtData::SDebugger(Default::default()),
+                data: js_ast::StmtData::SDebugger(bun_ast::s::Debugger::new()),
                 loc: bun_ast::Loc::EMPTY,
             });
             before.push(js_ast::Part {
                 stmts: debugger_stmts.into(),
-                ..Default::default()
+                ..js_ast::Part::new()
             });
         }
 
@@ -1242,7 +1242,7 @@ impl<'a> Parser<'a> {
                     bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
                 let decls = p
                     .arena
-                    .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
+                    .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::new());
                 if uses_dirname {
                     decls[0] = G::Decl {
                         binding: p.b(
@@ -1254,7 +1254,7 @@ impl<'a> Parser<'a> {
                         value: Some(p.new_expr(
                             E::String {
                                 data: p.source.path.name().dir.into(),
-                                ..Default::default()
+                                ..E::String::new()
                             },
                             bun_ast::Loc::EMPTY,
                         )),
@@ -1275,7 +1275,7 @@ impl<'a> Parser<'a> {
                         value: Some(p.new_expr(
                             E::String {
                                 data: p.source.path.text.into(),
-                                ..Default::default()
+                                ..E::String::new()
                             },
                             bun_ast::Loc::EMPTY,
                         )),
@@ -1293,11 +1293,14 @@ impl<'a> Parser<'a> {
                             decls: {
                                 let mut dl = G::DeclList::init_capacity(decls.len());
                                 for d in decls.iter_mut() {
-                                    dl.append_assume_capacity(core::mem::take(d));
+                                    dl.append_assume_capacity(core::mem::replace(
+                                        d,
+                                        bun_ast::g::Decl::new(),
+                                    ));
                                 }
                                 dl
                             },
-                            ..Default::default()
+                            ..S::Local::new()
                         },
                         bun_ast::Loc::EMPTY,
                     )
@@ -1306,7 +1309,7 @@ impl<'a> Parser<'a> {
                     stmts: part_stmts.into(),
                     declared_symbols,
                     tag: bun_ast::PartTag::DirnameFilename,
-                    ..Default::default()
+                    ..js_ast::Part::new()
                 });
                 uses_dirname = false;
                 uses_filename = false;
@@ -1325,7 +1328,6 @@ impl<'a> Parser<'a> {
             .as_slice()
             .is_empty()
         {
-            #[derive(Default)]
             struct PerRecord {
                 escaped: bool,
                 aliases: Vec<bun_ast::StoreStr>,
@@ -1334,11 +1336,24 @@ impl<'a> Parser<'a> {
                 /// that stays one), so the call's value must hold it.
                 needs_value: bool,
             }
-            let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> = Default::default();
+
+            impl PerRecord {
+                #[inline]
+                fn new() -> Self {
+                    Self {
+                        escaped: false,
+                        aliases: Vec::new(),
+                        items: Vec::new(),
+                        needs_value: false,
+                    }
+                }
+            }
+            let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> =
+                bun_collections::ArrayHashMap::new();
             // A namespace ref is listed once per registration and once per
             // destructure of it; its alias map only needs one walk.
             let mut seen_namespace: bun_collections::HashMap<(bun_ast::Ref, u32), ()> =
-                Default::default();
+                bun_collections::HashMap::init();
             let arena = p.arena;
             for i in 0..p.imports_to_convert_from_dynamic_import.len() {
                 let (ns_ref, import_record_id, scope) = {
@@ -1367,9 +1382,10 @@ impl<'a> Parser<'a> {
                         || p.dynamic_import_escaped_records
                             .contains_key(&import_record_id)
                 };
-                let entry = bun_core::handle_oom(by_record.get_or_put(import_record_id));
+                let entry =
+                    bun_core::handle_oom(by_record.get_or_put(import_record_id, PerRecord::new));
                 if !entry.found_existing {
-                    *entry.value_ptr = PerRecord::default();
+                    *entry.value_ptr = PerRecord::new();
                 }
                 let rec = entry.value_ptr;
                 rec.escaped |= escaped;
@@ -1518,7 +1534,7 @@ impl<'a> Parser<'a> {
                         tag: bun_ast::PartTag::ImportToConvertFromRequire,
                         // This part has a single symbol, so it may be removed if unused.
                         can_be_removed_if_unused: true,
-                        ..Default::default()
+                        ..js_ast::Part::new()
                     });
                 }
                 debug_assert!(remaining_stmts.is_empty());
@@ -1676,12 +1692,18 @@ impl<'a> Parser<'a> {
                                 if let Some(id) = redirect_import_record_index
                                     && !p.options.is_entry_point
                                 {
-                                    part.symbol_uses = Default::default();
+                                    part.symbol_uses = bun_collections::ArrayHashMap::new();
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                                         import_records: p.import_records.move_to_baby_list(p.arena),
                                         redirect_import_record_index: Some(id),
-                                        named_imports: core::mem::take(&mut *p.named_imports),
-                                        named_exports: core::mem::take(&mut p.named_exports),
+                                        named_imports: core::mem::replace(
+                                            &mut *p.named_imports,
+                                            bun_collections::ArrayHashMap::new(),
+                                        ),
+                                        named_exports: core::mem::replace(
+                                            &mut p.named_exports,
+                                            bun_collections::StringArrayHashMap::init(),
+                                        ),
                                         ..js_ast::Ast::empty_in(p.arena)
                                     })));
                                 }
@@ -1962,7 +1984,7 @@ impl<'a> Parser<'a> {
                 bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
             let decls = p
                 .arena
-                .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
+                .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::new());
             if uses_dirname {
                 // var __dirname = import.meta
                 let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
@@ -1978,7 +2000,7 @@ impl<'a> Parser<'a> {
                             name: b"dir".into(),
                             name_loc: bun_ast::Loc::EMPTY,
                             target: import_meta,
-                            ..Default::default()
+                            ..E::Dot::new()
                         },
                         bun_ast::Loc::EMPTY,
                     )),
@@ -2003,7 +2025,7 @@ impl<'a> Parser<'a> {
                             name: b"path".into(),
                             name_loc: bun_ast::Loc::EMPTY,
                             target: import_meta,
-                            ..Default::default()
+                            ..E::Dot::new()
                         },
                         bun_ast::Loc::EMPTY,
                     )),
@@ -2021,11 +2043,14 @@ impl<'a> Parser<'a> {
                         decls: {
                             let mut dl = G::DeclList::init_capacity(decls.len());
                             for d in decls.iter_mut() {
-                                dl.append_assume_capacity(core::mem::take(d));
+                                dl.append_assume_capacity(core::mem::replace(
+                                    d,
+                                    bun_ast::g::Decl::new(),
+                                ));
                             }
                             dl
                         },
-                        ..Default::default()
+                        ..S::Local::new()
                     },
                     bun_ast::Loc::EMPTY,
                 )
@@ -2034,7 +2059,7 @@ impl<'a> Parser<'a> {
                 stmts: part_stmts.into(),
                 declared_symbols,
                 tag: bun_ast::PartTag::DirnameFilename,
-                ..Default::default()
+                ..js_ast::Part::new()
             });
         }
 
@@ -2086,7 +2111,7 @@ impl<'a> Parser<'a> {
                 break 'outer;
             }
 
-            let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+            let mut declared_symbols = bun_ast::DeclaredSymbolList::new();
             declared_symbols.ensure_total_capacity(items_count)?;
 
             // For CommonJS modules, use require instead of import
@@ -2105,7 +2130,7 @@ impl<'a> Parser<'a> {
                         let key = p.new_expr(
                             E::String {
                                 data: symbol_name.as_bytes().into(),
-                                ..Default::default()
+                                ..E::String::new()
                             },
                             bun_ast::Loc::EMPTY,
                         );
@@ -2135,7 +2160,7 @@ impl<'a> Parser<'a> {
                 let value = p.new_expr(
                     E::RequireString {
                         import_record_index: import_record_id,
-                        ..Default::default()
+                        ..E::RequireString::new()
                     },
                     bun_ast::Loc::EMPTY,
                 );
@@ -2149,7 +2174,7 @@ impl<'a> Parser<'a> {
                     S::Local {
                         kind: js_ast::LocalKind::KConst,
                         decls,
-                        ..Default::default()
+                        ..S::Local::new()
                     },
                     bun_ast::Loc::EMPTY,
                 );
@@ -2162,7 +2187,7 @@ impl<'a> Parser<'a> {
                         import_record_id,
                     ),
                     tag: bun_ast::PartTag::BunTest,
-                    ..Default::default()
+                    ..js_ast::Part::new()
                 });
             } else {
                 let import_record_id = p.add_import_record(
@@ -2222,7 +2247,7 @@ impl<'a> Parser<'a> {
                         import_record_id,
                     ),
                     tag: bun_ast::PartTag::BunTest,
-                    ..Default::default()
+                    ..js_ast::Part::new()
                 });
             }
 
@@ -2283,7 +2308,8 @@ impl<'a> Parser<'a> {
             // semantically a no-op.
             let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
             let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
-            let jsx_imports = core::mem::take(&mut p.jsx_imports);
+            let jsx_imports =
+                core::mem::replace(&mut p.jsx_imports, super::super::JSXImportSymbols::new());
 
             let mut buf: [&'static [u8]; 3] = [b"", b"", b""];
             let runtime_import_names = jsx_imports.runtime_import_names(&mut buf);
@@ -2351,7 +2377,7 @@ impl<'a> Parser<'a> {
                 );
             }
             if !rc_stmts.is_empty() {
-                let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+                let mut declared_symbols = bun_ast::DeclaredSymbolList::new();
                 let mut import_record_indices: js_ast::PartImportRecordIndices =
                     bun_alloc::AstAlloc::vec();
                 for stmt in &rc_stmts {
@@ -2399,7 +2425,7 @@ impl<'a> Parser<'a> {
                     declared_symbols,
                     import_record_indices,
                     can_be_removed_if_unused: true,
-                    ..Default::default()
+                    ..js_ast::Part::new()
                 });
             }
         }
@@ -2479,7 +2505,7 @@ impl<'a> Parser<'a> {
                         );
                         std::borrow::Cow::Owned(v)
                     },
-                    ..Default::default()
+                    ..bun_ast::Data::new()
                 });
 
                 if uses_module_ref {
@@ -2487,7 +2513,7 @@ impl<'a> Parser<'a> {
                         text: std::borrow::Cow::Borrowed(
                             b"This file is CommonJS because 'module' was used",
                         ),
-                        ..Default::default()
+                        ..bun_ast::Data::new()
                     });
                 }
 
@@ -2496,7 +2522,7 @@ impl<'a> Parser<'a> {
                         text: std::borrow::Cow::Borrowed(
                             b"This file is CommonJS because 'exports' was used",
                         ),
-                        ..Default::default()
+                        ..bun_ast::Data::new()
                     });
                 }
 
@@ -2505,7 +2531,7 @@ impl<'a> Parser<'a> {
                         text: std::borrow::Cow::Borrowed(
                             b"This file is CommonJS because top-level return was used",
                         ),
-                        ..Default::default()
+                        ..bun_ast::Data::new()
                     });
                 }
 
@@ -2514,7 +2540,7 @@ impl<'a> Parser<'a> {
                         text: std::borrow::Cow::Borrowed(
                             b"This file is CommonJS because a \"with\" statement is used",
                         ),
-                        ..Default::default()
+                        ..bun_ast::Data::new()
                     });
                 }
 
@@ -2569,7 +2595,7 @@ impl<'a> Parser<'a> {
         }
         cursor += BUN_PRAGMA.len();
 
-        let mut state = PragmaState::default();
+        let mut state = PragmaState::new();
 
         while cursor < end {
             match contents[cursor] {
@@ -2613,10 +2639,19 @@ impl<'a> Parser<'a> {
     }
 }
 
-#[derive(Default)]
 struct PragmaState {
     seen_cjs: bool,
     seen_bytecode: bool,
+}
+
+impl PragmaState {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            seen_cjs: false,
+            seen_bytecode: false,
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

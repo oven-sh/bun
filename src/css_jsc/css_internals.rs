@@ -158,7 +158,7 @@ fn testing_impl(
         opts
     };
 
-    let mut import_records = Vec::<ImportRecord>::default();
+    let mut import_records = Vec::<ImportRecord>::new();
     match StyleSheet::<DefaultAtRule>::parse(
         alloc,
         source.slice(),
@@ -168,7 +168,7 @@ fn testing_impl(
     ) {
         Ok(ret) => {
             let (mut stylesheet, extra) = ret;
-            let mut minify_options = MinifyOptions::default();
+            let mut minify_options = MinifyOptions::new();
             minify_options.targets.browsers = browsers;
             match stylesheet.minify(alloc, &minify_options, &extra) {
                 Ok(_) => {}
@@ -178,8 +178,8 @@ fn testing_impl(
                 }
             }
 
-            let symbols = bun_ast::symbol::Map::init_list(Default::default());
-            let local_names = LocalsResultsMap::default();
+            let symbols = bun_ast::symbol::Map::init_list(Vec::new());
+            let local_names = LocalsResultsMap::new();
             let result = match stylesheet.to_css(
                 alloc,
                 &PrinterOptions {
@@ -190,9 +190,9 @@ fn testing_impl(
                     },
                     targets: Targets {
                         browsers,
-                        ..Default::default()
+                        ..Targets::new()
                     },
-                    ..Default::default()
+                    ..PrinterOptions::default()
                 },
                 Some(ImportRecordHandler::init_outside_of_bundler(
                     &import_records,
@@ -248,7 +248,7 @@ fn parser_options_from_js(
 }
 
 fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers> {
-    let mut targets = Browsers::default();
+    let mut targets = Browsers::new();
 
     // Table-driven loop. Key order matters: it determines JS getter/exception
     // ordering.
@@ -307,7 +307,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     };
     let minify = minify_arg.is_boolean() && minify_arg.to_boolean();
 
-    let mut targets = Targets::default();
+    let mut targets = Targets::new();
     if let Some(arg) = arguments.next_eat() {
         if arg.is_object() {
             targets.browsers = Some(targets_from_js(global, arg)?);
@@ -318,7 +318,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
     let parser_options = ParserOptions::default(Some(&mut log));
 
-    let mut import_records = Vec::<ImportRecord>::default();
+    let mut import_records = Vec::<ImportRecord>::new();
     match StyleAttribute::parse(
         alloc,
         source.slice(),
@@ -330,7 +330,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             let mut stylesheet = stylesheet_;
             let minify_options = MinifyOptions {
                 targets,
-                ..Default::default()
+                ..MinifyOptions::new()
             };
             stylesheet.minify(minify_options);
 
@@ -339,7 +339,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
                 &PrinterOptions {
                     minify,
                     targets,
-                    ..Default::default()
+                    ..PrinterOptions::default()
                 },
                 Some(ImportRecordHandler::init_outside_of_bundler(
                     &import_records,

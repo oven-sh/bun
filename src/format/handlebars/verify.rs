@@ -319,7 +319,7 @@ impl<'a> Writer<'a> {
     fn body_of(&self, block: NodeId) -> (&'a [NodeId], Range) {
         match self.tree.kind(block) {
             Kind::Block { body, block_params } => (self.list(body), block_params),
-            _ => (&[], Range::default()),
+            _ => (&[], Range::new()),
         }
     }
 

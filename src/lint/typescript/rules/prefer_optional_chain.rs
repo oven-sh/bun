@@ -1654,13 +1654,23 @@ fn fix_chain<'a>(fixer: Fixer<'a>, node: Span, report_range: Span, new_code: Vec
 }
 
 /// The operands that may become one optional chain.
-#[derive(Default)]
 struct SubChain<'a> {
     /// `subChain.flat()`
     operands: Operands<'a>,
     /// `subChain.length`: `x !== null && x !== undefined` at the start counts as one.
     len: usize,
     last_chain: Option<ValidOperand<'a>>,
+}
+
+impl<'a> SubChain<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            operands: Operands::new(),
+            len: 0,
+            last_chain: None,
+        }
+    }
 }
 
 impl<'a> SubChain<'a> {
@@ -1976,7 +1986,7 @@ impl PreferOptionalChain {
         // tsgolint's `buildOrChains` builds one chain. Its `buildAndChains` ends at `shouldStopAtStrictNullishCheck`.
         let builds_one_chain = is_oxlint && operator == BinOp::Or;
         let stops_at_strict_checks = is_oxlint && operator == BinOp::And;
-        let mut sub_chain = SubChain::default();
+        let mut sub_chain = SubChain::new();
         let mut i = 0;
         while let Some(&operand) = chain.get(i) {
             let last_operand = sub_chain.operands.last().copied();
@@ -2043,7 +2053,7 @@ impl PreferOptionalChain {
                     if builds_one_chain {
                         return true;
                     }
-                    sub_chain = SubChain::default();
+                    sub_chain = SubChain::new();
                 } else if goes_on
                     && match (operator, operand.comparison_type) {
                         // `a && a.b && typeof a.b.c === "undefined"`: for tsgolint the chain ends before it.

@@ -11,10 +11,8 @@ use bun_alloc::Arena;
 use bun_ast::ImportKind;
 
 /// A CSS [`<image>`](https://www.w3.org/TR/css-images-3/#image-values) value.
-#[derive(Default)]
 pub enum Image {
     /// The `none` keyword.
-    #[default]
     None,
     /// A `url()`.
     Url(Url),
@@ -148,7 +146,7 @@ impl Image {
         // Determine which prefixes and color fallbacks are needed.
         let prefixes = self.get_necessary_prefixes(targets);
         let fallbacks = self.get_necessary_fallbacks(targets);
-        let mut res: css::SmallList<Image, 6> = css::SmallList::default();
+        let mut res: css::SmallList<Image, 6> = css::SmallList::new();
 
         // Get RGB fallbacks if needed.
         let rgb = if fallbacks.contains(ColorFallbackKind::RGB) {
@@ -470,7 +468,7 @@ impl ImageSetOption {
         // Temporarily ignore the targets while printing here.
         let targets = {
             let targets = dest.targets;
-            dest.targets = css::targets::Targets::default();
+            dest.targets = css::targets::Targets::new();
             targets
         };
         self.resolution.to_css(dest)?;

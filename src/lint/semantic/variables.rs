@@ -167,9 +167,17 @@ pub(crate) struct Above {
 
 /// The patterns that are far above a name, as in `let [a, [b, [c, ..`: to go up from each name
 /// takes quadratic time. Empty in a file without such patterns.
-#[derive(Default)]
 pub(crate) struct DeepPatterns {
     above: FxHashMap<u32, Above>,
+}
+
+impl DeepPatterns {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            above: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 /// The pattern that `pat` is a property or an element of, and its default value there.
@@ -609,7 +617,7 @@ impl Made {
 impl Variables {
     pub(crate) fn new<'a>(file: &'a File<'a>, tree: &ScopeTree) -> Variables {
         let hir = &file.hir;
-        let mut deep_patterns = DeepPatterns::default();
+        let mut deep_patterns = DeepPatterns::new();
         let (mut entries, in_order) = entries_in_order(file, &tree.unvisited, &mut deep_patterns);
         let scope_count = tree.scopes.len();
         let (mut entry_starts, has_names_that_leave_blocks) =

@@ -146,8 +146,8 @@ impl Rule for NoShadowRestrictedNames {
         let state = State {
             numbers: restricted.iter().fold(0, |numbers, name| numbers | 1 << (name.atom().0 % 64)),
             restricted,
-            reported: FxHashSet::default(),
-            seen: IdMap::default(),
+            reported: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            seen: IdMap::init(),
         };
         if state.restricted.is_empty() {
             return None;

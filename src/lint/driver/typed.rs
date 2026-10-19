@@ -190,8 +190,10 @@ impl<'t> Listed<'t> {
     fn new(by_path: &'t ByPath, files: &[Typed], indices: &[usize], cwd: &[u8]) -> Listed<'t> {
         let cwd = crate::paths::from_native(cwd);
         // The files of one configuration have one list, and so have the configurations that say the same.
-        let mut by_config: FxHashMap<*const ResolvedConfig, usize> = FxHashMap::default();
-        let mut by_text: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut by_config: FxHashMap<*const ResolvedConfig, usize> =
+            FxHashMap::with_hasher(bun_sema::util::FxBuild);
+        let mut by_text: FxHashMap<Vec<u8>, usize> =
+            FxHashMap::with_hasher(bun_sema::util::FxBuild);
         let mut lists = Vec::new();
         let of_file = indices.iter().map(|&index| {
             let config = files[index].config;
@@ -248,7 +250,7 @@ fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
     for pattern in patterns {
         list.extend(files_matching(&root, pattern, &ignored));
     }
-    let mut seen = bun_sema::util::FxHashSet::default();
+    let mut seen = bun_sema::util::FxHashSet::with_hasher(bun_sema::util::FxBuild);
     list.retain(|it| seen.insert(it.clone()));
     let in_the_format_of_the_checker = |it: Vec<u8>| from_native(&crate::paths::to_native(it));
     list.into_iter().map(in_the_format_of_the_checker).collect()
@@ -501,7 +503,7 @@ fn check_and_lint_in(
             refuses_broken_configurations: matches!(project, Project::Including(_)),
             // typescript-eslint checks with the compiler of the project. tsgolint has its own files.
             prefers_the_library_of_the_project: matches!(project, Project::Nearest),
-            ..Default::default()
+            ..bun_sema_driver::PlanOptions::new()
         },
         retains_everything: false,
         // A syntax error in one file does not keep the others from being linted.
@@ -515,7 +517,7 @@ fn check_and_lint_in(
     let provided = Provided {
         already_read,
         keeps_byte_order_marks: true,
-        ..Default::default()
+        ..Provided::new()
     };
     let (is_case_sensitive, unreadable, diagnostics, incomplete, refused, without_include) =
         bun_sema_driver::check_provided_then(&request, provided, |report| {
@@ -630,9 +632,9 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
             end: has_place.then_some((diagnostic.end_line, diagnostic.end_column)),
             details: Some(Box::new(Details {
                 help: help.into(),
-                ..Details::default()
+                ..Details::new()
             })),
-            ..LintMessage::default()
+            ..LintMessage::new()
         };
         let at = match noted.iter().position(|it| it.path == path) {
             Some(at) => at,
@@ -658,12 +660,21 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
 }
 
 /// `Context::invalid_tsconfigs`
-#[derive(Default)]
 pub(crate) struct InvalidTsconfigs {
     /// By file.
     pub(crate) results: Vec<FileResult>,
     /// The configuration files of the programs that `results` is about.
     of: Vec<Vec<u8>>,
+}
+
+impl InvalidTsconfigs {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            results: Vec::new(),
+            of: Vec::new(),
+        }
+    }
 }
 
 /// What oxlint makes of an error of the type checker: `typescript(TS2322)`, with the first line of the text. No comment disables it.
@@ -690,7 +701,7 @@ fn type_error(diagnostic: &Diagnostic) -> LintMessage {
             diagnostic.end_line,
             column(diagnostic.end_line, diagnostic.end_column),
         )),
-        ..LintMessage::default()
+        ..LintMessage::new()
     }
 }
 
@@ -709,12 +720,11 @@ fn too_large_for_flow_analysis() -> LintMessage {
             .to_vec(),
         line: 1,
         column: 1,
-        ..LintMessage::default()
+        ..LintMessage::new()
     }
 }
 
 /// Where ESLint's `verifyAndFix` is with a file.
-#[derive(Default)]
 struct Fixing {
     /// `None`: what is on the disk.
     current: Option<Vec<u8>>,
@@ -729,6 +739,21 @@ struct Fixing {
     last_pass: Option<(Vec<RuleId>, bool, usize)>,
 }
 
+impl Fixing {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            current: None,
+            previous: None,
+            passes: 0,
+            is_fixed: false,
+            fixes: 0,
+            is_over: false,
+            last_pass: None,
+        }
+    }
+}
+
 /// Lints `files` with types. `None` for a file that has to be linted without.
 pub(crate) fn lint(
     context: &Context,
@@ -739,7 +764,7 @@ pub(crate) fn lint(
     let mut done: Vec<Option<FileResult>> = files.iter().map(|_| None).collect();
     let state = |file: &Typed| Fixing {
         current: file.text.clone(),
-        ..Fixing::default()
+        ..Fixing::new()
     };
     let mut states: Vec<Fixing> = files.iter().map(state).collect();
     let mut pending: Vec<usize> = (0..files.len()).collect();
@@ -783,7 +808,7 @@ pub(crate) fn lint(
                     is_fixed: was_fixed,
                     fixes,
                     is_over: true,
-                    ..Fixing::default()
+                    ..Fixing::new()
                 };
                 next.push(index);
                 continue;
@@ -840,7 +865,7 @@ pub(crate) fn lint(
                     *state = Fixing {
                         current: file.text.clone(),
                         is_over: true,
-                        ..Fixing::default()
+                        ..Fixing::new()
                     };
                     next.push(index);
                     continue;

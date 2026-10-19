@@ -278,13 +278,26 @@ pub fn is_valid_blob(blob: &[u8]) -> bool {
     true
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct State {
     generated_line: i32,
     generated_column: i32,
     source_index: i32,
     original_line: i32,
     original_column: i32,
+}
+
+impl State {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            generated_line: 0,
+            generated_column: 0,
+            source_index: 0,
+            original_line: 0,
+            original_column: 0,
+        }
+    }
 }
 
 impl State {
@@ -615,7 +628,7 @@ impl InternalSourceMap {
 
         let sync_idx = self.locate_window(target_line, target_col)?;
 
-        let mut state = State::default();
+        let mut state = State::new();
         let mut reader = WindowReader::DANGLING;
         self.seed_window(sync_idx, &mut state, &mut reader);
 
@@ -656,7 +669,7 @@ impl Cursor {
     pub(crate) fn init(map: InternalSourceMap) -> Cursor {
         Cursor {
             map,
-            state: State::default(),
+            state: State::new(),
             peek: None,
             reader: WindowReader::DANGLING,
             sync_idx: 0,
@@ -704,7 +717,7 @@ impl Cursor {
                 return None;
             }
             self.sync_idx += 1;
-            let mut seed = State::default();
+            let mut seed = State::new();
             self.map
                 .seed_window(self.sync_idx, &mut seed, &mut self.reader);
             return Some(seed);
@@ -742,12 +755,12 @@ impl InternalSourceMap {
             .mapping_count()
             .min((n_sync as usize).saturating_mul(SYNC_INTERVAL));
         let _ = out.grow_if_needed(count.saturating_mul(6));
-        let mut prev = SourceMapState::default();
+        let mut prev = SourceMapState::new();
         let mut generated_line: i32 = 0;
 
         let mut idx: u32 = 0;
         while idx < n_sync {
-            let mut state = State::default();
+            let mut state = State::new();
             let mut reader = WindowReader::DANGLING;
             self.seed_window(idx, &mut state, &mut reader);
             emit_vlq(&state, &mut prev, &mut generated_line, out);
@@ -817,8 +830,8 @@ pub struct Builder {
     finalized: Option<MutableString>,
 }
 
-impl Default for Builder {
-    fn default() -> Self {
+impl Builder {
+    pub fn new() -> Self {
         Builder {
             generated_line: 0,
             pending_generated_line_delta: 0,
@@ -838,7 +851,7 @@ impl Default for Builder {
 
 impl Builder {
     pub(crate) fn init() -> Builder {
-        Builder::default()
+        Builder::new()
     }
 
     // `deinit` deleted: Vec/Option<MutableString> fields drop automatically.
@@ -1241,7 +1254,7 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
             source_index,
             original_line,
             original_column,
-            ..SourceMapState::default()
+            ..SourceMapState::new()
         });
     }
 

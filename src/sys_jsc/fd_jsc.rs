@@ -49,7 +49,7 @@ impl FdJsc for Fd {
                 RangeErrorOptions {
                     field_name: b"fd",
                     msg: b"an integer",
-                    ..Default::default()
+                    ..RangeErrorOptions::new()
                 },
             ));
         }
@@ -62,7 +62,7 @@ impl FdJsc for Fd {
                 RangeErrorOptions {
                     field_name: b"fd",
                     msg: range.as_bytes(),
-                    ..Default::default()
+                    ..RangeErrorOptions::new()
                 },
             ));
         }
@@ -86,7 +86,7 @@ impl FdJsc for Fd {
                 let err_instance = (bun_jsc::SystemError {
                     message: bun_core::String::static_("EMFILE, too many open files"),
                     code: bun_core::String::static_("EMFILE"),
-                    ..Default::default()
+                    ..bun_jsc::SystemError::new()
                 })
                 .to_error_instance(global);
                 let _ = global.vm().throw_error(global, err_instance);

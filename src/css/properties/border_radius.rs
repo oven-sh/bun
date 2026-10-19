@@ -138,7 +138,6 @@ impl BorderRadius {
     // eql comes from #[derive(PartialEq)].
 }
 
-#[derive(Default)]
 pub struct BorderRadiusHandler {
     pub(crate) top_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
     pub(crate) top_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
@@ -152,6 +151,24 @@ pub struct BorderRadiusHandler {
     // PropertyCategory::default() == Physical (see src/css/logical.rs).
     pub(crate) category: PropertyCategory,
     pub(crate) has_any: bool,
+}
+
+impl BorderRadiusHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            top_left: None,
+            top_right: None,
+            bottom_right: None,
+            bottom_left: None,
+            start_start: None,
+            start_end: None,
+            end_end: None,
+            end_start: None,
+            category: PropertyCategory::Physical,
+            has_any: false,
+        }
+    }
 }
 
 // There is no field-by-name reflection, so these helpers are

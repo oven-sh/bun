@@ -49,11 +49,11 @@ pub(crate) struct InternalMsgHolder {
     pub(crate) messages: Vec<bun_jsc::StrongOptional>,
 }
 
-impl Default for InternalMsgHolder {
-    fn default() -> Self {
+impl InternalMsgHolder {
+    pub(crate) fn new() -> Self {
         Self {
             seq: 0,
-            callbacks: bun_collections::ArrayHashMap::default(),
+            callbacks: bun_collections::ArrayHashMap::new(),
             worker: bun_jsc::StrongOptional::empty(),
             cb: bun_jsc::StrongOptional::empty(),
             messages: Vec::new(),
@@ -152,8 +152,8 @@ enum IncomingBuffer {
 impl IncomingBuffer {
     fn init(mode: Mode) -> IncomingBuffer {
         match mode {
-            Mode::Advanced => IncomingBuffer::Advanced(Vec::<u8>::default()),
-            Mode::Json => IncomingBuffer::Json(JSONLineBuffer::default()),
+            Mode::Advanced => IncomingBuffer::Advanced(Vec::<u8>::new()),
+            Mode::Json => IncomingBuffer::Json(JSONLineBuffer::new()),
         }
     }
 }
@@ -835,7 +835,7 @@ fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
         "",
         __jsc_host_close_sent_handle,
         1,
-        Default::default(),
+        bun_jsc::js_function::CreateJSFunctionOptions::new(),
     )
 }
 
@@ -860,7 +860,6 @@ impl WindowsWrite {
 }
 
 #[cfg(windows)]
-#[derive(Default)]
 pub(crate) struct WindowsState {
     /// Non-owning raw pointer. The allocation
     /// is `heap::alloc`'d in `write` and freed exactly once by
@@ -868,6 +867,17 @@ pub(crate) struct WindowsState {
     /// field never frees.
     pub(crate) windows_write: Option<*mut WindowsWrite>,
     pub(crate) try_close_after_write: bool,
+}
+
+#[cfg(windows)]
+impl WindowsState {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            windows_write: None,
+            try_close_after_write: false,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -978,7 +988,7 @@ impl SendQueueOwner {
                 .this_value
                 .get()
                 .try_get()
-                .unwrap_or_default(),
+                .unwrap_or_else(JSValue::new),
             SendQueueOwner::Instance(_) => JSValue::ZERO,
         }
     }
@@ -1030,11 +1040,11 @@ impl SendQueue {
             queue: JsCell::new(Vec::new()),
             waiting_for_ack: JsCell::new(None),
             retry_count: Cell::new(0),
-            keep_alive: JsCell::new(KeepAlive::default()),
+            keep_alive: JsCell::new(KeepAlive::new()),
             #[cfg(debug_assertions)]
             has_written_version: Cell::new(0),
             mode,
-            internal_msg_queue: JsCell::new(InternalMsgHolder::default()),
+            internal_msg_queue: JsCell::new(InternalMsgHolder::new()),
             incoming: JsCell::new(IncomingBuffer::init(mode)),
             incoming_fd: Cell::new(None),
             socket: JsCell::new(socket),
@@ -1046,7 +1056,7 @@ impl SendQueue {
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
             #[cfg(windows)]
-            windows: JsCell::new(WindowsState::default()),
+            windows: JsCell::new(WindowsState::new()),
         });
         this.root.set(Some(this.as_non_null()));
         this
@@ -1600,7 +1610,7 @@ impl SendQueue {
         if !bytes.is_empty() {
             self.queue.with_mut(|queue| {
                 queue.push(SendHandle {
-                    data: StreamBuffer::default(),
+                    data: StreamBuffer::new(),
                     handle: None,
                     callbacks: CallbackList::None,
                 });
@@ -1627,7 +1637,7 @@ impl SendQueue {
         log!("SendQueue#serializeAndSend");
         let indicate_backoff = self.waiting_for_ack.get().is_some() && !self.queue.get().is_empty();
         let mode = self.mode;
-        let mut payload = StreamBuffer::default();
+        let mut payload = StreamBuffer::new();
         let payload_length = match serialize(mode, &mut payload, global, value, is_internal) {
             Ok(n) => n,
             Err(_) => return SerializeAndSendResult::Failure,
@@ -2130,7 +2140,7 @@ fn handle_ipc_message(
                     get_nack_packet(send_queue.mode)
                 };
                 let mut handle = SendHandle {
-                    data: StreamBuffer::default(),
+                    data: StreamBuffer::new(),
                     handle: None,
                     callbacks: CallbackList::AckNack,
                 };
@@ -2210,7 +2220,7 @@ fn handle_ipc_message(
                         get_nack_packet(send_queue.mode)
                     };
                     let mut reply = SendHandle {
-                        data: StreamBuffer::default(),
+                        data: StreamBuffer::new(),
                         handle: None,
                         callbacks: CallbackList::AckNack,
                     };

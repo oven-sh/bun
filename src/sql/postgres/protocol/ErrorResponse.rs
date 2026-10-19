@@ -2,9 +2,17 @@ use crate::postgres::AnyPostgresError;
 use crate::postgres::protocol::field_message::FieldMessage;
 use crate::postgres::protocol::new_reader::NewReader;
 
-#[derive(Default)]
 pub struct ErrorResponse {
     pub messages: Vec<FieldMessage>,
+}
+
+impl ErrorResponse {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            messages: Vec::new(),
+        }
+    }
 }
 
 impl ErrorResponse {
@@ -17,7 +25,7 @@ impl ErrorResponse {
                 messages: FieldMessage::decode_list::<Container>(reader, remaining_bytes)?,
             });
         }
-        Ok(Self::default())
+        Ok(Self::new())
     }
 
     fn has_code(&self, sqlstate: &[u8]) -> bool {

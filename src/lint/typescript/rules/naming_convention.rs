@@ -352,7 +352,6 @@ impl NormalizedMatchRegex {
 }
 
 /// Upstream's `NormalizedSelector` without the `selector`.
-#[derive(Default)]
 struct NormalizedOption {
     custom: Option<NormalizedMatchRegex>,
     filter: Option<NormalizedMatchRegex>,
@@ -364,6 +363,24 @@ struct NormalizedOption {
     prefix: Vec<Vec<u8>>,
     suffix: Vec<Vec<u8>>,
     types: Option<u32>,
+}
+
+impl NormalizedOption {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            custom: None,
+            filter: None,
+            format: Vec::new(),
+            leading_underscore: None,
+            trailing_underscore: None,
+            modifiers: 0,
+            modifier_weight: 0,
+            prefix: Vec::new(),
+            suffix: Vec::new(),
+            types: None,
+        }
+    }
 }
 
 /// Upstream's `normalizeOption`: the selectors, and what applies to all of them.
@@ -408,7 +425,7 @@ fn default_options() -> Vec<(Vec<i32>, NormalizedOption)> {
             format: format.to_vec(),
             leading_underscore: underscore,
             trailing_underscore: underscore,
-            ..NormalizedOption::default()
+            ..NormalizedOption::new()
         };
         (parse_selector(selector.as_bytes()).into_iter().collect(), normalized)
     };
@@ -616,7 +633,7 @@ fn is_unused<'a>(cx: &Cx<'a, NamingConvention>, name: Name<'a>, scope: Option<Sc
         return false;
     };
     let analysis = &cx.state.analysis;
-    analysis.get_or_init(|| collect_variables(cx.file(), UsedMarks::default())).is_unused(variable)
+    analysis.get_or_init(|| collect_variables(cx.file(), UsedMarks::new())).is_unused(variable)
 }
 
 /// ESTree's `FunctionDeclaration`, `TSDeclareFunction`, `TSEmptyBodyFunctionExpression`,
@@ -631,10 +648,18 @@ fn is_function_node(func: Func) -> bool {
     }
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// Upstream's `collectVariables(context)`, if a selector asks for `unused`.
     analysis: OnceCell<VariableAnalysis<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            analysis: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 /// Those of the modifiers `global`, `exported` and `unused` that are among `wanted` and that `name` has in `scope`.
@@ -1080,7 +1105,7 @@ impl Rule for NamingConvention {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

@@ -74,11 +74,20 @@ enum Misuse {
 
 /// What has been found out about types: each constituent of a union is looked at, several times, and many spreads have
 /// the same type.
-#[derive(Default)]
 pub struct State<'a> {
     in_objects: IdMap<Type<'a>, Option<Misuse>>,
     /// Whether a spread in an array or a call is to be reported.
     in_lists: IdMap<Type<'a>, bool>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            in_objects: IdMap::init(),
+            in_lists: IdMap::init(),
+        }
+    }
 }
 
 fn is_type_recurser<'a>(ty: Type<'a>, predicate: &impl Fn(Type<'a>) -> bool) -> bool {
@@ -323,7 +332,7 @@ impl Rule for NoMisusedSpread {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {

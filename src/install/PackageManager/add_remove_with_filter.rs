@@ -39,7 +39,7 @@ pub(crate) struct WorkspaceTarget {
 impl WorkspaceTarget {
     pub(crate) fn root() -> WorkspaceTarget {
         WorkspaceTarget {
-            name: Box::default(),
+            name: Box::new([]),
             name_hash: None,
             package_json_path: root_package_json_path(),
         }
@@ -610,7 +610,7 @@ impl PendingWrite {
             );
             let outer = core::mem::replace(
                 &mut manager.updating_packages,
-                core::mem::take(&mut pending.updating),
+                core::mem::replace(&mut pending.updating, StringArrayHashMap::init()),
             );
             let summary_workspace =
                 core::mem::replace(&mut manager.workspace_name_hash, pending.target.name_hash);
@@ -623,7 +623,7 @@ impl PendingWrite {
                 dependency_list,
                 EditOptions {
                     exact_versions,
-                    ..Default::default()
+                    ..EditOptions::new()
                 },
             );
             manager.workspace_name_hash = summary_workspace;
@@ -705,11 +705,12 @@ pub(super) fn update_filtered_workspaces_and_install(
             if !remove_dependencies_from_package_json(&mut root, &updates) {
                 continue;
             }
-            (Box::default(), StringArrayHashMap::default())
+            (Box::new([]), StringArrayHashMap::init())
         } else {
             let wanted_len = move_to_front(&mut updates, &wanted);
             reset_e_strings(&mut updates);
-            let outer = core::mem::take(&mut manager.updating_packages);
+            let outer =
+                core::mem::replace(&mut manager.updating_packages, StringArrayHashMap::init());
             let mut slice: &mut [UpdateRequest] = &mut updates[..wanted_len];
             let result = add_catalog::edit_target(
                 manager,
@@ -719,18 +720,20 @@ pub(super) fn update_filtered_workspaces_and_install(
                 EditOptions {
                     exact_versions,
                     before_install: true,
-                    ..Default::default()
+                    ..EditOptions::new()
                 },
             );
             let kept = slice.len();
             let mine = core::mem::replace(&mut manager.updating_packages, outer);
             result?;
             for (name, info) in mine.iter() {
-                let entry = manager.updating_packages.get_or_put(name)?;
+                let entry = manager
+                    .updating_packages
+                    .get_or_put(name, PackageUpdateInfo::new)?;
                 if !entry.found_existing {
                     *entry.value_ptr = PackageUpdateInfo {
                         original_version_literal: info.original_version_literal.clone(),
-                        ..Default::default()
+                        ..PackageUpdateInfo::new()
                     };
                 }
             }

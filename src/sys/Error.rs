@@ -34,14 +34,14 @@ pub struct Error {
     pub dest: Box<[u8]>,
 }
 
-impl Default for Error {
-    fn default() -> Self {
+impl Error {
+    pub fn init() -> Self {
         Self {
             errno: TODO_ERRNO,
             fd: Fd::INVALID,
-            path: Box::default(),
+            path: Box::new([]),
             syscall: Tag::TODO,
-            dest: Box::default(),
+            dest: Box::new([]),
         }
     }
 }
@@ -77,7 +77,7 @@ impl Error {
         Error {
             errno: errno.into_errno_int(),
             syscall: syscall_tag,
-            ..Default::default()
+            ..Error::init()
         }
     }
 
@@ -94,7 +94,7 @@ impl Error {
         Error {
             errno: errno as Int,
             syscall: syscall_tag,
-            ..Default::default()
+            ..Error::init()
         }
     }
 
@@ -104,7 +104,7 @@ impl Error {
         Error {
             errno: errno as Int,
             syscall: syscall_tag,
-            ..Default::default()
+            ..Error::init()
         }
     }
 
@@ -150,7 +150,7 @@ impl Error {
         Error {
             errno: E::ENOMEM as Int,
             syscall: Tag::read,
-            ..Default::default()
+            ..Error::init()
         }
     }
 
@@ -161,7 +161,7 @@ impl Error {
         Error {
             errno: RETRY_ERRNO,
             syscall: Tag::read,
-            ..Default::default()
+            ..Error::init()
         }
     }
 
@@ -172,7 +172,7 @@ impl Error {
             errno: self.errno,
             syscall: self.syscall,
             fd,
-            ..Default::default()
+            ..Error::init()
         }
     }
 
@@ -184,7 +184,7 @@ impl Error {
             syscall: self.syscall,
             // PERF: clones the slice into a Box — profile if hot.
             path: Box::from(path),
-            ..Default::default()
+            ..Error::init()
         }
     }
 
@@ -195,7 +195,7 @@ impl Error {
             syscall: syscall_,
             // PERF: clones the slice into a Box — profile if hot.
             path: Box::from(path),
-            ..Default::default()
+            ..Error::init()
         }
     }
 
@@ -221,7 +221,7 @@ impl Error {
             // PERF: clones the slices into Boxes — profile if hot.
             path: Box::from(path),
             dest: Box::from(dest),
-            ..Default::default()
+            ..Error::init()
         }
     }
 
@@ -234,8 +234,8 @@ impl Error {
             errno: self.errno,
             fd: self.fd,
             syscall: self.syscall,
-            path: Box::default(),
-            dest: Box::default(),
+            path: Box::new([]),
+            dest: Box::new([]),
         }
     }
 
@@ -301,7 +301,7 @@ impl Error {
         let mut err = SystemError {
             errno: js_errno,
             syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
-            ..Default::default()
+            ..SystemError::new()
         };
 
         // both maps are total (`initFull("unknown error")`).
@@ -415,7 +415,7 @@ impl Error {
         Error {
             errno: TODO_ERRNO,
             syscall: Tag::TODO,
-            ..Default::default()
+            ..Error::init()
         }
     }
 }

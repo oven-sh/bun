@@ -179,7 +179,6 @@ struct Frame {
 }
 
 /// The vectors of a [`Printer`], which keep their capacity from one file to the next.
-#[derive(Default)]
 pub(crate) struct PrinterBuffers {
     /// What is to be printed after the current run. The last comes first.
     queue: Vec<Run>,
@@ -202,8 +201,26 @@ pub(crate) struct PrinterBuffers {
     pub(crate) marks: [Option<u32>; 2],
 }
 
+impl PrinterBuffers {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            queue: Vec::new(),
+            frames: Vec::new(),
+            indentions: Vec::new(),
+            history: Vec::new(),
+            suffix_indentions: Vec::new(),
+            line_suffixes: Vec::new(),
+            group_modes: Vec::new(),
+            measure_queue: Vec::new(),
+            measure_frames: Vec::new(),
+            before_try: BeforeTry::new(),
+            marks: [None; 2],
+        }
+    }
+}
+
 /// Copies of the vectors that printing not only adds to, as they were before the try. The others are cut back to their length.
-#[derive(Default)]
 struct BeforeTry {
     indentions: Vec<Indention>,
     history: Vec<Indention>,
@@ -216,6 +233,21 @@ struct BeforeTry {
     /// Those that were being printed when a try ended early, the innermost first. Tried by itself, each would end the same
     /// way: from its first line break on, what it prints does not depend on what is before it on the line.
     unstable: Vec<u32>,
+}
+
+impl BeforeTry {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            indentions: Vec::new(),
+            history: Vec::new(),
+            suffix_indentions: Vec::new(),
+            line_suffixes: Vec::new(),
+            noted_groups: Vec::new(),
+            inner: Vec::new(),
+            unstable: Vec::new(),
+        }
+    }
 }
 
 struct Printer<'d> {
@@ -264,7 +296,7 @@ pub(crate) fn print(
         mode: PrintMode::Expanded,
     });
     buffers.indentions.clear();
-    buffers.indentions.push(Indention::default());
+    buffers.indentions.push(Indention::new());
     buffers.history.clear();
     buffers.suffix_indentions.clear();
     buffers.line_suffixes.clear();
@@ -283,7 +315,7 @@ pub(crate) fn print(
             out,
             (source.len() + source.len() / 8).min(root.len as usize * 16) + 64,
         ),
-        pending_indent: Indention::default(),
+        pending_indent: Indention::new(),
         pending_space: false,
         measured_group_fits: true,
         is_trying: false,
@@ -403,7 +435,7 @@ impl<'d> Printer<'d> {
             .and_then(|before| self.pool.get(before))
         {
             Some(FormatElement::Skip(skip)) if skip.len == interned.len => skip.flat,
-            _ => Flat::default(),
+            _ => Flat::new(),
         }
     }
 
@@ -419,7 +451,11 @@ impl<'d> Printer<'d> {
 
     #[inline]
     fn indention(&self) -> Indention {
-        self.buffers.indentions.last().copied().unwrap_or_default()
+        self.buffers
+            .indentions
+            .last()
+            .copied()
+            .unwrap_or_else(Indention::new)
     }
 
     #[inline]
@@ -580,7 +616,7 @@ impl<'d> Printer<'d> {
                         }
                     }
                     Tag::StartDedent(DedentMode::Root) => {
-                        self.buffers.indentions.push(Indention::default())
+                        self.buffers.indentions.push(Indention::new())
                     }
                     Tag::StartAlign(align) => {
                         let next = self.indention().set_align(align.count());
@@ -1076,7 +1112,7 @@ impl<'d> Printer<'d> {
 
     #[inline(never)]
     fn print_pending_indent(&mut self) {
-        let indent = std::mem::take(&mut self.pending_indent);
+        let indent = std::mem::replace(&mut self.pending_indent, Indention::new());
         let (level, align) = (indent.level() as usize, indent.align() as usize);
         let width = level * self.options.indent_width as usize;
         match self.options.indent_style {
@@ -1239,8 +1275,8 @@ pub(crate) enum Indention {
     },
 }
 
-impl Default for Indention {
-    fn default() -> Self {
+impl Indention {
+    pub(crate) fn new() -> Self {
         Indention::Level(0)
     }
 }

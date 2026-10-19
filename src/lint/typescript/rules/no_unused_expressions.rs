@@ -21,14 +21,14 @@ impl Rule for NoUnusedExpressions {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Prologue<'a>> {
-        Some(Prologue::default())
+        Some(Prologue::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if is_plainly_used(statement) {
             return;
         }
-        let mut prologue = std::mem::take(&mut cx.state);
+        let mut prologue = std::mem::replace(&mut cx.state, Prologue::new());
         check(self.config, statement, &mut prologue, cx);
         cx.state = prologue;
     }

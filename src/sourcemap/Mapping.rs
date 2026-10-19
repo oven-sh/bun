@@ -50,11 +50,22 @@ pub struct Mapping {
 }
 
 /// Optimization: if we don't care about the "names" column, then don't store the names.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct MappingWithoutName {
     pub(crate) generated: LineColumnOffset,
     pub(crate) original: LineColumnOffset,
     pub(crate) source_index: i32,
+}
+
+impl MappingWithoutName {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            generated: LineColumnOffset::new(),
+            original: LineColumnOffset::new(),
+            source_index: 0,
+        }
+    }
 }
 
 impl MappingWithoutName {
@@ -73,9 +84,9 @@ pub enum ListValue {
     WithNames(MultiArrayList<Mapping>),
 }
 
-impl Default for ListValue {
-    fn default() -> Self {
-        ListValue::WithoutNames(MultiArrayList::default())
+impl ListValue {
+    pub fn new() -> Self {
+        ListValue::WithoutNames(MultiArrayList::new())
     }
 }
 
@@ -104,11 +115,21 @@ impl ListValue {
     }
 }
 
-#[derive(Default)]
 pub struct List {
     pub(crate) r#impl: ListValue,
     pub(crate) names: Box<[SemverString]>,
     pub(crate) names_buffer: Vec<u8>,
+}
+
+impl List {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            r#impl: ListValue::new(),
+            names: Box::new([]),
+            names_buffer: Vec::new(),
+        }
+    }
 }
 
 impl List {
@@ -122,12 +143,12 @@ impl List {
         // end of scope.
         let ListValue::WithoutNames(without_names) = core::mem::replace(
             &mut self.r#impl,
-            ListValue::WithNames(MultiArrayList::default()),
+            ListValue::WithNames(MultiArrayList::new()),
         ) else {
             unreachable!()
         };
 
-        let mut with_names: MultiArrayList<Mapping> = MultiArrayList::default();
+        let mut with_names: MultiArrayList<Mapping> = MultiArrayList::new();
         with_names.ensure_total_capacity(without_names.len())?;
         // `without_names` drops at end of scope (was `defer without_names.deinit(allocator)`).
 
@@ -420,10 +441,20 @@ impl Mapping {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct ParseOptions {
     pub allow_names: bool,
     pub sort: bool,
+}
+
+impl ParseOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            allow_names: false,
+            sort: false,
+        }
+    }
 }
 
 const HALF_USIZE: usize = size_of::<usize>() / 2;
@@ -444,14 +475,14 @@ pub fn parse(
 ) -> ParseResult {
     scoped_log!(SourceMap, "parse mappings ({} bytes)", bytes.len());
 
-    let mut mapping = List::default();
+    let mut mapping = List::new();
     // `errdefer mapping.deinit(allocator)` deleted: `List: Drop` and this fn returns no error union.
 
     if let Some(count) = estimated_mapping_count {
         if mapping.ensure_total_capacity(count).is_err() {
             return Err(ParseFail {
                 err: crate::Error::Alloc(bun_alloc::AllocError),
-                loc: Loc::default(),
+                loc: Loc::new(),
             });
         }
     }
@@ -499,7 +530,7 @@ pub fn parse(
             SimdResult::OutOfMemory => {
                 return Err(ParseFail {
                     err: crate::Error::Alloc(bun_alloc::AllocError),
-                    loc: Loc::default(),
+                    loc: Loc::new(),
                 });
             }
         }
@@ -723,7 +754,7 @@ pub fn parse(
         mapping.sort();
     }
 
-    let mut psm = ParsedSourceMap::default();
+    let mut psm = ParsedSourceMap::new();
     psm.mappings = mapping;
     psm.input_line_count = input_line_count;
     Ok(psm)
@@ -782,7 +813,7 @@ fn parse_simd(
         }
     }
 
-    let mut state = ParseMappingsState::default();
+    let mut state = ParseMappingsState::new();
     let mut err_at: usize = 0;
 
     let base = mapping.len();

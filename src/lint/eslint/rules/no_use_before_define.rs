@@ -140,12 +140,21 @@ pub fn is_named_export(reference: Reference) -> bool {
 /// That loop goes up from the name, once for each reference. Here it is known where it ends, and from the reference
 /// in whose initializer that is: if the name is in the same declarator, element, property, parameter or assignment,
 /// the loop has passed it.
-#[derive(Default)]
 pub struct Initializers<'a> {
     /// What the loop does not leave, from a node.
     ends: AncestorMemo<'a, Node<'a>>,
     /// The nearest node in whose initializer a node is.
     owners: AncestorMemo<'a, Node<'a>>,
+}
+
+impl<'a> Initializers<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            ends: AncestorMemo::new(),
+            owners: AncestorMemo::new(),
+        }
+    }
 }
 
 /// The declaration of a variable, for [`Initializers::has`].
@@ -445,7 +454,7 @@ impl Rule for NoUseBeforeDefine {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Initializers<'a>> {
-        Some(Initializers::default())
+        Some(Initializers::new())
     }
 
     fn symbol<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {

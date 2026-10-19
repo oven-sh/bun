@@ -28,11 +28,21 @@ type RefSet = crate::collections::FxHashSet<Ref>;
 )]
 type RefMap<V> = crate::collections::FxHashMap<Ref, V>;
 
-#[derive(Default)]
 struct BindingInfo {
     reassigned: bool,
     reassigned_by_inner_fn: bool,
     referenced_by_inner_fn: bool,
+}
+
+impl BindingInfo {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            reassigned: false,
+            reassigned_by_inner_fn: false,
+            referenced_by_inner_fn: false,
+        }
+    }
 }
 
 struct ContextIdentifierVisitor<'a> {
@@ -129,7 +139,10 @@ impl<'a> ContextIdentifierVisitor<'a> {
             return;
         }
         let ref_ = self.resolve_ref(ref_);
-        let info = self.binding_info.entry(ref_).or_default();
+        let info = self
+            .binding_info
+            .entry(ref_)
+            .or_insert_with(BindingInfo::new);
         info.reassigned = true;
         if self.function_stack.last().is_some() {
             self.inner_reassignments.push((ref_, self.depth()));
@@ -670,8 +683,8 @@ pub(crate) fn find_context_identifiers(
         env,
         scope_stack: vec![host.module_scope()],
         function_stack: Vec::new(),
-        binding_info: RefMap::default(),
-        decl_depth: RefMap::default(),
+        binding_info: RefMap::with_hasher(rustc_hash::FxBuildHasher),
+        decl_depth: RefMap::with_hasher(rustc_hash::FxBuildHasher),
         inner_references: Vec::new(),
         inner_reassignments: Vec::new(),
         error: None,
@@ -701,13 +714,19 @@ pub(crate) fn find_context_identifiers(
     // collected declaration depths.
     for (ref_, fn_depth) in core::mem::take(&mut visitor.inner_references) {
         if is_captured_by_function(visitor.decl_depth.get(&ref_).copied(), fn_depth) {
-            let info = visitor.binding_info.entry(ref_).or_default();
+            let info = visitor
+                .binding_info
+                .entry(ref_)
+                .or_insert_with(BindingInfo::new);
             info.referenced_by_inner_fn = true;
         }
     }
     for (ref_, fn_depth) in core::mem::take(&mut visitor.inner_reassignments) {
         if is_captured_by_function(visitor.decl_depth.get(&ref_).copied(), fn_depth) {
-            let info = visitor.binding_info.entry(ref_).or_default();
+            let info = visitor
+                .binding_info
+                .entry(ref_)
+                .or_insert_with(BindingInfo::new);
             info.reassigned_by_inner_fn = true;
         }
     }

@@ -258,7 +258,7 @@ where
                     relative_path,
                     bun_fmt::PathFormatOptions {
                         path_sep: bun_fmt::PathSep::Posix,
-                        ..Default::default()
+                        ..bun_fmt::PathFormatOptions::new()
                     },
                 )
             ))?;

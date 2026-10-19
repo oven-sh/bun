@@ -62,12 +62,12 @@ pub struct FileReader {
     pub(crate) sink_paused: Cell<bool>,
 }
 
-impl Default for FileReader {
-    fn default() -> Self {
+impl FileReader {
+    pub fn new() -> Self {
         Self {
             reader: UnsafeCell::new(IOReader::init::<FileReader>()),
             done: Cell::new(false),
-            pending: JsCell::new(streams::Pending::default()),
+            pending: JsCell::new(streams::Pending::new()),
             pending_value: JsCell::new(Strong::empty()),
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
@@ -102,8 +102,8 @@ pub(crate) struct OpenedFileBlob {
     pub(crate) file_type: FileType,
 }
 
-impl Default for OpenedFileBlob {
-    fn default() -> Self {
+impl OpenedFileBlob {
+    pub(crate) fn new() -> Self {
         Self {
             fd: Fd::INVALID,
             pollable: false,
@@ -123,7 +123,7 @@ impl Lazy {
     pub(crate) fn open_file_blob(file: &mut blob::store::File) -> sys::Result<OpenedFileBlob> {
         let mut this = OpenedFileBlob {
             fd: Fd::INVALID,
-            ..Default::default()
+            ..OpenedFileBlob::new()
         };
         let mut file_buf = bun_paths::path_buffer_pool::get();
         #[cfg(unix)]
@@ -732,7 +732,7 @@ impl FileReader {
             .get()
             .get()
             .and_then(|view| view.as_array_buffer(&global))
-            .unwrap_or_default();
+            .unwrap_or_else(bun_jsc::ArrayBuffer::new);
         let pending_buf = pending_array_buffer.slice_mut();
         let ret = if chunk.is_empty() {
             let buffered = self.buffered.replace(Vec::new());
@@ -741,7 +741,7 @@ impl FileReader {
             } else if pending_buf.len() >= buffered.len() {
                 pending_buf[..buffered.len()].copy_from_slice(&buffered);
                 streams::Result::IntoArrayAndDone(streams::IntoArray {
-                    value: self.pending_value.get().get().unwrap_or_default(),
+                    value: self.pending_value.get().get().unwrap_or_else(JSValue::new),
                     len: buffered.len() as u64,
                 })
             } else {
@@ -753,7 +753,7 @@ impl FileReader {
             let result = if pending_buf.len() >= chunk.len() {
                 pending_buf[..chunk.len()].copy_from_slice(&chunk);
                 let into = streams::IntoArray {
-                    value: self.pending_value.get().get().unwrap_or_default(),
+                    value: self.pending_value.get().get().unwrap_or_else(JSValue::new),
                     len: chunk.len() as u64,
                 };
                 if was_done {
@@ -883,7 +883,7 @@ impl FileReader {
         }
 
         if self.reader().has_pending_read() {
-            return Vec::<u8>::default();
+            return Vec::<u8>::new();
         }
 
         Vec::<u8>::move_from_list(mem::take(self.reader().buffer()))

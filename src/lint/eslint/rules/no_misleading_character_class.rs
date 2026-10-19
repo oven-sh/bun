@@ -284,12 +284,12 @@ impl NoMisleadingCharacterClass {
         if !may_be_misleading(pattern) {
             return;
         }
-        let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default())
+        let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::new())
         else {
             return;
         };
         let node = PatternNode::new(node);
-        let mut found = Found::default();
+        let mut found = core::array::from_fn(|_| Vec::new());
         for class in ast.root().descendants().filter(|it| it.ty() == NodeType::CharacterClass) {
             // A range takes a part of a sequence of characters, which this gives back.
             let mut sequence: SmallVec<[Character; 8]> = SmallVec::new();

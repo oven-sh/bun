@@ -21,9 +21,15 @@ impl PathLike for bun_paths::fs::Path<'_> {
 /// The lifetime of the keys are not owned by this map.
 ///
 /// We assume it's arena allocated.
-#[derive(Default)]
 pub struct PathToSourceIndexMap {
     pub(crate) map: Map,
+}
+
+impl PathToSourceIndexMap {
+    #[inline]
+    pub fn new() -> Self {
+        Self { map: Map::init() }
+    }
 }
 
 pub type Map = StringHashMap<IndexInt>;
@@ -58,7 +64,7 @@ impl PathToSourceIndexMap {
         text: impl AsRef<[u8]>,
     ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
         // PERF: see note in `put` re: key duplication.
-        self.map.get_or_put(text.as_ref())
+        self.map.get_or_put(text.as_ref(), || 0)
     }
 
     pub fn remove(&mut self, text: impl AsRef<[u8]>) -> bool {

@@ -75,13 +75,13 @@ pub(crate) struct ServerConfig {
     pub(crate) bake: Option<crate::bake::UserOptions>,
 }
 
-impl Default for ServerConfig {
-    fn default() -> Self {
+impl ServerConfig {
+    pub(crate) fn new() -> Self {
         Self {
-            address: Address::default(),
+            address: Address::new(),
             idle_timeout: 10,
             has_idle_timeout: false,
-            base_uri: Box::default(),
+            base_uri: Box::new([]),
             ssl_config: None,
             sni: None,
             max_request_body_size: 1024 * 1024 * 128,
@@ -94,7 +94,7 @@ impl Default for ServerConfig {
             is_node_http_server: false,
             websocket: None,
             reuse_port: false,
-            id: Box::default(),
+            id: Box::new([]),
             allow_hot: true,
             ipv6_only: false,
             http3: false,
@@ -118,8 +118,8 @@ pub(crate) enum Address {
     Unix(ZBox),
 }
 
-impl Default for Address {
-    fn default() -> Self {
+impl Address {
+    pub(crate) fn new() -> Self {
         Address::Tcp {
             port: 0,
             hostname: None,
@@ -199,10 +199,10 @@ impl RouteMethod {
     }
 }
 
-impl Default for RouteDeclaration {
-    fn default() -> Self {
+impl RouteDeclaration {
+    pub(crate) fn new() -> Self {
         Self {
-            path: ZBox::default(),
+            path: ZBox::new(),
             method: RouteMethod::Any,
         }
     }
@@ -278,7 +278,7 @@ impl ServerConfig {
         // etc. retained; resources gone), ensuring the assignment-drop of the
         // residual `self` is a no-op.
         let mut that = ServerConfig {
-            address: core::mem::take(&mut self.address),
+            address: core::mem::replace(&mut self.address, Address::new()),
             idle_timeout: self.idle_timeout,
             has_idle_timeout: self.has_idle_timeout,
             base_uri: core::mem::take(&mut self.base_uri),
@@ -549,7 +549,7 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
             ));
         }
 
-        let entry = bun_core::handle_oom(duped_route_names.get_or_put(route_name));
+        let entry = bun_core::handle_oom(duped_route_names.get_or_put(route_name, || ()));
         if entry.found_existing {
             return Err(global.throw_todo(
                 b"Support for duplicate route parameter names is not yet implemented.\n\n\
@@ -601,7 +601,7 @@ impl ServerConfig {
             // If this is a node:cluster child, let's default to SO_REUSEPORT.
             // That way you don't have to remember to set reusePort: true in Bun.serve() when using node:cluster.
             reuse_port: env.get(b"NODE_UNIQUE_ID").is_some(),
-            ..ServerConfig::default()
+            ..ServerConfig::new()
         };
         let mut hostname: Option<ZBox> = None;
         let mut unix: Option<ZBox> = None;
@@ -704,13 +704,13 @@ impl ServerConfig {
                 bun_jsc::JSPropertyIteratorOptions {
                     skip_empty_name: true,
                     include_value: true,
-                    ..Default::default()
+                    ..bun_jsc::JSPropertyIteratorOptions::init()
                 },
             )?;
             // iter drops at scope end
 
             let mut init_ctx_ = ServerInitContext {
-                dedupe_html_bundle_map: Default::default(),
+                dedupe_html_bundle_map: bun_collections::HashMap::init(),
                 framework_router_list: Vec::new(),
                 user_routes: &mut args.static_routes,
                 global,
@@ -900,7 +900,7 @@ impl ServerConfig {
 
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.
-                    let mut bundler_options = crate::bake::SplitBundlerOptions::default();
+                    let mut bundler_options = crate::bake::SplitBundlerOptions::new();
                     let bake_framework = global.bun_vm().bake_framework.get();
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
                     let framework = match bake_framework {
@@ -1017,7 +1017,7 @@ impl ServerConfig {
                     bun_fmt::OutOfRangeOptions {
                         field_name: b"options.port",
                         msg: b"an integer",
-                        ..Default::default()
+                        ..bun_fmt::OutOfRangeOptions::new()
                     },
                 ));
             }
@@ -1028,7 +1028,7 @@ impl ServerConfig {
                         min: 0,
                         max: 65535,
                         field_name: b"options.port",
-                        ..Default::default()
+                        ..bun_fmt::OutOfRangeOptions::new()
                     },
                 ));
             }
@@ -1257,14 +1257,14 @@ impl ServerConfig {
         if !args.base_uri.is_empty() {
             let base_url = URL::parse(&args.base_uri);
             if base_url.hostname.is_empty() {
-                args.base_uri = Box::default();
+                args.base_uri = Box::new([]);
                 return Err(
                     global.throw_invalid_arguments(format_args!("baseURI must have a hostname"))
                 );
             }
 
             if !strings::is_all_ascii(&args.base_uri) {
-                args.base_uri = Box::default();
+                args.base_uri = Box::new([]);
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Unicode baseURI must already be encoded for now.\nnew URL(baseuRI).toString() should do the trick.",
                 )));
@@ -1389,7 +1389,7 @@ impl ServerConfig {
             args.base_uri = buf.into_boxed_slice();
 
             if !strings::is_all_ascii(hostname) {
-                args.base_uri = Box::default();
+                args.base_uri = Box::new([]);
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.",
                 )));
@@ -1400,14 +1400,14 @@ impl ServerConfig {
         // but let's check anyway, just in case
         let base_url = URL::parse(&args.base_uri);
         if base_url.hostname.is_empty() {
-            args.base_uri = Box::default();
+            args.base_uri = Box::new([]);
             return Err(
                 global.throw_invalid_arguments(format_args!("baseURI must have a hostname"))
             );
         }
 
         if !base_url.username.is_empty() || !base_url.password.is_empty() {
-            args.base_uri = Box::default();
+            args.base_uri = Box::new([]);
             return Err(global.throw_invalid_arguments(format_args!(
                 "baseURI can't have a username or password",
             )));

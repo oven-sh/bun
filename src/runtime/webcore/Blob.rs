@@ -512,7 +512,7 @@ impl BlobExt for Blob {
                             "The file read did not complete before its thread stopped",
                         ),
                         syscall: BunString::static_("read"),
-                        ..Default::default()
+                        ..jsc::SystemError::new()
                     };
                     // The read's thread stopped; this runs at teardown (the unrun job's release,
                     // or `JobList::release_all_js`), where what the handler leaves stays pending.
@@ -565,7 +565,7 @@ impl BlobExt for Blob {
                                     t.blob.store().and_then(|s| s.get_path()).unwrap_or(b""),
                                 ),
                                 syscall: BunString::static_("fetch"),
-                                ..Default::default()
+                                ..bun_jsc::SystemError::new()
                             };
                             t.done(ReadBytesResult::Err(Box::new(err)))
                         }
@@ -575,7 +575,7 @@ impl BlobExt for Blob {
             let mut t = Box::new(Task::<H> {
                 ctx,
                 blob: self.dupe(),
-                poll: bun_io::KeepAlive::default(),
+                poll: bun_io::KeepAlive::new(),
             });
             t.poll.ref_(bun_io::js_vm_ctx());
             // reshaped for borrowck — `heap::alloc(t)` moves `t`, so clone the
@@ -834,7 +834,7 @@ impl BlobExt for Blob {
         };
 
         let mut context = FormDataContext {
-            joiner: bun_core::string_joiner::StringJoiner::default(),
+            joiner: bun_core::string_joiner::StringJoiner::new(),
             boundary,
             failed: false,
             global_this,
@@ -1532,7 +1532,7 @@ impl BlobExt for Blob {
                     mkdirp: options.mkdirp_if_not_exists.unwrap_or(true),
                     mode: options.mode.unwrap_or(WRITE_PERMISSIONS),
                     input_path,
-                    ..Default::default()
+                    ..streams::FileSinkOptions::new()
                 });
 
                 if let bun_sys::Result::Err(err) = sink.start(&stream_start, cx.context()) {
@@ -1629,7 +1629,7 @@ impl BlobExt for Blob {
                 s3.get_credentials().clone(),
                 path,
                 &global_this.js_thread(context),
-                Default::default(),
+                bun_s3_signing::MultiPartUploadOptions::new(),
                 self.content_type_or_mime_type(),
                 None,
                 None,
@@ -1746,7 +1746,7 @@ impl BlobExt for Blob {
             } else {
                 streams::Start::FileSink(streams::FileSinkOptions {
                     input_path: webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
-                    ..Default::default()
+                    ..streams::FileSinkOptions::new()
                 })
             };
             if let streams::Start::FileSink(ref mut opts) = stream_start {
@@ -1857,7 +1857,7 @@ impl BlobExt for Blob {
             }
         }
 
-        let mut content_type = BlobContentType::default();
+        let mut content_type = BlobContentType::new();
         if let Some(content_type_) = args_iter.next_eat() {
             'inner: {
                 if content_type_.is_string() {
@@ -2214,7 +2214,7 @@ impl BlobExt for Blob {
                 }
 
                 if blob.content_type_slice().is_empty() {
-                    blob.content_type.set(BlobContentType::default());
+                    blob.content_type.set(BlobContentType::new());
                     blob.content_type_was_set.set(false);
                 }
             }
@@ -2240,7 +2240,7 @@ impl BlobExt for Blob {
             s.is_all_ascii.set(is_all_ascii);
             store = Some(s);
         }
-        let blob = Blob::default();
+        let blob = Blob::empty();
         blob.size.set(len as SizeType);
         blob.store.set(store);
         blob.global_this.set(global_this);
@@ -2255,7 +2255,7 @@ impl BlobExt for Blob {
         was_string: bool,
     ) -> Blob {
         let len = bytes.len();
-        let blob = Blob::default();
+        let blob = Blob::empty();
         blob.size.set(len as SizeType);
         blob.store.set(if len > 0 {
             Some(Store::init(bytes))
@@ -2285,7 +2285,7 @@ impl BlobExt for Blob {
                         data: store::Data::Bytes(result),
                         mime_type: bun_http_types::MimeType::NONE,
                         ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                        is_all_ascii: store::IsAllAscii::default(),
+                        is_all_ascii: store::IsAllAscii::new(),
                     });
                     let blob = Blob::init_with_store(store, global_this);
                     if was_string && blob.content_type_slice().is_empty() {
@@ -3135,7 +3135,7 @@ impl BlobExt for Blob {
         // JS object graph, so a heap `Vec<JSValue>` is GC-safe with
         // unbounded capacity (a prior `BoundedArray<_, 128>` panicked on overflow).
         let mut stack: Vec<JSValue> = Vec::new();
-        let mut joiner = bun_core::string_joiner::StringJoiner::default();
+        let mut joiner = bun_core::string_joiner::StringJoiner::new();
         let mut could_have_non_ascii = false;
 
         loop {
@@ -3374,10 +3374,8 @@ impl BlobExt for Blob {
                     // (dotenv cannot name the s3_signing type — upward dep).
                     let env_creds = vm.transpiler.env_mut().get_s3_credentials();
                     let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
-                    let copy = core::mem::replace(
-                        path_or_fd,
-                        PathOrFileDescriptor::Path(PathLike::default()),
-                    );
+                    let copy =
+                        core::mem::replace(path_or_fd, PathOrFileDescriptor::Path(PathLike::new()));
                     let PathOrFileDescriptor::Path(path) = copy else {
                         unreachable!()
                     };
@@ -3405,7 +3403,7 @@ impl BlobExt for Blob {
                     return crate::api::standalone_graph_jsc::file_blob(file, global_this);
                 }
 
-                core::mem::replace(path_or_fd, PathOrFileDescriptor::Path(PathLike::default()))
+                core::mem::replace(path_or_fd, PathOrFileDescriptor::Path(PathLike::new()))
                     .thread_isolated_copy()
             }
             PathOrFileDescriptor::Fd(fd) => {
@@ -3677,9 +3675,9 @@ impl FormDataContext<'_> {
                             // Use a fresh stack
                             // `NodeFS` (it is stateless aside from a path scratch
                             // buffer; a per-VM cache would be purely a perf reuse).
-                            let mut node_fs = crate::node::fs::NodeFS::default();
+                            let mut node_fs = crate::node::fs::NodeFS::new();
                             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
-                            let mut rf_args = crate::node::fs::args::ReadFile::default();
+                            let mut rf_args = crate::node::fs::args::ReadFile::new();
                             rf_args.encoding = crate::node::types::Encoding::Buffer;
                             rf_args.path = file.pathlike.clone();
                             rf_args.offset = blob.offset.get();
@@ -4017,7 +4015,7 @@ pub(crate) fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLOR
         writer,
         ENABLE_ANSI_COLORS,
         " (<yellow>{f}<r>)",
-        bun_core::fmt::size(size, Default::default()),
+        bun_core::fmt::size(size, bun_core::fmt::SizeFormatterOptions::new()),
     )
 }
 
@@ -4042,12 +4040,12 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
             bun_sys::Tag::mkdir,
         ));
     };
-    node::fs::NodeFS::default()
+    node::fs::NodeFS::new()
         .mkdir_recursive(&node::fs::args::Mkdir {
             path: PathLike::borrowed(dirname),
             recursive: true,
             always_return_none: true,
-            ..Default::default()
+            ..node::fs::args::Mkdir::new()
         })
         .map(|_| ())
 }
@@ -4117,11 +4115,22 @@ fn body_used_rejection(global: &JSGlobalObject) -> JSValue {
         .reject()
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct WriteFileOptions {
     pub(crate) mkdirp_if_not_exists: Option<bool>,
     pub(crate) extra_options: Option<JSValue>,
     pub(crate) mode: Option<bun_sys::Mode>,
+}
+
+impl WriteFileOptions {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            mkdirp_if_not_exists: None,
+            extra_options: None,
+            mode: None,
+        }
+    }
 }
 
 /// Write an empty string to a file by truncating it.
@@ -4154,7 +4163,7 @@ fn write_file_with_empty_source_to_destination(
             // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh
             // `NodeFS` (it carries no per-call state for
             // `truncate`/`mkdir_recursive`).
-            let mut node_fs = node::fs::NodeFS::default();
+            let mut node_fs = node::fs::NodeFS::new();
             let mut result = node_fs.truncate(
                 &node::fs::args::Truncate {
                     path: file.pathlike.clone(),
@@ -4204,7 +4213,7 @@ fn write_file_with_empty_source_to_destination(
                                         path: PathLike::borrowed(dirpath),
                                         recursive: true,
                                         always_return_none: true,
-                                        ..Default::default()
+                                        ..node::fs::args::Mkdir::new()
                                     });
                                 if let bun_sys::Result::Err(e) = mkdir_result {
                                     *err = e;
@@ -4346,7 +4355,7 @@ pub(crate) fn write_file_with_source_destination(
 
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
         let write_file_promise = bun_core::heap::into_raw(Box::new(WriteFilePromise {
-            promise: jsc::JSPromiseStrong::default(),
+            promise: jsc::JSPromiseStrong::new(),
             global_this: cx.global(),
         }));
 
@@ -4456,7 +4465,7 @@ pub(crate) fn write_file_with_source_destination(
     } else if destination_type == store::DataTag::Bytes
         && (source_type == store::DataTag::File || source_type == store::DataTag::S3)
     {
-        let blob_value = source_blob.get_slice_from(cx.global(), 0, 0, BlobContentType::default());
+        let blob_value = source_blob.get_slice_from(cx.global(), 0, 0, BlobContentType::new());
         return Ok(JSPromise::resolved_promise_value(cx.global(), blob_value));
     } else if destination_type == store::DataTag::S3 {
         let s3 = destination_store.data.as_s3();
@@ -5382,7 +5391,7 @@ pub(crate) fn jsdom_file_construct(
     }
 
     if blob.content_type_slice().is_empty() {
-        blob.content_type.set(BlobContentType::default());
+        blob.content_type.set(BlobContentType::new());
         blob.content_type_was_set.set(false);
     }
 
@@ -5547,7 +5556,7 @@ impl S3BlobDownloadTask {
             global_this: bun_ptr::BackRef::new(cx.global()),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(cx.global()),
-            poll_ref: bun_io::KeepAlive::default(),
+            poll_ref: bun_io::KeepAlive::new(),
             handler,
         }));
         // SAFETY: just allocated; sole pointer until handed to the s3 callback
@@ -6060,7 +6069,7 @@ impl Any {
 impl Any {
     /// Moves the string out of the `WTFStringImpl` arm and leaves an empty `Blob`.
     fn take_string(&mut self) -> BunString {
-        match core::mem::replace(self, Any::Blob(Blob::default())) {
+        match core::mem::replace(self, Any::Blob(Blob::empty())) {
             Any::WTFStringImpl(string) => BunString::adopt_wtf_impl(string.into_raw()),
             _ => unreachable!("Any::take_string on a variant that is not a string"),
         }
@@ -6171,7 +6180,7 @@ impl Any {
                 }
                 let str = ib.to_json(cx.global());
                 // the GC will collect the string
-                *self = Any::Blob(Blob::default());
+                *self = Any::Blob(Blob::empty());
                 str
             }
             Any::WTFStringImpl(_) => {
@@ -6226,7 +6235,7 @@ impl Any {
             unreachable!()
         };
         let blob = Blob::init(core::mem::take(&mut ib.bytes), global);
-        *self = Any::Blob(Blob::default());
+        *self = Any::Blob(Blob::empty());
         blob
     }
 
@@ -6242,7 +6251,7 @@ impl Any {
                     return Ok(JSValue::js_empty_string(cx.global()));
                 }
                 let owned = ib.to_string_owned(cx.global())?;
-                *self = Any::Blob(Blob::default());
+                *self = Any::Blob(Blob::empty());
                 Ok(owned)
             }
             Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
@@ -6275,7 +6284,7 @@ impl Any {
             Any::InternalBlob(ib) => {
                 // Ownership transfers to JSC via the default-allocator path.
                 let bytes: &mut [u8] = ib.to_owned_slice().leak();
-                *self = Any::Blob(Blob::default());
+                *self = Any::Blob(Blob::empty());
                 jsc::ArrayBuffer::from_default_allocator(cx.global(), TYPED_ARRAY_VIEW, bytes)
             }
             Any::WTFStringImpl(_) => {
@@ -6357,15 +6366,15 @@ impl Any {
         match self {
             Any::Blob(b) => {
                 b.detach();
-                *self = Any::Blob(Blob::default());
+                *self = Any::Blob(Blob::empty());
             }
             Any::InternalBlob(ib) => {
                 ib.bytes.clear();
                 ib.bytes.shrink_to_fit();
-                *self = Any::Blob(Blob::default());
+                *self = Any::Blob(Blob::empty());
             }
             Any::WTFStringImpl(_) => {
-                *self = Any::Blob(Blob::default());
+                *self = Any::Blob(Blob::empty());
             }
         }
     }
@@ -6376,10 +6385,19 @@ impl Any {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A single-use Blob backed by an allocation of memory.
-#[derive(Default)]
 pub struct Internal {
     pub(crate) bytes: Vec<u8>,
     pub(crate) was_string: bool,
+}
+
+impl Internal {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            was_string: false,
+        }
+    }
 }
 
 impl Internal {
@@ -6670,7 +6688,7 @@ pub(crate) trait FileCloser: Sized {
             .flags
             .remove(bun_io::Flags::WasEverRegistered);
         *this.task() = bun_jsc::WorkPoolTask {
-            node: Default::default(),
+            node: bun_threading::thread_pool::Node::new(),
             callback: Self::on_close_io_request,
         };
         bun_jsc::WorkPool::schedule(this.task());

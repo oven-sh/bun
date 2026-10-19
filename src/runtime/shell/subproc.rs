@@ -127,10 +127,19 @@ pub(crate) type StdioResult = Option<Fd>;
 bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
 
 /// Used for captured writer
-#[derive(Default)]
 pub(crate) struct ShellIO {
     pub(crate) stdout: Option<Arc<IOWriter>>,
     pub(crate) stderr: Option<Arc<IOWriter>>,
+}
+
+impl ShellIO {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            stdout: None,
+            stderr: None,
+        }
+    }
 }
 
 // Note: with `Arc<IOWriter>` the only correct way to
@@ -672,9 +681,9 @@ impl ShellSubprocess {
             windows: WindowsOptions {
                 hide_window: true,
                 loop_: event_loop,
-                ..Default::default()
+                ..WindowsOptions::new()
             },
-            ..Default::default()
+            ..SpawnOptions::new()
         };
         #[cfg(unix)]
         {
@@ -1258,7 +1267,7 @@ impl Readable {
         debug_assert!(redirect_buf.is_none() || matches!(stdio, Stdio::Pipe | Stdio::Capture(_)));
         let buffered_output = match redirect_buf {
             Some(buf) => BufferedOutput::ArrayBuffer { buf, i: 0 },
-            None => BufferedOutput::default(),
+            None => BufferedOutput::new(),
         };
         // Note: `Stdio` impls Drop, so dispatch on `&mut` instead of partial moves (E0509).
         let mut stdio = stdio;
@@ -1470,7 +1479,7 @@ impl<'a> SpawnArgs<'a> {
             // `'a` lifetime independent of the `&mut self` reborrow — the
             // returned slice is naturally `&'a mut [u8]`.
             let arena: &'a Arena = self.arena;
-            let line: &'a mut [u8] = arena.alloc_slice_fill_default(len + 1);
+            let line: &'a mut [u8] = arena.alloc_slice_fill_copy(len + 1, 0);
             line[..key.len()].copy_from_slice(key);
             line[key.len()] = b'=';
             line[key.len() + 1..len].copy_from_slice(value);
@@ -1521,9 +1530,9 @@ pub(crate) enum BufferedOutput {
     ArrayBuffer { buf: jsc::PinnedArrayBuffer, i: u32 },
 }
 
-impl Default for BufferedOutput {
-    fn default() -> Self {
-        BufferedOutput::Bytelist(Vec::<u8>::default())
+impl BufferedOutput {
+    pub(crate) fn new() -> Self {
+        BufferedOutput::Bytelist(Vec::<u8>::new())
     }
 }
 
@@ -1571,8 +1580,8 @@ pub(crate) struct CapturedWriter {
     pub(crate) err: Option<SystemError>,
 }
 
-impl Default for CapturedWriter {
-    fn default() -> Self {
+impl CapturedWriter {
+    pub(crate) fn new() -> Self {
         CapturedWriter {
             dead: true,
             writer: None,
@@ -1734,7 +1743,7 @@ impl PipeReader {
         out_type: OutKind,
         interp: *mut crate::shell::interpreter::Interpreter,
     ) -> Arc<PipeReader> {
-        let mut captured_writer = CapturedWriter::default();
+        let mut captured_writer = CapturedWriter::new();
         if let Some(cap) = capture {
             captured_writer.writer = Some(cap); // dupeRef → Arc clone already happened on pass-in
             captured_writer.dead = false;
@@ -1916,7 +1925,7 @@ impl PipeReader {
         // SAFETY: see `arc_as_mut_ptr`; raw accesses, no borrow held.
         unsafe {
             if (*me).process.is_none() {
-                (*me).buffered_output = BufferedOutput::default();
+                (*me).buffered_output = BufferedOutput::new();
             }
         }
         Self::run_yield_with(interp, y);
@@ -2068,7 +2077,7 @@ impl PipeReader {
 
         if out.capacity() > 0 && out.is_empty() {
             drop(out);
-            return Box::default();
+            return Box::new([]);
         }
         out.into_boxed_slice()
         // PERF: into_boxed_slice may realloc to shrink. Profile if hot.
@@ -2133,13 +2142,13 @@ impl PipeReader {
         let old = unsafe {
             core::ptr::replace(
                 core::ptr::addr_of_mut!((*this).state),
-                PipeReaderState::Done(Box::default()),
+                PipeReaderState::Done(Box::new([])),
             )
         };
         if let PipeReaderState::Done(buf) = old {
             return buf;
         }
-        Box::default()
+        Box::new([])
     }
 }
 

@@ -261,7 +261,7 @@ impl<K: Key, V> IndexMap<K, V> {
     /// Remove every entry, yielding `(K, V)` in insertion order.
     pub(crate) fn drain(&mut self, range: core::ops::RangeFull) -> IntoIter<K, V> {
         let _ = range;
-        core::mem::take(self).into_iter()
+        core::mem::replace(self, IndexMap::init()).into_iter()
     }
 
     #[inline]
@@ -303,9 +303,9 @@ impl<'a, K: Key, V> Entry<'a, K, V> {
     }
 }
 
-impl<K: Key, V> Default for IndexMap<K, V> {
+impl<K: Key, V> IndexMap<K, V> {
     #[inline]
-    fn default() -> Self {
+    pub fn init() -> Self {
         Self::new()
     }
 }
@@ -447,9 +447,9 @@ impl<K: Key> IndexSet<K> {
     }
 }
 
-impl<K: Key> Default for IndexSet<K> {
+impl<K: Key> IndexSet<K> {
     #[inline]
-    fn default() -> Self {
+    pub fn init() -> Self {
         Self::new()
     }
 }

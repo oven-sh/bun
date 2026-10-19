@@ -7,7 +7,7 @@ use crate::bake::dev_server::{
 };
 use bun_collections::ArrayHashMap;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct MemoryCost {
     pub incremental_graph_client: usize,
     pub incremental_graph_server: usize,
@@ -285,10 +285,13 @@ impl DevServer {
         }
         bun_core::pretty_errorln!(
             "<d>DevServer tracked {}, process: {}<r>",
-            bun_core::fmt::size(self.memory_cost(), Default::default()),
+            bun_core::fmt::size(
+                self.memory_cost(),
+                bun_core::fmt::SizeFormatterOptions::new()
+            ),
             bun_core::fmt::size(
                 sys::self_process_memory_usage().unwrap_or(0),
-                Default::default()
+                bun_core::fmt::SizeFormatterOptions::new()
             ),
         );
     }

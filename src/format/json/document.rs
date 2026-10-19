@@ -46,8 +46,14 @@ struct Frame {
     previous: Option<u32>,
 }
 
-#[derive(Default)]
 pub(super) struct Frames(Vec<Frame>);
+
+impl Frames {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self(Vec::new())
+    }
+}
 
 struct Builder<'a> {
     text: &'a [u8],

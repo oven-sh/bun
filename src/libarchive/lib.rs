@@ -162,8 +162,8 @@ pub mod lib {
         pub pwrite: bool,
     }
 
-    impl Default for WriteStrategy {
-        fn default() -> Self {
+    impl WriteStrategy {
+        pub fn new() -> Self {
             Self { pwrite: cfg!(unix) }
         }
     }
@@ -1226,7 +1226,7 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
     // and `FILE_OPEN_IF` via `OpenOrCreate`.
     let opts = WindowsOpenDirOptions {
         op: WindowsOpenDirOp::OpenOrCreate,
-        ..Default::default()
+        ..WindowsOpenDirOptions::new()
     };
     // tar entry paths are dir-relative (no drive/UNC/`\??\`) so `init` never
     // returns BadPathName here.
@@ -1294,8 +1294,8 @@ pub mod archiver {
         pub skip_symlinks: bool,
     }
 
-    impl Default for ExtractOptions {
-        fn default() -> Self {
+    impl ExtractOptions {
+        pub fn new() -> Self {
             Self {
                 depth_to_skip: 0,
                 close_handles: true,
@@ -1477,7 +1477,7 @@ impl Archiver {
                             &temp_buf[..path_to_use_.len()]
                         };
 
-                        let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use)?;
+                        let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use, || ())?;
                         if !overwrite_entry.found_existing {
                             *overwrite_entry.key_ptr = Box::from(appender.append(path_to_use)?);
                         }
@@ -1515,7 +1515,7 @@ impl Archiver {
         let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
 
         let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
-        let mut write_strategy = lib::WriteStrategy::default();
+        let mut write_strategy = lib::WriteStrategy::new();
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
@@ -1623,7 +1623,7 @@ impl Archiver {
                                 "Skipping entry with a path longer than the maximum path length: {}\n",
                                 bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
                                     pathname,
-                                    Default::default()
+                                    bun_core::fmt::PathFormatOptions::new()
                                 )),
                             );
                         }
@@ -1693,7 +1693,7 @@ impl Archiver {
                             " {}",
                             bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
                                 path_slice,
-                                Default::default()
+                                bun_core::fmt::PathFormatOptions::new()
                             ))
                         );
                     }
@@ -1755,7 +1755,7 @@ impl Archiver {
                                             bun_core::fmt::EscapeControlChars(
                                                 bun_core::fmt::fmt_os_path(
                                                     path_slice,
-                                                    Default::default(),
+                                                    bun_core::fmt::PathFormatOptions::new(),
                                                 )
                                             ),
                                             bun_core::fmt::escape_control_chars(
@@ -1880,7 +1880,7 @@ impl Archiver {
                                                         (
                                                             bun_core::fmt::fmt_os_path(
                                                                 path_slice,
-                                                                Default::default(),
+                                                                bun_core::fmt::PathFormatOptions::new(),
                                                             ),
                                                             bstr::BStr::new(archive_error),
                                                         ),
@@ -1912,7 +1912,7 @@ impl Archiver {
                                                     (
                                                         bun_core::fmt::fmt_os_path(
                                                             path_slice,
-                                                            Default::default(),
+                                                            bun_core::fmt::PathFormatOptions::new(),
                                                         ),
                                                         retries_remaining,
                                                         5,
@@ -1934,7 +1934,7 @@ impl Archiver {
                                                     (
                                                         bun_core::fmt::fmt_os_path(
                                                             path_slice,
-                                                            Default::default(),
+                                                            bun_core::fmt::PathFormatOptions::new(),
                                                         ),
                                                         bstr::BStr::new(archive_error),
                                                     ),

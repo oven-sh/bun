@@ -64,7 +64,7 @@ fn env_string_store_put(
         value,
         can_be_removed_if_unused: true,
         call_can_be_unwrapped_if_unused: bun_ast::E::CallUnwrap::IfUnused,
-        ..Default::default()
+        ..Options::new()
     });
     store.get_or_put_value(key, data)?;
     Ok(())
@@ -165,9 +165,9 @@ impl DefineExt for Define {
         omit_unused_global_calls: bool,
     ) -> Result<Box<Define>, bun_alloc::AllocError> {
         let mut define = Box::new(Define {
-            identifiers: StringHashMap::default(),
-            dots: StringHashMap::default(),
-            dots_filter: Default::default(),
+            identifiers: StringHashMap::init(),
+            dots: StringHashMap::init(),
+            dots_filter: bun_js_parser::defines::DotFilter::new(),
             drop_debugger,
             user_hash: None,
         });
@@ -177,7 +177,7 @@ impl DefineExt for Define {
             value: ExprData::EUndefined(bun_ast::E::Undefined),
             valueless: true,
             can_be_removed_if_unused: true,
-            ..Default::default()
+            ..Options::new()
         });
         // Step 1. Load the globals into the hash tables
         for global in global_no_side_effect_property_accesses.iter() {
@@ -189,7 +189,7 @@ impl DefineExt for Define {
             valueless: true,
             can_be_removed_if_unused: true,
             call_can_be_unwrapped_if_unused: bun_ast::E::CallUnwrap::IfUnusedAndToStringSafe,
-            ..Default::default()
+            ..Options::new()
         });
 
         if omit_unused_global_calls {
@@ -324,7 +324,7 @@ impl DefineDataExt for DefineData {
                 if strings::eql(part, key) {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::default(),
+                        bun_ast::Loc::new(),
                         format_args!(
                             "define key \"{}\" must be a valid identifier",
                             bstr::BStr::new(key)
@@ -333,7 +333,7 @@ impl DefineDataExt for DefineData {
                 } else {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::default(),
+                        bun_ast::Loc::new(),
                         format_args!(
                             "define key \"{}\" contains invalid identifier \"{}\"",
                             bstr::BStr::new(part),
@@ -432,7 +432,7 @@ impl DefineDataExt for DefineData {
             // reachable. Route through `StoreStr` for the lifetime erasure.
             contents: std::borrow::Cow::Borrowed(bun_ast::StoreStr::new(arena_value).slice()),
             path: defines_path(),
-            ..Default::default()
+            ..bun_ast::Source::new()
         };
         let expr = bun_parsers::json_parser::parse_env_json(&source, log, bump)?;
         // The `deep_clone` is load-bearing even though `.data` bytes already
@@ -469,7 +469,7 @@ impl DefineDataExt for DefineData {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<UserDefines, crate::Error> {
-        let mut user_defines = UserDefines::default();
+        let mut user_defines = UserDefines::init();
         user_defines.reserve((defines.len() + drop.len()) as u32 as usize);
         for (key, value) in defines.keys().iter().zip(defines.values().iter()) {
             <Self as DefineDataExt>::from_mergeable_input_entry(

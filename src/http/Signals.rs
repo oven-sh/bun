@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Signals {
     // Non-owning pointers into a `Store` held by the caller (BACKREF per
     // PORTING.md); the `Store` outlives every `Signals` derived from it.
@@ -10,6 +10,19 @@ pub struct Signals {
     pub aborted: Option<NonNull<AtomicBool>>,
     pub cert_errors: Option<NonNull<AtomicBool>>,
     pub body_receive_mode: Option<NonNull<AtomicU8>>,
+}
+
+impl Signals {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            header_progress: None,
+            response_body_streaming: None,
+            aborted: None,
+            cert_errors: None,
+            body_receive_mode: None,
+        }
+    }
 }
 
 /// Receive backpressure high-water mark: bytes no consumer has taken, on either side of the
@@ -126,8 +139,8 @@ pub struct Store {
     pub(crate) body_receive_mode: AtomicU8,
 }
 
-impl Default for Store {
-    fn default() -> Self {
+impl Store {
+    pub fn new() -> Self {
         Self {
             header_progress: AtomicBool::new(false),
             response_body_streaming: AtomicBool::new(false),
@@ -143,7 +156,7 @@ impl Store {
     pub fn unclaimed() -> Self {
         Self {
             body_receive_mode: AtomicU8::new(BodyReceiveMode::Unclaimed as u8),
-            ..Self::default()
+            ..Self::new()
         }
     }
 

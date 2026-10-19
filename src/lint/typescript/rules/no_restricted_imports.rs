@@ -75,7 +75,7 @@ impl Rule for NoRestrictedImports {
         if self.base.is_empty() {
             return None;
         }
-        Some(SideEffectImports::default())
+        Some(SideEffectImports::new())
     }
 
     fn expr<'a>(&self, call: Expr<'a>, cx: &mut Cx<'a, Self>) {

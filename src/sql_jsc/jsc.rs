@@ -382,8 +382,14 @@ pub mod api {
         /// Owning handle to a `Box<bun_runtime::socket::SSLConfig>`. `None` =
         /// the default-constructed config — callers that pass
         /// `tls: true` get an SSLConfig with no overrides.
-        #[derive(Default)]
         pub struct SSLConfig(Option<NonNull<c_void>>);
+
+        impl SSLConfig {
+            #[inline]
+            pub fn new() -> Self {
+                Self(None)
+            }
+        }
 
         // SAFETY: the boxed `bun_runtime::socket::SSLConfig` is `Send` (only
         // `CString`/`Vec`/`AtomicU64` fields); the handle moves between
@@ -472,7 +478,7 @@ pub mod api {
                     None => bun_uws::us_bun_socket_context_options_t {
                         request_cert: 1,
                         reject_unauthorized: 0,
-                        ..Default::default()
+                        ..bun_uws::us_bun_socket_context_options_t::new()
                     },
                     // SAFETY: live boxed SSLConfig.
                     Some(p) => unsafe { (hooks().ssl_config_as_usockets_client)(p.as_ptr()) },
@@ -589,24 +595,33 @@ where
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub enum ImplementationVisibility {
-    #[default]
     Public = 0,
     Private = 1,
     PrivateRecursive = 2,
 }
 #[repr(u8)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub enum Intrinsic {
-    #[default]
     None = 0,
 }
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct CreateJSFunctionOptions {
     pub(crate) implementation_visibility: ImplementationVisibility,
     pub(crate) intrinsic: Intrinsic,
     pub(crate) constructor: Option<JSHostFn>,
+}
+
+impl CreateJSFunctionOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            implementation_visibility: ImplementationVisibility::Public,
+            intrinsic: Intrinsic::None,
+            constructor: None,
+        }
+    }
 }
 
 unsafe extern "C" {

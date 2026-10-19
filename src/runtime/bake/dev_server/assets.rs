@@ -15,7 +15,6 @@ use crate::webcore::AnyBlob;
 pub(crate) enum AssetsMarker {}
 pub(crate) type EntryIndex = bun_core::GenericIndex<u32, AssetsMarker>;
 
-#[derive(Default)]
 pub(crate) struct Assets {
     /// Keys are absolute paths. `StringArrayHashMap` stores owned `Box<[u8]>`
     /// keys.
@@ -75,7 +74,9 @@ impl Assets {
         // `gop` holds key/value ptrs into `path_map` and cannot stay live
         // across calls that take `&mut self`. Capture `index` /
         // `found_existing` and re-derive the value slot at the end instead.
-        let gop = self.path_map.get_or_put(abs_path)?;
+        let gop = self
+            .path_map
+            .get_or_put(abs_path, || bun_core::GenericIndex::init(0))?;
         let path_index = gop.index;
         let found_existing = gop.found_existing;
         let existing_entry = if found_existing {
@@ -106,7 +107,7 @@ impl Assets {
                     InitFromBytesOptions {
                         mime_type: Some(mime_type),
                         server,
-                        ..Default::default()
+                        ..InitFromBytesOptions::new()
                     },
                 );
                 // `ArrayHashMap<u64, _>` keys the entry on the hash itself.
@@ -128,7 +129,7 @@ impl Assets {
                     InitFromBytesOptions {
                         mime_type: Some(mime_type),
                         server,
-                        ..Default::default()
+                        ..InitFromBytesOptions::new()
                     },
                 ));
                 self.refs.push(1);

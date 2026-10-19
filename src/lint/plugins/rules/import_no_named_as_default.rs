@@ -36,7 +36,7 @@ impl Rule for NoNamedAsDefault {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let mut reexports: FxHashMap<ModuleId, Reexports> = FxHashMap::default();
+        let mut reexports: FxHashMap<ModuleId, Reexports> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for stmt in cx.file().stmts_of_kind(StmtTag::Import) {
             let StmtKind::Import(declaration) = stmt.kind() else {
                 continue;
@@ -106,7 +106,7 @@ struct Reexports<'m> {
 
 impl<'m> Reexports<'m> {
     fn new(remote: &'m Record) -> Self {
-        let mut by_export_name = FxHashMap::default();
+        let mut by_export_name = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for entry in remote.indirect_export_entries.iter() {
             by_export_name.entry(&*entry.export_name).or_insert(entry);
         }

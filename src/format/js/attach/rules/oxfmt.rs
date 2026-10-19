@@ -1074,7 +1074,7 @@ impl<'a> Rules<'_, 'a, '_> {
                     _ => CommentsBetweenTokens {
                         first_id: comments.first_id,
                         end_id: comments.first_id,
-                        ..CommentsBetweenTokens::default()
+                        ..CommentsBetweenTokens::new()
                     },
                 }
             }

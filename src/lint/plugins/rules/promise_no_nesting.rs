@@ -9,7 +9,6 @@ pub struct NoNesting;
 
 const NO_NESTING: Message = Message::new("", "Avoid nesting promises.");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// Whether something is in a function that is an argument of `then` or `catch`.
     callbacks: AncestorMemo<'a, ()>,
@@ -17,6 +16,17 @@ pub struct State<'a> {
     calls: AncestorMemo<'a, Expr<'a>>,
     /// All of the file, in the order of the source. Listed when they are first looked at.
     references: Option<Vec<Reference<'a>>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            callbacks: AncestorMemo::new(),
+            calls: AncestorMemo::new(),
+            references: None,
+        }
+    }
 }
 
 impl Rule for NoNesting {
@@ -29,7 +39,7 @@ impl Rule for NoNesting {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions_any(&["then", "catch"]).then(State::default)
+        file.mentions_any(&["then", "catch"]).then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

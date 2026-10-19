@@ -120,7 +120,7 @@ impl GlobalRegistry {
     pub fn new() -> Self {
         Self {
             base: false,
-            entries: HashMap::default(),
+            entries: HashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 
@@ -128,7 +128,7 @@ impl GlobalRegistry {
     pub fn with_base() -> Self {
         Self {
             base: true,
-            entries: HashMap::default(),
+            entries: HashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 
@@ -275,7 +275,7 @@ fn install_type_config_inner(
                     canonical_name: func_config.canonical_name.clone(),
                     aliasing: func_config.aliasing.clone(),
                     known_incompatible: func_config.known_incompatible.clone(),
-                    ..Default::default()
+                    ..FunctionSignatureBuilder::new()
                 },
                 None,
                 false,
@@ -303,7 +303,7 @@ fn install_type_config_inner(
                     no_alias: hook_config.no_alias.unwrap_or(false),
                     aliasing: hook_config.aliasing.clone(),
                     known_incompatible: hook_config.known_incompatible.clone(),
-                    ..Default::default()
+                    ..HookSignatureBuilder::new()
                 },
                 None,
             )
@@ -407,7 +407,7 @@ fn simple_function(
             rest_param,
             return_type,
             return_value_kind,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -439,7 +439,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Store,
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -452,7 +452,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Capture,
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -467,7 +467,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             },
             return_value_kind: ValueKind::Mutable,
             callee_effect: Effect::Capture,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -483,7 +483,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
                 shape_id: Some(BUILT_IN_ARRAY_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -543,7 +543,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
                     },
                 ],
             }),
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -560,7 +560,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Mutable,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -575,7 +575,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Mutable,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -590,7 +590,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Primitive,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -605,7 +605,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Primitive,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -620,7 +620,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Primitive,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -637,7 +637,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Mutable,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -673,7 +673,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
                     },
                 ],
             }),
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -714,7 +714,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             positional_params: vec![Effect::Read],
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -750,7 +750,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
                     },
                 ],
             }),
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -762,7 +762,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Store,
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -775,7 +775,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Store,
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -791,7 +791,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
                 shape_id: Some(BUILT_IN_SET_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -806,7 +806,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
                 shape_id: Some(BUILT_IN_SET_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -821,7 +821,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
                 shape_id: Some(BUILT_IN_SET_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -834,7 +834,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Read,
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -847,7 +847,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Read,
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -862,7 +862,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Primitive,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -874,7 +874,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Capture,
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -886,7 +886,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Capture,
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -898,7 +898,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Capture,
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -936,7 +936,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             positional_params: vec![Effect::Read],
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -949,7 +949,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Capture,
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -961,7 +961,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Store,
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -976,7 +976,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
                 shape_id: Some(BUILT_IN_MAP_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -989,7 +989,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Store,
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1005,7 +1005,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Primitive,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1017,7 +1017,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Capture,
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1029,7 +1029,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Capture,
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1041,7 +1041,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Capture,
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1079,7 +1079,7 @@ fn build_weak_set_shape(shapes: &mut ShapeRegistry) {
                 shape_id: Some(BUILT_IN_WEAK_SET_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1092,7 +1092,7 @@ fn build_weak_set_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Store,
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1117,7 +1117,7 @@ fn build_weak_map_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Capture,
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1132,7 +1132,7 @@ fn build_weak_map_shape(shapes: &mut ShapeRegistry) {
                 shape_id: Some(BUILT_IN_WEAK_MAP_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1145,7 +1145,7 @@ fn build_weak_map_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::Store,
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1168,7 +1168,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
         FunctionSignatureBuilder {
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1191,7 +1191,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             rest_param: Some(Effect::Read),
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1203,7 +1203,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             rest_param: Some(Effect::Read),
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1215,7 +1215,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             rest_param: Some(Effect::Read),
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1230,7 +1230,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             },
             callee_effect: Effect::Capture,
             return_value_kind: ValueKind::Frozen,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1246,7 +1246,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::ConditionallyMutate,
             return_value_kind: ValueKind::Mutable,
             no_alias: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1262,7 +1262,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::ConditionallyMutate,
             return_value_kind: ValueKind::Mutable,
             no_alias: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1278,7 +1278,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::ConditionallyMutate,
             return_value_kind: ValueKind::Mutable,
             no_alias: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1293,7 +1293,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             },
             callee_effect: Effect::Capture,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1308,7 +1308,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             },
             callee_effect: Effect::Capture,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1323,7 +1323,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Primitive,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1338,7 +1338,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Primitive,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1355,7 +1355,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Frozen,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1370,7 +1370,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Primitive,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -1382,12 +1382,13 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             rest_param: Some(Effect::Read),
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
     );
-    let mut mixed_props: HashMap<&'static str, Type> = HashMap::default();
+    let mut mixed_props: HashMap<&'static str, Type> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     mixed_props.insert("toString", mixed_to_string);
     mixed_props.insert("indexOf", mixed_index_of);
     mixed_props.insert("includes", mixed_includes);
@@ -1455,7 +1456,7 @@ fn build_state_shapes(shapes: &mut ShapeRegistry) {
             rest_param: Some(Effect::Freeze),
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         Some(BUILT_IN_SET_STATE_ID),
         false,
@@ -1476,7 +1477,7 @@ fn build_state_shapes(shapes: &mut ShapeRegistry) {
             rest_param: Some(Effect::Freeze),
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         Some(BUILT_IN_SET_ACTION_STATE_ID),
         false,
@@ -1497,7 +1498,7 @@ fn build_state_shapes(shapes: &mut ShapeRegistry) {
             rest_param: Some(Effect::Freeze),
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         Some(BUILT_IN_DISPATCH_ID),
         false,
@@ -1518,7 +1519,7 @@ fn build_state_shapes(shapes: &mut ShapeRegistry) {
             // Note: TS uses restParam: null for startTransition
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         Some(BUILT_IN_START_TRANSITION_ID),
         false,
@@ -1539,7 +1540,7 @@ fn build_state_shapes(shapes: &mut ShapeRegistry) {
             rest_param: Some(Effect::Freeze),
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         Some(BUILT_IN_SET_OPTIMISTIC_ID),
         false,
@@ -1565,7 +1566,7 @@ fn build_hook_shapes(shapes: &mut ShapeRegistry) {
             callee_effect: Effect::ConditionallyMutate,
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         Some(BUILT_IN_EFFECT_EVENT_ID),
         false,
@@ -1601,7 +1602,7 @@ pub fn get_reanimated_module_type(shapes: &mut ShapeRegistry) -> Type {
                 return_value_kind: ValueKind::Frozen,
                 no_alias: true,
                 hook_kind: HookKind::Custom,
-                ..Default::default()
+                ..HookSignatureBuilder::new()
             },
             None,
         );
@@ -1621,7 +1622,7 @@ pub fn get_reanimated_module_type(shapes: &mut ShapeRegistry) -> Type {
                 return_value_kind: ValueKind::Mutable,
                 no_alias: true,
                 hook_kind: HookKind::Custom,
-                ..Default::default()
+                ..HookSignatureBuilder::new()
             },
             None,
         );
@@ -1647,7 +1648,7 @@ pub fn get_reanimated_module_type(shapes: &mut ShapeRegistry) -> Type {
                 return_type: Type::Poly,
                 return_value_kind: ValueKind::Mutable,
                 no_alias: true,
-                ..Default::default()
+                ..FunctionSignatureBuilder::new()
             },
             None,
             false,
@@ -1744,7 +1745,7 @@ fn build_react_apis(
             return_value_kind: ValueKind::Frozen,
             return_value_reason: Some(ValueReason::Context),
             hook_kind: HookKind::UseContext,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         Some(BUILT_IN_USE_CONTEXT_HOOK_ID),
     );
@@ -1761,7 +1762,7 @@ fn build_react_apis(
             return_value_kind: ValueKind::Frozen,
             return_value_reason: Some(ValueReason::State),
             hook_kind: HookKind::UseState,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         None,
     );
@@ -1778,7 +1779,7 @@ fn build_react_apis(
             return_value_kind: ValueKind::Frozen,
             return_value_reason: Some(ValueReason::State),
             hook_kind: HookKind::UseActionState,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         None,
     );
@@ -1795,7 +1796,7 @@ fn build_react_apis(
             return_value_kind: ValueKind::Frozen,
             return_value_reason: Some(ValueReason::ReducerState),
             hook_kind: HookKind::UseReducer,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         None,
     );
@@ -1811,7 +1812,7 @@ fn build_react_apis(
             },
             return_value_kind: ValueKind::Mutable,
             hook_kind: HookKind::UseRef,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         None,
     );
@@ -1825,7 +1826,7 @@ fn build_react_apis(
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Frozen,
             hook_kind: HookKind::UseImperativeHandle,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         None,
     );
@@ -1839,7 +1840,7 @@ fn build_react_apis(
             return_type: Type::Poly,
             return_value_kind: ValueKind::Frozen,
             hook_kind: HookKind::UseMemo,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         None,
     );
@@ -1853,7 +1854,7 @@ fn build_react_apis(
             return_type: Type::Poly,
             return_value_kind: ValueKind::Frozen,
             hook_kind: HookKind::UseCallback,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         None,
     );
@@ -1894,7 +1895,7 @@ fn build_react_apis(
                     },
                 ],
             }),
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         Some(BUILT_IN_USE_EFFECT_HOOK_ID),
     );
@@ -1908,7 +1909,7 @@ fn build_react_apis(
             return_type: Type::Poly,
             return_value_kind: ValueKind::Frozen,
             hook_kind: HookKind::UseLayoutEffect,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         Some(BUILT_IN_USE_LAYOUT_EFFECT_HOOK_ID),
     );
@@ -1922,7 +1923,7 @@ fn build_react_apis(
             return_type: Type::Poly,
             return_value_kind: ValueKind::Frozen,
             hook_kind: HookKind::UseInsertionEffect,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         Some(BUILT_IN_USE_INSERTION_EFFECT_HOOK_ID),
     );
@@ -1938,7 +1939,7 @@ fn build_react_apis(
             },
             return_value_kind: ValueKind::Frozen,
             hook_kind: HookKind::UseTransition,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         None,
     );
@@ -1955,7 +1956,7 @@ fn build_react_apis(
             return_value_kind: ValueKind::Frozen,
             return_value_reason: Some(ValueReason::State),
             hook_kind: HookKind::UseOptimistic,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         None,
     );
@@ -1969,7 +1970,7 @@ fn build_react_apis(
             rest_param: Some(Effect::Freeze),
             return_type: Type::Poly,
             return_value_kind: ValueKind::Frozen,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         Some(BUILT_IN_USE_OPERATOR_ID),
         false,
@@ -1988,7 +1989,7 @@ fn build_react_apis(
             },
             return_value_kind: ValueKind::Frozen,
             hook_kind: HookKind::UseEffectEvent,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         Some(BUILT_IN_USE_EFFECT_EVENT_ID),
     );
@@ -2040,7 +2041,7 @@ fn build_typed_globals(
                     },
                 ],
             }),
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2054,7 +2055,7 @@ fn build_typed_globals(
                 shape_id: Some(BUILT_IN_OBJECT_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2087,7 +2088,7 @@ fn build_typed_globals(
                     },
                 ],
             }),
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2120,7 +2121,7 @@ fn build_typed_globals(
                     },
                 ],
             }),
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2146,7 +2147,7 @@ fn build_typed_globals(
             positional_params: vec![Effect::Read],
             return_type: Type::Primitive,
             return_value_kind: ValueKind::Primitive,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2165,7 +2166,7 @@ fn build_typed_globals(
                 shape_id: Some(BUILT_IN_ARRAY_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2179,7 +2180,7 @@ fn build_typed_globals(
                 shape_id: Some(BUILT_IN_ARRAY_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2212,7 +2213,7 @@ fn build_typed_globals(
             return_value_kind: ValueKind::Mutable,
             impure: true,
             canonical_name: Some("Math.random"),
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2232,7 +2233,7 @@ fn build_typed_globals(
             return_value_kind: ValueKind::Mutable,
             impure: true,
             canonical_name: Some("performance.now"),
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2251,7 +2252,7 @@ fn build_typed_globals(
             return_value_kind: ValueKind::Mutable,
             impure: true,
             canonical_name: Some("Date.now"),
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2305,7 +2306,7 @@ fn build_typed_globals(
                 shape_id: Some(BUILT_IN_MAP_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         true,
@@ -2322,7 +2323,7 @@ fn build_typed_globals(
                 shape_id: Some(BUILT_IN_SET_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         true,
@@ -2339,7 +2340,7 @@ fn build_typed_globals(
                 shape_id: Some(BUILT_IN_WEAK_MAP_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         true,
@@ -2356,7 +2357,7 @@ fn build_typed_globals(
                 shape_id: Some(BUILT_IN_WEAK_SET_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         true,
@@ -2373,7 +2374,7 @@ fn build_typed_globals(
             rest_param: Some(Effect::Freeze),
             return_type: Type::Poly,
             return_value_kind: ValueKind::Frozen,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2385,7 +2386,7 @@ fn build_typed_globals(
             rest_param: Some(Effect::Freeze),
             return_type: Type::Poly,
             return_value_kind: ValueKind::Frozen,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2399,7 +2400,7 @@ fn build_typed_globals(
                 shape_id: Some(BUILT_IN_USE_REF_ID),
             },
             return_value_kind: ValueKind::Mutable,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,
@@ -2423,7 +2424,7 @@ fn build_typed_globals(
             rest_param: Some(Effect::Freeze),
             return_type: Type::Poly,
             return_value_kind: ValueKind::Frozen,
-            ..Default::default()
+            ..FunctionSignatureBuilder::new()
         },
         None,
         false,

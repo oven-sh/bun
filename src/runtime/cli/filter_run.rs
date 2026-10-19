@@ -1011,7 +1011,7 @@ pub(crate) fn run_scripts_with_filter(
     // SAFETY: `state` is not moved after this point; outlives every `ProcessHandle`.
     let state_ptr: bun_ptr::BackRef<State, bun_ptr::Mut> =
         unsafe { bun_ptr::BackRef::from_raw_mut(core::ptr::addr_of_mut!(state)) };
-    let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
+    let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::init();
     for script in scripts.iter() {
         handles_vec.push(ProcessHandle {
             state: state_ptr,
@@ -1043,10 +1043,10 @@ pub(crate) fn run_scripts_with_filter(
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions {
                     loop_: EventLoopHandle::init_mini(event_loop),
-                    ..Default::default()
+                    ..spawn::WindowsOptions::new()
                 },
                 stream: true,
-                ..Default::default()
+                ..SpawnOptions::new()
             },
             remaining_dependencies: 0,
             dependents: Vec::new(),
@@ -1058,7 +1058,7 @@ pub(crate) fn run_scripts_with_filter(
     state.handles = handles_vec.into_boxed_slice();
     for (i, script) in scripts.iter().enumerate() {
         let handle_ptr: *mut ProcessHandle = &raw mut state.handles[i];
-        let res = map.get_or_put(&script.package_name)?;
+        let res = map.get_or_put(&script.package_name, Vec::new)?;
         if res.found_existing {
             res.value_ptr.push(handle_ptr);
             // Output.prettyErrorln("<r><red>error<r>: Duplicate package name: {s}", .{script.package_name});

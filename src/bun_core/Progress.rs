@@ -161,14 +161,14 @@ pub struct Progress {
     pub columns_written: usize,
 }
 
-impl Default for Progress {
-    fn default() -> Self {
+impl Progress {
+    pub fn new() -> Self {
         Self {
             terminal: None,
             is_windows_terminal: false,
             supports_ansi_escape_codes: false,
             dont_print_on_dumb: false,
-            root: Node::default(),
+            root: Node::new(),
             timer: None,
             prev_refresh_timestamp: 0,
             output_buffer: [0; 100],
@@ -181,9 +181,8 @@ impl Default for Progress {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Unit {
-    #[default]
     None,
     Files,
     Bytes,
@@ -205,8 +204,8 @@ pub struct Node {
     pub unprotected_completed_items: AtomicUsize,
 }
 
-impl Default for Node {
-    fn default() -> Self {
+impl Node {
+    pub fn new() -> Self {
         Self {
             context: ptr::null_mut(),
             parent: ptr::null_mut(),
@@ -653,7 +652,7 @@ mod tests {
     #[test]
     #[ignore = "uses thread::sleep() and is therefore slow; also prints bogus progress data to stderr"]
     fn basic_functionality() {
-        let mut progress = Progress::default();
+        let mut progress = Progress::new();
         let root_node = progress.start(b"", 100);
 
         let speed_factor = NS_PER_MS;

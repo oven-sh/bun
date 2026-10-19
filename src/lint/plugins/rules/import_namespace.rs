@@ -29,7 +29,6 @@ const OXLINT_COMPUTED_REFERENCE: Message =
     Message::new("", "Unable to validate computed reference to imported namespace {{namespace_name}}.");
 const OXLINT_ASSIGNMENT: Message = Message::new("", "Assignment to member of namespace {{namespace_name}}.'");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// `None`: oxlint, which asks its records.
     maps: Option<ExportMaps<'a>>,
@@ -37,6 +36,18 @@ pub struct State<'a> {
     declared: FxHashMap<(Scope<'a>, Name<'a>), bool>,
     star_exports: StarExports<'a>,
     namespaces: FxHashMap<ModuleId, Namespaces<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            maps: None,
+            declared: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            star_exports: StarExports::new(),
+            namespaces: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl Rule for Namespace {
@@ -51,16 +62,16 @@ impl Rule for Namespace {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         if !file.language().is_oxlint {
             let maps = file.has_stmts([StmtTag::Import]).then(|| ExportMaps::of(file))??;
-            return Some(State { maps: Some(maps), ..State::default() });
+            return Some(State { maps: Some(maps), ..State::new() });
         }
-        (!is_waiting_for_modules(file) && file.modules().is_some()).then(State::default)
+        (!is_waiting_for_modules(file) && file.modules().is_some()).then(State::new)
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let is_oxlint = cx.state.maps.is_none();
-        let mut namespaces = FxHashMap::default();
-        let mut seen = FxHashSet::default();
+        let mut namespaces = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+        let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for declaration in import_declarations(file) {
             let source = declaration.spec().bytes();
             let mut entries = import_entries_of(declaration).peekable();
@@ -146,7 +157,7 @@ struct Namespaces<'m> {
 
 impl<'m> Namespaces<'m> {
     fn new(module_record: &'m Record) -> Self {
-        let mut this = Namespaces { imported: FxHashMap::default(), exported: FxHashMap::default(), reexported: FxHashMap::default() };
+        let mut this = Namespaces { imported: FxHashMap::with_hasher(rustc_hash::FxBuildHasher), exported: FxHashMap::with_hasher(rustc_hash::FxBuildHasher), reexported: FxHashMap::with_hasher(rustc_hash::FxBuildHasher) };
         for entry in module_record.import_entries.iter().filter(|it| matches!(it.import_name, ImportName::NamespaceObject)) {
             this.imported.entry(&*entry.local_name).or_insert(&*entry.module_request);
         }

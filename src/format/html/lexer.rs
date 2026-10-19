@@ -45,10 +45,17 @@ pub(crate) enum TokenType {
     Eof,
 }
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Span {
     pub(crate) start: u32,
     pub(crate) end: u32,
+}
+
+impl Span {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self { start: 0, end: 0 }
+    }
 }
 
 impl Span {
@@ -104,7 +111,7 @@ pub(crate) struct LexedAttribute<'a> {
     pub(crate) value: Option<&'a [u8]>,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct Options {
     /// `tokenizeExpansionForms` and `tokenizeBlocks`
     pub(crate) tokenize_angular_blocks: bool,
@@ -112,6 +119,19 @@ pub(crate) struct Options {
     pub(crate) can_self_close: bool,
     pub(crate) allow_htm_component_closing_tags: bool,
     pub(crate) allow_start_tag_comments: bool,
+}
+
+impl Options {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            tokenize_angular_blocks: false,
+            tokenize_let: false,
+            can_self_close: false,
+            allow_htm_component_closing_tags: false,
+            allow_start_tag_comments: false,
+        }
+    }
 }
 
 /// `getTagContentType(tagName, prefix, hasParent, attrs)`, without the prefix, which nobody looks at.
@@ -1124,7 +1144,7 @@ impl<'a> Tokenizer<'a, '_> {
         self.end_token(parts)?;
         let name = match parts {
             Parts::Name(_, name) => name,
-            _ => Span::default(),
+            _ => Span::init(),
         };
         let mut value = None;
         self.skip_whitespace();

@@ -212,7 +212,7 @@ pub use rules::import::ImportConditions;
 // without pulling in the 6k-line parser hub.
 
 bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct VendorPrefix: u8 {
         /// No vendor prefixes. 0b00000001
         const NONE   = 0b0000_0001;
@@ -296,14 +296,14 @@ impl VendorPrefix {
 // compile without the 6k-line parser hub.
 
 /// Line/column within a single source. Column is 1-based, line is 0-based.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceLocation {
     pub(crate) line: u32,
     pub(crate) column: u32,
 }
 
 /// Cross-source location (carries a source-map source index).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, DeepClone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, DeepClone)]
 pub struct Location {
     /// The index of the source file within the source map.
     pub(crate) source_index: u32,
@@ -311,6 +311,17 @@ pub struct Location {
     pub(crate) line: u32,
     /// The column number within a line, starting at 1. Counted in UTF-16 code units.
     pub(crate) column: u32,
+}
+
+impl Location {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            source_index: 0,
+            line: 0,
+            column: 0,
+        }
+    }
 }
 
 impl Location {

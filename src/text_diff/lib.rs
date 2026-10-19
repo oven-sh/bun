@@ -229,11 +229,21 @@ struct Myers<'a, 's, T: Elem> {
     anchors: Option<Anchors>,
 }
 
-#[derive(Default)]
 struct MyersScratch {
     vf: Vec<i32>,
     vb: Vec<i32>,
     stack: Vec<Job>,
+}
+
+impl MyersScratch {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            vf: Vec::new(),
+            vb: Vec::new(),
+            stack: Vec::new(),
+        }
+    }
 }
 
 /// Scratch for the unique-token anchor split (line mode only).
@@ -1061,7 +1071,7 @@ pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
 
     if !ra.is_empty() && !rb.is_empty() {
         let n = ra.len() + rb.len();
-        let mut sc = MyersScratch::default();
+        let mut sc = MyersScratch::new();
         let mut rchanged = vec![false; n];
         let (rchanged_a, rchanged_b) = rchanged.split_at_mut(ra.len());
         let policy = Policy {
@@ -1249,7 +1259,6 @@ const HALF_MATCH_FLOOR: usize = 64 << 10;
 // ───────────────────────────── character mode ─────────────────────────────
 
 /// Character-level differ with reusable scratch space.
-#[derive(Default)]
 pub struct CharDiff {
     hunks: Vec<Hunk>,
     scratch: Vec<Hunk>,
@@ -1257,6 +1266,20 @@ pub struct CharDiff {
     changed_a: Vec<bool>,
     changed_b: Vec<bool>,
     kmp: Vec<u32>,
+}
+
+impl CharDiff {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            hunks: Vec::new(),
+            scratch: Vec::new(),
+            myers: MyersScratch::new(),
+            changed_a: Vec::new(),
+            changed_b: Vec::new(),
+            kmp: Vec::new(),
+        }
+    }
 }
 
 impl CharDiff {
@@ -1791,7 +1814,7 @@ mod tests {
     use super::*;
 
     fn diff_chars(a: &[u8], b: &[u8]) -> Vec<Hunk> {
-        CharDiff::default().diff(a, b).to_vec()
+        CharDiff::new().diff(a, b).to_vec()
     }
 
     /// Minimal-ish edit script between two sequences as a hunk list.
@@ -1812,7 +1835,7 @@ mod tests {
             });
             return hunks;
         }
-        let mut sc = MyersScratch::default();
+        let mut sc = MyersScratch::new();
         let mut changed_a = vec![false; a.len()];
         let mut changed_b = vec![false; b.len()];
         let mut myers = Myers::new(
@@ -2047,7 +2070,7 @@ mod tests {
         ] {
             let (a, b) = (a.as_bytes(), b.as_bytes());
             assert_eq!(
-                render(a, b, CharDiff::default().diff_as_fast_diff(a, b)),
+                render(a, b, CharDiff::new().diff_as_fast_diff(a, b)),
                 expected
             );
         }
@@ -2059,12 +2082,12 @@ mod tests {
             b_hi,
         };
         assert_eq!(
-            CharDiff::default().diff_as_fast_diff(&units("é  = 1"), &units("é = 1;")),
+            CharDiff::new().diff_as_fast_diff(&units("é  = 1"), &units("é = 1;")),
             [hunk(2, 3, 2, 2), hunk(6, 6, 5, 6)]
         );
         // The two differ in the second half of a surrogate pair.
         assert_eq!(
-            CharDiff::default().diff_as_fast_diff(&units("a = 😀;"), &units("a = 😁;")),
+            CharDiff::new().diff_as_fast_diff(&units("a = 😀;"), &units("a = 😁;")),
             [hunk(4, 6, 4, 6)]
         );
         // Quadratic for fast-diff.
@@ -2074,7 +2097,7 @@ mod tests {
                 .into_bytes()
         };
         let (a, b) = (blanks(300_000, 300_000), blanks(299_993, 300_005));
-        check_script(&a, &b, CharDiff::default().diff_as_fast_diff(&a, &b));
+        check_script(&a, &b, CharDiff::new().diff_as_fast_diff(&a, &b));
     }
 
     #[test]
@@ -2194,7 +2217,7 @@ mod tests {
             "a", "b", " ", "\n", "é", "è", "世", "🌍", "🌎", ".", "ab", "文", "本", "字", "符",
             "串", "测", "Пр", "и",
         ];
-        let mut cd = CharDiff::default();
+        let mut cd = CharDiff::new();
         for iter in 0..4000 {
             let make = |rng: &mut Rng, n: usize| -> String {
                 (0..n)
@@ -2247,7 +2270,7 @@ mod tests {
         let mut rng = Rng(99);
         let a: Vec<u8> = (0..20_000).map(|_| b'a' + rng.below(20) as u8).collect();
         let b: Vec<u8> = (0..20_000).map(|_| b'a' + rng.below(20) as u8).collect();
-        let mut sc = MyersScratch::default();
+        let mut sc = MyersScratch::new();
         let (mut ca, mut cb) = (vec![false; a.len()], vec![false; b.len()]);
         let policy = Policy {
             probe: 64,

@@ -10,14 +10,18 @@ use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
 pub(crate) struct Which {
     pub(crate) state: State,
 }
 
-#[derive(Default)]
+impl Which {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { state: State::Idle }
+    }
+}
+
 pub(crate) enum State {
-    #[default]
     Idle,
     /// Called with no args: queued a single "\n" and waiting for the write.
     OneArg,

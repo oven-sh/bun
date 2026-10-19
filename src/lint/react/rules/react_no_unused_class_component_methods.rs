@@ -109,7 +109,6 @@ fn leaving(node: Span) -> Time {
     (node.end, false, Reverse(node.start))
 }
 
-#[derive(Default)]
 struct ClassInfo<'a> {
     /// `classNode`, unless `isClass`.
     object: Option<Expr<'a>>,
@@ -119,6 +118,19 @@ struct ClassInfo<'a> {
     properties: Vec<(Span, Cow<'a, [u8]>)>,
     used_properties: FxHashSet<Cow<'a, [u8]>>,
     in_static: bool,
+}
+
+impl<'a> ClassInfo<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            object: None,
+            id: None,
+            properties: Vec::new(),
+            used_properties: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            in_static: false,
+        }
+    }
 }
 
 impl<'a> ClassInfo<'a> {
@@ -249,8 +261,8 @@ impl Rule for NoUnusedClassComponentMethods {
         let mut class_info = None;
         for (_, listener) in calls {
             match listener {
-                Listener::Class(node) => class_info = Some(ClassInfo { id: node.name(), ..ClassInfo::default() }),
-                Listener::Object(node) => class_info = Some(ClassInfo { object: Some(node), ..ClassInfo::default() }),
+                Listener::Class(node) => class_info = Some(ClassInfo { id: node.name(), ..ClassInfo::new() }),
+                Listener::Object(node) => class_info = Some(ClassInfo { object: Some(node), ..ClassInfo::new() }),
                 Listener::ClassExit => {
                     if let Some(ended) = class_info.take() {
                         ended.report_unused_properties(cx);

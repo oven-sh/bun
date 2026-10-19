@@ -47,9 +47,9 @@ pub enum BlobContentType {
     Owned(std::sync::Arc<[u8]>),
 }
 
-impl Default for BlobContentType {
+impl BlobContentType {
     #[inline]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self::Static(b"")
     }
 }
@@ -150,14 +150,14 @@ unsafe impl Send for Blob {}
 // the `Cell` fields are never raced with a writer.
 unsafe impl Sync for Blob {}
 
-impl Default for Blob {
-    fn default() -> Self {
+impl Blob {
+    pub fn empty() -> Self {
         Self {
             reported_estimated_size: Cell::new(0),
             size: Cell::new(0),
             offset: Cell::new(0),
             store: JsCell::new(None),
-            content_type: JsCell::new(BlobContentType::default()),
+            content_type: JsCell::new(BlobContentType::new()),
             content_type_was_set: Cell::new(false),
             charset: Cell::new(AsciiStatus::Unknown),
             is_jsdom_file: Cell::new(false),
@@ -276,9 +276,9 @@ impl Blob {
         let content_type = if let store::Data::File(ref f) = store.data {
             BlobContentType::from_mime(&f.mime_type)
         } else {
-            BlobContentType::default()
+            BlobContentType::new()
         };
-        let blob = Blob::default();
+        let blob = Blob::empty();
         blob.size.set(size);
         blob.store.set(Some(store));
         blob.content_type.set(content_type);
@@ -294,7 +294,7 @@ impl Blob {
         } else {
             None
         };
-        let blob = Blob::default();
+        let blob = Blob::empty();
         blob.size.set(size);
         blob.store.set(store);
         blob.global_this.set(global_this);
@@ -303,7 +303,7 @@ impl Blob {
 
     #[inline]
     pub fn init_empty(global_this: &JSGlobalObject) -> Blob {
-        let blob = Blob::default();
+        let blob = Blob::empty();
         blob.global_this.set(global_this);
         blob
     }
@@ -452,7 +452,7 @@ impl Blob {
         self.detach();
         self.name.set(bun_core::String::DEAD);
 
-        self.content_type.set(BlobContentType::default());
+        self.content_type.set(BlobContentType::new());
 
         if self.is_heap_allocated() {
             // SAFETY: `self` is the `*mut Blob` originally produced by
@@ -542,8 +542,14 @@ pub mod store {
 
     /// Tri-state "are the bytes all ASCII", learned lazily by whichever
     /// thread's dupe reads or writes the full store first.
-    #[derive(Default)]
     pub struct IsAllAscii(core::sync::atomic::AtomicU8);
+
+    impl IsAllAscii {
+        #[inline]
+        pub fn new() -> Self {
+            Self(core::sync::atomic::AtomicU8::new(0))
+        }
+    }
 
     impl IsAllAscii {
         #[inline]
@@ -630,14 +636,14 @@ pub mod store {
     // interior mutability, so sharing references across threads is sound.
     unsafe impl Sync for Bytes {}
 
-    impl Default for Bytes {
-        fn default() -> Self {
+    impl Bytes {
+        pub fn new() -> Self {
             Self {
                 ptr: None,
                 len: 0,
                 cap: 0,
                 allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: Box::default(),
+                stored_name: Box::new([]),
             }
         }
     }
@@ -656,7 +662,7 @@ pub mod store {
                 len: len as SizeType,
                 cap: cap as SizeType,
                 allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: Box::default(),
+                stored_name: Box::new([]),
             }
         }
 
@@ -671,7 +677,7 @@ pub mod store {
                 len: len as SizeType,
                 cap: len as SizeType,
                 allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: Box::default(),
+                stored_name: Box::new([]),
             }
         }
 
@@ -715,7 +721,7 @@ pub mod store {
                 len,
                 cap,
                 allocator,
-                stored_name: Box::default(),
+                stored_name: Box::new([]),
             }
         }
 
@@ -795,8 +801,8 @@ pub mod store {
         pub mode_seen_by_clone: Option<bun_sys::Mode>,
     }
 
-    impl Default for File {
-        fn default() -> Self {
+    impl File {
+        pub fn new() -> Self {
             Self {
                 pathlike: PathOrFileDescriptor::Fd(bun_sys::Fd::INVALID),
                 mime_type: bun_http_types::MimeType::OTHER,
@@ -816,7 +822,7 @@ pub mod store {
             File {
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-                ..Default::default()
+                ..File::new()
             }
         }
     }
@@ -878,7 +884,7 @@ pub mod store {
                 credentials: Some(RefPtr::new(credentials)),
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-                options: bun_s3_signing::MultiPartUploadOptions::default(),
+                options: bun_s3_signing::MultiPartUploadOptions::new(),
                 acl: None,
                 storage_class: None,
                 request_payer: false,
@@ -901,7 +907,7 @@ pub mod store {
                 data: Data::Bytes(Bytes::init(bytes)),
                 mime_type: bun_http_types::MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: IsAllAscii::default(),
+                is_all_ascii: IsAllAscii::new(),
             })
         }
 

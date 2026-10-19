@@ -17,9 +17,3 @@ bitflags! {
         const COPY_OUT_PAUSED                 = 1 << 10;
     }
 }
-
-impl Default for ConnectionFlags {
-    fn default() -> Self {
-        Self::empty()
-    }
-}

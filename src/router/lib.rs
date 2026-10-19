@@ -48,7 +48,7 @@ use bun_ptr::Interned;
 
 // Defined here so T4 router is self-contained; `bun_bundler::options` re-exports
 // this (`pub use bun_router::RouteConfig`) so the original path keeps resolving.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RouteConfig {
     pub dir: Box<[u8]>,
 
@@ -62,6 +62,17 @@ pub struct RouteConfig {
     // I would consider using a custom binary format to minimize request size
     // maybe like CBOR
     pub extensions: Box<[Box<[u8]>]>,
+}
+
+impl RouteConfig {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            dir: Box::new([]),
+            asset_prefix_path: Box::new([]),
+            extensions: Box::new([]),
+        }
+    }
 }
 
 // `hash_const` is byte-identical to the runtime `bun_wyhash::hash` (seed 0);
@@ -90,7 +101,7 @@ impl Router {
         Ok(Router {
             routes: Routes {
                 static_: StringHashMap::new(),
-                ..Routes::default()
+                ..Routes::new()
             },
             loaded_routes: false,
             config,
@@ -136,7 +147,6 @@ struct RouteIndex {
 // TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
 // yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
 // accessors. Hand-rolled SoA struct until the derive exists.
-#[derive(Default)]
 struct RouteIndexList {
     // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
     // `NonNull<Route>` / `*const Route` into the box interiors; unboxing
@@ -146,6 +156,18 @@ struct RouteIndexList {
     name: Vec<&'static [u8]>,
     match_name: Vec<&'static [u8]>,
     filepath: Vec<&'static [u8]>,
+}
+
+impl RouteIndexList {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            route: Vec::new(),
+            name: Vec::new(),
+            match_name: Vec::new(),
+            filepath: Vec::new(),
+        }
+    }
 }
 
 impl RouteIndexList {
@@ -206,10 +228,10 @@ pub struct Routes {
     pub(crate) index: Option<NonNull<Route>>,
 }
 
-impl Default for Routes {
-    fn default() -> Self {
+impl Routes {
+    pub fn new() -> Self {
         Self {
-            list: RouteIndexList::default(),
+            list: RouteIndexList::new(),
             dynamic_start: None,
             dynamic_len: 0,
             static_: StringHashMap::new(),
@@ -485,7 +507,7 @@ impl<'a> RouteLoader<'a> {
         if this.all_routes.is_empty() {
             return Routes {
                 static_: this.static_list,
-                ..Routes::default()
+                ..Routes::new()
             };
         }
 
@@ -493,7 +515,7 @@ impl<'a> RouteLoader<'a> {
             sorter::sort_by_name_cmp(a, b)
         });
 
-        let mut route_list = RouteIndexList::default();
+        let mut route_list = RouteIndexList::new();
         route_list
             .set_capacity(this.all_routes.len())
             .expect("unreachable");
@@ -650,8 +672,15 @@ impl<'a> RouteLoader<'a> {
 
 // Packed `{ offset: u16, len: u16 }` pair stored in a u32.
 #[repr(transparent)]
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct TinyPtr(u32);
+
+impl TinyPtr {
+    #[inline]
+    pub fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl TinyPtr {
     #[inline]
@@ -803,7 +832,7 @@ impl Route {
 
             name = strings::trim_right(name, b"/");
 
-            let mut validation_result = pattern::ValidationResult::default();
+            let mut validation_result = pattern::ValidationResult::new();
             let is_index = name.is_empty();
 
             let mut has_uppercase = false;
@@ -1427,7 +1456,7 @@ pub mod pattern {
 
                         let mut tag = Tag::Dynamic;
 
-                        let mut param = TinyPtr::default();
+                        let mut param = TinyPtr::new();
 
                         i += 1;
 
@@ -1520,10 +1549,20 @@ pub mod pattern {
         }
     }
 
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct ValidationResult {
         pub(crate) param_count: u16,
         pub(crate) kind: Tag,
+    }
+
+    impl ValidationResult {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                param_count: 0,
+                kind: Tag::Static,
+            }
+        }
     }
 
     #[derive(strum::IntoStaticStr, Debug, Clone, Copy)]
@@ -1538,9 +1577,8 @@ pub mod pattern {
     bun_core::impl_tag_error!(PatternParseError);
 
     #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
+    #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum Tag {
-        #[default]
         Static = 0,
         Dynamic = 1,
         CatchAll = 2,
@@ -1720,7 +1758,7 @@ mod tests {
         ];
 
         fn run(list: &[(&[u8], &[u8], &[Entry])]) -> usize {
-            let mut parameters = route_param::List::default();
+            let mut parameters = Vec::new();
             let mut failures: usize = 0;
             for (pattern, pathname, entries) in list.iter() {
                 parameters.clear();

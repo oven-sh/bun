@@ -219,7 +219,7 @@ pub mod debug {
             let base_address = info.dli_fbase as usize;
             if !self.address_map.contains_key(&base_address) {
                 let name = if info.dli_fname.is_null() {
-                    Box::default()
+                    Box::new([])
                 } else {
                     // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
                     unsafe { bun_core::ffi::cstr(info.dli_fname) }
@@ -789,7 +789,7 @@ mod draft {
             Output::disable_scoped_debug_writer();
         }
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = BoundedArray::<u8, 1024>::new();
 
         match PANIC_STAGE.with(|s| s.get()) {
             0 => {
@@ -1052,7 +1052,7 @@ mod draft {
                         // SAFETY: single-threaded mutation under panic_mutex
                         HAS_PRINTED_MESSAGE.store(true, Ordering::Relaxed);
 
-                        dump_stack_trace(trace, WriteStackTraceLimits::default());
+                        dump_stack_trace(trace, WriteStackTraceLimits::new());
 
                         if write!(
                             trace_str_buf.writer(),
@@ -1733,7 +1733,7 @@ mod draft {
         // Just the panic message — no `(file:line:col)` suffix. The call site is
         // captured in the backtrace and symbolized there. With `-Zlocation-detail=none`
         // in release the location would be `<redacted>:0:0` anyway.
-        let mut msg_buf = BoundedArray::<u8, 1024>::default();
+        let mut msg_buf = BoundedArray::<u8, 1024>::new();
         {
             let payload = info.payload();
             let msg: &str = if let Some(s) = payload.downcast_ref::<&'static str>() {
@@ -1752,7 +1752,7 @@ mod draft {
         let reason =
             CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = BoundedArray::<u8, 1024>::new();
         {
             let _panic_guard = PANIC_MUTEX.lock();
             let writer = &mut stderr_writer();
@@ -1796,7 +1796,7 @@ mod draft {
             };
 
             if debug_trace {
-                dump_stack_trace(&trace, WriteStackTraceLimits::default());
+                dump_stack_trace(&trace, WriteStackTraceLimits::new());
                 let _ = write!(
                     trace_str_buf.writer(),
                     "{}",
@@ -2786,7 +2786,7 @@ mod draft {
             if sysdir_len == 0 || sysdir_len >= sysdir.len() {
                 return;
             }
-            let mut cmd_line = BoundedArray::<u16, 4096>::default();
+            let mut cmd_line = BoundedArray::<u16, 4096>::new();
             if cmd_line.append(u16::from(b'"')).is_err()
                 || cmd_line.append_slice(&sysdir[..sysdir_len]).is_err()
                 || cmd_line
@@ -2876,7 +2876,7 @@ mod draft {
             let Some(curl) = bun_which::which(&mut buf, path_env, cwd_bytes, b"curl") else {
                 return;
             };
-            let mut cmd_line = BoundedArray::<u8, 4096>::default();
+            let mut cmd_line = BoundedArray::<u8, 4096>::new();
             if cmd_line.append_slice(url).is_err() {
                 return;
             }
@@ -3385,7 +3385,7 @@ mod draft {
         // `Environment::BASE_PATH` is `&[u8]`, which `const_format::concatcp!` cannot
         // ingest. The constant is tiny and this path is debug-only — build it once
         // at runtime in a stack BoundedArray (no heap, async-signal-safe).
-        let mut base_path_buf = BoundedArray::<u8, { bun_paths::MAX_PATH_BYTES }>::default();
+        let mut base_path_buf = BoundedArray::<u8, { bun_paths::MAX_PATH_BYTES }>::new();
         let _ = base_path_buf.append_slice(Environment::BASE_PATH);
         let _ = base_path_buf.append_slice(bun_paths::SEP_STR.as_bytes());
         let base_path: &[u8] = base_path_buf.const_slice();
@@ -3625,7 +3625,7 @@ mod draft {
         let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
         // PORTING.md §Forbidden: no Box::leak. We're on the noreturn path, so a stack
         // buffer suffices — `panic_impl` erases to &'static for the abort path.
-        let mut msg = BoundedArray::<u8, 256>::default();
+        let mut msg = BoundedArray::<u8, 256>::new();
         let _ = write!(
             msg.writer(),
             "unsupported uv function: {}",

@@ -319,8 +319,15 @@ pub(crate) struct Interpreter {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct InterpreterFlags(u8);
+
+impl InterpreterFlags {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(0)
+    }
+}
 impl InterpreterFlags {
     pub(crate) const fn done(self) -> bool {
         self.0 & 0b1 != 0
@@ -559,8 +566,8 @@ impl Interpreter {
             args: JsCell::new(shargs),
             jsobjs,
             root_shell: JsCell::new(ShellExecEnv {
-                _buffered_stdout: Bufio::default(),
-                _buffered_stderr: Bufio::default(),
+                _buffered_stdout: Bufio::new(),
+                _buffered_stderr: Bufio::new(),
                 shell_env: EnvMap::init(),
                 cmd_local_env: EnvMap::init(),
                 export_env,
@@ -578,11 +585,11 @@ impl Interpreter {
                 stderr: crate::shell::io::OutKind::Pipe,
             }),
             has_pending_activity: AtomicU32::new(0),
-            keep_alive: JsCell::new(bun_io::KeepAlive::default()),
+            keep_alive: JsCell::new(bun_io::KeepAlive::new()),
             context: Cell::new(None),
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
-            flags: Cell::new(InterpreterFlags::default()),
+            flags: Cell::new(InterpreterFlags::new()),
             // Starts at `None` so `async_cmd_done` only finishes once
             // `on_root_child_done` has recorded the real exit code.
             exit_code: Cell::new(None),
@@ -625,7 +632,7 @@ impl Interpreter {
         self.this_jsvalue.set(crate::jsc::JSValue::ZERO);
         // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
         // default drops the refs.
-        self.root_io.set(IO::default());
+        self.root_io.set(IO::new());
         // Free buffered IO, env
         // maps, cwd fd; do NOT free the struct itself (it's embedded).
         self.root_shell.with_mut(|rs| rs.deinit_embedded(true));
@@ -1212,7 +1219,7 @@ impl Interpreter {
             stdout_fd,
             crate::shell::io_writer::Flags {
                 pollable: is_pollable(stdout_fd),
-                ..Default::default()
+                ..crate::shell::io_writer::Flags::new()
             },
             event_loop,
         );
@@ -1222,7 +1229,7 @@ impl Interpreter {
             stderr_fd,
             crate::shell::io_writer::Flags {
                 pollable: is_pollable(stderr_fd),
-                ..Default::default()
+                ..crate::shell::io_writer::Flags::new()
             },
             event_loop,
         );
@@ -1510,7 +1517,7 @@ impl Interpreter {
             // Cannot be safely called multiple times.
             // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
             // default drops the refs.
-            self.root_io.set(IO::default());
+            self.root_io.set(IO::new());
             self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
         }
 
@@ -1601,7 +1608,7 @@ impl Interpreter {
                         ShellExecEnv::deinit_impl(env);
                     }
                 }
-                this.root_io.set(IO::default());
+                this.root_io.set(IO::new());
                 this.root_shell.with_mut(|rs| rs.deinit_embedded(true));
             }
             CleanupState::RuntimeCleaned => {
@@ -1810,9 +1817,9 @@ pub(crate) enum Bufio {
     Borrowed(*mut Vec<u8>),
 }
 
-impl Default for Bufio {
-    fn default() -> Self {
-        Bufio::Owned(Vec::<u8>::default())
+impl Bufio {
+    pub(crate) fn new() -> Self {
+        Bufio::Owned(Vec::<u8>::new())
     }
 }
 
@@ -1827,9 +1834,8 @@ impl Bufio {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShellExecEnvKind {
-    #[default]
     Normal,
     CmdSubst,
     Subshell,
@@ -1939,12 +1945,12 @@ impl ShellExecEnv {
             match out {
                 OutKind::Fd(f) => match f.captured {
                     Some(cap) => Bufio::Borrowed(cap),
-                    None => Bufio::Owned(Vec::<u8>::default()),
+                    None => Bufio::Owned(Vec::<u8>::new()),
                 },
-                OutKind::Ignore => Bufio::Owned(Vec::<u8>::default()),
+                OutKind::Ignore => Bufio::Owned(Vec::<u8>::new()),
                 OutKind::Pipe => match kind {
                     ShellExecEnvKind::Normal | ShellExecEnvKind::CmdSubst => {
-                        Bufio::Owned(Vec::<u8>::default())
+                        Bufio::Owned(Vec::<u8>::new())
                     }
                     ShellExecEnvKind::Subshell | ShellExecEnvKind::Pipeline => {
                         Bufio::Borrowed(parent_buf)
@@ -2439,7 +2445,7 @@ pub(crate) fn shell_openat(
                     bun_sys::WindowsOpenDirOptions {
                         iterable: true,
                         no_follow: flags & bun_sys::O::NOFOLLOW != 0,
-                        ..Default::default()
+                        ..bun_sys::WindowsOpenDirOptions::new()
                     },
                 )
                 .map_err(|e| e.with_path(path.as_bytes()))?
@@ -2454,7 +2460,7 @@ pub(crate) fn shell_openat(
                 bun_sys::WindowsOpenDirOptions {
                     iterable: true,
                     no_follow: flags & bun_sys::O::NOFOLLOW != 0,
-                    ..Default::default()
+                    ..bun_sys::WindowsOpenDirOptions::new()
                 },
             )
             .map_err(|e| e.with_path(path.as_bytes()))?
@@ -2815,7 +2821,7 @@ impl ShellTask {
     pub(crate) fn new_child(parent: &ShellTask) -> Self {
         ShellTask {
             task: WorkPoolTask {
-                node: Default::default(),
+                node: bun_threading::thread_pool::Node::new(),
                 callback: shell_task_unset_callback,
             },
             // Spelled out so `#[track_caller]` names this site, not `Option::clone`.
@@ -2825,7 +2831,7 @@ impl ShellTask {
                 None => None,
             },
             event_loop: parent.event_loop,
-            keep_alive: Default::default(),
+            keep_alive: bun_io::KeepAlive::new(),
             interp: core::ptr::null_mut(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(parent.event_loop),
         }
@@ -2834,14 +2840,14 @@ impl ShellTask {
     pub(crate) fn new(event_loop: EventLoopHandle) -> Self {
         ShellTask {
             task: WorkPoolTask {
-                node: Default::default(),
+                node: bun_threading::thread_pool::Node::new(),
                 // Real callback is installed by `schedule::<C>()`; this only
                 // fires if a caller forgets the `<C>` (debug-asserted there).
                 callback: shell_task_unset_callback,
             },
             poster: None,
             event_loop,
-            keep_alive: Default::default(),
+            keep_alive: bun_io::KeepAlive::new(),
             interp: core::ptr::null_mut(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(event_loop),
         }

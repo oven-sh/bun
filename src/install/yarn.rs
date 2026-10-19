@@ -21,14 +21,22 @@ use bun_install::npm;
 use bun_paths::AutoAbsPath;
 use bun_semver::{self as Semver, String as SemverString};
 
-#[derive(Default)]
 pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
     /// Maps the key that `consolidate_and_append_entry` builds to an index in `entries`.
     entry_by_name_version: StringHashMap<usize>,
 }
 
-#[derive(Default)]
+impl<'a> YarnLock<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            entry_by_name_version: StringHashMap::init(),
+        }
+    }
+}
+
 pub struct Entry<'a> {
     pub(crate) specs: Vec<&'a [u8]>,
     /// Name of the package the entry resolves to; see `package_name_of`.
@@ -49,6 +57,27 @@ pub struct Entry<'a> {
     pub(crate) os: npm::Negatable<npm::OperatingSystem>,
     pub(crate) cpu: npm::Negatable<npm::Architecture>,
     pub(crate) git_repo_name: Option<Box<[u8]>>,
+}
+
+impl<'a> Entry<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            specs: Vec::new(),
+            name: &[],
+            version: &[],
+            resolved: None,
+            integrity: None,
+            dependencies: [None; 4],
+            commit: None,
+            workspace: false,
+            file: None,
+            link: None,
+            os: npm::Negatable::new(),
+            cpu: npm::Negatable::new(),
+            git_repo_name: None,
+        }
+    }
 }
 
 const DEPENDENCY_SECTIONS: [(&[u8], dependency::Behavior); 4] = [
@@ -155,9 +184,7 @@ impl<'a> Entry<'a> {
 
     /// The `integrity` line or, without one, the sha1 after the `#` in a tarball's `resolved`.
     fn tarball_integrity(&self) -> Integrity {
-        let integrity = self
-            .integrity
-            .map_or_else(Integrity::default, Integrity::parse);
+        let integrity = self.integrity.map_or_else(Integrity::new, Integrity::parse);
         // In a git entry, the `#` in `resolved` is followed by a commit, not by the tarball's sha1.
         if integrity.tag.is_supported() || self.commit.is_some() {
             return integrity;
@@ -284,7 +311,7 @@ impl<'a> YarnLock<'a> {
                     specs: current_specs.clone(),
                     name: Entry::package_name_of(&current_specs),
                     version: b"", // assigned below when "version" key is parsed
-                    ..Default::default()
+                    ..Entry::<'a>::new()
                 };
 
                 for &spec in &current_specs {
@@ -324,7 +351,8 @@ impl<'a> YarnLock<'a> {
                     if let Some(space_idx) = strings::index_of(trimmed, b" ") {
                         let key = strings::trim(&trimmed[0..space_idx], b" \"");
                         let value = strings::trim(&trimmed[space_idx + 1..], b" \"");
-                        let map = entry.dependencies[dep_type].get_or_insert_default();
+                        let map =
+                            entry.dependencies[dep_type].get_or_insert_with(StringHashMap::init);
                         map.put(key, value)?;
                     }
                     continue;
@@ -390,7 +418,7 @@ impl<'a> YarnLock<'a> {
         let link = new_entry.link.as_deref().unwrap_or(b"");
         // A name and a version only identify a package when it comes from a registry.
         let (file, resolved, commit) = if new_entry.is_registry_entry() {
-            Default::default()
+            (&[], &[], &[])
         } else {
             (
                 new_entry.file.unwrap_or_default(),
@@ -439,7 +467,7 @@ fn append_package_json(
     let (source, json) = match manager.workspace_package_json_cache.get_with_path(
         log,
         path.slice(),
-        Default::default(),
+        super::GetJsonOptions::new(),
     ) {
         // Cloned because parsing the root's `workspaces` grows the cache holding this entry.
         GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
@@ -456,7 +484,7 @@ fn append_package_json(
         // The parse diagnostics are already in `log`.
         GetJsonResult::ParseErr(_) => return Err(crate::Error::InvalidPackageJSON),
     };
-    let mut package = LockfilePackage::default();
+    let mut package = LockfilePackage::new();
     let features = workspace_path.map_or(Features::main(), |_| Features::WORKSPACE);
     package.parse_with_json(this, manager, log, &source, json, &mut (), features)?;
     if let Some(workspace_path) = workspace_path {
@@ -589,7 +617,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         return Err(crate::Error::UnsupportedYarnLockfileVersion);
     }
 
-    let mut yarn_lock = YarnLock::default();
+    let mut yarn_lock = YarnLock::new();
     yarn_lock.parse(data)?;
 
     this.init_empty();
@@ -654,7 +682,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 break 'blk Resolution::init(ResolutionValue::Symlink(sbuf!(this).append(link)?));
             } else if let Some(commit) = entry.commit {
                 let Some(resolved) = entry.resolved.as_deref() else {
-                    break 'blk Resolution::default();
+                    break 'blk Resolution::new();
                 };
                 let mut owner_str: &[u8] = b"";
                 let mut repo_str: &[u8] = resolved;
@@ -676,7 +704,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     owner: sbuf!(this).append(owner_str)?,
                     repo: sbuf!(this).append(repo_str)?,
                     committish: sbuf!(this).append(committish)?,
-                    resolved: SemverString::default(),
+                    resolved: SemverString::new(),
                     package_name: sbuf!(this).append(package_name)?,
                 };
                 // `resolved` names the cache folder, and is the commit that a git checkout uses.
@@ -699,7 +727,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                             sbuf!(this).append(resolved)?,
                         ));
                     }
-                    None if !is_registry_entry => break 'blk Resolution::default(),
+                    None if !is_registry_entry => break 'blk Resolution::new(),
                     _ => {}
                 }
 
@@ -719,7 +747,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                             sbuf!(this).append(resolved)?,
                         ));
                     }
-                    break 'blk Resolution::default();
+                    break 'blk Resolution::new();
                 }
 
                 // The bare URL a fresh install records; empty means the configured registry.
@@ -730,7 +758,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     {
                         sbuf!(this).append(resolved)?
                     }
-                    _ => SemverString::default(),
+                    _ => SemverString::new(),
                 };
                 break 'blk Resolution::init(ResolutionValue::Npm(VersionedURL {
                     url,
@@ -769,20 +797,20 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             name: pkg_name,
             name_hash,
             resolution,
-            dependencies: Default::default(),
-            resolutions: Default::default(),
+            dependencies: super::ExternalSlice::empty(),
+            resolutions: super::ExternalSlice::empty(),
             meta: PackageMeta {
                 id: appended_id,
                 origin: Origin::Npm,
                 arch: entry.cpu.combine(),
                 os: entry.os.combine(),
-                man_dir: SemverString::default(),
+                man_dir: SemverString::new(),
                 has_install_script: HasInstallScript::False,
                 integrity: entry.tarball_integrity(),
-                ..Default::default()
+                ..PackageMeta::new()
             },
             bin: Bin::init(),
-            scripts: Default::default(),
+            scripts: crate::lockfile_real::package::scripts::Scripts::new(),
         };
         // yarn.lock does not record bins. For a `file:` folder or a `link:`, they are read from the
         // package.json on disk.
@@ -794,7 +822,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             && let GetJsonResult::Entry(json) = manager.workspace_package_json_cache.get_with_path(
                 log,
                 path.slice(),
-                Default::default(),
+                super::GetJsonOptions::new(),
             )
         {
             let manifest = json.root;
@@ -858,7 +886,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     Some(&mut *log),
                     None,
                 )
-                .unwrap_or_default();
+                .unwrap_or_else(bun_install_types::DependencyVersion::new);
                 parsed_version.literal = dep_version_string;
 
                 key.clear();
@@ -917,7 +945,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     Ok(LoadResult::Ok(lockfile::LoadResultOk {
         lockfile: this,
         migrated: lockfile::Migrated::Yarn,
-        serializer_result: Default::default(),
+        serializer_result: crate::lockfile_real::bun_lockb::SerializerLoadResult::new(),
         format: lockfile::LockfileFormat::Binary,
     }))
 }

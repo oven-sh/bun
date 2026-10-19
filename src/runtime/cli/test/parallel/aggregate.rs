@@ -37,7 +37,7 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
                 line_number: 0,
                 failure: Some(TestFailure {
                     message: b"worker process crashed before reporting results".to_vec(),
-                    ..Default::default()
+                    ..TestFailure::new()
                 }),
             };
             junit.record_test_case(&crashed).expect("oom");
@@ -47,10 +47,15 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
 }
 
 pub(crate) fn write_coverage_report(coord: &mut Coordinator, opts: &mut CodeCoverageOptions) {
-    let mut merged = core::mem::take(&mut coord.coverage_files);
+    let mut merged = core::mem::replace(
+        &mut coord.coverage_files,
+        bun_collections::StringArrayHashMap::init(),
+    );
     let mut reports: Vec<Report<'static>> = Vec::with_capacity(merged.count());
     for m in merged.values_mut() {
-        reports.push(bun_core::handle_oom(core::mem::take(m).finish()));
+        reports.push(bun_core::handle_oom(
+            core::mem::replace(m, bun_sourcemap_jsc::code_coverage::MergedReport::new()).finish(),
+        ));
     }
     if reports.is_empty() {
         return;

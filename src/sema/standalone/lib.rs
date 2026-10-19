@@ -193,7 +193,11 @@ mod tests {
     #[test]
     fn the_real_path_of_what_is_below_the_marked_root_is_below_it() {
         // No test can make a directory in `/`. This one is there, and is no link.
-        let disk = Disk::with_already_read(1, Default::default(), b"/");
+        let disk = Disk::with_already_read(
+            1,
+            bun_sema::util::FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            b"/",
+        );
         assert_eq!(disk.realpath(b"/usr/lib"), b"/usr/lib");
         assert_eq!(disk.realpath(b"/\0/usr/lib"), b"/\0/usr/lib");
     }

@@ -275,7 +275,7 @@ impl Checker<'_, '_> {
             mode,
         };
         let error_node = (file, request.start, request.end);
-        let site = SpecifierSite::default();
+        let site = SpecifierSite::new();
         if !self.resolve_external_module_at(file, location, site, error_node, Some(2354)) {
             return None;
         }

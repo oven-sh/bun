@@ -203,7 +203,7 @@ impl FSWatchTaskPosix {
                 ctx,
                 count: 0,
                 entries: [const { MaybeUninit::uninit() }; 8],
-                concurrent_task: ConcurrentTask::default(),
+                concurrent_task: ConcurrentTask::init(),
             };
         }
 
@@ -263,7 +263,7 @@ impl FSWatchTaskPosix {
                     &mut self.entries,
                     [const { MaybeUninit::uninit() }; 8],
                 ),
-                concurrent_task: ConcurrentTask::default(),
+                concurrent_task: ConcurrentTask::init(),
             }));
             self.count = 0;
             // SAFETY: `that` is a freshly-boxed task; the concurrent queue takes
@@ -333,12 +333,11 @@ pub(crate) type EventPathString = Box<[u8]>;
 
 /// The kind of change a watcher backend reports for a path, before it becomes a JS event.
 /// Every backend (inotify, kqueue, FSEvents, Windows) produces exactly these two.
-#[derive(Copy, Clone, Default, Eq, PartialEq, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum WatchEventKind {
     #[strum(serialize = "rename")]
     Rename,
     #[strum(serialize = "change")]
-    #[default]
     Change,
 }
 
@@ -410,14 +409,14 @@ impl Taskable for FSWatchTaskWindows {
 }
 
 #[cfg(windows)]
-impl Default for FSWatchTaskWindows {
-    fn default() -> Self {
+impl FSWatchTaskWindows {
+    pub(crate) fn new() -> Self {
         Self {
             event: Event::Error {
                 err: bun_sys::Error {
                     errno: SystemErrno::EINVAL as _,
                     syscall: bun_sys::Tag::watch,
-                    ..Default::default()
+                    ..bun_sys::Error::init()
                 },
                 close: true,
             },
@@ -520,7 +519,7 @@ impl FSWatchTaskWindows {
                 // variant, and `encoding` is immutable after init.
                 unreachable!()
             };
-            let js = core::mem::take(s).into_js(&ctx.global_this)?;
+            let js = core::mem::replace(s, bun_core::String::EMPTY).into_js(&ctx.global_this)?;
             ctx.emit_with_filename::<EVENT_TYPE>(js);
             Ok(())
         } else {
@@ -811,7 +810,7 @@ impl FSWatcher {
                 this_ref.current_task.set(FSWatchTask {
                     // SAFETY: `this` is the live boxed FSWatcher (shared; the task only reads).
                     ctx: Some(unsafe { bun_ptr::ParentRef::from_raw(this) }),
-                    ..Default::default()
+                    ..FSWatchTask::new()
                 });
                 this_ref.current_task.with_mut(|t| t.append_abort());
             } else {
@@ -1153,7 +1152,7 @@ impl FSWatcher {
                 errno: SystemErrno::ENAMETOOLONG as _,
                 syscall: bun_sys::Tag::watch,
                 path: args.path.slice().into(),
-                ..Default::default()
+                ..bun_sys::Error::init()
             });
         };
         let joined_len = joined.len();
@@ -1173,9 +1172,9 @@ impl FSWatcher {
             loop_kind: vm_ref.current_loop_kind(),
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,
-                ..Default::default()
+                ..FSWatchTask::new()
             }),
-            mutex: Mutex::default(),
+            mutex: Mutex::init(),
             signal: JsCell::new(args.signal.map(|s| s.ref_())),
             persistent: Cell::new(args.persistent),
             path_watcher: Cell::new(None),
@@ -1184,7 +1183,7 @@ impl FSWatcher {
             encoding: args.encoding,
             closed: Cell::new(false),
             verbose: args.verbose,
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: JsCell::new(KeepAlive::new()),
             pending_activity_count: AtomicU32::new(1),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FSWatcher>(),
         }));
@@ -1222,7 +1221,7 @@ impl FSWatcher {
                             errno: err.errno,
                             syscall: bun_sys::Tag::watch,
                             path: args.path.slice().into(),
-                            ..Default::default()
+                            ..bun_sys::Error::init()
                         });
                     }
                 }
@@ -1244,13 +1243,13 @@ impl FSWatcher {
 }
 
 #[cfg(not(windows))]
-impl Default for FSWatchTaskPosix {
-    fn default() -> Self {
+impl FSWatchTaskPosix {
+    pub(crate) fn new() -> Self {
         Self {
             ctx: None,
             count: 0,
             entries: [const { MaybeUninit::uninit() }; 8],
-            concurrent_task: ConcurrentTask::default(),
+            concurrent_task: ConcurrentTask::init(),
         }
     }
 }

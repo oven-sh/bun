@@ -222,11 +222,17 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
 }
 
 /// How the version strings that `edit_after_resolve` wrote to package.json changed the lockfile.
-#[derive(Default)]
 pub(crate) struct Synced {
     /// A dependency that had resolved to a registry package now has a version range that matches a
     /// workspace, so it was resolved to that workspace instead.
     pub(crate) links: bool,
+}
+
+impl Synced {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { links: false }
+    }
 }
 
 /// Phase 1, before bun.lock is saved: puts the resolved versions into the in-memory copies of the
@@ -240,7 +246,7 @@ pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<
             .iter()
             .any(|e| e.received_requests)
     {
-        return Ok(Synced::default());
+        return Ok(Synced::new());
     }
     edit_after_resolve_slow(manager)
 }
@@ -325,7 +331,7 @@ fn edit_update_targets(
     let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
     for target in selected {
         let mut ast = fetch_entry_root(manager, &target);
-        let mut updating = bun_collections::StringArrayHashMap::default();
+        let mut updating = bun_collections::StringArrayHashMap::init();
         for options in [
             EditOptions {
                 exact_versions: true,
@@ -333,7 +339,7 @@ fn edit_update_targets(
             },
             EditOptions {
                 exact_versions: exact,
-                ..Default::default()
+                ..EditOptions::new()
             },
         ] {
             PackageJSONEditor::edit_update_entries(
@@ -374,7 +380,7 @@ fn edit_cwd(
     let in_root = cwd_target.name_hash.is_none();
     let options = EditOptions {
         exact_versions: exact,
-        ..Default::default()
+        ..EditOptions::new()
     };
     let mut ast = fetch_entry_root(manager, &cwd_target);
     if updates.is_empty() {
@@ -435,7 +441,7 @@ fn parse_edited(
     edited: &[EditedPackageJson],
 ) -> crate::Result<Vec<(usize, Package)>> {
     scratch.parse_root(manager, Features::main())?;
-    let mut root_pkg = Some(core::mem::take(&mut scratch.root));
+    let mut root_pkg = Some(core::mem::replace(&mut scratch.root, Package::new()));
     let mut parsed: Vec<(usize, Package)> = Vec::with_capacity(edited.len());
     for (i, e) in edited.iter().enumerate() {
         if e.target.name_hash.is_none() {
@@ -500,7 +506,7 @@ fn sync_lockfile(
             let lbuf = manager.lockfile.buffers.string_bytes.as_slice();
             let row_deps = row.get(manager.lockfile.buffers.dependencies.as_slice());
             // Zero-length while every scratch dep so far matched the row at its own index.
-            let mut claimed = DynamicBitSet::default();
+            let mut claimed = DynamicBitSet::new();
             let mut changed = Vec::new();
             for (si, s) in scratch_deps.iter().enumerate() {
                 let same_index = si < row_deps.len()
@@ -595,7 +601,7 @@ fn sync_lockfile(
 
 fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {
     let printed: &[u8] = &fetch_entry(manager, target).source.contents;
-    let mut file = WorkspacePackageJSONCache::default();
+    let mut file = WorkspacePackageJSONCache::new();
     let GetResult::Entry(on_disk) = file.get_with_path(
         &mut bun_ast::Log::init(),
         &target.package_json_path,

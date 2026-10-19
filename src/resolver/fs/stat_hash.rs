@@ -2,7 +2,6 @@ use bun_hash::XxHash64Streaming as XxHash64;
 use bun_http_types::ETag::wtf;
 use bun_sys::{S, Stat, Timespec};
 
-#[derive(Default)]
 pub struct StatHash {
     pub(crate) value: u64,
 
@@ -10,6 +9,18 @@ pub struct StatHash {
     pub(crate) last_modified_buffer: [u8; 32],
     pub(crate) last_modified_buffer_len: u8,
     // TODO: add etag support here!
+}
+
+impl StatHash {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            value: 0,
+            last_modified_u64: 0,
+            last_modified_buffer: [0; 32],
+            last_modified_buffer_len: 0,
+        }
+    }
 }
 
 // `libc::stat` has no mtime method, so project the platform-specific fields

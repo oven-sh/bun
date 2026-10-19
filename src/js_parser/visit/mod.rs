@@ -89,13 +89,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
 
         let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
-        let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
+        let old_fn_only_data =
+            core::mem::replace(&mut self.fn_only_data_visit, FnOnlyDataVisit::new());
         self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
-            ..Default::default()
+            ..FnOrArrowDataVisit::new()
         };
         self.fn_only_data_visit = FnOnlyDataVisit {
             is_this_nested: true,
-            ..Default::default()
+            ..FnOnlyDataVisit::new()
         };
 
         if let Some(name) = func.name {
@@ -359,7 +360,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_immediately_assigned_to_decl: true,
                         // `const { a } = x` reads `x.a` and drops `x`.
                         is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
-                        ..Default::default()
+                        ..ExprIn::new()
                     },
                 );
                 self.react_compiler_candidate_name = None;
@@ -401,7 +402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             [unwrapped_id.get_usize()];
                                         deferred.namespace.ref_ = ref_;
                                         self.import_items_for_namespace
-                                            .insert(ref_, ImportItemForNamespaceMap::default());
+                                            .insert(ref_, ImportItemForNamespaceMap::init());
                                         continue 'outer;
                                     }
                                 }
@@ -775,7 +776,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut st.value,
                     ExprIn {
                         assign_target,
-                        ..Default::default()
+                        ..ExprIn::new()
                     },
                 );
             }
@@ -1061,11 +1062,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
                     let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
-                    let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
-                    self.fn_or_arrow_data_visit = FnOrArrowDataVisit::default();
+                    let old_fn_only_data =
+                        core::mem::replace(&mut self.fn_only_data_visit, FnOnlyDataVisit::new());
+                    self.fn_or_arrow_data_visit = FnOrArrowDataVisit::new();
                     self.fn_only_data_visit = FnOnlyDataVisit {
                         is_this_nested: true,
-                        ..Default::default()
+                        ..FnOnlyDataVisit::new()
                     };
                     // PropertyKind::ClassStaticBlock guarantees `Some`; arena-owned for 'a.
                     let csb = property.class_static_block_mut().unwrap();
@@ -1301,7 +1303,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 target: this_target,
                                 name: name.into(),
                                 name_loc: bind_loc,
-                                ..Default::default()
+                                ..E::Dot::new()
                             },
                             bind_loc,
                         );
@@ -1318,13 +1320,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 self.new_expr(E::Identifier::init(field_symbol_ref), bind_loc);
                             class_body.push(G::Property {
                                 key: Some(field_ident),
-                                ..Default::default()
+                                ..G::Property::new()
                             });
                         }
                     }
 
                     for slot in class.properties.slice_mut().iter_mut() {
-                        let prop = core::mem::take(slot);
+                        let prop = core::mem::replace(slot, bun_ast::g::Property::new());
                         if !lower_fields || !is_instance_field(&prop) {
                             class_body.push(prop);
                             continue;
@@ -1343,7 +1345,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             target: this_target,
                                             name: s.data,
                                             name_loc: key.loc,
-                                            ..Default::default()
+                                            ..E::Dot::new()
                                         },
                                         key.loc,
                                     )
@@ -1415,14 +1417,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 E::Call {
                                     target,
                                     args,
-                                    ..Default::default()
+                                    ..E::Call::new()
                                 },
                                 loc,
                             );
                             ctor_stmts.push(self.s(
                                 S::SExpr {
                                     value: call,
-                                    ..Default::default()
+                                    ..S::SExpr::new()
                                 },
                                 loc,
                             ));
@@ -1440,7 +1442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         stmts: bun_ast::StoreSlice::from_bump(ctor_stmts),
                                     },
                                     flags: flags::FUNCTION_NONE,
-                                    ..Default::default()
+                                    ..G::Fn::new()
                                 },
                             },
                             loc,
@@ -1451,7 +1453,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 flags: flags::Property::IsMethod.into(),
                                 key: Some(key_expr),
                                 value: Some(value_expr),
-                                ..Default::default()
+                                ..G::Property::new()
                             },
                         );
                     }
@@ -1605,7 +1607,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut let_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
                 let mut var_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
                 let mut non_fn_stmts: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
-                let mut fn_stmts: HashMap<Ref, u32> = HashMap::default();
+                let mut fn_stmts: HashMap<Ref, u32> = HashMap::init();
 
                 for stmt in before.iter().copied() {
                     match stmt.data {
@@ -1635,7 +1637,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 continue;
                             }
 
-                            let gpe = fn_stmts.get_or_put(name_ref).expect("oom");
+                            let gpe = fn_stmts.get_or_put(name_ref, || 0).expect("oom");
                             let mut index = *gpe.value_ptr;
                             if !gpe.found_existing {
                                 index = u32::try_from(let_decls.len()).expect("int cast");
@@ -1653,7 +1655,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     let value = p.new_expr(
                                         E::Identifier {
                                             ref_: name_ref,
-                                            ..Default::default()
+                                            ..E::Identifier::new()
                                         },
                                         name.loc,
                                     );
@@ -1694,7 +1696,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         S::Local {
                             kind: LocalKind::KLet,
                             decls,
-                            ..Default::default()
+                            ..S::Local::new()
                         },
                         loc,
                     ));
@@ -1714,7 +1716,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             S::Local {
                                 kind: LocalKind::KVar,
                                 decls,
-                                ..Default::default()
+                                ..S::Local::new()
                             },
                             loc,
                         ));

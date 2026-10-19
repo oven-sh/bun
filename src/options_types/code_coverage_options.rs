@@ -12,8 +12,8 @@ pub struct Fraction {
     pub failing: bool,
 }
 
-impl Default for Fraction {
-    fn default() -> Self {
+impl Fraction {
+    pub fn new() -> Self {
         Self {
             functions: 0.9,
             lines: 0.9,
@@ -38,8 +38,8 @@ pub struct CodeCoverageOptions {
     pub ignore_patterns: Vec<Box<[u8]>>,
 }
 
-impl Default for CodeCoverageOptions {
-    fn default() -> Self {
+impl CodeCoverageOptions {
+    pub fn new() -> Self {
         Self {
             skip_test_files: !bun_core::env::ALLOW_ASSERT,
             reporters: Reporters {
@@ -47,7 +47,7 @@ impl Default for CodeCoverageOptions {
                 lcov: false,
             },
             reports_directory: Box::from(b"coverage" as &[u8]),
-            fractions: Fraction::default(),
+            fractions: Fraction::new(),
             ignore_sourcemap: false,
             enabled: false,
             fail_on_low_coverage: false,

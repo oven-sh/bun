@@ -370,10 +370,10 @@ impl<'a, 'o> Printer<'a, 'o> {
             pre_depth: 0,
             quoted_depth: 0,
             stack,
-            comments: Default::default(),
-            comments_of_attributes: FxHashMap::default(),
-            comments_of_elements: FxHashMap::default(),
-            ends_tag_with_line_comment: FxHashSet::default(),
+            comments: core::array::from_fn(|_| Vec::new()),
+            comments_of_attributes: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            comments_of_elements: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ends_tag_with_line_comment: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 
@@ -1198,7 +1198,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 start: self.tree[first].start,
                 end: self.tree[last].end,
             },
-            _ => Span::default(),
+            _ => Span::init(),
         };
         let comments: Vec<LeadingComment> = (self
             .leading_comment(id, place)

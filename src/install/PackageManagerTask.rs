@@ -62,12 +62,12 @@ pub(crate) fn uninit() -> Task<'static> {
         // `mem::zeroed()`; and struct-update `..Task::uninit()` *drops* the
         // base value's `log` when the caller supplies their own, so this must
         // be a valid (empty) Log either way.
-        log: Log::default(),
+        log: Log::empty(),
         id: Id(0),
         package_manager: None,
         status: Status::Waiting,
         threadpool_task: thread_pool::Task {
-            node: Default::default(),
+            node: bun_threading::thread_pool::Node::new(),
             callback: Task::callback,
         },
         err: None,
@@ -89,8 +89,15 @@ unsafe impl<'a> bun_threading::Linked for Task<'a> {
 
 /// An ID that lets us register a callback without keeping the same pointer around
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Id(u64);
+
+impl Id {
+    #[inline]
+    pub fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl core::fmt::Display for Id {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -279,7 +286,10 @@ impl<'a> Task<'a> {
                     // Take ownership so the
                     // multi-MB manifest buffer drops on every exit of this arm
                     // instead of staying live on the NetworkTask until recycle.
-                    let mut body = core::mem::take(&mut network.response_buffer);
+                    let mut body = core::mem::replace(
+                        &mut network.response_buffer,
+                        crate::bun_output::MutableString::new(),
+                    );
 
                     let Some(metadata) = &network.response.metadata else {
                         // Handle the case when metadata is null (e.g., network failure before receiving headers)
@@ -300,7 +310,7 @@ impl<'a> Task<'a> {
                         this.err = Some(err);
                         this.status = Status::Fail;
                         this.data = Data {
-                            package_manifest: ManuallyDrop::new(npm::PackageManifest::default()),
+                            package_manifest: ManuallyDrop::new(npm::PackageManifest::new()),
                         };
                         break 'body;
                     };
@@ -348,7 +358,7 @@ impl<'a> Task<'a> {
                             this.err = Some(err);
                             this.status = Status::Fail;
                             this.data = Data {
-                                package_manifest: ManuallyDrop::new(npm::PackageManifest::default()),
+                                package_manifest: ManuallyDrop::new(npm::PackageManifest::new()),
                             };
                             break 'body;
                         }
@@ -377,7 +387,7 @@ impl<'a> Task<'a> {
                             );
                             this.status = Status::Fail;
                             this.data = Data {
-                                package_manifest: ManuallyDrop::new(npm::PackageManifest::default()),
+                                package_manifest: ManuallyDrop::new(npm::PackageManifest::new()),
                             };
                             break 'body;
                         }
@@ -396,7 +406,10 @@ impl<'a> Task<'a> {
                     let extract = unsafe { &mut *this.request.extract };
                     // Take ownership so the
                     // tarball body drops on every exit of this arm.
-                    let mut buffer = core::mem::take(&mut extract.network.response_buffer);
+                    let mut buffer = core::mem::replace(
+                        &mut extract.network.response_buffer,
+                        crate::bun_output::MutableString::new(),
+                    );
 
                     let result = match extract.tarball.run(&mut this.log, buffer.slice()) {
                         Ok(v) => v,
@@ -404,7 +417,7 @@ impl<'a> Task<'a> {
                             this.err = Some(err);
                             this.status = Status::Fail;
                             this.data = Data {
-                                extract: ManuallyDrop::new(ExtractData::default()),
+                                extract: ManuallyDrop::new(ExtractData::new()),
                             };
                             break 'body;
                         }
@@ -444,7 +457,7 @@ impl<'a> Task<'a> {
                             this.err = Some(err);
                             this.status = Status::Fail;
                             this.data = Data {
-                                extract: ManuallyDrop::new(ExtractData::default()),
+                                extract: ManuallyDrop::new(ExtractData::new()),
                             };
                             break 'body;
                         }

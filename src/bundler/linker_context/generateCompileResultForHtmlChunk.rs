@@ -68,7 +68,6 @@ pub(crate) unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoo
     unsafe { Chunk::write_compile_result_slot(chunk_ptr, i, result) };
 }
 
-#[derive(Default)]
 struct EndTagIndices {
     head: Option<u32>,
     body: Option<u32>,

@@ -596,10 +596,17 @@ struct Temporary {
 }
 
 /// Positions of the last statement that reads and of the last statement that writes.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct Statements {
     read: u32,
     write: u32,
+}
+
+impl Statements {
+    #[inline]
+    fn new() -> Self {
+        Self { read: 0, write: 0 }
+    }
 }
 
 /// Not in upstream: a use promotes a temporary when a statement after its definition conflicts.
@@ -620,7 +627,7 @@ impl<'a> InterState<'a> {
         InterState {
             temporaries: IdMap::new(),
             position: 0,
-            statements: Statements::default(),
+            statements: Statements::new(),
             value_block_statements: None,
             inline_macro_operands,
             operands_of_macro_operands: IdMap::new(),
@@ -661,7 +668,7 @@ impl<'a> InterState<'a> {
     }
 
     fn conflicts(&self, temporary: Temporary) -> bool {
-        let in_value_block = self.value_block_statements.unwrap_or_default();
+        let in_value_block = self.value_block_statements.unwrap_or_else(Statements::new);
         let read = self.statements.read.max(in_value_block.read);
         let write = self.statements.write.max(in_value_block.write);
         match temporary.effect {
@@ -673,7 +680,7 @@ impl<'a> InterState<'a> {
 
     fn enter_value_block(&mut self) -> Option<Statements> {
         let outer = self.value_block_statements;
-        self.value_block_statements = Some(outer.unwrap_or_default());
+        self.value_block_statements = Some(outer.unwrap_or_else(Statements::new));
         outer
     }
 

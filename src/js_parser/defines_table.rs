@@ -216,7 +216,7 @@ fn pure_global_identifier_define() -> &'static defines::IdentifierDefine {
                 value: ExprData::EUndefined(js_ast::E::Undefined),
                 valueless: true,
                 can_be_removed_if_unused: true,
-                ..Default::default()
+                ..defines::Options::new()
             }))
         })
         .0
@@ -236,7 +236,7 @@ mod identifiers {
                 SyncDefineData(defines::DefineData::init(defines::Options {
                     value: ExprData::EUndefined(js_ast::E::Undefined),
                     can_be_removed_if_unused: true,
-                    ..Default::default()
+                    ..defines::Options::new()
                 }))
             })
             .0
@@ -247,7 +247,7 @@ mod identifiers {
             .get_or_init(|| {
                 SyncDefineData(defines::DefineData::init(defines::Options {
                     value: ExprData::ENumber(NAN_VAL),
-                    ..Default::default()
+                    ..defines::Options::new()
                 }))
             })
             .0
@@ -258,7 +258,7 @@ mod identifiers {
             .get_or_init(|| {
                 SyncDefineData(defines::DefineData::init(defines::Options {
                     value: ExprData::ENumber(INF_VAL),
-                    ..Default::default()
+                    ..defines::Options::new()
                 }))
             })
             .0

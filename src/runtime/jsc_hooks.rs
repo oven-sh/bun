@@ -257,7 +257,7 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         let ctx = if vm.tls_default_ciphers().is_some() {
             cache.get_or_create(&crate::socket::tls_true_defaults(vm, false), &mut err)
         } else {
-            cache.get_or_create_opts(&Default::default(), &mut err)
+            cache.get_or_create_opts(&bun_uws_sys::BunSocketContextOptions::new(), &mut err)
         };
         match ctx {
             Some(ctx) => vm.as_mut().rare_data().default_client_ssl_ctx = Some(ctx),
@@ -341,12 +341,12 @@ unsafe fn init_runtime_state(
     let state = bun_core::heap::into_raw(Box::new(RuntimeState {
         timer: timer::All::init(),
         sql_rare: bun_sql_jsc::jsc::RareData {
-            mysql_context: Default::default(),
-            postgresql_context: Default::default(),
+            mysql_context: bun_sql_jsc::mysql::MySQLContext::new(),
+            postgresql_context: bun_sql_jsc::postgres::PostgresSQLContext::new(),
         },
-        ssl_ctx_cache: Default::default(),
+        ssl_ctx_cache: crate::api::bun_ssl_context_cache::SSLContextCache::new(),
         global_dns_data: core::cell::OnceCell::new(),
-        entry_point: ServerEntryPoint::default(),
+        entry_point: ServerEntryPoint::new(),
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
@@ -403,7 +403,10 @@ unsafe fn init_runtime_state(
         // value before the move. Avoids deep-cloning `loaders`/
         // `entry_points`/`define` (Vec<Box<[u8]>>) on every VM init —
         // measurable on `bun -e ''` startup.
-        let mut args = core::mem::take(&mut opts.transform_options);
+        let mut args = core::mem::replace(
+            &mut opts.transform_options,
+            bun_bundler::options::TransformOptions::new(),
+        );
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
         args.write = Some(false);
         args.target = Some(api::Target::Bun);
@@ -557,7 +560,7 @@ unsafe fn configure_debugger(
                     from_environment_variable: unix,
                     wait_for_connection,
                     set_breakpoint_on_first_line,
-                    ..Default::default()
+                    ..Debugger::new()
                 })
             } else if !connect_to.is_empty() {
                 Some(Debugger {
@@ -566,7 +569,7 @@ unsafe fn configure_debugger(
                     wait_for_connection: Wait::Off,
                     set_breakpoint_on_first_line: false,
                     mode: Mode::Connect,
-                    ..Default::default()
+                    ..Debugger::new()
                 })
             } else {
                 None
@@ -586,7 +589,7 @@ unsafe fn configure_debugger(
                 },
                 set_breakpoint_on_first_line: set_breakpoint_on_first_line
                     || enable.set_breakpoint_on_first_line,
-                ..Default::default()
+                ..Debugger::new()
             })
         }
     };
@@ -2209,7 +2212,7 @@ fn transpile_source_code_of_any_provenance(
     {
         return Ok(ResolvedSource {
             source_url: input_specifier.create_if_different(path.text),
-            ..Default::default()
+            ..ResolvedSource::new()
         });
     }
 
@@ -2230,7 +2233,7 @@ fn transpile_source_code_of_any_provenance(
         | L::Text
         | L::Md => {
             // `bun_ast::ASTMemoryAllocator::Scope`.
-            let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
+            let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::new();
             _ast_scope.enter();
 
             // `Transpiler::reset_store`. Inline only the
@@ -2365,7 +2368,7 @@ fn transpile_source_code_of_any_provenance(
             // ── RuntimeTranspilerCache ──────────────────────────────────────
             let mut cache = bun_ast::RuntimeTranspilerCache {
                 r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
-                ..Default::default()
+                ..bun_ast::RuntimeTranspilerCache::new()
             };
 
             // ── Swap `vm.transpiler.log` (and linker/resolver/pm logs) ──────
@@ -2413,7 +2416,7 @@ fn transpile_source_code_of_any_provenance(
             let (macro_mode, has_any_macro_remappings) =
                 unsafe { ((*jsc_vm).macro_mode, (*jsc_vm).has_any_macro_remappings) };
             let macro_remappings = if macro_mode || !has_any_macro_remappings || is_node_override {
-                bun_resolver::package_json::MacroMap::default()
+                bun_resolver::package_json::MacroMap::init()
             } else {
                 // Note: `MacroMap`'s value type
                 // (`StringArrayHashMap<Box<[u8]>>`) has only the fallible
@@ -2430,9 +2433,9 @@ fn transpile_source_code_of_any_provenance(
                     // Hot path: a module with no `--define`/`with { type: "macro" }`
                     // remappings skips the per-entry re-key + per-value fallible
                     // `clone()` entirely.
-                    bun_resolver::package_json::MacroMap::default()
+                    bun_resolver::package_json::MacroMap::init()
                 } else {
-                    let mut m = bun_resolver::package_json::MacroMap::default();
+                    let mut m = bun_resolver::package_json::MacroMap::init();
                     for (k, v) in src.iter() {
                         m.insert(k, bun_core::handle_oom(v.clone()));
                     }
@@ -2505,7 +2508,7 @@ fn transpile_source_code_of_any_provenance(
                         fallback_source = bun_ast::Source {
                             path: fallback_path,
                             contents: std::borrow::Cow::Borrowed(code),
-                            ..Default::default()
+                            ..bun_ast::Source::new()
                         };
                         virtual_source = Some(&fallback_source);
                     }
@@ -2643,7 +2646,7 @@ fn transpile_source_code_of_any_provenance(
                     remove_cjs_module_wrapper: is_main
                         && unsafe { &*jsc_vm }.module_loader.eval_source.is_some(),
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
-                    replace_exports: Default::default(),
+                    replace_exports: bun_collections::StringArrayHashMap::init(),
                 };
 
                 // Both the file-only and transpiled arms hit the same
@@ -2753,7 +2756,7 @@ fn transpile_source_code_of_any_provenance(
                         source_code: bun_core::String::clone_utf8(&source.contents),
                         source_url: input_specifier.create_if_different(path.text),
                         tag: ResolvedSourceTag::JsonForObjectLoader,
-                        ..Default::default()
+                        ..ResolvedSource::new()
                     });
                 }
 
@@ -2772,7 +2775,7 @@ fn transpile_source_code_of_any_provenance(
                     return Ok(ResolvedSource {
                         source_code,
                         source_url: input_specifier.create_if_different(path.text),
-                        ..Default::default()
+                        ..ResolvedSource::new()
                     });
                 }
 
@@ -2819,7 +2822,7 @@ fn transpile_source_code_of_any_provenance(
                         source_url: input_specifier.create_if_different(path.text),
                         jsvalue_for_export,
                         tag: ResolvedSourceTag::ExportsObject,
-                        ..Default::default()
+                        ..ResolvedSource::new()
                     });
                 }
 
@@ -2830,7 +2833,10 @@ fn transpile_source_code_of_any_provenance(
                     // when `parse_result` drops on return — UAF on the C++ side.
                     // Move the variant out and `heap::alloc` so ownership
                     // transfers to C++ exactly as in the spec.
-                    let already_bundled = core::mem::take(&mut parse_result.already_bundled);
+                    let already_bundled = core::mem::replace(
+                        &mut parse_result.already_bundled,
+                        bun_bundler::transpiler::AlreadyBundled::None,
+                    );
                     let is_commonjs_module = already_bundled.is_common_js();
                     let bytecode_cache = Bytecode::owned(already_bundled.into_bytecode());
                     return Ok(ResolvedSource {
@@ -2839,7 +2845,7 @@ fn transpile_source_code_of_any_provenance(
                         already_bundled: true,
                         bytecode_cache,
                         is_commonjs_module,
-                        ..Default::default()
+                        ..ResolvedSource::new()
                     });
                 }
 
@@ -2852,7 +2858,7 @@ fn transpile_source_code_of_any_provenance(
                             source_url: input_specifier.create_if_different(path.text),
                             is_commonjs_module: true,
                             tag: ResolvedSourceTag::Javascript,
-                            ..Default::default()
+                            ..ResolvedSource::new()
                         });
                     }
                 }
@@ -2911,7 +2917,8 @@ fn transpile_source_code_of_any_provenance(
                     } else {
                         None
                     };
-                    let source_code = core::mem::take(&mut entry.output_code);
+                    let source_code =
+                        core::mem::replace(&mut entry.output_code, bun_core::String::EMPTY);
                     // When the cached entry was detected as
                     // CJS but lives inside a `"type":"module"` package, emit
                     // `package_json_type_module` so the C++ loader applies the
@@ -2968,8 +2975,8 @@ fn transpile_source_code_of_any_provenance(
                         is_commonjs_module,
                         module_info,
                         tag,
-                        bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
-                        ..Default::default()
+                        bytecode_cache: node_compile_cache_blob.unwrap_or_else(Bytecode::new),
+                        ..ResolvedSource::new()
                     });
                 }
 
@@ -3159,7 +3166,8 @@ fn transpile_source_code_of_any_provenance(
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
-                    resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();
+                    resolved_source.bytecode_cache =
+                        node_compile_cache_blob.unwrap_or_else(Bytecode::new);
                     return Ok(resolved_source);
                 }
 
@@ -3256,8 +3264,8 @@ fn transpile_source_code_of_any_provenance(
                     is_commonjs_module,
                     module_info,
                     tag,
-                    bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
-                    ..Default::default()
+                    bytecode_cache: node_compile_cache_blob.unwrap_or_else(Bytecode::new),
+                    ..ResolvedSource::new()
                 });
             }
         }
@@ -3307,7 +3315,7 @@ fn transpile_source_code_of_any_provenance(
                         source_url: input_specifier.create_if_different(path.text),
                         tag: ResolvedSourceTag::Esm,
                         is_static: true,
-                        ..Default::default()
+                        ..ResolvedSource::new()
                     });
                 }
             }
@@ -3337,7 +3345,7 @@ fn transpile_source_code_of_any_provenance(
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::Esm,
                 is_static: true,
-                ..Default::default()
+                ..ResolvedSource::new()
             })
         }
 
@@ -3350,7 +3358,7 @@ fn transpile_source_code_of_any_provenance(
                 return Ok(ResolvedSource {
                     source_url: input_specifier.create_if_different(path.text),
                     tag: ResolvedSourceTag::Esm,
-                    ..Default::default()
+                    ..ResolvedSource::new()
                 });
             }
             let html_bundle = crate::api::HTMLBundle::init(global_object, path.text);
@@ -3359,7 +3367,7 @@ fn transpile_source_code_of_any_provenance(
                 jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle, global_object),
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,
-                ..Default::default()
+                ..ResolvedSource::new()
             })
         }
 
@@ -3372,7 +3380,7 @@ fn transpile_source_code_of_any_provenance(
                 return Ok(ResolvedSource {
                     source_url: input_specifier.create_if_different(path.text),
                     tag: ResolvedSourceTag::Esm,
-                    ..Default::default()
+                    ..ResolvedSource::new()
                 });
             }
 
@@ -3435,7 +3443,7 @@ fn transpile_source_code_of_any_provenance(
                     jsvalue_for_export: JSValue::create_empty_object(global_object, 0),
                     source_url: input_specifier.create_if_different(path.text),
                     tag: ResolvedSourceTag::ExportDefaultObject,
-                    ..Default::default()
+                    ..ResolvedSource::new()
                 });
             }
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3469,7 +3477,7 @@ fn transpile_source_code_of_any_provenance(
                 jsvalue_for_export: value,
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,
-                ..Default::default()
+                ..ResolvedSource::new()
             })
         }
     }
@@ -3561,7 +3569,7 @@ fn js_synthetic_module(name: &'static [u8]) -> ResolvedSource {
     ResolvedSource {
         source_url: bun_core::String::static_(name),
         tag: Tag::from_name(name),
-        ..ResolvedSource::default()
+        ..ResolvedSource::new()
     }
 }
 
@@ -3599,7 +3607,7 @@ fn get_hardcoded_module(
                 source_url: specifier.clone(),
                 tag: Tag::Esm,
                 is_static: true,
-                ..ResolvedSource::default()
+                ..ResolvedSource::new()
             })
         }
         HardcodedModule::NodeStreamIter => {
@@ -3657,7 +3665,7 @@ fn get_hardcoded_module(
                 source_code: bun_core::String::from_bytes(bun_ast::runtime::Runtime::source_code()),
                 source_url: specifier.clone(),
                 is_static: true,
-                ..ResolvedSource::default()
+                ..ResolvedSource::new()
             });
         }
         // Every other `HardcodedModule` is served straight out of the
@@ -3691,7 +3699,7 @@ fn __bun_fetch_builtin_module(
         return Some(ResolvedSource {
             source_url: bun_core::String::clone_utf8(&name),
             tag,
-            ..ResolvedSource::default()
+            ..ResolvedSource::new()
         });
     }
 
@@ -3711,7 +3719,7 @@ fn __bun_fetch_builtin_module(
             return Some(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(contents),
                 source_url: specifier.clone(),
-                ..ResolvedSource::default()
+                ..ResolvedSource::new()
             });
         }
         return None;
@@ -3742,7 +3750,7 @@ export default db;
                 source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
                 source_url: specifier.clone(),
                 is_static: true,
-                ..ResolvedSource::default()
+                ..ResolvedSource::new()
             });
         }
 
@@ -3757,7 +3765,7 @@ export default db;
             return Some(ResolvedSource {
                 jsvalue_for_export: value,
                 tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
-                ..ResolvedSource::default()
+                ..ResolvedSource::new()
             });
         }
 
@@ -3794,7 +3802,7 @@ export default db;
             },
             is_commonjs_module: file.module_format == ModuleFormat::Cjs,
             is_prelinked_module: file.prelinked_index != u32::MAX,
-            ..ResolvedSource::default()
+            ..ResolvedSource::new()
         });
     }
 
@@ -4024,7 +4032,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                         // — see logger/lib.rs:32-). Re-init from `path.text`.
                         path: bun_paths::fs::Path::init(path_text),
                         contents: std::borrow::Cow::Borrowed(contents),
-                        ..Default::default()
+                        ..bun_ast::Source::new()
                     });
                     virtual_source = virtual_source_to_use.as_ref();
                 }
@@ -4230,7 +4238,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                     *ret = ErrorableResolvedSource::ok(ResolvedSource {
                         cjs_custom_extension_index: strong.get(),
                         tag: ResolvedSourceTag::CommonJsCustomExtension,
-                        ..Default::default()
+                        ..ResolvedSource::new()
                     });
                     return ptr::null_mut();
                 }
@@ -4366,7 +4374,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                                 *ret = ErrorableResolvedSource::ok(ResolvedSource {
                                     cjs_custom_extension_index: strong.get(),
                                     tag: ResolvedSourceTag::CommonJsCustomExtension,
-                                    ..Default::default()
+                                    ..ResolvedSource::new()
                                 });
                                 return ptr::null_mut();
                             }
@@ -4728,7 +4736,7 @@ pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
         // The `InternalModuleRegistryFlag` consumer reads only `tag`.
         *ret = ErrorableResolvedSource::ok(ResolvedSource {
             tag,
-            ..ResolvedSource::default()
+            ..ResolvedSource::new()
         });
         return true;
     }
@@ -4830,11 +4838,11 @@ fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mod
             pathlike: PathOrFileDescriptor::Fd(fd),
             is_atty: Some(is_atty),
             mode,
-            ..Default::default()
+            ..File::new()
         }),
         mime_type: bun_http_types::MimeType::NONE,
         ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
-        is_all_ascii: IsAllAscii::default(),
+        is_all_ascii: IsAllAscii::new(),
     }))
     .cast()
 }

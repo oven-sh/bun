@@ -97,7 +97,6 @@ impl JsxNoLiteralsOptions {
     }
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// For each element and fragment that it is in: which of the `elementOverrides` holds for the closest element, and
     /// which for the elements in that.
@@ -108,6 +107,18 @@ pub struct State<'a> {
     exported_names: IdMap<Symbol<'a>, Option<&'a [u8]>>,
     /// Upstream: the same by the name alone, of the declarations so far. `None`: it is exported under a string.
     renamed_import_map: FxHashMap<&'a [u8], Option<&'a [u8]>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            scopes: Vec::new(),
+            outermost: None,
+            exported_names: IdMap::init(),
+            renamed_import_map: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 const JSX: NodeTags = NodeTags::new().exprs(&[ExprTag::Jsx]);
@@ -170,7 +181,7 @@ impl Rule for JsxNoLiterals {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        file.has_exprs([ExprTag::Jsx]).then(State::default)
+        file.has_exprs([ExprTag::Jsx]).then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

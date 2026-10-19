@@ -492,7 +492,7 @@ fn may_clash(symbol: Symbol, is_typescript: bool) -> bool {
 /// The names that more than one declaration may declare in one of oxc's scopes. Each name is bound on its own, so no other name
 /// has to be replayed.
 fn candidates<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
-    let mut names = FxHashSet::default();
+    let mut names = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     let is_typescript = !file.is_javascript();
     let twice = file.symbols_declared_twice();
     names.extend(
@@ -558,8 +558,8 @@ pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         is_module: source_type(file) == SourceType::Module,
         top: file.top_level_scope().id().0,
         symbols: Vec::new(),
-        bindings: FxHashMap::default(),
-        hoisting: FxHashMap::default(),
+        bindings: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        hoisting: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         errors: Vec::new(),
     };
     for (span, name, declaration, scope) in all {
@@ -573,7 +573,8 @@ pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
 /// names that are not private.
 fn repeated_members<'a>(class: Class<'a>, errors: &mut Vec<(u32, SyntaxError)>) {
     let file = class.file();
-    let mut last: FxHashMap<&'a [u8], (Member<'a>, Span)> = FxHashMap::default();
+    let mut last: FxHashMap<&'a [u8], (Member<'a>, Span)> =
+        FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     let is_accessor = |it: Member<'a>| matches!(it.kind(), MemberKind::Getter | MemberKind::Setter);
     let is_static = |it: Member<'a>| it.flags().contains(Flags::STATIC);
     // `PropertyKey::name`, and where the key is, without brackets.
@@ -744,7 +745,7 @@ pub(super) fn duplicate_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         })
     };
     // `ModuleRecord::exported_bindings`, and each name with the place that another has taken from it.
-    let mut last: FxHashMap<&'a [u8], Span> = FxHashMap::default();
+    let mut last: FxHashMap<&'a [u8], Span> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     let mut replaced: Vec<(&'a [u8], Span)> = Vec::new();
     // The `default`s of what the module exports itself, and of what it hands on from another.
     let (mut own_defaults, mut other_defaults): (Vec<Span>, Vec<Span>) = (Vec::new(), Vec::new());

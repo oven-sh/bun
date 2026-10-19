@@ -16,7 +16,7 @@ pub mod bun_install_js_bindings {
                 // emits this `JSHostFn`-ABI shim.
                 __jsc_host_js_parse_lockfile,
                 1,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         obj
@@ -64,7 +64,7 @@ pub mod bun_install_js_bindings {
             &[b"bun.lockb".as_slice()],
         );
 
-        let mut lockfile_ = Lockfile::default();
+        let mut lockfile_ = Lockfile::new();
 
         // `bun_vm()` returns a raw `*mut VirtualMachine`; deref locally so the
         // env-loader fixup and the package-manager borrow are scoped

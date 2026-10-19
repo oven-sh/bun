@@ -887,7 +887,7 @@ impl Order {
                 utils::array_sort_by(group, &is_before);
             }
             // What has the same name and the same kind gets the rank of the last of them.
-            let mut ranks: FxHashMap<(&[u8], ImportKind), f64> = FxHashMap::default();
+            let mut ranks: FxHashMap<(&[u8], ImportKind), f64> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for (new_rank, it) in order
                 .iter()
                 .filter_map(|at| imported.get(*at as usize))
@@ -1170,7 +1170,7 @@ impl Order {
     /// `module.exports = { b, a }`, and `exports.b = ..; exports.a = ..`.
     fn check_cjs_exports<'a>(&self, cx: &Cx<'a, Self>) {
         let file = cx.file();
-        let mut blocks: FxHashMap<(u32, u32, bool), Vec<Entry<'a>>> = FxHashMap::default();
+        let mut blocks: FxHashMap<(u32, u32, bool), Vec<Entry<'a>>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for e in file.exprs_of_kind(ExprTag::Assign) {
             let (ExprKind::Assign { target, value, .. }, Node::Stmt(statement)) =
                 (e.kind(), e.parent())

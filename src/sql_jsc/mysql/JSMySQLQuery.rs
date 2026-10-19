@@ -72,7 +72,7 @@ impl JSMySQLQuery {
                 bigint,
                 simple,
             )),
-            undescribed: JsCell::new(Undescribed::default()),
+            undescribed: JsCell::new(Undescribed::new()),
         }));
         let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
 

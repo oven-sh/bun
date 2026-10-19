@@ -160,8 +160,15 @@ const _: () = assert!(core::mem::size_of::<Task>() == 2 * core::mem::size_of::<u
 /// What outlived its context (a pool job, a queued task, a timer that was not swept) holds an id
 /// no live context has.
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Default, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct ContextId(u32);
+
+impl ContextId {
+    #[inline]
+    pub fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl ContextId {
     /// No script's context. Never handed out to one.
@@ -286,8 +293,8 @@ pub struct ConcurrentTask {
     pub auto_delete: bool,
 }
 
-impl Default for ConcurrentTask {
-    fn default() -> Self {
+impl ConcurrentTask {
+    pub fn init() -> Self {
         Self {
             // SAFETY: all-zero is a valid bit pattern for `Task` (plain tag
             // byte + raw pointer); caller must set a real task before use.

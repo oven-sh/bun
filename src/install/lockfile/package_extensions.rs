@@ -16,12 +16,21 @@ use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice};
 use crate::resolution_real::Tag as ResolutionTag;
 use crate::{Dependency, DependencyID, PackageID, PackageNameHash, invalid_package_id};
 
-#[derive(Default)]
 pub(crate) struct PackageExtensions {
     /// From package.json, on every install. Not saved.
     pub(crate) rules: Vec<Rule>,
     /// What rules did to the packages of this lockfile. Saved.
     pub(crate) applied: Vec<Applied>,
+}
+
+impl PackageExtensions {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            rules: Vec::new(),
+            applied: Vec::new(),
+        }
+    }
 }
 
 /// `"<name>[@<range>]": { .. }`
@@ -188,7 +197,7 @@ fn is_supported_specifier(literal: &[u8]) -> bool {
         _ => return false,
     }
     dependency::parse_with_tag(
-        SemverString::default(),
+        SemverString::new(),
         None,
         trimmed,
         tag,
@@ -392,7 +401,7 @@ impl Lockfile {
                 Some(log),
                 None,
             )
-            .unwrap_or_default(),
+            .unwrap_or_else(bun_install_types::DependencyVersion::new),
         })
     }
 
@@ -633,7 +642,8 @@ impl Lockfile {
         &mut self,
         log: &mut bun_ast::Log,
     ) -> Result<Option<(Vec<DependencyID>, Vec<(u64, PackageNameHash)>)>, AllocError> {
-        let PackageExtensions { rules, applied } = core::mem::take(&mut self.package_extensions);
+        let PackageExtensions { rules, applied } =
+            core::mem::replace(&mut self.package_extensions, PackageExtensions::new());
         let mut now = Vec::with_capacity(applied.len());
         let mut unresolved = Vec::new();
         let mut changed = false;
@@ -714,7 +724,10 @@ impl Lockfile {
                     write!(
                         line,
                         "{}: {{",
-                        format_json_string_utf8(&label, Default::default())
+                        format_json_string_utf8(
+                            &label,
+                            crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+                        )
                     )
                 } else {
                     line.write_all(b",")
@@ -725,7 +738,10 @@ impl Lockfile {
                         line,
                         "{}{}",
                         if i == 0 { "" } else { ", " },
-                        format_json_string_utf8(name, Default::default()),
+                        format_json_string_utf8(
+                            name,
+                            crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+                        ),
                     );
                 }
                 line.push(b']');

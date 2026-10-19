@@ -13,16 +13,7 @@ use enum_map::Enum;
 /// - src/jsc/bindings/headers-handwritten.h
 #[repr(u8)]
 #[derive(
-    Copy,
-    Clone,
-    Default,
-    Eq,
-    PartialEq,
-    Debug,
-    Hash,
-    Enum,
-    strum::IntoStaticStr,
-    strum::VariantNames,
+    Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr, strum::VariantNames,
 )]
 // The lower_snake names are exposed to JS (HTMLImportManifest
 // `"loader":`, BuildArtifact.loader) so the strum serialization must match exactly.
@@ -33,7 +24,6 @@ pub enum Loader {
     Ts = 2,
     Tsx = 3,
     Css = 4,
-    #[default]
     File = 5,
     Json = 6,
     Jsonc = 7,
@@ -249,10 +239,9 @@ impl Loader {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SideEffects {
     /// The default value conservatively considers all files to have side effects.
-    #[default]
     HasSideEffects,
 
     /// This file was listed as not having side effects by a "package.json"

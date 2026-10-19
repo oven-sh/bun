@@ -150,7 +150,7 @@ pub fn init_global(
                 global.top_level_dir = Box::<[u8]>::from(&buf[..len]);
             }
             Err(_) => {
-                global.top_level_dir = Box::default();
+                global.top_level_dir = Box::new([]);
             }
         }
     }
@@ -251,11 +251,11 @@ impl MiniEventLoop {
     pub(crate) fn init() -> MiniEventLoop {
         MiniEventLoop {
             tasks: Queue::init(),
-            concurrent_tasks: ConcurrentTaskQueue::default(),
+            concurrent_tasks: ConcurrentTaskQueue::new(),
             loop_: UwsLoop::get(),
             file_polls: None,
             env: None,
-            top_level_dir: Box::default(),
+            top_level_dir: Box::new([]),
             after_event_loop_callback_ctx: None,
             after_event_loop_callback: None,
             pipe_read_scratch: Box::new(bun_io::PipeReadScratch::new()),

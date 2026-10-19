@@ -46,7 +46,7 @@ pub(crate) fn is_promise_with_context(call_expr: Call<'_>) -> Option<Name<'_>> {
 fn is_not_promise(receiver: Expr) -> bool {
     let mut at = receiver;
     // `const a = b, b = a` goes in a circle.
-    let mut seen = rustc_hash::FxHashSet::default();
+    let mut seen = rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     while seen.insert(at) {
         at = get_inner_expression(at);
         match at.kind() {

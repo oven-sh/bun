@@ -21,7 +21,6 @@ const JSX_MAX_DEPTH: Message = Message::new(
     "JSX nesting depth of {{depth}} exceeds the configured maximum of {{max}}",
 );
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The depth of each element and fragment around what comes next, the innermost last.
     depths: Vec<u32>,
@@ -32,6 +31,19 @@ pub struct State<'a> {
     /// Whether an element with elements in it may be what a variable is given.
     is_any_written: bool,
     found: Vec<Found>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            depths: Vec::new(),
+            variables: IdMap::init(),
+            containers: Vec::new(),
+            is_any_written: false,
+            found: Vec::new(),
+        }
+    }
 }
 
 /// What is reported.
@@ -57,7 +69,7 @@ impl Rule for JsxMaxDepth {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (is_jsx(file) && file.has_exprs([ExprTag::Jsx])).then(State::default)
+        (is_jsx(file) && file.has_exprs([ExprTag::Jsx])).then(State::new)
     }
 
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -127,7 +139,7 @@ impl Rule for JsxMaxDepth {
         let mut found = std::mem::take(&mut cx.state.found);
         // upstream's `JSXExpressionContainer`
         if cx.state.is_any_written {
-            let (mut known, mut fine) = (Known::default(), FxHashMap::<u32, u32>::default());
+            let (mut known, mut fine) = (Known::with_hasher(rustc_hash::FxBuildHasher), FxHashMap::<u32, u32>::with_hasher(rustc_hash::FxBuildHasher));
             for (expression, base_depth) in std::mem::take(&mut cx.state.containers) {
                 let Some(element) = find_jsx_element_or_fragment(expression, &mut known) else {
                     continue;
@@ -222,7 +234,6 @@ fn find_jsx_element_or_fragment<'a>(
 }
 
 /// For oxlint: what the depth of an element, or of what a variable is initialized with, is made of.
-#[derive(Default)]
 struct Parts<'a> {
     /// How deeply elements are nested in it.
     elements_depth: u32,
@@ -234,8 +245,19 @@ struct Parts<'a> {
 }
 
 impl<'a> Parts<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            elements_depth: 0,
+            variables: SmallVec::new(),
+            known: 0,
+        }
+    }
+}
+
+impl<'a> Parts<'a> {
     fn of_element(jsx: Jsx<'a>) -> Self {
-        let mut parts = Parts::default();
+        let mut parts = Parts::new();
         let mut pending: SmallVec<[(Jsx<'a>, u32); 8]> = smallvec![(jsx, 0)];
         while let Some((jsx, level)) = pending.pop() {
             parts.elements_depth = parts.elements_depth.max(level);
@@ -268,9 +290,9 @@ impl<'a> Parts<'a> {
             Some((_, ExprKind::Jsx(jsx))) => Parts::of_element(jsx),
             Some((ident, ExprKind::Ident(_))) => Parts {
                 variables: ident.symbol().map(|it| (it, None)).into_iter().collect(),
-                ..Parts::default()
+                ..Parts::new()
             },
-            _ => Parts::default(),
+            _ => Parts::new(),
         }
     }
 

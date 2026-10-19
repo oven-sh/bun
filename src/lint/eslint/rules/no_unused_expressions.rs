@@ -98,8 +98,14 @@ fn looks_like_directive(statement: Stmt) -> bool {
 
 /// What has been asked about last, with where its first statement that does not look like a
 /// directive starts.
-#[derive(Default)]
 pub struct Prologue<'a>(Option<(Node<'a>, u32)>);
+
+impl<'a> Prologue<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self(None)
+    }
+}
 
 /// Whether `statement` is where a directive can be, even if the parser does not say that it is
 /// one, as for ES3.
@@ -169,14 +175,14 @@ impl Rule for NoUnusedExpressions {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Prologue<'a>> {
-        Some(Prologue::default())
+        Some(Prologue::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if is_plainly_used(statement) {
             return;
         }
-        let mut prologue = std::mem::take(&mut cx.state);
+        let mut prologue = std::mem::replace(&mut cx.state, Prologue::new());
         check(self.config, statement, &mut prologue, cx);
         cx.state = prologue;
     }

@@ -100,7 +100,7 @@ fn tag_name_len(text: &[u8]) -> usize {
 /// they scan the rest of the input from every `<`.
 pub(crate) fn tags(html: &[u8], pattern: TagPattern) -> impl Iterator<Item = Tag> {
     // Opening quotes from which the scan is already known to find no closing `>`.
-    let mut hopeless: FxHashSet<usize> = FxHashSet::default();
+    let mut hopeless: FxHashSet<usize> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     // For `'` and for `"`, the offset after which that quote doesn't appear again.
     let mut no_quote_from = [html.len(); 2];
     // A range that's known to have no `>` and no quote in it.

@@ -21,8 +21,8 @@ pub struct HandshakeV10 {
     pub auth_plugin_name: Data,
 }
 
-impl Default for HandshakeV10 {
-    fn default() -> Self {
+impl HandshakeV10 {
+    pub fn new() -> Self {
         Self {
             protocol_version: 10,
             server_version: Data::empty(),
@@ -30,8 +30,8 @@ impl Default for HandshakeV10 {
             auth_plugin_data: [0u8; NONCE_LENGTH],
             capability_flags: Capabilities::default(),
             mariadb_capability_flags: MariaDBCapabilities::default(),
-            character_set: CharacterSet::default(),
-            status_flags: StatusFlags::default(),
+            character_set: CharacterSet::new(),
+            status_flags: StatusFlags::new(),
             auth_plugin_name: Data::empty(),
         }
     }

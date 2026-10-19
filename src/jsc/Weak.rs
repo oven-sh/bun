@@ -81,8 +81,8 @@ pub struct Weak<T> {
     _ctx: PhantomData<*mut T>,
 }
 
-impl<T> Default for Weak<T> {
-    fn default() -> Self {
+impl<T> Weak<T> {
+    pub fn new() -> Self {
         Self {
             r#ref: None,
             _ctx: PhantomData,
@@ -95,7 +95,7 @@ impl<T> Weak<T> {
     /// moment GC reaps the referent, before any sweep runs cell destructors.
     pub fn create_passive(value: JSValue, global_this: &JSGlobalObject) -> Self {
         if value.is_empty() {
-            return Self::default();
+            return Self::new();
         }
         Self {
             r#ref: Some(WeakImpl::init(global_this, value, WeakRefType::None, None)),

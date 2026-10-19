@@ -23,11 +23,22 @@ pub struct ForbidPropTypes {
 const FORBIDDEN_PROP_TYPE: Message = Message::new("forbiddenPropType", "Prop type \"{{target}}\" is forbidden");
 
 /// What the listener for `ImportDeclaration` sets.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Packages<'a> {
     prop_types_package_name: Option<Name<'a>>,
     react_package_name: Option<Name<'a>>,
     is_foreign_prop_types_package: bool,
+}
+
+impl<'a> Packages<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            prop_types_package_name: None,
+            react_package_name: None,
+            is_foreign_prop_types_package: false,
+        }
+    }
 }
 
 /// An import that sets something, once a foreign package is imported: before that the names do not matter.
@@ -116,7 +127,7 @@ impl Rule for ForbidPropTypes {
         if !self.bits_of_forbidden.iter().any(|bit| file.mentions_bit(*bit)) {
             return None;
         }
-        Some(State { imports: imports_of(file), forbidden: Vec::new(), known: FxHashMap::default() })
+        Some(State { imports: imports_of(file), forbidden: Vec::new(), known: FxHashMap::with_hasher(rustc_hash::FxBuildHasher) })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -189,7 +200,7 @@ fn imports_of<'a>(file: &'a File<'a>) -> Vec<Imported<'a>> {
     }
     let mut statements: Vec<Stmt<'a>> = file.stmts_of_kind(StmtTag::Import).collect();
     utils::sort::sort_by_key(&mut statements, |it| it.span().start);
-    let (mut imports, mut packages) = (Vec::new(), Packages::default());
+    let (mut imports, mut packages) = (Vec::new(), Packages::new());
     for statement in statements {
         let StmtKind::Import(import) = statement.kind() else {
             continue;
@@ -252,7 +263,7 @@ impl<'a> State<'a> {
     fn listened(&self, span: Span) -> Listened<'a> {
         let imports = self.imports.partition_point(|it| it.start < span.start);
         let packages = imports.checked_sub(1).and_then(|last| self.imports.get(last)).map(|it| it.packages);
-        Listened { span, imports, packages: packages.unwrap_or_default() }
+        Listened { span, imports, packages: packages.unwrap_or_else(Packages::new) }
     }
 }
 

@@ -210,7 +210,7 @@ impl Parser<'_> {
         let mut around_wiki_labels: Vec<(usize, OFF)> = Vec::new();
         // A label is content of its own.
         let mut end = content.len();
-        let mut walk = Walk::default();
+        let mut walk = Walk::new();
         let mut pos: usize = 0;
         // Up to where `content` is taken by what comes before brackets.
         let mut taken: usize = 0;
@@ -321,7 +321,7 @@ impl Parser<'_> {
                     href: dest,
                     title,
                     reference,
-                    ..Default::default()
+                    ..SpanAttrs::new()
                 },
             )?;
             self.image_nesting_level += 1;
@@ -334,7 +334,7 @@ impl Parser<'_> {
                     href: dest,
                     title,
                     reference,
-                    ..Default::default()
+                    ..SpanAttrs::new()
                 },
             )?;
             self.link_nesting_level += 1;
@@ -773,7 +773,7 @@ impl Parser<'_> {
             Span::Wikilink,
             SpanAttrs {
                 href: target,
-                ..Default::default()
+                ..SpanAttrs::new()
             },
         )?;
         let label_start = match m.pipe_pos {
@@ -901,7 +901,7 @@ impl Parser<'_> {
                 href: url,
                 autolink: true,
                 autolink_email: is_email,
-                ..Default::default()
+                ..SpanAttrs::new()
             },
         )?;
         self.at(beg + 1, beg + 1 + url.len());
@@ -948,7 +948,7 @@ impl Parser<'_> {
             SpanAttrs {
                 href: label,
                 reference: Reference::Footnote,
-                ..Default::default()
+                ..SpanAttrs::new()
             },
         )?;
         self.at(beg + 2 + label.len(), beg + 3 + label.len());

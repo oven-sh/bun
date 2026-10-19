@@ -46,10 +46,10 @@ impl Scopes {
     fn new(globals: HashSet<StoreStr>) -> Self {
         Self {
             seen: IdMap::new(),
-            stack: vec![HashMap::default()],
+            stack: vec![HashMap::with_hasher(rustc_hash::FxBuildHasher)],
             taken: vec![[0; 2]],
             globals,
-            names: HashSet::default(),
+            names: HashSet::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 
@@ -123,7 +123,8 @@ impl Scopes {
     }
 
     fn enter(&mut self) {
-        self.stack.push(HashMap::default());
+        self.stack
+            .push(HashMap::with_hasher(rustc_hash::FxBuildHasher));
         self.taken.push(*self.taken.last().unwrap());
     }
 
@@ -290,11 +291,13 @@ fn rename_variables_with_parent(
 
     // The names are for what is generated.
     if env.output_mode == OutputMode::Lint {
-        return HashSet::default();
+        return HashSet::with_hasher(rustc_hash::FxBuildHasher);
     }
 
-    let mut result: HashSet<String> =
-        HashSet::with_capacity_and_hasher(scopes.names.len() + globals.len(), Default::default());
+    let mut result: HashSet<String> = HashSet::with_capacity_and_hasher(
+        scopes.names.len() + globals.len(),
+        rustc_hash::FxBuildHasher,
+    );
     for n in scopes.names.iter().chain(globals.iter()) {
         result.insert(bun_core::BStr::new(n.slice()).to_string());
     }
@@ -319,7 +322,7 @@ fn rename_variables_impl(func: &ReactiveFunction, visitor: &Visitor, scopes: &mu
 /// Collects all globally referenced names from the reactive function.
 /// TS: `collectReferencedGlobals`
 fn collect_referenced_globals(block: &ReactiveBlock, env: &Environment) -> HashSet<StoreStr> {
-    let mut globals = HashSet::default();
+    let mut globals = HashSet::with_hasher(rustc_hash::FxBuildHasher);
     collect_globals_block(block, &mut globals, env);
     globals
 }

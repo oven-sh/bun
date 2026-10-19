@@ -35,8 +35,8 @@ pub struct ArrayBuffer {
     pub pinned: bool,
 }
 
-impl Default for ArrayBuffer {
-    fn default() -> Self {
+impl ArrayBuffer {
+    pub fn new() -> Self {
         Self {
             ptr: ptr::null_mut(),
             len: 0,
@@ -400,7 +400,7 @@ impl ArrayBuffer {
             byte_len: bytes.len(),
             typed_array_type,
             ptr: bytes.as_mut_ptr(),
-            ..Default::default()
+            ..ArrayBuffer::new()
         }
     }
 
@@ -422,7 +422,7 @@ impl ArrayBuffer {
             byte_len: len,
             typed_array_type,
             ptr,
-            ..Default::default()
+            ..ArrayBuffer::new()
         }
     }
 
@@ -721,7 +721,7 @@ impl PinnedArrayBuffer {
     /// VM-shutdown finalizer only: the heap sweep already deleted what `Drop`
     /// would unpin and unprotect, so release nothing.
     pub fn defuse(&mut self) {
-        self.buffer = ArrayBuffer::default();
+        self.buffer = ArrayBuffer::new();
         self.rooted = false;
         self.copy = None;
     }
@@ -903,7 +903,6 @@ impl TypedArrayType {
 // MarkedArrayBuffer
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct MarkedArrayBuffer {
     pub buffer: ArrayBuffer,
     pub owns_buffer: bool,

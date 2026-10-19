@@ -485,7 +485,7 @@ mod _impl {
                     code: BunString::static_(code),
                     message: BunString::clone_utf8(message.as_bytes()),
                     syscall: BunString::static_("uv_cwd"),
-                    ..Default::default()
+                    ..bun_jsc::SystemError::new()
                 };
                 Err(global_object.throw_value(err.to_error_instance(global_object)))
             }

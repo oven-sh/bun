@@ -34,7 +34,9 @@ static ARENA_POOL: Cell<Option<Arena>> = Cell::new(None);
 
 #[inline]
 fn take_pooled_arena() -> Arena {
-    ARENA_POOL.take().unwrap_or_default()
+    ARENA_POOL
+        .take()
+        .unwrap_or_else(bun_alloc::MimallocArena::new)
 }
 
 /// Park a *clean* (reset) arena for reuse by the next `ASTMemoryAllocator` on
@@ -70,8 +72,8 @@ pub struct ASTMemoryAllocator {
     previous_ast_state: Option<Box<AstAllocState>>,
 }
 
-impl Default for ASTMemoryAllocator {
-    fn default() -> Self {
+impl ASTMemoryAllocator {
+    pub fn init() -> Self {
         Self {
             arena: take_pooled_arena(),
             external_arena: ptr::null(),
@@ -124,7 +126,7 @@ impl ASTMemoryAllocator {
     /// Callers whose `fallback` arena outlives the allocator should use
     /// [`Self::borrowing`] instead.
     pub fn new(_fallback: &Arena) -> Self {
-        Self::default()
+        Self::init()
     }
 
     /// Construct an allocator that routes every allocation into `arena`
@@ -354,8 +356,8 @@ pub struct Scope<'a> {
     entered: bool,
 }
 
-impl<'a> Default for Scope<'a> {
-    fn default() -> Self {
+impl<'a> Scope<'a> {
+    pub fn new() -> Self {
         Self {
             current: None,
             previous: None,

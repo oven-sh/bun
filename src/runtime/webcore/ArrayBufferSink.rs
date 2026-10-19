@@ -7,7 +7,6 @@ use bun_sys as syscall;
 // The "ArrayBufferSink" symbol-name concatenation lives in the `JsSinkAbi`
 // impl in `Sink.rs` (see `array_buffer_sink_abi`).
 
-#[derive(Default)]
 pub struct ArrayBufferSink {
     pub(crate) bytes: Vec<u8>,
     // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
@@ -70,9 +69,9 @@ impl ArrayBufferSink {
     // pre-allocated slot.
     pub(crate) fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         this.write(ArrayBufferSink {
-            bytes: Vec::<u8>::default(),
+            bytes: Vec::<u8>::new(),
             done: false,
-            source: SourceHandle::default(),
+            source: SourceHandle::None,
             streaming: false,
             as_uint8array: false,
         });

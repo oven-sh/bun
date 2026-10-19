@@ -206,7 +206,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_ts_decorators: class_opts.allow_ts_decorators,
                 class_has_extends: extends.is_some(),
                 has_argument_decorators: false,
-                ..Default::default()
+                ..PropertyOpts::new()
             };
 
             // Parse decorators for this property
@@ -426,10 +426,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Expr, Error> {
         let p = self;
         let mut items_list = BumpVec::<Expr>::new_in(p.arena);
-        let mut errors = DeferredErrors::default();
-        let mut arrow_arg_errors = DeferredArrowArgErrors::default();
-        let mut spread_range = bun_ast::Range::default();
-        let mut type_colon_range = bun_ast::Range::default();
+        let mut errors = DeferredErrors::new();
+        let mut arrow_arg_errors = DeferredArrowArgErrors::new();
+        let mut spread_range = bun_ast::Range::new();
+        let mut type_colon_range = bun_ast::Range::new();
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
@@ -553,7 +553,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc: item.loc,
                     }),
                     default: tuple.expr,
-                    ..Default::default()
+                    ..G::Arg::new()
                 });
             }
 
@@ -563,7 +563,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     AwaitOrYield::AllowIdent
                 },
-                ..Default::default()
+                ..FnOrArrowDataParse::new()
             };
 
             // Avoid parsing TypeScript code like "a ? (1 + 2) : (3 + 4)" as an arrow
@@ -628,7 +628,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let async_expr = p.new_expr(
                 E::Identifier {
                     ref_: async_ref,
-                    ..Default::default()
+                    ..E::Identifier::new()
                 },
                 loc,
             );
@@ -636,7 +636,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 E::Call {
                     target: async_expr,
                     args: ExprNodeList::from_arena_slice(items),
-                    ..Default::default()
+                    ..E::Call::new()
                 },
                 loc,
             ));
@@ -739,7 +739,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut class_opts = ParseClassOptions {
             allow_ts_decorators: true,
             is_type_script_declare: opts.is_typescript_declare,
-            ..Default::default()
+            ..ParseClassOptions::new()
         };
         if let Some(dec) = &opts.ts_decorators {
             class_opts.ts_decorators = dec.values;
@@ -810,7 +810,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token != T::TIdentifier {
             return Ok(ExprOrLetStmt {
                 stmt_or_expr: js_ast::StmtOrExpr::Expr(p.parse_expr(Level::Lowest)?),
-                ..Default::default()
+                ..ExprOrLetStmt::new()
             });
         }
 
@@ -836,7 +836,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     kind: js_ast::LocalKind::KLet,
                                     decls,
                                     is_export: opts.is_export,
-                                    ..Default::default()
+                                    ..S::Local::new()
                                 },
                                 token_range.loc,
                             )),
@@ -886,7 +886,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             kind: js_ast::LocalKind::KUsing,
                             decls,
                             is_export: false,
-                            ..Default::default()
+                            ..S::Local::new()
                         },
                         token_range.loc,
                     )),
@@ -941,7 +941,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     kind: js_ast::LocalKind::KAwaitUsing,
                                     decls,
                                     is_export: false,
-                                    ..Default::default()
+                                    ..S::Local::new()
                                 },
                                 token_range.loc,
                             )),
@@ -952,7 +952,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break 'value p.new_expr(
                         E::Identifier {
                             ref_: r,
-                            ..Default::default()
+                            ..E::Identifier::new()
                         },
                         // TODO: implement saveExprCommentsHere and use using_loc here
                         using_range.loc,
@@ -970,12 +970,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
             return Ok(ExprOrLetStmt {
                 stmt_or_expr: js_ast::StmtOrExpr::Expr(expr),
-                ..Default::default()
+                ..ExprOrLetStmt::new()
             });
         } else {
             return Ok(ExprOrLetStmt {
                 stmt_or_expr: js_ast::StmtOrExpr::Expr(p.parse_expr(Level::Lowest)?),
-                ..Default::default()
+                ..ExprOrLetStmt::new()
             });
         }
 
@@ -985,11 +985,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmt_or_expr: js_ast::StmtOrExpr::Expr(p.new_expr(
                 E::Identifier {
                     ref_,
-                    ..Default::default()
+                    ..E::Identifier::new()
                 },
                 token_range.loc,
             )),
-            ..Default::default()
+            ..ExprOrLetStmt::new()
         };
         if let js_ast::StmtOrExpr::Expr(ref mut e) = result.stmt_or_expr {
             p.parse_suffix(e, Level::Lowest, None, EFlags::None)?;
@@ -1232,7 +1232,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 key = p.new_expr(
                     E::String {
                         data: name.into(),
-                        ..Default::default()
+                        ..E::String::new()
                     },
                     loc,
                 );
@@ -1257,7 +1257,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.expect(T::TColon)?;
-        let value = p.parse_binding(ParseBindingOptions::default())?;
+        let value = p.parse_binding(ParseBindingOptions::new())?;
 
         let mut default_value: Option<Expr> = None;
         if p.lexer.token == T::TEquals {
@@ -1646,7 +1646,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let arg_binding = p.b(B::Identifier { r#ref: async_ref }, async_range.loc);
                         let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
                             binding: arg_binding,
-                            ..Default::default()
+                            ..G::Arg::new()
                         });
                         let _ = p
                             .push_scope_for_parse_pass(
@@ -1656,7 +1656,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("unreachable");
                         let mut data = FnOrArrowDataParse {
                             needs_async_loc: async_range.loc,
-                            ..Default::default()
+                            ..FnOrArrowDataParse::new()
                         };
                         let arrow_body = p.parse_arrow_body(args, &mut data)?;
                         p.pop_scope();
@@ -1681,7 +1681,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let args: &'a mut [G::Arg] =
                                 p.arena.alloc_slice_fill_with(1, |_| G::Arg {
                                     binding: arg_binding,
-                                    ..Default::default()
+                                    ..G::Arg::new()
                                 });
                             p.lexer.next()?;
 
@@ -1693,7 +1693,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let mut data = FnOrArrowDataParse {
                                 allow_await: AwaitOrYield::AllowExpr,
                                 needs_async_loc: args[0].binding.loc,
-                                ..Default::default()
+                                ..FnOrArrowDataParse::new()
                             };
                             // Pop the scope on the error path too.
                             let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
@@ -1721,7 +1721,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_async: true,
                             is_after_question_and_before_colon: flags
                                 == EFlags::AfterQuestionAndBeforeColon,
-                            ..Default::default()
+                            ..ParenExprOpts::new()
                         },
                     );
                 }
@@ -1745,7 +1745,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         is_async: true,
                                         force_arrow_fn: result
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
-                                        ..Default::default()
+                                        ..ParenExprOpts::new()
                                     },
                                 );
                             }
@@ -1763,7 +1763,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(
             E::Identifier {
                 ref_: async_ref,
-                ..Default::default()
+                ..E::Identifier::new()
             },
             async_range.loc,
         ))

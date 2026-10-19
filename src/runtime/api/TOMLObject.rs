@@ -72,7 +72,7 @@ pub(crate) fn stringify<'a>(
     let mut stringifier = Stringifier {
         stack_check: StackCheck::init(),
         builder: wtf::StringBuilder::init(),
-        visiting: HashMap::default(),
+        visiting: HashMap::init(),
         wrote: false,
     };
 
@@ -147,7 +147,7 @@ impl Stringifier {
     fn mark_visiting(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         let was_present = self
             .visiting
-            .get_or_put(value)
+            .get_or_put(value, || ())
             .map_err(|_| StringifyError::Js(JsError::OutOfMemory))?
             .found_existing;
         if was_present {
@@ -212,7 +212,7 @@ impl Stringifier {
         let iter_options = jsc::JSPropertyIteratorOptions {
             skip_empty_name: false,
             include_value: true,
-            ..Default::default()
+            ..jsc::JSPropertyIteratorOptions::init()
         };
 
         // Pass 1: keyvals.
@@ -367,7 +367,7 @@ impl Stringifier {
             jsc::JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,
-                ..Default::default()
+                ..jsc::JSPropertyIteratorOptions::init()
             },
         )?;
         let mut first = true;

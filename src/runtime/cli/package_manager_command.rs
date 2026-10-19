@@ -168,7 +168,7 @@ impl PackageManagerCommand {
             }
         };
 
-        let mut lockfile = Box::<Lockfile>::default();
+        let mut lockfile = Box::new(Lockfile::new());
         let load_lockfile = lockfile.load_from_bytes(None, bytes, log);
         Self::handle_load_lockfile_errors_for(&load_lockfile, LogLevel::Default, "hash");
 

@@ -22,13 +22,19 @@ thread_local! {
 
 /// Per-thread buffers reused from one file to the next to reduce allocation. A pool thread outlives
 /// a check, so the check owns this: a thread holds one only while it works for the check.
-#[derive(Default)]
 pub struct ThreadCaches([Option<Box<Scratch>>; 2]);
+
+impl ThreadCaches {
+    #[inline]
+    pub fn new() -> Self {
+        Self([None; 2])
+    }
+}
 
 impl ThreadCaches {
     /// Takes the caches from the calling thread.
     pub fn take() -> ThreadCaches {
-        ThreadCaches::default().install()
+        ThreadCaches::new().install()
     }
 
     /// Installs the caches on the calling thread. Returns the previous ones.
@@ -40,7 +46,7 @@ impl ThreadCaches {
 /// One of `SCRATCH`, which is nobody's until `give_back_scratch`.
 fn take_scratch() -> Box<Scratch> {
     let taken = SCRATCH.with_borrow_mut(|all| all.iter_mut().find_map(Option::take));
-    taken.unwrap_or_default()
+    taken.unwrap_or_else(|| Box::new(Scratch::new()))
 }
 
 fn give_back_scratch(scratch: Box<Scratch>) {
@@ -53,7 +59,6 @@ fn give_back_scratch(scratch: Box<Scratch>) {
 
 /// How many files were parsed at once, and how many the parser that refuses a text at its first
 /// error has refused, by reason.
-#[derive(Default)]
 pub struct Counts {
     pub parsed: AtomicU64,
     pub refused: [AtomicU64; Refusal::COUNT],
@@ -283,7 +288,7 @@ fn file_read_as(
         // The file is not looked at any further: its first error is all that is said about it.
         Err((why, at, _)) => {
             let is_too_deep = why == Refusal::TooDeep;
-            let is_first_in_text = dialect == Dialect::default();
+            let is_first_in_text = dialect == Dialect::new();
             let error = match scratch.error_before_refusal(is_first_in_text, text.len()) {
                 Some(error) => error.clone(),
                 None => Diagnostic::new(DiagnosticKind::Parse, (at, 0), 1128, &[]),
@@ -349,7 +354,7 @@ pub fn summarize<'s>(
     every_file_is_a_module: bool,
 ) -> File<'s> {
     let how = Reading {
-        dialect: Dialect::default(),
+        dialect: Dialect::new(),
         path,
         script_kind,
         experimental_decorators,
@@ -358,7 +363,7 @@ pub fn summarize<'s>(
         attach_comments: false,
     };
     SCRATCH.with_borrow_mut(|all| {
-        let scratch = all[0].get_or_insert_default();
+        let scratch = all[0].get_or_insert_with(|| Box::new(Scratch::new()));
         parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
     })
 }
@@ -409,7 +414,13 @@ pub fn summarize_in<'s>(
         attach_comments: false,
     };
     SCRATCH.with_borrow_mut(|all| {
-        parse_into_arena(all[0].get_or_insert_default(), how, memory, text, atoms)
+        parse_into_arena(
+            all[0].get_or_insert_with(|| Box::new(Scratch::new())),
+            how,
+            memory,
+            text,
+            atoms,
+        )
     })
 }
 
@@ -553,7 +564,7 @@ impl<'t> Parts<'t> {
         Parts {
             text,
             scratch: Some(scratch),
-            stops_of_part: Default::default(),
+            stops_of_part: bun_highway::ScannerStopsBuffer::new(),
         }
     }
 
@@ -568,7 +579,10 @@ impl<'t> Parts<'t> {
         part: Part,
         then: impl FnOnce(Summary<'_, 's>, &dyn Intern, &[u8], u32) -> R,
     ) -> Result<R, PartError> {
-        let (text, scratch) = (self.text, self.scratch.get_or_insert_default());
+        let (text, scratch) = (
+            self.text,
+            self.scratch.get_or_insert_with(|| Box::new(Scratch::new())),
+        );
         let options = |from: u32, until: u32| Options {
             is_javascript,
             dialect,
@@ -578,7 +592,7 @@ impl<'t> Parts<'t> {
                 ..part
             }),
             attach_comments: true,
-            ..Default::default()
+            ..Options::new()
         };
         // Where it ends.
         let whole = options(part.from, part.until);

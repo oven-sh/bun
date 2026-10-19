@@ -40,10 +40,17 @@ impl NodeId {
 }
 
 /// A run of `Ast::lists` or of `Ast::text`.
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub(super) struct Run {
     pub(super) start: u32,
     pub(super) len: u32,
+}
+
+impl Run {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self { start: 0, len: 0 }
+    }
 }
 
 impl Run {
@@ -54,7 +61,7 @@ impl Run {
 }
 
 /// `/pattern/flags`
-#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Flags {
     pub global: bool,
     pub ignore_case: bool,
@@ -64,6 +71,22 @@ pub struct Flags {
     pub dot_all: bool,
     pub has_indices: bool,
     pub unicode_sets: bool,
+}
+
+impl Flags {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            global: false,
+            ignore_case: false,
+            multiline: false,
+            unicode: false,
+            sticky: false,
+            dot_all: false,
+            has_indices: false,
+            unicode_sets: false,
+        }
+    }
 }
 
 /// `regex.flags`
@@ -88,7 +111,7 @@ impl std::fmt::Display for Flags {
 }
 
 /// The flags in `(?ims-ims:)`
-#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ModifierFlags {
     pub ignore_case: bool,
     pub multiline: bool,
@@ -734,7 +757,7 @@ impl<'a> Node<'a> {
             Data::Alternative { elements }
             | Data::CharacterClass { elements, .. }
             | Data::StringAlternative { elements } => self.list(elements),
-            _ => self.list(Run::default()),
+            _ => self.list(Run::new()),
         }
     }
 

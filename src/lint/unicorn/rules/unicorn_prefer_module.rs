@@ -12,11 +12,20 @@ const USE_STRICT_DIRECTIVE: Message = Message::new("", "Do not use \"use strict\
 const GLOBAL_RETURN: Message = Message::new("", "\"return\" should be used inside a function.");
 const COMMON_JS_GLOBAL: Message = Message::new("", "Do not use \"{{name}}\".");
 
-#[derive(Default)]
 pub struct State<'a> {
     common_js_globals: Option<[Name<'a>; 5]>,
     /// What is in a function.
     functions: AncestorMemo<'a, ()>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            common_js_globals: None,
+            functions: AncestorMemo::new(),
+        }
+    }
 }
 
 impl Rule for PreferModule {
@@ -44,11 +53,11 @@ impl Rule for PreferModule {
             return None;
         }
         if !file.mentions_any(&COMMON_JS_GLOBALS) {
-            return Some(State::default());
+            return Some(State::new());
         }
         Some(State {
             common_js_globals: Some(COMMON_JS_GLOBALS.map(|it| file.name_of(it))),
-            functions: AncestorMemo::default(),
+            functions: AncestorMemo::new(),
         })
     }
 

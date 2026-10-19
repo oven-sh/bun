@@ -820,7 +820,7 @@ impl Font {
 }
 
 bitflags::bitflags! {
-    #[derive(Default, Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub(crate) struct FontProperty: u8 {
         const FONT_FAMILY       = 1 << 0;
         const FONT_SIZE         = 1 << 1;
@@ -853,7 +853,6 @@ impl FontProperty {
     }
 }
 
-#[derive(Default)]
 pub struct FontHandler {
     family: Option<Vec<FontFamily>>,
     size: Option<FontSize>,
@@ -864,6 +863,23 @@ pub struct FontHandler {
     variant_caps: Option<FontVariantCaps>,
     flushed_properties: FontProperty,
     has_any: bool,
+}
+
+impl FontHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            family: None,
+            size: None,
+            style: None,
+            weight: None,
+            stretch: None,
+            line_height: None,
+            variant_caps: None,
+            flushed_properties: FontProperty::empty(),
+            has_any: false,
+        }
+    }
 }
 
 impl FontHandler {
@@ -999,7 +1015,7 @@ impl FontHandler {
         if let Some(f) = family.as_mut() {
             if f.len() > 1 {
                 // Dedupe
-                let mut seen: FontFamilyHashMap<()> = Default::default();
+                let mut seen: FontFamilyHashMap<()> = bun_collections::ArrayHashMap::new();
 
                 let mut i: usize = 0;
                 while i < f.len() {

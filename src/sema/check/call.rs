@@ -2142,13 +2142,13 @@ impl<'p, 's> Checker<'p, 's> {
         match node {
             InstantiationExpression::Expr(file, e) => match self.hir(file)[e].kind {
                 ExprKind::Instantiation { type_args, .. } => (file, type_args),
-                _ => (file, IdList::default()),
+                _ => (file, IdList::EMPTY),
             },
             InstantiationExpression::TypeNode(file, node) => match self.hir(file)[node].kind {
                 TypeNodeKind::Typeof { args, .. } | TypeNodeKind::Import { args, .. } => {
                     (file, args)
                 }
-                _ => (file, IdList::default()),
+                _ => (file, IdList::EMPTY),
             },
         }
     }
@@ -2356,7 +2356,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// before all others.
     pub(super) fn candidates_in_order(&mut self, sigs: &[SigId]) -> List<'p, SigId> {
         let first = match *sigs {
-            [] => return List::default(),
+            [] => return List::new(),
             [only] => return List::One(only),
             [first, ..] => first,
         };
@@ -2870,8 +2870,14 @@ impl<'p, 's> Checker<'p, 's> {
             mode_of_recheck: std::mem::replace(&mut self.mode_of_recheck, check_mode),
             // A result computed under one pushed contextual type is not valid under another, or
             // under none.
-            rechecked_exprs: std::mem::take(&mut self.rechecked_exprs),
-            rechecked_members: std::mem::take(&mut self.rechecked_members),
+            rechecked_exprs: std::mem::replace(
+                &mut self.rechecked_exprs,
+                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ),
+            rechecked_members: std::mem::replace(
+                &mut self.rechecked_members,
+                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ),
             recheck: self.begin_recheck(),
         };
         (check_mode, outside)

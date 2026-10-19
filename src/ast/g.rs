@@ -15,10 +15,20 @@ pub use crate::flags::Function as FnFlags;
 // erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
 // adding a `PhantomData<&'arena ()>` to `StoreSlice` in one pass.
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Decl {
     pub binding: BindingNodeIndex,
     pub value: Option<ExprNodeIndex>,
+}
+
+impl Decl {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            binding: BindingNodeIndex::new(),
+            value: None,
+        }
+    }
 }
 
 // Inherent assoc types are nightly; free alias.
@@ -33,10 +43,10 @@ pub struct NamespaceAlias {
     pub import_record_index: u32,
 }
 
-impl Default for NamespaceAlias {
-    fn default() -> Self {
+impl NamespaceAlias {
+    pub fn new() -> Self {
         Self {
-            namespace_ref: Ref::default(),
+            namespace_ref: Ref::NONE,
             alias: StoreStr::EMPTY,
             was_originally_property_access: false,
             import_record_index: u32::MAX,
@@ -65,8 +75,8 @@ pub struct Class {
     pub should_lower_standard_decorators: bool,
 }
 
-impl Default for Class {
-    fn default() -> Self {
+impl Class {
+    pub fn new() -> Self {
         Self {
             class_keyword: crate::Range::NONE,
             ts_decorators: bun_alloc::AstAlloc::vec(),
@@ -162,8 +172,8 @@ pub struct Property {
 
 pub type PropertyList = Vec<Property, bun_alloc::AstAlloc>;
 
-impl Default for Property {
-    fn default() -> Self {
+impl Property {
+    pub fn new() -> Self {
         Self {
             initializer: None,
             kind: PropertyKind::Normal,
@@ -281,8 +291,8 @@ pub struct Fn {
     pub return_ts_metadata: TypeScript::Metadata,
 }
 
-impl Default for Fn {
-    fn default() -> Self {
+impl Fn {
+    pub fn new() -> Self {
         Self {
             name: None,
             open_parens_loc: crate::Loc::EMPTY,
@@ -305,7 +315,7 @@ impl Fn {
         stack_check: bun_core::StackCheck,
     ) -> crate::Result<Fn> {
         let src_args: &[Arg] = self.args.slice();
-        let args: &mut [Arg] = bump.alloc_slice_fill_default::<Arg>(src_args.len());
+        let args: &mut [Arg] = bump.alloc_slice_fill_with::<Arg, _>(src_args.len(), |_| Arg::new());
         for i in 0..args.len() {
             args[i] = src_args[i].deep_clone(bump, stack_check)?;
         }
@@ -335,11 +345,11 @@ pub struct Arg {
     pub ts_metadata: TypeScript::Metadata,
 }
 
-impl Default for Arg {
-    fn default() -> Self {
+impl Arg {
+    pub fn new() -> Self {
         Self {
             ts_decorators: bun_alloc::AstAlloc::vec(),
-            binding: BindingNodeIndex::default(),
+            binding: BindingNodeIndex::new(),
             default: None,
             is_typescript_ctor_field: false,
             ts_metadata: TypeScript::Metadata::MNone,

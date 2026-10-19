@@ -25,7 +25,6 @@ fn is_field_initializer<'a>(member: Member<'a>, node: Node<'a>) -> bool {
         && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// What adds to the complexity of the code path that it is in: where it starts, how much it adds, and what it is.
     found: Vec<(u32, usize, Node<'a>)>,
@@ -34,6 +33,18 @@ pub struct State<'a> {
     /// The same for the initializers of fields, of which few have more than one.
     of_fields: FxHashMap<Member<'a>, usize>,
     owners: AncestorMemo<'a, Node<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            found: Vec::new(),
+            of_functions: Vec::new(),
+            of_fields: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            owners: AncestorMemo::new(),
+        }
+    }
 }
 
 impl Complexity {
@@ -234,7 +245,7 @@ impl Rule for Complexity {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        self.threshold.is_some().then(State::default)
+        self.threshold.is_some().then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

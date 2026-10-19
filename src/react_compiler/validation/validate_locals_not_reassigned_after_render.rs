@@ -20,7 +20,7 @@ pub(crate) fn validate_locals_not_reassigned_after_render(
     func: &HirFunction,
     env: &mut Environment,
 ) {
-    let mut context_variables: IdBitSet<IdentifierId> = IdBitSet::default();
+    let mut context_variables: IdBitSet<IdentifierId> = IdBitSet::init();
     let mut diagnostics: Vec<CompilerDiagnostic> = Vec::new();
 
     let reassignment = get_context_reassignment(

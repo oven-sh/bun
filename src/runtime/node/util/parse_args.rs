@@ -402,14 +402,14 @@ fn parse_option_definitions<'a>(
     while let Some((long_option, obj)) = iter.next()? {
         let mut option = OptionDefinition {
             long_name: long_option,
-            ..Default::default()
+            ..OptionDefinition::new()
         };
 
         validators::validate_object(
             global,
             obj,
             format_args!("options.{}", option.long_name),
-            Default::default(),
+            crate::node::validators_impl::ValidateObjectOptions::empty(),
         )?;
 
         // type field is required
@@ -959,7 +959,12 @@ fn parse_args_impl(
     // Phase 0.C: Parse the options definitions
 
     let options_iter = if !config_options.is_undefined_or_null() {
-        validators::validate_object(global, config_options, "options", Default::default())?;
+        validators::validate_object(
+            global,
+            config_options,
+            "options",
+            crate::node::validators_impl::ValidateObjectOptions::empty(),
+        )?;
         Some(bun_jsc::JSPropertyIterator::init(
             global,
             config_options.get_object().unwrap(),

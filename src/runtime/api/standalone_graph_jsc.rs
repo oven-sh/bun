@@ -40,9 +40,9 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
             data: Data::Bytes(bytes),
             mime_type: MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
+            is_all_ascii: IsAllAscii::new(),
         };
-        let blob = Blob::default();
+        let blob = Blob::empty();
         if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
             bun_paths::extension(file.name),
             b'.',

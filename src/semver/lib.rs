@@ -154,10 +154,20 @@ pub mod external_string {
     use super::semver_string::{Formatter, String};
 
     #[repr(C)]
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct ExternalString {
         pub value: String,
         pub hash: u64,
+    }
+
+    impl ExternalString {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                value: String::new(),
+                hash: 0,
+            }
+        }
     }
 
     impl ExternalString {
@@ -221,13 +231,22 @@ pub mod semver_string {
 
     /// String type that stores either an offset/length into an external buffer or a string inline directly
     #[repr(C)]
-    #[derive(Copy, Clone, PartialEq, Eq, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     pub struct String {
         /// This is three different types of string.
         /// 1. Empty string. If it's all zeroes, then it's an empty string.
         /// 2. If the final bit is not set, then it's a string that is stored inline.
         /// 3. If the final bit is set, then it's a string that is stored in an external buffer.
         pub bytes: [u8; String::MAX_INLINE_LEN],
+    }
+
+    impl String {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                bytes: [0; String::MAX_INLINE_LEN],
+            }
+        }
     }
 
     impl fmt::Debug for String {
@@ -332,7 +351,7 @@ pub mod semver_string {
 
         pub fn init(buf: &[u8], in_: &[u8]) -> String {
             match in_.len() {
-                0 => String::default(),
+                0 => String::new(),
                 1 => String {
                     bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0],
                 },
@@ -385,7 +404,7 @@ pub mod semver_string {
         pub(crate) fn init_inline(in_: &[u8]) -> String {
             debug_assert!(Self::can_inline(in_));
             match in_.len() {
-                0 => String::default(),
+                0 => String::new(),
                 1 => String {
                     bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0],
                 },
@@ -418,7 +437,7 @@ pub mod semver_string {
 
         pub fn init_append_if_needed(buf: &mut Vec<u8>, in_: &[u8]) -> Result<String, AllocError> {
             Ok(match in_.len() {
-                0 => String::default(),
+                0 => String::new(),
                 1 => String {
                     bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0],
                 },
@@ -626,8 +645,8 @@ pub mod semver_string {
         pub quote: bool,
     }
 
-    impl Default for JsonFormatterOptions {
-        fn default() -> Self {
+    impl JsonFormatterOptions {
+        pub fn new() -> Self {
             Self { quote: true }
         }
     }
@@ -719,7 +738,7 @@ pub mod semver_string {
 
     // ── String.Pointer ────────────────────────────────────────────────────
     #[repr(C)]
-    #[derive(Copy, Clone, Default)]
+    #[derive(Copy, Clone)]
     pub struct Pointer {
         pub off: u32,
         pub len: u32,
@@ -784,9 +803,17 @@ pub mod semver_string {
         }
     }
 
-    #[derive(Default)]
     pub struct StringPool {
         map: HashMap<u64, String, bun_collections::IdentityContext<u64>>,
+    }
+
+    impl StringPool {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                map: HashMap::init(),
+            }
+        }
     }
     pub struct StringPoolEntry<'a> {
         pub found_existing: bool,
@@ -794,7 +821,7 @@ pub mod semver_string {
     }
     impl StringPool {
         pub fn get_or_put(&mut self, hash: u64) -> Result<StringPoolEntry<'_>, AllocError> {
-            let gpe = self.map.get_or_put(hash)?;
+            let gpe = self.map.get_or_put(hash, String::new)?;
             Ok(StringPoolEntry {
                 found_existing: gpe.found_existing,
                 value_ptr: gpe.value_ptr,
@@ -821,12 +848,23 @@ pub mod semver_string {
         }
     }
 
-    #[derive(Default)]
     pub struct Builder {
         pub len: usize,
         pub cap: usize,
         pub ptr: Option<Box<[u8]>>,
         pub string_pool: StringPool,
+    }
+
+    impl Builder {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                len: 0,
+                cap: 0,
+                ptr: None,
+                string_pool: StringPool::new(),
+            }
+        }
     }
 
     impl Builder {
@@ -963,7 +1001,7 @@ mod tests {
         assert_eq!(s.len(), 8);
         assert!(!String::can_inline(s));
 
-        let mut builder = Builder::default();
+        let mut builder = Builder::new();
         builder.count(s);
         assert_eq!(builder.cap, 8);
         builder.allocate().unwrap();

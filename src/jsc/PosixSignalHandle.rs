@@ -14,9 +14,18 @@ const BUFFER_SIZE: usize = 8192;
 
 /// Signal numbers queued by signal handlers on any thread for the main loop.
 #[cfg(unix)]
-#[derive(Default)]
 pub struct PosixSignalHandle {
     ring: SignalRing<BUFFER_SIZE>,
+}
+
+#[cfg(unix)]
+impl PosixSignalHandle {
+    #[inline]
+    pub fn init() -> Self {
+        Self {
+            ring: SignalRing::new(),
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -224,7 +233,7 @@ extern "C" fn Bun__ensureSignalHandler() {
             // SAFETY: `vm` and its event loop are process-lifetime.
             let this = unsafe { &mut *(*vm).event_loop() };
             if this.signal_handler.is_none() {
-                let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
+                let boxed = PosixSignalHandle::new(PosixSignalHandle::init());
                 this.signal_handler =
                     Some(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(boxed)));
             }

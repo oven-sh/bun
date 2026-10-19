@@ -2,14 +2,18 @@ use crate::shell::builtin::{Builtin, BuiltinState};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
 pub(crate) struct Exit {
     state: State,
 }
 
-#[derive(Default)]
+impl Exit {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { state: State::Idle }
+    }
+}
+
 enum State {
-    #[default]
     Idle,
     WaitingIo,
     Done,

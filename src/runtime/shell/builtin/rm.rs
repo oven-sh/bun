@@ -12,24 +12,26 @@ use crate::shell::interpreter::{
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
 pub(crate) struct Rm {
     pub(crate) opts: Opts,
     pub(crate) state: RmState,
 }
 
-#[derive(Default)]
+impl Rm {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            opts: Opts::new(),
+            state: RmState::Idle,
+        }
+    }
+}
+
 pub(crate) enum RmState {
-    #[default]
     Idle,
-    ParseOpts {
-        idx: u32,
-        wait_write_err: bool,
-    },
+    ParseOpts { idx: u32, wait_write_err: bool },
     Exec(ExecState),
-    Done {
-        exit_code: ExitCode,
-    },
+    Done { exit_code: ExitCode },
     Err(ExitCode),
 }
 
@@ -66,8 +68,8 @@ pub(crate) struct Opts {
     pub(crate) remove_empty_dirs: bool,
 }
 
-impl Default for Opts {
-    fn default() -> Self {
+impl Opts {
+    pub(crate) fn new() -> Self {
         Self {
             force: false,
             prompt_behaviour: PromptBehaviour::Never,
@@ -78,10 +80,9 @@ impl Default for Opts {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) enum PromptBehaviour {
     /// `--interactive=never` (default)
-    #[default]
     Never,
     /// `-I`, `--interactive=once`
     Once,
@@ -686,7 +687,7 @@ impl ShellRmTask {
             deleted_entries: Vec::new(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(evtloop),
             work_task: WorkPoolTask {
-                node: Default::default(),
+                node: bun_threading::thread_pool::Node::new(),
                 callback: DirTask::work_pool_callback,
             },
         }));
@@ -827,7 +828,7 @@ impl ShellRmTask {
             deleted_entries: Vec::new(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(self.event_loop),
             work_task: WorkPoolTask {
-                node: Default::default(),
+                node: bun_threading::thread_pool::Node::new(),
                 callback: DirTask::work_pool_callback,
             },
         }));

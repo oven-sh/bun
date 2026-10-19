@@ -205,7 +205,7 @@ impl NoUselessEscape {
             return;
         }
         let mode = regex::Mode::of_flags(literal.flags());
-        let Ok(ast) = regex::parse_pattern(pattern, mode, regex::Options::default()) else {
+        let Ok(ast) = regex::parse_pattern(pattern, mode, regex::Options::new()) else {
             return;
         };
         for character in ast.root().descendants() {

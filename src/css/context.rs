@@ -137,7 +137,7 @@ impl<'a> PropertyHandlerContext<'a> {
                             declarations: self.clone_decls(&entry.declarations),
                             important_declarations: self.clone_decls(&entry.important_declarations),
                         },
-                        rules: css::CssRuleList::default(),
+                        rules: css::CssRuleList::new(),
                         loc: style_rule.loc,
                     })],
                 },
@@ -201,7 +201,7 @@ impl<'a> PropertyHandlerContext<'a> {
                     },
                 },
                 rules: {
-                    let mut list: css::CssRuleList<T> = css::CssRuleList::default();
+                    let mut list: css::CssRuleList<T> = css::CssRuleList::new();
 
                     list.v.push(css::CssRule::Style(css::StyleRule {
                         selectors: style_rule.selectors.deep_clone(),
@@ -212,7 +212,7 @@ impl<'a> PropertyHandlerContext<'a> {
                                 self.bump_static(),
                             ),
                         },
-                        rules: css::CssRuleList::default(),
+                        rules: css::CssRuleList::new(),
                         loc: style_rule.loc,
                     }));
 
@@ -247,7 +247,7 @@ impl<'a> PropertyHandlerContext<'a> {
                 declarations: self.clone_decls(decls),
                 important_declarations: css::DeclarationList::new_in(self.bump_static()),
             },
-            rules: css::CssRuleList::default(),
+            rules: css::CssRuleList::new(),
             loc: sty.loc,
         };
 

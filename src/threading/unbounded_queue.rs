@@ -103,8 +103,8 @@ impl<T: Node> Clone for Batch<T> {
 }
 impl<T: Node> Copy for Batch<T> {}
 
-impl<T: Node> Default for Batch<T> {
-    fn default() -> Self {
+impl<T: Node> Batch<T> {
+    pub fn new() -> Self {
         Self {
             front: ptr::null_mut(),
             count: 0,
@@ -178,12 +178,6 @@ pub struct QueuePadded<T>(pub(crate) T);
 pub struct UnboundedQueue<T: Node> {
     pub(crate) back: QueuePadded<AtomicPtr<T>>,
     pub(crate) front: QueuePadded<AtomicPtr<T>>,
-}
-
-impl<T: Node> Default for UnboundedQueue<T> {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl<T: Node> UnboundedQueue<T> {
@@ -295,7 +289,7 @@ impl<T: Node> UnboundedQueue<T> {
     }
 
     pub fn pop_batch(&self) -> Batch<T> {
-        let mut batch = Batch::<T>::default();
+        let mut batch = Batch::<T>::new();
 
         // Not AcqRel because another thread that sees this `null` doesn't depend on any
         // visible side-effects from this thread.

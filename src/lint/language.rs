@@ -62,9 +62,8 @@ pub enum Parser {
 }
 
 /// Whether the globals of a file are what the types of its program declare: [`File::inferred_globals`](crate::ast::File).
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum InferGlobals {
-    #[default]
     No,
     /// They, and what the configuration has.
     Besides,
@@ -285,7 +284,8 @@ impl LanguageOptions {
         let own = &self.own_globals;
         let is_own = |name: &[u8]| own.binary_search_by(|it| (*it.0).cmp(name)).is_ok();
         let mut all: Vec<(Box<[u8]>, Global)> = Vec::new();
-        let mut index_of: FxHashMap<&'static [u8], usize> = FxHashMap::default();
+        let mut index_of: FxHashMap<&'static [u8], usize> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for env in &self.envs {
             let variables = environment(env, Tables::Oxlint).into_iter().flatten();
             let variables: Vec<_> = variables.filter(|it| !is_own(it.0)).collect();
@@ -560,12 +560,12 @@ impl LanguageOptions {
     }
 }
 
-impl Default for LanguageOptions {
-    fn default() -> Self {
+impl LanguageOptions {
+    pub fn new() -> Self {
         LanguageOptions {
             ecma_version: Self::LATEST_ECMA_VERSION,
             source_type: SourceType::Module,
-            globals: Arc::default(),
+            globals: std::sync::Arc::new(Vec::new()),
             written_globals: Vec::new(),
             env_behind_off: Vec::new(),
             envs: Vec::new(),

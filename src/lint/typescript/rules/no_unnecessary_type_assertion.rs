@@ -258,11 +258,20 @@ fn get_type_arguments<'a>(ty: Type<'a>) -> impl ExactSizeIterator<Item = Type<'a
 }
 
 /// What [`type_contains`] has met.
-#[derive(Default)]
 struct Met<'a> {
     seen: IdSet<Type<'a>>,
     /// The declarations of the signatures that are being looked into. Only tsgolint has them.
     active_signatures: SmallVec<[TsNode<'a>; 8]>,
+}
+
+impl<'a> Met<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            seen: IdSet::init(),
+            active_signatures: SmallVec::new(),
+        }
+    }
 }
 
 /// `None`: the type is infinite. Upstream runs out of stack, which ends the walk. To go on with the rest of each level
@@ -321,12 +330,12 @@ fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Me
 // What upstream says of `any` in an infinite type, once it has run out of stack, changes with the rest of the file. Mostly it is
 // that there is one, which is also what reports nothing.
 fn contains_any(ty: Type) -> bool {
-    type_contains(ty, |t| is_type_flag_set(t, TypeFlags::ANY), &mut Met::default()).unwrap_or(true)
+    type_contains(ty, |t| is_type_flag_set(t, TypeFlags::ANY), &mut Met::new()).unwrap_or(true)
 }
 
 fn contains_type_variable(ty: Type) -> bool {
     let is_one = |t| is_type_flag_set(t, TypeFlags::TYPE_VARIABLE | TypeFlags::INDEX);
-    type_contains(ty, is_one, &mut Met::default()).unwrap_or(false)
+    type_contains(ty, is_one, &mut Met::new()).unwrap_or(false)
 }
 
 fn has_phantom_type_arguments(ty: Type) -> bool {
@@ -918,11 +927,20 @@ fn get_uncast_type(expression: Expr<'_>) -> Type<'_> {
 }
 
 /// Looks for a call that infers its type arguments, but not in functions and assertions, which expect other things.
-#[derive(Default)]
 struct CallThatInfers {
     /// How many functions and assertions are around.
     hidden: u32,
     is_found: bool,
+}
+
+impl CallThatInfers {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            hidden: 0,
+            is_found: false,
+        }
+    }
 }
 
 impl CallThatInfers {
@@ -988,7 +1006,7 @@ fn is_asserted_type_expected_of_a_call_in_the_arguments(expression: Expr) -> boo
     let is_by_index = infers.is_some()
         && !matches!(call.kind(), ExprKind::TaggedTemplate(_))
         && !it.args().iter().any(|argument| argument.tag() == ExprTag::Spread);
-    let mut calls = CallThatInfers::default();
+    let mut calls = CallThatInfers::new();
     for (index, argument) in it.args().iter().enumerate() {
         // Nor does what a parameter without a type variable expects.
         if !is_by_index || tsgolint_has_generic_inference_parameter_at_argument(call, index, &mut std::iter::empty()) {

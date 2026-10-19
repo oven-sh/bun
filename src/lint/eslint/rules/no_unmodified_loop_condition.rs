@@ -156,13 +156,23 @@ struct Above<'a> {
     is_alone: bool,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The tests of the loops.
     tests: Vec<Span>,
     /// `has_dynamic_expressions`
     is_dynamic: IdMap<Expr<'a>, bool>,
     is_oxlint: bool,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            tests: Vec::new(),
+            is_dynamic: IdMap::init(),
+            is_oxlint: false,
+        }
+    }
 }
 
 /// ESLint's `isWriteReference`. Of the initializers only those of `var` count: they are evaluated
@@ -307,7 +317,7 @@ impl Rule for NoUnmodifiedLoopCondition {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        Some(State { is_oxlint: file.language().is_oxlint, ..State::default() })
+        Some(State { is_oxlint: file.language().is_oxlint, ..State::new() })
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -329,7 +339,7 @@ impl Rule for NoUnmodifiedLoopCondition {
         let mut conditions: Vec<Condition<'a>> = Vec::new();
         let is_oxlint = cx.state.is_oxlint;
         let mut functions =
-            Functions { is_oxlint, nearest: AncestorMemo::default(), declarations: AncestorMemo::default() };
+            Functions { is_oxlint, nearest: AncestorMemo::new(), declarations: AncestorMemo::new() };
         // Each once: a test can be in another.
         let mut end = 0u32;
         for test in spans {
@@ -340,7 +350,7 @@ impl Rule for NoUnmodifiedLoopCondition {
         }
         let mut modified_groups: IdSet<Expr<'a>> = IdSet::new();
         let mut of_symbols: IdMap<Symbol<'a>, Modifiers<'a>> = IdMap::new();
-        let mut of_globals: FxHashMap<Name<'a>, Modifiers<'a>> = FxHashMap::default();
+        let mut of_globals: FxHashMap<Name<'a>, Modifiers<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for condition in &mut conditions {
             let modifiers = match condition.reference.symbol() {
                 Some(symbol) if !symbol.has_writes() => continue,

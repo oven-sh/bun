@@ -86,7 +86,7 @@ fn check_statements<'a>(
 ) {
     let file = cx.file();
     // By what is expected, as it is written.
-    let mut variables_expected: FxHashMap<Vec<u8>, TrackingExpectPair<'a>> = FxHashMap::default();
+    let mut variables_expected: FxHashMap<Vec<u8>, TrackingExpectPair<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for statement in statements {
         let StmtKind::Expr(expression) = statement.kind() else {
             continue;
@@ -170,7 +170,7 @@ fn check_statements<'a>(
                     called_with
                         .type_args()
                         .angle_brackets_span()
-                        .unwrap_or_default(),
+                        .unwrap_or_else(Span::init),
                 ),
                 b"(".as_slice(),
                 arguments.as_slice(),

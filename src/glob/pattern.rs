@@ -116,14 +116,14 @@ impl Pattern {
             ]),
             dots: Dots::Match,
             is_negated: false,
-            heads: Box::default(),
+            heads: Box::new([]),
             start_len: 0,
             tail_len: 0,
-            tails: Box::default(),
+            tails: Box::new([]),
             is_star_and_tail: false,
             inner: 0..0,
             is_for_name: false,
-            names: Box::default(),
+            names: Box::new([]),
             is_names_only: false,
         };
         let bangs = matcher::negations(pattern);
@@ -488,7 +488,7 @@ fn heads(
             let after = run_from(end);
             let mut tokens = (first..end - 1).map(|it| matcher::token_at(pattern, it, shape).0);
             if shape.is_sequence_at(first) || !tokens.all(|it| it == Token::Literal) {
-                return Box::default();
+                return Box::new([]);
             }
             for alternative in shape.alternatives_at(first).map(|it| &pattern[it]) {
                 let text = [
@@ -507,7 +507,7 @@ fn heads(
     }
     match found.iter().all(|it| !it.is_empty()) {
         true => found.into_iter().map(Vec::into_boxed_slice).collect(),
-        false => Box::default(),
+        false => Box::new([]),
     }
 }
 

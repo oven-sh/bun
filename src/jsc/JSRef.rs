@@ -250,12 +250,6 @@ impl JsRef {
     }
 }
 
-impl Default for JsRef {
-    fn default() -> Self {
-        JsRef::empty()
-    }
-}
-
 /// Forwarding accessors for the common `JsCell<JsRef>` field shape, so call
 /// sites read `field.try_get()` / `field.get_or_undefined()` instead of the
 /// double-step `field.get().try_get()` / `field.get().get()`.

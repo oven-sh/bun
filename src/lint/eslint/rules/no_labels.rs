@@ -97,7 +97,7 @@ impl Rule for NoLabels {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(FxHashMap::default())
+        Some(FxHashMap::with_hasher(rustc_hash::FxBuildHasher))
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

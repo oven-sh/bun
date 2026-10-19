@@ -126,8 +126,8 @@ pub struct BunSocketContextOptions {
     pub ecdh_curve: *const c_char,
 }
 
-impl Default for BunSocketContextOptions {
-    fn default() -> Self {
+impl BunSocketContextOptions {
+    pub fn new() -> Self {
         Self {
             key_file_name: ptr::null(),
             cert_file_name: ptr::null(),

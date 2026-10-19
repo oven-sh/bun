@@ -60,13 +60,13 @@ pub struct ProxyTunnel {
     pub(crate) ref_count: Cell<u32>,
 }
 
-impl Default for ProxyTunnel {
-    fn default() -> Self {
+impl ProxyTunnel {
+    pub fn new() -> Self {
         Self {
             wrapper: None,
             shutdown_err: Cell::new(crate::Error::ConnectionClosed),
             socket: Socket::None,
-            write_buffer: bun_io::StreamBuffer::default(),
+            write_buffer: bun_io::StreamBuffer::new(),
             did_have_handshaking_error: false,
             verification: PeerVerification::None,
             ref_count: Cell::new(1),
@@ -640,7 +640,7 @@ impl ProxyTunnel {
         // `RefPtr::new` owns the tunnel's initial ref (`ref_count == 1` from
         // `Default`); the client holds it until `close_proxy_tunnel` or the
         // hand-off to the keep-alive pool.
-        let mut tunnel = ProxyTunnel::default();
+        let mut tunnel = ProxyTunnel::new();
         tunnel.wrapper = Some(wrapper);
         tunnel.socket = Socket::from_generic::<IS_SSL>(socket);
         let proxy_tunnel = RefPtr::new(tunnel);

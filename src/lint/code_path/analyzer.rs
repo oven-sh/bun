@@ -1189,7 +1189,7 @@ fn loop_with_target(node: Node<'_>) -> Option<Stmt<'_>> {
 /// Analyzes the code path of `node` alone, which is a function or the file, without the functions
 /// in it. Returns whether its end can be reached, and fills in `reach` for its statements and cases.
 pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
-    let (file, store) = (node.file(), &Store::default());
+    let (file, store) = (node.file(), &Store::new());
     let (enter, exit) = match reach {
         Some(_) => (
             StmtTag::ALL

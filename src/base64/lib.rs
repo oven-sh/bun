@@ -292,7 +292,7 @@ pub mod vlq {
         VLQ { bytes, len: 0 }
     }
 
-    #[derive(Copy, Clone, Default)]
+    #[derive(Copy, Clone)]
     pub struct VLQResult {
         pub value: i32,
         pub start: usize,
@@ -972,7 +972,7 @@ pub fn wyhash_url_safe<'a>(
     // Always alloc a fresh slice from the arena.
     // PERF: no buffer reuse for large encode_len — profile if hot.
     let slice_to_write: &mut [u8] =
-        bump.alloc_slice_fill_default(encode_len + usize::from(at_start));
+        bump.alloc_slice_fill_copy(encode_len + usize::from(at_start), 0);
 
     let base64_encoded_hash_len = encode_url_safe(slice_to_write, &h_bytes);
 

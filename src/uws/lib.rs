@@ -220,12 +220,21 @@ pub mod ssl_wrapper {
     const MAX_RECORD_OVERHEAD: usize = 5 + 88;
 
     /// What the one BIO of the `SSL` reads and writes. No borrow spans an `SSL_*` call or a handler.
-    #[derive(Default)]
     struct Ciphertext {
         /// Sealed, not yet given to `Handlers::write`.
         outgoing: RefCell<Vec<u8>>,
         /// From the peer, not yet read by BoringSSL.
         incoming: RefCell<VecDeque<u8>>,
+    }
+
+    impl Ciphertext {
+        #[inline]
+        fn new() -> Self {
+            Self {
+                outgoing: core::cell::RefCell::new(Vec::new()),
+                incoming: core::cell::RefCell::new(std::collections::VecDeque::new()),
+            }
+        }
     }
 
     extern "C" fn bio_write(bio: *mut boring_sys::BIO, data: *const c_char, len: c_int) -> c_int {
@@ -379,8 +388,14 @@ pub mod ssl_wrapper {
     pub type SslWrapper<T> = SSLWrapper<T>;
 
     #[repr(transparent)]
-    #[derive(Default)]
     pub struct Flags(Cell<u8>);
+
+    impl Flags {
+        #[inline]
+        pub fn new() -> Self {
+            Self(core::cell::Cell::new(0))
+        }
+    }
 
     // Bit layout (LSB-first):
     //   bits 0-1: handshake_state (u2)
@@ -586,7 +601,7 @@ pub mod ssl_wrapper {
                 }
             }
 
-            let flags = Flags::default();
+            let flags = Flags::new();
             flags.set_is_client(is_client);
 
             let inner = Box::new(Inner {
@@ -601,8 +616,8 @@ pub mod ssl_wrapper {
                         .is_some()
                         .then_some(Self::server_identity),
                     latest_session: Cell::new(None),
-                    sessions: RefCell::default(),
-                    keylog: RefCell::default(),
+                    sessions: core::cell::RefCell::new(std::collections::VecDeque::new()),
+                    keylog: core::cell::RefCell::new(std::collections::VecDeque::new()),
                 },
                 handlers: Cell::new(handlers),
                 flags,
@@ -611,7 +626,7 @@ pub mod ssl_wrapper {
                 renegotiation_count: Cell::new(0),
                 renegotiation_window_start: Cell::new(None),
                 traffic: Cell::new(Traffic::Idle),
-                ciphertext: Ciphertext::default(),
+                ciphertext: Ciphertext::new(),
             });
             let this = Self { inner };
             // SAFETY: `ssl` and `bio` are live; the box outlives both, `deinit` frees `ssl` first. One BIO for both ends gives `ssl` its one reference.
@@ -983,7 +998,7 @@ pub mod ssl_wrapper {
                     },
                 ),
                 // node:tls reads a failure with no error after end() as its own close.
-                HandshakeOutcome::Aborted => (false, us_bun_verify_error_t::default()),
+                HandshakeOutcome::Aborted => (false, us_bun_verify_error_t::new()),
                 HandshakeOutcome::PeerClosed => (false, us_bun_verify_error_t::peer_disconnected()),
             };
             self.flags.set_authorized(success);
@@ -1023,7 +1038,7 @@ pub mod ssl_wrapper {
         /// The SSL's X509 verdict. Shutdown state does not change it.
         fn verify_error(&self) -> us_bun_verify_error_t {
             let Some(ssl) = self.ssl.get() else {
-                return us_bun_verify_error_t::default();
+                return us_bun_verify_error_t::new();
             };
             // SAFETY: ssl is a live SSL*; uSockets helper reads the verify result off it.
             unsafe { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) }

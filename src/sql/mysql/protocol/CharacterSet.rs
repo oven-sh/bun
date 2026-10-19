@@ -264,8 +264,8 @@ impl CharacterSet {
     }
 }
 
-impl Default for CharacterSet {
-    fn default() -> Self {
+impl CharacterSet {
+    pub fn new() -> Self {
         Self::DEFAULT
     }
 }

@@ -71,17 +71,17 @@ pub enum ContextTimer {
     AbortSignal,
 }
 
-impl Default for ScriptExecutionContext {
-    fn default() -> Self {
+impl ScriptExecutionContext {
+    pub fn new() -> Self {
         Self {
-            id: JsCell::new(ContextId::default()),
+            id: JsCell::new(ContextId::new()),
             head: JsCell::new(ptr::null_mut()),
             tail: JsCell::new(ptr::null_mut()),
             stopped: JsCell::new(false),
             socket_groups: JsCell::new(None),
             stop_again_queued: JsCell::new(false),
             dom_context: core::cell::Cell::new(ptr::null_mut()),
-            timers: JsCell::new(Default::default()),
+            timers: JsCell::new(bun_collections::ArrayHashMap::new()),
         }
     }
 }
@@ -96,7 +96,7 @@ impl ScriptExecutionContext {
     /// Its identifier is the first global's ([`bind`](Self::bind)), which does not change: the
     /// globals `bun test --isolate` makes inherit it.
     pub(crate) fn root() -> Self {
-        Self::default()
+        Self::new()
     }
 
     /// Once, when the VM's first global has been made.
@@ -106,14 +106,14 @@ impl ScriptExecutionContext {
 
     /// `VirtualMachine::dead_context`: stopped from the start.
     pub(crate) fn dead() -> Self {
-        let context = Self::default();
+        let context = Self::new();
         context.id.set(ContextId::DEAD);
         context.stopped.set(true);
         context
     }
 
     pub(crate) fn for_graph(id: ContextId, dom_context: *mut core::ffi::c_void) -> Self {
-        let context = Self::default();
+        let context = Self::new();
         context.id.set(id);
         context.dom_context.set(dom_context);
         context
@@ -198,7 +198,7 @@ impl ScriptExecutionContext {
     pub fn take_timers(
         &self,
     ) -> bun_collections::ArrayHashMap<*mut core::ffi::c_void, ContextTimer> {
-        self.timers.take()
+        self.timers.replace(bun_collections::ArrayHashMap::new())
     }
 
     /// Nothing is armed and no client socket is open: freeing it strands nothing.
@@ -211,8 +211,12 @@ impl ScriptExecutionContext {
 
     /// The groups client sockets opened by a graph context's script join.
     pub(crate) fn socket_groups(&self) -> *mut crate::rare_data::SocketGroups {
-        self.socket_groups
-            .with_mut(|groups| ptr::from_mut(&mut **groups.get_or_insert_with(Default::default)))
+        self.socket_groups.with_mut(|groups| {
+            ptr::from_mut(
+                &mut **groups
+                    .get_or_insert_with(|| Box::new(crate::rare_data::SocketGroups::new())),
+            )
+        })
     }
 
     /// # Safety
@@ -380,7 +384,7 @@ impl AbortHandle {
 
     /// Stop following the signal and release it.
     pub fn unfollow(&self) {
-        let Some(signal) = self.signal.take() else {
+        let Some(signal) = self.signal.replace(None) else {
             return;
         };
         signal.clean_native_bindings(ptr::from_ref(self).cast_mut().cast());

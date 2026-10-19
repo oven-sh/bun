@@ -56,7 +56,7 @@ struct Defaults(FxHashMap<(Plugin, &'static str), (Severity, Arc<[Json]>)>);
 impl Defaults {
     #[optimize(size)]
     fn new(registry: &Registry) -> Defaults {
-        let mut on = FxHashMap::default();
+        let mut on = FxHashMap::with_hasher(bun_sema::util::FxBuild);
         let config = configs::defaults(registry);
         for path in [&b"/a.js"[..], b"/a.jsx", b"/a.ts", b"/a.tsx"] {
             let Some(FileConfig::Matched(of_file)) =
@@ -386,7 +386,7 @@ pub(crate) fn explain(
         remote_image_paths: None,
         image_base_dir: None,
     };
-    let rendered = render_to_ansi(&markdown, bun_md::root::Options::default(), theme);
+    let rendered = render_to_ansi(&markdown, bun_md::root::Options::new(), theme);
     Ok(match rendered {
         Ok(Some(rendered)) => rendered.into_vec(),
         Ok(None) | Err(_) => markdown,

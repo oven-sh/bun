@@ -34,11 +34,11 @@ impl Callback {
     }
 }
 
-impl Default for ThreadSafeStreamBuffer {
-    fn default() -> Self {
+impl ThreadSafeStreamBuffer {
+    pub fn init() -> Self {
         Self {
-            buffer: StreamBuffer::default(),
-            mutex: Mutex::default(),
+            buffer: StreamBuffer::new(),
+            mutex: Mutex::init(),
             // .initExactRefs(2) — 1 for main thread and 1 for http thread
             ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
             callback: None,

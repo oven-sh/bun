@@ -115,7 +115,7 @@ impl SrcUnicode {
         let bytes: &'static [u8] =
             unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
         let iter = CodepointIterator::init(bytes);
-        let mut cursor = Cursor::default();
+        let mut cursor = Cursor::new();
         Self::next_cursor(&iter, &mut cursor);
         let mut next_cursor = cursor;
         Self::next_cursor(&iter, &mut next_cursor);
@@ -242,7 +242,7 @@ bun_core::declare_scope!(BRACES, visible);
 /// amount of brace expansion (like around 32k variants to expand)
 // Two u16 fields packed into a u32.
 #[repr(transparent)]
-#[derive(Default, Copy, Clone)]
+#[derive(Copy, Clone)]
 struct ExpansionVariant(u32);
 
 impl ExpansionVariant {
@@ -261,10 +261,17 @@ impl ExpansionVariant {
     }
 }
 
-#[derive(Default, Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct ExpansionVariants {
     pub(crate) idx: u16,
     pub(crate) end: u16,
+}
+
+impl ExpansionVariants {
+    #[inline]
+    pub fn new() -> Self {
+        Self { idx: 0, end: 0 }
+    }
 }
 
 #[derive(bun_core::EnumTag)]
@@ -923,8 +930,8 @@ pub fn calculate_expanded_amount(tokens: &[Token]) -> u32 {
         segment_product: u32,
         accumulator: u32,
     }
-    impl Default for StackEntry {
-        fn default() -> Self {
+    impl StackEntry {
+        fn new() -> Self {
             Self {
                 segment_product: 1,
                 accumulator: 0,
@@ -936,7 +943,7 @@ pub fn calculate_expanded_amount(tokens: &[Token]) -> u32 {
 
     for tok in tokens {
         match tok {
-            Token::Open(_) => nested_brace_stack.push(StackEntry::default()),
+            Token::Open(_) => nested_brace_stack.push(StackEntry::new()),
             Token::Comma => {
                 let top = nested_brace_stack.last_mut().unwrap();
                 top.accumulator = top.accumulator.saturating_add(top.segment_product);
@@ -1100,7 +1107,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                             tok_idx: u32::try_from(self.tokens.len()).expect("int cast"),
                             has_comma: false,
                         });
-                        self.tokens.push(Token::Open(ExpansionVariants::default()));
+                        self.tokens.push(Token::Open(ExpansionVariants::new()));
                         continue;
                     }
                     c if c == u32::from(b'}') => {
@@ -1280,7 +1287,7 @@ mod tests {
             TestCase(
                 b"{a,b}",
                 vec![
-                    Token::Open(ExpansionVariants::default()),
+                    Token::Open(ExpansionVariants::new()),
                     Token::Text(SmolStr::from_slice(b"a").unwrap()),
                     Token::Comma,
                     Token::Text(SmolStr::from_slice(b"b").unwrap()),

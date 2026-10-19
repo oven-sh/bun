@@ -215,8 +215,8 @@ fn run_on_arguments<'a>(args: List<'a, Expr<'a>>) -> Option<Pattern<'a>> {
         return Some(pattern);
     }
     let mode = match flags {
-        Some(flags) => mode_of_flags(Pattern::read(flags, Mode::default())?.text())?,
-        None => Mode::default(),
+        Some(flags) => mode_of_flags(Pattern::read(flags, Mode::new())?.text())?,
+        None => Mode::new(),
     };
     Pattern::read(get_inner_expression(first), mode)
 }

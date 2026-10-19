@@ -135,7 +135,7 @@ impl Rule for NoRestrictedGlobals {
         let object = options.object(0);
         let is_globals_object = object.has("globals");
         let globals = if is_globals_object { object.array("globals") } else { options.all() };
-        let mut restricted = FxHashMap::default();
+        let mut restricted = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for global in globals {
             match global.as_str() {
                 Some(name) => {

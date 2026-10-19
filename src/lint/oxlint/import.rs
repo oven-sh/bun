@@ -183,7 +183,8 @@ pub fn import_entries<'a>(file: &'a File<'a>) -> impl Iterator<Item = ImportEntr
 /// is among the `indirect_export_entries`.
 fn reexported_imports<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
     // The first import of a name counts.
-    let mut is_reexported: FxHashMap<Name<'a>, bool> = FxHashMap::default();
+    let mut is_reexported: FxHashMap<Name<'a>, bool> =
+        FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for entry in import_entries(file) {
         let is_namespace = matches!(entry.import_name, ImportImportName::NamespaceObject(_));
         is_reexported

@@ -46,7 +46,7 @@ impl Framework {
                 true,
                 Utf8Bytes::Borrowed(b"react-server-dom-bun/server"),
             )),
-            react_fast_refresh: Some(ReactFastRefresh::default()),
+            react_fast_refresh: Some(ReactFastRefresh::new()),
             file_system_router_types: vec![FileSystemRouterType {
                 root: Utf8Bytes::Borrowed(b"pages"),
                 prefix: Utf8Bytes::Borrowed(b"/"),
@@ -73,7 +73,7 @@ impl Framework {
         resolver: &mut bun_resolver::Resolver,
         file_system_router_types: Vec<FileSystemRouterType>,
     ) -> Framework {
-        let mut fw = Framework::default();
+        let mut fw = Framework::new();
 
         if !file_system_router_types.is_empty() {
             fw = Self::react();
@@ -145,7 +145,7 @@ impl Framework {
                     "\"",
                 ),
             ),
-            ..Default::default()
+            ..bun_ast::Msg::new()
         });
     }
 }

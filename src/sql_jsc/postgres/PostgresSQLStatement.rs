@@ -27,20 +27,20 @@ pub struct PostgresSQLStatement {
     pub(crate) fields_flags: DataCellFlags,
 }
 
-impl Default for PostgresSQLStatement {
-    fn default() -> Self {
+impl PostgresSQLStatement {
+    pub fn init() -> Self {
         // Callers must set `signature`. This Default
         // exists only to mirror the per-field `= ...` initializers.
         Self {
-            cached_structure: PostgresCachedStructure::default(),
+            cached_structure: PostgresCachedStructure::new(),
             ref_count: Cell::new(1),
             fields: Vec::new(),
-            parameters: Box::default(),
-            signature: Signature::default(),
+            parameters: Box::new([]),
+            signature: Signature::init(),
             status: Status::Pending,
             error_response: None,
             needs_duplicate_check: true,
-            fields_flags: DataCellFlags::default(),
+            fields_flags: DataCellFlags::empty(),
         }
     }
 }
@@ -71,7 +71,7 @@ pub use bun_sql::shared::statement_status::Status;
 impl PostgresSQLStatement {
     pub(crate) fn new(signature: Signature) -> RefPtr<PostgresSQLStatement> {
         // It implements Drop, so `..Default::default()` is not allowed (E0509).
-        let mut statement = PostgresSQLStatement::default();
+        let mut statement = PostgresSQLStatement::init();
         statement.signature = signature;
         RefPtr::new(statement)
     }
@@ -153,9 +153,9 @@ impl PostgresSQLStatement {
     /// What `describe` takes, of the result that just ended. The next one starts with no fields:
     /// in a simple query a command that returns no rows comes without a RowDescription.
     pub(crate) fn take_result(&mut self) -> ResultDescription {
-        self.cached_structure = Default::default();
+        self.cached_structure = PostgresCachedStructure::new();
         self.needs_duplicate_check = true;
-        self.fields_flags = Default::default();
+        self.fields_flags = DataCellFlags::empty();
         (
             core::mem::take(&mut self.parameters),
             core::mem::take(&mut self.fields),
@@ -201,11 +201,20 @@ impl Drop for PostgresSQLStatement {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct StatementCache {
     cache: crate::shared::StatementCache<PostgresSQLStatement>,
     /// Out of `cache` for good, and the server still has them.
     discarded: Vec<RefPtr<PostgresSQLStatement>>,
+}
+
+impl StatementCache {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            cache: crate::shared::StatementCache::new(),
+            discarded: Vec::new(),
+        }
+    }
 }
 
 impl StatementCache {

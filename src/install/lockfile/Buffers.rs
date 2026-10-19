@@ -12,7 +12,6 @@ use crate::package_manager_real::package_manager_options::Options as PackageMana
 use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_package_id};
 use bun_io::Write as _;
 
-#[derive(Default)]
 pub struct Buffers {
     pub(crate) trees: tree::List,
     pub hoisted_dependencies: DependencyIDList,
@@ -25,6 +24,20 @@ pub struct Buffers {
     pub extern_strings: ExternalStringBuffer,
     /// This is where all non-inlinable `Semver.String`s are stored.
     pub string_bytes: StringBuffer,
+}
+
+impl Buffers {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            trees: Vec::new(),
+            hoisted_dependencies: Vec::new(),
+            resolutions: Vec::new(),
+            dependencies: Vec::new(),
+            extern_strings: Vec::new(),
+            string_bytes: Vec::new(),
+        }
+    }
 }
 
 impl Buffers {
@@ -304,7 +317,7 @@ pub(crate) fn load(
     pm_: Option<&PackageManager>,
     packages_len: usize,
 ) -> crate::Result<Buffers> {
-    let mut this = Buffers::default();
+    let mut this = Buffers::new();
     let external_dependency_list_: Vec<dependency::External>;
 
     macro_rules! load_generic_field {

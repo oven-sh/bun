@@ -278,7 +278,7 @@ impl S3Client {
         );
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
-            MultiPartUploadOptions::default(),
+            MultiPartUploadOptions::new(),
             args.next_eat(),
             None,
             None,
@@ -541,7 +541,7 @@ impl S3Client {
 
         let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
             global,
-            PathLike::default(),
+            PathLike::new(),
             options,
             &ptr.credentials,
             ptr.options,
@@ -653,7 +653,7 @@ impl S3Client {
 
         let blob = S3File::construct_s3_file_with_s3_credentials(
             global,
-            PathLike::default(),
+            PathLike::new(),
             options,
             &existing_credentials,
         )?;

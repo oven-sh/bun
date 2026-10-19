@@ -53,12 +53,12 @@ impl Rule for NoThisInSfc {
             }
         };
         is_candidate.then(|| State {
-            parent_component: AncestorWalk::default(),
-            parent_class_component: AncestorMemo::default(),
+            parent_component: AncestorWalk::new(),
+            parent_class_component: AncestorMemo::new(),
             components: Components::new(file),
-            enclosing_function: AncestorMemo::default(),
+            enclosing_function: AncestorMemo::new(),
             is_in_candidate: IdMap::new(),
-            members: Queue::default(),
+            members: Queue::new(),
         })
     }
 

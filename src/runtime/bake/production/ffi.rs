@@ -133,7 +133,7 @@ extern "C" fn BakeProdResolve(
     if let Some(alias) = bun_resolve_builtins::Alias::get(
         specifier.slice(),
         bun_ast::Target::Bun,
-        bun_resolve_builtins::Cfg::default(),
+        bun_resolve_builtins::Cfg::new(),
     ) {
         return BunString::static_(alias.path.as_bytes());
     }

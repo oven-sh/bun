@@ -12,10 +12,20 @@ struct Bound<'a> {
     inclusive: bool,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct Interval<'a> {
     lower: Option<Bound<'a>>,
     upper: Option<Bound<'a>>,
+}
+
+impl<'a> Interval<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            lower: None,
+            upper: None,
+        }
+    }
 }
 
 impl<'a> Interval<'a> {
@@ -196,11 +206,11 @@ fn after_last_patch(version: Version) -> Option<Version> {
         Some(minor) => Version {
             major: version.major,
             minor,
-            ..Default::default()
+            ..Version::new()
         },
         None => Version {
             major: version.major.checked_add(1)?,
-            ..Default::default()
+            ..Version::new()
         },
     })
 }
@@ -245,7 +255,7 @@ impl Group {
         }
         let is_range = |query: &&Query| query.exact_version().is_none();
         for a in self.alternatives().filter(is_range) {
-            let mut base = Interval::default();
+            let mut base = Interval::new();
             base.and_query(a, self_buf);
             if !base.is_non_empty() {
                 continue;
@@ -275,7 +285,7 @@ impl Group {
             .any(|comparator| {
                 let mut version = comparator.version;
                 if comparator.op == Op::Lt && version.tag.eql(Tag::ZERO_PRE) {
-                    version.tag = Tag::default();
+                    version.tag = Tag::new();
                 }
                 self.satisfies(version, self_buf, other_buf)
             })
@@ -287,7 +297,7 @@ impl Group {
         let mut a = Some(&self.head);
         'alternatives: while let Some(list_a) = a {
             a = list_a.next.as_deref();
-            let mut sub = Interval::default();
+            let mut sub = Interval::new();
             sub.and_query(&list_a.head, self_buf);
             let sub = sub.canonical();
             if !sub.is_non_empty() {
@@ -296,7 +306,7 @@ impl Group {
             let mut b = Some(&other.head);
             while let Some(list_b) = b {
                 b = list_b.next.as_deref();
-                let mut dom = Interval::default();
+                let mut dom = Interval::new();
                 dom.and_query(&list_b.head, other_buf);
                 if sub.is_within(&dom.canonical()) && sub.prereleases_can_satisfy(&list_b.head) {
                     continue 'alternatives;

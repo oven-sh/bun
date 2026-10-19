@@ -87,7 +87,6 @@ fn is_method(func: Func) -> bool {
 }
 
 /// What is counted once in a file, when it is needed.
-#[derive(Default)]
 pub struct Counts<'a> {
     /// The functions that are long enough to have too many lines, with what of each is counted.
     candidates: Vec<(Func<'a>, Span)>,
@@ -97,6 +96,18 @@ pub struct Counts<'a> {
     lines: Option<Vec<u32>>,
     /// What [`count_comment_lines_as_oxlint`] returns.
     comments: Option<Vec<(u32, u32)>>,
+}
+
+impl<'a> Counts<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            candidates: Vec::new(),
+            has_other_line_breaks: None,
+            lines: None,
+            comments: None,
+        }
+    }
 }
 
 impl MaxLinesPerFunction {
@@ -145,7 +156,7 @@ impl Rule for MaxLinesPerFunction {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Counts<'a>> {
-        (file.text().len() >= self.max as usize).then(Counts::default)
+        (file.text().len() >= self.max as usize).then(Counts::new)
     }
 
     #[inline]
@@ -157,7 +168,7 @@ impl Rule for MaxLinesPerFunction {
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         // The last of them that has few lines. So has what is in it, which comes before it.
-        let mut short = Span::default();
+        let mut short = Span::init();
         for (func, span) in std::mem::take(&mut cx.state.candidates).into_iter().rev() {
             if short.contains(span) {
                 continue;

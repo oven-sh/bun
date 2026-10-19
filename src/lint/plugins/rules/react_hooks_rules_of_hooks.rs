@@ -246,7 +246,6 @@ impl Ranges {
 }
 
 /// What is asked about every hook, and computed once for the file.
-#[derive(Default)]
 pub(crate) struct Memo<'a> {
     do_while_loops: OnceCell<Ranges>,
     try_statements: OnceCell<Ranges>,
@@ -260,6 +259,21 @@ pub(crate) struct Memo<'a> {
     pub(crate) function_around: AncestorMemo<'a, Func<'a>>,
     /// and whether it is in a call of `memo` or `forwardRef`.
     pub(crate) in_memo_or_forward_ref: AncestorMemo<'a, ()>,
+}
+
+impl<'a> Memo<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            do_while_loops: core::cell::OnceCell::new(),
+            try_statements: core::cell::OnceCell::new(),
+            effects: core::cell::OnceCell::new(),
+            suppressed_lines: core::cell::OnceCell::new(),
+            inside_component_or_hook: AncestorMemo::new(),
+            function_around: AncestorMemo::new(),
+            in_memo_or_forward_ref: AncestorMemo::new(),
+        }
+    }
 }
 
 impl<'a> Memo<'a> {
@@ -379,11 +393,20 @@ struct Paths<'a> {
 /// comes out as zero again, and counting it again finds nothing new to be in a cycle but the frames of the stack above the lowest of
 /// them. When the topmost leaves the stack with zero itself, the same holds with the segments that made it zero: its group takes over
 /// those that it owns.
-#[derive(Default)]
 struct Zeros {
     /// The group of each segment, by its id.
     group_of: FxHashMap<u32, usize>,
     groups: Vec<ZeroGroup>,
+}
+
+impl Zeros {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            group_of: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            groups: Vec::new(),
+        }
+    }
 }
 
 struct ZeroGroup {
@@ -491,8 +514,8 @@ impl<'a> Paths<'a> {
         }
         let mut stack: Vec<Frame<'a>> = Vec::new();
         // Where each segment of the stack is in it.
-        let mut positions: FxHashMap<u32, usize> = FxHashMap::default();
-        let mut zeros = Zeros::default();
+        let mut positions: FxHashMap<u32, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+        let mut zeros = Zeros::new();
         let mut entering = Some(start);
         let mut returned = Count::ZERO;
         loop {
@@ -651,7 +674,6 @@ impl<'a> Paths<'a> {
     }
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The calls of hooks.
     calls: Vec<Expr<'a>>,
@@ -661,6 +683,18 @@ pub struct State<'a> {
     hooks: Vec<(Option<Segment<'a>>, Expr<'a>)>,
     /// Where those of each code path start in `hooks`.
     starts: Vec<usize>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            calls: Vec::new(),
+            segments: Vec::new(),
+            hooks: Vec::new(),
+            starts: Vec::new(),
+        }
+    }
 }
 
 /// The hint for a conditional hook. Points at the condition or early return that decides whether `func` calls `hook`.
@@ -714,9 +748,9 @@ impl Rule for RulesOfHooks {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        let mut state = State::default();
+        let mut state = State::new();
         // A file has many times as many calls as names.
-        let mut is_name_of_hook = ByName::default();
+        let mut is_name_of_hook = ByName::new();
         let may_call_a_hook = file.mentions_name_of_hook();
         for e in file
             .exprs_of_kind(ExprTag::Call)
@@ -848,7 +882,7 @@ fn roots_if_always_called<'a>(file: &'a File<'a>, calls: &[Expr<'a>]) -> Option<
         .map(|it| at_the_top_of_its_code_path(*it, &mut steps))
         .collect::<Option<_>>()?;
     // For each code path, where the last of the statements starts.
-    let mut last: FxHashMap<Node<'a>, u32> = FxHashMap::default();
+    let mut last: FxHashMap<Node<'a>, u32> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for call in &calls {
         let last = last.entry(call.root).or_insert(0);
         *last = call.before.end.max(*last);
@@ -898,7 +932,7 @@ impl RulesOfHooks {
         let Some(roots) = roots_if_always_called(cx.file(), &calls) else {
             return self.analyze(cx);
         };
-        let mut memo = Memo::default();
+        let mut memo = Memo::new();
         for (call, root) in calls.iter().zip(roots) {
             if let Some(call) = call.as_call() {
                 self.check_hooks(root, &[(None, call.callee())], None, &mut memo, cx);
@@ -908,7 +942,7 @@ impl RulesOfHooks {
 
     /// Analyzes the file, and does what upstream does in its listeners.
     fn analyze<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let mut memo = Memo::default();
+        let mut memo = Memo::new();
         for step in steps(cx.file(), ExprTag::Call.into(), NodeTags::EMPTY) {
             match step {
                 Step::Event(Event::SegmentStart(segment, _)) => cx.state.segments.push(segment),
@@ -951,10 +985,10 @@ impl RulesOfHooks {
                     .iter()
                     .map(|it| it.id())
                     .collect(),
-                cyclic: FxHashSet::default(),
-                from_start: FxHashMap::default(),
-                to_end: FxHashMap::default(),
-                shortest: FxHashMap::default(),
+                cyclic: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+                from_start: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                to_end: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                shortest: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
                 outer: hooks
                     .iter()
                     .find_map(|it| it.0.filter(|segment| segment.code_path() != code_path)),
@@ -1097,7 +1131,7 @@ impl RulesOfHooks {
         // The calls in which such a function can be referred to, in the order in which the walk enters them.
         let mut effects: Vec<Span> = Vec::new();
         let mut functions: Vec<Reference<'a>> = Vec::new();
-        let mut inside_component_or_hook = AncestorMemo::default();
+        let mut inside_component_or_hook = AncestorMemo::new();
         for e in file.exprs_of_kind(ExprTag::Call) {
             let ExprKind::Call(call) = e.kind() else {
                 continue;

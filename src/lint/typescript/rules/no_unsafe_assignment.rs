@@ -284,7 +284,7 @@ fn check_object_destructure<'a>(
     parts: &mut Vec<Destructured<'a>>,
 ) {
     // The first of each name.
-    let mut properties = FxHashMap::default();
+    let mut properties = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for property in sender_type.get_properties() {
         properties.entry(property.name()).or_insert(property);
     }

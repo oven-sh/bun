@@ -224,7 +224,7 @@ impl DevServer {
         // TODO: lazy structure caching since we are making these objects a lot
         let global = self.vm().global();
         let params_js_value = {
-            let mut params: router::MatchedParams = Default::default();
+            let mut params: router::MatchedParams = crate::bake::router::MatchedParams::new();
             let url_bunstr = match &req {
                 // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
                 SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8((**r).url()),
@@ -320,7 +320,7 @@ impl DevServer {
                         mime_type: Some(&MimeType::HTML),
                         // SAFETY: `self_ptr` is `&mut self` erased; live for this fn body.
                         server: unsafe { &*self_ptr }.server,
-                        ..Default::default()
+                        ..crate::server::static_route::InitFromBytesOptions::new()
                     },
                 );
                 let blob = response.this_ptr();
@@ -543,7 +543,7 @@ impl DevServer {
                         mime_type: Some(&MimeType::JAVASCRIPT),
                         // SAFETY: `self_ptr` is `&mut self` erased; live for this fn body.
                         server: unsafe { &*self_ptr }.server,
-                        ..Default::default()
+                        ..crate::server::static_route::InitFromBytesOptions::new()
                     },
                 );
                 let client_bundle = bundle.this_ptr();

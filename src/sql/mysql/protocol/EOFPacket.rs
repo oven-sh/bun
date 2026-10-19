@@ -7,11 +7,11 @@ pub struct EOFPacket {
     pub status_flags: StatusFlags,
 }
 
-impl Default for EOFPacket {
-    fn default() -> Self {
+impl EOFPacket {
+    pub fn new() -> Self {
         Self {
             header: 0xfe,
-            status_flags: StatusFlags::default(),
+            status_flags: StatusFlags::new(),
         }
     }
 }

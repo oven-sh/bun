@@ -9,9 +9,16 @@ pub enum StatusFlag {
     SERVER_MORE_RESULTS_EXISTS = 8,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct StatusFlags {
     _value: u16,
+}
+
+impl StatusFlags {
+    #[inline]
+    pub fn new() -> Self {
+        Self { _value: 0 }
+    }
 }
 
 impl fmt::Display for StatusFlags {

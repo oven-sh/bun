@@ -228,21 +228,24 @@ fn get_temporary_directory_run(
     let temp_dir_name = FileSystem::get_default_temp_dir();
 
     let mut tried_dot_tmp = false;
-    let mut tempdir: Dir =
-        match sys::make_path::make_open_path(&Dir::cwd(), temp_dir_name, Default::default()) {
-            Ok(d) => d,
-            Err(_) => {
-                tried_dot_tmp = true;
-                match sys::make_path::make_open_path(
-                    cache_directory,
-                    bun_paths::path_literal!(".tmp"),
-                    Default::default(),
-                ) {
-                    Ok(d) => d,
-                    Err(err) => return Err(DirectoryError::OpenTemporary(err)),
-                }
+    let mut tempdir: Dir = match sys::make_path::make_open_path(
+        &Dir::cwd(),
+        temp_dir_name,
+        bun_sys::OpenDirOptions::new(),
+    ) {
+        Ok(d) => d,
+        Err(_) => {
+            tried_dot_tmp = true;
+            match sys::make_path::make_open_path(
+                cache_directory,
+                bun_paths::path_literal!(".tmp"),
+                bun_sys::OpenDirOptions::new(),
+            ) {
+                Ok(d) => d,
+                Err(err) => return Err(DirectoryError::OpenTemporary(err)),
             }
-        };
+        }
+    };
 
     let mut tmpbuf = bun_paths::path_buffer_pool::get();
     let tmpname =
@@ -263,7 +266,7 @@ fn get_temporary_directory_run(
             tmpname,
             sys::CreateFlags {
                 truncate: true,
-                ..Default::default()
+                ..sys::CreateFlags::new()
             },
         ) {
             Ok(f) => f,
@@ -274,7 +277,7 @@ fn get_temporary_directory_run(
                     tempdir = match sys::make_path::make_open_path(
                         cache_directory,
                         bun_paths::path_literal!(".tmp"),
-                        Default::default(),
+                        bun_sys::OpenDirOptions::new(),
                     ) {
                         Ok(d) => d,
                         Err(err) => return Err(DirectoryError::OpenTemporary(err)),
@@ -301,7 +304,9 @@ fn get_temporary_directory_run(
                 let _ = tempdir.delete_file_z(tmpname);
                 if !tried_dot_tmp {
                     tried_dot_tmp = true;
-                    tempdir = match cache_directory.make_open_path(b".tmp", Default::default()) {
+                    tempdir = match cache_directory
+                        .make_open_path(b".tmp", bun_sys::OpenDirOptions::new())
+                    {
                         Ok(d) => d,
                         Err(err2) => {
                             return Err(DirectoryError::WriteCache {
@@ -397,7 +402,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
             let opened = fetch_cache_directory_path(env, Some(configured)).and_then(|cache_dir| {
                 // SAFETY: see fn safety contract.
                 unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
-                Dir::cwd().make_open_path(&cache_dir.path, Default::default())
+                Dir::cwd().make_open_path(&cache_dir.path, bun_sys::OpenDirOptions::new())
             });
 
             match opened {
@@ -422,7 +427,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
                 ))
         };
 
-        return Dir::cwd().make_open_path(b"node_modules/.cache", Default::default());
+        return Dir::cwd().make_open_path(b"node_modules/.cache", bun_sys::OpenDirOptions::new());
     }
 }
 
@@ -1012,7 +1017,8 @@ pub fn try_global_link_dir(this: &mut PackageManager) -> Result<Fd, DirectoryErr
         Err(crate::Error::NoGlobalDirectoryFound) => return Err(DirectoryError::NoGlobal),
         Err(err) => return Err(DirectoryError::OpenGlobal(err)),
     };
-    let link_dir = match global_dir.make_open_path(b"node_modules", Default::default()) {
+    let link_dir = match global_dir.make_open_path(b"node_modules", bun_sys::OpenDirOptions::new())
+    {
         Ok(d) => d,
         Err(err) => {
             // The error message prints this descriptor, and a debug build looks up its path, so
@@ -1254,7 +1260,7 @@ pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
         z_static(b"package.json\0"),
         sys::CreateFlags {
             read: true,
-            ..Default::default()
+            ..sys::CreateFlags::new()
         },
     ) {
         Ok(f) => f,
@@ -1393,7 +1399,7 @@ pub fn save_lockfile(
         unsafe { (*save_node).end() };
         this.progress.refresh();
         this.progress.root.end();
-        this.progress = Default::default();
+        this.progress = super::Progress::new();
     } else if wrote && log_level != LogLevel::Silent {
         bun_core::pretty_errorln!("Saved lockfile");
         Output::flush();

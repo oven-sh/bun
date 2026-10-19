@@ -48,7 +48,7 @@ pub struct ContextData {
     pub unreadable_config: Option<Box<[u8]>>,
 }
 
-impl Default for ContextData {
+impl ContextData {
     // ── Startup .text page-fault reduction ───────────────────────────────
     // `--version` perf showed `ContextData::default` (1 638 B) plus its
     // out-of-line callees (`TransformOptions` / `DebugOptions` / `TestOptions`
@@ -66,18 +66,18 @@ impl Default for ContextData {
     // and lives on a single contiguous page. This removes the per-type callees
     // from the startup fault set without violating any niche invariants.
     #[inline(always)]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             start_time: 0,
-            args: api::TransformOptions::default(),
+            args: api::TransformOptions::new(),
             log: core::ptr::null_mut(),
             positionals: Vec::new(),
             passthrough: Vec::new(),
             install: None,
-            debug: DebugOptions::default(),
-            test_options: TestOptions::default(),
-            bundler_options: BundlerOptions::default(),
-            runtime_options: RuntimeOptions::default(),
+            debug: DebugOptions::new(),
+            test_options: TestOptions::new(),
+            bundler_options: BundlerOptions::new(),
+            runtime_options: RuntimeOptions::new(),
             filters: Vec::new(),
             workspaces: false,
             if_present: false,
@@ -248,17 +248,17 @@ pub struct BundlerOptions {
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }
 
-impl Default for BundlerOptions {
+impl BundlerOptions {
     // See `ContextData::default` — folded into the single startup call site.
     #[inline(always)]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
-            outdir: Box::default(),
-            outfile: Box::default(),
-            metafile: Box::default(),
-            metafile_md: Box::default(),
-            root_dir: Box::default(),
-            public_path: Box::default(),
+            outdir: Box::new([]),
+            outfile: Box::new([]),
+            metafile: Box::new([]),
+            metafile_md: Box::new([]),
+            root_dir: Box::new([]),
+            public_path: Box::new([]),
             entry_naming: Box::from(&b"[dir]/[name].[ext]"[..]),
             chunk_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
             asset_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
@@ -281,8 +281,8 @@ impl Default for BundlerOptions {
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
             bytecode_order: Vec::new(),
-            banner: Box::default(),
-            footer: Box::default(),
+            banner: Box::new([]),
+            footer: Box::new([]),
             css_chunking: false,
             min_chunk_size: None,
             module_preload: true,
@@ -291,10 +291,10 @@ impl Default for BundlerOptions {
             bake_debug_disable_minify: false,
             production: false,
             env_behavior: api::DotEnvBehavior::disable,
-            env_prefix: Box::default(),
+            env_prefix: Box::new([]),
             elide_lines: None,
             compile: false,
-            compile_target: CompileTarget::default(),
+            compile_target: CompileTarget::new(),
             compile_exec_argv: None,
             compile_autoload_dotenv: true,
             compile_autoload_bunfig: true,
@@ -303,7 +303,7 @@ impl Default for BundlerOptions {
             compile_executable_path: None,
             compile_jit_policy: 1.0,
             compile_assets: Vec::new(),
-            windows: bundle_enums::WindowsOptions::default(),
+            windows: bundle_enums::WindowsOptions::new(),
             allow_unresolved: None,
         }
     }
@@ -382,10 +382,10 @@ pub struct DebugOptions {
     pub output_file: Box<[u8]>,
 }
 
-impl Default for DebugOptions {
+impl DebugOptions {
     // See `ContextData::default` — folded into the single startup call site.
     #[inline(always)]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             silent: false,
             hot_reload: HotReload::None,
@@ -399,10 +399,10 @@ impl Default for DebugOptions {
             loaded_bunfig: false,
             use_system_shell: !cfg!(windows),
             macros: MacroOptions::Unspecified,
-            editor: Box::default(),
-            package_bundle_map: ArrayHashMap::default(),
-            test_directory: Box::default(),
-            output_file: Box::default(),
+            editor: Box::new([]),
+            package_bundle_map: ArrayHashMap::new(),
+            test_directory: Box::new([]),
+            output_file: Box::new([]),
         }
     }
 }
@@ -488,11 +488,22 @@ pub struct Shard {
     pub count: u32,
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct Reporters {
     pub dots: bool,
     pub only_failures: bool,
     pub junit: bool,
+}
+
+impl Reporters {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            dots: false,
+            only_failures: false,
+            junit: false,
+        }
+    }
 }
 
 impl TestOptions {
@@ -505,10 +516,10 @@ impl TestOptions {
     }
 }
 
-impl Default for TestOptions {
+impl TestOptions {
     // See `ContextData::default` — folded into the single startup call site.
     #[inline(always)]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             // 5 seconds
             default_timeout_ms: 5 * 1000,
@@ -523,7 +534,7 @@ impl Default for TestOptions {
             seed: None,
             concurrent_test_glob: None,
             bail: 0,
-            coverage: CodeCoverageOptions::default(),
+            coverage: CodeCoverageOptions::new(),
             path_ignore_patterns: Vec::new(),
             path_ignore_patterns_from_cli: false,
             test_filter_pattern: None,
@@ -543,7 +554,7 @@ impl Default for TestOptions {
             shard: None,
             timings_files: Vec::new(),
             update_timings: false,
-            reporters: Reporters::default(),
+            reporters: Reporters::new(),
             reporter_outfile: None,
         }
     }
@@ -554,18 +565,21 @@ pub enum Debugger {
     Enable(DebuggerEnable),
 }
 
-impl Default for Debugger {
-    #[inline(always)]
-    fn default() -> Self {
-        Debugger::Unspecified
-    }
-}
-
-#[derive(Default)]
 pub struct DebuggerEnable {
     pub path_or_port: Box<[u8]>,
     pub wait_for_connection: bool,
     pub set_breakpoint_on_first_line: bool,
+}
+
+impl DebuggerEnable {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            path_or_port: Box::new([]),
+            wait_for_connection: false,
+            set_breakpoint_on_first_line: false,
+        }
+    }
 }
 
 pub struct RuntimeOptions {
@@ -595,7 +609,6 @@ pub struct RuntimeOptions {
     pub heap_prof: HeapProf,
 }
 
-#[derive(Default)]
 pub struct Eval {
     pub script: Box<[u8]>,
     pub eval_and_print: bool,
@@ -603,6 +616,17 @@ pub struct Eval {
     /// holds the user's actual `-e` bytes so `process._eval` reports them
     /// (or `undefined` when empty). `None` = not `--interactive`.
     pub interactive_script: Option<Box<[u8]>>,
+}
+
+impl Eval {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            script: Box::new([]),
+            eval_and_print: false,
+            interactive_script: None,
+        }
+    }
 }
 
 pub struct CpuProf {
@@ -614,14 +638,14 @@ pub struct CpuProf {
     pub json_format: bool,
 }
 
-impl Default for CpuProf {
+impl CpuProf {
     // See `ContextData::default` — folded into the single startup call site.
     #[inline(always)]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             enabled: false,
-            name: Box::default(),
-            dir: Box::default(),
+            name: Box::new([]),
+            dir: Box::new([]),
             interval: 1000,
             md_format: false,
             json_format: false,
@@ -629,7 +653,6 @@ impl Default for CpuProf {
     }
 }
 
-#[derive(Default)]
 pub struct HeapProf {
     pub enabled: bool,
     pub text_format: bool,
@@ -637,10 +660,22 @@ pub struct HeapProf {
     pub dir: Box<[u8]>,
 }
 
-impl Default for RuntimeOptions {
+impl HeapProf {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            enabled: false,
+            text_format: false,
+            name: Box::new([]),
+            dir: Box::new([]),
+        }
+    }
+}
+
+impl RuntimeOptions {
     // See `ContextData::default` — folded into the single startup call site.
     #[inline(always)]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             smol: false,
             check: false,
@@ -648,7 +683,7 @@ impl Default for RuntimeOptions {
             if_present: false,
             redis_preconnect: false,
             sql_preconnect: false,
-            eval: Eval::default(),
+            eval: Eval::new(),
             preconnect: Vec::new(),
             experimental_http2_fetch: false,
             experimental_http3_fetch: false,
@@ -657,10 +692,10 @@ impl Default for RuntimeOptions {
             interactive: false,
             preserve_symlinks_main: false,
             console_depth: None,
-            cron_title: Box::default(),
-            cron_period: Box::default(),
-            cpu_prof: CpuProf::default(),
-            heap_prof: HeapProf::default(),
+            cron_title: Box::new([]),
+            cron_period: Box::new([]),
+            cpu_prof: CpuProf::new(),
+            heap_prof: HeapProf::new(),
         }
     }
 }

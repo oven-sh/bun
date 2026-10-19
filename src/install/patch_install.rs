@@ -322,7 +322,7 @@ impl PatchTask {
                     manager
                         .lockfile
                         .patched_dependencies
-                        .get_or_put(calc_hash.name_and_version_hash),
+                        .get_or_put(calc_hash.name_and_version_hash, super::PatchedDep::new),
                 );
                 if gop.found_existing {
                     gop.value_ptr.set_patchfile_hash(Some(hash));
@@ -553,7 +553,7 @@ impl PatchTask {
                         reason.err.name(),
                         BStr::new(reason.step.name())
                     ),
-                    Default::default(),
+                    bun_ast::AddErrorOptions::new(),
                 );
                 return Ok(());
             }
@@ -584,13 +584,13 @@ impl PatchTask {
             if let Err(e) = patchfile.apply(patch_pkg_dir) {
                 log.add_error_fmt_opts(
                     format_args!("failed applying patch file: {}", e),
-                    Default::default(),
+                    bun_ast::AddErrorOptions::new(),
                 );
                 return Ok(());
             }
 
             // 5. Add bun tag
-            let mut buntagbuf = crate::BuntagHashBuf::default();
+            let mut buntagbuf = [0; 26];
             let len = crate::buntaghashbuf_make(&mut buntagbuf, patch.patch_hash).len();
             let buntag_zstr = ZStr::from_buf(&buntagbuf, len);
             if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
@@ -599,7 +599,7 @@ impl PatchTask {
                         "failed adding bun tag: {}",
                         e.with_path(buntag_zstr.as_bytes())
                     ),
-                    Default::default(),
+                    bun_ast::AddErrorOptions::new(),
                 );
                 return Ok(());
             }
@@ -611,7 +611,7 @@ impl PatchTask {
             e.err = e.err.with_path(cache_dir_subpath_z.as_bytes());
             log.add_error_fmt_opts(
                 format_args!("renaming changes to cache dir: {}", e),
-                Default::default(),
+                bun_ast::AddErrorOptions::new(),
             );
         }
         Ok(())
@@ -729,7 +729,7 @@ impl PatchTask {
             manager: bun_ptr::BackRef::new_mut(manager),
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
-                node: ThreadPoolNode::default(),
+                node: ThreadPoolNode::new(),
                 callback: Self::run_from_thread_pool,
             },
             pre: false,
@@ -806,7 +806,7 @@ impl PatchTask {
             manager: bun_ptr::BackRef::new_mut(pkg_manager),
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
-                node: ThreadPoolNode::default(),
+                node: ThreadPoolNode::new(),
                 callback: Self::run_from_thread_pool,
             },
             pre: false,

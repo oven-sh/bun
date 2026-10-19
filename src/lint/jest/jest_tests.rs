@@ -835,7 +835,10 @@ pub(crate) mod no_identical_title {
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         // The titles of more than one call. Most files have none.
-        let (mut titles, mut repeated) = (FxHashSet::default(), FxHashSet::default());
+        let (mut titles, mut repeated) = (
+            FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+        );
         for (_, title) in iter_possible_jest_call_node(ctx.file, ctx.runner)
             .filter_map(|it| title_of(it.node, ctx.runner))
         {
@@ -846,9 +849,9 @@ pub(crate) mod no_identical_title {
         if repeated.is_empty() {
             return;
         }
-        let mut blocks = AncestorMemo::default();
+        let mut blocks = AncestorMemo::new();
         let mut title_to_calls: FxHashMap<Name<'a>, SmallVec<[Titled<'a>; 1]>> =
-            FxHashMap::default();
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             let node = possible_jest_node.node;
             let Some((argument, title)) =
@@ -890,7 +893,10 @@ pub(crate) mod no_identical_title {
                 is_describe,
                 parent: parent.unwrap_or(0),
             };
-            title_to_calls.entry(title).or_default().push(titled);
+            title_to_calls
+                .entry(title)
+                .or_insert_with(smallvec::SmallVec::new)
+                .push(titled);
         }
         // oxlint sorts the calls with one title by the block, and compares each with the one before: a `describe('a')` that is
         // between `it('a')` and `test('a')` then keeps these two apart. It starts from the order of its list, and the sort is not
@@ -1110,7 +1116,7 @@ pub(crate) mod prefer_each {
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         let file = ctx.file;
         // The loop that something is in, if no call is between, and whether something is in a call of `it.each` or the like.
-        let (mut loops, mut tests) = (AncestorMemo::default(), AncestorMemo::default());
+        let (mut loops, mut tests) = (AncestorMemo::new(), AncestorMemo::new());
         // The calls that are reported, each with its loop.
         let mut found: Vec<(Stmt<'a>, Expr<'a>, &'static str)> = Vec::new();
         let kinds = [
@@ -1265,8 +1271,7 @@ pub(crate) mod prefer_lowercase_title {
                     true
                 }
                 JestFnKind::General(JestGeneralFnKind::Describe) => {
-                    self.ignore_top_level_describe
-                        && Scopes::default().of(Node::Expr(node)).is_none()
+                    self.ignore_top_level_describe && Scopes::new().of(Node::Expr(node)).is_none()
                 }
                 JestFnKind::General(JestGeneralFnKind::Test | JestGeneralFnKind::Bench) => false,
                 _ => true,

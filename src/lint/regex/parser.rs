@@ -36,7 +36,7 @@ pub fn parse_flags(source: &[u8], options: Options) -> Result<Flags, SyntaxError
             self.0 = flags;
         }
     }
-    let mut keep = Keep(Flags::default());
+    let mut keep = Keep(Flags::new());
     validator::validate_flags(source, options, &mut keep)?;
     Ok(keep.0)
 }
@@ -293,7 +293,7 @@ impl Builder<'_> {
                             .groups
                             .get_or_insert_with(|| self.list(groups.iter().map(|it| it.1)))
                     }
-                    Err(_) => Run::default(),
+                    Err(_) => Run::new(),
                 }
             };
             if let Some(NodeData {
@@ -363,7 +363,7 @@ impl Handler for Builder<'_> {
         self.capturing_groups.clear();
         self.node = self.push(
             Data::Pattern {
-                alternatives: Run::default(),
+                alternatives: Run::new(),
             },
             NodeId::NONE,
             start,
@@ -450,7 +450,7 @@ impl Handler for Builder<'_> {
         self.open(start, |alternatives| Data::CapturingGroup {
             name,
             alternatives,
-            references: Run::default(),
+            references: Run::new(),
         });
         self.capturing_groups.push(self.node);
     }
@@ -551,7 +551,7 @@ impl Handler for Builder<'_> {
             Data::Backreference {
                 number,
                 name,
-                resolved: Run::default(),
+                resolved: Run::new(),
             },
             start,
             end,

@@ -171,7 +171,9 @@ fn with_text_format_source<R>(
             }
         }
     }
-    let recycle = Recycle(Some(ARENA.take().unwrap_or_default()));
+    let recycle = Recycle(Some(
+        ARENA.take().unwrap_or_else(bun_alloc::MimallocArena::new),
+    ));
     let arena = recycle.0.as_ref().expect("set above");
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
@@ -186,7 +188,7 @@ fn with_text_format_source<R>(
             bun_jsc::RangeErrorOptions {
                 field_name: b"input.byteLength",
                 max: i64::from(i32::MAX),
-                ..Default::default()
+                ..bun_jsc::RangeErrorOptions::new()
             },
         ));
     }

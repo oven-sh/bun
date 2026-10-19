@@ -5,13 +5,23 @@ use core::ptr::NonNull;
 
 bun_core::declare_scope!(AutoKiller, hidden);
 
-#[derive(Default)]
 pub struct ProcessAutoKiller {
     /// Keys are intrusively-refcounted `*Process` (ref()'d on insert, deref()'d
     /// on remove/drop). Stored as raw ptr for identity-hash semantics.
     pub(crate) processes: ArrayHashMap<*mut Process, ()>,
     pub enabled: bool,
     pub(crate) ever_enabled: bool,
+}
+
+impl ProcessAutoKiller {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            processes: ArrayHashMap::new(),
+            enabled: false,
+            ever_enabled: false,
+        }
+    }
 }
 
 impl ProcessAutoKiller {
@@ -91,7 +101,7 @@ impl ProcessAutoKiller {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Result {
     pub processes: u32,
 }

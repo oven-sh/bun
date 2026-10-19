@@ -14,15 +14,24 @@ const UNNECESSARY_ASSIGN: Message = Message::new(
 );
 
 /// What is known about the body of a class.
-#[derive(Default)]
 struct ReportInfo<'a> {
     assigned_before_constructor: FxHashSet<Cow<'a, [u8]>>,
     assigned_before_unnecessary: FxHashSet<Cow<'a, [u8]>>,
     unnecessary_assignments: Vec<(Cow<'a, [u8]>, Expr<'a>)>,
 }
 
+impl<'a> ReportInfo<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            assigned_before_constructor: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            assigned_before_unnecessary: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            unnecessary_assignments: Vec::new(),
+        }
+    }
+}
+
 /// What is looked up for every assignment.
-#[derive(Default)]
 struct Memo<'a> {
     /// For each name that a scope refers to: whether the first reference is to a parameter.
     from_parameter: IdMap<Scope<'a>, FxHashMap<Name<'a>, bool>>,
@@ -32,6 +41,19 @@ struct Memo<'a> {
     property_definitions: AncestorMemo<'a, Member<'a>>,
     functions: AncestorMemo<'a, Func<'a>>,
     class_bodies: AncestorMemo<'a, Class<'a>>,
+}
+
+impl<'a> Memo<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            from_parameter: IdMap::init(),
+            parameter_properties: IdMap::init(),
+            property_definitions: AncestorMemo::new(),
+            functions: AncestorMemo::new(),
+            class_bodies: AncestorMemo::new(),
+        }
+    }
 }
 
 fn is_this_member_expression(e: Expr<'_>) -> bool {
@@ -83,7 +105,7 @@ impl<'a> Memo<'a> {
         }
         let scope = Node::Expr(identifier).scope();
         let first_references = self.from_parameter.get_or_insert_with(scope, || {
-            let mut first_references = FxHashMap::default();
+            let mut first_references = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for reference in scope.references() {
                 first_references.entry(reference.name()).or_insert_with(|| {
                     matches!(
@@ -260,12 +282,21 @@ fn is_in_field_initializer<'a>(
     }
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// There is a `this.x = x` for an `x` that is a parameter property.
     has_copy: bool,
     /// The names of all parameter properties. Listed at the first `this.x = x`.
     parameter_properties: Option<FxHashSet<Name<'a>>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            has_copy: false,
+            parameter_properties: None,
+        }
+    }
 }
 
 impl NoUnnecessaryParameterPropertyAssignment {
@@ -306,7 +337,7 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        (file.has_classes() && file.has_exprs([ExprTag::Assign])).then(State::default)
+        (file.has_classes() && file.has_exprs([ExprTag::Assign])).then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -332,13 +363,13 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
             (it.span().start, Reverse(it.span().end))
         });
 
-        let mut infos: FxHashMap<Class<'a>, ReportInfo<'a>> = FxHashMap::default();
-        let mut memo = Memo::default();
+        let mut infos: FxHashMap<Class<'a>, ReportInfo<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+        let mut memo = Memo::new();
         for e in assignments {
             let Some(class) = enclosing_class_body(e, &mut memo) else {
                 continue;
             };
-            let info = infos.entry(class).or_default();
+            let info = infos.entry(class).or_insert_with(ReportInfo::new);
 
             let function = get_upper_function(e, &mut memo);
             let constructor = match function.and_then(call_around_arrow) {

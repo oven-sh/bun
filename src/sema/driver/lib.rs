@@ -57,9 +57,17 @@ use std::time::{Duration, Instant};
 /// for the duration of a parallel region, and gets the same set back in the next one. A set that
 /// went from thread to thread would be grown and freed by another thread than the one that
 /// allocated it, and the allocator defers such a free.
-#[derive(Default)]
 pub struct ThreadCaches {
     idle: Guarded<Vec<(ThreadId, RecentAtoms, bun_sema_parser::ThreadCaches)>>,
+}
+
+impl ThreadCaches {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            idle: Guarded::init(Vec::new()),
+        }
+    }
 }
 
 impl ThreadCaches {
@@ -93,7 +101,7 @@ impl ThreadCaches {
     pub(crate) fn drop_those_of_the_parser(&self) {
         drop(bun_sema_parser::ThreadCaches::take());
         for set in self.idle.lock().iter_mut() {
-            set.2 = Default::default();
+            set.2 = bun_sema_parser::ThreadCaches::new();
         }
     }
 }
@@ -109,7 +117,7 @@ fn release_free_pages_of(pool: &bun_threading::ThreadPool) {
     }
     pool.push_idle_task_to_each_thread(|| {
         bun_core::heap::into_raw(Box::new(Task {
-            node: Node::default(),
+            node: Node::new(),
             callback: release,
         }))
     });
@@ -341,7 +349,7 @@ pub fn use_a_pool_of_their_own(name: &'static str) {
         bun_threading::ThreadPool::init(bun_threading::thread_pool::Config {
             max_threads: u32::from(bun_core::get_thread_count()),
             stack_size: STACK_OF_A_WORKER,
-            ..Default::default()
+            ..bun_threading::thread_pool::Config::new()
         })
         .named(name)
     });
@@ -514,8 +522,8 @@ pub struct PlanOptions {
     pub memory: usize,
 }
 
-impl Default for PlanOptions {
-    fn default() -> PlanOptions {
+impl PlanOptions {
+    pub fn new() -> PlanOptions {
         PlanOptions {
             step_growth: 8,
             warm_up_files: 1 + 8 + 64,
@@ -720,7 +728,6 @@ impl Plan {
 }
 
 /// The progress of a check. Read from another thread.
-#[derive(Default)]
 pub struct Progress {
     /// The number of files to check. 0: the program is still being loaded.
     pub to_check: AtomicUsize,
@@ -731,6 +738,19 @@ pub struct Progress {
     pub bytes_checked: AtomicUsize,
     /// The number of errors found so far.
     pub errors: AtomicUsize,
+}
+
+impl Progress {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            to_check: core::sync::atomic::AtomicUsize::new(0),
+            checked: core::sync::atomic::AtomicUsize::new(0),
+            bytes_to_check: core::sync::atomic::AtomicUsize::new(0),
+            bytes_checked: core::sync::atomic::AtomicUsize::new(0),
+            errors: core::sync::atomic::AtomicUsize::new(0),
+        }
+    }
 }
 
 /// A compiler option of a command line and its value. `null` unsets the option.
@@ -807,7 +827,6 @@ pub struct RejectedFlag {
 }
 
 /// What `parseCommandLineWorker` makes of the arguments of a command line.
-#[derive(Default)]
 pub struct CommandLine {
     /// `fileNames`
     pub paths: Vec<Vec<u8>>,
@@ -821,6 +840,20 @@ pub struct CommandLine {
     pub errors: Vec<Diagnostic>,
     /// The other `errors`. A caller may know more flags, and it says so in its own words.
     pub rejected: Vec<RejectedFlag>,
+}
+
+impl CommandLine {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            paths: Vec::new(),
+            project: None,
+            build: false,
+            compiler_options: Vec::new(),
+            errors: Vec::new(),
+            rejected: Vec::new(),
+        }
+    }
 }
 
 /// `shortOptionNames` of the options that are known here. Both names have their dashes.
@@ -858,7 +891,7 @@ pub fn parse_command_line(args: &[&[u8]], cwd: &[u8]) -> CommandLine {
     let mut parser = CommandLineParser {
         cwd: &cwd,
         response_files: Vec::new(),
-        parsed: CommandLine::default(),
+        parsed: CommandLine::new(),
     };
     parser.parse_strings(args);
     parser.parsed
@@ -1259,7 +1292,6 @@ pub struct GlobalsOf {
     pub checks_javascript: bool,
 }
 
-#[derive(Default)]
 pub struct Report {
     /// Sorted as TypeScript sorts them: diagnostics without a file first, then by path and
     /// position.
@@ -1313,6 +1345,40 @@ pub struct Report {
     pub load_phases: [Duration; Phase::ALL.len()],
     /// The maximum stack usage of any file, in bytes.
     pub deepest_stack: usize,
+}
+
+impl Report {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            diagnostics: Vec::new(),
+            incomplete: Vec::new(),
+            unreadable: Vec::new(),
+            refused: Vec::new(),
+            without_include: Vec::new(),
+            globals: Vec::new(),
+            has_bun_types_installed: false,
+            not_installed: Vec::new(),
+            scripts_elsewhere: Vec::new(),
+            is_case_sensitive: false,
+            is_quiet: false,
+            listed_files: Vec::new(),
+            resolution_trace: Vec::new(),
+            tasks: Vec::new(),
+            files_loaded: 0,
+            files_parsed_for_all: 0,
+            files_checked: 0,
+            files_not_checked: 0,
+            steps: Vec::new(),
+            projects_checked: 0,
+            follows_references: false,
+            declaration_files: Vec::new(),
+            load_time: core::time::Duration::ZERO,
+            check_time: core::time::Duration::ZERO,
+            load_phases: [core::time::Duration::ZERO; Phase::ALL.len()],
+            deepest_stack: 0,
+        }
+    }
 }
 
 impl Report {
@@ -1464,15 +1530,7 @@ fn located(
     end: u32,
     reported: Diagnostic,
 ) -> Diagnostic {
-    located_after(
-        &Counted::default(),
-        path,
-        text,
-        starts,
-        start,
-        end,
-        reported,
-    )
+    located_after(&Counted::new(), path, text, starts, start, end, reported)
 }
 
 /// `counted`: see `line_and_character`.
@@ -1527,11 +1585,20 @@ fn line_and_character(text: &[u8], starts: &[u32], offset: u32, counted: &Counte
 
 /// Two offsets in a text that `line_and_character` was asked for, each with the number it found. Two, because errors
 /// that start at one place and end further and further on, as those of a chain of operators do, are asked for in turn.
-#[derive(Default)]
 struct Counted {
     places: std::cell::Cell<[(u32, u32); 2]>,
     /// Which of them was written before the other.
     older: std::cell::Cell<usize>,
+}
+
+impl Counted {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            places: core::cell::Cell::new([(0, 0); 2]),
+            older: core::cell::Cell::new(0),
+        }
+    }
 }
 
 fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
@@ -1549,7 +1616,7 @@ fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
 /// has been checked. If `then` returns, the caches of the threads are dropped too, and the free
 /// memory is returned to the system.
 pub fn check_then<R>(request: &Request, then: impl FnOnce(Report) -> R) -> R {
-    check_provided_then(request, host::Provided::default(), then)
+    check_provided_then(request, host::Provided::new(), then)
 }
 
 /// `check_then`, for a caller that has read some of the files, or that watches them.
@@ -1706,7 +1773,6 @@ fn dependencies_not_installed(
 
 /// The configuration files that a request has loaded, by path: finding the project of a path loads
 /// some, and each is loaded once.
-#[derive(Default)]
 struct Projects {
     loaded: FxHashMap<Vec<u8>, Result<config::Project, Vec<ConfigError>>>,
     /// `Project::files`, to look a file up in.
@@ -1714,6 +1780,17 @@ struct Projects {
     /// An entry point is JavaScript (`Request::are_entry_points`). It is of the project that would
     /// have it under `allowJs`.
     counts_javascript: bool,
+}
+
+impl Projects {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            loaded: FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            files: FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            counts_javascript: false,
+        }
+    }
 }
 
 impl Projects {
@@ -1906,7 +1983,7 @@ fn project_without_config(
 fn nested_configs(disk: &host::Disk, top: &[u8]) -> Vec<Vec<u8>> {
     let (mut found, mut pending) = (Vec::new(), vec![top.to_vec()]);
     // By real path: a link can lead back up.
-    let mut visited = FxHashSet::default();
+    let mut visited = FxHashSet::with_hasher(bun_sema::util::FxBuild);
     while let Some(dir) = pending.pop() {
         if !visited.insert(disk.realpath(&dir)) {
             continue;
@@ -1976,7 +2053,7 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     };
     let mut report = check_paths(disk, request);
     // Each is checked in its own project, like a file that is named, and once.
-    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::with_hasher(bun_sema::util::FxBuild);
     loop {
         let mut scripts = std::mem::take(&mut report.scripts_elsewhere);
         scripts.retain(|script| seen.insert(script.clone()));
@@ -1997,7 +2074,7 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
 fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let started = Instant::now();
     let cwd = host::from_native(request.cwd);
-    let mut report = Report::default();
+    let mut report = Report::new();
     // `tscCompilation`, `tscBuildCompilation`
     if !request.errors.is_empty() {
         report.diagnostics.extend_from_slice(request.errors);
@@ -2055,7 +2132,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     // `--project`, or else the configuration file nearest to a directory, or else nearest to the
     // working directory.
     // By directory: a run of the linter names every file of a repository.
-    let nearest_to: std::cell::RefCell<FxHashMap<Vec<u8>, Option<Vec<u8>>>> = Default::default();
+    let nearest_to: std::cell::RefCell<FxHashMap<Vec<u8>, Option<Vec<u8>>>> =
+        core::cell::RefCell::new(bun_sema::util::FxHashMap::with_hasher(
+            bun_sema::util::FxBuild,
+        ));
     let config_in = |dir: &[u8]| {
         if explicit.is_some() {
             return explicit.clone();
@@ -2077,7 +2157,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let mut projects = Projects {
         // By its name, as `include` finds it.
         counts_javascript: request.are_entry_points && paths.iter().any(|it| is_javascript(it)),
-        ..Default::default()
+        ..Projects::new()
     };
     if paths.is_empty() {
         match project_in(&cwd) {
@@ -2269,7 +2349,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         in_common: &in_common,
         threads: disk.threads(),
         shares: shares.as_deref(),
-        taken: Guarded::new(Taken::default()),
+        taken: Guarded::new(Taken::new()),
         has_changed: bun_threading::Condvar::new(),
     };
     let next = AtomicUsize::new(0);
@@ -2295,7 +2375,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 run: (run.as_ref()).filter(|_| for_the_rest.is_none() || *config != for_the_rest),
                 place: (at_once > 1).then_some(&place),
             };
-            let (so_far, began) = (Report::default(), Instant::now());
+            let (so_far, began) = (Report::new(), Instant::now());
             let checked = check_project_of(disk, request, &projects, of, so_far, began);
             *reports[index].lock() = Some(checked);
         }
@@ -2379,7 +2459,6 @@ struct Room<'a> {
     has_changed: bun_threading::Condvar,
 }
 
-#[derive(Default)]
 struct Taken {
     bytes: usize,
     programs: usize,
@@ -2394,6 +2473,22 @@ struct Taken {
     of_the_ended: usize,
     /// The part of it that they took after their files were found.
     added: usize,
+}
+
+impl Taken {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            bytes: 0,
+            programs: 0,
+            going_on: 0,
+            waiting: 0,
+            largest: 0,
+            ended: 0,
+            of_the_ended: 0,
+            added: 0,
+        }
+    }
 }
 
 /// Of a program in a `Room`, until it is dropped.
@@ -2702,7 +2797,8 @@ impl Graph<'_> {
             config::load_overriding(self.host, &Session::new(), config, &over).ok()
         };
         // On all threads, by name: what the root references, then what that references, and so on.
-        let mut ahead: FxHashMap<Vec<u8>, Option<config::Project>> = FxHashMap::default();
+        let mut ahead: FxHashMap<Vec<u8>, Option<config::Project>> =
+            FxHashMap::with_hasher(bun_sema::util::FxBuild);
         let mut names = referenced(&root);
         loop {
             names.shared_sort_unstable();
@@ -2831,10 +2927,19 @@ struct OpenTask {
 
 /// The files that the projects of a `tsc -b` run are going to emit, and the directories that
 /// contain them with all their ancestors: by which projects. Keyed by `tspath.Path`.
-#[derive(Default)]
 struct Expected {
     files: FxHashMap<Vec<u8>, Vec<usize>>,
     directories: FxHashMap<Vec<u8>, Vec<usize>>,
+}
+
+impl Expected {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            files: FxHashMap::with_hasher(bun_sema::util::FxBuild),
+            directories: FxHashMap::with_hasher(bun_sema::util::FxBuild),
+        }
+    }
 }
 
 impl Expected {
@@ -2867,8 +2972,8 @@ struct Emitted {
 impl Emitted {
     fn new(projects: usize) -> Emitted {
         Emitted {
-            files: ShardedMap::default(),
-            directories: ShardedMap::default(),
+            files: ShardedMap::new(),
+            directories: ShardedMap::new(),
             has_files: AtomicBool::new(false),
             built_after: (0..projects)
                 .map(|_| AtomicUsize::new(usize::MAX))
@@ -2881,17 +2986,19 @@ impl Emitted {
         if !files.is_empty() {
             self.has_files.store(true, Ordering::Relaxed);
         }
-        let mut directories: FxHashSet<Vec<u8>> = FxHashSet::default();
+        let mut directories: FxHashSet<Vec<u8>> = FxHashSet::with_hasher(bun_sema::util::FxBuild);
         for (path, text) in files {
             let mut directory = dirname::<Posix>(&path);
             while directory.len() > 1 && directories.insert(directory.to_vec()) {
                 directory = dirname::<Posix>(directory);
             }
-            let of_all = self.files.insert_ref(path, Guarded::default());
+            let of_all = self.files.insert_ref(path, Guarded::init(Vec::new()));
             of_all.lock().push((project, text));
         }
         for directory in directories {
-            let of_all = self.directories.insert_ref(directory, Guarded::default());
+            let of_all = self
+                .directories
+                .insert_ref(directory, Guarded::init(Vec::new()));
             of_all.lock().push(project);
         }
     }
@@ -2999,7 +3106,7 @@ impl Host for WithOutputs<'_> {
             Some((_, written)) => Cow::Owned((*written).clone()),
             None => self.disk.read(path).unwrap_or_else(|| {
                 self.unreadable.lock().push(path.to_vec());
-                Cow::default()
+                Cow::Owned(Vec::new())
             }),
         }
     }
@@ -3134,9 +3241,9 @@ fn check_with_references(
             true => overriding_options(request, true),
             false => Vec::new(),
         },
-        tasks: FxHashMap::default(),
+        tasks: FxHashMap::with_hasher(bun_sema::util::FxBuild),
         projects: Vec::new(),
-        index_of: FxHashMap::default(),
+        index_of: FxHashMap::with_hasher(bun_sema::util::FxBuild),
         circularity_stack: Vec::new(),
         errors: Vec::new(),
         not_found: Vec::new(),
@@ -3296,7 +3403,7 @@ fn check_with_references(
         true => name,
         false => to_path(&name, false).into_owned(),
     };
-    let mut expected = Expected::default();
+    let mut expected = Expected::new();
     for (index, sources) in roots.iter().enumerate().filter(|_| !reads_sources) {
         for source in sources {
             if writes_declaration_files(index)
@@ -3320,7 +3427,7 @@ fn check_with_references(
             pending.extend(&references[index]);
         }
     }
-    let mut project_files = ProjectFiles::default();
+    let mut project_files = ProjectFiles::new();
     for index in (0..count).filter(|&index| is_reached[index]) {
         for (source, path) in roots[index].iter().zip(&root_paths[index]) {
             let output_dts = match reads_sources {
@@ -3368,7 +3475,7 @@ fn check_with_references(
                 .collect();
             return Ok((!diagnostics.is_empty()).then(|| Report {
                 diagnostics,
-                ..Default::default()
+                ..Report::new()
             }));
         }
         if is_left_out[index] {
@@ -3377,7 +3484,7 @@ fn check_with_references(
         project.errors.append(&mut about_references);
         // `initMapperWorker`: the references in order, each project before its own references. A
         // cycle leads back to the project itself, whose files are not those of a reference.
-        let mut is_referenced: FxHashSet<usize> = FxHashSet::default();
+        let mut is_referenced: FxHashSet<usize> = FxHashSet::with_hasher(bun_sema::util::FxBuild);
         let mut referenced: Vec<usize> = Vec::new();
         let mut pending: Vec<usize> = references[index].iter().rev().copied().collect();
         while let Some(i) = pending.pop() {
@@ -3438,7 +3545,7 @@ fn check_with_references(
                 &host,
                 project,
                 request,
-                Report::default(),
+                Report::new(),
                 Instant::now(),
                 named,
                 Some(&is_owned_elsewhere),
@@ -3598,7 +3705,7 @@ fn check_with_references(
             if reports_references {
                 report.report_task(Report {
                     diagnostics: vec![d],
-                    ..Default::default()
+                    ..Report::new()
                 });
             }
         }
@@ -4248,7 +4355,7 @@ fn check_named_files(
         let module = &program.files.modules[file.idx()];
         let text = &text_of(file)[..];
         let starts = compute_ecma_line_starts(text);
-        let counted = Counted::default();
+        let counted = Counted::new();
         let shown: Vec<Diagnostic> = errors
             .into_iter()
             .map(|e| {

@@ -507,7 +507,7 @@ impl<'m, 'a> Printer<'m, 'a> {
         }
         let node_lines = model.lines(node);
         let mut has_loc = node_lines.is_some();
-        let node_lines = node_lines.unwrap_or_default();
+        let node_lines = node_lines.unwrap_or_else(crate::js::sort_imports::babel::Lines::new);
         let (mut last_line, mut leading_comment_newline) = (0, 0);
         let no_line_terminator = self.no_line_terminator;
         let len = comments.len();
@@ -604,7 +604,10 @@ impl<'m, 'a> Printer<'m, 'a> {
         let model = self.model;
         match node {
             Node::Interpreter => {
-                let span = model.interpreter.map(|it| it.0).unwrap_or_default();
+                let span = model
+                    .interpreter
+                    .map(|it| it.0)
+                    .unwrap_or_else(super::super::Span::init);
                 self.token(model.file.slice(span));
                 self.newline_char();
             }
@@ -622,7 +625,9 @@ impl<'m, 'a> Printer<'m, 'a> {
             }
             Node::Local(index) => self.module_export_name(model.specifiers[index as usize].local),
             Node::Source(_) | Node::AttributeKey(_) | Node::AttributeValue(_) => {
-                let text = model.file.slice(model.span(node).unwrap_or_default());
+                let text = model
+                    .file
+                    .slice(model.span(node).unwrap_or_else(super::super::Span::init));
                 match matches!(text.first(), Some(b'"' | b'\'')) {
                     true => self.token(text),
                     false => self.word(text),

@@ -299,7 +299,7 @@ pub(crate) mod prompt {
         let _restore =
             bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
                 unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-                ..Default::default()
+                ..bun_sys::windows::UpdateStdioModeFlagsOpts::new()
             });
 
         // 7. Pause while waiting for the user's response.

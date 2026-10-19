@@ -133,8 +133,15 @@ enum TemplateElementLayout {
 }
 
 /// The number of columns that the line of a `${` is indented by.
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone)]
 struct TemplateElementIndention(u32);
+
+impl TemplateElementIndention {
+    #[inline]
+    fn new() -> Self {
+        Self(0)
+    }
+}
 
 impl TemplateElementIndention {
     fn level(self, indent_width: IndentWidth) -> u32 {
@@ -216,7 +223,7 @@ impl<'a> TemplateLike<'a> {
         f: &Formatter<'a>,
     ) -> impl Iterator<Item = FormatTemplateExpression<'a>> + use<'a> {
         let tab_width = f.options().indent_width.value();
-        let mut indention = TemplateElementIndention::default();
+        let mut indention = TemplateElementIndention::new();
         (0..self.quasi_count()).map_while(move |i| {
             let quasi_text = self.raw(i);
             indention =
@@ -247,7 +254,7 @@ impl<'a> Format<'a> for TemplateLike<'a> {
             .expressions(false, f)
             .map(|it| match collapses_line_breaks {
                 true => FormatTemplateExpression {
-                    place: Place::After(TemplateElementIndention::default()),
+                    place: Place::After(TemplateElementIndention::new()),
                     ..it
                 },
                 false => it,
@@ -457,7 +464,6 @@ impl EachTemplateColumn {
 ///   ${11} | ${1} | ${12}
 /// `
 /// ```
-#[derive(Default)]
 struct EachTemplateTable {
     /// For each row, whether it has a cell that takes more than one line. It is not aligned then.
     rows: Vec<bool>,
@@ -465,6 +471,19 @@ struct EachTemplateTable {
     elements: Vec<EachTemplateElement>,
     current_row_widths: Vec<usize>,
     current_row_has_line_break_column: bool,
+}
+
+impl EachTemplateTable {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            rows: Vec::new(),
+            columns_width: Vec::new(),
+            elements: Vec::new(),
+            current_row_widths: Vec::new(),
+            current_row_has_line_break_column: false,
+        }
+    }
 }
 
 impl EachTemplateTable {
@@ -496,7 +515,7 @@ impl EachTemplateTable {
     }
 
     fn from_template<'a>(template: Template<'a>, f: &mut Formatter<'a>) -> Self {
-        let mut table = EachTemplateTable::default();
+        let mut table = EachTemplateTable::new();
 
         let header = template.raw(0);
         let header = header.strip_suffix(b"|").unwrap_or(header);

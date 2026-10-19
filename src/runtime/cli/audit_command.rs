@@ -36,12 +36,23 @@ struct VulnerabilityInfo {
 /// Root-most first, ending at the vulnerable package.
 type DependencyPath = Vec<Box<[u8]>>;
 
-#[derive(Default)]
 struct AuditStats {
     checked: usize,
     skipped: usize,
     below_level: u32,
     ignored: u32,
+}
+
+impl AuditStats {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            checked: 0,
+            skipped: 0,
+            below_level: 0,
+            ignored: 0,
+        }
+    }
 }
 
 fn plural(n: usize) -> &'static str {
@@ -279,7 +290,7 @@ impl AuditCommand {
 fn build_dependency_tree(
     pm: &mut PackageManager,
 ) -> Result<StringHashMap<Vec<Box<[u8]>>>, bun_alloc::AllocError> {
-    let mut dependency_tree: StringHashMap<Vec<Box<[u8]>>> = StringHashMap::default();
+    let mut dependency_tree: StringHashMap<Vec<Box<[u8]>>> = StringHashMap::init();
 
     let packages = pm.lockfile.packages.slice();
     let pkg_names = packages.items_name();
@@ -308,7 +319,7 @@ fn build_dependency_tree(
             let resolved_name = pkg_names[resolved_pkg_id as usize].slice(buf);
 
             // `StringHashMap::get_or_put` always boxes the key on miss.
-            let result = dependency_tree.get_or_put(resolved_name)?;
+            let result = dependency_tree.get_or_put(resolved_name, Vec::new)?;
             result.value_ptr.push(Box::<[u8]>::from(package_name));
         }
     }
@@ -520,7 +531,10 @@ fn build_body(packages_list: &[PackageVersions]) -> Box<[u8]> {
         write!(
             &mut body,
             "{}",
-            bun_core::fmt::format_json_string_utf8(&package.name, Default::default())
+            bun_core::fmt::format_json_string_utf8(
+                &package.name,
+                bun_core::fmt::JSONFormatterUTF8Options::new()
+            )
         )
         .expect("unreachable");
         body.push(b':');
@@ -532,7 +546,10 @@ fn build_body(packages_list: &[PackageVersions]) -> Box<[u8]> {
             write!(
                 &mut body,
                 "{}",
-                bun_core::fmt::format_json_string_utf8(version, Default::default())
+                bun_core::fmt::format_json_string_utf8(
+                    version,
+                    bun_core::fmt::JSONFormatterUTF8Options::new()
+                )
             )
             .expect("unreachable");
         }
@@ -551,7 +568,7 @@ fn send_audit_requests(
 ) -> Result<AuditResponses, bun_alloc::AllocError> {
     let mut bodies: Vec<Box<[u8]>> = Vec::with_capacity(collected.requests.len());
     let mut unaudited_registries: Vec<audit_fix::UnauditedRegistry> = Vec::new();
-    let mut stats = AuditStats::default();
+    let mut stats = AuditStats::new();
 
     for request in &collected.requests {
         match send_audit_request(pm, &request.registry, &request.body, echo_json)? {
@@ -684,7 +701,7 @@ fn send_audit_request(
         Ok(_) => {
             let response = response_buf.list.as_slice();
             // Before the bodies are merged, so that the registry that sent this one is named.
-            match collect_vulnerabilities(response, None, &[], &mut AuditStats::default())? {
+            match collect_vulnerabilities(response, None, &[], &mut AuditStats::new())? {
                 Ok(_) => return Ok(Ok(Box::<[u8]>::from(response))),
                 Err(reason) => reason,
             }
@@ -722,9 +739,9 @@ fn parse_vulnerability(package_name: &[u8], vuln: &E::ObjectJSON) -> Vulnerabili
     let mut vulnerability = VulnerabilityInfo {
         severity: Box::<[u8]>::from(b"moderate" as &[u8]),
         title: Box::<[u8]>::from(b"Vulnerability found" as &[u8]),
-        url: Box::default(),
-        vulnerable_versions: Box::default(),
-        id: Box::default(),
+        url: Box::new([]),
+        vulnerable_versions: Box::new([]),
+        id: Box::new([]),
         package_name: Box::<[u8]>::from(package_name),
     };
 
@@ -798,8 +815,8 @@ fn find_dependency_paths(
     }
 
     let mut queue: std::collections::VecDeque<Box<[u8]>> = std::collections::VecDeque::new();
-    let mut visited: StringHashMap<()> = StringHashMap::default();
-    let mut parent_map: StringHashMap<Box<[u8]>> = StringHashMap::default();
+    let mut visited: StringHashMap<()> = StringHashMap::init();
+    let mut parent_map: StringHashMap<Box<[u8]>> = StringHashMap::init();
 
     if let Some(dependents) = dependency_tree.get(target_package) {
         for dependent in dependents {
@@ -822,7 +839,7 @@ fn find_dependency_paths(
             let mut path = DependencyPath::new();
 
             let mut trace: Box<[u8]> = current;
-            let mut seen_in_trace: StringHashMap<()> = StringHashMap::default();
+            let mut seen_in_trace: StringHashMap<()> = StringHashMap::init();
 
             // Walks dependent → dependency.
             loop {
@@ -938,12 +955,23 @@ fn collect_vulnerabilities(
     Ok(Ok(vulnerabilities))
 }
 
-#[derive(Default)]
 struct VulnCounts {
     low: u32,
     moderate: u32,
     high: u32,
     critical: u32,
+}
+
+impl VulnCounts {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            low: 0,
+            moderate: 0,
+            high: 0,
+            critical: 0,
+        }
+    }
 }
 
 fn print_severity(severity: &[u8]) {
@@ -1012,7 +1040,7 @@ fn print_enhanced_audit_report(
         return Ok(0);
     }
 
-    let mut vuln_counts = VulnCounts::default();
+    let mut vuln_counts = VulnCounts::new();
     for vulnerability in &vulnerabilities {
         match &*vulnerability.severity {
             b"low" => vuln_counts.low += 1,

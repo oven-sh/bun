@@ -593,7 +593,6 @@ pub enum ScanResult {
 /// offset and the stack of in-progress aggregates across calls so each buffered
 /// byte is examined a bounded number of times; the allocating parser only runs
 /// once a full reply is known to be present.
-#[derive(Default)]
 pub struct ReplyScanner {
     /// Byte offset of the next unscanned element, relative to the start of the
     /// buffer passed to [`ReplyScanner::scan`].
@@ -602,6 +601,17 @@ pub struct ReplyScanner {
     /// first.
     stack: Vec<u64>,
     crlf_skip: usize,
+}
+
+impl ReplyScanner {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            pos: 0,
+            stack: Vec::new(),
+            crlf_skip: 0,
+        }
+    }
 }
 
 impl ReplyScanner {

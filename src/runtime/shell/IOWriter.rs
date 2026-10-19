@@ -96,12 +96,24 @@ pub(crate) enum WriterTag {
 // Flags / Writer queue entry
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct Flags {
     pub(crate) pollable: bool,
     pub(crate) nonblock: bool,
     pub(crate) is_socket: bool,
     pub(crate) broken_pipe: bool,
+}
+
+impl Flags {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            pollable: false,
+            nonblock: false,
+            is_socket: false,
+            broken_pipe: false,
+        }
+    }
 }
 
 /// One queued chunk: which child enqueued it, how many bytes (in `buf`), how
@@ -254,7 +266,7 @@ impl IOWriter {
     }
 
     pub(crate) fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> std::sync::Arc<IOWriter> {
-        let mut writer = WriterImpl::default();
+        let mut writer = WriterImpl::new();
         // Tell the PipeWriter impl to *not* close the file descriptor.
         #[cfg(not(windows))]
         {

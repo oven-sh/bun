@@ -56,7 +56,6 @@ pub const AI_ALL: c_int = 256;
 #[cfg(not(windows))]
 pub const AI_ALL: c_int = libc::AI_ALL;
 
-#[derive(Default)]
 pub struct GetAddrInfo {
     pub name: Box<[u8]>,
     pub port: u16,
@@ -111,8 +110,8 @@ pub struct Options {
     pub flags: c_int, // AI_* packed flags
 }
 
-impl Default for Options {
-    fn default() -> Self {
+impl Options {
+    pub fn new() -> Self {
         Self {
             family: Family::Unspecified,
             socktype: SocketType::Stream,
@@ -429,10 +428,9 @@ pub fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u8)]
-#[derive(Copy, Clone, Default, Eq, PartialEq, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Order {
     #[strum(serialize = "verbatim")]
-    #[default]
     Verbatim = 0,
     #[strum(serialize = "ipv4first")]
     Ipv4first = 4,

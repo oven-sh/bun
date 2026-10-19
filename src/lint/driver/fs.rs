@@ -317,8 +317,16 @@ fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
 
 /// The real paths of the files that a run has written. Two paths can lead to one file (a link, a letter in the other case), and
 /// two threads that replace the same file at the same time fail now and then on Windows.
-#[derive(Default)]
 pub(crate) struct Written(Guarded<FxHashSet<Vec<u8>>>);
+
+impl Written {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(Guarded::init(bun_sema::util::FxHashSet::with_hasher(
+            bun_sema::util::FxBuild,
+        )))
+    }
+}
 
 /// Replaces the text of the file at `path`, which exists. What links to the file still does. `Err`: why it is not written.
 /// A link below `cwd`, the working directory, is not followed out of the repository: nobody reads the links of a checkout.

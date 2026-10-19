@@ -29,9 +29,9 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) 
                 file: Cow::Owned(file),
                 line: 0,
                 column: 0,
-                ..Default::default()
+                ..Location::new()
             }),
         },
-        ..Default::default()
+        ..Msg::new()
     })
 }

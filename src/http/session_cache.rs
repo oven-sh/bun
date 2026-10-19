@@ -41,7 +41,6 @@ impl Drop for CacheEntry {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct SessionCache {
     entries: RefCell<Vec<CacheEntry>>,
 }

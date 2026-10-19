@@ -125,13 +125,13 @@ impl BorderImage {
             || repeat.is_some()
         {
             return Ok(BorderImage {
-                source: source.unwrap_or_default(),
+                source: source.unwrap_or(Image::None),
                 slice: slice.unwrap_or_else(BorderImageSlice::default),
                 width: width.unwrap_or_else(|| {
                     Rect::<BorderImageSideWidth>::all(BorderImageSideWidth::default())
                 }),
                 outset: outset
-                    .unwrap_or_else(|| Rect::<LengthOrNumber>::all(LengthOrNumber::default())),
+                    .unwrap_or_else(|| Rect::<LengthOrNumber>::all(LengthOrNumber::new())),
                 repeat: repeat.unwrap_or_else(BorderImageRepeat::default),
             });
         }
@@ -157,7 +157,7 @@ impl BorderImage {
         repeat: &BorderImageRepeat,
         dest: &mut Printer,
     ) -> core::result::Result<(), PrintErr> {
-        if !source.eql(&Image::default()) {
+        if !source.eql(&Image::None) {
             source.to_css(dest)?;
         }
         let has_slice = !slice.eql(&BorderImageSlice::default());
@@ -227,10 +227,10 @@ impl BorderImage {
 
     pub(crate) fn default() -> BorderImage {
         BorderImage {
-            source: Image::default(),
+            source: Image::None,
             slice: BorderImageSlice::default(),
             width: Rect::<BorderImageSideWidth>::all(BorderImageSideWidth::default()),
-            outset: Rect::<LengthOrNumber>::all(LengthOrNumber::default()),
+            outset: Rect::<LengthOrNumber>::all(LengthOrNumber::new()),
             repeat: BorderImageRepeat::default(),
         }
     }
@@ -428,7 +428,7 @@ impl BorderImageSlice {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub(crate) struct BorderImageProperty: u8 {
         const SOURCE = 1 << 0;
         const SLICE  = 1 << 1;
@@ -460,7 +460,6 @@ impl BorderImageProperty {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct BorderImageHandler {
     pub source: Option<Image>,
     pub slice: Option<BorderImageSlice>,
@@ -470,6 +469,22 @@ pub(crate) struct BorderImageHandler {
     pub vendor_prefix: VendorPrefix,
     pub flushed_properties: BorderImageProperty,
     pub has_any: bool,
+}
+
+impl BorderImageHandler {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            source: None,
+            slice: None,
+            width: None,
+            outset: None,
+            repeat: None,
+            vendor_prefix: VendorPrefix::empty(),
+            flushed_properties: BorderImageProperty::empty(),
+            has_any: false,
+        }
+    }
 }
 
 impl BorderImageHandler {

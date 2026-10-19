@@ -40,7 +40,7 @@ impl Rule for NoRenderReturnValue {
         let version = if is_oxlint { ULTIMATE_LATEST_SEMVER } else { get_react_version_from_context(file) };
         let callee_object_names = callee_object_names(version);
         file.mentions_any(callee_object_names)
-            .then(|| State { callee_object_names, is_in_expression_arrow: AncestorMemo::default() })
+            .then(|| State { callee_object_names, is_in_expression_arrow: AncestorMemo::new() })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

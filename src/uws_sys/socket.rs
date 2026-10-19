@@ -307,7 +307,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connected s => s.get_verify_error(),
             duplex d => d.ssl_error(),
             pipe p => p.ssl_error(),
-            else => us_bun_verify_error_t::default(),
+            else => us_bun_verify_error_t::new(),
         )
     }
 

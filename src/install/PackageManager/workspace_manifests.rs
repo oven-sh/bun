@@ -30,9 +30,9 @@ pub(crate) struct ScratchManifests {
 impl ScratchManifests {
     pub(crate) fn new() -> ScratchManifests {
         ScratchManifests {
-            lockfile: Lockfile::default(),
+            lockfile: Lockfile::new(),
             log: bun_ast::Log::init(),
-            root: Package::default(),
+            root: Package::new(),
         }
     }
 
@@ -141,7 +141,7 @@ impl ScratchManifests {
             (bun_ptr::ParentRef::new(&entry.source), entry.root)
         };
         let mut resolver: () = ();
-        let mut pkg = Package::default();
+        let mut pkg = Package::new();
         // Unlike the root's workspaces walk, a `Features::WORKSPACE` parse never grows the cache, so the entry stays put.
         pkg.parse_with_json(
             &mut self.lockfile,
@@ -382,7 +382,7 @@ impl WorkspaceManifests {
             workspaces: true,
             dependencies: false,
             peer_dependencies: false,
-            ..Features::default()
+            ..Features::new()
         };
         let mut scratch = ScratchManifests::new();
         if let Err(err) = scratch.parse_root(manager, features) {
@@ -487,7 +487,10 @@ pub(crate) fn relation_graph(
     let mut parsed: Vec<(u32, Package)> = Vec::with_capacity(targets.len());
     for (i, target) in targets.iter().enumerate() {
         if target.name_hash.is_none() {
-            parsed.push((i as u32, core::mem::take(&mut scratch.root)));
+            parsed.push((
+                i as u32,
+                core::mem::replace(&mut scratch.root, Package::new()),
+            ));
             continue;
         }
         match scratch.parse_member(manager, target) {

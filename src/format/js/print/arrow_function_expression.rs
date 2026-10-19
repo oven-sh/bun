@@ -16,12 +16,23 @@ use crate::prelude::*;
 use crate::{format_args, write};
 use smallvec::SmallVec;
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct FormatJsArrowFunctionExpressionOptions {
     pub(crate) assignment_layout: Option<AssignmentLikeLayout>,
     pub(crate) call_argument_layout: Option<GroupedCallArgumentLayout>,
     /// Whether what is formatted is kept, to be written again.
     pub(crate) cache_mode: FunctionCacheMode,
+}
+
+impl FormatJsArrowFunctionExpressionOptions {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            assignment_layout: None,
+            call_argument_layout: None,
+            cache_mode: FunctionCacheMode::NoCache,
+        }
+    }
 }
 
 /// Which argument of a call is written right after the `(` or right before the `)`, while the
@@ -42,9 +53,8 @@ impl GroupedCallArgumentLayout {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum FunctionCacheMode {
-    #[default]
     NoCache,
     /// What is formatted is kept, and what has been kept is written.
     Cache,
@@ -618,11 +628,7 @@ impl<'a> Format<'a> for FormatSignature<'a> {
         let flattened = format_with(|f| match (has_parameters, &return_type) {
             // The arguments ask whether the return type breaks.
             (true, Some(return_type)) => {
-                let key = || {
-                    arrow
-                        .return_type()
-                        .map_or_else(Span::default, |it| it.span())
-                };
+                let key = || arrow.return_type().map_or_else(Span::init, |it| it.span());
                 let return_type = FormatContentWithCacheMode::new(key, return_type, cache_mode);
                 write!(f, [type_params, params, return_type]);
             }

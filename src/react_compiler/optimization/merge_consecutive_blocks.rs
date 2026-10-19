@@ -68,7 +68,7 @@ fn collect_inner_functions(
 
 fn merge_blocks(func: &mut HirFunction) -> Result<(), CompilerDiagnostic> {
     // Build fallthrough set
-    let mut fallthrough_blocks: IdBitSet<BlockId> = IdBitSet::default();
+    let mut fallthrough_blocks: IdBitSet<BlockId> = IdBitSet::init();
     for block in func.body.blocks.values() {
         if let Some(ft) = visitors::terminal_fallthrough(&block.terminal) {
             fallthrough_blocks.insert(ft);

@@ -570,7 +570,7 @@ fn search(
     let git = match are_all_in_repositories.map(|it| OfGit::for_search(base, true, it)) {
         Some(Some(git)) => git,
         Some(None) => return Ok(Vec::new()),
-        None => OfGit::default(),
+        None => OfGit::new(),
     };
     let above = configs.for_directory(base)?;
     let mut level = vec![Directory {
@@ -731,7 +731,7 @@ pub(crate) fn expand(
         }
     }
     let ignored = &*ignored;
-    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::with_hasher(bun_sema::util::FxBuild);
     let mut is_anything_ignored = false;
     for (entry, input, written) in entries {
         // What the paths that `fast-glob` returns start with, which they are sorted by.

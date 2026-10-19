@@ -156,7 +156,7 @@ fn init_modules() {
                     // Default::default() fills them safely.
                     source: bun_ast::Source::init_path_string(spec.pkgjson_path, b""),
                     side_effects: SideEffects::False,
-                    ..Default::default()
+                    ..PackageJSON::new()
                 },
                 fs::Path::init_with_namespace_virtual(spec.index_path, b"node", spec.pretty),
                 spec.code,
@@ -164,7 +164,7 @@ fn init_modules() {
         })
         .collect();
 
-    let mut m = bun_collections::StringHashMap::<FallbackModule>::default();
+    let mut m = bun_collections::StringHashMap::<FallbackModule>::init();
     // SAFETY: `init_modules` runs exactly once under `Once::call_once`; no other
     // thread observes `MODULES`/`MAP` until this returns.
     unsafe {

@@ -16,8 +16,15 @@ use crate::bake::Side;
 /// covers `Client`/`Server` owners and is used as the `bundling_failures` map
 /// key directly.
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub(crate) struct OwnerPacked(pub(crate) u32);
+
+impl OwnerPacked {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self(0)
+    }
+}
 impl OwnerPacked {
     #[inline]
     pub(crate) fn new(side: Side, file: u32) -> Self {
@@ -119,10 +126,17 @@ const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 /// PERF: `data` is an owned `Box<[u8]>`, so `Clone` deep-copies between
 /// `bundling_failures` and the `failures_added`/`failures_removed` lists —
 /// profile if this shows up on a hot path.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct SerializedFailure {
     /// Wire-format bytes (length-prefixed; first 4 bytes encode `Owner.Packed`).
     pub(crate) data: Box<[u8]>,
+}
+
+impl SerializedFailure {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { data: Box::new([]) }
+    }
 }
 
 impl SerializedFailure {

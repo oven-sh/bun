@@ -144,17 +144,17 @@ impl<'p, 's> Checker<'p, 's> {
             arena: &arena,
             read_library,
             symbols: Vec::new(),
-            symbol_ids: FxHashMap::default(),
-            properties: FxHashMap::default(),
-            signatures: FxHashMap::default(),
-            types_at: FxHashMap::default(),
-            ops_on_many: FxHashMap::default(),
-            flags_of_many: FxHashMap::default(),
-            many_signatures: FxHashMap::default(),
-            expected_of_many: FxHashMap::default(),
-            children: FxHashMap::default(),
-            super_type_nodes: FxHashMap::default(),
-            many_children: FxHashMap::default(),
+            symbol_ids: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            properties: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            signatures: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            types_at: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            ops_on_many: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            flags_of_many: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            many_signatures: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            expected_of_many: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            children: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            super_type_nodes: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            many_children: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             symbols_of_declarations: OnceCell::new(),
         };
         then(&mut services)
@@ -312,7 +312,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     fn package_names_of_linked_files(&self) -> &'p FxHashMap<FileId, Vec<u8>> {
         let program = self.c.p;
         program.package_names_of_linked_files.get_or_init(|| {
-            let (files, mut names) = (program.files, FxHashMap::<FileId, Vec<u8>>::default());
+            let (files, mut names) = (
+                program.files,
+                FxHashMap::<FileId, Vec<u8>>::with_hasher(rustc_hash::FxBuildHasher),
+            );
             for importer in files.modules.iter() {
                 for (&(specifier, _), &file) in importer.imports.iter() {
                     let module = files.module(file);

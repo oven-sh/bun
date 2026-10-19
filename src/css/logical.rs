@@ -1,6 +1,5 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PropertyCategory {
     Logical,
-    #[default]
     Physical,
 }

@@ -182,7 +182,7 @@ macro_rules! cmd_noargs {
                 frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&[]),
-                CommandMeta::default(),
+                CommandMeta::SUPPORTS_AUTO_PIPELINING,
                 concat!("Failed to send ", $command),
             )
         }
@@ -214,7 +214,7 @@ macro_rules! cmd_key {
                 frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&[key]),
-                CommandMeta::default(),
+                CommandMeta::SUPPORTS_AUTO_PIPELINING,
                 concat!("Failed to send ", $command),
             )
         }
@@ -260,7 +260,7 @@ macro_rules! cmd_key_varargs {
                 frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&args),
-                CommandMeta::default(),
+                CommandMeta::SUPPORTS_AUTO_PIPELINING,
                 concat!("Failed to send ", $command),
             )
         }
@@ -299,7 +299,7 @@ macro_rules! cmd_key_value {
                 frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&[key, value]),
-                CommandMeta::default(),
+                CommandMeta::SUPPORTS_AUTO_PIPELINING,
                 concat!("Failed to send ", $command),
             )
         }
@@ -345,7 +345,7 @@ macro_rules! cmd_key_value_value2 {
                 frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&[key, value, value2]),
-                CommandMeta::default(),
+                CommandMeta::SUPPORTS_AUTO_PIPELINING,
                 concat!("Failed to send ", $command),
             )
         }
@@ -354,7 +354,13 @@ macro_rules! cmd_key_value_value2 {
 
 macro_rules! cmd_strings_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
-        cmd_strings_varargs!($fn_name, $name, $command, $state, CommandMeta::default());
+        cmd_strings_varargs!(
+            $fn_name,
+            $name,
+            $command,
+            $state,
+            CommandMeta::SUPPORTS_AUTO_PIPELINING
+        );
     };
     ($fn_name:ident, $name:literal, $command:literal, $state:ident, $meta:expr) => {
         #[bun_jsc::host_fn(method)]
@@ -426,7 +432,7 @@ macro_rules! cmd_key_value_varargs {
                 frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&args),
-                CommandMeta::default(),
+                CommandMeta::SUPPORTS_AUTO_PIPELINING,
                 concat!("Failed to send ", $command),
             )
         }
@@ -468,7 +474,7 @@ impl JSValkeyClient {
         let mut cmd = Command {
             command: cmd_str.slice(),
             args: CommandArgs::Args(&args),
-            meta: CommandMeta::default(),
+            meta: CommandMeta::SUPPORTS_AUTO_PIPELINING,
         };
         // Note: reshaped for borrowck (cmd.meta = cmd.meta.check(&cmd))
         let checked_meta = cmd.meta.check(&cmd);
@@ -500,7 +506,7 @@ impl JSValkeyClient {
             frame.this(),
             b"GET",
             CommandArgs::Args(&[key]),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send GET command",
         )
     }
@@ -574,7 +580,7 @@ impl JSValkeyClient {
             frame.this(),
             b"SET",
             CommandArgs::Args(&args),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send SET command",
         )
     }
@@ -596,7 +602,7 @@ impl JSValkeyClient {
             frame.this(),
             b"INCR",
             CommandArgs::Args(&[key]),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send INCR command",
         )
     }
@@ -618,7 +624,7 @@ impl JSValkeyClient {
             frame.this(),
             b"DECR",
             CommandArgs::Args(&[key]),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send DECR command",
         )
     }
@@ -681,7 +687,7 @@ impl JSValkeyClient {
                 min: 0,
                 max: 2147483647,
                 field_name: b"seconds",
-                ..Default::default()
+                ..jsc::IntegerRange::new()
             },
         )?;
 
@@ -694,7 +700,7 @@ impl JSValkeyClient {
             frame.this(),
             b"EXPIRE",
             CommandArgs::Raw(&[key.slice(), seconds_slice]),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send EXPIRE command",
         )
     }
@@ -716,7 +722,7 @@ impl JSValkeyClient {
             frame.this(),
             b"TTL",
             CommandArgs::Args(&[key]),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send TTL command",
         )
     }
@@ -761,7 +767,7 @@ impl JSValkeyClient {
             frame.this(),
             b"SREM",
             CommandArgs::Args(&args),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send SREM command",
         )
     }
@@ -804,7 +810,7 @@ impl JSValkeyClient {
             frame.this(),
             b"SRANDMEMBER",
             CommandArgs::Args(&args),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send SRANDMEMBER command",
         )
     }
@@ -827,7 +833,7 @@ impl JSValkeyClient {
             frame.this(),
             b"SMEMBERS",
             CommandArgs::Args(&[key]),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send SMEMBERS command",
         )
     }
@@ -866,7 +872,7 @@ impl JSValkeyClient {
             frame.this(),
             b"SPOP",
             CommandArgs::Args(&args),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send SPOP command",
         )
     }
@@ -911,7 +917,7 @@ impl JSValkeyClient {
             frame.this(),
             b"SADD",
             CommandArgs::Args(&args),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send SADD command",
         )
     }
@@ -1007,7 +1013,7 @@ impl JSValkeyClient {
             frame.this(),
             b"HMGET",
             CommandArgs::Args(&args),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send HMGET command",
         )
     }
@@ -1035,7 +1041,7 @@ impl JSValkeyClient {
             frame.this(),
             b"HINCRBY",
             CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send HINCRBY command",
         )
     }
@@ -1063,7 +1069,7 @@ impl JSValkeyClient {
             frame.this(),
             b"HINCRBYFLOAT",
             CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send HINCRBYFLOAT command",
         )
     }
@@ -1168,7 +1174,7 @@ impl JSValkeyClient {
             frame.this(),
             command,
             CommandArgs::Slices(&args),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             msg,
         )
     }
@@ -1297,7 +1303,7 @@ impl JSValkeyClient {
             frame.this(),
             b"PING",
             CommandArgs::Args(args_slice),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send PING command",
         )
     }
@@ -1689,14 +1695,14 @@ impl JSValkeyClient {
         b"psubscribe",
         "PSUBSCRIBE",
         DontCare,
-        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST
+        CommandMeta::SUPPORTS_AUTO_PIPELINING | CommandMeta::SUBSCRIPTION_REQUEST
     );
     cmd_strings_varargs!(
         punsubscribe,
         b"punsubscribe",
         "PUNSUBSCRIBE",
         DontCare,
-        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST
+        CommandMeta::SUPPORTS_AUTO_PIPELINING | CommandMeta::SUBSCRIPTION_REQUEST
     );
     cmd_strings_varargs!(pubsub, b"pubsub", "PUBSUB", DontCare);
     cmd_strings_varargs!(copy, b"copy", "COPY", NotSubscriber);
@@ -1814,7 +1820,7 @@ impl JSValkeyClient {
             frame.this(),
             b"PUBLISH",
             CommandArgs::Args(&args),
-            CommandMeta::default(),
+            CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send PUBLISH command",
         )
     }
@@ -1899,7 +1905,7 @@ impl JSValkeyClient {
         let command = Command {
             command: b"SUBSCRIBE",
             args: CommandArgs::Args(&redis_channels),
-            meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
+            meta: CommandMeta::SUPPORTS_AUTO_PIPELINING | CommandMeta::SUBSCRIPTION_REQUEST,
         };
         let promise = match this.send(global, frame.this(), &command) {
             Ok(p) => p,
@@ -1928,7 +1934,7 @@ impl JSValkeyClient {
             this_js,
             b"UNSUBSCRIBE",
             CommandArgs::Args(redis_channels),
-            CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
+            CommandMeta::SUPPORTS_AUTO_PIPELINING | CommandMeta::SUBSCRIPTION_REQUEST,
             "Failed to send UNSUBSCRIBE command",
         )
     }

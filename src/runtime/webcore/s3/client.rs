@@ -73,7 +73,7 @@ pub(crate) fn stat(
             method: bun_http::Method::HEAD,
             body: b"",
             request_payer,
-            ..Default::default()
+            ..s3_simple_request::Options::new()
         },
         s3_simple_request::Callback::Stat(callback),
         callback_context,
@@ -96,7 +96,7 @@ pub(crate) fn download(
             method: bun_http::Method::GET,
             body: b"",
             request_payer,
-            ..Default::default()
+            ..s3_simple_request::Options::new()
         },
         s3_simple_request::Callback::Download(callback),
         callback_context,
@@ -140,7 +140,7 @@ pub(crate) fn download_slice(
             body: b"",
             range: range.map(Vec::into_boxed_slice),
             request_payer,
-            ..Default::default()
+            ..s3_simple_request::Options::new()
         },
         s3_simple_request::Callback::Download(callback),
         callback_context,
@@ -163,7 +163,7 @@ pub(crate) fn delete(
             method: bun_http::Method::DELETE,
             body: b"",
             request_payer,
-            ..Default::default()
+            ..s3_simple_request::Options::new()
         },
         s3_simple_request::Callback::Delete(callback),
         callback_context,
@@ -177,7 +177,7 @@ pub(crate) fn list_objects(
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
-    let mut search_params: Vec<u8> = Vec::<u8>::default();
+    let mut search_params: Vec<u8> = Vec::<u8>::new();
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
 
@@ -296,15 +296,15 @@ pub(crate) fn list_objects(
         callback: s3_simple_request::Callback::ListObjects(callback),
         headers,
         http_ticket: None,
-        response_buffer: MutableString::default(),
-        result: bun_http::HTTPClientResult::default(),
-        concurrent_task: Default::default(),
+        response_buffer: MutableString::new(),
+        result: bun_http::HTTPClientResult::new(),
+        concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask::init(),
         proxy_url,
-        body: Box::default(),
+        body: Box::new([]),
         poll_ref: bun_io::KeepAlive::init(),
-        signal_store: Default::default(),
+        signal_store: bun_http::signals::Store::new(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
-        context: Default::default(),
+        context: bun_event_loop::ContextId::new(),
     }));
     // SAFETY: just allocated, non-null
     let task = unsafe { &mut *task_ptr };
@@ -352,13 +352,13 @@ pub(crate) fn list_objects(
             reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
             tls_props: crate::socket::http_client_defaults(vm),
             signals: Some(task.signal_store.to()),
-            ..Default::default()
+            ..bun_http::async_http::Options::new()
         },
     ));
 
     // queue http request
-    bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
+    bun_http::http_thread::init(&bun_http::http_thread::InitOpts::new());
+    let mut batch = bun_threading::thread_pool::Batch::new();
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: its context aborts it
@@ -398,7 +398,7 @@ pub(crate) fn upload(
             acl,
             storage_class,
             request_payer,
-            ..Default::default()
+            ..s3_simple_request::Options::new()
         },
         s3_simple_request::Callback::Upload(callback),
         callback_context,
@@ -513,14 +513,14 @@ pub(crate) fn writable_stream(
         // keeping this task alive). Dereference to `&'static` for storage.
         vm: VirtualMachine::get(),
         global_this: global_static,
-        buffered: JsCell::new(StreamBuffer::default()),
+        buffered: JsCell::new(StreamBuffer::new()),
         uploaded_bytes: Cell::new(0),
         path: Box::<[u8]>::from(path),
         proxy: None,
         content_type: content_type.map(Box::<[u8]>::from),
         content_disposition: content_disposition.map(Box::<[u8]>::from),
         content_encoding: content_encoding.map(Box::<[u8]>::from),
-        upload_id: JsCell::new(Box::default()),
+        upload_id: JsCell::new(Box::new([])),
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
         state: Cell::new(MultiPartUploadState::NotStarted),
@@ -546,7 +546,7 @@ pub(crate) fn writable_stream(
             task: Some(unsafe { RefPtr::from_raw(task_ptr) }),
             global_this: Some(bun_ptr::BackRef::new(cx.global())),
             writer_holders: Cell::new(2),
-            ..Default::default()
+            ..NetworkSink::init()
         }));
 
     task.callback_context.set(response_stream.cast::<c_void>());
@@ -712,7 +712,7 @@ impl S3UploadStreamWrapper {
                 }
                 // The stream is not read again. Unrooted, its pump (which may never settle: the
                 // script running it may be a disposed `Bun.ModuleGraph`'s) can be collected.
-                self_.readable_stream_ref = ReadableStreamStrong::default();
+                self_.readable_stream_ref = ReadableStreamStrong::Empty;
                 if is_native {
                     self_.detach_sink();
                     // SAFETY: `self_` is the live Box allocation; this balances the
@@ -856,7 +856,7 @@ pub(crate) fn upload_stream(
                 };
                 stream.pending.set(crate::webcore::streams::Pending {
                     result: crate::webcore::streams::StreamResult::Done,
-                    ..Default::default()
+                    ..crate::webcore::streams::Pending::new()
                 });
                 let js_err = err.to_js(cx.global());
                 js_err.ensure_still_alive();
@@ -880,7 +880,7 @@ pub(crate) fn upload_stream(
                 };
                 stream.pending.set(crate::webcore::streams::Pending {
                     result: crate::webcore::streams::StreamResult::Done,
-                    ..Default::default()
+                    ..crate::webcore::streams::Pending::new()
                 });
                 let js_err = err.to_js(cx.global());
                 js_err.ensure_still_alive();
@@ -932,14 +932,14 @@ pub(crate) fn upload_stream(
         // outlives every MultiPartUpload. Dereference to `&'static` for storage.
         vm: VirtualMachine::get(),
         global_this: global_static,
-        buffered: JsCell::new(StreamBuffer::default()),
+        buffered: JsCell::new(StreamBuffer::new()),
         uploaded_bytes: Cell::new(0),
         path: Box::<[u8]>::from(path),
         proxy: proxy.map(Box::<[u8]>::from),
         content_type: content_type.map(Box::<[u8]>::from),
         content_disposition: content_disposition.map(Box::<[u8]>::from),
         content_encoding: content_encoding.map(Box::<[u8]>::from),
-        upload_id: JsCell::new(Box::default()),
+        upload_id: JsCell::new(Box::new([])),
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
         state: Cell::new(MultiPartUploadState::WaitStreamCheck),
@@ -967,7 +967,7 @@ pub(crate) fn upload_stream(
             // SAFETY: adopts one of `task_ptr`'s two initial refs.
             task: unsafe { RefPtr::from_raw(task_ptr) },
             end_promise: bun_jsc::JSPromiseStrong::init(cx.global()),
-            readable_stream_ref: ReadableStreamStrong::default(),
+            readable_stream_ref: ReadableStreamStrong::Empty,
             global: global_static,
         }));
     // SAFETY: freshly heap-allocated; exclusive access here.
@@ -984,7 +984,7 @@ pub(crate) fn upload_stream(
         // SAFETY: `task_ptr` is live; the sink's ref is released in `detach_writable`.
         task: Some(unsafe { RefPtr::init_ref(task_ptr) }),
         global_this: Some(bun_ptr::BackRef::new(cx.global())),
-        ..Default::default()
+        ..NetworkSink::init()
     }));
     let sink_handle = crate::webcore::SinkHandle::S3Upload(bun_ptr::BackRef::new_mut(sink));
     ctx.sink = Some(NonNull::from(&mut *sink));
@@ -1137,7 +1137,7 @@ fn download_stream(
 ) -> *mut S3HttpDownloadStreamingTask {
     if s3_simple_request::nothing_new_leaves(context) {
         callback(
-            &MutableString::default(),
+            &MutableString::new(),
             false,
             Some(s3_simple_request::NOTHING_NEW_LEAVES),
             callback_context,
@@ -1183,7 +1183,7 @@ fn download_stream(
             drop(range);
             let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
             callback(
-                &MutableString::default(),
+                &MutableString::new(),
                 false,
                 Some(Error::S3Error {
                     code: error_code_and_message.code,
@@ -1221,20 +1221,20 @@ fn download_stream(
             headers,
             http_ticket: None,
             has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
-            signal_store: Default::default(),
-            signals: Default::default(),
+            signal_store: bun_http::signals::Store::new(),
+            signals: bun_http::Signals::new(),
             poll_ref: bun_io::KeepAlive::init(),
-            mutex: Default::default(),
+            mutex: bun_threading::Mutex::init(),
             request_error: None,
-            reported_response_buffer: MutableString::default(),
+            reported_response_buffer: MutableString::new(),
             // `State::default()` sets
             // `has_more = true` (bit 48). Passing 0 here would start the task with
             // `has_more == false`, tripping the `assert(state.has_more)` in
             // `process_http_callback` on the very first HTTP-thread callback.
             state: core::sync::atomic::AtomicU64::new(
-                crate::webcore::s3::download_stream::State::default().0,
+                crate::webcore::s3::download_stream::State::new().0,
             ),
-            concurrent_task: Default::default(),
+            concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask::init(),
             async_http_id: 0,
             abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpDownloadStreamingTask>(),
         },
@@ -1287,7 +1287,7 @@ fn download_stream(
             signals: Some(task.signals),
             reject_unauthorized: Some(reject_unauthorized),
             tls_props: crate::socket::http_client_defaults(vm),
-            ..Default::default()
+            ..bun_http::async_http::Options::new()
         },
     ));
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
@@ -1296,8 +1296,8 @@ fn download_stream(
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request
-    bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
+    bun_http::http_thread::init(&bun_http::http_thread::InitOpts::new());
+    let mut batch = bun_threading::thread_pool::Batch::new();
     http.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
@@ -1484,7 +1484,7 @@ pub(crate) fn readable_stream(
     let reader: *mut crate::webcore::byte_stream::Source =
         crate::webcore::byte_stream::Source::new(crate::webcore::readable_stream::NewSource {
             global_this: Some(bun_ptr::BackRef::new(cx.global())),
-            ..crate::webcore::readable_stream::NewSource::with_context(ByteStream::default())
+            ..crate::webcore::readable_stream::NewSource::with_context(ByteStream::new())
         });
     // SAFETY: freshly heap-allocated via TrivialNew; exclusive access until handed to JS below.
     let reader_mut = unsafe { &mut *reader };
@@ -1493,7 +1493,7 @@ pub(crate) fn readable_stream(
     let readable_value = reader_mut.to_readable_stream(cx)?;
 
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {
-        stream: Default::default(),
+        stream: crate::webcore::byte_stream::ProducerHold::new(),
         path: Box::<[u8]>::from(path),
         global: global_static,
         task: Cell::new(core::ptr::null_mut()),

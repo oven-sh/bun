@@ -28,7 +28,7 @@ impl Rule for ExportsStyle {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("exports").then(AssignmentTargets::default)
+        file.mentions("exports").then(AssignmentTargets::new)
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

@@ -187,10 +187,19 @@ impl RawToken {
 }
 
 /// The tokens and the comments of a file, each in source order, each once it is asked for.
-#[derive(Default)]
 pub(crate) struct TokenStore {
     tokens: OnceCell<Vec<RawToken>>,
     comments: OnceCell<Vec<RawToken>>,
+}
+
+impl TokenStore {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            tokens: core::cell::OnceCell::new(),
+            comments: core::cell::OnceCell::new(),
+        }
+    }
 }
 
 /// A token or a comment.
@@ -459,7 +468,7 @@ fn is_whitespace(text: &[u8]) -> bool {
 
 impl<'a> File<'a> {
     fn raw_tokens(&'a self) -> &'a [RawToken] {
-        let store = self.lazy.tokens.get_or_init(TokenStore::default);
+        let store = self.lazy.tokens.get_or_init(TokenStore::new);
         store.tokens.get_or_init(|| {
             let (tokens, comments) = scan::scan(self);
             // Already there if the comments were asked for first.
@@ -469,7 +478,7 @@ impl<'a> File<'a> {
     }
 
     fn raw_comments(&'a self) -> &'a [RawToken] {
-        let store = self.lazy.tokens.get_or_init(TokenStore::default);
+        let store = self.lazy.tokens.get_or_init(TokenStore::new);
         if let Some(comments) = store.comments.get() {
             return comments;
         }

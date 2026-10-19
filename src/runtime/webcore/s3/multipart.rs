@@ -391,7 +391,7 @@ impl UploadPart {
                 body: self.data(),
                 search_params: Some(search_params),
                 request_payer: ctx.request_payer,
-                ..Default::default()
+                ..s3_simple_request::S3RequestOptions::new()
             },
             s3_simple_request::S3Callback::Part(Self::on_part_response),
             std::ptr::from_ref::<Self>(self).cast_mut().cast::<c_void>(),
@@ -476,7 +476,7 @@ impl MultiPartUpload {
                             acl: self_.acl,
                             storage_class: self_.storage_class,
                             request_payer: self_.request_payer,
-                            ..Default::default()
+                            ..s3_simple_request::S3RequestOptions::new()
                         },
                         s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                         this.cast::<c_void>(),
@@ -903,7 +903,7 @@ impl MultiPartUpload {
                 body: self.multipart_upload_list.get().as_slice(),
                 search_params: Some(search_params),
                 request_payer: self.request_payer,
-                ..Default::default()
+                ..s3_simple_request::S3RequestOptions::new()
             },
             s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request),
             self.as_ctx_ptr(),
@@ -936,7 +936,7 @@ impl MultiPartUpload {
                 body: b"",
                 search_params: Some(search_params),
                 request_payer: self.request_payer,
-                ..Default::default()
+                ..s3_simple_request::S3RequestOptions::new()
             },
             s3_simple_request::S3Callback::Delete(Self::on_rollback_multi_part_request),
             self.as_ctx_ptr(),
@@ -972,7 +972,7 @@ impl MultiPartUpload {
                     acl: self.acl,
                     storage_class: self.storage_class,
                     request_payer: self.request_payer,
-                    ..Default::default()
+                    ..s3_simple_request::S3RequestOptions::new()
                 },
                 s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
                 self.as_ctx_ptr(),
@@ -1013,7 +1013,7 @@ impl MultiPartUpload {
             }
             // if is one big chunk we can pass ownership and avoid dupe
             if self.buffered.get().cursor == 0 && self.buffered.get().size() == len {
-                let owned = self.buffered.replace(StreamBuffer::default());
+                let owned = self.buffered.replace(StreamBuffer::new());
                 // we need to know the allocated size to free the memory later
                 let allocated_size = owned.memory_cost();
                 let slice_len = owned.slice().len();
@@ -1113,7 +1113,7 @@ impl MultiPartUpload {
                     acl: self.acl,
                     storage_class: self.storage_class,
                     request_payer: self.request_payer,
-                    ..Default::default()
+                    ..s3_simple_request::S3RequestOptions::new()
                 },
                 s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                 self.as_ctx_ptr(),

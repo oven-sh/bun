@@ -49,14 +49,20 @@ pub struct Theme<'a> {
 
 /// Renderer that only collects image URLs — no output. Used by the CLI
 /// pre-scan pass to decide which remote images to download.
-#[derive(Default)]
 pub struct ImageUrlCollector {
     pub urls: Vec<Box<[u8]>>,
 }
 
 impl ImageUrlCollector {
+    #[inline]
+    pub fn new() -> Self {
+        Self { urls: Vec::new() }
+    }
+}
+
+impl ImageUrlCollector {
     pub fn init() -> ImageUrlCollector {
-        ImageUrlCollector::default()
+        ImageUrlCollector::new()
     }
 
     pub fn renderer(&mut self) -> Renderer<'_> {
@@ -186,8 +192,8 @@ struct BlockContext {
     indent: u32,
 }
 
-impl Default for BlockContext {
-    fn default() -> Self {
+impl BlockContext {
+    fn new() -> Self {
         Self {
             kind: BlockKind::Li,
             data: 0,
@@ -321,7 +327,7 @@ impl<'a> AnsiRenderer<'a> {
                 self.push_block(BlockContext {
                     kind: BlockKind::Quote,
                     indent: 2,
-                    ..Default::default()
+                    ..BlockContext::new()
                 });
             }
             BlockType::Ul => {
@@ -330,7 +336,7 @@ impl<'a> AnsiRenderer<'a> {
                     kind: BlockKind::Ul,
                     data,
                     indent: 2,
-                    ..Default::default()
+                    ..BlockContext::new()
                 });
             }
             BlockType::Ol => {
@@ -339,7 +345,7 @@ impl<'a> AnsiRenderer<'a> {
                     kind: BlockKind::Ol,
                     data,
                     indent: 3,
-                    ..Default::default()
+                    ..BlockContext::new()
                 });
             }
             BlockType::Li => {
@@ -347,7 +353,7 @@ impl<'a> AnsiRenderer<'a> {
                 self.write_indent();
                 let mut entry = BlockContext {
                     kind: BlockKind::Li,
-                    ..Default::default()
+                    ..BlockContext::new()
                 };
                 // find_parent_list returns an index instead of
                 // `&mut BlockContext` so we can call self.write_styled()
@@ -1068,7 +1074,7 @@ impl<'a> AnsiRenderer<'a> {
         let link = self.link.take();
         self.link = space.in_link.then(|| OpenLink {
             depth: 1,
-            href: Box::default(),
+            href: Box::new([]),
         });
         self.wrap_break();
         self.span_flags = span_flags;
@@ -1546,7 +1552,7 @@ impl<'a> AnsiRenderer<'a> {
             opts: bun_core::fmt::HighlighterOptions {
                 enable_colors: true,
                 check_for_unhighlighted_write: false,
-                ..Default::default()
+                ..bun_core::fmt::HighlighterOptions::new()
             },
         };
         let mut aw: Vec<u8> = Vec::new();
@@ -1699,7 +1705,7 @@ impl<'a> AnsiRenderer<'a> {
                 b""
             };
             let mut rest = content;
-            let mut state = CellAnsiState::default();
+            let mut state = CellAnsiState::new();
             while !rest.is_empty() {
                 let mut cut = visible_index_at(rest, w);
                 if cut < rest.len() {
@@ -1759,7 +1765,7 @@ impl<'a> AnsiRenderer<'a> {
                 let opens: CellAnsiState = if line < state_at[i].len() {
                     state_at[i][line]
                 } else {
-                    CellAnsiState::default()
+                    CellAnsiState::new()
                 };
                 self.out.write_byte(b' ');
                 if row.is_header && self.theme.colors {
@@ -2056,12 +2062,24 @@ impl<'a> AnsiRenderer<'a> {
 /// Tracked so a cell that wraps mid-span can re-emit the same opens
 /// on the continuation segment AND close any open OSC 8 link before
 /// the border character — `\x1b[0m` doesn't terminate OSC 8.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct CellAnsiState<'s> {
     flags: u8,
     fg: Option<&'s [u8]>,
     bg: Option<&'s [u8]>,
     link: Option<&'s [u8]>,
+}
+
+impl<'s> CellAnsiState<'s> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            flags: 0,
+            fg: None,
+            bg: None,
+            link: None,
+        }
+    }
 }
 
 const CELL_BOLD: u8 = 1 << 0;

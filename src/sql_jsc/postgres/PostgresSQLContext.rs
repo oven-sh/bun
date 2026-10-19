@@ -5,11 +5,21 @@
 use crate::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMachineSqlExt as _};
 
 #[repr(C)]
-#[derive(Default)]
 pub struct PostgresSQLContext {
     pub(crate) on_query_resolve_fn: StrongOptional,
     pub(crate) on_query_reject_fn: StrongOptional,
     pub(crate) array_literal_fn: StrongOptional,
+}
+
+impl PostgresSQLContext {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            on_query_resolve_fn: StrongOptional::new(),
+            on_query_reject_fn: StrongOptional::new(),
+            array_literal_fn: StrongOptional::new(),
+        }
+    }
 }
 
 impl PostgresSQLContext {

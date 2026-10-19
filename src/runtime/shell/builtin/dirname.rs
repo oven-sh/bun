@@ -3,15 +3,22 @@ use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Default)]
 pub(crate) struct Dirname {
     state: State,
     buf: Vec<u8>,
 }
 
-#[derive(Default)]
+impl Dirname {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            state: State::Idle,
+            buf: Vec::new(),
+        }
+    }
+}
+
 enum State {
-    #[default]
     Idle,
     Err,
     Done,

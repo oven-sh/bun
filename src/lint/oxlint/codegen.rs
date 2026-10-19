@@ -108,10 +108,19 @@ fn print_number(out: &mut Vec<u8>, n: f64) {
 /// What the fixes of oxlint print a part of the tree anew with: oxc's `Codegen`, with single quotes. Strings, numbers,
 /// objects and arrays are printed as there. Everything else stays as it is written, which is the same only if it is
 /// written as oxc prints it.
-#[derive(Default)]
 pub struct Codegen {
     pub code: Vec<u8>,
     indent: usize,
+}
+
+impl Codegen {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            code: Vec::new(),
+            indent: 0,
+        }
+    }
 }
 
 impl Codegen {

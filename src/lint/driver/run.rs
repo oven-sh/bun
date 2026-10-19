@@ -38,7 +38,7 @@ macro_rules! pretty {
 const ESLINT_VERSION: &str = "10.12.0";
 
 /// Standard output, or standard error.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct Stream {
     pub is_tty: bool,
     pub colors: bool,
@@ -104,11 +104,21 @@ pub struct Environment<'e> {
 }
 
 /// What to print, and the exit code: 0, 1 if there are problems in the code, 2 if linting failed.
-#[derive(Default)]
 pub struct Outcome {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub exit_code: u8,
+}
+
+impl Outcome {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            exit_code: 0,
+        }
+    }
 }
 
 /// The variables that tell oxlint that an agent runs it. Any value counts but an empty one.
@@ -277,7 +287,7 @@ impl Pool {
 
     pub(crate) fn new(threads: usize) -> Pool {
         Pool {
-            caches: Default::default(),
+            caches: bun_sema_driver::ThreadCaches::new(),
             threads: match threads {
                 0 => usize::from(bun_core::get_thread_count()),
                 threads => threads.min(Pool::MOST),
@@ -296,7 +306,6 @@ impl Pool {
 }
 
 /// `--timing`: how long all threads together have spent on what, in nanoseconds.
-#[derive(Default)]
 pub(crate) struct Timing {
     is_on: bool,
     pub(crate) read: AtomicU64,
@@ -304,6 +313,19 @@ pub(crate) struct Timing {
     pub(crate) rules: AtomicU64,
     /// Files in which `File::mentions` says yes to every name, so that each rule about a name listens.
     pub(crate) without_filter: AtomicU64,
+}
+
+impl Timing {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            is_on: false,
+            read: core::sync::atomic::AtomicU64::new(0),
+            parse: core::sync::atomic::AtomicU64::new(0),
+            rules: core::sync::atomic::AtomicU64::new(0),
+            without_filter: core::sync::atomic::AtomicU64::new(0),
+        }
+    }
 }
 
 impl Timing {
@@ -342,7 +364,6 @@ struct Run<'r> {
 }
 
 /// What there is to say about the file of suppressions.
-#[derive(Default)]
 struct Suppressed {
     /// It has what does not occur.
     has_unused: bool,
@@ -350,6 +371,17 @@ struct Suppressed {
     has_new: bool,
     /// It was written. `Some(true)`: it was there before.
     updated: Option<bool>,
+}
+
+impl Suppressed {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            has_unused: false,
+            has_new: false,
+            updated: None,
+        }
+    }
 }
 
 /// What was linted.
@@ -726,7 +758,7 @@ impl Run<'_> {
         let mut with_types: Vec<(&Target, Typed)> = Vec::new();
         let mut rules_without_types: Vec<&'static str> = Vec::new();
         // The configurations whose rules are in that list. Many files have one.
-        let (mut listed, mut last) = (FxHashSet::default(), None);
+        let (mut listed, mut last) = (FxHashSet::with_hasher(bun_sema::util::FxBuild), None);
         for target in &supported {
             let Status::Matched(config) = &target.status else {
                 without_types.push(target);
@@ -825,7 +857,7 @@ impl Run<'_> {
             plain,
             next_heavy: AtomicUsize::new(0),
             taken: AtomicUsize::new(0),
-            ends: Default::default(),
+            ends: core::array::from_fn(|_| core::sync::atomic::AtomicUsize::new(0)),
             next_plain: AtomicUsize::new(0),
             lint: &lint,
         };
@@ -1012,7 +1044,7 @@ impl Run<'_> {
         }
         let timing = Timing {
             is_on: options.timing,
-            ..Timing::default()
+            ..Timing::new()
         };
         let names: Vec<_> = (0..pool.threads().max(1))
             .map(|_| bun_sema::session::Session::new())
@@ -1031,7 +1063,7 @@ impl Run<'_> {
         let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
         let inferred = (options.infer_globals == Some(true) || by_options)
             .then(|| Inferred::new(environment, pool.threads(), by_options));
-        let invalid_tsconfigs = Guarded::new(Default::default());
+        let invalid_tsconfigs = Guarded::new(crate::typed::InvalidTsconfigs::new());
         let only = (options.only.as_ref()).map(|it| git::Files::read(it, options.fix, environment));
         let only = match only.transpose() {
             Ok(only) => only,
@@ -1110,7 +1142,7 @@ impl Run<'_> {
             }
             return self.out;
         }
-        let mut phases = Phases::default();
+        let mut phases = Phases::new();
         let linted = match options.stdin {
             true => match fs::read_stdin() {
                 Ok(text) => self.lint_text(&loader, &context, text),
@@ -1241,7 +1273,7 @@ impl Run<'_> {
             );
         }
         let mut in_comments = std::mem::take(&mut *skipped_in_comments.lock());
-        let mut not_built_in = NotBuiltIn::default();
+        let mut not_built_in = NotBuiltIn::new();
         in_comments.retain(|it| !not_built_in.takes(it));
         if !in_comments.is_empty() {
             bun_lint::utils::sort::sort_by(&mut in_comments, |a, b| a.cmp(b));
@@ -1387,7 +1419,7 @@ impl Run<'_> {
             let changed: Vec<&FileResult> = results.iter().filter(|it| it.is_fixed).collect();
             let (mut failures, mut written) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
             let in_written = AtomicU64::new(0);
-            let once = fs::Written::default();
+            let once = fs::Written::new();
             pool.for_each(changed.len(), 1, &|index| {
                 let result = changed[index];
                 let done = match result.written() {
@@ -1425,7 +1457,7 @@ impl Run<'_> {
         }
 
         let suppressed = match options.stdin {
-            true => Suppressed::default(),
+            true => Suppressed::new(),
             false => match self.apply_suppressions(&mut results, is_oxlint, is_native) {
                 Ok(suppressed) => suppressed,
                 Err(Fatal(error)) => return self.fail(&error),
@@ -1443,7 +1475,7 @@ impl Run<'_> {
             false => None,
         };
 
-        let mut counts = Counts::default();
+        let mut counts = Counts::new();
         (results.iter().chain(&about_suppressions)).for_each(|it| counts.add(it.counts));
         if options.quiet {
             results.iter_mut().for_each(FileResult::keep_errors_only);
@@ -1709,7 +1741,7 @@ impl Run<'_> {
             ));
         }
         if !writes && !options.prune_suppressions && !exists {
-            return Ok(Suppressed::default());
+            return Ok(Suppressed::new());
         }
         let updated = (writes || (options.prune_suppressions && exists)).then_some(exists);
         let mut suppressed = Suppressions::load(&path)?;
@@ -1723,7 +1755,7 @@ impl Run<'_> {
             suppressed.save(&path)?;
             return Ok(Suppressed {
                 updated,
-                ..Suppressed::default()
+                ..Suppressed::new()
             });
         }
         let is_new = |it: &LintMessage| {
@@ -1806,12 +1838,21 @@ impl Run<'_> {
 
 /// What the configurations of the files that were linted, and their comments, turn on without naming it, or where something else
 /// does the work, and what is left out here on purpose. That it did not run is a note, in every format.
-#[derive(Default)]
 struct NotBuiltIn {
     /// [`formatting_rule`]
     about_layout: Vec<&'static str>,
     /// [`ResolvedConfig::plugins_without_rules`]
     plugins: Vec<&'static str>,
+}
+
+impl NotBuiltIn {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            about_layout: Vec::new(),
+            plugins: Vec::new(),
+        }
+    }
 }
 
 impl NotBuiltIn {
@@ -1862,13 +1903,24 @@ impl NotBuiltIn {
 }
 
 /// How long the parts of a run took, in seconds.
-#[derive(Default)]
 struct Phases {
     discovery: f64,
     /// With types.
     checking: f64,
     linting: f64,
     formatting: f64,
+}
+
+impl Phases {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            discovery: 0.0,
+            checking: 0.0,
+            linting: 0.0,
+            formatting: 0.0,
+        }
+    }
 }
 
 /// Tells the user that the files at `paths` were not linted. `because`: why, for one file and for more than one.
@@ -1920,9 +1972,9 @@ fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {
 /// What there is to say about a command line that cannot be read, which is `message`.
 pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome {
     let run = Run {
-        options: &Options::default(),
+        options: &Options::new(),
         environment,
-        out: Outcome::default(),
+        out: Outcome::new(),
         began: Instant::now(),
         is_for_oxlint: None,
         modules: None,
@@ -1941,7 +1993,7 @@ pub fn run(options: &Options, environment: &Environment) -> Outcome {
         let run = Run {
             options,
             environment,
-            out: Outcome::default(),
+            out: Outcome::new(),
             began: Instant::now(),
             is_for_oxlint: None,
             modules,

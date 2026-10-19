@@ -512,7 +512,7 @@ impl PostgresSQLConnection {
         }
         self.clean_up_requests(Some(value));
         self.update_has_pending_activity();
-        if let Some(target) = self.cancel_target.take() {
+        if let Some(target) = self.cancel_target.replace(None) {
             target
                 .session
                 .on_cancel_connection_closed(&target.request, sent_first_message);
@@ -529,7 +529,7 @@ impl PostgresSQLConnection {
             &message,
             &PostgresErrorOptions {
                 code,
-                ..Default::default()
+                ..PostgresErrorOptions::new()
             },
         ) {
             Ok(v) => v,
@@ -975,7 +975,7 @@ impl ConnectionStrings {
         options: &[u8],
         path: &[u8],
     ) -> Self {
-        let mut b = bun_core::StringBuilder::default();
+        let mut b = bun_core::StringBuilder::new();
         for string in [user, password, scram_password, database, options, path] {
             b.count_z(string);
         }
@@ -1059,20 +1059,20 @@ fn open(
             })),
             status: Cell::new(Status::Connecting),
             ref_count: Cell::new(1),
-            write_buffer: JsCell::new(OffsetByteList::default()),
-            read_buffer: JsCell::new(OffsetByteList::default()),
+            write_buffer: JsCell::new(OffsetByteList::new()),
+            read_buffer: JsCell::new(OffsetByteList::new()),
             last_message_start: Cell::new(0),
             requests: JsCell::new(PostgresRequest::Queue::new()),
             pipelined_requests: Cell::new(0),
             nonpipelinable_requests: Cell::new(0),
             pending_requests: Cell::new(0),
             advancing: Cell::new(false),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: JsCell::new(KeepAlive::new()),
             global_object: BackRef::new(global_object),
             vm: BackRef::from(
                 core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
             ),
-            statements: JsCell::new(StatementCache::default()),
+            statements: JsCell::new(StatementCache::new()),
             prepared_statement_id: Cell::new(0),
             transaction_status: Cell::new(b'I'),
             pending_activity_count: AtomicU32::new(0),
@@ -1416,7 +1416,7 @@ impl PostgresSQLConnection {
             &PostgresErrorOptions {
                 code: b"ERR_POSTGRES_QUERY_CANCELLED",
                 hint,
-                ..Default::default()
+                ..PostgresErrorOptions::new()
             },
         )
         .unwrap_or_else(|err| self.global().take_error(err))
@@ -1892,7 +1892,8 @@ impl PostgresSQLConnection {
             debug_assert!(false, "a queued request has a statement and a wrapper");
             return self.remove_unwritten(&req);
         };
-        let values = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or_default();
+        let values =
+            postgres_sql_query::js::binding_get_cached(this_value).unwrap_or_else(JSValue::new);
         let unnamed = self
             .flags
             .get()
@@ -2023,7 +2024,7 @@ impl PostgresSQLConnection {
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
-                        let owner = self.js_value.get().try_get().unwrap_or_default();
+                        let owner = self.js_value.get().try_get().unwrap_or_else(JSValue::new);
                         let cs = statement.structure(owner, self.global());
                         structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                         cached_structure = Some(ParentRef::new(cs));
@@ -2076,7 +2077,7 @@ impl PostgresSQLConnection {
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
                 let pending_value = postgres_sql_query::js::pending_value_get_cached(this_value)
-                    .unwrap_or_default();
+                    .unwrap_or_else(JSValue::new);
                 pending_value.ensure_still_alive();
                 let result = match putter.to_js(
                     pending_value,
@@ -2152,7 +2153,8 @@ impl PostgresSQLConnection {
                     return reader.skip_message();
                 }
 
-                let mut cmd: protocol::CommandComplete = Default::default();
+                let mut cmd: protocol::CommandComplete =
+                    bun_sql::postgres::postgres_protocol::CommandComplete::new();
                 cmd.decode_internal(reader.reborrow())?;
                 debug!("-> {}", bstr::BStr::new(cmd.command_tag.slice()));
 
@@ -2258,9 +2260,9 @@ impl PostgresSQLConnection {
                 // invalidate state derived from them so the next DataRow builds
                 // the correct structure instead of reusing a stale cached one.
                 statement.fields = description.fields.into_vec();
-                statement.cached_structure = Default::default();
+                statement.cached_structure = PostgresCachedStructure::new();
                 statement.needs_duplicate_check = true;
-                statement.fields_flags = Default::default();
+                statement.fields_flags = crate::shared::sql_data_cell::Flags::empty();
             }
             MessageType::Authentication => {
                 let auth = protocol::Authentication::decode_internal(&mut reader)?;
@@ -2580,9 +2582,9 @@ impl PostgresSQLConnection {
                         }
                         debug!("MD5Password");
                         // Format is: md5 + md5(md5(password + username) + salt)
-                        let mut first_hash_buf: [u8; 16] = Default::default();
+                        let mut first_hash_buf: [u8; 16] = [0; 16];
                         let mut first_hash_str = [0u8; 32];
-                        let mut final_hash_buf: [u8; 16] = Default::default();
+                        let mut final_hash_buf: [u8; 16] = [0; 16];
                         let mut final_hash_str = [0u8; 32];
                         let mut final_password_buf = [0u8; 36];
 

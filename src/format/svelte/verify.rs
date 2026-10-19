@@ -775,7 +775,7 @@ fn signature(
         tree: &tree,
         text,
         parse: parsers.program,
-        reader: Reader::default(),
+        reader: Reader::new(),
         comments: 0,
         sensitivity,
     };

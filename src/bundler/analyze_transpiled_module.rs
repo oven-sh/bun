@@ -78,7 +78,7 @@ impl RecordKind {
 
 bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct Flags: u8 {
         const CONTAINS_IMPORT_META = 1 << 0;
         const IS_TYPESCRIPT        = 1 << 1;
@@ -478,10 +478,19 @@ impl<'a> ModuleInfoSlotTable<'a> {
 
 /// Interns every module's strings during a `--compile` link and serializes
 /// the `ModuleInfoSlotTable` their bodies index.
-#[derive(Default)]
 pub struct ModuleInfoSlotTableBuilder {
     ids: bun_collections::HashMap<Box<[u8]>, u32>,
     slots: Vec<u32>,
+}
+
+impl ModuleInfoSlotTableBuilder {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            ids: bun_collections::HashMap::init(),
+            slots: Vec::new(),
+        }
+    }
 }
 impl ModuleInfoSlotTableBuilder {
     /// Interns every string of `mi`; the result maps its local ids to table ids.

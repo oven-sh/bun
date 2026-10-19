@@ -253,12 +253,22 @@ impl<'a> Program<'a> {
 }
 
 /// What is allocated to compare two programs, and used again for the next two.
-#[derive(Default)]
 pub struct Scratch {
     /// By atom of the program before, the atom of the program after that has the same text.
     atoms: Vec<u32>,
     operands: (Vec<ExprId>, Vec<ExprId>),
     imports: (Vec<u32>, Vec<u32>),
+}
+
+impl Scratch {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            atoms: Vec::new(),
+            operands: (Vec::new(), Vec::new()),
+            imports: (Vec::new(), Vec::new()),
+        }
+    }
 }
 
 /// No atom has been found for it yet.

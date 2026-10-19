@@ -44,11 +44,11 @@ pub trait HeapNode: Sized {
     fn heap(&mut self) -> &mut IntrusiveField<Self>;
 }
 
-impl<T: HeapNode, Context: HeapContext<T>> Default for Intrusive<T, Context>
+impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context>
 where
     Context: bun_alloc::Stateless,
 {
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             root: ptr::null_mut(),
             context: Context::INSTANCE,
@@ -149,7 +149,7 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
 
         // Clear pointers with runtime safety so we can verify on
         // insert that values aren't incorrectly being set multiple times.
-        *(*root).heap() = IntrusiveField::default();
+        *(*root).heap() = IntrusiveField::new();
 
         root
     }
@@ -292,8 +292,8 @@ pub struct IntrusiveField<T> {
     pub next: *mut T,
 }
 
-impl<T> Default for IntrusiveField<T> {
-    fn default() -> Self {
+impl<T> IntrusiveField<T> {
+    pub fn new() -> Self {
         Self {
             child: ptr::null_mut(),
             prev: ptr::null_mut(),

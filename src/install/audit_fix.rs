@@ -155,7 +155,7 @@ impl AdvisoryIndex {
         for (i, advisory) in advisories.iter().enumerate() {
             by_name
                 .entry(Semver::string::Builder::string_hash(&advisory.package_name))
-                .or_default()
+                .or_insert_with(Vec::new)
                 .push(i);
         }
         Ok(AdvisoryIndex {
@@ -486,7 +486,7 @@ fn pin_for(
                 site: EditSite::Catalog(Box::from(catalog_name)),
                 key: Box::from(name),
                 old_literal: Box::from(entry.version.literal.slice(buf)),
-                new_literal: Box::default(),
+                new_literal: Box::new([]),
             })
         }
         DependencyVersionTag::Npm => {
@@ -509,7 +509,7 @@ fn pin_for(
                         site: EditSite::Override(selector),
                         key: Box::from(name),
                         old_literal: written,
-                        new_literal: Box::default(),
+                        new_literal: Box::new([]),
                     })
                 }
                 None => Some(PackageJsonEdit {
@@ -518,7 +518,7 @@ fn pin_for(
                     site: EditSite::Dependencies,
                     key: Box::from(name),
                     old_literal: Box::from(literal),
-                    new_literal: Box::default(),
+                    new_literal: Box::new([]),
                 }),
             }
         }
@@ -905,7 +905,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                     major: candidate.version.major,
                     minor: candidate.version.minor,
                     patch: candidate.version.patch,
-                    ..Default::default()
+                    ..Semver::Version::new()
                 },
                 edges,
                 downgrade: candidate.downgrade,
@@ -1405,7 +1405,7 @@ fn enqueue_pinned_as(
         behavior: row.behavior.with(Behavior::PEER, false),
         version: dependency::Version {
             tag: DependencyVersionTag::Npm,
-            literal: Semver::String::default(),
+            literal: Semver::String::new(),
             value: dependency::Value {
                 npm: ManuallyDrop::new(dependency::NpmInfo {
                     name: pkg_name,

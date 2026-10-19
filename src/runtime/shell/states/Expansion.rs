@@ -54,9 +54,8 @@ pub(crate) struct Expansion {
     pub(crate) out_exit_code: ExitCode,
 }
 
-#[derive(Default, strum::IntoStaticStr)]
+#[derive(strum::IntoStaticStr)]
 pub enum ExpansionState {
-    #[default]
     Idle,
     Walking,
     CmdSubst,
@@ -68,7 +67,6 @@ pub enum ExpansionState {
     Err(Box<ShellErr>),
 }
 
-#[derive(Default)]
 pub(crate) struct ExpansionOut {
     pub(crate) buf: Vec<u8>,
     /// Word boundaries within `buf` (for IFS splitting / glob results).
@@ -82,6 +80,18 @@ pub(crate) struct ExpansionOut {
     /// empty, this distinguishes `""` (push one empty arg) from `$unset`
     /// (push no arg). See [`Expansion::has_quoted_empty`].
     pub(crate) has_quoted_empty: bool,
+}
+
+impl ExpansionOut {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            bounds: Vec::new(),
+            out_exit_code: 0,
+            has_quoted_empty: false,
+        }
+    }
 }
 
 impl Expansion {
@@ -102,7 +112,7 @@ impl Expansion {
             node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Atom) },
             state: ExpansionState::Idle,
             word_idx: 0,
-            out: ExpansionOut::default(),
+            out: ExpansionOut::new(),
             current_out: Vec::new(),
             meta_offsets: Vec::new(),
             child_script: None,
@@ -757,7 +767,7 @@ impl Expansion {
     /// Take the expanded output (called by the parent after `child_done`).
     pub(crate) fn take_out(interp: &Interpreter, this: NodeId) -> ExpansionOut {
         let me = interp.as_expansion_mut(this);
-        let mut out = core::mem::take(&mut me.out);
+        let mut out = core::mem::replace(&mut me.out, ExpansionOut::new());
         out.out_exit_code = me.out_exit_code;
         out.has_quoted_empty = me.has_quoted_empty;
         out

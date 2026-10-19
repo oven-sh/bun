@@ -118,7 +118,7 @@ impl Rule for ConsistentGenericConstructors {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<GlobalFunctions<'a>> {
-        Some(GlobalFunctions::default())
+        Some(GlobalFunctions::with_hasher(rustc_hash::FxBuildHasher))
     }
 
     fn expr<'a>(&self, rhs: Expr<'a>, cx: &mut Cx<'a, Self>) {

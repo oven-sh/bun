@@ -27,8 +27,8 @@ pub struct SQLDataCell {
     pub(crate) index: u32,
 }
 
-impl Default for SQLDataCell {
-    fn default() -> Self {
+impl SQLDataCell {
+    pub fn new() -> Self {
         Self {
             tag: Tag::Null,
             value: Value { null: 0 },
@@ -196,7 +196,7 @@ impl SQLDataCell {
 
     #[inline]
     pub(crate) fn null() -> SQLDataCell {
-        SQLDataCell::default()
+        SQLDataCell::new()
     }
 
     /// A `Null`-tagged cell pre-classified for `column` at ordinal `position`,
@@ -232,7 +232,7 @@ impl SQLDataCell {
         SQLDataCell {
             tag: Tag::Int4,
             value: Value { int4: value },
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -241,7 +241,7 @@ impl SQLDataCell {
         SQLDataCell {
             tag: Tag::Uint4,
             value: Value { uint4: value },
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -250,7 +250,7 @@ impl SQLDataCell {
         SQLDataCell {
             tag: Tag::Int8,
             value: Value { int8: value },
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -259,7 +259,7 @@ impl SQLDataCell {
         SQLDataCell {
             tag: Tag::Uint8,
             value: Value { uint8: value },
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -268,7 +268,7 @@ impl SQLDataCell {
         SQLDataCell {
             tag: Tag::Float8,
             value: Value { float8: value },
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -277,7 +277,7 @@ impl SQLDataCell {
         SQLDataCell {
             tag: Tag::Bool,
             value: Value { bool_: value as u8 },
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -286,7 +286,7 @@ impl SQLDataCell {
         SQLDataCell {
             tag: Tag::Date,
             value: Value { date: value },
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -301,7 +301,7 @@ impl SQLDataCell {
                 string: clone_utf8_or_null(bytes),
             },
             free_value: 1,
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -316,7 +316,7 @@ impl SQLDataCell {
                 json: clone_utf8_or_null(bytes),
             },
             free_value: 1,
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -328,7 +328,7 @@ impl SQLDataCell {
                 array: Array::new(cells),
             },
             free_value: 1,
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -340,7 +340,7 @@ impl SQLDataCell {
                 numbers: Array::new(values),
             },
             free_value: 1,
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -355,7 +355,7 @@ impl SQLDataCell {
                     len: elements.len() as u64,
                 },
             },
-            ..Default::default()
+            ..SQLDataCell::new()
         }
     }
 
@@ -370,7 +370,7 @@ impl SQLDataCell {
                         len: bytes_slice.len() as u64,
                     },
                 },
-                ..Default::default()
+                ..SQLDataCell::new()
             };
         }
         // TODO: check empty and null fields
@@ -487,7 +487,7 @@ fn clone_utf8_or_null(bytes: &[u8]) -> WTFStringImpl {
 
 bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Copy, Clone, Default)]
+    #[derive(Copy, Clone)]
     pub struct Flags: u32 {
         const HAS_INDEXED_COLUMNS   = 1 << 0;
         const HAS_NAMED_COLUMNS     = 1 << 1;
@@ -505,23 +505,25 @@ pub(crate) fn dedupe_columns<'a>(
     let mut seen_numbers: Vec<u32> = Vec::new();
     // StringHashMap clones to an owned `Box<[u8]>` key. Fine for a transient
     // dedup set.
-    let mut seen_fields: StringHashMap<()> = StringHashMap::default();
+    let mut seen_fields: StringHashMap<()> = StringHashMap::init();
     seen_fields.reserve(columns.len());
 
-    let mut flags = Flags::default();
+    let mut flags = Flags::empty();
     for name_or_index in columns {
         // The verdict of an earlier pass, when the other columns may have had other names.
         if let ColumnIdentifier::Duplicate(name) = &mut *name_or_index {
-            *name_or_index = ColumnIdentifier::init(core::mem::take(name)).unwrap_or_oom();
+            *name_or_index =
+                ColumnIdentifier::init(core::mem::replace(name, Data::Empty)).unwrap_or_oom();
         }
         match &mut *name_or_index {
             ColumnIdentifier::Name(name) => {
                 let found_existing = seen_fields
-                    .get_or_put(name.slice())
+                    .get_or_put(name.slice(), || ())
                     .unwrap_or_oom()
                     .found_existing;
                 if found_existing {
-                    *name_or_index = ColumnIdentifier::Duplicate(core::mem::take(name));
+                    *name_or_index =
+                        ColumnIdentifier::Duplicate(core::mem::replace(name, Data::Empty));
                     flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
                 }
 

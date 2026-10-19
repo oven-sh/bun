@@ -35,8 +35,8 @@ impl Rule for NoUselessPromiseResolveReject {
         let has = |name: &str| file.find_name(name).is_some();
         (has("Promise") && METHODS.into_iter().any(has)).then(|| State {
             methods: METHODS.map(|it| file.name_of(it)),
-            nearest_function: AncestorMemo::default(),
-            is_in_try_statement: AncestorMemo::default(),
+            nearest_function: AncestorMemo::new(),
+            is_in_try_statement: AncestorMemo::new(),
         })
     }
 

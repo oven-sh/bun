@@ -21,10 +21,19 @@ enum ClosestBlock<'a> {
     FunctionBody(Func<'a>),
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     closest_block: AncestorMemo<'a, ClosestBlock<'a>>,
     in_function: AncestorMemo<'a, ()>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            closest_block: AncestorMemo::new(),
+            in_function: AncestorMemo::new(),
+        }
+    }
 }
 
 impl Rule for CallbackReturn {
@@ -55,7 +64,7 @@ impl Rule for CallbackReturn {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        self.callbacks.iter().any(|it| file.mentions(first_name(it))).then(State::default)
+        self.callbacks.iter().any(|it| file.mentions(first_name(it))).then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

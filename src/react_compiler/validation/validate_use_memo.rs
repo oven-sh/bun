@@ -35,8 +35,8 @@ fn validate_use_memo_impl(
     validate_no_void_use_memo: bool,
 ) -> CompilerError {
     let mut void_memo_errors = CompilerError::new();
-    let mut use_memos: IdBitSet<IdentifierId> = IdBitSet::default();
-    let mut react: IdBitSet<IdentifierId> = IdBitSet::default();
+    let mut use_memos: IdBitSet<IdentifierId> = IdBitSet::init();
+    let mut react: IdBitSet<IdentifierId> = IdBitSet::init();
     let mut func_exprs: IdMap<IdentifierId, FuncExprInfo> = IdMap::new();
     let mut unused_use_memos: IdMap<IdentifierId, (SourceLocation, Option<String>)> = IdMap::new();
 

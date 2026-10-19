@@ -13,12 +13,21 @@ pub struct NoSetState;
 const NO_SET_STATE: Message = Message::new("noSetState", "Do not use setState");
 const OXLINT: Message = Message::new("", "Do not use `setState`.");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The component that something is in, as oxlint finds it.
     component_around: AncestorMemo<'a, Node<'a>>,
     /// The calls of `this.setState`, for upstream.
     calls: Vec<Expr<'a>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            component_around: AncestorMemo::new(),
+            calls: Vec::new(),
+        }
+    }
 }
 
 impl Rule for NoSetState {
@@ -45,7 +54,7 @@ impl Rule for NoSetState {
                 && file.has_exprs([ExprTag::This])
                 && Components::may_have_any(file)
         };
-        is_candidate.then(State::default)
+        is_candidate.then(State::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -68,13 +77,13 @@ impl Rule for NoSetState {
 
     /// upstream's listener, in the order of ESLint's walk. Then its `Program:exit`.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let mut queue = Queue::default();
+        let mut queue = Queue::new();
         for call in std::mem::take(&mut cx.state.calls) {
             queue.push(At::enter(Node::Expr(call)), 0, Node::Expr(call));
         }
         let mut components = Components::new(cx.file());
         // `component.setStateUsages`: which of `lists`. Two components can have one.
-        let mut set_state_usages: FxHashMap<ComponentId, usize> = FxHashMap::default();
+        let mut set_state_usages: FxHashMap<ComponentId, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut lists: Vec<Vec<Span>> = Vec::new();
         while let Some(event) = queue.pop_until(At::END) {
             components.advance(event.at);

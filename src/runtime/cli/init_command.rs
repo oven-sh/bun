@@ -46,7 +46,7 @@ impl InitCommand {
         let _stdin_mode =
             bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
                 unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-                ..Default::default()
+                ..bun_sys::windows::UpdateStdioModeFlagsOpts::new()
             });
 
         let mut input: Vec<u8> = Vec::new();
@@ -397,7 +397,7 @@ impl InitCommand {
             Fs::PathName::init(Fs::FileSystem::get().top_level_dir_without_trailing_slash());
         let destination_dir = Fd::cwd();
 
-        let mut fields = PackageJSONFields::default();
+        let mut fields = PackageJSONFields::new();
 
         let mut package_json_file: Option<bun_sys::File> =
             bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0).ok();
@@ -561,7 +561,7 @@ impl InitCommand {
         }
 
         if !did_load_package_json {
-            fields.object = bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
+            fields.object = bun_ast::Expr::init(bun_ast::E::Object::new(), bun_ast::Loc::EMPTY)
                 .data
                 .e_object();
         }
@@ -821,9 +821,9 @@ impl InitCommand {
                 },
                 &bun_ast::Source::init_empty_file(b"package.json"),
                 js_printer::PrintJsonOptions {
-                    indent: Default::default(),
+                    indent: bun_ast::Indentation::new(),
                     mangled_props: None,
-                    ..Default::default()
+                    ..js_printer::PrintJsonOptions::new()
                 },
             );
             if let Err(err) = print_result {
@@ -1099,8 +1099,8 @@ pub(crate) struct PackageJSONFields {
     pub(crate) private: bool,
 }
 
-impl Default for PackageJSONFields {
-    fn default() -> Self {
+impl PackageJSONFields {
+    pub(crate) fn new() -> Self {
         Self {
             name: b"project".to_vec(),
             object: None,
@@ -1927,7 +1927,7 @@ fn dependency_map(package_json: &bun_ast::E::Object, key: &[u8]) -> bun_ast::Exp
     package_json
         .get(key)
         .filter(|value| value.data.is_e_object())
-        .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY))
+        .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::new(), bun_ast::Loc::EMPTY))
 }
 
 fn is_type_script_entry_point(entry_point: &[u8]) -> bool {

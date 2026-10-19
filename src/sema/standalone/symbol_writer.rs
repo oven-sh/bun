@@ -55,7 +55,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             c,
             file,
             results: Vec::with_capacity(capacity),
-            line_starts: FxHashMap::default(),
+            line_starts: FxHashMap::with_hasher(bun_sema::util::FxBuild),
         }
     }
 

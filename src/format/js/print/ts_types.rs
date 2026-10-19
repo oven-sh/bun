@@ -459,7 +459,7 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     };
     let options = ty.import_attributes();
     let comments = match f.is_quiet() {
-        true => ImportTypeComments::default(),
+        true => ImportTypeComments::init(),
         false => ImportTypeComments::new(ty, source, options, f),
     };
     let format_source = comments.format_source(source);
@@ -505,7 +505,6 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
 /// The comments in `typeof import("a", { with: { .. } })`, by the ESTree node that Prettier attaches them to. Of those nodes only
 /// the module specifier and the inner object can own comments here, so they also own the comments of the import type after
 /// `typeof`, of the outer object and of its property.
-#[derive(Default)]
 struct ImportTypeComments<'a> {
     /// `typeof /* comment */ import("a")`
     leading_import: CommentList<'a>,
@@ -526,6 +525,25 @@ struct ImportTypeComments<'a> {
     /// Before the `}` of `{ with: { .. } }`.
     trailing_property: CommentList<'a>,
     trailing_options: CommentList<'a>,
+}
+
+impl<'a> ImportTypeComments<'a> {
+    #[inline]
+    fn init() -> Self {
+        Self {
+            leading_import: CommentList::empty(),
+            leading_source: CommentList::empty(),
+            trailing_source: CommentList::empty(),
+            leading_options: core::array::from_fn(|_| CommentList::empty()),
+            leading_property: core::array::from_fn(|_| CommentList::empty()),
+            at_end_of_line_before_colon: CommentList::empty(),
+            at_end_of_line_after_colon: CommentList::empty(),
+            trailing_keyword: CommentList::empty(),
+            leading_attributes: CommentList::empty(),
+            trailing_property: CommentList::empty(),
+            trailing_options: CommentList::empty(),
+        }
+    }
 }
 
 impl<'a> ImportTypeComments<'a> {
@@ -562,7 +580,7 @@ impl<'a> ImportTypeComments<'a> {
                 leading_import,
                 leading_source,
                 trailing_source: of_source.trailing,
-                ..ImportTypeComments::default()
+                ..ImportTypeComments::init()
             };
         };
         let outer = options.options_span();

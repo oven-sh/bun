@@ -98,7 +98,7 @@ pub fn replace_as_oxlint<'a>(fixer: Fixer<'a>, e: Expr<'a>, call: Call<'a>) -> O
     }
     let open: &[u8] = if could_be_asi_hazard(e) { b";[" } else { b"[" };
     let written = args.first().map(|first| Span::new(first.outer_span().start, e.span().end - 1));
-    Some(fixer.replace(e, [open, fixer.file().slice(written.unwrap_or_default()), b"]"].concat()))
+    Some(fixer.replace(e, [open, fixer.file().slice(written.unwrap_or_else(Span::init)), b"]"].concat()))
 }
 
 impl Rule for NoArrayConstructor {

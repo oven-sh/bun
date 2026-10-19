@@ -476,7 +476,7 @@ pub(crate) fn generate_slug<'a>(
 
     // Deduplicate via slug_counts. `StringHashMap::get_or_put` probes
     // once (the map owns its keys, value starts at 0 on miss).
-    let Ok(gop) = slug_counts.get_or_put(&text_buf[..out_len]) else {
+    let Ok(gop) = slug_counts.get_or_put(&text_buf[..out_len], || 0) else {
         return &text_buf[..out_len];
     };
     if !gop.found_existing {
@@ -498,7 +498,6 @@ pub(crate) fn generate_slug<'a>(
 /// Shared heading-ID state used by all renderers (HTML, React AST, JS callbacks).
 /// Tracks whether we're inside a heading, accumulates text for slug generation,
 /// and deduplicates slugs via a count map.
-#[derive(Default)]
 pub struct HeadingIdTracker {
     pub(crate) enabled: bool,
     pub(crate) in_heading: bool,
@@ -507,10 +506,22 @@ pub struct HeadingIdTracker {
 }
 
 impl HeadingIdTracker {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            enabled: false,
+            in_heading: false,
+            text_buf: Vec::new(),
+            slug_counts: bun_collections::StringHashMap::init(),
+        }
+    }
+}
+
+impl HeadingIdTracker {
     pub fn init(enabled: bool) -> HeadingIdTracker {
         HeadingIdTracker {
             enabled,
-            ..Default::default()
+            ..HeadingIdTracker::new()
         }
     }
 

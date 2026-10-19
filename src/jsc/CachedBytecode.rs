@@ -293,7 +293,7 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     optimize: bool,
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
-    crate::initialize(crate::InitializeOptions::default());
+    crate::initialize(crate::InitializeOptions::new());
     let (bytes, handle) = CachedBytecode::generate(
         format,
         source,
@@ -319,7 +319,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
     evaluated_modules: &[u64],
     not_evaluated_modules: &[u64],
 ) -> NonNull<BytecodeLinkEncoder> {
-    crate::initialize(crate::InitializeOptions::default());
+    crate::initialize(crate::InitializeOptions::new());
     // SAFETY: the slices are valid for the call (C++ copies them); `external_strings` is a live table. `new` never returns null.
     unsafe {
         NonNull::new_unchecked(Bun__BytecodeLinkEncoder__create(
@@ -512,7 +512,7 @@ pub(crate) fn __bun_jsc_wtf_string_hash(wtf8: &[u8]) -> u32 {
 
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_encoder_string_table_new() -> NonNull<EncoderStringTable> {
-    crate::initialize(crate::InitializeOptions::default());
+    crate::initialize(crate::InitializeOptions::new());
     EncoderStringTable::new()
 }
 
@@ -552,7 +552,7 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
     depth: u32,
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
-    crate::initialize(crate::InitializeOptions::default());
+    crate::initialize(crate::InitializeOptions::new());
     let mut bytes: Option<NonNull<u8>> = None;
     let mut size: usize = 0;
     let mut handle: Option<NonNull<CachedBytecode>> = None;
@@ -581,7 +581,7 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode_from_source(
     depth: u32,
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
-    crate::initialize(crate::InitializeOptions::default());
+    crate::initialize(crate::InitializeOptions::new());
     let mut bytes: Option<NonNull<u8>> = None;
     let mut size: usize = 0;
     let mut handle: Option<NonNull<CachedBytecode>> = None;

@@ -6,9 +6,17 @@ use bun_lint::utils::text::to_lower_case;
 use rustc_hash::FxHashMap;
 
 /// `new GithubSlugger()`
-#[derive(Default)]
 pub(crate) struct Slugger {
     occurrences: FxHashMap<Vec<u8>, u32>,
+}
+
+impl Slugger {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            occurrences: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl Slugger {

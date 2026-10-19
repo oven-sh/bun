@@ -39,16 +39,15 @@ pub struct Meta {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum HasInstallScript {
     Old = 0,
-    #[default]
     False,
     True,
 }
 
-impl Default for Meta {
-    fn default() -> Self {
+impl Meta {
+    pub fn new() -> Self {
         Self {
             origin: Origin::Npm,
             _padding_origin: 0,
@@ -57,8 +56,8 @@ impl Default for Meta {
             libc: Libc::NONE,
             _padding_libc: 0,
             id: INVALID_PACKAGE_ID,
-            man_dir: String::default(),
-            integrity: Integrity::default(),
+            man_dir: String::new(),
+            integrity: Integrity::new(),
             has_install_script: HasInstallScript::False,
             _padding_integrity: [0; 2],
         }
@@ -96,7 +95,7 @@ impl Meta {
     }
 
     pub(crate) fn init() -> Meta {
-        Meta::default()
+        Meta::new()
     }
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone` now
@@ -116,7 +115,7 @@ impl Meta {
             libc: self.libc,
             origin: self.origin,
             has_install_script: self.has_install_script,
-            ..Meta::default()
+            ..Meta::new()
         }
     }
 }

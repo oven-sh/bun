@@ -144,8 +144,8 @@ pub struct DumpStackTraceOptions {
     pub skip_file_patterns: &'static [&'static [u8]],
     pub skip_function_patterns: &'static [&'static [u8]],
 }
-impl Default for DumpStackTraceOptions {
-    fn default() -> Self {
+impl DumpStackTraceOptions {
+    pub fn new() -> Self {
         Self {
             frame_count: usize::MAX,
             stop_at_jsc_llint: false,
@@ -790,10 +790,19 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     libc_abort();
 }
 
-#[derive(Default)]
 pub struct AllocatorConfiguration {
     pub verbose: bool,
     pub long_running: bool,
+}
+
+impl AllocatorConfiguration {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            verbose: false,
+            long_running: false,
+        }
+    }
 }
 
 #[inline]

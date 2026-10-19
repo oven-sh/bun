@@ -467,7 +467,7 @@ impl<'a> PackageCollector<'a> {
         dep_id: DependencyID,
     ) -> Result<(), Error> {
         let pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
-        if pkg_id == invalid_package_id || self.dedupe.get_or_put(pkg_id)?.found_existing {
+        if pkg_id == invalid_package_id || self.dedupe.get_or_put(pkg_id, || ())?.found_existing {
             return Ok(());
         }
         self.queue.push_back(QueueItem {
@@ -579,7 +579,7 @@ fn build_package_json(
     let pkg_names = pkgs.items_name();
     let pkg_resolutions = pkgs.items_resolution();
     let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-    let json_opts = bun_core::fmt::JSONFormatterUTF8Options::default();
+    let json_opts = bun_core::fmt::JSONFormatterUTF8Options::new();
 
     json_buf.extend_from_slice(b"[\n");
 
@@ -743,7 +743,10 @@ fn attempt_security_scan(
     write!(
         &mut quoted,
         "{}",
-        bun_core::fmt::format_json_string_utf8(security_scanner, Default::default())
+        bun_core::fmt::format_json_string_utf8(
+            security_scanner,
+            crate::bun_output::fmt::JSONFormatterUTF8Options::new()
+        )
     )?;
     let code = replace_first(&code, b"__SCANNER_MODULE__", &quoted);
 
@@ -928,7 +931,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             stdin: Stdio::Inherit,
             cwd: Box::from(FileSystem::instance().top_level_dir()),
             extra_fds,
-            ..Default::default()
+            ..SpawnOptions::new()
         };
 
         let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
@@ -1031,9 +1034,9 @@ impl<'a> SecurityScanSubprocess<'a> {
             extra_fds,
             windows: spawn::WindowsOptions {
                 loop_: EventLoopHandle::from_any(&mut self.manager.event_loop),
-                ..Default::default()
+                ..spawn::WindowsOptions::new()
             },
-            ..Default::default()
+            ..SpawnOptions::new()
         };
 
         let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
@@ -1100,7 +1103,12 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
-        let process_handle = std::mem::take(spawned).to_process_handle(event_loop);
+        let process_handle = std::mem::replace(
+            spawned,
+            bun_spawn::PosixSpawnResult::new(),
+            bun_spawn::WindowsSpawnResult::new(),
+        )
+        .to_process_handle(event_loop);
         let process: *mut Process = process_handle.as_ptr();
 
         // Derive the raw backref once and use it for all subsequent field

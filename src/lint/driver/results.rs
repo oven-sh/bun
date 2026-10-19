@@ -6,7 +6,7 @@ use bun_lint::source::LineStarts;
 use std::sync::Arc;
 
 /// ESLint's `calculateStatsPerFile`.
-#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Counts {
     pub(crate) errors: usize,
     pub(crate) fatal_errors: usize,
@@ -16,8 +16,21 @@ pub(crate) struct Counts {
 }
 
 impl Counts {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            errors: 0,
+            fatal_errors: 0,
+            warnings: 0,
+            fixable_errors: 0,
+            fixable_warnings: 0,
+        }
+    }
+}
+
+impl Counts {
     pub(crate) fn of(messages: &[LintMessage]) -> Counts {
-        let mut counts = Counts::default();
+        let mut counts = Counts::new();
         for message in messages {
             let is_fixable = usize::from(message.fix.is_some());
             if message.is_fatal || message.severity == Severity::Error {
@@ -85,7 +98,10 @@ impl FileResult {
             return LineStarts::at(starts.clone());
         }
         let config = self.linted.as_ref().map(|it| &it.config);
-        let breaks = config.map_or_else(Default::default, |it| it.line_breaks);
+        let breaks = config.map_or_else(
+            || bun_lint::languages::LineBreaks::EcmaScript,
+            |it| it.line_breaks,
+        );
         breaks.line_starts(self.text.as_deref().unwrap_or_default())
     }
 
@@ -117,7 +133,7 @@ impl FileResult {
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),
-            ..LintMessage::default()
+            ..LintMessage::new()
         }];
         FileResult {
             path,

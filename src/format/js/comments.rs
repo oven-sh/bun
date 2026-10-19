@@ -172,12 +172,6 @@ impl<'a> CommentList<'a> {
     }
 }
 
-impl Default for CommentList<'_> {
-    fn default() -> Self {
-        CommentList::empty()
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct CommentIter<'a> {
     list: CommentList<'a>,

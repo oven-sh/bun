@@ -22,9 +22,18 @@ use std::sync::Arc;
 /// | the `compilerOptions` of the `tsconfig.json` of the file, which that plugin reads | `tsconfig.jsx`, `tsconfig.jsxFactory`, `tsconfig.jsxFragmentFactory`, `tsconfig.reactNamespace` |
 /// | oxfmt | `sortImports`, which used to be `experimentalSortImports` |
 /// | Bun | `bun.sortImports`, set by `sortImports` under `[fmt]` in bunfig.toml or by `--sort-imports` |
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Settings {
     entries: Vec<(Box<[u8]>, Box<[u8]>)>,
+}
+
+impl Settings {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
 }
 
 const OF_TRIVAGO: [&[u8]; 8] = [
@@ -210,7 +219,7 @@ impl Settings {
                 .unwrap_or_default()
                 .iter())
             .map(|pattern| Exclude {
-                glob: Minimatch::with(pattern, MinimatchOptions::default()),
+                glob: Minimatch::with(pattern, MinimatchOptions::new()),
                 has_slash: strings::contains_char(pattern, b'/'),
             })
             .collect(),

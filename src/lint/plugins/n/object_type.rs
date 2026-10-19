@@ -56,7 +56,6 @@ fn is_global_object(e: Expr) -> bool {
 }
 
 /// `buildExpressionTypeProvider`, for a file.
-#[derive(Default)]
 pub(crate) struct ExpressionTypes<'a> {
     /// The expressions that are being looked at.
     tracked: Vec<Expr<'a>>,
@@ -66,6 +65,18 @@ pub(crate) struct ExpressionTypes<'a> {
     known: FxHashMap<(Expr<'a>, usize), Option<&'static str>>,
     /// Whether a variable only has the value that it is declared with.
     is_never_written: IdMap<Symbol<'a>, bool>,
+}
+
+impl<'a> ExpressionTypes<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            tracked: Vec::new(),
+            came_again_to: None,
+            known: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            is_never_written: IdMap::init(),
+        }
+    }
 }
 
 impl<'a> ExpressionTypes<'a> {

@@ -54,14 +54,14 @@ fn report<'a>(case: Case<'a>, first: Span, cx: &Cx<'a, NoDuplicateCase>) {
         Some(format!("Only the first case with this label runs. It is on line {}.", cx.line_of(first.start)))
     });
     report.labels_with(|labels| {
-        labels.push(case.test().map(Expr::span).unwrap_or_default(), "is duplicated here");
+        labels.push(case.test().map(Expr::span).unwrap_or_else(Span::init), "is duplicated here");
     });
 }
 
 /// For a `switch` of which no test can be written differently: two are [`equal`] if they are of one kind and have one text.
 #[inline(never)]
 fn check_by_text<'a>(cases: List<'a, Case<'a>>, cx: &Cx<'a, NoDuplicateCase>) {
-    let mut first_of = FxHashMap::default();
+    let mut first_of = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for case in cases {
         let Some(test) = case.test() else {
             continue;

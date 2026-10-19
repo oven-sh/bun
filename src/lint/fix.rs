@@ -13,10 +13,9 @@ pub struct Fix {
 }
 
 /// How much a change that `--fix` does not make can be trusted: oxlint's `FixKind`. ESLint knows the first only.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SuggestionKind {
     /// It may change what the program does: `--fix-suggestions` makes it.
-    #[default]
     Suggestion,
     /// It may break the program: `--fix-dangerously` makes it.
     DangerousFix,

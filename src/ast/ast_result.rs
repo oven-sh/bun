@@ -111,8 +111,8 @@ impl<'a> Ast<'a> {
         Self {
             approximate_newline_count: 0,
             has_lazy_export: false,
-            runtime_imports: Default::default(),
-            nested_scope_slot_counts: SlotCounts::default(),
+            runtime_imports: crate::runtime::Imports::new(),
+            nested_scope_slot_counts: SlotCounts::new(),
             uses_exports_ref: false,
             uses_module_ref: false,
             uses_require_ref: false,
@@ -128,22 +128,22 @@ impl<'a> Ast<'a> {
             export_default_alias_of_import: Ref::NONE,
             parts: PartList::new_in(arena),
             symbols: SymbolList::new_in(arena),
-            module_scope: Scope::default(),
+            module_scope: Scope::EMPTY,
             char_freq: None,
-            scope_uses: ScopeUseList::default(),
+            scope_uses: ScopeUseList::new(),
             exports_ref: Ref::NONE,
             module_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
             require_ref: Ref::NONE,
-            named_imports: Default::default(),
-            named_exports: Default::default(),
+            named_imports: ArrayHashMap::new(),
+            named_exports: StringArrayHashMap::init(),
             export_star_import_records: AstAlloc::vec(),
-            dynamic_import_aliases: Default::default(),
-            top_level_symbols_to_parts: Default::default(),
-            commonjs_named_exports: Default::default(),
+            dynamic_import_aliases: ArrayHashMap::new(),
+            top_level_symbols_to_parts: ArrayHashMap::new(),
+            commonjs_named_exports: StringArrayHashMap::init(),
             redirect_import_record_index: None,
             target: Target::Browser,
-            ts_enums: Default::default(),
+            ts_enums: ArrayHashMap::new(),
             has_commonjs_export_names: false,
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
@@ -161,9 +161,8 @@ pub struct CommonJSNamedExport {
 }
 
 /// The kind of value in `exports.name = value`, for a call of the export.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub enum CommonJSExportValue {
-    #[default]
     Other,
     /// A function or an arrow function with no `this` inside.
     FunctionIgnoringThis,
@@ -225,8 +224,8 @@ pub struct ScopeUseList {
     pub spans: AstVec<ScopeUseSpan>,
 }
 
-impl Default for ScopeUseList {
-    fn default() -> Self {
+impl ScopeUseList {
+    pub fn new() -> Self {
         ScopeUseList {
             tracked: false,
             points: AstAlloc::vec(),
@@ -236,7 +235,7 @@ impl Default for ScopeUseList {
 }
 
 /// One `import()` / `require()` whose every use the parser accounted for.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct DynamicImportUse {
     /// The export names read off the result, sorted and deduplicated.
     pub aliases: crate::StoreSlice<crate::StoreStr>,
@@ -246,6 +245,17 @@ pub struct DynamicImportUse {
     /// Some use needs the namespace object whatever the linker binds: a read
     /// that is not an item, or a local that may hold several namespaces.
     pub needs_namespace_object: bool,
+}
+
+impl DynamicImportUse {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            aliases: crate::StoreSlice::EMPTY,
+            items: crate::StoreSlice::EMPTY,
+            needs_namespace_object: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

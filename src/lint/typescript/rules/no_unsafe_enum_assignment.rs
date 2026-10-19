@@ -41,7 +41,6 @@ const MAXIMUM_DEPTH: u32 = 5;
 
 type Context<'a> = Cx<'a, NoUnsafeEnumAssignment>;
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The array and object literals inside a value that has been reported, which are not reported
     /// element by element.
@@ -57,6 +56,20 @@ pub struct State<'a> {
     types: TypeCache<'a>,
     /// [`describe_enum_types`] of one type.
     descriptions: IdMap<Type<'a>, Vec<u8>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            checked_nodes: IdSet::init(),
+            pending: Vec::new(),
+            is_about_itself: false,
+            about_themselves: Vec::new(),
+            types: TypeCache::new(),
+            descriptions: IdMap::init(),
+        }
+    }
 }
 
 fn get_constraint_type(ty: Type<'_>) -> Type<'_> {
@@ -108,13 +121,23 @@ fn is_mismatched_enum_assignment_types<'a>(sender_type: Type<'a>, receiver_type:
 }
 
 /// What has been found out about types, as long as the file is linted.
-#[derive(Default)]
 struct TypeCache<'a> {
     generic_types: IdMap<Type<'a>, bool>,
     top_level_mismatches: FxHashMap<(Type<'a>, Type<'a>), bool>,
     /// The pairs that the comparison at hand has looked at: recursive types would be visited
     /// endlessly.
     visited: FxHashSet<(Type<'a>, Type<'a>)>,
+}
+
+impl<'a> TypeCache<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            generic_types: IdMap::init(),
+            top_level_mismatches: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            visited: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 impl<'a> TypeCache<'a> {
@@ -817,7 +840,7 @@ impl Rule for NoUnsafeEnumAssignment {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {

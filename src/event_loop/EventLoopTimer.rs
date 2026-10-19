@@ -69,9 +69,8 @@ impl bun_io::heap::HeapNode for EventLoopTimer {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum InHeap {
-    #[default]
     None,
     Regular,
     Fake,
@@ -83,7 +82,7 @@ impl EventLoopTimer {
             next: timespec::EPOCH,
             state: State::PENDING,
             tag,
-            heap: IntrusiveField::default(),
+            heap: IntrusiveField::new(),
             in_heap: InHeap::None,
         }
     }
@@ -267,10 +266,9 @@ macro_rules! impl_timer_owner {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum State {
     /// The timer is waiting to be enabled.
-    #[default]
     PENDING,
 
     /// The timer is active and will fire at the next time.
@@ -339,8 +337,8 @@ impl From<Kind> for KindBig {
 #[derive(Copy, Clone)]
 pub struct TimerFlags(u32);
 
-impl Default for TimerFlags {
-    fn default() -> Self {
+impl TimerFlags {
+    pub fn new() -> Self {
         // has_js_ref=true, everything else 0
         Self(1 << 30)
     }

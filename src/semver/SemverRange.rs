@@ -6,9 +6,8 @@ use crate::query::token::Wildcard;
 use crate::version::Tag;
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Op {
-    #[default]
     Unset = 0,
     Eql = 1,
     Lt = 3,
@@ -17,10 +16,20 @@ pub enum Op {
     Gte = 6,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct Range {
     pub left: Comparator,
     pub right: Comparator,
+}
+
+impl Range {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            left: Comparator::new(),
+            right: Comparator::new(),
+        }
+    }
 }
 
 impl Range {
@@ -32,7 +41,7 @@ impl Range {
                     op: Op::Eql,
                     version,
                 },
-                ..Default::default()
+                ..Range::new()
             },
 
             Wildcard::Major => Range {
@@ -41,10 +50,10 @@ impl Range {
                     version: Version {
                         // .raw = version.raw
                         tag: floor,
-                        ..Default::default()
+                        ..Version::new()
                     },
                 },
-                ..Default::default()
+                ..Range::new()
             },
 
             Wildcard::Minor => Range {
@@ -54,7 +63,7 @@ impl Range {
                     version: Version {
                         major: version.major,
                         tag: floor,
-                        ..Default::default()
+                        ..Version::new()
                     },
                 },
             },
@@ -67,7 +76,7 @@ impl Range {
                         major: version.major,
                         minor: version.minor,
                         tag: floor,
-                        ..Default::default()
+                        ..Version::new()
                     },
                 },
             },
@@ -181,10 +190,20 @@ impl fmt::Display for Formatter<'_> {
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct Comparator {
     pub op: Op,
     pub version: Version,
+}
+
+impl Comparator {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            op: Op::Unset,
+            version: Version::new(),
+        }
+    }
 }
 
 impl Comparator {
@@ -194,7 +213,7 @@ impl Comparator {
             op: Op::Lt,
             version: Version {
                 tag: Tag::ZERO_PRE,
-                ..Default::default()
+                ..Version::new()
             },
         }
     }
@@ -208,7 +227,7 @@ impl Comparator {
                 version: Version {
                     major: m,
                     tag: Tag::ZERO_PRE,
-                    ..Default::default()
+                    ..Version::new()
                 },
             },
             None => Comparator {
@@ -217,7 +236,7 @@ impl Comparator {
                     major: u64::MAX,
                     minor: u64::MAX,
                     patch: u64::MAX,
-                    ..Default::default()
+                    ..Version::new()
                 },
             },
         }
@@ -232,7 +251,7 @@ impl Comparator {
                     major,
                     minor: m,
                     tag: Tag::ZERO_PRE,
-                    ..Default::default()
+                    ..Version::new()
                 },
             },
             None => Comparator {
@@ -241,7 +260,7 @@ impl Comparator {
                     major,
                     minor: u64::MAX,
                     patch: u64::MAX,
-                    ..Default::default()
+                    ..Version::new()
                 },
             },
         }
@@ -257,7 +276,7 @@ impl Comparator {
                     minor,
                     patch: p,
                     tag: Tag::ZERO_PRE,
-                    ..Default::default()
+                    ..Version::new()
                 },
             },
             None => Comparator {
@@ -266,7 +285,7 @@ impl Comparator {
                     major,
                     minor,
                     patch: u64::MAX,
-                    ..Default::default()
+                    ..Version::new()
                 },
             },
         }
@@ -280,7 +299,7 @@ impl Comparator {
                 version: Version {
                     major: m,
                     tag,
-                    ..Default::default()
+                    ..Version::new()
                 },
             },
             None => Comparator::null_set(),
@@ -296,7 +315,7 @@ impl Comparator {
                     major,
                     minor: m,
                     tag,
-                    ..Default::default()
+                    ..Version::new()
                 },
             },
             None => Comparator::gte_next_major(major, tag),

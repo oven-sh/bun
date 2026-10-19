@@ -339,7 +339,7 @@ impl<'a> Stmt<'a> {
                 Span::new(skip_trivia(self.file.hir.text, raw.loc.pos), raw.loc.end)
             }
             Some(raw) => Span::new(raw.start, raw.loc.end),
-            None => Span::default(),
+            None => Span::init(),
         }
     }
 

@@ -137,7 +137,7 @@ impl Order {
         // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
         let first_parent: Option<*mut DescribeScope> = unsafe { current.as_ref().base.parent };
 
-        let mut list = EntryList::default();
+        let mut list = EntryList::new();
 
         // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
         if use_each_hooks {
@@ -323,10 +323,19 @@ fn box_inner_mut<T>(b: &T) -> *mut T {
     core::ptr::from_ref(b).cast_mut()
 }
 
-#[derive(Default)]
 struct EntryList {
     first: Option<*mut ExecutionEntry>,
     last: Option<*mut ExecutionEntry>,
+}
+
+impl EntryList {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            first: None,
+            last: None,
+        }
+    }
 }
 
 impl EntryList {

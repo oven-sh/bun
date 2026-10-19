@@ -206,7 +206,6 @@ impl<'a> PropTypes<'a> {
 }
 
 /// What `propTypesInstructions` closes over.
-#[derive(Default)]
 struct PropTypesInstructions<'a> {
     class_expressions: Vec<Class<'a>>,
     custom_validators: Vec<Box<[u8]>>,
@@ -217,6 +216,20 @@ struct PropTypesInstructions<'a> {
     class_bodies: AncestorMemo<'a, ()>,
     /// Whether a node is in a declaration of prop types.
     declarations: AncestorMemo<'a, ()>,
+}
+
+impl<'a> PropTypesInstructions<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            class_expressions: Vec::new(),
+            custom_validators: Vec::new(),
+            imports: ReactTypeImports::new(),
+            flow_version: None,
+            class_bodies: AncestorMemo::new(),
+            declarations: AncestorMemo::new(),
+        }
+    }
 }
 
 impl<'a> PropTypesInstructions<'a> {
@@ -323,7 +336,7 @@ impl<'a> PropTypesInstructions<'a> {
         mut ignore_props_validation: bool,
         root_node: Option<Node<'a>>,
     ) -> Result<bool, RangeError> {
-        let mut seen = FxHashSet::default();
+        let mut seen = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         loop {
             let e = match prop_types {
                 PropTypes::Null => return Ok(ignore_props_validation),
@@ -331,7 +344,7 @@ impl<'a> PropTypesInstructions<'a> {
                 PropTypes::Type(ty) => {
                     let ts_type_annotation = declare_prop_types_for_ts_type_annotation(
                         Some(ty),
-                        std::mem::take(declared_prop_types),
+                        std::mem::replace(declared_prop_types, DeclaredPropTypes::new()),
                         root_node,
                         &self.imports,
                         &self.custom_validators,
@@ -420,7 +433,7 @@ impl<'a> PropTypesInstructions<'a> {
         let known = component.declared_prop_types.take();
         let ignore_props_validation = component.ignore_props_validation;
         let is_known = known.is_some();
-        let mut declared_prop_types = known.unwrap_or_default();
+        let mut declared_prop_types = known.unwrap_or_else(DeclaredPropTypes::new);
         let declared = self.declare_prop_types(
             node,
             prop_types,
@@ -458,7 +471,7 @@ impl<'a> PropTypesInstructions<'a> {
         {
             let obj = declare_prop_types_for_ts_type_annotation(
                 call.type_args().get(1),
-                DeclaredPropTypes::default(),
+                DeclaredPropTypes::new(),
                 root_node,
                 &self.imports,
                 &self.custom_validators,
@@ -690,6 +703,6 @@ impl<'a> Instructions<'a> for PropTypesInstructions<'a> {
 pub(crate) fn declared<'a>(custom_validators: &[Box<[u8]>]) -> Box<dyn Instructions<'a> + 'a> {
     Box::new(PropTypesInstructions {
         custom_validators: custom_validators.to_vec(),
-        ..PropTypesInstructions::default()
+        ..PropTypesInstructions::new()
     })
 }

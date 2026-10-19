@@ -154,7 +154,7 @@ impl PackageManager {
         dn.set_completed_items(total);
         self.progress.refresh();
         self.progress.root.end();
-        self.progress = Default::default();
+        self.progress = super::Progress::new();
         self.downloads_node = None;
     }
 }

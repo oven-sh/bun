@@ -8,7 +8,6 @@ pub struct NoThisInExportedFunction;
 
 const NO_THIS_IN_EXPORTED_FUNCTION: Message = Message::new("", "`this` should not be used in exported functions");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The function in whose body something is, if a `this` there is that of the function.
     functions: AncestorMemo<'a, Option<Func<'a>>>,
@@ -17,6 +16,17 @@ pub struct State<'a> {
     /// Where the function declarations and the function expressions are, without those in another, in order. No other function
     /// is exported.
     candidates: Vec<Span>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            functions: AncestorMemo::new(),
+            exports: IdMap::init(),
+            candidates: Vec::new(),
+        }
+    }
 }
 
 impl Rule for NoThisInExportedFunction {
@@ -41,7 +51,7 @@ impl Rule for NoThisInExportedFunction {
             end = end.max(it.end);
             is_in_no_other
         });
-        (!candidates.is_empty()).then(|| State { candidates, ..State::default() })
+        (!candidates.is_empty()).then(|| State { candidates, ..State::new() })
     }
 
     fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {

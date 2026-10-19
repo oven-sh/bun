@@ -140,14 +140,14 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             }),
                         )
                     } else {
-                        BundlerCssRuleList::default()
+                        BundlerCssRuleList::new()
                     };
                     let mut ast = BundlerStyleSheet {
                         rules,
-                        sources: Default::default(),
-                        source_map_urls: Default::default(),
-                        license_comments: Default::default(),
-                        composes: Default::default(),
+                        sources: Vec::new(),
+                        source_map_urls: Vec::new(),
+                        license_comments: Vec::new(),
+                        composes: bun_collections::ArrayHashMap::new(),
                         ..BundlerStyleSheet::empty()
                     };
                     wrap_rules_with_conditions(&mut ast, bump, &entry.conditions);
@@ -164,12 +164,12 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         entry.condition_import_records.push(ImportRecord {
                             kind: ImportKind::At,
                             path: *p,
-                            range: Range::default(),
+                            range: Range::new(),
                             tag: ImportRecordTag::None,
                             loader: None,
-                            source_index: AstIndex::default(),
+                            source_index: AstIndex::INVALID,
                             original_path: b"",
-                            flags: ImportRecordFlags::default(),
+                            flags: ImportRecordFlags::empty(),
                         });
 
                         // Handling a chain of nested conditions is complicated. We can't
@@ -194,16 +194,16 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             // `ManuallyDrop` so the duplicate is abandoned instead; the rule
                             // slab itself is arena-owned so it is reclaimed on arena reset.
                             let ast_import = core::mem::ManuallyDrop::new(BundlerStyleSheet {
-                                license_comments: Default::default(),
-                                sources: Default::default(),
-                                source_map_urls: Default::default(),
+                                license_comments: Vec::new(),
+                                sources: Vec::new(),
+                                source_map_urls: Vec::new(),
                                 rules: {
                                     let mut import_rule = ImportRule {
                                         url: p.pretty,
                                         import_record_idx: entry.condition_import_records.len()
                                             as u32,
                                         loc: Location::dummy(),
-                                        ..Default::default()
+                                        ..ImportRule::new()
                                     };
                                     // SAFETY: shallow struct
                                     // copy. The duplicate is never dropped (`ManuallyDrop`
@@ -213,7 +213,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                         unsafe { core::ptr::read(entry.conditions.at(j)) };
                                     arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                                 },
-                                composes: Default::default(),
+                                composes: bun_collections::ArrayHashMap::new(),
                                 ..BundlerStyleSheet::empty()
                             });
 
@@ -223,7 +223,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 minify: c.options.minify_whitespace
                                     || c.options.minify_syntax
                                     || c.options.minify_identifiers,
-                                ..Default::default()
+                                ..PrinterOptions::default()
                             };
 
                             let print_result = match ast_import.to_css(
@@ -281,7 +281,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         }
                     }
 
-                    let mut empty_conditions = ImportConditions::default();
+                    let mut empty_conditions = ImportConditions::new();
                     // Index 0 is disjoint from every `at(j)` (j>=1) read above;
                     // only now do we materialize the exclusive borrow.
                     let actual_conditions: &mut ImportConditions = if had_conditions {
@@ -296,9 +296,9 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         range: Range::NONE,
                         tag: ImportRecordTag::None,
                         loader: None,
-                        source_index: AstIndex::default(),
+                        source_index: AstIndex::INVALID,
                         original_path: b"",
-                        flags: ImportRecordFlags::default(),
+                        flags: ImportRecordFlags::empty(),
                     });
 
                     css_chunk.asts[i] = BundlerStyleSheet {
@@ -317,10 +317,10 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 unsafe { core::ptr::read(actual_conditions) };
                             arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                         },
-                        sources: Default::default(),
-                        source_map_urls: Default::default(),
-                        license_comments: Default::default(),
-                        composes: Default::default(),
+                        sources: Vec::new(),
+                        source_map_urls: Vec::new(),
+                        license_comments: Vec::new(),
+                        composes: bun_collections::ArrayHashMap::new(),
                         ..BundlerStyleSheet::empty()
                     };
                 }
@@ -441,7 +441,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
 fn arena_rule_list(rules: ArenaVec<'_, BundlerCssRule>) -> BundlerCssRuleList {
     let len = rules.len();
     if len == 0 {
-        return BundlerCssRuleList::default();
+        return BundlerCssRuleList::new();
     }
     let slab = rules.into_bump_slice_mut();
     BundlerCssRuleList {
@@ -499,7 +499,10 @@ fn wrap_rules_with_conditions(
                 if do_block_rule {
                     BundlerCssRule::LayerBlock(BundlerLayerBlockRule {
                         name: layer,
-                        rules: core::mem::take(&mut ast.rules),
+                        rules: core::mem::replace(
+                            &mut ast.rules,
+                            bun_css::rules::CssRuleList::new(),
+                        ),
                         loc: Location::dummy(),
                     })
                 } else {
@@ -507,7 +510,7 @@ fn wrap_rules_with_conditions(
                         names: if let Some(ly) = layer {
                             SmallList::<LayerName, 1>::with_one(ly)
                         } else {
-                            SmallList::default()
+                            SmallList::new()
                         },
                         loc: Location::dummy(),
                     })
@@ -524,7 +527,10 @@ fn wrap_rules_with_conditions(
                     BundlerCssRule::Supports(BundlerSupportsRule {
                         condition: supports
                             .clone_with_import_records(temp_bump, &mut dummy_import_records),
-                        rules: core::mem::take(&mut ast.rules),
+                        rules: core::mem::replace(
+                            &mut ast.rules,
+                            bun_css::rules::CssRuleList::new(),
+                        ),
                         loc: Location::dummy(),
                     }),
                 );
@@ -540,7 +546,7 @@ fn wrap_rules_with_conditions(
                     query: item
                         .media
                         .clone_with_import_records(temp_bump, &mut dummy_import_records),
-                    rules: core::mem::take(&mut ast.rules),
+                    rules: core::mem::replace(&mut ast.rules, bun_css::rules::CssRuleList::new()),
                     loc: Location::dummy(),
                 }),
             );

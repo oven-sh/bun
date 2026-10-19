@@ -80,10 +80,20 @@ struct Expression {
 }
 
 /// `strip` of what opens or closes something.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Strip {
     open: bool,
     close: bool,
+}
+
+impl Strip {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            open: false,
+            close: false,
+        }
+    }
 }
 
 impl Strip {
@@ -707,7 +717,7 @@ impl Parser<'_> {
         let (call, is_valid) = self.call(path)?;
         let block_params = match self.peek().kind {
             TokenKind::OpenBlockParams if takes_block_params => self.block_params()?,
-            _ => Range::default(),
+            _ => Range::new(),
         };
         let close = self.expect(close)?;
         Ok(Header {
@@ -763,14 +773,14 @@ impl Parser<'_> {
         is_inverted: bool,
     ) -> NodeId {
         if let Some(chained) = inverse.and_then(|inverse| inverse.chained) {
-            self.set_close_strip(chained, close.unwrap_or_default());
+            self.set_close_strip(chained, close.unwrap_or_else(Strip::new));
         }
         let strip = header.strip.flags(ast::OPEN_OPEN, ast::OPEN_CLOSE)
             | inverse.map_or(0, |inverse| {
                 inverse.strip.flags(ast::INVERSE_OPEN, ast::INVERSE_CLOSE)
             })
             | close
-                .unwrap_or_default()
+                .unwrap_or_else(Strip::new)
                 .flags(ast::CLOSE_OPEN, ast::CLOSE_CLOSE);
         let kind = Kind::BlockStatement {
             call: header.call,
@@ -868,7 +878,7 @@ impl Parser<'_> {
         let open = self.next();
         // It becomes a block like any other.
         let header = Header {
-            strip: Strip::default(),
+            strip: Strip::new(),
             is_as_written: true,
             ..self.header(open, TokenKind::CloseRawBlock, false)?
         };
@@ -898,7 +908,7 @@ impl Parser<'_> {
             _ => (TokenKind::Close, self.slice(open).ends_with(b"&")),
         };
         self.has_dropped = false;
-        let no_arguments = (Range::default(), Range::default());
+        let no_arguments = (Range::new(), Range::new());
         let (path, mut call, mut is_valid) = if open.kind == TokenKind::Open && self.is_at_hash() {
             let base = self.pending.len();
             self.hash()?;

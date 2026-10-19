@@ -137,7 +137,7 @@ impl ResponseBody {
         }
         match transfer_encoding {
             Some(bun_http::Encoding::Chunked) => {
-                let mut decoder = picohttp::phr_chunked_decoder::default();
+                let mut decoder = picohttp::phr_chunked_decoder::new();
                 decoder.consume_trailer = 1;
                 Self::Chunked(decoder)
             }
@@ -472,7 +472,7 @@ where
             interim_len: Cell::new(0),
             ws_mode: websocket.is_ws_mode(),
             response_body: Cell::new(None),
-            hostname: JsCell::new(ZBox::default()),
+            hostname: JsCell::new(ZBox::new()),
             context: context.id(),
             poll_ref: JsCell::new(poll_ref),
             state: Cell::new(State::Initializing),
@@ -727,7 +727,7 @@ where
             // `tls.checkServerIdentity` may close the WebSocket, which frees `this`.
             let _guard = RefPtr::from_this(this);
             // That close clears `hostname`, so the name is moved out while the verdict borrows it.
-            let hostname = this.hostname.take();
+            let hostname = this.hostname.replace(ZBox::new());
             let ssl = socket.ssl_mut();
             let name = identity_name(hostname.as_bytes(), ssl.as_deref());
             let handshake = TlsHandshake::First {
@@ -1030,7 +1030,7 @@ where
         let (Some(mut body), Some(ws)) = (this.response_body.get(), this.cpp_websocket()) else {
             return;
         };
-        let mut chunk = this.body.take();
+        let mut chunk = this.body.replace(Vec::new());
         chunk.extend_from_slice(data);
         let ended = body.decode(&mut chunk);
         this.response_body.set(Some(body));
@@ -1173,7 +1173,7 @@ where
         let ssl_options: SSLConfig = match this.ssl_config.get().as_deref() {
             Some(config) => config.clone(),
             None => {
-                let mut c = SSLConfig::default();
+                let mut c = SSLConfig::new();
                 c.reject_unauthorized = 0; // We verify manually
                 c.request_cert = 1;
                 let vm = bun_jsc::virtual_machine::VirtualMachine::get();
@@ -1504,7 +1504,7 @@ where
         // Any arm below that doesn't hand `saved_secure` to did_connect must
         // release the ref it took out of `self` (SSL_CTX_free at fn end).
         // The connected client checks a TLS renegotiation against this name.
-        let verified_hostname = this.hostname.take();
+        let verified_hostname = this.hostname.replace(ZBox::new());
         this.clear_data();
         bun_jsc::mark_binding!();
         let tcp = this.tcp.get();
@@ -1647,7 +1647,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         self.body.set(Vec::new());
 
         if !self.hostname.get().is_empty() {
-            self.hostname.set(ZBox::default());
+            self.hostname.set(ZBox::new());
         }
 
         // Clean up proxy state. Null the field and detach the tunnel's
@@ -1703,7 +1703,7 @@ fn isomorphic_encode(s: &BunString) -> Cow<'_, [u8]> {
 
 fn encode_headers(names: &[BunString], values: &[BunString]) -> Headers {
     debug_assert_eq!(names.len(), values.len());
-    let mut headers = Headers::default();
+    let mut headers = Headers::new();
     for (name, value) in names.iter().zip(values) {
         headers.append(&isomorphic_encode(name), &isomorphic_encode(value));
     }
@@ -1847,7 +1847,7 @@ fn parse_deflate_response(response: &[u8]) -> Option<WebSocketDeflate::Params> {
     if parts.next()? != b"permessage-deflate" {
         return None;
     }
-    let mut params = WebSocketDeflate::Params::default();
+    let mut params = WebSocketDeflate::Params::new();
     let (mut server_bits, mut client_bits) = (None, None);
     for part in parts {
         let (key, bits) = match strings::split_once_char(part, b'=') {

@@ -13,11 +13,20 @@ struct Label {
 
 /// The names of a scope, or the exports or the members of a symbol, while the file is being bound.
 /// Most have a few, which take no allocation and are compared one after the other.
-#[derive(Default)]
 struct Table {
     few: SmallVec<[(Atom, SymbolId); Table::FEW]>,
     /// In place of `few`, once there are more than `Table::FEW`.
     many: Option<Names>,
+}
+
+impl Table {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            few: SmallVec::new(),
+            many: None,
+        }
+    }
 }
 
 type Names = FxHashMap<Atom, SymbolId>;
@@ -50,7 +59,9 @@ impl Table {
             self.few.push((name, symbol));
             return None;
         }
-        let mut many = spare.pop().unwrap_or_default();
+        let mut many = spare
+            .pop()
+            .unwrap_or_else(|| rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher));
         many.extend(self.few.drain(..));
         many.insert(name, symbol);
         self.many = Some(many);
@@ -111,8 +122,8 @@ pub(super) struct Room {
     yields: Vec<u32>,
 }
 
-impl Default for Room {
-    fn default() -> Self {
+impl Room {
+    pub(super) fn new() -> Self {
         Room {
             b: BoundBuilder::new(),
             tables: Vec::new(),
@@ -134,7 +145,7 @@ thread_local! {
 }
 
 pub(super) fn take_room() -> Box<Room> {
-    ROOM.take().unwrap_or_default()
+    ROOM.take().unwrap_or_else(|| Box::new(Room::new()))
 }
 
 pub(super) fn leave_room(room: Box<Room>) {
@@ -273,7 +284,7 @@ impl<'f, 's> Binder<'f, 's> {
         options: BindOptions,
         atoms: &'f dyn crate::atom::Intern,
     ) -> BoundBuilder {
-        Self::run_in(f, options, atoms, &mut Room::default())
+        Self::run_in(f, options, atoms, &mut Room::new())
     }
 
     fn run_in(
@@ -407,7 +418,7 @@ impl<'f, 's> Binder<'f, 's> {
             scope_change_of: FnId::NONE,
             associated_declaration: (PatId::NONE, FnId::NONE),
             instance_states: Vec::new(),
-            chain_answers: Default::default(),
+            chain_answers: core::cell::RefCell::new(Vec::new()),
             // As the parser: what is bound is walked by the checker, whose time can be the square or the cube of the depth.
             stack_check: bun_core::StackCheck::init()
                 .with_at_most(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize),
@@ -456,7 +467,7 @@ impl<'f, 's> Binder<'f, 's> {
     // ───────────────────────────── symbols and scopes ─────────────────────────────
 
     fn new_table(&mut self) -> TableId {
-        self.tables.push(Table::default());
+        self.tables.push(Table::new());
         TableId(self.tables.len() as u32 - 1)
     }
 
@@ -970,7 +981,7 @@ impl<'f, 's> Binder<'f, 's> {
 
     fn new_label(&mut self, is_loop: bool) -> FlowId {
         self.label_edges.push(Label {
-            edges: Default::default(),
+            edges: smallvec::SmallVec::new(),
             node: FlowId::NONE,
             is_loop,
         });
@@ -2212,7 +2223,7 @@ impl<'f, 's> Binder<'f, 's> {
         dynamic.sort_by_key(|dynamic| dynamic.0);
         let dynamic = dynamic.iter().map(|dynamic| dynamic.1);
         self.b.specifiers.extend(dynamic);
-        let mut seen = crate::util::FxHashSet::default();
+        let mut seen = crate::util::FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         self.b.specifiers.retain(|s| seen.insert(*s));
         if !self.b.ambient_specifiers.is_empty() {
             self.b.ambient_specifiers.retain(|s| seen.insert(*s));

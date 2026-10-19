@@ -93,7 +93,7 @@ fn is_in_render(statement: Stmt<'_>) -> bool {
 impl PreferStatelessFunction {
     /// The nodes at which a listener of upstream marks a component as one that cannot be a function.
     fn marks<'a>(&self, file: &'a File<'a>, components: &Components<'a>) -> Queue<'a> {
-        let mut queue = Queue::default();
+        let mut queue = Queue::new();
         let mut mark = |node: Node<'a>| queue.push(At::enter(node), 0, node);
 
         // ClassDeclaration, ClassExpression
@@ -196,7 +196,7 @@ impl Rule for PreferStatelessFunction {
         }
 
         let mut queue = self.marks(file, &components);
-        let mut marked: FxHashSet<ComponentId> = FxHashSet::default();
+        let mut marked: FxHashSet<ComponentId> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         while let Some(event) = queue.pop_until(At::END) {
             components.advance(event.at);
             let node = match event.node {

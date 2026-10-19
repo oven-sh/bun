@@ -89,7 +89,7 @@ impl DevServer {
                 mime_type: Some(&MimeType::HTML),
                 server: self.server,
                 status_code: 500,
-                ..Default::default()
+                ..crate::server::static_route::InitFromBytesOptions::new()
             },
         );
         Ok(())
@@ -415,7 +415,7 @@ impl DevServer {
             .expect("infallible: bundle active");
         let gop = current_bundle
             .resolution_failure_entries
-            .get_or_put(owner)?;
+            .get_or_put(owner, Log::empty)?;
         if !gop.found_existing {
             *gop.value_ptr = Log::init();
         }

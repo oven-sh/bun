@@ -77,8 +77,8 @@ impl RuntimeOptions {
     const HAS_JIT_POLICY: u32 = 1 << 1;
 }
 
-impl Default for RuntimeOptions {
-    fn default() -> Self {
+impl RuntimeOptions {
+    pub fn new() -> Self {
         Self { jit_policy: 1.0 }
     }
 }
@@ -468,18 +468,16 @@ pub(crate) struct CompiledModuleGraphFile {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FileSide {
-    #[default]
     Server = 0,
     Client = 1,
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Encoding {
     Binary = 0,
-    #[default]
     Latin1 = 1,
     /// Little-endian UTF-16 code units at an even section offset. Reuses the
     /// value of the never-written `Utf8` variant so an older runtime reads it
@@ -488,9 +486,8 @@ pub enum Encoding {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ModuleFormat {
-    #[default]
     None = 0,
     Esm = 1,
     Cjs = 2,
@@ -892,7 +889,7 @@ impl LazySourceMap {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct Offsets {
     pub byte_count: usize,
     pub modules_ptr: StringPointer,
@@ -903,7 +900,7 @@ pub(crate) struct Offsets {
 
 bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct Flags: u32 {
         const DISABLE_DEFAULT_ENV_FILES     = 1 << 0;
         const DISABLE_AUTOLOAD_BUNFIG       = 1 << 1;
@@ -969,7 +966,7 @@ impl StandaloneModuleGraph {
                 dirs: StringArrayHashMap::new(),
                 entry_point_id: 0,
                 compile_exec_argv: b"",
-                flags: Flags::default(),
+                flags: Flags::empty(),
                 builtin_bytecode: Vec::new(),
                 bytecode_string_table: &[],
                 linked_bytecode_payload: None,
@@ -977,7 +974,7 @@ impl StandaloneModuleGraph {
                 prelinked_module_graph: &[],
                 prelinked_module_files: Vec::new(),
                 startup_module_count: 0,
-                runtime_options: RuntimeOptions::default(),
+                runtime_options: RuntimeOptions::new(),
             });
         }
 
@@ -1125,7 +1122,7 @@ impl StandaloneModuleGraph {
                 record_at = raw_len;
             }
         }
-        let mut runtime_options = RuntimeOptions::default();
+        let mut runtime_options = RuntimeOptions::new();
         if offsets.flags.contains(Flags::HAS_RUNTIME_OPTIONS)
             && record_at + 2 * size_of::<u32>() <= raw_len
         {
@@ -1139,7 +1136,7 @@ impl StandaloneModuleGraph {
                 }
             }
         }
-        let mut linked_bytecode_payload = StringPointer::default();
+        let mut linked_bytecode_payload = StringPointer::new();
         let mut linked_bytecode_region_ends = [0u32; LINKED_BYTECODE_REGION_COUNT];
         const LINKED_PAYLOAD_RECORD: usize = (2 + LINKED_BYTECODE_REGION_COUNT) * size_of::<u32>();
         if offsets.flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD)
@@ -1477,7 +1474,7 @@ pub(crate) fn to_bytes(
     };
 
     let mut has_entry_point = false;
-    let mut string_builder = bun_core::StringBuilder::default();
+    let mut string_builder = bun_core::StringBuilder::new();
     let mut module_count: usize = 0;
     for output_file in output_files {
         string_builder.count_z(&output_file.dest_path);
@@ -1549,7 +1546,7 @@ pub(crate) fn to_bytes(
 
         // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
         if seen_paths
-            .get_or_put(module_dest_path(output_file))?
+            .get_or_put(module_dest_path(output_file), || ())?
             .found_existing
         {
             continue;
@@ -1587,7 +1584,7 @@ pub(crate) fn to_bytes(
             .iter()
             .find(|f| f.output_kind == options::OutputKind::BytecodePayload)
             .map(|f| bun_bundler::bytecode_order::split_payload_file(f.value.as_slice()));
-    let mut linked_payload_ptr = StringPointer::default();
+    let mut linked_payload_ptr = StringPointer::new();
 
     // `Flags::HAS_PRELINKED_MODULE_GRAPH`: graph module index -> file-table position, so the runtime registers a whole
     // import closure by index without looking any path up. Empty (and the graph is not embedded) unless every graph
@@ -1659,7 +1656,7 @@ pub(crate) fn to_bytes(
                 }
                 break 'brk append_bytecode_aligned(&mut string_builder, bytecode.value.as_slice());
             } else {
-                break 'brk StringPointer::default();
+                break 'brk StringPointer::new();
             }
         };
 
@@ -1686,7 +1683,7 @@ pub(crate) fn to_bytes(
                     length: mi_bytes.len() as u32,
                 };
             }
-            break 'brk StringPointer::default();
+            break 'brk StringPointer::new();
         };
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
@@ -1732,9 +1729,9 @@ pub(crate) fn to_bytes(
         }
 
         modules.push(CompiledModuleGraphFile {
-            name: StringPointer::default(),
+            name: StringPointer::new(),
             loader: output_file.loader,
-            contents: StringPointer::default(),
+            contents: StringPointer::new(),
             encoding: Encoding::Binary,
             module_format: if output_file.loader.is_javascript_like() {
                 match output_format {
@@ -1747,12 +1744,12 @@ pub(crate) fn to_bytes(
             },
             bytecode,
             module_info,
-            bytecode_origin_path: StringPointer::default(),
+            bytecode_origin_path: StringPointer::new(),
             side: match output_file.side.unwrap_or(options::Side::Server) {
                 options::Side::Server => FileSide::Server,
                 options::Side::Client => FileSide::Client,
             },
-            sourcemap: StringPointer::default(),
+            sourcemap: StringPointer::new(),
         });
     }
 
@@ -2148,7 +2145,7 @@ pub(crate) fn inject<'a>(
                     access_mask: w::SYNCHRONIZE | w::GENERIC_WRITE | w::GENERIC_READ | w::DELETE,
                     disposition: w::FILE_OPEN,
                     options: w::FILE_SYNCHRONOUS_IO_NONALERT | w::FILE_OPEN_REPARSE_POINT,
-                    ..Default::default()
+                    ..Syscall::NtCreateFileOptions::new()
                 },
             ) {
                 Ok(f) => f,
@@ -2591,8 +2588,8 @@ pub(crate) fn download_to_path(
     env: &mut bun_dotenv::Loader,
     dest_z: &ZStr,
 ) -> crate::Result<()> {
-    bun_http::http_thread::init(&Default::default());
-    let mut refresher = bun_core::Progress::Progress::default();
+    bun_http::http_thread::init(&bun_http::http_thread::InitOpts::new());
+    let mut refresher = bun_core::Progress::Progress::new();
 
     {
         refresher.refresh();
@@ -2624,7 +2621,7 @@ pub(crate) fn download_to_path(
             let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
                 bun_http::Method::GET,
                 url,
-                Default::default(),
+                bun_collections::MultiArrayList::new(),
                 b"",
                 b"",
                 http_proxy,
@@ -2689,7 +2686,7 @@ pub(crate) fn download_to_path(
                 let tempdir_name: &ZStr =
                     bun_fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
                 let tmpdir = bun_sys::Dir::cwd()
-                    .make_open_path(tempdir_name.as_bytes(), Default::default())?;
+                    .make_open_path(tempdir_name.as_bytes(), bun_sys::OpenDirOptions::new())?;
                 scopeguard::defer! {
                     let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name.as_bytes());
                 }
@@ -2701,7 +2698,7 @@ pub(crate) fn download_to_path(
                     bun_libarchive::ExtractOptions {
                         // "package/bin"
                         depth_to_skip: 2,
-                        ..Default::default()
+                        ..bun_libarchive::ExtractOptions::new()
                     },
                 );
                 if extract_res.is_err() {
@@ -3282,7 +3279,7 @@ fn append_shared_bytecode(
     }
     builtin_bytecode_table[0..4].copy_from_slice(&count.to_le_bytes());
 
-    let mut bytecode_string_table_ptr = StringPointer::default();
+    let mut bytecode_string_table_ptr = StringPointer::new();
     for output_file in output_files {
         if output_file.output_kind != options::OutputKind::BytecodeStringTable {
             continue;
@@ -3292,7 +3289,7 @@ fn append_shared_bytecode(
         };
         bytecode_string_table_ptr = append_bytecode_aligned(string_builder, bytes);
     }
-    let mut module_info_string_table_ptr = StringPointer::default();
+    let mut module_info_string_table_ptr = StringPointer::new();
     if let Some(table) = output_files
         .iter()
         .find(|f| f.output_kind == options::OutputKind::ModuleInfoStringTable)
@@ -3303,7 +3300,7 @@ fn append_shared_bytecode(
         string_builder.len += padding;
         module_info_string_table_ptr = string_builder.append_count(table.value.as_slice());
     }
-    let mut prelinked_module_graph_ptr = StringPointer::default();
+    let mut prelinked_module_graph_ptr = StringPointer::new();
     if embed_prelinked_graph {
         if let Some(graph) = output_files
             .iter()

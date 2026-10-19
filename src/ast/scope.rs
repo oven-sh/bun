@@ -67,7 +67,7 @@ impl<const N: usize> InlineMembers<N> {
         let i = self.len as usize;
         self.hashes[i] = hash;
         self.names[i] = crate::StoreStr::new(name);
-        self.members[i] = Member::default();
+        self.members[i] = Member::new();
         self.len += 1;
         i
     }
@@ -87,9 +87,7 @@ impl<const N: usize> InlineMembers<N> {
 /// start as a short inline array and only become a hash table past
 /// `INLINE_MAX`. Both live in `AstAlloc` (freed with the arena holding the
 /// `Scope`; a `Scope`'s `Drop` never runs).
-#[derive(Default)]
 pub enum Members {
-    #[default]
     Empty,
     /// In declaration order.
     Small(bun_alloc::AstBox<InlineMembers<4>>),
@@ -224,7 +222,7 @@ impl Members {
             }
             table
         }
-        let table = match core::mem::take(self) {
+        let table = match core::mem::replace(self, Members::Empty) {
             Members::Table(mut table) => {
                 table.reserve(capacity, |e| Self::table_hash(e.hash));
                 table
@@ -303,7 +301,7 @@ impl Members {
                                     .insert(MemberEntry {
                                         name: crate::StoreStr::new(name),
                                         hash,
-                                        member: Member::default(),
+                                        member: Member::new(),
                                     })
                                     .into_mut()
                                     .member,
@@ -396,13 +394,6 @@ impl Scope {
         is_after_const_local_prefix: false,
         ts_namespace: None,
     };
-}
-
-impl Default for Scope {
-    #[inline]
-    fn default() -> Self {
-        Self::EMPTY
-    }
 }
 
 impl Scope {
@@ -548,10 +539,20 @@ impl Scope {
 // Do not make this a packed struct
 // Two hours of debugging time lost to that.
 // It causes a crash due to undefined memory
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Member {
     pub ref_: Ref,
     pub loc: crate::Loc,
+}
+
+impl Member {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            ref_: Ref::NONE,
+            loc: crate::Loc::new(),
+        }
+    }
 }
 
 impl Member {

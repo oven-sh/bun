@@ -117,8 +117,8 @@ pub struct SASL {
     pub(crate) status: SASLStatus,
 }
 
-impl Default for SASL {
-    fn default() -> Self {
+impl SASL {
+    pub fn new() -> Self {
         Self {
             nonce_base64_bytes: [0; NONCE_BASE64_LEN],
             nonce_len: 0,
@@ -160,7 +160,7 @@ impl SASL {
         tls: Option<&mut SSL>,
         asked_for_tls: bool,
     ) -> Result<SASL, Refusal> {
-        let mut sasl = SASL::default();
+        let mut sasl = SASL::new();
         let Some(ssl) = tls else {
             if channel_binding == ChannelBinding::Require {
                 return Err(Refusal::required(

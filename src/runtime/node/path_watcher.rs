@@ -124,13 +124,13 @@ unsafe impl Sync for PathWatcherManager {}
 // whose `Send` bound reduces to `PathWatcherManager: Sync`.
 unsafe impl Send for PathWatcherManager {}
 
-impl Default for PathWatcherManager {
-    fn default() -> Self {
+impl PathWatcherManager {
+    pub(crate) fn new() -> Self {
         Self {
             mutex: Mutex::new(),
-            watchers: UnsafeCell::new(StringArrayHashMap::default()),
+            watchers: UnsafeCell::new(StringArrayHashMap::init()),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-            platform: UnsafeCell::new(Platform::default()),
+            platform: UnsafeCell::new(Platform::new()),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
             platform_fd: Cell::new(Fd::INVALID),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
@@ -215,11 +215,21 @@ pub(crate) struct PathWatcher {
 ///
 /// Fields are `Cell` so `should_emit` takes `&self` — the emit paths then only
 /// ever need shared access to a `PathWatcher`.
-#[derive(Default)]
 pub(crate) struct ChangeEvent {
     hash: Cell<u64>,
     event_type: Cell<WatchEventKind>,
     timestamp: Cell<i64>,
+}
+
+impl ChangeEvent {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            hash: core::cell::Cell::new(0),
+            event_type: core::cell::Cell::new(WatchEventKind::Change),
+            timestamp: core::cell::Cell::new(0),
+        }
+    }
 }
 
 impl ChangeEvent {
@@ -467,7 +477,7 @@ pub(crate) fn watch(
     // scoped to this lookup.
     if let Some(&existing) = unsafe { (*manager.watchers.get()).get(key) } {
         // SAFETY: existing is a live PathWatcher under manager.mutex.
-        unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
+        unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::new())) };
         manager.mutex.unlock();
         return Ok(existing);
     }
@@ -481,11 +491,11 @@ pub(crate) fn watch(
         recursive,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
-        handlers: ArrayHashMap::default(),
-        platform: PlatformWatch::default(),
+        handlers: ArrayHashMap::new(),
+        platform: PlatformWatch::new(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.
-    unsafe { handle_oom((*watcher).handlers.put(ctx, ChangeEvent::default())) };
+    unsafe { handle_oom((*watcher).handlers.put(ctx, ChangeEvent::new())) };
     // SAFETY: holding manager.mutex; exclusive access to manager.watchers.
     unsafe { handle_oom((*manager.watchers.get()).put(key, watcher)) };
 
@@ -654,7 +664,6 @@ compile_error!("path_watcher: unsupported target");
 /// Recursive watches are implemented by walking the tree at subscribe time and adding
 /// a wd per directory, then adding new subdirectories as they appear (IN_CREATE|IN_ISDIR).
 #[cfg(any(target_os = "linux", target_os = "android"))]
-#[derive(Default)]
 pub(crate) struct Linux {
     /// wd → list of owners. `inotify_add_watch` returns the same wd for the same
     /// inode on a given inotify fd, so two PathWatchers whose roots overlap (e.g.
@@ -662,6 +671,16 @@ pub(crate) struct Linux {
     /// owner gets its own subpath so the event can be reported relative to the right
     /// root, and `inotify_rm_watch` is only issued when the last owner detaches.
     wd_map: HashMap<i32, Vec<WdOwner>>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl Linux {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            wd_map: HashMap::init(),
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -677,11 +696,18 @@ struct WdOwner {
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-#[derive(Default)]
 pub(crate) struct LinuxWatch {
     /// All wds belonging to this PathWatcher (one for a file/non-recursive dir,
     /// many for a recursive dir).
     wds: Vec<i32>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl LinuxWatch {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { wds: Vec::new() }
+    }
 }
 // Drop: Vec frees automatically.
 
@@ -723,7 +749,7 @@ impl Linux {
         }
         // Owning raw pointer first, shared view second: the spawn error arm reclaims
         // through `manager_ptr`, which must not be derived from a shared reference.
-        let manager_ptr = bun_core::heap::into_raw(Box::new(PathWatcherManager::default()));
+        let manager_ptr = bun_core::heap::into_raw(Box::new(PathWatcherManager::new()));
         // SAFETY: just allocated and exclusively owned; published only on Ok.
         let manager: &'static PathWatcherManager = unsafe { &*manager_ptr };
         manager.platform_fd.set(Fd::from_native(rc));
@@ -785,7 +811,7 @@ impl Linux {
         }
         let wd: i32 = rc;
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
-        let owners = unsafe { (*plat).wd_map.entry(wd).or_default() };
+        let owners = unsafe { (*plat).wd_map.entry(wd).or_insert_with(Vec::new) };
         // This wd may already have this watcher as an owner:
         //   - IN_CREATE raced the initial walk (same subpath → the reassign is a no-op)
         //   - a subdirectory was *renamed* within the tree: IN_MOVED_TO re-adds it,
@@ -897,7 +923,7 @@ impl Linux {
                     let err = sys::Error {
                         errno: errno as u16,
                         syscall: Tag::read,
-                        ..Default::default()
+                        ..sys::Error::init()
                     };
                     manager.mutex.lock();
                     // SAFETY: holding manager.mutex.
@@ -920,7 +946,7 @@ impl Linux {
 
             manager.mutex.lock();
             // Track which PathWatchers got at least one event so we flush() each once.
-            let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
+            let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::new();
 
             let mut i: usize = 0;
             while i < n {
@@ -945,7 +971,7 @@ impl Linux {
                     for &w in watchers.values() {
                         // SAFETY: w live under manager.mutex.
                         unsafe { (*w).emit_overflow() };
-                        let _ = handle_oom(touched.get_or_put(w));
+                        let _ = handle_oom(touched.get_or_put(w, || ()));
                     }
                     continue;
                 }
@@ -970,7 +996,7 @@ impl Linux {
                                     path::basename(w.path.as_bytes()),
                                     w.is_file,
                                 );
-                                let _ = handle_oom(touched.get_or_put(o.watcher));
+                                let _ = handle_oom(touched.get_or_put(o.watcher, || ()));
                             }
                             // SAFETY: exclusive scoped access to this watcher's wd
                             // list under manager.mutex; the shared borrow above is
@@ -1094,7 +1120,7 @@ impl Linux {
                                     && !watcher_is_file),
                         );
                     }
-                    let _ = handle_oom(touched.get_or_put(owner_watcher));
+                    let _ = handle_oom(touched.get_or_put(owner_watcher, || ()));
 
                     // Recursive: a new directory appeared under this owner's tree —
                     // start watching it so future events inside it are delivered.
@@ -1196,15 +1222,21 @@ use bun_watcher::inotify_watcher::Event as InotifyEvent;
 /// Unlike the old design, FSEvents is used for both files and directories (same as
 /// libuv), so `fs.watch()` no longer spins up a second kqueue thread.
 #[cfg(target_os = "macos")]
-#[derive(Default)]
 pub(crate) struct Darwin {
     // No manager-level state — FSEvents has its own process-global loop.
 }
 
 #[cfg(target_os = "macos")]
-#[derive(Default)]
 pub(crate) struct DarwinWatch {
     fsevents: Option<*mut fsevents::FSEventsWatcher>,
+}
+
+#[cfg(target_os = "macos")]
+impl DarwinWatch {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { fsevents: None }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1222,7 +1254,7 @@ impl Drop for DarwinWatch {
 impl Darwin {
     fn init() -> sys::Result<&'static PathWatcherManager> {
         // SAFETY: just allocated; nothing after this can fail.
-        Ok(unsafe { &*bun_core::heap::into_raw(Box::new(PathWatcherManager::default())) })
+        Ok(unsafe { &*bun_core::heap::into_raw(Box::new(PathWatcherManager::new())) })
     }
 
     /// Caller does NOT hold `manager.mutex` — `FSEvents.watch()` takes the FSEvents

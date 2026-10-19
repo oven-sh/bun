@@ -250,7 +250,7 @@ fn explode_type_and_value_specifiers(model: &mut Model, nodes: &mut Vec<u32>) {
                 is_type,
                 specifiers,
                 has_attributes: false,
-                comments: Attached::default(),
+                comments: Attached::new(),
                 ..declaration
             });
         }
@@ -629,10 +629,10 @@ fn sorted_nodes(model: &mut Model, options: &Options) -> Option<Vec<Node>> {
     }
     let entries = comment_registry(model, &output);
     for &index in &output {
-        model.declarations[index as usize].comments = Attached::default();
+        model.declarations[index as usize].comments = Attached::new();
         let (start, len) = model.declarations[index as usize].specifiers;
         for at in start..start + len {
-            model.specifiers[model.orders[at as usize] as usize].comments = Attached::default();
+            model.specifiers[model.orders[at as usize] as usize].comments = Attached::new();
         }
     }
     let provides_gap = matches!(

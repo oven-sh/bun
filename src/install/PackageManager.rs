@@ -349,13 +349,13 @@ impl ManifestFailure {
     pub(crate) fn already_reported() -> Self {
         ManifestFailure {
             reported: FailureReport::Errored,
-            ..Default::default()
+            ..ManifestFailure::new()
         }
     }
 }
 
-impl Default for ManifestFailure {
-    fn default() -> Self {
+impl ManifestFailure {
+    pub(crate) fn new() -> Self {
         ManifestFailure {
             msgs: Vec::new(),
             is_missing: false,
@@ -393,7 +393,6 @@ pub(crate) struct Wanted {
 /// resolved, so nothing new would be requested either. To keep the network busy, `look_ahead`
 /// guesses which versions the waiting dependencies will resolve to and requests the manifests that
 /// those versions depend on. It only fills `PackageManager::manifests`, never the lockfile.
-#[derive(Default)]
 pub(crate) struct LookAhead {
     /// The packages that were looked at, by the hash of their name. One guess per package is
     /// enough: its versions mostly depend on the same packages, and a second range mostly shares
@@ -410,6 +409,19 @@ pub(crate) struct LookAhead {
     pub(crate) deferred_peers_seen: usize,
 }
 
+impl LookAhead {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            seen: HashMap::init(),
+            waiting: HashMap::init(),
+            arrived: Vec::new(),
+            in_peer_pass: false,
+            deferred_peers_seen: 0,
+        }
+    }
+}
+
 /// A git, GitHub or tarball package that is downloaded and waits for its turn. See
 /// `RemotePackages`.
 pub(crate) struct ArrivedPackage {
@@ -421,13 +433,22 @@ pub(crate) struct ArrivedPackage {
 /// downloaded. If it were added to the lockfile on arrival, the place of its dependencies in the
 /// queue would depend on how fast its server is. So each one is added when the queue is empty, in
 /// the order of the dependencies that ask for them: `append_next_remote_package`.
-#[derive(Default)]
 pub(crate) struct RemotePackages {
     /// Every task that a dependency on such a package has waited for.
     pub(crate) tasks: Vec<Task::Id>,
     /// The downloaded packages whose turn has not come, by the task that fetched them.
     pub(crate) arrived:
         HashMap<Task::Id, ArrivedPackage, bun_collections::IdentityContext<Task::Id>>,
+}
+
+impl RemotePackages {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            tasks: Vec::new(),
+            arrived: HashMap::init(),
+        }
+    }
 }
 
 /// Which package `append_next_remote_package` may add.
@@ -655,9 +676,15 @@ pub struct PackageManager {
     pub(crate) cached_tick_for_slow_lifecycle_script_logging: u64,
 }
 
-#[derive(Default)]
 pub struct RootPackageId {
     pub(crate) id: Option<PackageID>,
+}
+
+impl RootPackageId {
+    #[inline]
+    pub fn new() -> Self {
+        Self { id: None }
+    }
 }
 
 impl RootPackageId {
@@ -810,13 +837,24 @@ impl WorkspaceFilter {
     }
 }
 
-#[derive(Default)]
 pub struct PackageUpdateInfo {
     pub(crate) original_version_literal: Box<[u8]>,
     // set by the post-install write-back; the install summary still needs the entry
     pub(crate) written_back: bool,
     pub(crate) original_version_string_buf: Box<[u8]>,
     pub(crate) original_version: Option<Semver::Version>,
+}
+
+impl PackageUpdateInfo {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            original_version_literal: Box::new([]),
+            written_back: false,
+            original_version_string_buf: Box::new([]),
+            original_version: None,
+        }
+    }
 }
 
 impl PackageUpdateInfo {
@@ -859,9 +897,7 @@ impl UpdateTargetWorkspace {
     }
 }
 
-#[derive(Default)]
 pub enum TrackInstalledBin {
-    #[default]
     None,
     Pending,
     Basename(Box<[u8]>),
@@ -1445,10 +1481,10 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     // used later for adding to path for scripts
     manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
 
-    let node_gyp_tempdir = match tempdir
-        .handle
-        .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
-    {
+    let node_gyp_tempdir = match tempdir.handle.make_open_path(
+        &manager.node_gyp_tempdir_name,
+        bun_sys::OpenDirOptions::new(),
+    ) {
         Ok(d) => d,
         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
             // it should not exist
@@ -1570,7 +1606,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     };
     match err {
         http::InitError::LoadCAFile => {
-            let mut normalizer = PosixToWinNormalizer::default();
+            let mut normalizer = PosixToWinNormalizer::new();
             let normalized = normalizer.resolve_z(FileSystem::instance().top_level_dir(), abs_ca_z);
             if !bun_sys::exists_z(normalized) {
                 Output::err(
@@ -1666,7 +1702,7 @@ fn allocate_package_manager(
             }
         );
         wr!(network_task_fifo, NetworkQueue::init());
-        wr!(retry_queue, Default::default());
+        wr!(retry_queue, crate::retry_timer::RetryQueue::new());
         wr!(patch_task_fifo, PatchTaskFifo::init());
         wr!(log, log);
         wr!(root_dir, root_dir);
@@ -1676,11 +1712,11 @@ fn allocate_package_manager(
             thread_pool,
             ThreadPool::init(thread_pool::Config {
                 max_threads: u32::from(bun_core::get_thread_count()),
-                ..Default::default()
+                ..thread_pool::Config::new()
             })
         );
-        wr!(resolve_tasks, ResolveTaskQueue::default());
-        wr!(lockfile, Box::new(Lockfile::default()));
+        wr!(resolve_tasks, ResolveTaskQueue::new());
+        wr!(lockfile, Box::new(Lockfile::new()));
         wr!(
             event_loop,
             if runtime_auto_install {
@@ -1704,36 +1740,39 @@ fn allocate_package_manager(
         // remaining defaults:
         wr!(timestamp_for_manifest_cache_control, 0);
         wr!(extracted_count, 0);
-        wr!(summary, Default::default());
-        wr!(progress, Progress::default());
+        wr!(summary, crate::lockfile_real::package::DiffSummary::new());
+        wr!(progress, Progress::new());
         wr!(downloads_node, None);
         wr!(scripts_node, None);
         wr!(progress_name_buf, [0; 768]);
         wr!(track_installed_bin, TrackInstalledBin::None);
         wr!(to_update, false);
-        wr!(update_requests, Box::default());
-        wr!(update_request_index, Default::default());
-        wr!(audit_fix_pins, Box::default());
-        wr!(root_package_id, RootPackageId::default());
+        wr!(update_requests, Box::new([]));
+        wr!(
+            update_request_index,
+            crate::package_manager_real::update_request::UpdateRequestIndex::new()
+        );
+        wr!(audit_fix_pins, Box::new([]));
+        wr!(root_package_id, RootPackageId::new());
         wr!(workspace_root_name_hash, 0);
-        wr!(workspace_root_version, Box::default());
-        wr!(task_batch, thread_pool::Batch::default());
-        wr!(task_queue, TaskDependencyQueue::default());
-        wr!(manifests, PackageManifestMap::default());
-        wr!(folders, Default::default());
-        wr!(git_repositories, RepositoryMap::default());
-        wr!(git_commits, GitCommitMap::default());
+        wr!(workspace_root_version, Box::new([]));
+        wr!(task_batch, thread_pool::Batch::new());
+        wr!(task_queue, TaskDependencyQueue::init());
+        wr!(manifests, PackageManifestMap::new());
+        wr!(folders, HashMap::init());
+        wr!(git_repositories, RepositoryMap::init());
+        wr!(git_commits, GitCommitMap::init());
         wr!(git_tasks, VecDeque::new());
         wr!(running_git_tasks, AtomicU32::new(0));
         wr!(git_env, bun_ptr::JsCell::new(None));
-        wr!(appended_task_packages, AppendedTaskPackageMap::default());
-        wr!(network_dedupe_map, Default::default());
-        wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
-        wr!(network_tarball_batch, thread_pool::Batch::default());
-        wr!(network_resolve_batch, thread_pool::Batch::default());
-        wr!(patch_apply_batch, thread_pool::Batch::default());
-        wr!(patch_calc_hash_batch, thread_pool::Batch::default());
-        wr!(patch_task_queue, PatchTaskQueue::default());
+        wr!(appended_task_packages, AppendedTaskPackageMap::init());
+        wr!(network_dedupe_map, HashMap::init());
+        wr!(async_network_task_queue, AsyncNetworkTaskQueue::new());
+        wr!(network_tarball_batch, thread_pool::Batch::new());
+        wr!(network_resolve_batch, thread_pool::Batch::new());
+        wr!(patch_apply_batch, thread_pool::Batch::new());
+        wr!(patch_calc_hash_batch, thread_pool::Batch::new());
+        wr!(patch_task_queue, PatchTaskQueue::new());
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
         wr!(total_tasks, 0);
@@ -1741,13 +1780,16 @@ fn allocate_package_manager(
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);
         wr!(root_lifecycle_scripts, None);
-        wr!(node_gyp_tempdir_name, Box::default());
+        wr!(node_gyp_tempdir_name, Box::new([]));
         wr!(preinstall_state, Vec::new());
-        wr!(postinstall_optimizer, Default::default());
+        wr!(
+            postinstall_optimizer,
+            crate::postinstall_optimizer::List::new()
+        );
         wr!(global_link_dir, None);
         wr!(global_dir, None);
-        wr!(global_link_dir_path, Box::default());
-        wr!(on_wake, WakeHandler::default());
+        wr!(global_link_dir_path, Box::new([]));
+        wr!(on_wake, WakeHandler::new());
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
@@ -1756,28 +1798,31 @@ fn allocate_package_manager(
         wr!(local_in_root, Vec::new());
         wr!(alias_rows, Vec::new());
         wr!(patched_versions, None);
-        wr!(known_npm_aliases, NpmAliasMap::default());
+        wr!(known_npm_aliases, NpmAliasMap::init());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);
-        wr!(updating_packages, StringArrayHashMap::default());
+        wr!(updating_packages, StringArrayHashMap::init());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
         wr!(held_messages, None);
-        wr!(manifest_failures, HashMap::default());
-        wr!(look_ahead, LookAhead::default());
-        wr!(remote_packages, RemotePackages::default());
+        wr!(manifest_failures, HashMap::init());
+        wr!(look_ahead, LookAhead::new());
+        wr!(remote_packages, RemotePackages::new());
         wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
         wr!(wrote_package_json, false);
         wr!(migrated_package_json_moves, Vec::new());
-        wr!(catalog_add, add_catalog::State::default());
-        wr!(patched_dependencies_to_remove, ArrayHashMap::default());
-        wr!(pending_patch_commit, Default::default());
+        wr!(catalog_add, add_catalog::State::new());
+        wr!(patched_dependencies_to_remove, ArrayHashMap::new());
+        wr!(
+            pending_patch_commit,
+            crate::package_manager_real::patch_package::PendingCommit::new()
+        );
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
@@ -1977,7 +2022,7 @@ fn load_npmrc_files<'a>(
     for path in project_npmrcs {
         paths.push(path);
     }
-    let mut install = Api::BunInstall::default();
+    let mut install = Api::BunInstall::new();
     if let Some(path) = ini::load_npmrc_config(&mut install, bunfig, env, diagnostics, &paths) {
         unreadable.get_or_insert_with(|| path.as_bytes().into());
     }
@@ -2011,7 +2056,7 @@ pub fn config_ignores_scripts(
     if env_ignores_scripts(env) {
         return Ok(true);
     }
-    let no_bunfig = Api::BunInstall::default();
+    let no_bunfig = Api::BunInstall::new();
     let bunfig = ctx.install.as_deref().unwrap_or(&no_bunfig);
     if let Some(ignore_scripts) = bunfig.ignore_scripts {
         return Ok(ignore_scripts);
@@ -2034,7 +2079,7 @@ pub fn config_ignores_scripts(
 pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8]>> {
     let bunfig = (::bun_bunfig::arguments::load_user_install_section().ok())
         .flatten()
-        .unwrap_or_default();
+        .unwrap_or_else(|| Box::new(bun_options_types::schema::api::BunInstall::new()));
     if bunfig.cache_directory.is_some() {
         return bunfig.cache_directory;
     }
@@ -2312,7 +2357,7 @@ fn exit_if_started_in_member_outside(
     else {
         return;
     };
-    let mut linked = crate::lockfile_real::LinkedMembers::default();
+    let mut linked = crate::lockfile_real::LinkedMembers::new();
     linked.see(path, entry.is_behind_link);
     let Some(real_path) = linked.outside_and_started_in(path) else {
         return;
@@ -2379,7 +2424,11 @@ fn find_project<'a>(
             continue;
         }
         match workspace_package_json_cache
-            .get_with_path(&mut bun_ast::Log::init(), &walk.path, Default::default())
+            .get_with_path(
+                &mut bun_ast::Log::init(),
+                &walk.path,
+                super::GetJsonOptions::new(),
+            )
             .unwrap()
         {
             Ok(json) if OF_A_PROJECT.iter().any(|key| json.root.get(key).is_some()) => {
@@ -2425,7 +2474,7 @@ pub fn project_directory(cwd: &[u8]) -> Option<&[u8]> {
     initialize_store();
     find_project(
         without_trailing_slash_windows_path(cwd),
-        &mut WorkspacePackageJSONCache::default(),
+        &mut WorkspacePackageJSONCache::new(),
         &mut None,
     )
     .map(|(project, _)| project)
@@ -2554,11 +2603,11 @@ pub fn init(
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
     let mut workspace_package_json_cache = WorkspacePackageJSONCache {
-        map: Default::default(),
+        map: bun_collections::StringHashMap::init(),
     };
 
     let mut workspace_name_hash: Option<PackageNameHash> = None;
-    let mut root_package_json_name_at_time_of_init: Box<[u8]> = Box::default();
+    let mut root_package_json_name_at_time_of_init: Box<[u8]> = Box::new([]);
 
     // Step 1. Find the nearest package.json directory
     //
@@ -2783,10 +2832,7 @@ pub fn init(
 
     {
         // npmrc < bunfig < CLI
-        let bunfig_install = ctx
-            .install
-            .take()
-            .map_or_else(Api::BunInstall::default, |b| *b);
+        let bunfig_install = ctx.install.take().map_or_else(Api::BunInstall::new, |b| *b);
         let mut npmrc_local = bun_paths::path_buffer_pool::get();
         let mut install = load_npmrc_files(
             &bunfig_install,
@@ -2811,7 +2857,7 @@ pub fn init(
 
     let options = Options {
         global: cli.global,
-        ..Default::default()
+        ..Options::new()
     };
 
     if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
@@ -3027,7 +3073,7 @@ pub fn init(
         ca: ca_ptrs,
         abs_ca_file_name: abs_ca_file_name_static,
         on_init_error: http_thread_on_init_error,
-        ..Default::default()
+        ..http::http_thread::InitOpts::new()
     });
 
     let timestamp_for_manifest_cache_control: u32 = 'brk: {
@@ -3119,7 +3165,7 @@ fn init_with_runtime_once(
         None => importer_dir,
     };
     let importer_dir = without_trailing_slash_windows_path(importer_dir);
-    let mut workspace_package_json_cache = WorkspacePackageJSONCache::default();
+    let mut workspace_package_json_cache = WorkspacePackageJSONCache::new();
     let mut unreadable = None;
     let project = find_project(
         importer_dir,
@@ -3201,7 +3247,7 @@ fn init_with_runtime_once(
             .map(|path| ZBox::from_bytes(path.as_bytes()))
         })
         .collect();
-    let no_bunfig = Api::BunInstall::default();
+    let no_bunfig = Api::BunInstall::new();
     let npmrc = load_npmrc_files(
         bun_install.unwrap_or(&no_bunfig),
         env,
@@ -3227,7 +3273,7 @@ fn init_with_runtime_once(
     let manager_ptr = allocate_package_manager(
         Options {
             runtime_auto_install: true,
-            ..Default::default()
+            ..Options::new()
         },
         std::ptr::from_mut(log),
         root_dir,
@@ -3236,7 +3282,7 @@ fn init_with_runtime_once(
         workspace_package_json_cache,
         None,
         Subcommand::Install,
-        Box::default(),
+        Box::new([]),
     );
     // SAFETY: per-field placement above fully initialized the PackageManager;
     // the `&mut PackageManager` validity invariant now holds for the post-init
@@ -3244,7 +3290,7 @@ fn init_with_runtime_once(
     let manager = unsafe { &mut *manager_ptr };
 
     if Output::enable_ansi_colors_stderr() {
-        manager.progress = Progress::default();
+        manager.progress = Progress::new();
         manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         let _ = manager.progress.start(b"", 0);
     } else {
@@ -3285,7 +3331,7 @@ fn init_with_runtime_once(
         }
         && let Ok(dir) = bun_sys::Dir::open(project_dir)
     {
-        let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
+        let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::new()));
         match lockfile.load_from_dir::<false>(dir.fd(), Some(&mut *manager), log) {
             lockfile::LoadResult::Ok(_) => {}
             _ => lockfile.init_empty(),
@@ -3322,7 +3368,7 @@ fn init_with_runtime_once(
     manager.lockfile.init_empty();
     manager.lockfile.append_package(&lockfile::Package {
         resolution: crate::resolution::Resolution::init(crate::resolution::TaggedValue::Root),
-        ..Default::default()
+        ..lockfile::Package::new()
     })?;
     Ok(())
 }
@@ -3343,12 +3389,16 @@ fn parse_runtime_root(
     let (source, json) = {
         let entry = manager
             .workspace_package_json_cache
-            .get_with_path(&mut parse_log, &path[..path.len() - 1], Default::default())
+            .get_with_path(
+                &mut parse_log,
+                &path[..path.len() - 1],
+                super::GetJsonOptions::new(),
+            )
             .unwrap()?;
         (entry.source.clone(), entry.root)
     };
-    let mut root = lockfile::Package::default();
-    let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
+    let mut root = lockfile::Package::new();
+    let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::new()));
     let result = root
         .parse_with_json(
             &mut lockfile,
@@ -3362,7 +3412,7 @@ fn parse_runtime_root(
                 dev_dependencies: true,
                 optional_dependencies: true,
                 workspaces: true,
-                ..Default::default()
+                ..bun_install::Features::new()
             },
         )
         .and_then(|()| {

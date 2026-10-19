@@ -249,10 +249,20 @@ fn is_update_of_for(node: Node<'_>) -> bool {
 }
 
 /// On which of the paths that lead through a segment `super()` is called.
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 struct Called {
     in_every_path: bool,
     in_some_paths: bool,
+}
+
+impl Called {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            in_every_path: false,
+            in_some_paths: false,
+        }
+    }
 }
 
 /// What the segments before a segment that have been seen say.
@@ -274,7 +284,6 @@ struct FuncInfo<'a> {
     code_path: CodePath<'a>,
 }
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The constructor that is checked. Those of the classes in it are checked on their own.
     constructor: Option<Func<'a>>,
@@ -293,6 +302,22 @@ pub struct State<'a> {
     is_passed_over: bool,
     /// One of them is called after another, or again.
     is_repeated: bool,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            constructor: None,
+            func_infos: Vec::new(),
+            seg_info_map: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            super_callees: None,
+            winding: None,
+            found: Vec::new(),
+            is_passed_over: false,
+            is_repeated: false,
+        }
+    }
 }
 
 impl<'a> State<'a> {
@@ -443,7 +468,7 @@ impl ConstructorSuper {
         // loop, as in `do { a(); } while (b);`: then `super()` is never called on every path to it, and to what
         // follows.
         let unknown = SegmentInfo {
-            called: Called::default(),
+            called: Called::new(),
             valid_nodes: SmallVec::new(),
         };
         let id = segment.id();
@@ -494,7 +519,7 @@ impl ConstructorSuper {
             in_some_paths: info.called.in_some_paths || before.called.in_some_paths,
         };
         if before.called.in_some_paths {
-            let again = std::mem::take(&mut info.valid_nodes);
+            let again = std::mem::replace(&mut info.valid_nodes, smallvec::SmallVec::new());
             if cx.language().is_oxlint {
                 // For oxlint a loop runs not at all or several times.
                 cx.state.is_passed_over |= !again.is_empty();
@@ -574,7 +599,7 @@ impl Rule for ConstructorSuper {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {

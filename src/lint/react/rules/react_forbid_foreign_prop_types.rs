@@ -43,8 +43,8 @@ impl Rule for ForbidForeignPropTypes {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         file.mentions("propTypes").then(|| State {
             prop_types: file.name_of("propTypes"),
-            assignments: AncestorMemo::default(),
-            class_properties: AncestorMemo::default(),
+            assignments: AncestorMemo::new(),
+            class_properties: AncestorMemo::new(),
         })
     }
 

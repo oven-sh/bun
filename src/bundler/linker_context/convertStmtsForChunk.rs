@@ -77,13 +77,13 @@ pub(crate) fn convert_stmts_for_chunk(
                     bump,
                     E::Identifier {
                         ref_: c.unbound_module_ref,
-                        ..Default::default()
+                        ..E::Identifier::new()
                     },
                     Loc::EMPTY,
                 ),
                 name: b"exports".into(),
                 name_loc: Loc::EMPTY,
-                ..Default::default()
+                ..E::Dot::new()
             },
             Loc::EMPTY,
         ));
@@ -134,7 +134,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                     namespace_ref: s.namespace_ref,
                                     import_record_index: s.import_record_index,
                                     star_name_loc: alias.loc,
-                                    ..Default::default()
+                                    ..S::Import::new()
                                 },
                                 stmt.loc,
                             );
@@ -180,7 +180,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                         namespace_ref: s.namespace_ref,
                                         import_record_index: s.import_record_index,
                                         star_name_loc: stmt.loc,
-                                        ..Default::default()
+                                        ..S::Import::new()
                                     },
                                     stmt.loc,
                                 ),
@@ -204,7 +204,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                     namespace_ref: s.namespace_ref,
                                     import_record_index: s.import_record_index,
                                     star_name_loc: stmt.loc,
-                                    ..Default::default()
+                                    ..S::Import::new()
                                 },
                                 stmt.loc,
                             );
@@ -216,14 +216,14 @@ pub(crate) fn convert_stmts_for_chunk(
                             args.push(Expr::init(
                                 E::Identifier {
                                     ref_: ast.exports_ref,
-                                    ..Default::default()
+                                    ..E::Identifier::new()
                                 },
                                 stmt.loc,
                             ));
                             args.push(Expr::init(
                                 E::Identifier {
                                     ref_: s.namespace_ref,
-                                    ..Default::default()
+                                    ..E::Identifier::new()
                                 },
                                 stmt.loc,
                             ));
@@ -246,18 +246,18 @@ pub(crate) fn convert_stmts_for_chunk(
                                                     bump,
                                                     E::Identifier {
                                                         ref_: export_star_ref,
-                                                        ..Default::default()
+                                                        ..E::Identifier::new()
                                                     },
                                                     stmt.loc,
                                                 ),
                                                 args: bun_ast::ExprNodeList::from_owned_slice(
                                                     args.into_boxed_slice(),
                                                 ),
-                                                ..Default::default()
+                                                ..E::Call::new()
                                             },
                                             stmt.loc,
                                         ),
-                                        ..Default::default()
+                                        ..S::SExpr::new()
                                     },
                                     stmt.loc,
                                 ))?;
@@ -283,15 +283,15 @@ pub(crate) fn convert_stmts_for_chunk(
                                                     target: Expr::init(
                                                         E::Identifier {
                                                             ref_: wrapper_ref,
-                                                            ..Default::default()
+                                                            ..E::Identifier::new()
                                                         },
                                                         stmt.loc,
                                                     ),
-                                                    ..Default::default()
+                                                    ..E::Call::new()
                                                 },
                                                 stmt.loc,
                                             ),
-                                            ..Default::default()
+                                            ..S::SExpr::new()
                                         },
                                         stmt.loc,
                                     ))?;
@@ -313,7 +313,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                 Expr::init(
                                     E::RequireString {
                                         import_record_index: s.import_record_index,
-                                        ..Default::default()
+                                        ..E::RequireString::new()
                                     },
                                     stmt.loc,
                                 )
@@ -343,7 +343,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                 break 'brk Expr::init(
                                     E::RequireString {
                                         import_record_index: s.import_record_index,
-                                        ..Default::default()
+                                        ..E::RequireString::new()
                                     },
                                     stmt.loc,
                                 );
@@ -356,7 +356,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             args.push(Expr::init(
                                 E::Identifier {
                                     ref_: ast.exports_ref,
-                                    ..Default::default()
+                                    ..E::Identifier::new()
                                 },
                                 stmt.loc,
                             ));
@@ -375,18 +375,18 @@ pub(crate) fn convert_stmts_for_chunk(
                                                 target: Expr::init(
                                                     E::Identifier {
                                                         ref_: export_star_ref,
-                                                        ..Default::default()
+                                                        ..E::Identifier::new()
                                                     },
                                                     stmt.loc,
                                                 ),
                                                 args: ExprNodeList::from_owned_slice(
                                                     args.into_boxed_slice(),
                                                 ),
-                                                ..Default::default()
+                                                ..E::Call::new()
                                             },
                                             stmt.loc,
                                         ),
-                                        ..Default::default()
+                                        ..S::SExpr::new()
                                     },
                                     stmt.loc,
                                 ))?;
@@ -414,14 +414,16 @@ pub(crate) fn convert_stmts_for_chunk(
                         // Turn this statement into "import {foo} from 'path'"
                         // TODO: is this allocation necessary?
                         let src_items: &[bun_ast::ClauseItem] = s.items.slice();
-                        let items =
-                            bump.alloc_slice_fill_default::<bun_ast::ClauseItem>(src_items.len());
+                        let items = bump.alloc_slice_fill_with::<bun_ast::ClauseItem, _>(
+                            src_items.len(),
+                            |_| bun_ast::ClauseItem::new(),
+                        );
                         for (src, dest) in src_items.iter().zip(items.iter_mut()) {
                             *dest = bun_ast::ClauseItem {
                                 alias: src.original_name,
                                 alias_loc: src.alias_loc,
                                 name: src.name,
-                                ..Default::default()
+                                ..bun_ast::ClauseItem::new()
                             };
                         }
 
@@ -431,7 +433,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                 import_record_index: s.import_record_index,
                                 namespace_ref: s.namespace_ref,
                                 is_single_line: s.is_single_line,
-                                ..Default::default()
+                                ..S::Import::new()
                             },
                             stmt.loc,
                         );
@@ -521,7 +523,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                             left: Expr::init(
                                                 E::CommonJSExportIdentifier {
                                                     ref_: ident_ref,
-                                                    ..Default::default()
+                                                    ..E::CommonJSExportIdentifier::init()
                                                 },
                                                 decl.binding.loc,
                                             ),
@@ -529,7 +531,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                         },
                                         stmt.loc,
                                     ),
-                                    ..Default::default()
+                                    ..S::SExpr::new()
                                 },
                                 stmt.loc,
                             );
@@ -560,7 +562,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                                     ),
                                                     value: Some(s2.value),
                                                 }]),
-                                                ..Default::default()
+                                                ..S::Local::new()
                                             },
                                             stmt.loc,
                                         );
@@ -635,7 +637,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                             ),
                                             value: Some(*e),
                                         }]),
-                                        ..Default::default()
+                                        ..S::Local::new()
                                     },
                                     stmt.loc,
                                 );
@@ -668,13 +670,13 @@ fn assign_module_exports(bump: &Bump, module_ref: bun_ast::Ref, value: Expr, loc
                                 bump,
                                 E::Identifier {
                                     ref_: module_ref,
-                                    ..Default::default()
+                                    ..E::Identifier::new()
                                 },
                                 loc,
                             ),
                             name: b"exports".into(),
                             name_loc: loc,
-                            ..Default::default()
+                            ..E::Dot::new()
                         },
                         loc,
                     ),
@@ -682,7 +684,7 @@ fn assign_module_exports(bump: &Bump, module_ref: bun_ast::Ref, value: Expr, loc
                 },
                 loc,
             ),
-            ..Default::default()
+            ..S::SExpr::new()
         },
         loc,
     )

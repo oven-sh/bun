@@ -71,8 +71,8 @@ impl ErasedAgentSlot {
     }
 }
 
-impl Default for ErasedAgentSlot {
-    fn default() -> Self {
+impl ErasedAgentSlot {
+    pub fn new() -> Self {
         Self {
             agent: Cell::new(core::ptr::null_mut()),
             sequence: Cell::new(0),
@@ -134,22 +134,22 @@ pub struct Debugger {
     pub must_block_until_connected: bool,
 }
 
-impl Default for Debugger {
-    fn default() -> Self {
+impl Debugger {
+    pub fn new() -> Self {
         Self {
             path_or_port: None,
             from_environment_variable: b"",
             script_execution_context_id: 0,
             next_debugger_id: 1,
-            poll_ref: KeepAlive::default(),
+            poll_ref: KeepAlive::new(),
             wait_for_connection: Wait::Off,
             set_breakpoint_on_first_line: false,
             mode: Mode::Listen,
             protocol: Protocol::Jsc,
-            test_reporter_agent: TestReporterAgent::default(),
-            lifecycle_reporter_agent: LifecycleAgent::default(),
-            extension_agent: ErasedAgentSlot::default(),
-            http_server_agent: HTTPServerAgent::default(),
+            test_reporter_agent: TestReporterAgent::new(),
+            lifecycle_reporter_agent: LifecycleAgent::new(),
+            extension_agent: ErasedAgentSlot::new(),
+            http_server_agent: HTTPServerAgent::new(),
             must_block_until_connected: false,
         }
     }
@@ -449,7 +449,7 @@ impl Debugger {
                 env_map,
             ))),
             is_main_thread: false,
-            ..Default::default()
+            ..crate::virtual_machine::InitOptions::new()
         })
         .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
         let _ = vm_ptr;
@@ -565,7 +565,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
             Wait::Off
         },
         protocol: Protocol::NodeInspector,
-        ..Default::default()
+        ..Debugger::new()
     }));
 
     // Frontends need positions that map back to the original source, so stop
@@ -659,7 +659,7 @@ pub fn did_connect() {
 // AsyncTaskTracker — stable surface (used by pool jobs / event_loop).
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct AsyncTaskTracker {
     pub id: u64,
 }
@@ -772,12 +772,21 @@ pub fn will_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallT
 
 // ─── TestReporterAgent ────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct TestReporterAgent {
     pub(crate) handle: *mut TestReporterHandle,
     /// Shared `describe`/`test` ID counter for both the live
     /// (`ScopeFunctions::call`) and retroactive reporting paths.
     pub next_test_id: i32,
+}
+
+impl TestReporterAgent {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            handle: core::ptr::null_mut(),
+            next_test_id: 0,
+        }
+    }
 }
 
 /// this enum is kept in sync with c++ InspectorTestReporterAgent.cpp `enum class BunTestStatus`
@@ -959,9 +968,17 @@ impl TestReporterAgent {
 
 // ─── LifecycleAgent ───────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct LifecycleAgent {
     pub(crate) handle: *mut LifecycleHandle,
+}
+
+impl LifecycleAgent {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            handle: core::ptr::null_mut(),
+        }
+    }
 }
 
 bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }

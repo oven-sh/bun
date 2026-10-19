@@ -86,12 +86,22 @@ pub(crate) struct Event<'a> {
 }
 
 /// The nodes that somebody wants to be called with, each at its time.
-#[derive(Default)]
 pub(crate) struct Queue<'a> {
     events: Vec<Event<'a>>,
     /// How many of `events` are handed out.
     popped: usize,
     is_sorted: bool,
+}
+
+impl<'a> Queue<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            events: Vec::new(),
+            popped: 0,
+            is_sorted: false,
+        }
+    }
 }
 
 impl<'a> Queue<'a> {
@@ -130,9 +140,8 @@ pub(crate) enum PropTypeKind {
 }
 
 /// `children` of a declared prop type.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) enum Children<'a> {
-    #[default]
     None,
     Named(DeclaredPropTypes<'a>),
     Union(Vec<DeclaredPropType<'a>>),
@@ -140,7 +149,7 @@ pub(crate) enum Children<'a> {
 
 /// What `buildReactDeclarationTypes` and `DeclarePropTypesForTSTypeAnnotation` make. The default is
 /// `{}`, which accepts everything.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct DeclaredPropType<'a> {
     pub(crate) kind: Option<PropTypeKind>,
     pub(crate) children: Children<'a>,
@@ -150,9 +159,23 @@ pub(crate) struct DeclaredPropType<'a> {
     pub(crate) is_required: Option<bool>,
 }
 
+impl<'a> DeclaredPropType<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            kind: None,
+            children: Children::None,
+            full_name: None,
+            name: None,
+            node: None,
+            is_required: None,
+        }
+    }
+}
+
 /// `declaredPropTypes`, and the `children` of a shape: an object of JavaScript. It has its own
 /// properties only: `object[name]` also finds what `Object.prototype` has.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct DeclaredPropTypes<'a> {
     /// As they came.
     entries: Vec<(Cow<'a, [u8]>, DeclaredPropType<'a>)>,
@@ -160,6 +183,17 @@ pub(crate) struct DeclaredPropTypes<'a> {
     index: FxHashMap<Cow<'a, [u8]>, u32>,
     /// What is assigned to `__proto__`: that makes no property. What is found through it is not.
     prototype: Option<Box<DeclaredPropType<'a>>>,
+}
+
+impl<'a> DeclaredPropTypes<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            index: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            prototype: None,
+        }
+    }
 }
 
 impl<'a> DeclaredPropTypes<'a> {
@@ -261,11 +295,20 @@ impl<'a> UsedPropType<'a> {
 }
 
 /// Which used prop types a list has. The list is only added to.
-#[derive(Default)]
 struct Equivalents<'a> {
     known: FxHashSet<(&'a [u8], bool, Cow<'a, [u8]>)>,
     /// How many of the list are in `known`.
     counted: usize,
+}
+
+impl<'a> Equivalents<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            known: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            counted: 0,
+        }
+    }
 }
 
 impl<'a> Equivalents<'a> {
@@ -346,7 +389,6 @@ fn is_in_decorator<'a>(child: Node<'a>, parent: Node<'a>) -> bool {
 }
 
 /// upstream's `class Components`.
-#[derive(Default)]
 pub(crate) struct ComponentList<'a> {
     /// `Object.values(Lists.get(this))`
     list: Vec<Component<'a>>,
@@ -356,6 +398,18 @@ pub(crate) struct ComponentList<'a> {
     around: AncestorMemo<'a, ComponentId>,
     /// Where the last of the nodes starts that `around` has been asked about.
     asked_until: u32,
+}
+
+impl<'a> ComponentList<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            list: Vec::new(),
+            by_id: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            around: AncestorMemo::new(),
+            asked_until: 0,
+        }
+    }
 }
 
 impl<'a> ComponentList<'a> {
@@ -384,14 +438,14 @@ impl<'a> ComponentList<'a> {
                     used_prop_types: None,
                     ignore_unused_prop_types_validation: false,
                     default_props: None,
-                    equivalents: Equivalents::default(),
+                    equivalents: Equivalents::new(),
                 });
                 (id, 0, confidence)
             }
         };
         // What starts before `node` is not in it.
         if (before >= 1) != (after >= 1) && At::place(node).0.start <= self.asked_until {
-            self.around = AncestorMemo::default();
+            self.around = AncestorMemo::new();
             self.asked_until = 0;
         }
         id
@@ -434,8 +488,8 @@ impl<'a> ComponentList<'a> {
     /// what the uncertain ones in it use.
     pub(crate) fn list(&mut self) -> Vec<ComponentId> {
         let mut used_prop_types: FxHashMap<ComponentId, (Vec<UsedPropType<'a>>, Equivalents<'a>)> =
-            FxHashMap::default();
-        let mut around: AncestorMemo<'a, Option<ComponentId>> = AncestorMemo::default();
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+        let mut around: AncestorMemo<'a, Option<ComponentId>> = AncestorMemo::new();
 
         // Find props used in components for which we are not confident
         for uncertain in self.list.iter().filter(|it| it.confidence < 2) {
@@ -451,7 +505,9 @@ impl<'a> ComponentList<'a> {
             };
             let used = uncertain.used_prop_types.iter().flatten();
             let mut new_used_props = used.filter(|it| !it.is_property).cloned();
-            let (props_list, equivalents) = used_prop_types.entry(component).or_default();
+            let (props_list, equivalents) = used_prop_types
+                .entry(component)
+                .or_insert_with(|| (Vec::new(), Equivalents::new()));
             equivalents.merge_used_prop_types(props_list, &mut new_used_props);
         }
 

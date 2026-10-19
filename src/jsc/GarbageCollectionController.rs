@@ -31,8 +31,8 @@ bun_event_loop::impl_timer_owner!(
     from_gc_repeating_timer_ptr => gc_repeating_timer,
 );
 
-impl Default for GarbageCollectionController {
-    fn default() -> Self {
+impl GarbageCollectionController {
+    pub fn new() -> Self {
         Self {
             gc_repeating_timer: JsCell::new(EventLoopTimer::init_paused(TimerTag::GcRepeating)),
             gc_last_heap_size: Cell::new(0),

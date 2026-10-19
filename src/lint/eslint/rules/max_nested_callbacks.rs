@@ -14,12 +14,21 @@ const EXCEED: Message = Message::new(
     "Too many nested callbacks ({{num}}). Maximum allowed is {{max}}.",
 );
 
-#[derive(Default)]
 pub struct State {
     /// By the index of a function: one more than how many of it and the functions around it are callbacks. 0: not known.
     callbacks: Vec<usize>,
     /// ESLint before 10 counts while it walks.
     depth: usize,
+}
+
+impl State {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            callbacks: Vec::new(),
+            depth: 0,
+        }
+    }
 }
 
 /// A `FunctionExpression` or an `ArrowFunctionExpression` of ESLint.
@@ -89,7 +98,7 @@ impl Rule for MaxNestedCallbacks {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

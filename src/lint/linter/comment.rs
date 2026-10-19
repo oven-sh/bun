@@ -98,7 +98,7 @@ pub(crate) fn parse_directive(text: &[u8], space: Space) -> Option<DirectiveComm
 pub(crate) fn parse_list_config(text: &[u8]) -> Vec<&[u8]> {
     let mut names: Vec<&[u8]> = Vec::new();
     // All of them, once there are many.
-    let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
+    let mut seen: FxHashSet<&[u8]> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     for name in strings::split(text, b",") {
         let name = match strings::trim_js_whitespace(name) {
             [b'\'', inner @ .., b'\''] | [b'"', inner @ .., b'"'] => inner,
@@ -152,7 +152,7 @@ pub(crate) fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)
     // `.split(/\s|,+/u)`
     let mut items: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
     // Where each is in `items`, once there are many.
-    let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+    let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     let mut at = 0;
     while at < collapsed.len() {
         let start = at;

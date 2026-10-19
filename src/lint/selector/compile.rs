@@ -4,7 +4,6 @@ use super::program::{Bound, Id, Op, Program, Run, TypeSet};
 use crate::estree::NodeType;
 
 /// What ESLint's `analyzeParsedSelector` finds.
-#[derive(Default)]
 pub(super) struct Analysis {
     /// The number of attributes, fields and `:nth-child()`s.
     pub(super) attribute_count: u32,
@@ -12,6 +11,17 @@ pub(super) struct Analysis {
     pub(super) identifier_count: u32,
     /// So many combinators follow each other that the stack does not hold them: `esquery` throws when it matches.
     pub(super) is_too_deep: bool,
+}
+
+impl Analysis {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            attribute_count: 0,
+            identifier_count: 0,
+            is_too_deep: false,
+        }
+    }
 }
 
 impl Analysis {
@@ -32,7 +42,7 @@ impl Analysis {
                     node_type
                         .filter(|_| is_exact)
                         .map(|it| TypeSet::of(&[it]))
-                        .unwrap_or_default(),
+                        .unwrap_or_else(TypeSet::new),
                 )
             }
             Op::NotAny(list) => {
@@ -42,7 +52,7 @@ impl Analysis {
                 None
             }
             Op::Any(list) => {
-                let mut union = Some(TypeSet::default());
+                let mut union = Some(TypeSet::new());
                 for &it in list.of(&program.lists) {
                     let types = self.analyze(program, it);
                     union = union.zip(types).map(|(all, types)| all.union(types));
@@ -90,17 +100,19 @@ impl Analysis {
 pub(super) fn possible_types(program: &Program, id: Id) -> Option<TypeSet> {
     let either = |a: Option<TypeSet>, b: Option<TypeSet>| a.zip(b).map(|(a, b)| a.union(b));
     match *program.ops.get(id as usize)? {
-        Op::Identifier { node_type, .. } => {
-            Some(node_type.map(|it| TypeSet::of(&[it])).unwrap_or_default())
-        }
+        Op::Identifier { node_type, .. } => Some(
+            node_type
+                .map(|it| TypeSet::of(&[it]))
+                .unwrap_or_else(TypeSet::new),
+        ),
         Op::Class { types, .. } => Some(types),
-        Op::UnknownClass(_) => Some(TypeSet::default()),
+        Op::UnknownClass(_) => Some(TypeSet::new()),
         Op::Any(list) => {
             let each = list
                 .of(&program.lists)
                 .iter()
                 .map(|&it| possible_types(program, it));
-            each.fold(Some(TypeSet::default()), either)
+            each.fold(Some(TypeSet::new()), either)
         }
         Op::All(list) => {
             let each = list

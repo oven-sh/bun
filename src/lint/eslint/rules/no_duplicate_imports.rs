@@ -60,7 +60,6 @@ fn oxlint_place(statement: Stmt) -> Span {
 }
 
 /// What oxlint knows of the names that have been imported from a module.
-#[derive(Default)]
 struct Imported<'a> {
     by_import_type: bool,
     by_other_imports: bool,
@@ -70,6 +69,20 @@ struct Imported<'a> {
     namespace: Option<Stmt<'a>>,
     named: Option<Stmt<'a>>,
     default: Option<Stmt<'a>>,
+}
+
+impl<'a> Imported<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            by_import_type: false,
+            by_other_imports: false,
+            first: None,
+            namespace: None,
+            named: None,
+            default: None,
+        }
+    }
 }
 
 impl Imported<'_> {
@@ -114,7 +127,7 @@ impl NoDuplicateImports {
         if modules.iter().zip(modules.iter().skip(1)).all(|(a, b)| a != b) {
             return;
         }
-        let mut all: FxHashMap<Name<'a>, Imported<'a>> = FxHashMap::default();
+        let mut all: FxHashMap<Name<'a>, Imported<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for (statement, import) in imports() {
             let (mut default, mut namespace) = (import.default().is_some(), import.namespace().is_some());
             let mut named = import.named().len();
@@ -124,11 +137,11 @@ impl NoDuplicateImports {
                 (_, _, 1..) => Type::Named,
                 _ => continue,
             };
-            let (imported, is_type) = (all.entry(import.spec()).or_default(), import.is_type_only());
+            let (imported, is_type) = (all.entry(import.spec()).or_insert_with(Imported::new), import.is_type_only());
             let has_names = imported.by_import_type || imported.by_other_imports;
             if has_names && imported.can_merge(first, is_type, self.allow_separate_type_imports) {
                 cx.report(oxlint_place(statement), IMPORT).data("module", import.spec()).labels_with(|labels| {
-                    labels.push(imported.first.map(oxlint_place).unwrap_or_default(), MERGED_WITH_IMPORT)
+                    labels.push(imported.first.map(oxlint_place).unwrap_or_else(Span::init), MERGED_WITH_IMPORT)
                 });
                 match first {
                     Type::ImportDefault => default = false,
@@ -155,7 +168,7 @@ impl NoDuplicateImports {
             return;
         }
         for (statement, import) in imports() {
-            let first = *all.entry(import.spec()).or_default().first.get_or_insert(statement);
+            let first = *all.entry(import.spec()).or_insert_with(Imported::new).first.get_or_insert(statement);
             if first != statement {
                 cx.report(oxlint_place(statement), IMPORT)
                     .data("module", import.spec())
@@ -292,7 +305,7 @@ impl Rule for NoDuplicateImports {
                     if self.should_report(entry, &previous, exports) {
                         let place = if is_oxlint { oxlint_place(entry.statement) } else { entry.statement.span() };
                         cx.report(place, message).data("module", entry.module).labels_with(|labels| {
-                            let first = of_module.first().map(|it| oxlint_place(it.statement)).unwrap_or_default();
+                            let first = of_module.first().map(|it| oxlint_place(it.statement)).unwrap_or_else(Span::init);
                             let is_import = message.id == IMPORT.id;
                             labels.push(first, if is_import { MERGED_WITH_IMPORT } else { "Can be merged with this" });
                         });

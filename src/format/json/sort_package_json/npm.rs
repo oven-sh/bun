@@ -560,7 +560,7 @@ fn order_of_script_names(a: &[u8], b: &[u8]) -> Ordering {
 /// `sortScripts`: sorts by name, with `prea` and `posta` around `a`. For `keeps_order`, see [`has_sequential_script`].
 pub(super) fn sort_scripts(scripts: &mut [Member<'_>], keeps_order: bool) {
     let all: FxHashSet<&[u8]> = scripts.iter().map(|it| &it.key[..]).collect();
-    let mut prefixable: FxHashSet<&[u8]> = FxHashSet::default();
+    let mut prefixable: FxHashSet<&[u8]> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     let mut names: Vec<&[u8]> = (scripts.iter())
         .map(|script| {
             let name = &script.key[..];
@@ -579,7 +579,7 @@ pub(super) fn sort_scripts(scripts: &mut [Member<'_>], keeps_order: bool) {
         crate::sort::sort_by(&mut names, |a, b| order_of_script_names(a, b));
     }
     // Where each script goes: the first place that names it.
-    let mut ranks: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+    let mut ranks: FxHashMap<Vec<u8>, usize> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     let mut place = |name: Vec<u8>| {
         let rank = ranks.len();
         ranks.entry(name).or_insert(rank);

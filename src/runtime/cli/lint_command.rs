@@ -226,9 +226,9 @@ fn run_to_end(
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
                 None, None,
             )),
-            ..Default::default()
+            ..crate::api::bun::process::WindowsOptions::new()
         },
-        ..Default::default()
+        ..SpawnOptions::new()
     };
     // It is written while what the program prints is read, so neither waits for the other.
     let spawned = std::thread::scope(|scope| {
@@ -278,7 +278,7 @@ pub(crate) fn run_and_exit(
         run_git(command)
     };
     let command_line: Vec<&[u8]> = bun_core::argv().iter().skip(1).collect();
-    let js_engine = super::lint_js::Engines::default();
+    let js_engine = super::lint_js::Engines::new();
     // `path.win32.resolve` asks for it where a path names another drive than its base.
     bun_paths::fs::FileSystem::init(&working_directory());
     let environment = Environment {
@@ -326,7 +326,7 @@ impl LintCommand {
                     rest,
                     environment,
                 )),
-                ..Outcome::default()
+                ..Outcome::new()
             })
         }
         if HAS_TEST_RUNNER && let [b"--print-markdown-trees", rest @ ..] = &args[..] {
@@ -335,7 +335,7 @@ impl LintCommand {
                 Outcome {
                     exit_code: u8::from(trees.is_none()),
                     stdout: trees.unwrap_or_default(),
-                    ..Outcome::default()
+                    ..Outcome::new()
                 }
             })
         }
@@ -345,7 +345,7 @@ impl LintCommand {
                 Outcome {
                     exit_code: u8::from(answers.is_none()),
                     stdout: answers.unwrap_or_default(),
-                    ..Outcome::default()
+                    ..Outcome::new()
                 }
             })
         }
@@ -385,7 +385,8 @@ impl LintCommand {
                 },
             );
             if let Some(of_bun_format) = of_bun_format {
-                defaults.get_or_insert_default().of_bun_format = Some(Box::new(of_bun_format));
+                defaults.get_or_insert_with(Options::new).of_bun_format =
+                    Some(Box::new(of_bun_format));
             }
             match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
                 None => bun_lint_driver::run(&options, environment),

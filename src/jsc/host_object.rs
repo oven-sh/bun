@@ -28,7 +28,13 @@ pub fn create_host_function_object(global: &JSGlobalObject, fns: &[HostFnEntry])
         object.put(
             global,
             name.as_bytes(),
-            JSFunction::create(global, name, host_fn, arity, Default::default()),
+            JSFunction::create(
+                global,
+                name,
+                host_fn,
+                arity,
+                crate::js_function::CreateJSFunctionOptions::new(),
+            ),
         );
     }
     object

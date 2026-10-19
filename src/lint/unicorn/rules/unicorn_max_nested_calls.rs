@@ -9,10 +9,18 @@ pub struct MaxNestedCalls {
 
 const MAX_NESTED_CALLS: Message = Message::new("", "Call is nested too deeply. Maximum allowed is {{max}}.");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The call that something is in an argument of. `None`: a function, a class or JSX comes first.
     enclosing_calls: AncestorMemo<'a, Option<Expr<'a>>>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            enclosing_calls: AncestorMemo::new(),
+        }
+    }
 }
 
 impl Rule for MaxNestedCalls {
@@ -25,7 +33,7 @@ impl Rule for MaxNestedCalls {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

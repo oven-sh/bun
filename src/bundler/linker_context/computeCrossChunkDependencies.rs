@@ -22,10 +22,10 @@ pub(crate) fn compute_cross_chunk_dependencies(
     // these must be global arena
     let mut chunk_metas: Vec<ChunkMeta> = (0..chunks.len())
         .map(|_| ChunkMeta {
-            imports: ChunkMetaMap::default(),
-            exports: ChunkMetaMap::default(),
-            dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
-            require_imports: ArrayHashMap::<IndexInt, ()>::default(),
+            imports: ChunkMetaMap::new(),
+            exports: ChunkMetaMap::new(),
+            dynamic_imports: ArrayHashMap::<IndexInt, ()>::new(),
+            require_imports: ArrayHashMap::<IndexInt, ()>::new(),
         })
         .collect();
 
@@ -470,17 +470,16 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
                     {
                         let js = chunks[chunk_index].content.javascript_mut();
-                        let entry = js.imports_from_other_chunks.get_or_put_value(
-                            other_chunk_index,
-                            CrossChunkImportItemList::default(),
-                        )?;
+                        let entry = js
+                            .imports_from_other_chunks
+                            .get_or_put_value(other_chunk_index, Vec::new())?;
                         entry
                             .value_ptr
                             .push(CrossChunkImportItem { r#ref: import_ref });
                     }
                     let _ = chunk_metas[other_chunk_index as usize]
                         .exports
-                        .get_or_put(import_ref);
+                        .get_or_put(import_ref, || ());
                 } else {
                     // SAFETY: arena slice valid for the link pass.
                     let name = symbol.original_name.slice();
@@ -527,10 +526,9 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     continue;
                 }
                 let js = chunks[chunk_index].content.javascript_mut();
-                let _ = js.imports_from_other_chunks.get_or_put_value(
-                    other_chunk_index as u32,
-                    CrossChunkImportItemList::default(),
-                );
+                let _ = js
+                    .imports_from_other_chunks
+                    .get_or_put_value(other_chunk_index as u32, Vec::new());
             }
         }
 
@@ -649,17 +647,18 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             if !matches!(chunks[chunk_index].content, chunk::Content::Javascript(_)) {
                 continue;
             }
-            let mut imports_from_other_chunks = core::mem::take(
+            let mut imports_from_other_chunks = core::mem::replace(
                 &mut chunks[chunk_index]
                     .content
                     .javascript_mut()
                     .imports_from_other_chunks,
+                ArrayHashMap::new(),
             );
             let mut cross_chunk_imports =
                 core::mem::take(&mut chunks[chunk_index].cross_chunk_imports);
             // `take` expresses the move-out/move-in: mutate the Vec, then
             // write it back at loop end.
-            let mut cross_chunk_prefix_stmts = Vec::<bun_ast::Stmt>::default();
+            let mut cross_chunk_prefix_stmts = Vec::<bun_ast::Stmt>::new();
 
             let reached = &chunks[chunk_index]
                 .content
@@ -713,7 +712,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             items: items_ptr,
                             import_record_index,
                             namespace_ref: Ref::NONE,
-                            ..Default::default()
+                            ..bun_ast::S::Import::new()
                         });
                         cross_chunk_prefix_stmts.push(bun_ast::Stmt::init(
                             bun_ast::StoreRef::from_bump(import),

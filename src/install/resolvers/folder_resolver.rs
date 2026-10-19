@@ -232,7 +232,7 @@ fn read_package_json_from_disk(
 ) -> crate::Result<LockfilePackage> {
     let mut body = npm::Registry::BodyPool::get();
 
-    let mut package: LockfilePackage = Default::default();
+    let mut package: LockfilePackage = LockfilePackage::new();
 
     // Borrow splitting: `manager.lockfile`, `manager`, and `manager.log` are
     // needed simultaneously; borrowck rejects the overlap on `&mut self`,
@@ -259,7 +259,7 @@ fn read_package_json_from_disk(
         // other live reference.
         let json = unsafe { &mut *manager_ptr }
             .workspace_package_json_cache
-            .get_with_path(log, abs.as_bytes(), Default::default())
+            .get_with_path(log, abs.as_bytes(), super::GetJsonOptions::new())
             .unwrap()?;
         // `Expr` is `Copy`; take a raw pointer to `source` so the borrow on
         // `workspace_package_json_cache` ends before `&mut *manager_ptr` is
@@ -362,11 +362,11 @@ pub(crate) fn listed_dependencies(
     let mut log = bun_ast::Log::init();
     // `bun add` in a workspace edits the copy in this cache before it writes the file.
     let entry = (manager.workspace_package_json_cache)
-        .get_with_path(&mut log, paths.abs.as_bytes(), Default::default())
+        .get_with_path(&mut log, paths.abs.as_bytes(), super::GetJsonOptions::new())
         .unwrap()
         .ok()?;
     let (source, json) = (entry.source.clone(), entry.root);
-    let mut listed = ListedDependencies::default();
+    let mut listed = ListedDependencies::new();
     // These features register no `npm:` alias, which would change how other rows are resolved.
     let parsed = listed.package.parse_with_json(
         &mut listed.lockfile,

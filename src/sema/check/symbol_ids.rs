@@ -29,7 +29,6 @@ enum SymbolKey {
     Transient(u64),
 }
 
-#[derive(Default)]
 pub(super) struct SymbolIds {
     /// `symbol.id`. `nextSymbolId` is their number.
     ids: FxHashMap<SymbolKey, u32>,
@@ -39,6 +38,17 @@ pub(super) struct SymbolIds {
     /// `Emit` follows the check of the last file, so what it is the first to ask about gets an id
     /// that nothing reads.
     is_emitting: bool,
+}
+
+impl SymbolIds {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            ids: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            of_late_bound_names: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            is_emitting: false,
+        }
+    }
 }
 
 impl SymbolIds {
@@ -56,7 +66,7 @@ impl Checker<'_, '_> {
     /// From now on this checker hands out symbol ids. It is the only checker of the program, and
     /// has not checked anything yet.
     pub fn hand_out_symbol_ids(&mut self) {
-        let mut handed_out = SymbolIds::default();
+        let mut handed_out = SymbolIds::new();
         // `BindSourceFiles`: a `singleThreadedWorkGroup` runs what was queued last first.
         for &file in self.files().order.iter().rev() {
             for &class in self.bound(file).classes_of_private_names.iter() {

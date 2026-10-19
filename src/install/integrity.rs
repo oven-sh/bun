@@ -22,8 +22,8 @@ pub struct Integrity {
 // size 65, align 1, no padding bytes, `Copy + 'static`. Every byte initialized.
 unsafe impl bytemuck::NoUninit for Integrity {}
 
-impl Default for Integrity {
-    fn default() -> Self {
+impl Integrity {
+    pub fn new() -> Self {
         Self {
             tag: Tag::UNKNOWN,
             value: EMPTY_DIGEST_BUF,
@@ -55,14 +55,14 @@ impl Integrity {
         if buf.is_empty() {
             return Ok(Integrity {
                 tag: Tag::UNKNOWN,
-                ..Default::default()
+                ..Integrity::new()
             });
         }
 
         // e.g. "3cd0599b099384b815c10f7fa7df0092b62d534f"
         let mut integrity = Integrity {
             tag: Tag::SHA1,
-            ..Default::default()
+            ..Integrity::new()
         };
         let end: usize = b"3cd0599b099384b815c10f7fa7df0092b62d534f"
             .len()
@@ -86,7 +86,7 @@ impl Integrity {
     }
 
     pub(crate) fn parse(buf: &[u8]) -> Integrity {
-        let mut strongest = Integrity::default();
+        let mut strongest = Integrity::new();
         for entry in buf.split(|c: &u8| c.is_ascii_whitespace()) {
             let parsed = Self::parse_entry(entry);
             if parsed.tag.0 > strongest.tag.0 {
@@ -100,7 +100,7 @@ impl Integrity {
         if buf.len() < b"sha256-".len() {
             return Integrity {
                 tag: Tag::UNKNOWN,
-                ..Default::default()
+                ..Integrity::new()
             };
         }
 
@@ -109,7 +109,7 @@ impl Integrity {
         if tag == Tag::UNKNOWN {
             return Integrity {
                 tag: Tag::UNKNOWN,
-                ..Default::default()
+                ..Integrity::new()
             };
         }
 
@@ -117,7 +117,7 @@ impl Integrity {
         if expected_len == 0 {
             return Integrity {
                 tag: Tag::UNKNOWN,
-                ..Default::default()
+                ..Integrity::new()
             };
         }
 
@@ -138,14 +138,14 @@ impl Integrity {
         let Ok(decoded_size) = base64.decoder.calc_size_for_slice(input) else {
             return Integrity {
                 tag: Tag::UNKNOWN,
-                ..Default::default()
+                ..Integrity::new()
             };
         };
 
         if decoded_size > expected_len {
             return Integrity {
                 tag: Tag::UNKNOWN,
-                ..Default::default()
+                ..Integrity::new()
             };
         }
 
@@ -156,7 +156,7 @@ impl Integrity {
         {
             return Integrity {
                 tag: Tag::UNKNOWN,
-                ..Default::default()
+                ..Integrity::new()
             };
         }
 
@@ -391,7 +391,7 @@ impl Streaming {
     pub(crate) fn final_(&mut self) -> Integrity {
         let mut out: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
         match &mut self.hasher {
-            Hasher::None => Integrity::default(),
+            Hasher::None => Integrity::new(),
             Hasher::Sha1(h) => {
                 h.r#final(
                     (&mut out[0..SHA1_DIGEST_LEN])

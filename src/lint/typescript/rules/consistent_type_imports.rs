@@ -32,12 +32,21 @@ const TYPE_OVER_VALUE: Message = Message::new(
     "All imports in the declaration are only used as types. Use `import type`.",
 );
 
-#[derive(Default)]
 pub struct State<'a> {
     imports: Vec<Import<'a>>,
     /// There is a decorator, in a file for which `experimentalDecorators` and
     /// `emitDecoratorMetadata` are on: a type next to it can be needed as a value.
     has_decorator_metadata: bool,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            imports: Vec::new(),
+            has_decorator_metadata: false,
+        }
+    }
 }
 
 /// An `ImportDefaultSpecifier`, an `ImportNamespaceSpecifier` or an `ImportSpecifier`.
@@ -77,7 +86,6 @@ fn oxlint_takes_for_jsx_factory(file: &File, specifier: Specifier) -> bool {
 }
 
 /// What is known of all the imports from one module.
-#[derive(Default)]
 struct SourceImports<'a> {
     /// The first `import type` with nothing but named imports.
     type_only_named_import: Option<Import<'a>>,
@@ -87,11 +95,22 @@ struct SourceImports<'a> {
     value_only_named_import: Option<Import<'a>>,
 }
 
+impl<'a> SourceImports<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            type_only_named_import: None,
+            value_import: None,
+            value_only_named_import: None,
+        }
+    }
+}
+
 /// `imports`: all of the file, in the order of the source.
 fn source_imports<'a>(imports: &[Import<'a>]) -> FxHashMap<Name<'a>, SourceImports<'a>> {
-    let mut sources: FxHashMap<Name<'a>, SourceImports<'a>> = FxHashMap::default();
+    let mut sources: FxHashMap<Name<'a>, SourceImports<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     for &import in imports {
-        let source_imports = sources.entry(import.spec()).or_default();
+        let source_imports = sources.entry(import.spec()).or_insert_with(SourceImports::new);
         let has_only_named = import.default().is_none() && import.namespace().is_none();
         if import.is_type_only() {
             if has_only_named {
@@ -146,7 +165,7 @@ fn has_attributes(import: Import) -> bool {
 fn oxlint_is_ambient(class: Class) -> bool {
     class.file().is_declaration_file()
         || class.flags().contains(Flags::AMBIENT)
-        || AmbientAncestors::default().has_ambient_typescript_ancestor(class.into())
+        || AmbientAncestors::new().has_ambient_typescript_ancestor(class.into())
 }
 
 /// Whether an `import type` would do for `reference`.
@@ -670,7 +689,7 @@ impl Rule for ConsistentTypeImports {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

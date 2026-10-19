@@ -56,13 +56,24 @@ fn html_ids(html: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
-#[derive(Default)]
 pub(crate) struct Seen<'d> {
     /// Doesn't include `top`, which is always valid.
     fragment_ids: FxHashSet<Vec<u8>>,
     slugger: Slugger,
     relevant_nodes: Vec<Node<'d>>,
     heading_text: Vec<u8>,
+}
+
+impl<'d> Seen<'d> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            fragment_ids: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            slugger: Slugger::new(),
+            relevant_nodes: Vec::new(),
+            heading_text: Vec::new(),
+        }
+    }
 }
 
 impl Rule for NoMissingLinkFragments {
@@ -98,7 +109,7 @@ impl Listens for NoMissingLinkFragments {
     type Seen<'d> = Seen<'d>;
 
     fn seen<'d>(&self) -> Self::Seen<'d> {
-        Seen::default()
+        Seen::new()
     }
 
     fn on<'d>(

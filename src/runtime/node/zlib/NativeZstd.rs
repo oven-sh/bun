@@ -102,7 +102,7 @@ mod _impl {
             let mode = NodeMode::from_int(mode_int as u8);
             let stream = Context {
                 mode,
-                ..Default::default()
+                ..Context::new()
             };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
@@ -111,7 +111,7 @@ mod _impl {
                 global_this: bun_ptr::BackRef::new(global),
                 ticket: Cell::new(None),
                 stream: JsCell::new(stream),
-                poll_ref: JsCell::new(CountedKeepAlive::default()),
+                poll_ref: JsCell::new(CountedKeepAlive::new()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pinned_buffers: Cell::new(0),
@@ -120,7 +120,7 @@ mod _impl {
                 // WorkPoolTask { callback: undefined } — callback is overwritten by
                 // CompressionStream::write before scheduling; placeholder here.
                 task: JsCell::new(WorkPoolTask {
-                    node: Default::default(),
+                    node: bun_threading::thread_pool::Node::new(),
                     callback: unset_task_callback,
                 }),
                 estimated_external_size: Self::external_size_for(mode),
@@ -311,8 +311,8 @@ mod _impl {
         pub(crate) remaining: u64,
     }
 
-    impl Default for Context {
-        fn default() -> Self {
+    impl Context {
+        pub(crate) fn new() -> Self {
             Self {
                 mode: NodeMode::NONE,
                 state: None,

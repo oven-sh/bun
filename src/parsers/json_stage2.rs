@@ -244,7 +244,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         'outer: loop {
             let from = p;
             let iterator = strings::CodepointIterator::init(&self.contents[from..]);
-            let mut iter = strings::Cursor::default();
+            let mut iter = strings::Cursor::new();
             while iterator.next(&mut iter) {
                 let is_ws =
                     matches!(iter.c, 0x09 | 0x0A | 0x0D | 0x20) || is_exotic_whitespace(iter.c);
@@ -609,7 +609,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 },
                 _ => {
                     let iterator = strings::CodepointIterator::init(&rest[i..]);
-                    let mut iter = strings::Cursor::default();
+                    let mut iter = strings::Cursor::new();
                     if !iterator.next(&mut iter) || !is_exotic_whitespace(iter.c) {
                         return false;
                     }
@@ -843,7 +843,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let dup = if n_prior <= Self::DUP_LINEAR_MAX {
             if n_prior == Self::DUP_LINEAR_MAX {
                 if self.dup_maps.len() == self.spill_depth {
-                    self.dup_maps.push(DupMap::default());
+                    self.dup_maps.push(DupMap::init());
                 }
                 let map = &mut self.dup_maps[self.spill_depth];
                 self.spill_depth += 1;
@@ -1066,7 +1066,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     ) -> PResult<(f64, usize)> {
         let n = t.len();
         let mut i = prefix_len;
-        let mut integer = bun_core::fmt::RadixInteger::default();
+        let mut integer = bun_core::fmt::RadixInteger::new();
         let mut is_first = true;
         let mut is_invalid_legacy_octal = false;
         let mut last_underscore_end: usize = usize::MAX;
@@ -1321,7 +1321,7 @@ fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err 
     buf: &mut Vec<u8>,
 ) -> PResult {
     let iterator = strings::CodepointIterator::init(body);
-    let mut iter = strings::Cursor::default();
+    let mut iter = strings::Cursor::new();
     while iterator.next(&mut iter) {
         let c = iter.c;
         if c != '\\' as CodePoint {

@@ -70,10 +70,19 @@ struct PackageResolveError<'a> {
 
 pub type Map = Vec<AsyncModule>;
 
-#[derive(Default)]
 pub struct Queue {
     pub map: Map,
     pub(crate) scheduled: u32,
+}
+
+impl Queue {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            map: Vec::new(),
+            scheduled: 0,
+        }
+    }
 }
 
 /// The `WakeHandler`'s context, kept for the VM's lifetime; the waking threads outlive any one VM.
@@ -540,7 +549,7 @@ impl AsyncModule {
         let this_promise = crate::JSPromise::create(global_object).to_js();
         let promise = StrongOptional::create(this_promise, global_object);
 
-        let mut buf = bun_core::StringBuilder::default();
+        let mut buf = bun_core::StringBuilder::new();
         buf.count(opts.referrer);
         buf.count(opts.specifier);
         buf.count(opts.path.text);
@@ -574,7 +583,7 @@ impl AsyncModule {
             arena: opts.arena,
             ast_alloc_state: opts.ast_alloc_state,
             is_static: opts.is_static,
-            poll_ref: KeepAlive::default(),
+            poll_ref: KeepAlive::new(),
         })
     }
 
@@ -1171,7 +1180,7 @@ impl AsyncModule {
             source_url: BunString::from_bytes(path.text),
             is_commonjs_module,
             is_static: self.is_static,
-            ..Default::default()
+            ..ResolvedSource::new()
         })
     }
 }

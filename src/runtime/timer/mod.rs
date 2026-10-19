@@ -83,7 +83,7 @@ macro_rules! impl_timer_object {
                         super::EventLoopTimerTag::$tag,
                     ),
                     // Default-constructed here, then overwritten in `init()`.
-                    internals: super::TimerObjectInternals::default(),
+                    internals: super::TimerObjectInternals::new(),
                 }
             }
         }
@@ -252,7 +252,7 @@ mod event_loop_delay_monitor_draft;
 // (`All::insert/remove/next/get_timeout`).
 
 /// Stateless context for the heap comparator.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct TimerHeapCtx;
 
 impl bun_alloc::Stateless for TimerHeapCtx {
@@ -268,8 +268,14 @@ impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct TimerHeap(bun_io::heap::Intrusive<EventLoopTimer, TimerHeapCtx>);
+
+impl TimerHeap {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(bun_io::heap::Intrusive::new())
+    }
+}
 
 impl TimerHeap {
     #[inline]
@@ -322,11 +328,21 @@ impl TimerHeap {
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
 pub(crate) type TimeoutMap = ArrayHashMap<i32, *mut EventLoopTimer>;
 
-#[derive(Default)]
 pub(crate) struct Maps {
     pub(crate) set_timeout: TimeoutMap,
     pub(crate) set_interval: TimeoutMap,
     pub(crate) set_immediate: TimeoutMap,
+}
+
+impl Maps {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            set_timeout: TimeoutMap::new(),
+            set_interval: TimeoutMap::new(),
+            set_immediate: TimeoutMap::new(),
+        }
+    }
 }
 
 impl Maps {
@@ -355,8 +371,8 @@ pub(crate) use crate::test_runner::timers::fake_timers::FakeTimers;
 pub(crate) struct DateHeaderTimer {
     pub(crate) event_loop_timer: EventLoopTimer,
 }
-impl Default for DateHeaderTimer {
-    fn default() -> Self {
+impl DateHeaderTimer {
+    pub(crate) fn new() -> Self {
         Self {
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DateHeaderTimer),
         }
@@ -411,10 +427,10 @@ pub(crate) struct EventLoopDelayMonitor {
     pub(crate) last_fire_ns: u64,
     pub(crate) enabled: bool,
 }
-impl Default for EventLoopDelayMonitor {
-    fn default() -> Self {
+impl EventLoopDelayMonitor {
+    pub(crate) fn new() -> Self {
         Self {
-            histogram: bun_jsc::Weak::default(),
+            histogram: bun_jsc::Weak::new(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
             resolution_ms: 10,
             last_fire_ns: 0,
@@ -457,7 +473,7 @@ impl EventLoopDelayMonitor {
             return;
         }
         self.enabled = false;
-        self.histogram = bun_jsc::Weak::default();
+        self.histogram = bun_jsc::Weak::new();
         self.last_fire_ns = 0;
         // FIRED (not linked) when called from `on_fire`.
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
@@ -614,7 +630,7 @@ impl All {
         Self {
             last_id: 1,
             thread_id: std::thread::current().id(),
-            timers: TimerHeap::default(),
+            timers: TimerHeap::new(),
             active_timer_count: 0,
             #[cfg(windows)]
             uv_timer: bun_core::ffi::zeroed(),
@@ -624,11 +640,11 @@ impl All {
             immediate_ref_count: 0,
             #[cfg(windows)]
             uv_idle: bun_core::ffi::zeroed(),
-            event_loop_delay: EventLoopDelayMonitor::default(),
-            fake_timers: FakeTimers::default(),
-            maps: Maps::default(),
-            date_header_timer: DateHeaderTimer::default(),
-            wtf_timers: Guarded::init(TimerHeap::default()),
+            event_loop_delay: EventLoopDelayMonitor::new(),
+            fake_timers: FakeTimers::new(),
+            maps: Maps::new(),
+            date_header_timer: DateHeaderTimer::new(),
+            wtf_timers: Guarded::init(TimerHeap::new()),
         }
     }
 

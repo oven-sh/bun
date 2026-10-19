@@ -44,12 +44,23 @@ pub fn is_handlebars_path(path: &[u8]) -> bool {
 }
 
 /// What can be used again for the next file.
-#[derive(Default)]
 pub struct Scratch {
     tokens: Vec<lexer::Token>,
     statements: Vec<parser::Statement>,
     tree: ast::Tree,
     elements: Elements,
+}
+
+impl Scratch {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            tokens: Vec::new(),
+            statements: Vec::new(),
+            tree: ast::Tree::new(),
+            elements: Elements::new(),
+        }
+    }
 }
 
 /// Prettier's `parse`, of a text without `\r` that has blanks in the place of its front matter, which ends at
@@ -101,17 +112,11 @@ pub fn says_the_same(
     after: &[u8],
     options: &FormatOptions,
 ) -> Result<bool, FormatError> {
-    let mut scratch = Scratch::default();
+    let mut scratch = Scratch::new();
     let written = [before, after].map(|text| {
         let text = bun_core::strings::crlf_as_lf(text.strip_prefix(BOM).unwrap_or(text));
         let (content, front_matter_end) = without_front_matter(&text);
-        let template = parse(
-            &content,
-            front_matter_end,
-            &mut scratch,
-            &Refusal::default(),
-        )
-        .ok()?;
+        let template = parse(&content, front_matter_end, &mut scratch, &Refusal::new()).ok()?;
         if scratch.tree.has_lost_text {
             return Some((content.into_owned(), false));
         }
@@ -167,7 +172,7 @@ pub fn format(
         return Ok(());
     }
     let (content, front_matter_end) = without_front_matter(text);
-    let refusal = Refusal::default();
+    let refusal = Refusal::new();
     let template =
         parse(&content, front_matter_end, scratch, &refusal).map_err(|error| match error {
             Error::Syntax(_) => FormatError::SyntaxErrorAt(refusal.reason())

@@ -86,7 +86,7 @@ fn referenced_by<'a>(node: Node<'a>, scope: Scope<'a>) -> Nodes<'a> {
 
 /// Whether there is a way from `from` to `to`, which is not empty, with the names looked up in `scope`.
 fn leads<'a>(from: Node<'a>, to: Node<'a>, scope: Scope<'a>) -> bool {
-    let mut visited: FxHashSet<Node<'a>> = FxHashSet::default();
+    let mut visited: FxHashSet<Node<'a>> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
     let mut stack = referenced_by(from, scope);
     while let Some(node) = stack.pop() {
         if node == to {

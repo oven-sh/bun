@@ -104,7 +104,7 @@ impl Program {
         let referenced = known.flat_map(|it| outlines.libs_referenced_by(&it.1));
         let libs: Vec<Vec<u8>> = outline.libs.iter().cloned().chain(referenced).collect();
         // typescript-eslint's table: each library, parts of editions too, with those that it refers to.
-        let mut language = LanguageOptions::default();
+        let mut language = LanguageOptions::new();
         let name_in_table = |lib: &Vec<u8>| -> Box<[u8]> {
             match lib.is_empty() {
                 true => b"lib"[..].into(),
@@ -204,7 +204,9 @@ impl<'e> Inferred<'e> {
                 None => Outlines::new(&self.environment.cwd, &[], &[]),
             },
             programs: AppendVec::new(),
-            known: Default::default(),
+            known: bun_threading::guarded::GuardedBy::init(bun_sema::util::FxHashMap::with_hasher(
+                bun_sema::util::FxBuild,
+            )),
         });
         let outline = (by_options.outlines).of(&crate::paths::to_native(path.to_vec()))?;
         let mut known = by_options.known.lock();
@@ -261,7 +263,7 @@ impl<'e> Inferred<'e> {
                 reports_nothing_about_files: true,
                 shares_every_file: true,
                 prefers_the_library_of_the_project: true,
-                ..Default::default()
+                ..bun_sema_driver::PlanOptions::new()
             },
             retains_everything: false,
             stops_like_tsc: false,
@@ -271,10 +273,10 @@ impl<'e> Inferred<'e> {
             after_file: None,
             declaration_file_emitted: None,
         };
-        bun_sema_driver::check_provided_then(&request, Provided::default(), |report| {
+        bun_sema_driver::check_provided_then(&request, Provided::new(), |report| {
             let mut tables = Tables {
                 is_case_sensitive: report.is_case_sensitive,
-                of_file: FxHashMap::default(),
+                of_file: FxHashMap::with_hasher(bun_sema::util::FxBuild),
                 lists: Vec::with_capacity(report.globals.len()),
             };
             for of_program in report.globals {

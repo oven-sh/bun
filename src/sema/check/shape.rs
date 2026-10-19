@@ -44,7 +44,7 @@ impl<P> Names<P> {
 impl<'s> Names<ArenaBox<'s, [u32]>> {
     fn of(props: &ArenaVec<'s, Prop<'s>>) -> Self {
         if props.len() <= FEW {
-            return Names::new(ArenaBox::default());
+            return Names::new(ArenaBox::empty());
         }
         let places = std::iter::repeat_n(0, (props.len() * 2).next_power_of_two());
         let mut names = Self {
@@ -1436,7 +1436,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.index_infos_in_instantiation
             .push(IndexInfosInInstantiation {
                 ty,
-                instantiations: FxHashMap::default(),
+                instantiations: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
                 hits: 0,
             });
         let values: SmallVec<[TypeId; 2]> = (declared.index.iter())
@@ -2112,8 +2112,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `getObjectLiteralIndexInfo`: the string index signature covers every member that is not
         // named by a symbol (`isSymbolWithSymbolName`), including those named by a number.
-        let mut values: [Vec<TypeId>; 3] = Default::default();
-        let mut components: [Vec<IndexComponent>; 3] = Default::default();
+        let mut values: [Vec<TypeId>; 3] = core::array::from_fn(|_| Vec::new());
+        let mut components: [Vec<IndexComponent>; 3] = core::array::from_fn(|_| Vec::new());
         let mut add = |value: TypeId,
                        component: Option<IndexComponent>,
                        is_numeric: bool,
@@ -2924,7 +2924,7 @@ impl<'p, 's> Checker<'p, 's> {
         // FOR SPEED: a target that several paths lead to is visited once.
         let mut seen: SmallVec<[Sym; 16]> = SmallVec::new();
         // Those after the first 16.
-        let mut seen_later = crate::util::FxHashSet::<Sym>::default();
+        let mut seen_later = crate::util::FxHashSet::<Sym>::with_hasher(rustc_hash::FxBuildHasher);
         // Depth first: the last one is the next.
         let mut todo: SmallVec<[TypeId; 16]> = smallvec![ty];
         while let Some(next) = todo.pop() {
@@ -3092,7 +3092,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `return data.resolvedBaseTypes`
         let mut in_progress = self.base_types_so_far.iter().rev();
         let so_far = in_progress.find(|it| it.0 == sym);
-        let so_far = so_far.map_or_else(List::default, |it| List::Own(it.1.clone()));
+        let so_far = so_far.map_or_else(List::new, |it| List::Own(it.1.clone()));
         let (Some(own), Some(head)) = (own, head) else {
             return so_far;
         };
@@ -3112,7 +3112,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.resolution_start = resolution_start;
                 let p = self.p;
                 let known = p.base_types.get_ref(&self.task, &sym);
-                known.map_or_else(List::default, |known| List::Kept(known))
+                known.map_or_else(List::new, |known| List::Kept(known))
             }
             _ => so_far,
         }
@@ -7263,7 +7263,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut is_shape_of_whole = is_apparent.then_some(true);
         // What `build_intersection_shape` leaves out where it asks whether the property is optional.
         let is_of_no_member = |c: &Self, prop: &Prop| matches!(prop.source, PropSource::Symbol(sym) if !c.is_member_symbol(sym));
-        let mut seen = crate::util::FxHashSet::<Atom>::default();
+        let mut seen = crate::util::FxHashSet::<Atom>::with_hasher(rustc_hash::FxBuildHasher);
         for (at, &member) in all.iter().enumerate() {
             let rest = &all[at + 1..];
             if rest.is_empty() {

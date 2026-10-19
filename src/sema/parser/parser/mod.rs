@@ -353,7 +353,7 @@ pub(crate) fn run<'a>(
     let mut file = recycled_file(&mut f);
     let mut stacks = std::mem::take(&mut scratch.stacks);
     stacks.clear();
-    let mut declared = std::mem::take(&mut scratch.declared);
+    let mut declared = std::mem::replace(&mut scratch.declared, Declared::new());
     declared.begin(
         text.len(),
         options.dialect.oxc_names,
@@ -430,7 +430,7 @@ pub(crate) fn run<'a>(
         return Err(Refused::new(Refusal::Reported));
     }
     if f.diagnostics.len() > errors {
-        if options.dialect == Default::default() {
+        if options.dialect == bun_sema::resolve::Dialect::new() {
             f.diagnostics.shared_sort_by_key(|it| (it.start, it.code));
         }
         f.has_parse_diagnostics = true;
@@ -475,7 +475,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             recovers: options.recovers,
             reads_jsdoc: jsdoc.wanted != 0,
             jsdoc,
-            comments: comments::CommentTracker::default(),
+            comments: comments::CommentTracker::new(),
             lists: 0,
             // No token is in it.
             declaration_scan: stmt::DeclarationScan {
@@ -636,7 +636,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
         // typescript-estree, acorn and Babel throw the error that is reported first, which is not the first in the
         // text: the scanner reports what is wrong in a token before the parser says that it expected another.
-        if self.f.diagnostics.len() > 1 && self.options.dialect == Default::default() {
+        if self.f.diagnostics.len() > 1 && self.options.dialect == bun_sema::resolve::Dialect::new()
+        {
             self.f
                 .diagnostics
                 .shared_sort_by_key(|it| (it.start, it.code));
@@ -1255,7 +1256,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.f.stmts.push(Stmt {
                 kind: StmtKind::Expr(decorator),
                 start,
-                loc: TextRange::default(),
+                loc: TextRange::new(),
                 modifiers: Span::EMPTY,
             });
         }

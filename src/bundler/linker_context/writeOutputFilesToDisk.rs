@@ -38,7 +38,9 @@ pub(crate) fn write_output_files_to_disk(
 ) -> Result<(), Error> {
     let _trace = bun_core::perf::trace("Bundler.writeOutputFilesToDisk");
 
-    let root_dir = match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
+    let root_dir = match bun_sys::Dir::cwd()
+        .make_open_path(root_path, bun_sys::OpenDirOptions::new())
+    {
         Ok(dir) => dir,
         Err(e) => {
             if bun_errno::SystemErrno::from(e.clone()) == bun_errno::SystemErrno::ENOTDIR {
@@ -161,9 +163,9 @@ pub(crate) fn write_output_files_to_disk(
                             bytecode_index: None,
                             module_info_index: None,
                             display_size: 0,
-                            referenced_css_chunks: Box::default(),
+                            referenced_css_chunks: Box::new([]),
                             source_index: IndexOptional::NONE,
-                            bake_extra: BakeExtra::default(),
+                            bake_extra: BakeExtra::new(),
                         },
                     ))?,
                 )
@@ -175,21 +177,21 @@ pub(crate) fn write_output_files_to_disk(
                 data: OutputFileData::Saved(0),
                 hash: None,
                 loader: chunk.content.loader(),
-                input_path: Box::default(),
+                input_path: Box::new([]),
                 display_size: 0,
                 output_kind: options::OutputKind::Chunk,
                 input_loader: Loader::Js,
-                output_path: Box::default(),
+                output_path: Box::new([]),
                 is_executable: false,
                 source_map_index,
                 bytecode_index: None,
                 module_info_index: None,
                 side: Some(options::Side::Client),
                 entry_point_index: None,
-                referenced_css_chunks: Box::default(),
+                referenced_css_chunks: Box::new([]),
                 size: None,
                 source_index: IndexOptional::NONE,
-                bake_extra: BakeExtra::default(),
+                bake_extra: BakeExtra::new(),
             }));
             continue;
         }
@@ -233,8 +235,10 @@ pub(crate) fn write_output_files_to_disk(
 
         // Take `intermediate_output` by value so its `&mut self` is
         // disjoint from the `&chunks[i]` / `&[Chunk]` reads below.
-        let mut intermediate_output =
-            core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
+        let mut intermediate_output = core::mem::replace(
+            &mut chunks[chunk_index_in_chunks_list].intermediate_output,
+            crate::chunk::IntermediateOutput::Empty,
+        );
         let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
         let parse_graph = c.parse_graph();
 
@@ -357,9 +361,9 @@ pub(crate) fn write_output_files_to_disk(
                     bytecode_index: None,
                     module_info_index: None,
                     display_size: 0,
-                    referenced_css_chunks: Box::default(),
+                    referenced_css_chunks: Box::new([]),
                     source_index: IndexOptional::NONE,
-                    bake_extra: BakeExtra::default(),
+                    bake_extra: BakeExtra::new(),
                 }));
             }
             SourceMapOption::Inline => {
@@ -477,9 +481,9 @@ pub(crate) fn write_output_files_to_disk(
                             source_map_index: None,
                             bytecode_index: None,
                             module_info_index: None,
-                            referenced_css_chunks: Box::default(),
+                            referenced_css_chunks: Box::new([]),
                             source_index: IndexOptional::NONE,
-                            bake_extra: BakeExtra::default(),
+                            bake_extra: BakeExtra::new(),
                         }));
                     }
                 }
@@ -568,11 +572,11 @@ pub(crate) fn write_output_files_to_disk(
                         .map(|&i| OutputFileIndex::init(i))
                         .collect()
                 }
-                Content::Css(_) => Box::default(),
-                Content::Html => Box::default(),
+                Content::Css(_) => Box::new([]),
+                Content::Html => Box::new([]),
             },
             source_index: IndexOptional::NONE,
-            bake_extra: BakeExtra::default(),
+            bake_extra: BakeExtra::new(),
         }));
 
         // We want the chunk index to remain the same in `output_files` so the indices in `OutputFile.referenced_css_chunks` work.
@@ -614,7 +618,7 @@ pub(crate) fn write_output_files_to_disk(
             let bytes = if let OutputFileValue::Buffer { bytes } = &mut src.value {
                 core::mem::take(bytes)
             } else {
-                Box::default()
+                Box::new([])
             };
             // `defer src.value.buffer.arena.free(bytes)` — `bytes` is now an
             // owned Box that drops at end of scope.
@@ -654,7 +658,7 @@ pub(crate) fn write_output_files_to_disk(
             let bytes_len = bytes.len();
             drop(bytes);
             *dest = core::mem::replace(src, OutputFile::zero_value());
-            dest.value = OutputFileValue::Saved(SavedFile::default());
+            dest.value = OutputFileValue::Saved(SavedFile::new());
             dest.size = bytes_len;
         }
     }

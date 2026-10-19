@@ -76,7 +76,7 @@ bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop
 
 bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy)]
     pub struct Flags: u8 {
         const DISCONNECTED = 1 << 0;
         const IS_CLOSED    = 1 << 1;
@@ -507,7 +507,7 @@ impl WindowsNamedPipe {
 
         self.event_loop_timer.with_mut(|t| {
             t.state = EventLoopTimerState::FIRED;
-            t.heap = Default::default();
+            t.heap = bun_io::heap::IntrusiveField::new();
         });
 
         if has_been_cleared {
@@ -534,9 +534,9 @@ impl WindowsNamedPipe {
             root: Cell::new(core::ptr::null_mut()),
             handlers,
             // defaults:
-            writer: JsCell::new(StreamingWriter::default()),
+            writer: JsCell::new(StreamingWriter::new()),
             incoming: JsCell::new(Vec::new()),
-            ssl_error: JsCell::new(CertError::default()),
+            ssl_error: JsCell::new(CertError::new()),
             connect_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_connect_t>()),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::WindowsNamedPipe,
@@ -621,7 +621,7 @@ impl WindowsNamedPipe {
                     return bun_sys::Result::Err(bun_sys::Error {
                         errno: bun_sys::E::EPIPE as _,
                         syscall: bun_sys::Tag::connect,
-                        ..Default::default()
+                        ..bun_sys::Error::init()
                     });
                 }
             }
@@ -774,7 +774,7 @@ impl WindowsNamedPipe {
                     return Some(bun_sys::Result::Err(bun_sys::Error {
                         errno: bun_sys::E::EPIPE as _,
                         syscall: bun_sys::Tag::connect,
-                        ..Default::default()
+                        ..bun_sys::Error::init()
                     }));
                 }
             }
@@ -788,7 +788,7 @@ impl WindowsNamedPipe {
                     return Some(bun_sys::Result::Err(bun_sys::Error {
                         errno: bun_sys::E::EPIPE as _,
                         syscall: bun_sys::Tag::connect,
-                        ..Default::default()
+                        ..bun_sys::Error::init()
                     }));
                 }
             }
@@ -1020,11 +1020,12 @@ impl WindowsNamedPipe {
             unsafe { (*stream).read_stop() };
         }
         self.writer.with_mut(|w| w.close_without_reporting());
-        self.writer.with_mut(|w| w.outgoing = Default::default());
+        self.writer
+            .with_mut(|w| w.outgoing = bun_io::StreamBuffer::new());
         if !self.flags.get().contains(Flags::WRAPPER_BUSY) {
             self.wrapper.set(None);
         }
-        self.ssl_error.set(CertError::default());
+        self.ssl_error.set(CertError::new());
     }
 }
 

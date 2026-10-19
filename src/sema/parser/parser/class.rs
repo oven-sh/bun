@@ -102,7 +102,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
         }
         let modifiers = self.f.classes.get(class.idx()).map(|it| it.modifiers);
-        self.add_stmt(StmtKind::Class(class), start, modifiers.unwrap_or_default())
+        self.add_stmt(
+            StmtKind::Class(class),
+            start,
+            modifiers.unwrap_or(Span::EMPTY),
+        )
     }
 
     /// `parseClassExpression`
@@ -637,7 +641,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             func: FnId::NONE,
             name_pos,
             start: start.pos,
-            loc: TextRange::default(),
+            loc: TextRange::new(),
             modifiers: Span::EMPTY,
         };
         // What has no name is a property, whatever follows.

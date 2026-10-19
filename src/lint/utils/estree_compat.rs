@@ -69,7 +69,7 @@ pub fn sequence_root(mut e: Expr<'_>) -> Expr<'_> {
     }
     let file = e.file();
     let roots = file.lazy.sequence_roots.get_or_init(|| {
-        let mut roots = FxHashMap::default();
+        let mut roots = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for id in (0..file.hir.exprs.len() as u32).map(hir::ExprId) {
             let root = Expr::new(file, id);
             if !is_sequence_root(root) {

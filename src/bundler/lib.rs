@@ -262,9 +262,8 @@ pub mod options {
     /// `bun_runtime::api::BuildArtifact` can spell `<&str>::from(kind)` without
     /// a duplicate enum.
     #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, strum::IntoStaticStr)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
     pub enum OutputKind {
-        #[default]
         #[strum(serialize = "chunk")]
         Chunk,
         #[strum(serialize = "asset")]
@@ -400,34 +399,32 @@ bun_dispatch::link_interface! {
 // `OutputFile.Options` field defaults. Kept here rather than in `OutputFile.rs` so the
 // derive-free struct stays codegen-friendly while every `init(..)` call site
 // can use struct-update syntax.
-impl Default for output_file::OptionsData {
-    fn default() -> Self {
-        output_file::OptionsData::Buffer {
-            data: Box::default(),
-        }
+impl output_file::OptionsData {
+    pub fn new() -> Self {
+        output_file::OptionsData::Buffer { data: Box::new([]) }
     }
 }
-impl Default for output_file::Options {
-    fn default() -> Self {
+impl output_file::Options {
+    pub fn new() -> Self {
         output_file::Options {
-            loader: options::Loader::default(),
-            input_loader: options::Loader::default(),
+            loader: options::Loader::File,
+            input_loader: options::Loader::File,
             hash: None,
             source_map_index: None,
             bytecode_index: None,
             module_info_index: None,
-            output_path: Box::default(),
+            output_path: Box::new([]),
             source_index: output_file::IndexOptional::NONE,
             size: None,
-            input_path: Box::default(),
+            input_path: Box::new([]),
             display_size: 0,
             output_kind: options::OutputKind::Chunk,
             is_executable: false,
-            data: output_file::OptionsData::default(),
+            data: output_file::OptionsData::new(),
             side: None,
             entry_point_index: None,
-            referenced_css_chunks: Box::default(),
-            bake_extra: output_file::BakeExtra::default(),
+            referenced_css_chunks: Box::new([]),
+            bake_extra: output_file::BakeExtra::new(),
         }
     }
 }

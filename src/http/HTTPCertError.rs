@@ -1,4 +1,3 @@
-#[derive(Default)]
 pub struct HTTPCertError {
     pub(crate) error_no: i32,
 }

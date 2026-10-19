@@ -11,10 +11,9 @@ use css::{PrintErr, Printer, VendorPrefix};
 
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum FlexDirection {
     /// Flex items are laid out in a row.
-    #[default]
     Row,
     /// Flex items are laid out in a row, and reversed.
     RowReverse,
@@ -37,10 +36,9 @@ impl FlexDirection {
 
 /// A value for the [flex-wrap](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-wrap-property) property.
 /// A value for the [flex-wrap](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-wrap-property) property.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum FlexWrap {
     /// The flex items do not wrap.
-    #[default]
     Nowrap,
     /// The flex items wrap.
     Wrap,
@@ -90,12 +88,12 @@ impl FlexFlow {
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut needs_space = false;
-        if self.direction != FlexDirection::default() || self.wrap == FlexWrap::default() {
+        if self.direction != FlexDirection::Row || self.wrap == FlexWrap::Nowrap {
             self.direction.to_css(dest)?;
             needs_space = true;
         }
 
-        if self.wrap != FlexWrap::default() {
+        if self.wrap != FlexWrap::Nowrap {
             if needs_space {
                 dest.write_str(" ")?;
             }
@@ -491,7 +489,6 @@ impl FlexLinePack {
 pub(crate) type BoxOrdinalGroup = CSSInteger;
 
 // A handler for flex-related properties that manages both standard and legacy vendor prefixed values.
-#[derive(Default)]
 pub struct FlexHandler {
     /// The flex-direction property value and vendor prefix
     pub(crate) direction: Option<(FlexDirection, VendorPrefix)>,
@@ -525,6 +522,30 @@ pub struct FlexHandler {
     pub(crate) flex_order: Option<(CSSInteger, VendorPrefix)>,
     /// Whether any flex-related properties have been set
     pub(crate) has_any: bool,
+}
+
+impl FlexHandler {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            direction: None,
+            box_orient: None,
+            box_direction: None,
+            wrap: None,
+            box_lines: None,
+            grow: None,
+            box_flex: None,
+            flex_positive: None,
+            shrink: None,
+            flex_negative: None,
+            basis: None,
+            preferred_size: None,
+            order: None,
+            box_ordinal_group: None,
+            flex_order: None,
+            has_any: false,
+        }
+    }
 }
 
 impl FlexHandler {

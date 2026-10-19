@@ -132,7 +132,7 @@ impl Stringifier {
             builder: wtf::StringBuilder::init(),
             indent: 0,
             space: Space::init(global, space_value)?,
-            visiting: HashMap::default(),
+            visiting: HashMap::init(),
         })
     }
 
@@ -194,7 +194,7 @@ impl Stringifier {
         // once the collections-side grow is made fallible.
         let was_present = self
             .visiting
-            .get_or_put(unwrapped)
+            .get_or_put(unwrapped, || ())
             .map_err(|_| StringifyError::Js(JsError::OutOfMemory))?
             .found_existing;
         if was_present {
@@ -272,7 +272,7 @@ impl Stringifier {
             jsc::JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,
-                ..Default::default()
+                ..jsc::JSPropertyIteratorOptions::init()
             },
         )?;
 

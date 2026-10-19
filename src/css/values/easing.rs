@@ -33,7 +33,7 @@ pub struct CubicBezier {
     pub(crate) y2: CSSNumber,
 }
 
-#[derive(Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Steps {
     /// The number of intervals in the function.
     pub(crate) count: CSSInteger,
@@ -120,7 +120,7 @@ impl EasingFunction {
                             p.expect_comma()?;
                             StepPosition::parse(p)
                         })
-                        .unwrap_or_default();
+                        .unwrap_or(StepPosition::End);
                     Ok(EasingFunction::Steps(Steps { count, position }))
                 },
                 _ => Err(location.new_unexpected_token_error(Token::Ident(function))),
@@ -213,14 +213,13 @@ impl EasingFunction {
 }
 
 /// A [step position](https://www.w3.org/TR/css-easing-1/#step-position), used within the `steps()` function.
-#[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum StepPosition {
     /// The first rise occurs at input progress value of 0.
     #[strum(serialize = "start")]
     Start,
     /// The last rise occurs at input progress value of 1.
     #[strum(serialize = "end")]
-    #[default]
     End,
     /// All rises occur within the range (0, 1).
     #[strum(serialize = "jump-none")]

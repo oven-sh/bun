@@ -76,7 +76,7 @@ fn get_property_name<'a>(key: Key<'a>, is_oxlint: bool) -> Option<&'a [u8]> {
 /// of `expression` has, if all of them are object literals.
 fn get_properties_in_all_branches<'a>(expression: Expr<'a>, is_oxlint: bool) -> FxHashSet<&'a [u8]> {
     // For each name, how many branches have it, and the last of them.
-    let mut found: FxHashMap<&'a [u8], (u32, u32)> = FxHashMap::default();
+    let mut found: FxHashMap<&'a [u8], (u32, u32)> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     let mut branches = 0;
     let mut rest: SmallVec<[Expr<'a>; 8]> = smallvec![expression];
     while let Some(branch) = rest.pop() {
@@ -92,7 +92,7 @@ fn get_properties_in_all_branches<'a>(expression: Expr<'a>, is_oxlint: bool) -> 
                 }
             }
             ExprKind::Cond { yes, no, .. } => rest.extend([yes, no]),
-            _ => return FxHashSet::default(),
+            _ => return FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
     found.into_iter().filter(|(_, (count, _))| *count == branches).map(|(name, _)| name).collect()

@@ -133,7 +133,7 @@ pub struct OutlinedFunctionEntry {
 
 impl Environment {
     pub fn new() -> Self {
-        Self::with_config(EnvironmentConfig::default())
+        Self::with_config(EnvironmentConfig::new())
     }
 
     /// Create a new Environment with the given configuration.
@@ -165,7 +165,7 @@ impl Environment {
                     return_value_kind: hook.value_kind,
                     hook_kind: HookKind::Custom,
                     no_alias: hook.no_alias,
-                    ..Default::default()
+                    ..HookSignatureBuilder::new()
                 },
                 None,
             );
@@ -173,7 +173,8 @@ impl Environment {
         }
 
         // Register reanimated module type when enabled
-        let mut module_types: HashMap<StoreStr, Option<Global>> = HashMap::default();
+        let mut module_types: HashMap<StoreStr, Option<Global>> =
+            HashMap::with_hasher(rustc_hash::FxBuildHasher);
         if config.enable_custom_type_definition_for_reanimated {
             let reanimated_module_type = globals::get_reanimated_module_type(&mut shapes);
             module_types.insert(
@@ -202,9 +203,9 @@ impl Environment {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: AstAlloc::vec(),
-            binding_names: HashMap::default(),
-            reference_node_ids: HashSet::default(),
-            hoisted_identifiers: HashSet::default(),
+            binding_names: HashMap::with_hasher(rustc_hash::FxBuildHasher),
+            reference_node_ids: HashSet::with_hasher(rustc_hash::FxBuildHasher),
+            hoisted_identifiers: HashSet::with_hasher(rustc_hash::FxBuildHasher),
             validate_preserve_existing_memoization_guarantees: config
                 .validate_preserve_existing_memoization_guarantees,
             validate_no_set_state_in_render: config.validate_no_set_state_in_render,
@@ -213,7 +214,7 @@ impl Environment {
             globals: global_registry,
             shapes,
             module_types,
-            module_type_errors: HashMap::default(),
+            module_type_errors: HashMap::with_hasher(rustc_hash::FxBuildHasher),
             default_nonmutating_hook: None,
             default_mutating_hook: None,
             outlined_functions: AstAlloc::vec(),
@@ -365,7 +366,7 @@ impl Environment {
     }
 
     pub fn take_errors(&mut self) -> CompilerError {
-        let mut errors = std::mem::take(&mut self.errors);
+        let mut errors = std::mem::replace(&mut self.errors, CompilerError::new());
         // Mark as not thrown — these are accumulated errors returned at the end
         // of the pipeline, not errors thrown by a pass.
         errors.is_thrown = false;
@@ -378,7 +379,7 @@ impl Environment {
     pub fn take_invariant_errors(&mut self) -> CompilerError {
         let mut invariant = CompilerError::new();
         let mut remaining = CompilerError::new();
-        let old = std::mem::take(&mut self.errors);
+        let old = std::mem::replace(&mut self.errors, CompilerError::new());
         for detail in old.details {
             let is_invariant = match &detail {
                 crate::diagnostics::CompilerErrorOrDiagnostic::Diagnostic(d) => {
@@ -796,7 +797,7 @@ impl Environment {
         // Lazily build the set of known names from existing identifiers.
         // This approximates Babel's hasBinding/hasGlobal/hasReference checks.
         if self.uid_known_names.is_none() {
-            let mut known = HashSet::default();
+            let mut known = HashSet::with_hasher(rustc_hash::FxBuildHasher);
             for id in &self.identifiers {
                 if let Some(name) = &id.name {
                     known.insert(StoreStr::new(name.value()));

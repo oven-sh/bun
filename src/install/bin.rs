@@ -45,8 +45,8 @@ pub struct Bin {
     pub(crate) value: Value,
 }
 
-impl Default for Bin {
-    fn default() -> Self {
+impl Bin {
+    pub fn empty() -> Self {
         Bin::init()
     }
 }
@@ -224,7 +224,7 @@ impl Bin {
                 return Ok(Bin::new(Tag::File, Value::init_file(buf.append(str_)?)));
             }
         }
-        Ok(Bin::default())
+        Ok(Bin::empty())
     }
 
     fn parse_append_object<'a>(
@@ -262,7 +262,7 @@ impl Bin {
                 ));
             }
         }
-        Ok(Bin::default())
+        Ok(Bin::empty())
     }
 
     pub(crate) fn parse_append_from_directories(
@@ -272,7 +272,7 @@ impl Bin {
         if let Some(bin_str) = bin_expr.as_utf8_string_literal() {
             return Ok(Bin::new(Tag::Dir, Value::init_dir(buf.append(bin_str)?)));
         }
-        Ok(Bin::default())
+        Ok(Bin::empty())
     }
 
     pub(crate) fn to_json<W: fmt::Write, const STYLE: ToJsonStyle>(
@@ -293,7 +293,10 @@ impl Bin {
                         write!(
                             writer,
                             "{}",
-                            self.value.file.fmt_json(buf, Default::default())
+                            self.value.file.fmt_json(
+                                buf,
+                                bun_semver::semver_string::JsonFormatterOptions::new()
+                            )
                         )?;
                     }
                     Tag::NamedFile => {
@@ -301,8 +304,14 @@ impl Bin {
                         write!(
                             writer,
                             " {}: {} ",
-                            self.value.named_file[0].fmt_json(buf, Default::default()),
-                            self.value.named_file[1].fmt_json(buf, Default::default()),
+                            self.value.named_file[0].fmt_json(
+                                buf,
+                                bun_semver::semver_string::JsonFormatterOptions::new()
+                            ),
+                            self.value.named_file[1].fmt_json(
+                                buf,
+                                bun_semver::semver_string::JsonFormatterOptions::new()
+                            ),
                         )?;
                         writer.write_char('}')?;
                     }
@@ -310,7 +319,10 @@ impl Bin {
                         write!(
                             writer,
                             "{}",
-                            self.value.dir.fmt_json(buf, Default::default())
+                            self.value.dir.fmt_json(
+                                buf,
+                                bun_semver::semver_string::JsonFormatterOptions::new()
+                            )
                         )?;
                     }
                     Tag::Map => {
@@ -326,8 +338,14 @@ impl Bin {
                             write!(
                                 writer,
                                 " {}: {}",
-                                list[i].value.fmt_json(buf, Default::default()),
-                                list[i + 1].value.fmt_json(buf, Default::default()),
+                                list[i].value.fmt_json(
+                                    buf,
+                                    bun_semver::semver_string::JsonFormatterOptions::new()
+                                ),
+                                list[i + 1].value.fmt_json(
+                                    buf,
+                                    bun_semver::semver_string::JsonFormatterOptions::new()
+                                ),
                             )?;
                             i += 2;
                         }
@@ -346,7 +364,9 @@ impl Bin {
                     write!(
                         writer,
                         "{}",
-                        self.value.file.fmt_json(buf, Default::default())
+                        self.value
+                            .file
+                            .fmt_json(buf, bun_semver::semver_string::JsonFormatterOptions::new())
                     )?;
                 }
                 Tag::NamedFile => {
@@ -356,8 +376,10 @@ impl Bin {
                     writeln!(
                         writer,
                         "{}: {},",
-                        self.value.named_file[0].fmt_json(buf, Default::default()),
-                        self.value.named_file[1].fmt_json(buf, Default::default()),
+                        self.value.named_file[0]
+                            .fmt_json(buf, bun_semver::semver_string::JsonFormatterOptions::new()),
+                        self.value.named_file[1]
+                            .fmt_json(buf, bun_semver::semver_string::JsonFormatterOptions::new()),
                     )?;
                     *indent -= 1;
                     write_indent(writer, indent)?;
@@ -367,7 +389,9 @@ impl Bin {
                     write!(
                         writer,
                         "{}",
-                        self.value.dir.fmt_json(buf, Default::default())
+                        self.value
+                            .dir
+                            .fmt_json(buf, bun_semver::semver_string::JsonFormatterOptions::new())
                     )?;
                 }
                 Tag::Map => {
@@ -386,8 +410,14 @@ impl Bin {
                         writeln!(
                             writer,
                             "{}: {},",
-                            list[i].value.fmt_json(buf, Default::default()),
-                            list[i + 1].value.fmt_json(buf, Default::default()),
+                            list[i].value.fmt_json(
+                                buf,
+                                bun_semver::semver_string::JsonFormatterOptions::new()
+                            ),
+                            list[i + 1].value.fmt_json(
+                                buf,
+                                bun_semver::semver_string::JsonFormatterOptions::new()
+                            ),
                         )?;
                         i += 2;
                     }
@@ -983,7 +1013,7 @@ impl<'a> Linker<'a> {
 
         if let Some(seen) = self.seen.as_deref_mut() {
             // StringHashMap::get_or_put boxes the key on insert.
-            let _ = seen.get_or_put(abs_dest.as_bytes());
+            let _ = seen.get_or_put(abs_dest.as_bytes(), || ());
         }
 
         bun_core::analytics::Features::binlinks_inc();
@@ -1919,7 +1949,7 @@ pub(crate) fn link_free_bins(
     let (target_node_modules_path, mut node_modules_path) =
         (abs_node_modules(), abs_node_modules());
 
-    let mut seen: StringHashMap<()> = StringHashMap::default();
+    let mut seen: StringHashMap<()> = StringHashMap::init();
     match global_bin_path {
         // The linker creates a missing `.bin`, but never a missing global bin folder.
         Some(bin_path) if see_names_in(bin_path.as_bytes(), &mut seen).is_err() => return,

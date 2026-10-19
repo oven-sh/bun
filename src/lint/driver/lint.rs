@@ -97,10 +97,9 @@ pub(crate) struct Context<'c, 'm> {
 pub(crate) type RuleFilter<'f> = dyn Fn(&RuleId, Severity) -> bool + Sync + 'f;
 
 /// Which fixes and suggestions the rules that are built in make.
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Fixes {
     /// Those that the run reads.
-    #[default]
     IfRead,
     /// All: a processor is given them.
     ForProcessor,
@@ -109,10 +108,9 @@ pub(crate) enum Fixes {
 }
 
 /// Which rules run.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 enum Which<'h> {
     /// Those of the configuration.
-    #[default]
     All,
     /// It is only to be known whether it can be parsed.
     None,
@@ -121,7 +119,7 @@ enum Which<'h> {
 }
 
 /// How a text is linted, if not like a file.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct How<'h> {
     /// See [`LintOptions::again`].
     again: Option<Again<'h>>,
@@ -135,6 +133,21 @@ struct How<'h> {
     /// Set if the file isn't JavaScript: the arguments of [`File::in_language`].
     in_language: Option<(&'h [u8], &'h Parsed, LineBreaks)>,
     rules: Which<'h>,
+}
+
+impl<'h> How<'h> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            again: None,
+            fixes: Fixes::IfRead,
+            physical_path_len: None,
+            script: None,
+            is_later_script: false,
+            in_language: None,
+            rules: Which::All,
+        }
+    }
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -193,7 +206,7 @@ impl Context<'_, '_> {
             },
             js_plugins: Some(self.js_plugins),
             respects_eslint_comments: self.of_oxlint.is_none_or(|it| it.respects_eslint_comments),
-            ..LintOptions::default()
+            ..LintOptions::new()
         }
     }
 
@@ -301,7 +314,7 @@ impl Context<'_, '_> {
 
     /// Parses `text` as the file at `path` and lints it, without types.
     pub(crate) fn verify(&self, path: &[u8], text: &[u8], config: &ResolvedConfig) -> LintResult {
-        self.verify_as(path, text, config, &How::default())
+        self.verify_as(path, text, config, &How::new())
     }
 
     /// Lints the text that the messages of `result` are about once more, and makes what oxlint says besides each message. Nothing, if
@@ -324,7 +337,7 @@ impl Context<'_, '_> {
         let is_asked_about = |id: &RuleId, _: Severity| only.is_none_or(|only| only.contains(&id));
         let how = How {
             rules: Which::WithHelp(&is_asked_about),
-            ..How::default()
+            ..How::new()
         };
         self.verify_as(&path, text, &linted.config, &how).messages
     }
@@ -333,7 +346,7 @@ impl Context<'_, '_> {
     pub(crate) fn parses(&self, path: &[u8], text: &[u8], config: &ResolvedConfig) -> bool {
         let how = How {
             rules: Which::None,
-            ..How::default()
+            ..How::new()
         };
         let result = match Framework::of(path).filter(|_| config.language.is_oxlint) {
             Some(framework) => {
@@ -364,7 +377,7 @@ impl Context<'_, '_> {
         let how = How {
             fixes,
             physical_path_len: Some(physical_path_len),
-            ..How::default()
+            ..How::new()
         };
         Some(self.verify_as(path, text, config, &how)).filter(|it| !it.is_unread)
     }
@@ -393,7 +406,7 @@ impl Context<'_, '_> {
                 };
                 return LintResult {
                     messages: errors.into_iter().map(fatal).collect(),
-                    ..LintResult::default()
+                    ..LintResult::new()
                 };
             }
         };
@@ -402,7 +415,7 @@ impl Context<'_, '_> {
             fixes,
             physical_path_len,
             in_language: Some((body, &parsed, dialect.language.line_breaks())),
-            ..How::default()
+            ..How::new()
         };
         let mut result = self.verify_as(path, body, config, &how);
         // The language parsed the text without the byte order mark, so shift the fixes by its length.
@@ -432,7 +445,7 @@ impl Context<'_, '_> {
         let how = How {
             script: Some((kind, filter)),
             is_later_script,
-            ..How::default()
+            ..How::new()
         };
         self.verify_as(path, text, config, &how)
     }
@@ -457,7 +470,7 @@ impl Context<'_, '_> {
             messages,
             suppressed: std::mem::take(&mut result.suppressed),
             run_keys: std::mem::take(&mut result.run_keys),
-            ..LintResult::default()
+            ..LintResult::new()
         };
         let again = Again {
             previous: &previous,
@@ -465,7 +478,7 @@ impl Context<'_, '_> {
         };
         let how = How {
             again: Some(again),
-            ..How::default()
+            ..How::new()
         };
         let framework = Framework::of(&path).filter(|_| config.language.is_oxlint);
         let mut linted = match framework {
@@ -569,7 +582,7 @@ impl Context<'_, '_> {
         config: &ResolvedConfig,
         then: &mut dyn for<'f> FnMut(&'f File<'f>),
     ) {
-        self.parse_again_as(path, text, config, &How::default(), then);
+        self.parse_again_as(path, text, config, &How::new(), then);
     }
 
     fn parse_again_as(
@@ -597,13 +610,13 @@ impl Context<'_, '_> {
         let parse_again = |then: &mut dyn for<'f> FnMut(&'f File<'f>)| {
             self.parse_again_as(path, text, config, as_what, then);
         };
-        let mut result = LintResult::default();
+        let mut result = LintResult::new();
         self.parse(path, text, config, as_what, &mut |file| {
             result = match file {
                 Some(file) => self.verify_parsed(file, config, as_what, &parse_again),
                 None => LintResult {
                     messages: vec![too_deep()],
-                    ..LintResult::default()
+                    ..LintResult::new()
                 },
             };
         });
@@ -622,7 +635,7 @@ impl Context<'_, '_> {
         if as_what.physical_path_len.is_some() && may_be_misread(file) {
             return LintResult {
                 is_unread: true,
-                ..LintResult::default()
+                ..LintResult::new()
             };
         }
         let options = self.lint_options();
@@ -872,7 +885,7 @@ fn too_deep() -> LintMessage {
         fix: None,
         suggestions: Vec::new(),
         suppressions: Vec::new(),
-        ..LintMessage::default()
+        ..LintMessage::new()
     }
 }
 

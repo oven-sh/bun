@@ -125,7 +125,7 @@ pub(crate) fn run_as_coordinator(
             out: WorkerPipe::new(core::ptr::null()),
             err: WorkerPipe::new(core::ptr::null()),
             process: None,
-            ipc: Channel::default(),
+            ipc: Channel::new(),
             inflight: None,
             dispatched_at: 0,
             captured: Vec::new(),
@@ -174,13 +174,15 @@ pub(crate) fn run_as_coordinator(
         bail: ctx.test_options.bail,
         dots: ctx.test_options.reporters.dots,
         test_records: if ctx.test_options.reporters.junit {
-            (0..n).map(|_| Default::default()).collect()
+            (0..n)
+                .map(|_| crate::cli::test::parallel::coordinator::FileTestRecords::new())
+                .collect()
         } else {
             Vec::new()
         },
-        coverage_files: Default::default(),
+        coverage_files: bun_collections::StringArrayHashMap::init(),
         last_header_idx: None,
-        frame: Frame::default(),
+        frame: Frame::new(),
         files_done: 0,
         spawned_count: 0,
         live_workers: 0,
@@ -661,7 +663,7 @@ pub(crate) fn run_as_worker(
         reporter,
         vm,
         cmds: WorkerCommands {
-            channel: Channel::default(),
+            channel: Channel::new(),
             pending_idx: None,
             pending_path: Vec::new(),
             done: false,

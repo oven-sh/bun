@@ -62,12 +62,21 @@ pub(crate) fn valkey_error_to_js(
 }
 
 pub(crate) fn resp_value_to_js(this: &mut RESPValue, global: &JSGlobalObject) -> JsResult<JSValue> {
-    resp_value_to_js_with_options(this, global, ToJSOptions::default())
+    resp_value_to_js_with_options(this, global, ToJSOptions::new())
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct ToJSOptions {
     pub(crate) return_as_buffer: bool,
+}
+
+impl ToJSOptions {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            return_as_buffer: false,
+        }
+    }
 }
 
 fn valkey_str_to_js_value(
@@ -116,7 +125,7 @@ pub(crate) fn resp_value_to_js_with_options(
             let js_obj = JSValue::create_empty_object_with_null_prototype(global);
             for entry in entries.iter_mut() {
                 let js_key =
-                    resp_value_to_js_with_options(&mut entry.key, global, ToJSOptions::default())?;
+                    resp_value_to_js_with_options(&mut entry.key, global, ToJSOptions::new())?;
                 let js_value = resp_value_to_js_with_options(&mut entry.value, global, options)?;
 
                 JSValue::put_to_property_key(js_obj, global, js_key, js_value)?;

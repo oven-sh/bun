@@ -581,7 +581,7 @@ impl<'a> Walker<'_, '_, 'a> {
 
 /// Analyzes the whole file and returns the message described at the top of this file.
 pub(crate) fn analyze<'a>(file: &'a File<'a>, tree: Tree<'_, 'a>) -> Vec<u32> {
-    let store = &Store::default();
+    let store = &Store::new();
     let mut walker = Walker {
         file,
         store,

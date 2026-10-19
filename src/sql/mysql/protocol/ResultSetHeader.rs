@@ -1,9 +1,15 @@
 use super::any_mysql_error::Error as AnyMySQLError;
 use super::stack_reader::PacketReader;
 
-#[derive(Default)]
 pub struct ResultSetHeader {
     pub field_count: u64,
+}
+
+impl ResultSetHeader {
+    #[inline]
+    pub fn new() -> Self {
+        Self { field_count: 0 }
+    }
 }
 
 impl ResultSetHeader {

@@ -30,9 +30,8 @@ pub(crate) enum Placement {
 }
 
 /// Prettier's `comment.marker`. It tells apart the dangling comments of one node that are printed in different places.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Marker {
-    #[default]
     None,
     /// `(a /* comment */) => b`
     CommentBeforeArrow,
@@ -102,7 +101,6 @@ impl<'a> Attachment<'a> {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct Attached<'a> {
     /// Indexed by comment id.
     pub(crate) attachments: Vec<Attachment<'a>>,
@@ -112,6 +110,18 @@ pub(crate) struct Attached<'a> {
     /// a node is printed that has neither a comment nor one of these in it, nothing in it owns a comment.
     pub(crate) relocated_owner_starts: Vec<u32>,
     pub(crate) has_ignore_comments: bool,
+}
+
+impl<'a> Attached<'a> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            attachments: Vec::new(),
+            ignored_nodes: Vec::new(),
+            relocated_owner_starts: Vec::new(),
+            has_ignore_comments: false,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -304,7 +314,7 @@ pub(crate) fn attach<'a>(
     let nodes = cx.surrounding_nodes_of_all_comments();
     let mut attached = Attached {
         attachments: vec![Attachment::dangling(program); nodes.len()],
-        ..Attached::default()
+        ..Attached::new()
     };
     let mut ties: Vec<usize> = Vec::new();
     let mut text_positions = TextPositions::NONE_ASKED_YET;

@@ -187,7 +187,7 @@ pub(crate) mod js_fns {
             let cfg = ExecutionEntryCfg {
                 has_done_parameter,
                 timeout: args.options.timeout,
-                ..Default::default()
+                ..ExecutionEntryCfg::new()
             };
 
             let Some(bun_test) = bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm()) else {
@@ -203,7 +203,7 @@ pub(crate) mod js_fns {
                     tag.as_hook_tag().unwrap(),
                     args.callback,
                     cfg,
-                    BaseScopeCfg::default(),
+                    BaseScopeCfg::new(),
                     AddedInPhase::Preload,
                 )?;
                 return Ok(JSValue::UNDEFINED);
@@ -221,7 +221,7 @@ pub(crate) mod js_fns {
                         tag.as_hook_tag().unwrap(),
                         args.callback,
                         cfg,
-                        BaseScopeCfg::default(),
+                        BaseScopeCfg::new(),
                         AddedInPhase::Collection,
                     )?;
                     Ok(JSValue::UNDEFINED)
@@ -295,7 +295,7 @@ pub(crate) mod js_fns {
                         args.callback,
                         cfg,
                         None,
-                        BaseScopeCfg::default(),
+                        BaseScopeCfg::new(),
                         AddedInPhase::Execution,
                     );
                     let new_item_ptr = bun_core::heap::into_raw(new_item);
@@ -1567,11 +1567,6 @@ pub(crate) enum StepResult {
     Waiting { timeout: Timespec },
     Complete,
 }
-impl Default for StepResult {
-    fn default() -> Self {
-        StepResult::Waiting { timeout: Timespec::EPOCH }
-    }
-}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Advance {
@@ -1581,21 +1576,33 @@ enum Advance {
 
 pub(crate) use super::collection::Collection;
 
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ConcurrentMode {
-    #[default]
     Inherit,
     No,
     Yes,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct BaseScopeCfg {
     pub(crate) self_concurrent: ConcurrentMode,
     pub(crate) self_mode: ScopeMode,
     pub(crate) self_only: bool,
     pub(crate) test_id_for_debugger: i32,
     pub(crate) line_no: u32,
+}
+
+impl BaseScopeCfg {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            self_concurrent: ConcurrentMode::Inherit,
+            self_mode: ScopeMode::Normal,
+            self_only: false,
+            test_id_for_debugger: 0,
+            line_no: 0,
+        }
+    }
 }
 impl BaseScopeCfg {
     /// returns None if the other already has the value
@@ -1623,9 +1630,8 @@ impl BaseScopeCfg {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ScopeMode {
-    #[default]
     Normal,
     Skip,
     Todo,
@@ -1851,7 +1857,7 @@ pub(crate) enum HookTag {
     AfterAll,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(crate) struct ExecutionEntryCfg {
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
@@ -1860,6 +1866,18 @@ pub(crate) struct ExecutionEntryCfg {
     pub(crate) retry_count: u32,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     pub(crate) repeat_count: u32,
+}
+
+impl ExecutionEntryCfg {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            timeout: 0,
+            has_done_parameter: false,
+            retry_count: 0,
+            repeat_count: 0,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

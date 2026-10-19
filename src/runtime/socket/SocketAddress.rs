@@ -52,8 +52,8 @@ pub(crate) struct Options {
     pub(crate) flowlabel: Option<u32>,
 }
 
-impl Default for Options {
-    fn default() -> Self {
+impl Options {
+    pub(crate) fn new() -> Self {
         Self {
             family: AF::INET,
             address: None,
@@ -348,7 +348,7 @@ impl SocketAddress {
             Options {
                 address: Some(address_),
                 family: family_,
-                ..Default::default()
+                ..Options::new()
             },
         )
     }
@@ -507,7 +507,7 @@ impl SocketAddress {
     /// that will not be around for very long. `createDTO` is even faster, but
     /// requires callers to already have a presentation-formatted address.
     pub(crate) fn into_dto(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let address = match self._presentation.take() {
+        let address = match self._presentation.replace(BunString::EMPTY) {
             cached if cached.tag() != bun_core::Tag::Dead => cached,
             _ => self.fmt_presentation(),
         };

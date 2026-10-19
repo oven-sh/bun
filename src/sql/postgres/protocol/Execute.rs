@@ -8,8 +8,8 @@ pub struct Execute<'a> {
     pub p: PortalOrPreparedStatement<'a>,
 }
 
-impl<'a> Default for Execute<'a> {
-    fn default() -> Self {
+impl<'a> Execute<'a> {
+    pub fn new() -> Self {
         Self {
             max_rows: 0,
             p: PortalOrPreparedStatement::Portal(b""),

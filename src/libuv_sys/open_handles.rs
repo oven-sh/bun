@@ -54,7 +54,7 @@ struct Open {
 }
 
 std::thread_local! {
-    static OPEN: RefCell<Open> = RefCell::new(Open::default());
+    static OPEN: RefCell<Open> = RefCell::new(Open::new());
 }
 
 fn add(handle: *mut uv_handle_t, kind: Kind) {

@@ -23,7 +23,6 @@ fn place(id: u32) -> (u32, usize, u64) {
     (id >> 9, ((id >> 6) & 7) as usize, 1 << (id & 63))
 }
 
-#[derive(Default)]
 struct Ids {
     few: SmallVec<[u32; FEW]>,
     /// Empty while `few` holds the set. By the upper bits of an id: ids are given out in order, so
@@ -31,6 +30,17 @@ struct Ids {
     /// those of the program.
     pages: FxHashMap<u32, Page>,
     len: usize,
+}
+
+impl Ids {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            few: SmallVec::new(),
+            pages: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            len: 0,
+        }
+    }
 }
 
 impl Ids {
@@ -102,11 +112,11 @@ pub struct IdSet<T> {
     of: PhantomData<fn(T)>,
 }
 
-impl<T> Default for IdSet<T> {
+impl<T> IdSet<T> {
     #[inline]
-    fn default() -> Self {
+    pub fn init() -> Self {
         IdSet {
-            ids: Ids::default(),
+            ids: Ids::new(),
             of: PhantomData,
         }
     }
@@ -115,7 +125,7 @@ impl<T> Default for IdSet<T> {
 impl<T: Indexed> IdSet<T> {
     #[inline]
     pub fn new() -> Self {
-        Self::default()
+        Self::init()
     }
 
     /// Whether it was not in the set.
@@ -156,7 +166,7 @@ impl<T: Indexed> Extend<T> for IdSet<T> {
 
 impl<T: Indexed> FromIterator<T> for IdSet<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        let mut set = IdSet::default();
+        let mut set = IdSet::init();
         set.extend(iter);
         set
     }
@@ -237,13 +247,13 @@ pub struct IdMap<T, V> {
     of: PhantomData<fn(T)>,
 }
 
-impl<T, V> Default for IdMap<T, V> {
+impl<T, V> IdMap<T, V> {
     #[inline]
-    fn default() -> Self {
+    pub fn init() -> Self {
         IdMap {
             ids: IdsTo {
                 few: SmallVec::new(),
-                many: FxHashMap::default(),
+                many: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             },
             of: PhantomData,
         }
@@ -253,7 +263,7 @@ impl<T, V> Default for IdMap<T, V> {
 impl<T: Indexed, V> IdMap<T, V> {
     #[inline]
     pub fn new() -> Self {
-        Self::default()
+        Self::init()
     }
 
     /// What `key` had before.

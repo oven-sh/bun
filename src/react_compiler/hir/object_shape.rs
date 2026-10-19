@@ -143,7 +143,7 @@ impl ShapeRegistry {
     pub fn new() -> Self {
         Self {
             base: None,
-            entries: HashMap::default(),
+            entries: HashMap::with_hasher(rustc_hash::FxBuildHasher),
             next_anon: 0,
         }
     }
@@ -152,7 +152,7 @@ impl ShapeRegistry {
     pub fn with_base(base: &'static HashMap<&'static str, ObjectShape>) -> Self {
         Self {
             base: Some(base),
-            entries: HashMap::default(),
+            entries: HashMap::with_hasher(rustc_hash::FxBuildHasher),
             next_anon: 0,
         }
     }
@@ -344,10 +344,10 @@ pub struct FunctionSignatureBuilder {
     pub aliasing: Option<AliasingSignatureConfig>,
 }
 
-impl Default for FunctionSignatureBuilder {
+impl FunctionSignatureBuilder {
     #[cold]
     #[inline(never)]
-    fn default() -> Self {
+    pub fn new() -> Self {
         Self {
             positional_params: Vec::new(),
             rest_param: None,
@@ -379,8 +379,8 @@ pub struct HookSignatureBuilder {
     pub aliasing: Option<AliasingSignatureConfig>,
 }
 
-impl Default for HookSignatureBuilder {
-    fn default() -> Self {
+impl HookSignatureBuilder {
+    pub fn new() -> Self {
         Self {
             positional_params: Vec::new(),
             rest_param: None,
@@ -435,7 +435,7 @@ pub fn default_nonmutating_hook(registry: &mut ShapeRegistry) -> Type {
                     },
                 ],
             }),
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         Some("DefaultNonmutatingHook"),
     )
@@ -451,7 +451,7 @@ pub fn default_mutating_hook(registry: &mut ShapeRegistry) -> Type {
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
             hook_kind: HookKind::Custom,
-            ..Default::default()
+            ..HookSignatureBuilder::new()
         },
         Some("DefaultMutatingHook"),
     )

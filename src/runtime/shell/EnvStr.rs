@@ -194,8 +194,8 @@ impl EnvStr {
     }
 }
 
-impl Default for EnvStr {
-    fn default() -> Self {
+impl EnvStr {
+    pub(crate) fn new() -> Self {
         Self::pack(0, Tag::Empty, 0)
     }
 }

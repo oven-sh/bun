@@ -47,10 +47,19 @@ const FLOATING_VOID: Message = Message::new(
 
 /// What has been found out about types, unless with `checkThenables` it depends on the place too. Each constituent of a
 /// union is looked at, and many statements have the same type.
-#[derive(Default)]
 pub struct State<'a> {
     promise_arrays: IdMap<Type<'a>, bool>,
     promise_likes: IdMap<Type<'a>, bool>,
+}
+
+impl<'a> State<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            promise_arrays: IdMap::init(),
+            promise_likes: IdMap::init(),
+        }
+    }
 }
 
 /// In which way a promise is not handled.
@@ -379,7 +388,7 @@ impl Rule for NoFloatingPromises {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+        Some(State::new())
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

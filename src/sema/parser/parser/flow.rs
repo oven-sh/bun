@@ -82,7 +82,7 @@ fn property_of_record(
         func: FnId::NONE,
         name_pos,
         start,
-        loc: TextRange::default(),
+        loc: TextRange::new(),
         modifiers: Span::EMPTY,
     }
 }
@@ -976,7 +976,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             func: FnId::NONE,
             name_pos: start.pos,
             start: start.pos,
-            loc: TextRange::default(),
+            loc: TextRange::new(),
             modifiers: Span::EMPTY,
         };
         let first_modifier = self.s.modifiers.len();

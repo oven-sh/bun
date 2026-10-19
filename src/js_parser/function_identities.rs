@@ -60,7 +60,7 @@ impl FunctionIdentity {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct FunctionIdentities {
     /// The top-level code. `None`: part of it is nested too deeply to walk.
     pub module: Option<u64>,
@@ -94,12 +94,13 @@ impl FunctionIdentities {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
         let source = bun_ast::Source::init_path_string(&b"chunk.js"[..], text);
-        let mut options = crate::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
+        let mut options =
+            crate::ParserOptions::init(bun_options_types::jsx::Pragma::new(), bun_ast::Loader::Js);
         options.features.no_macros = true;
         options.features.top_level_await = kind == Text::Module;
         options.jsc_builtin_syntax = kind == Text::Builtin;
         options.suppress_warnings_about_weird_code = true;
-        let define = crate::Define::default();
+        let define = crate::Define::new();
         let mut log = bun_ast::Log::init();
         let parser = crate::Parser::init(options, &mut log, &source, &define, &arena).ok()?;
         let mut identities = parser
@@ -136,7 +137,6 @@ fn starts_in_code_units(functions: &mut [FunctionIdentity], text: &[u8], first_n
 }
 
 /// One per function being hashed.
-#[derive(Default)]
 struct Frame<'a> {
     hasher: Wyhash,
     /// What the function declares, numbered in the order it declares it.
@@ -154,6 +154,22 @@ struct Frame<'a> {
     is_unnamed: bool,
     /// A class field's, which is gone when the functions in the field are walked: it declares nothing.
     is_field: bool,
+}
+
+impl<'a> Frame<'a> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            hasher: Wyhash::new(),
+            declared: HashMap::init(),
+            of_module: HashMap::init(),
+            labels: HashMap::init(),
+            is_module: false,
+            awaits: false,
+            is_unnamed: false,
+            is_field: false,
+        }
+    }
 }
 
 struct Walker<'p, 'a> {
@@ -414,7 +430,7 @@ impl<'p, 'a> Walker<'p, 'a> {
     }
 
     fn push_frame(&mut self, is_module: bool) {
-        let mut frame = self.spare_frames.pop().unwrap_or_default();
+        let mut frame = self.spare_frames.pop().unwrap_or_else(Frame::new);
         frame.hasher = Wyhash::init(0);
         frame.is_module = is_module;
         self.frames.push(frame);
@@ -840,7 +856,7 @@ impl<'p, 'a> Walker<'p, 'a> {
         let class_index = self.fields.len();
         self.fields.push([None, None]);
         let fields_around = self.fields_being_walked;
-        let mut private_names = HashMap::<&'a [u8], u32>::default();
+        let mut private_names = HashMap::<&'a [u8], u32>::init();
         for property in class.properties.slice() {
             if let Some(Data::EPrivateIdentifier(name)) = property.key.as_ref().map(|key| &key.data)
             {

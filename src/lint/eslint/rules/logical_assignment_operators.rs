@@ -432,7 +432,7 @@ impl Rule for LogicalAssignmentOperators {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<WithBlocks<'a>> {
-        Some(WithBlocks::default())
+        Some(WithBlocks::new())
     }
 
     #[inline]

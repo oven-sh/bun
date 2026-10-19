@@ -124,11 +124,21 @@ impl PostinstallOptimizer {
 // re-hashing it.
 pub type Map = ArrayHashMap<PackageNameHash, PostinstallOptimizer, ArrayIdentityContextU64>;
 
-#[derive(Default)]
 pub struct List {
     pub(crate) dynamic: Map,
     pub(crate) disable_default_native_binlinks: bool,
     pub(crate) disable_default_ignore: bool,
+}
+
+impl List {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            dynamic: Map::new(),
+            disable_default_native_binlinks: false,
+            disable_default_ignore: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -140,8 +150,8 @@ pub struct PkgInfo<'a> {
     pub(crate) version_buf: &'a [u8],
 }
 
-impl Default for PkgInfo<'_> {
-    fn default() -> Self {
+impl PkgInfo<'_> {
+    pub fn new() -> Self {
         Self {
             name_hash: 0,
             version: None,

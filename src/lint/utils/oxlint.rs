@@ -102,7 +102,7 @@ pub fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
         }
         _ => false,
     };
-    let mut in_function = AncestorMemo::default();
+    let mut in_function = AncestorMemo::new();
     file.body().iter().any(is_module_declaration)
         || file.has_exprs([ExprTag::ImportMeta])
         || file.has_exprs([ExprTag::Await])
@@ -222,8 +222,14 @@ pub fn is_namespace_of_types(symbol: Symbol) -> bool {
 }
 
 /// `has_ambient_typescript_ancestor`, asked of many nodes of a file.
-#[derive(Default)]
 pub struct AmbientAncestors<'a>(AncestorMemo<'a, ()>);
+
+impl<'a> AmbientAncestors<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self(AncestorMemo::new())
+    }
+}
 
 impl<'a> AmbientAncestors<'a> {
     /// Whether `node` is in a `declare namespace`, a `declare module` or a `global`.

@@ -162,12 +162,6 @@ impl<T> Clone for RawSlice<T> {
         *self
     }
 }
-impl<T> Default for RawSlice<T> {
-    #[inline]
-    fn default() -> Self {
-        RawSlice::EMPTY
-    }
-}
 impl<T> core::ops::Deref for RawSlice<T> {
     type Target = [T];
     #[inline]
@@ -1744,10 +1738,20 @@ pub(crate) mod strings_impl {
     }
 
     /// Result of an encode-into-fixed-buffer operation. Port of `EncodeIntoResult`.
-    #[derive(Clone, Copy, Default, Debug)]
+    #[derive(Clone, Copy, Debug)]
     pub struct EncodeIntoResult {
         pub read: u32,
         pub written: u32,
+    }
+
+    impl EncodeIntoResult {
+        #[inline]
+        pub fn new() -> Self {
+            Self {
+                read: 0,
+                written: 0,
+            }
+        }
     }
 
     /// Port of `elementLengthUTF16IntoUTF8`: the exact UTF-8 byte length of a
@@ -1771,7 +1775,7 @@ pub(crate) mod strings_impl {
     /// Returns units read / bytes written. Caller is responsible for sizing `buf`.
     pub fn copy_utf16_into_utf8(buf: &mut [u8], utf16: &[u16]) -> EncodeIntoResult {
         if utf16.is_empty() || buf.is_empty() {
-            return EncodeIntoResult::default();
+            return EncodeIntoResult::new();
         }
         let worst_case = utf16.len().saturating_mul(3);
         let utf8_len = if worst_case <= buf.len() {
@@ -1789,7 +1793,7 @@ pub(crate) mod strings_impl {
     ) -> EncodeIntoResult {
         debug_assert!(utf8_len >= element_length_utf16_into_utf8(utf16));
         if utf16.is_empty() || buf.is_empty() {
-            return EncodeIntoResult::default();
+            return EncodeIntoResult::new();
         }
         // Fast path: if buf can definitely hold the whole conversion, try simdutf.
         if utf8_len > 0 && utf8_len <= buf.len() {

@@ -96,7 +96,6 @@ const SHARE_TO_SAVE: f64 = 0.5;
 /// 16 realms. Nor does what a realm has loaded say what it costs: from 0.06 to 2.7 seconds for a MB of source.
 const BYTES_IN_THE_COST: f64 = 1e6;
 
-#[derive(Default)]
 struct Left {
     /// How large the files are that are still to come.
     bytes: u64,
@@ -110,9 +109,28 @@ struct Left {
     most: usize,
 }
 
+impl Left {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            bytes: 0,
+            at_first: 0,
+            possible: 0,
+            shown: (0, 0),
+            most: 0,
+        }
+    }
+}
+
 /// Decides how many realms a run has.
-#[derive(Default)]
 pub struct Demand(Guarded<Left>);
+
+impl Demand {
+    #[inline]
+    pub fn new() -> Self {
+        Self(Guarded::init(Left::new()))
+    }
+}
 
 impl Demand {
     /// [`Engine::expect`]
@@ -121,7 +139,7 @@ impl Demand {
             bytes: size,
             at_first: size,
             most,
-            ..Left::default()
+            ..Left::new()
         };
     }
 

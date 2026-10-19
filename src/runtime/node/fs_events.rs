@@ -59,8 +59,8 @@ pub(crate) struct FSEventStreamContext {
     pub(crate) pad: [*mut c_void; 3],
 }
 
-impl Default for FSEventStreamContext {
-    fn default() -> Self {
+impl FSEventStreamContext {
+    pub(crate) fn new() -> Self {
         Self {
             version: 0,
             info: ptr::null_mut(),
@@ -412,8 +412,8 @@ impl FSEventsLoop {
             signal_source: AtomicPtr::new(ptr::null_mut()),
             loop_: AtomicPtr::new(ptr::null_mut()),
             mutex: Mutex::new(),
-            sem: Semaphore::default(),
-            tasks: UnboundedQueue::default(),
+            sem: Semaphore::init(),
+            tasks: UnboundedQueue::new(),
             thread: UnsafeCell::new(None),
             state: UnsafeCell::new(FSEventsLoopState {
                 watchers: Vec::new(),
@@ -671,7 +671,7 @@ impl FSEventsLoop {
                 info: core::ptr::from_ref::<FSEventsLoop>(self)
                     .cast_mut()
                     .cast::<c_void>(),
-                ..Default::default()
+                ..FSEventStreamContext::new()
             };
 
             let latency: CFAbsoluteTime = 0.05;

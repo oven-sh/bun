@@ -172,24 +172,25 @@ pub(crate) fn infer_mutation_aliasing_effects(
         instruction_signature_cache.resize_with(func.instructions.len(), || None);
     }
     let mut context = Context {
-        interned_effects: (!env.config.effects_keep_their_place).then(HashMap::default),
+        interned_effects: (!env.config.effects_keep_their_place)
+            .then(|| HashMap::with_hasher(rustc_hash::FxBuildHasher)),
         instruction_signature_cache,
         signature: Vec::new(),
         effects: Vec::new(),
-        catch_handlers: HashMap::default(),
+        catch_handlers: HashMap::with_hasher(rustc_hash::FxBuildHasher),
         is_function_expression,
         hoisted_context_declarations,
         non_mutating_spreads,
         effect_value_id_cache: HashMap::with_capacity_and_hasher(
             func.instructions.len(),
-            Default::default(),
+            rustc_hash::FxBuildHasher,
         ),
-        function_value_id_cache: HashMap::default(),
+        function_value_id_cache: HashMap::with_hasher(rustc_hash::FxBuildHasher),
         function_values: Vec::new(),
-        function_signature_cache: HashMap::default(),
-        aliasing_config_temp_cache: HashMap::default(),
+        function_signature_cache: HashMap::with_hasher(rustc_hash::FxBuildHasher),
+        aliasing_config_temp_cache: HashMap::with_hasher(rustc_hash::FxBuildHasher),
         next_value_id,
-        fallback_value_ids: HashMap::default(),
+        fallback_value_ids: HashMap::with_hasher(rustc_hash::FxBuildHasher),
     };
 
     let mut iteration_count = 0;
@@ -338,7 +339,7 @@ fn hashset_of(r: ValueReason) -> ValueReasonSet {
 }
 
 /// An `Option<AbstractValue>` in a number. Zero is `None`.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct PackedValue(u32);
 
 impl PackedValue {
@@ -401,7 +402,7 @@ impl Packed for ValueSet {
 /// The points-to set of an identifier. Two that are equal are the same set; two that are not can be.
 ///
 /// Typical cardinality is 1, and such a set is its `ValueId`. A larger one is a place in [`ValueSets`].
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct ValueSet(u32);
 
 impl ValueSet {
@@ -427,9 +428,15 @@ impl ValueSet {
 ///
 /// Each is a value added to a smaller set: the set of a phi at the end of n branches, or of the
 /// binding of a handler after n calls, grows n times, and each time takes the room of one value.
-#[derive(Default)]
 struct ValueSets {
     added: Vec<(ValueId, ValueSet)>,
+}
+
+impl ValueSets {
+    #[inline]
+    fn new() -> Self {
+        Self { added: Vec::new() }
+    }
 }
 
 impl ValueSets {
@@ -615,7 +622,7 @@ impl InferenceState {
         InferenceState {
             values: ChunkedVec::new(),
             variables: ChunkedVec::new(),
-            sets: Rc::default(),
+            sets: std::rc::Rc::new(core::cell::RefCell::new(ValueSets::new())),
             uninitialized_access: std::cell::Cell::new(None),
         }
     }
@@ -1172,7 +1179,8 @@ fn find_hoisted_context_declarations(
     func: &HirFunction,
     env: &Environment,
 ) -> HashMap<DeclarationId, Option<Place>> {
-    let mut hoisted: HashMap<DeclarationId, Option<Place>> = HashMap::default();
+    let mut hoisted: HashMap<DeclarationId, Option<Place>> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
 
     fn visit(
         hoisted: &mut HashMap<DeclarationId, Option<Place>>,
@@ -1238,7 +1246,7 @@ fn find_non_mutated_destructure_spreads(
     }
 
     let mut candidate_non_mutating_spreads: HashMap<IdentifierId, IdentifierId> =
-        HashMap::default();
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     for (_block_id, block) in &func.body.blocks {
         if !candidate_non_mutating_spreads.is_empty() {
             for phi in &block.phis {
@@ -1344,7 +1352,7 @@ fn find_non_mutated_destructure_spreads(
         }
     }
 
-    let mut non_mutating: HashSet<IdentifierId> = HashSet::default();
+    let mut non_mutating: HashSet<IdentifierId> = HashSet::with_hasher(rustc_hash::FxBuildHasher);
     for (key, value) in &candidate_non_mutating_spreads {
         if key == value {
             non_mutating.insert(*key);
@@ -3191,11 +3199,13 @@ fn compute_effects_for_aliasing_signature_config(
     temp_cache: &mut HashMap<(IdentifierId, u32), Place>,
 ) -> Result<Option<Vec<AliasingEffect>>, CompilerDiagnostic> {
     // Build substitutions from config strings to places
-    let mut substitutions: HashMap<&'static str, Vec<Place>> = HashMap::default();
+    let mut substitutions: HashMap<&'static str, Vec<Place>> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     substitutions.insert(config.receiver, vec![receiver.clone()]);
     substitutions.insert(config.returns, vec![lvalue.clone()]);
 
-    let mut mutable_spreads: HashSet<IdentifierId> = HashSet::default();
+    let mut mutable_spreads: HashSet<IdentifierId> =
+        HashSet::with_hasher(rustc_hash::FxBuildHasher);
 
     for (i, arg) in args.iter().enumerate() {
         match arg {
@@ -3469,8 +3479,10 @@ fn compute_effects_for_aliasing_signature(
         return Ok(None);
     }
 
-    let mut mutable_spreads: HashSet<IdentifierId> = HashSet::default();
-    let mut substitutions: HashMap<IdentifierId, Vec<Place>> = HashMap::default();
+    let mut mutable_spreads: HashSet<IdentifierId> =
+        HashSet::with_hasher(rustc_hash::FxBuildHasher);
+    let mut substitutions: HashMap<IdentifierId, Vec<Place>> =
+        HashMap::with_hasher(rustc_hash::FxBuildHasher);
     substitutions.insert(signature.receiver, vec![receiver.clone()]);
     substitutions.insert(signature.returns, vec![lvalue.clone()]);
 

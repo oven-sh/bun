@@ -95,7 +95,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         // (constructed from `NonNull::from(&mut self)` in `bundle_v2.rs`).
         ctx,
         // Placeholder; consumer overwrites before read.
-        task: Default::default(),
+        task: bun_event_loop::ConcurrentTask::ConcurrentTask::init(),
         value,
         external: ExternalFreeFunction::NONE,
         watcher_data: WatcherData::NONE,
@@ -168,7 +168,7 @@ fn task_callback(
     // `Source` is not `Clone`; the original is consumed here.
     // Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
-    let source = core::mem::take(&mut task.source);
+    let source = core::mem::replace(&mut task.source, Source::new());
     let mut ab = AstBuilder::init(bump, &source, ctx.transpiler().options.hot_module_reloading)?;
 
     match &task.data {
@@ -192,7 +192,7 @@ fn task_callback(
         ast: bundled_ast,
         source,
         loader: Loader::Js,
-        log: core::mem::take(log),
+        log: core::mem::replace(log, Log::empty()),
         use_directive: UseDirective::None,
         side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
         unique_key_for_additional_file: bun_ast::StoreStr::EMPTY,
@@ -201,20 +201,18 @@ fn task_callback(
     })
 }
 
-impl Default for ServerComponentParseTask {
+impl ServerComponentParseTask {
     /// Callers (`bundle_v2.rs`) supply `data`/`ctx`/`source`
     /// via FRU and rely on this for the intrusive `task` link.
-    fn default() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             task: ThreadPoolTask {
-                node: Default::default(),
+                node: bun_threading::thread_pool::Node::new(),
                 callback: task_callback_wrap,
             },
-            data: Data::ClientEntryWrapper(ClientEntryWrapper {
-                path: Box::default(),
-            }),
+            data: Data::ClientEntryWrapper(ClientEntryWrapper { path: Box::new([]) }),
             ctx: None,
-            source: Source::default(),
+            source: Source::new(),
         }
     }
 }
@@ -230,7 +228,7 @@ fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) 
         namespace_ref,
         import_record_index: record,
         is_single_line: true,
-        ..Default::default()
+        ..S::Import::new()
     })?;
     b.import_records[record as usize]
         .flags
@@ -329,11 +327,11 @@ fn generate_client_reference_proxy(
         let err_msg = b.new_expr(E::New {
             target: b.new_expr(E::Identifier {
                 ref_: error_ref,
-                ..Default::default()
+                ..E::Identifier::new()
             }),
             args: bun_ast::ExprNodeList::from_slice(&[b.new_expr(E::String::init(err_msg_string))]),
             close_parens_loc: Loc::EMPTY,
-            ..Default::default()
+            ..E::New::new()
         });
 
         // registerClientReference(
@@ -351,12 +349,12 @@ fn generate_client_reference_proxy(
                         stmts: bun_ast::StoreSlice::new_mut(arrow_body_stmts),
                         loc: Loc::EMPTY,
                     },
-                    ..Default::default()
+                    ..E::Arrow::new()
                 }),
                 module_path,
                 b.new_expr(E::String::init(b.bump.alloc_slice_copy(key))),
             ]),
-            ..Default::default()
+            ..E::Call::new()
         });
 
         if is_default {
@@ -383,7 +381,7 @@ fn generate_client_reference_proxy(
                 }]),
                 is_export: true,
                 kind: S::Kind::KConst,
-                ..Default::default()
+                ..S::Local::new()
             })?;
         }
     }

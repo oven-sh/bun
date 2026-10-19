@@ -38,7 +38,7 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
         loop_: bun_event_loop::EventLoopHandle::init_mini(
             bun_event_loop::MiniEventLoop::init_global(None, None),
         ),
-        ..Default::default()
+        ..crate::api::bun::process::WindowsOptions::new()
     }
 }
 
@@ -134,17 +134,17 @@ impl Version {
         const PREFIX: &[u8] = b"sha256:";
         const HEX_LEN: usize = 64;
         if buf.len() != PREFIX.len() + HEX_LEN || !strings::starts_with(buf, PREFIX) {
-            return Integrity::default();
+            return Integrity::new();
         }
 
         let mut digest = Integrity {
             tag: IntegrityTag::SHA256,
-            ..Default::default()
+            ..Integrity::new()
         };
         for (i, pair) in buf[PREFIX.len()..].as_chunks::<2>().0.iter().enumerate() {
             match bun_fmt::hex_pair_value(pair[0], pair[1]) {
                 Some(byte) => digest.value[i] = byte,
-                None => return Integrity::default(),
+                None => return Integrity::new(),
             }
         }
 
@@ -185,7 +185,7 @@ impl UpgradeCommand {
     ) -> crate::Result<Option<Version>> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
 
-        let mut header_entries: headers::EntryList = headers::EntryList::default();
+        let mut header_entries: headers::EntryList = headers::EntryList::new();
         let accept = headers::Entry {
             name: HTTP::ETag::StringPointer {
                 offset: 0,
@@ -330,10 +330,10 @@ impl UpgradeCommand {
         }
 
         let mut version = Version {
-            zip_url: Box::default(),
-            tag: Box::default(),
+            zip_url: Box::new([]),
+            tag: Box::new([]),
             size: 0,
-            digest: Integrity::default(),
+            digest: Integrity::new(),
         };
 
         if !expr.is_object() {
@@ -535,7 +535,7 @@ impl UpgradeCommand {
     }
 
     fn _exec(ctx: Command::Context) -> crate::Result<()> {
-        HTTP::http_thread::init(&Default::default());
+        HTTP::http_thread::init(&bun_http::http_thread::InitOpts::new());
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
         let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
@@ -561,7 +561,7 @@ impl UpgradeCommand {
             // leak the Progress and use raw pointers so we can pass both
             // `&mut refresher` and `&mut progress` to `get_latest_version`.
             let refresher: *mut Progress::Progress =
-                bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
+                bun_core::heap::into_raw(Box::new(Progress::Progress::new()));
             // SAFETY: refresher is a fresh leaked allocation.
             let progress: *mut Progress::Node =
                 unsafe { (*refresher).start(b"Fetching version tags", 0) };
@@ -628,7 +628,7 @@ impl UpgradeCommand {
                 .as_bytes()
                 .into(),
                 size: 0,
-                digest: Integrity::default(),
+                digest: Integrity::new(),
             }
         };
 
@@ -638,7 +638,7 @@ impl UpgradeCommand {
 
         {
             let refresher: *mut Progress::Progress =
-                bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
+                bun_core::heap::into_raw(Box::new(Progress::Progress::new()));
             // SAFETY: refresher is a fresh leaked allocation.
             let progress: *mut Progress::Node =
                 unsafe { (*refresher).start(b"Downloading", version.size as usize) };
@@ -653,7 +653,7 @@ impl UpgradeCommand {
             let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
                 HTTP::Method::GET,
                 zip_url,
-                headers::EntryList::default(),
+                headers::EntryList::new(),
                 b"",
                 b"",
                 http_proxy,
@@ -846,7 +846,7 @@ impl UpgradeCommand {
                         stdin: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stderr: spawn_sync::SyncStdio::Inherit,
-                        ..Default::default()
+                        ..spawn_sync::Options::new()
                     }) {
                         Ok(Ok(r)) => r,
                         Ok(Err(err)) => {
@@ -948,7 +948,7 @@ impl UpgradeCommand {
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stdin: spawn_sync::SyncStdio::Inherit,
                         windows: spawn_windows_options(),
-                        ..Default::default()
+                        ..spawn_sync::Options::new()
                     });
                     let spawn_res = match spawn_res {
                         Ok(r) => r,
@@ -993,7 +993,7 @@ impl UpgradeCommand {
                         stdin: spawn_sync::SyncStdio::Ignore,
                         #[cfg(windows)]
                         windows: spawn_windows_options(),
-                        ..Default::default()
+                        ..spawn_sync::Options::new()
                     });
                     // Any spawn-time failure (allocator/OOM surfaces as
                     // `crate::Error`, posix_spawn surfaces as
@@ -1329,7 +1329,7 @@ impl UpgradeCommand {
                         stdin: spawn_sync::SyncStdio::Ignore,
                         #[cfg(windows)]
                         windows: spawn_windows_options(),
-                        ..Default::default()
+                        ..spawn_sync::Options::new()
                     });
                 }
             }
@@ -1402,7 +1402,7 @@ pub(crate) mod upgrade_js_bindings {
                 // `__jsc_host_` prefix.
                 __jsc_host_js_open_temp_dir_without_sharing_delete,
                 1,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         obj.put(
@@ -1413,7 +1413,7 @@ pub(crate) mod upgrade_js_bindings {
                 "closeTempDirHandle",
                 __jsc_host_js_close_temp_dir_handle,
                 1,
-                Default::default(),
+                bun_jsc::js_function::CreateJSFunctionOptions::new(),
             ),
         );
         obj

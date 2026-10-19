@@ -19,7 +19,7 @@ pub type FunctionInfo<'a> = Func<'a>;
 /// typescript-eslint's `Options` of `explicitReturnTypeUtils`: the options that
 /// `explicit-function-return-type` and `explicit-module-boundary-types` have in common. An option
 /// that a rule does not have is `false`.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub struct ReturnTypeOptions {
     pub allow_direct_const_assertion_in_arrow_functions: bool,
     pub allow_expressions: bool,

@@ -117,14 +117,14 @@ impl Rule for Extensions {
         if !file.language().is_oxlint {
             return Visitor::of(SYSTEMS)
                 .may_visit(file)
-                .then(|| State(FxHashMap::default()));
+                .then(|| State(FxHashMap::with_hasher(rustc_hash::FxBuildHasher)));
         }
         let enforces_nothing = self.require_extension.is_none()
             && self.extensions.is_empty()
             && self.path_group_overrides.is_empty();
         if !enforces_nothing && !is_waiting_for_modules(file) {
             // Before the calls are looked at.
-            let mut resolved = FxHashMap::default();
+            let mut resolved = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for (module_name, _) in requested_modules(file) {
                 resolved.insert(
                     module_name,
@@ -190,7 +190,7 @@ impl Props {
     fn new(options: &Options) -> Props {
         let mut result = Props {
             default_config: ExtensionRule::Never,
-            pattern: FxHashMap::default(),
+            pattern: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             ignore_packages: false,
             check_type_imports: false,
             path_group_overrides: Vec::new(),

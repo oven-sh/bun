@@ -394,8 +394,8 @@ pub struct MainFile {
     pub(crate) is_waiting_for_dir_change: bool,
 }
 
-impl Default for MainFile {
-    fn default() -> Self {
+impl MainFile {
+    pub fn new() -> Self {
         Self {
             dir: b"",
             dir_hash: 0,
@@ -416,7 +416,7 @@ impl MainFile {
                 0
             },
             is_waiting_for_dir_change: false,
-            ..Default::default()
+            ..MainFile::new()
         };
 
         if let Some(dir) = bun_core::dirname(file) {
@@ -594,7 +594,7 @@ where
         unsafe {
             let concurrent = (*that).concurrent_task.insert(ConcurrentTask {
                 task: JscTask::init(that),
-                ..Default::default()
+                ..ConcurrentTask::init()
             });
             // `&that.concurrent_task` is an interior pointer into the
             // Box-allocated Task. `RELOAD_IMMEDIATELY` already diverged above, so
@@ -714,7 +714,7 @@ where
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
             #[cfg(not(windows))]
-            tombstones: StringHashMap::default(),
+            tombstones: StringHashMap::init(),
             // SAFETY: see above.
             reload_handle: unsafe { (*this).reload_handle() },
             _event_loop: PhantomData,

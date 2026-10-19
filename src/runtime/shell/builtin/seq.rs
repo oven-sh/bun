@@ -5,9 +5,8 @@ use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
-    #[default]
     Idle,
     Err,
     Done,
@@ -24,8 +23,8 @@ pub(crate) struct Seq {
     terminator: bun_ptr::RawSlice<u8>,
 }
 
-impl Default for Seq {
-    fn default() -> Self {
+impl Seq {
+    pub(crate) fn new() -> Self {
         Self {
             state: State::Idle,
             start: 1.0,

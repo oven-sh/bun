@@ -18,7 +18,7 @@ fn is_function_call(init: Expr<'_>, name: &str) -> bool {
 
 /// Whether `new RegExp` accepts the literal. If not, the `value` of typescript-estree's `Literal` is `null`.
 fn is_valid_regex(literal: Expr<'_>) -> bool {
-    regex::validate_literal(literal.text(), regex::Options::default(), &mut regex::Ignore).is_ok()
+    regex::validate_literal(literal.text(), regex::Options::new(), &mut regex::Ignore).is_ok()
 }
 
 /// The operand, if `init` is a unary expression with one of `operators`. Otherwise `init`.

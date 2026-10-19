@@ -484,7 +484,7 @@ pub mod generate_header {
                 major: u64::from(v.major),
                 minor: u64::from(v.minor),
                 patch: u64::from(v.patch),
-                ..Default::default()
+                ..semver::Version::new()
             }
         }
 
@@ -511,7 +511,7 @@ pub mod generate_header {
                     major: 5,
                     minor: 11,
                     patch: 0,
-                    ..Default::default()
+                    ..semver::Version::new()
                 };
 
                 match kernel_version().order(min_epoll_pwait2, b"", b"") {

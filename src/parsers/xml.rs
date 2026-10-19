@@ -2663,7 +2663,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
             group_of: Vec::new(),
             groups: Vec::new(),
             gathered: Rows::with_capacity(0),
-            group_index: HashMap::default(),
+            group_index: HashMap::init(),
             root: None,
         }
     }
@@ -3068,10 +3068,19 @@ struct AttDef<'a, U: Unit> {
 
 /// The ATTLIST declarations for one element type, in declaration order (the
 /// first declaration of an attribute is binding, §3.3), indexed by name.
-#[derive(Default)]
 struct AttList<'a, U: Unit> {
     defs: Vec<AttDef<'a, U>>,
     by_name: HashMap<&'a [U], u32>,
+}
+
+impl<'a, U: Unit> AttList<'a, U> {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            defs: Vec::new(),
+            by_name: HashMap::init(),
+        }
+    }
 }
 
 impl<'a, U: Unit> AttList<'a, U> {
@@ -3141,8 +3150,8 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 suspended: Vec::new(),
                 next_frame_id: 1,
                 entities: Entities {
-                    general: HashMap::default(),
-                    parameter: HashMap::default(),
+                    general: HashMap::init(),
+                    parameter: HashMap::init(),
                 },
                 expanded_bytes: 0,
                 document_len: contents.len() as u64,
@@ -3174,10 +3183,10 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             in_dtd: false,
             stack_check: StackCheck::init(),
             sink,
-            attlists: HashMap::default(),
+            attlists: HashMap::init(),
             open: Vec::new(),
             attribute_first: [&[]; LINEAR_ATTRIBUTE_LIMIT],
-            attribute_names: HashMap::default(),
+            attribute_names: HashMap::init(),
             attribute_count: 0,
         }
     }
@@ -3834,7 +3843,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                     .entry(element)
                     .or_insert_with(|| AttList {
                         defs: Vec::new(),
-                        by_name: HashMap::default(),
+                        by_name: HashMap::init(),
                     })
                     .declare(AttDef {
                         name,

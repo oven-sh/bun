@@ -53,7 +53,7 @@ impl Rule for MaxDependencies {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let mut dependency_sources: FxHashSet<&[u8]> = FxHashSet::default();
+        let mut dependency_sources: FxHashSet<&[u8]> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         // Whether it is the first that is too many.
         let mut add = |source, is_type: bool| {
             !(self.ignore_type_imports && is_type)

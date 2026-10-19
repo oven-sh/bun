@@ -38,7 +38,6 @@ pub(crate) struct Entry {
 }
 
 /// The nodes in source order. An object or array is followed by its contents. In an object, keys and values alternate.
-#[derive(Default)]
 pub struct Tree {
     pub(crate) nodes: Vec<Entry>,
     /// The unescaped values of strings and keys: a node index and a span in `texts`, sorted by node index. It only has
@@ -46,6 +45,18 @@ pub struct Tree {
     pub(crate) unescaped: Vec<(u32, Span)>,
     pub(crate) texts: Vec<u8>,
     pub(crate) comments: Vec<Span>,
+}
+
+impl Tree {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            unescaped: Vec::new(),
+            texts: Vec::new(),
+            comments: Vec::new(),
+        }
+    }
 }
 
 /// A tree and its source text.

@@ -18,10 +18,10 @@ pub(crate) struct Seen {
     text: Vec<u8>,
 }
 
-impl Default for Seen {
-    fn default() -> Self {
+impl Seen {
+    pub(crate) fn new() -> Self {
         Seen {
-            headings_by_level: Default::default(),
+            headings_by_level: core::array::from_fn(|_| rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher)),
             last_level: 1,
             children_sequence: Vec::new(),
             text: Vec::new(),
@@ -49,7 +49,7 @@ impl Listens for NoDuplicateHeadings {
     type Seen<'d> = Seen;
 
     fn seen<'d>(&self) -> Self::Seen<'d> {
-        Seen::default()
+        Seen::new()
     }
 
     fn on<'d>(

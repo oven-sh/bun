@@ -19,7 +19,7 @@ impl Rule for NoInvalidThis {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Known<'a>> {
-        Some(Known::default())
+        Some(Known::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

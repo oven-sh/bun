@@ -10,7 +10,7 @@ use super::*;
 
 bitflags::bitflags! {
     /// Which tags there are.
-    #[derive(Copy, Clone, PartialEq, Eq, Default)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     struct TagSet: u8 {
         /// A tag, whatever it is.
         const ANY = 1 << 0;
@@ -23,11 +23,20 @@ bitflags::bitflags! {
 }
 
 /// What the tags of some JSDoc comments say.
-#[derive(Default)]
 struct Tags {
     set: TagSet,
     /// The text of the first `@deprecated`.
     deprecated: Option<Vec<u8>>,
+}
+
+impl Tags {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            set: TagSet::empty(),
+            deprecated: None,
+        }
+    }
 }
 
 impl Tags {
@@ -179,7 +188,7 @@ fn may_have_deprecated_tag(comment: &[u8]) -> bool {
 
 /// `jsDoc.tags` of the comment of `text` from `start` to `end`: a tag that is in another tag is not among them.
 fn parse_tags(text: &[u8], start: usize, end: usize, is_stack_low: &dyn Fn() -> bool) -> Tags {
-    let mut tags = Tags::default();
+    let mut tags = Tags::new();
     let comment_end = end;
     let rows = super::super::jsdoc::tags(text, start, end, is_stack_low);
     for row in rows.iter().filter(|row| row.depth == 0) {
@@ -322,10 +331,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// `getJSDocTags(node)`
     fn js_doc_tags(&self, host: NodeRef) -> Tags {
         let Some((hir, at)) = self.valid(host) else {
-            return Tags::default();
+            return Tags::new();
         };
         let collected = self.with_text(host.file, |text| {
-            let mut tags = Tags::default();
+            let mut tags = Tags::new();
             // A variable, a parameter or a property has those of its initializer too.
             let is_variable_like = matches!(
                 hir.kind(at),
@@ -357,7 +366,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             }
             tags
         });
-        collected.unwrap_or_default()
+        collected.unwrap_or_else(Tags::new)
     }
 
     /// `getJsDocTagsOfDeclarations(declarations, checker)`
@@ -368,7 +377,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         depth: u32,
     ) -> Tags {
         // `getJsDocTagsFromDeclarations`
-        let mut tags = Tags::default();
+        let mut tags = Tags::new();
         for (index, &declaration) in declarations.iter().enumerate() {
             if declarations[..index].contains(&declaration) {
                 continue;

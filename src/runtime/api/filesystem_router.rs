@@ -58,7 +58,11 @@ const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"
 
 /// Newtype so the orphan rule lets us `impl ResolverLike` for the foreign
 /// `bun_resolver::Resolver`.
-struct RouterResolver<'a, 'r>(&'r mut Resolver<'a>);
+struct RouterResolver<'a, 'r> {
+    resolver: &'r mut Resolver<'a>,
+    /// List each directory as it is on disk, not as the resolver recorded it earlier.
+    from_disk: bool,
+}
 
 impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     #[inline]
@@ -68,12 +72,113 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     #[inline]
     fn fs_impl(&self) -> *mut Fs::Implementation {
         // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-        unsafe { &raw mut (*self.0.fs()).fs }
+        unsafe { &raw mut (*self.resolver.fs()).fs }
     }
     #[inline]
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
-        self.0.read_dir_info_ignore_error(path)
+        if self.from_disk {
+            return read_dir_info_from_disk(self.resolver, path).ok().flatten();
+        }
+        self.resolver.read_dir_info_ignore_error(path)
     }
+}
+
+/// The resolver keeps its record of a directory for the life of the process. This drops a record
+/// that differs from the directory, so that the read is of the directory as it is now.
+fn read_dir_info_from_disk(
+    resolver: &mut Resolver<'_>,
+    path: &[u8],
+) -> bun_resolver::CrateResult<Option<bun_resolver::DirInfoRef>> {
+    #[cfg(windows)]
+    let normalized = WIN32_NORMALIZE_BUF.with_borrow_mut(|buf| {
+        Fs::FileSystem::get()
+            .normalize_buf(&mut buf[..], path)
+            .to_vec()
+    });
+    #[cfg(windows)]
+    let path = normalized.as_slice();
+    let path = strings::paths::without_trailing_slash_windows_path(path);
+
+    if dir_record_is_stale(path) {
+        let _ = resolver.bust_dir_cache(path);
+    }
+    match resolver.read_dir_info(path) {
+        // "Not found" can be a record too, of a read before the directory was there.
+        Ok(None) => {
+            let _ = resolver.bust_dir_cache(path);
+            resolver.read_dir_info(path)
+        }
+        found => found,
+    }
+}
+
+/// Whether the resolver has a listing of the directory at `path` that differs from it: in a name,
+/// in the spelling of a name, or in a name being a directory. A link is not followed here, so a
+/// directory with a link in it always counts as stale.
+fn dir_record_is_stale(path: &[u8]) -> bool {
+    use bun_sys::FileKind;
+
+    let rfs: *mut Fs::Implementation = &raw mut Fs::FileSystem::instance().fs;
+    {
+        // SAFETY: `rfs` is the process-global RealFS. Its listings are read under `entries_mutex`.
+        let _entries_lock = unsafe { (*rfs).entries_mutex.lock_guard() };
+        // SAFETY: as above.
+        match unsafe { (*rfs).entries.get(path) } {
+            Some(Fs::EntriesOption::Entries(_)) => {}
+            Some(Fs::EntriesOption::Err(_)) => return true,
+            // Nothing to compare with: the read that follows is from disk.
+            None => return false,
+        }
+    }
+
+    // The resolver reads directories under `entries_mutex`: list this one before taking it.
+    let Ok(dir) = bun_sys::Dir::open(path) else {
+        return true;
+    };
+    let mut names: Vec<u8> = Vec::new();
+    let mut listed: Vec<(u32, u32, FileKind)> = Vec::new();
+    let mut iterator = bun_sys::iterate_dir(dir.fd());
+    loop {
+        let entry = match iterator.next() {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(_) => return true,
+        };
+        let name = entry.name.slice_u8();
+        listed.push((names.len() as u32, name.len() as u32, entry.kind));
+        names.extend_from_slice(name);
+    }
+    drop(dir);
+
+    // SAFETY: `rfs` is the process-global RealFS. Its listings are read under `entries_mutex`.
+    let _entries_lock = unsafe { (*rfs).entries_mutex.lock_guard() };
+    // SAFETY: as above.
+    let Some(Fs::EntriesOption::Entries(cached)) = (unsafe { (*rfs).entries.get(path) }) else {
+        return false;
+    };
+    let mut count = 0;
+    for (start, len, kind) in listed {
+        let name = &names[start as usize..][..len as usize];
+        let is_dir = match kind {
+            FileKind::File => false,
+            FileKind::Directory => true,
+            FileKind::SymLink | FileKind::Unknown => return true,
+            // The resolver's listing leaves the other kinds out.
+            _ => continue,
+        };
+        count += 1;
+        let Some(found) = cached.get(name) else {
+            return true;
+        };
+        let entry = found.entry();
+        // SAFETY: `rfs` is the process-global RealFS. A stat that `kind` has to do is serialized
+        // on the mutex of the entry.
+        let cached_is_dir = unsafe { entry.kind(rfs, false) } == Fs::EntryKind::Dir;
+        if entry.base() != name || cached_is_dir != is_dir {
+            return true;
+        }
+    }
+    count != cached.data.count()
 }
 
 // `js.routesSetCached` codegen accessor — emitted by the `.classes.ts`
@@ -208,6 +313,9 @@ impl FileSystemRouter {
             asset_prefix_slice = asset_prefix.to_utf8(global_this)?;
         }
         let mut log = Log::Log::new();
+        // What the resolver reports while it reads a directory (a tsconfig.json that does not
+        // parse) is not a route error: every constructor reads the directories again.
+        let mut resolver_log = Log::Log::new();
         // `defer vm.transpiler.resolver.log = orig_log` — RAII guard restores on
         // every exit path. Derived from the thread-local raw `*mut VirtualMachine`
         // (via `get_mut_ptr`) so the stored slot pointer keeps valid provenance
@@ -215,12 +323,12 @@ impl FileSystemRouter {
         // reborrows below (deriving from `vm: &mut _` would be invalidated by
         // those reborrows before the guard's `Drop` runs).
         // SAFETY: `vm` is the live VM for this global; resolver outlives this
-        // scope. Guard is declared after `log` so it drops (and restores) first.
+        // scope. Guard is declared after `resolver_log` so it drops (and restores) first.
         let _restore_log = unsafe {
             let vm_ptr = VirtualMachine::get_mut_ptr();
             Resolver::scoped_log(
                 core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
-                core::ptr::NonNull::from(&mut log),
+                core::ptr::NonNull::from(&mut resolver_log),
             )
         };
 
@@ -229,7 +337,8 @@ impl FileSystemRouter {
         let path_to_use: Vec<u8> =
             strings::paths::clone_normalizing_separators(root_dir_path.slice());
 
-        let root_dir_info = match vm.transpiler.resolver.read_dir_info(&path_to_use) {
+        let root_dir_info = match read_dir_info_from_disk(&mut vm.transpiler.resolver, &path_to_use)
+        {
             Ok(Some(info)) => info,
             Ok(None) => {
                 return Err(global_this.throw(format_args!(
@@ -238,7 +347,8 @@ impl FileSystemRouter {
                 )));
             }
             Err(_) => {
-                let err_value = log.to_js(global_this, format_args!("reading root directory"));
+                let err_value =
+                    resolver_log.to_js(global_this, format_args!("reading root directory"));
                 return Err(global_this.throw_value(err_value?));
             }
         };
@@ -264,7 +374,10 @@ impl FileSystemRouter {
                 .load_routes(
                     &mut log,
                     &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
+                    &mut RouterResolver {
+                        resolver: &mut vm.transpiler.resolver,
+                        from_disk: true,
+                    },
                     &config_dir,
                 )
                 .is_err()
@@ -494,7 +607,10 @@ impl FileSystemRouter {
                 .load_routes(
                     &mut log,
                     &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
+                    &mut RouterResolver {
+                        resolver: &mut vm.transpiler.resolver,
+                        from_disk: false,
+                    },
                     &config_dir,
                 )
                 .is_err()

@@ -1,5 +1,5 @@
 import { FileSystemRouter } from "bun";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
@@ -1133,4 +1133,209 @@ it("an absolute dir with '..' in it names routes like its normalized spelling", 
     stderr: "",
     exitCode: 0,
   });
+});
+
+const page = "export default 1;\n";
+const routeNames = (router: FileSystemRouter) => Object.keys(router.routes).sort();
+const routerOver = (dir: string, options: { fileExtensions?: string[] } = {}) =>
+  new FileSystemRouter({ style: "nextjs", dir, ...options });
+/** `routes` with each file path relative to `root`, in POSIX form. */
+const routesBelow = (router: FileSystemRouter, root: string) =>
+  Object.fromEntries(
+    Object.entries(router.routes)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([name, filePath]) => [name, path.relative(root, filePath).replaceAll("\\", "/")]),
+  );
+
+describe("a new router reads the directory from disk", () => {
+  // Each of these leaves a record of `pages` in the resolver's directory cache.
+  const recorders: Record<string, (pages: string) => unknown> = {
+    "an earlier router": pages => routerOver(pages),
+    "import()": pages => import(path.join(pages, "a.tsx")),
+    "require()": pages => require(path.join(pages, "a.tsx")),
+    "Bun.resolveSync()": pages => Bun.resolveSync("./a.tsx", pages),
+    "Bun.build()": pages => Bun.build({ entrypoints: [path.join(pages, "a.tsx")], target: "bun", throw: false }),
+  };
+  it.each(Object.keys(recorders))("after %s read it", async recorder => {
+    using dir = tempDir("fsr-fresh-recorded", { "pages/a.tsx": page, "pages/old.tsx": page });
+    const pages = path.join(String(dir), "pages");
+    await recorders[recorder](pages);
+
+    fs.writeFileSync(path.join(pages, "new.tsx"), page);
+    fs.rmSync(path.join(pages, "old.tsx"));
+    expect(routesBelow(routerOver(pages), pages)).toEqual({ "/a": "a.tsx", "/new": "new.tsx" });
+  });
+
+  it("a file added to and a file removed from a subdirectory", () => {
+    using dir = tempDir("fsr-fresh-subdir", { "pages/a.tsx": page, "pages/sub/old.tsx": page });
+    const pages = path.join(String(dir), "pages");
+    expect(routeNames(routerOver(pages))).toEqual(["/a", "/sub/old"]);
+
+    fs.writeFileSync(path.join(pages, "sub", "new.tsx"), page);
+    fs.rmSync(path.join(pages, "sub", "old.tsx"));
+    expect(routeNames(routerOver(pages))).toEqual(["/a", "/sub/new"]);
+    // A router over the subdirectory reads it too.
+    expect(routeNames(routerOver(path.join(pages, "sub")))).toEqual(["/new"]);
+  });
+
+  it("a new and a removed subdirectory", () => {
+    using dir = tempDir("fsr-fresh-dirs", { "pages/a.tsx": page, "pages/gone/post.tsx": page });
+    const pages = path.join(String(dir), "pages");
+    expect(routeNames(routerOver(pages))).toEqual(["/a", "/gone/post"]);
+
+    fs.mkdirSync(path.join(pages, "blog"));
+    fs.writeFileSync(path.join(pages, "blog", "post.tsx"), page);
+    fs.rmSync(path.join(pages, "gone"), { recursive: true });
+    expect(routeNames(routerOver(pages))).toEqual(["/a", "/blog/post"]);
+  });
+
+  it("a file replaced by a directory of the same name", () => {
+    using dir = tempDir("fsr-fresh-swap", { "pages/a.tsx": page, "pages/b.tsx": page });
+    const pages = path.join(String(dir), "pages");
+    expect(routeNames(routerOver(pages))).toEqual(["/a", "/b"]);
+
+    fs.rmSync(path.join(pages, "b.tsx"));
+    fs.mkdirSync(path.join(pages, "b.tsx"));
+    fs.writeFileSync(path.join(pages, "b.tsx", "c.tsx"), page);
+    expect(routeNames(routerOver(pages))).toEqual(["/a", "/b.tsx/c"]);
+  });
+
+  it("a directory created after the constructor threw for it", () => {
+    using dir = tempDir("fsr-fresh-missing", {});
+    const pages = path.join(String(dir), "pages");
+    expect(() => routerOver(pages)).toThrow("Unable to find directory");
+
+    fs.mkdirSync(pages);
+    fs.writeFileSync(path.join(pages, "a.tsx"), page);
+    expect(routeNames(routerOver(pages))).toEqual(["/a"]);
+  });
+
+  it("in a Worker, after a router on the main thread", async () => {
+    using dir = tempDir("fsr-fresh-worker", {
+      "pages/a.tsx": page,
+      "pages/old.tsx": page,
+      "worker.mjs": `
+        self.onmessage = event => {
+          const router = new Bun.FileSystemRouter({ style: "nextjs", dir: event.data });
+          postMessage(Object.keys(router.routes).sort());
+        };
+      `,
+    });
+    const pages = path.join(String(dir), "pages");
+    expect(routeNames(routerOver(pages))).toEqual(["/a", "/old"]);
+    fs.writeFileSync(path.join(pages, "new.tsx"), page);
+    fs.rmSync(path.join(pages, "old.tsx"));
+
+    const worker = new Worker(path.join(String(dir), "worker.mjs"));
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+      worker.onmessage = event => resolve(event.data);
+      worker.onerror = reject;
+      worker.postMessage(pages);
+      expect(await promise).toEqual(["/a", "/new"]);
+    } finally {
+      worker.terminate();
+    }
+  });
+});
+
+it.skipIf(isWindows)("a new router follows a link to where it leads now", () => {
+  using dir = tempDir("fsr-fresh-link", {
+    "pages/a.tsx": page,
+    "first.tsx": page,
+    "second.tsx": page,
+  });
+  const root = String(dir);
+  const link = path.join(root, "pages", "linked.tsx");
+  fs.symlinkSync(path.join(root, "first.tsx"), link);
+  expect(routesBelow(routerOver(path.join(root, "pages")), root)).toEqual({
+    "/a": "pages/a.tsx",
+    "/linked": "first.tsx",
+  });
+
+  fs.unlinkSync(link);
+  fs.symlinkSync(path.join(root, "second.tsx"), link);
+  expect(routesBelow(routerOver(path.join(root, "pages")), root)).toEqual({
+    "/a": "pages/a.tsx",
+    "/linked": "second.tsx",
+  });
+});
+
+it("import() loads the file that a new router names after a rename", async () => {
+  using dir = tempDir("fsr-fresh-rename", {
+    "pages/a.tsx": `export default "a.tsx";\n`,
+    "pages/About.tsx": `export default "About.tsx";\n`,
+  });
+  const pages = path.join(String(dir), "pages");
+  const load = async (router: FileSystemRouter, url: string) => {
+    const { filePath } = router.match(url)!;
+    return { file: path.basename(filePath), loaded: (await import(filePath)).default };
+  };
+  const first = routerOver(pages);
+  expect([await load(first, "/a"), await load(first, "/About")]).toEqual([
+    { file: "a.tsx", loaded: "a.tsx" },
+    { file: "About.tsx", loaded: "About.tsx" },
+  ]);
+
+  fs.rmSync(path.join(pages, "a.tsx"));
+  fs.writeFileSync(path.join(pages, "a.jsx"), `export default "a.jsx";\n`);
+  fs.rmSync(path.join(pages, "About.tsx"));
+  fs.writeFileSync(path.join(pages, "about.tsx"), `export default "about.tsx";\n`);
+  const second = routerOver(pages);
+  expect([await load(second, "/a"), await load(second, "/about")]).toEqual([
+    { file: "a.jsx", loaded: "a.jsx" },
+    { file: "about.tsx", loaded: "about.tsx" },
+  ]);
+});
+
+it("bun --hot reloads a file saved by rename beside a router's routes", async () => {
+  // The hot reloader finds a file that was saved by rename through the resolver's record of its
+  // directory. A router that drops that record whenever it is constructed loses the reload.
+  using dir = tempDir("fsr-hot-rename", {
+    "pages/a.tsx": page,
+    "pages/data.json": JSON.stringify({ v: 1 }),
+    "server.mjs": `
+      import data from "./pages/data.json";
+      const router = new Bun.FileSystemRouter({ style: "nextjs", dir: import.meta.dir + "/pages" });
+      console.write("v=" + data.v + " routes=" + Object.keys(router.routes).join(",") + "\\n");
+      setInterval(() => {}, 1 << 30);
+    `,
+  });
+  const data = path.join(String(dir), "pages", "data.json");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--hot", "server.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  const evaluations: string[] = [];
+  let buffered = "";
+  for await (const chunk of proc.stdout) {
+    buffered += new TextDecoder().decode(chunk);
+    const lines = buffered.split("\n");
+    buffered = lines.pop()!;
+    const before = evaluations.length;
+    evaluations.push(...lines.filter(line => line.startsWith("v=")));
+    if (evaluations.length === 3) break;
+    if (evaluations.length > before) {
+      fs.writeFileSync(data + ".tmp", JSON.stringify({ v: evaluations.length + 1 }));
+      // Windows does not rename onto a file that is there.
+      if (isWindows) fs.rmSync(data);
+      fs.renameSync(data + ".tmp", data);
+    }
+  }
+  expect(evaluations).toEqual(["v=1 routes=/a", "v=2 routes=/a", "v=3 routes=/a"]);
+}, 30_000);
+
+it("a tsconfig.json or package.json that does not parse is not the router's error", () => {
+  using dir = tempDir("fsr-broken-config", {
+    "tsconfig.json": `{ "compilerOptions": { "paths": `,
+    "pages/a.tsx": page,
+    "pages/package.json": `{ "name": `,
+    "pages/sub/b.tsx": page,
+    "pages/sub/tsconfig.json": `{ "compilerOptions": `,
+  });
+  expect(routeNames(routerOver(path.join(String(dir), "pages")))).toEqual(["/a", "/sub/b"]);
 });

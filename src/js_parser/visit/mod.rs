@@ -24,7 +24,7 @@ use bun_ast::scope::{Kind as ScopeKind, Member as ScopeMember};
 use bun_ast::symbol::Kind as SymbolKind;
 use bun_ast::{
     AssignTarget, B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S,
-    Stmt, StmtData, Symbol,
+    Stmt, StmtData, StmtNodeList, Symbol,
 };
 use bun_collections::VecExt;
 // `parser::SideEffects` is a stub enum without the assoc fns; the real
@@ -1484,6 +1484,258 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         shadow_ref
     }
 
+    /// `twin = name`: the Annex B `var` that a renamer keeps apart from a sloppy block-level function.
+    fn sloppy_block_fn_twin_decl(&mut self, twin: Ref, name: LocRef) -> G::Decl {
+        self.record_usage(name.ref_);
+        let value = self.new_expr(
+            E::Identifier {
+                ref_: name.ref_,
+                ..Default::default()
+            },
+            name.loc,
+        );
+        G::Decl {
+            binding: self.b(B::Identifier { r#ref: twin }, name.loc),
+            value: Some(value),
+        }
+    }
+
+    /// `var twin = name`, or the bare assignment when the `var` moves to the top level.
+    fn sloppy_block_fn_twin_stmt(&mut self, decls: ListManaged<'a, G::Decl>) -> Option<Stmt> {
+        let relocated = self.maybe_relocate_vars_to_top_level(&decls, RelocateVarsMode::Normal);
+        if relocated.ok {
+            return relocated.stmt;
+        }
+        let decls = G::DeclList::from_bump_vec(decls);
+        let loc = decls.at(0).value.unwrap().loc;
+        Some(self.s(
+            S::Local {
+                kind: LocalKind::KVar,
+                decls,
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
+    /// The `var _s = $RefreshSig$()` and `_s(fn, "hash")` that `s_function` put at `body[at]`, if any.
+    fn react_refresh_signature_at(&self, body: &[Stmt], at: usize) -> Option<(Stmt, Expr)> {
+        if !self.options.features.react_fast_refresh {
+            return None;
+        }
+        let decl = *body.get(at)?;
+        let StmtData::SLocal(local) = decl.data else {
+            return None;
+        };
+        if local.decls.len_u32() != 1 {
+            return None;
+        }
+        let ExprData::ECall(call) = local.decls.at(0).value?.data else {
+            return None;
+        };
+        let ExprData::EIdentifier(target) = call.target.data else {
+            return None;
+        };
+        if target.ref_ != self.react_refresh.create_signature_ref {
+            return None;
+        }
+        let StmtData::SExpr(register) = body.get(at + 1)?.data else {
+            return None;
+        };
+        Some((decl, register.value))
+    }
+
+    /// Takes `name` off `case_block_fns`. Returns whether it was on it.
+    fn take_case_block_fn(&mut self, name: Ref) -> bool {
+        let Some(at) = self.case_block_fns.iter().position(|r| *r == name) else {
+            return false;
+        };
+        self.case_block_fns.swap_remove(at);
+        true
+    }
+
+    /// Lowers the functions in `case_block_fns` to a `let` that is initialized where the switch is entered.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn finish_case_block_fns(
+        &mut self,
+        data: &mut S::Switch,
+    ) -> Option<ListManaged<'a, Stmt>> {
+        struct Lowered {
+            name: LocRef,
+            value: Expr,
+            react_refresh_register: Option<Expr>,
+        }
+
+        let p = self;
+        // SAFETY: current_scope is a valid arena ptr for the parse.
+        let has_direct_eval = p.current_scope().contains_direct_eval;
+        let is_strict = p.is_strict_mode();
+        let cases = data.cases.slice_mut();
+
+        let mut lowered: ListManaged<'a, Lowered> = ListManaged::new_in(p.arena);
+        let mut entry: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
+        let mut first_loc = bun_ast::Loc::EMPTY;
+        // A direct eval can reach every binding of the case block by name.
+        let mut stays_in_case_block = has_direct_eval;
+
+        for case in cases.iter_mut() {
+            let body: &'a [Stmt] = case.body.slice();
+            let mut out: ListManaged<'a, Stmt> = ListManaged::with_capacity_in(body.len(), p.arena);
+            let mut changed = false;
+            let mut i = 0;
+            while i < body.len() {
+                let stmt = body[i];
+                i += 1;
+                // Only the functions that `visit_stmts` chose to lower are on the list.
+                let name = match stmt.data {
+                    StmtData::SFunction(func) => func
+                        .func
+                        .name
+                        .filter(|name| p.take_case_block_fn(name.ref_)),
+                    _ => None,
+                };
+                let (Some(name), StmtData::SFunction(mut func)) = (name, stmt.data) else {
+                    // Anything else that the case block declares lexically.
+                    stays_in_case_block |= match stmt.data {
+                        StmtData::SFunction(_) | StmtData::SClass(_) => true,
+                        StmtData::SLocal(local) => local.kind != LocalKind::KVar,
+                        _ => false,
+                    };
+                    out.push(stmt);
+                    continue;
+                };
+                let twin = p
+                    .hoisted_ref_for_sloppy_mode_block_fn
+                    .get(&name.ref_)
+                    .copied();
+
+                // Direct "eval": the declaration stays, as in any block. Strict code has no `var` to lose.
+                if has_direct_eval && (twin.is_some() || !is_strict) {
+                    if let Some(twin) = twin {
+                        p.symbols[twin.inner_index() as usize].link.set(name.ref_);
+                    }
+                    stays_in_case_block = true;
+                    out.push(stmt);
+                    continue;
+                }
+
+                changed = true;
+                if first_loc.is_empty() {
+                    first_loc = stmt.loc;
+                }
+                let mut react_refresh_register = None;
+                if let Some((signature, register)) = p.react_refresh_signature_at(body, i) {
+                    entry.push(signature);
+                    react_refresh_register = Some(register);
+                    i += 2;
+                }
+
+                func.func.name = None;
+                let value = p.new_expr(
+                    E::Function {
+                        func: core::mem::take(&mut func.func),
+                    },
+                    stmt.loc,
+                );
+                // The last function statement for a given symbol wins
+                match lowered.iter_mut().find(|f| f.name.ref_ == name.ref_) {
+                    Some(existing) => {
+                        existing.value = value;
+                        existing.react_refresh_register = react_refresh_register;
+                    }
+                    None => lowered.push(Lowered {
+                        name,
+                        value,
+                        react_refresh_register,
+                    }),
+                }
+
+                // Annex B assigns the `var` when the declaration is evaluated.
+                if let Some(twin) = twin {
+                    let mut decls = ListManaged::with_capacity_in(1, p.arena);
+                    decls.push(p.sloppy_block_fn_twin_decl(twin, name));
+                    if let Some(assign) = p.sloppy_block_fn_twin_stmt(decls) {
+                        out.push(assign);
+                    }
+                }
+            }
+            if changed {
+                case.body = StmtNodeList::from_bump(out);
+            }
+        }
+
+        if lowered.is_empty() {
+            return None;
+        }
+
+        let only_default = cases.len() == 1 && cases[0].value.is_none();
+        // `{ let g; switch (v) { case (g = function(){}, <first test>): .. } }`
+        let in_case_test = stays_in_case_block && !only_default;
+
+        let mut decls: ListManaged<'a, G::Decl> =
+            ListManaged::with_capacity_in(lowered.len(), p.arena);
+        let mut after: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
+        let mut assigns = Expr::EMPTY;
+        for f in lowered.iter() {
+            let binding = p.b(B::Identifier { r#ref: f.name.ref_ }, f.name.loc);
+            if in_case_test {
+                decls.push(G::Decl {
+                    binding,
+                    value: None,
+                });
+                p.record_usage(f.name.ref_);
+                assigns = assigns.join_with_comma(Expr::assign(
+                    Expr::init_identifier(f.name.ref_, f.name.loc),
+                    f.value,
+                ));
+                if let Some(register) = f.react_refresh_register {
+                    assigns = assigns.join_with_comma(register);
+                }
+            } else {
+                decls.push(G::Decl {
+                    binding,
+                    value: Some(f.value),
+                });
+                if let Some(register) = f.react_refresh_register {
+                    after.push(p.s(
+                        S::SExpr {
+                            value: register,
+                            ..Default::default()
+                        },
+                        register.loc,
+                    ));
+                }
+            }
+        }
+        entry.push(p.s(
+            S::Local {
+                kind: LocalKind::KLet,
+                decls: G::DeclList::from_bump_vec(decls),
+                ..Default::default()
+            },
+            first_loc,
+        ));
+        entry.extend_from_slice(&after);
+
+        if in_case_test {
+            // The first case test always runs, and it runs inside the switch block.
+            if let Some(test) = cases.iter_mut().find_map(|case| case.value.as_mut()) {
+                *test = assigns.join_with_comma(*test);
+            }
+        }
+
+        if only_default {
+            // The one clause is entered at its head.
+            entry.extend_from_slice(cases[0].body.slice());
+            cases[0].body = StmtNodeList::from_bump(entry);
+            return None;
+        }
+
+        // `{ let g = function(){}; switch (v) { .. } }`: the caller adds the switch.
+        Some(entry)
+    }
+
     // Try separating the list for appending, so that it's not a pointer.
     pub(crate) fn visit_stmts(
         &mut self,
@@ -1580,7 +1832,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .kind
                                     == SymbolKind::HoistedFunction
                             {
-                                break 'list_getter &mut before;
+                                if kind != StmtsKind::SwitchStmt {
+                                    break 'list_getter &mut before;
+                                }
+                                // A case body is not where the switch is entered (evanw/esbuild#4533).
+                                let name_ref = data.func.name.unwrap().ref_;
+                                let len = visited.len();
+                                p.visit_and_append_stmt(&mut visited, stmt)?;
+                                if visited.len() != len {
+                                    p.case_block_fns.push(name_ref);
+                                }
+                                continue 'stmt_loop;
                             }
                         }
                         StmtData::SEnum(_) => {
@@ -1649,19 +1911,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 if let Some(&hoisted_ref) =
                                     p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
                                 {
-                                    p.record_usage(name_ref);
-                                    let value = p.new_expr(
-                                        E::Identifier {
-                                            ref_: name_ref,
-                                            ..Default::default()
-                                        },
-                                        name.loc,
-                                    );
-                                    var_decls.push(G::Decl {
-                                        binding: p
-                                            .b(B::Identifier { r#ref: hoisted_ref }, name.loc),
-                                        value: Some(value),
-                                    });
+                                    var_decls.push(p.sloppy_block_fn_twin_decl(hoisted_ref, name));
                                 }
                             }
 
@@ -1701,23 +1951,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if var_decls.len() > 0 {
-                    let relocated =
-                        p.maybe_relocate_vars_to_top_level(&var_decls, RelocateVarsMode::Normal);
-                    if relocated.ok {
-                        if let Some(new) = relocated.stmt {
-                            before.push(new);
-                        }
-                    } else {
-                        let decls = G::DeclList::from_bump_vec(var_decls);
-                        let loc = decls.at(0).value.unwrap().loc;
-                        before.push(p.s(
-                            S::Local {
-                                kind: LocalKind::KVar,
-                                decls,
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
+                    if let Some(stmt) = p.sloppy_block_fn_twin_stmt(var_decls) {
+                        before.push(stmt);
                     }
                 }
 

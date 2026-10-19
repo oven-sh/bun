@@ -41,6 +41,7 @@ using namespace JSC;
     macro(addAbortAlgorithmToSignal) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
+    macro(asymmetricMatch) \
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \

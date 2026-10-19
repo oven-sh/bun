@@ -681,6 +681,72 @@ static NEVER_INLINE std::optional<bool> runEqualityTesters(JSGlobalObject* globa
     return verdict != 0;
 }
 
+// Rules out most objects without a property lookup.
+static ALWAYS_INLINE bool mayHaveAsymmetricMatchMethod(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value || !value.isCell())
+        return false;
+    JSCell* cell = value.asCell();
+    if (cell->type() != FinalObjectType && cell->type() != ObjectType)
+        return false;
+    Structure* structure = cell->structure();
+    if (!structure->hasMonoProto() || structure->storedPrototype() != JSValue(globalObject->objectPrototype()))
+        return true;
+    auto* name = WebCore::builtinNames(globalObject->vm()).asymmetricMatchPublicName().impl();
+    return !structure->seenProperties().ruleOut(CompactPtr<UniquedStringImpl>::encode(name));
+}
+
+// Values with the same structure both have the method or both don't, and two matchers are compared as plain objects.
+static ALWAYS_INLINE bool oneMayHaveAsymmetricMatchMethod(JSGlobalObject* globalObject, JSValue a, JSValue b)
+{
+    if (a && b && a.isCell() && b.isCell() && a.asCell()->structureID() == b.asCell()->structureID())
+        return false;
+    return mayHaveAsymmetricMatchMethod(globalObject, a) || mayHaveAsymmetricMatchMethod(globalObject, b);
+}
+
+// Looks up asymmetricMatch() without running getters or Proxy traps. Returns an empty value if it isn't a method.
+static JSValue asymmetricMatchMethod(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!mayHaveAsymmetricMatchMethod(globalObject, value))
+        return {};
+    VM& vm = globalObject->vm();
+    PropertyName name = WebCore::builtinNames(vm).asymmetricMatchPublicName();
+    for (JSObject* object = asObject(value); object != globalObject->objectPrototype();) {
+        if (object->type() != FinalObjectType && object->type() != ObjectType)
+            return {};
+        Structure* structure = object->structure();
+        unsigned attributes;
+        PropertyOffset offset = structure->get(vm, name, attributes);
+        if (offset != invalidOffset) {
+            if (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))
+                return {};
+            JSValue method = object->getDirect(offset);
+            return method.isCallable() ? method : JSValue();
+        }
+        JSValue prototype = structure->storedPrototype(object);
+        if (!prototype.isObject())
+            return {};
+        object = asObject(prototype);
+    }
+    return {};
+}
+
+// Jest and Vitest treat any object with an asymmetricMatch() method as a matcher. Returns nullopt if neither or both are.
+static NEVER_INLINE std::optional<bool> matchUserAsymmetricMatcher(JSGlobalObject* globalObject, ThrowScope& scope, JSValue a, JSValue b)
+{
+    JSValue methodOfA = asymmetricMatchMethod(globalObject, a);
+    JSValue methodOfB = asymmetricMatchMethod(globalObject, b);
+    if (!methodOfA == !methodOfB) [[likely]]
+        return std::nullopt;
+    JSValue method = methodOfA ? methodOfA : methodOfB;
+    JSValue other = methodOfA ? b : a;
+    MarkedArgumentBuffer arguments;
+    arguments.append(other ? other : jsUndefined());
+    JSValue matched = JSC::call(globalObject, method, JSC::getCallData(method), methodOfA ? a : b, arguments);
+    RETURN_IF_EXCEPTION(scope, false);
+    return matched.toBoolean(globalObject);
+}
+
 // jsdom and happy-dom nodes are class instances, sometimes wrapped in a Proxy.
 static ALWAYS_INLINE bool mayBeDOMNode(JSGlobalObject* globalObject, JSObject* object)
 {
@@ -950,6 +1016,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(scope, false);
                 break;
             }
+        } else if (oneMayHaveAsymmetricMatchMethod(globalObject, v1, v2)) {
+            if (auto matched = matchUserAsymmetricMatcher(globalObject, scope, v1, v2)) [[unlikely]]
+                return *matched;
         }
 
         if (hasEqualityTesters(globalObject)) [[unlikely]] {
@@ -2433,6 +2502,12 @@ bool Bun__deepMatch(
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
                     break;
+                }
+            } else if (oneMayHaveAsymmetricMatchMethod(globalObject, prop, subsetProp)) {
+                if (auto matched = matchUserAsymmetricMatcher(globalObject, throwScope, prop, subsetProp)) [[unlikely]] {
+                    if (!*matched)
+                        return false;
+                    continue;
                 }
             }
         }
@@ -5095,7 +5170,7 @@ BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
     auto view = WTF::StringView(std::span { ptr, strlen(ptr) });
 
     // Fallback to .name if className is empty
-    if (view.length() == 0 || StringView("Function"_s) == view) {
+    if (view.length() == 0 || StringView("Function"_s) == view || cell->inherits<JSC::InternalFunction>()) {
         return JSC__JSValue__getNameProperty(JSValue0, arg1);
     }
 

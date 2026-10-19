@@ -4609,6 +4609,18 @@ describe("expect()", () => {
       expect(expect.any(Thing)).toEqual(new Thing());
     });
 
+    test("failure messages print expect.any() with the class name", () => {
+      class Thing {}
+      const printed = [Thing, Map, URL, AbortSignal, Response].map(constructor => {
+        try {
+          expect(1).toEqual(expect.any(constructor));
+        } catch (error) {
+          return /Any<\w*>/.exec(stripVTControlCharacters(error.message))?.[0];
+        }
+      });
+      expect(printed).toEqual(["Any<Thing>", "Any<Map>", "Any<URL>", "Any<AbortSignal>", "Any<Response>"]);
+    });
+
     test("expect.any(Object) matches typeof === 'object'", () => {
       // https://github.com/jestjs/jest/blob/main/packages/expect/src/asymmetricMatchers.ts
       // Jest: `if (this.sample == Object) return typeof other == 'object';`
@@ -5188,6 +5200,97 @@ describe("expect()", () => {
 
       test("notCloseTo return false if received is not number", () => {
         expect(expect.not.closeTo(1)).not.toEqual("a");
+      });
+    });
+
+    describe("objects with an asymmetricMatch() method", () => {
+      const isEven = {
+        asymmetricMatch: (/** @type {unknown} */ value) => typeof value === "number" && value % 2 === 0,
+      };
+
+      test("toEqual() and toStrictEqual() call asymmetricMatch()", () => {
+        expect(2).toEqual(isEven);
+        expect([1, 2]).toEqual([1, isEven]);
+        expect({ n: 2 }).toEqual({ n: isEven });
+        expect([{ n: 2 }]).toStrictEqual([{ n: isEven }]);
+        expect(new Map([["n", 2]])).toEqual(new Map([["n", isEven]]));
+        expect([3]).not.toEqual([isEven]);
+        expect(() => expect([3]).toEqual([isEven])).toThrow();
+        expect(() => expect([2]).not.toEqual([isEven])).toThrow();
+      });
+
+      test("asymmetricMatch() also works on the received value", () => {
+        expect(isEven).toEqual(2);
+        expect([isEven]).toEqual([2]);
+        expect([isEven]).not.toEqual([3]);
+      });
+
+      test("toMatchObject(), toContainEqual() and toHaveProperty() call asymmetricMatch()", () => {
+        expect({ n: 2, other: 1 }).toMatchObject({ n: isEven });
+        expect({ n: 3, other: 1 }).not.toMatchObject({ n: isEven });
+        expect({ deep: { n: 2, other: 1 } }).toMatchObject({ deep: { n: isEven } });
+        expect([1, 2]).toContainEqual(isEven);
+        expect([1, 3]).not.toContainEqual(isEven);
+        expect({ n: 2 }).toHaveProperty("n", isEven);
+        expect({ n: 3 }).not.toHaveProperty("n", isEven);
+      });
+
+      test("mock function matchers call asymmetricMatch()", () => {
+        const double = jest.fn((/** @type {number} */ n, /** @type {string} */ _label) => n * 2);
+        double(2, "a");
+        expect(double).toHaveBeenCalledWith(isEven, "a");
+        expect(double).toHaveBeenLastCalledWith(isEven, "a");
+        expect(double).toHaveBeenNthCalledWith(1, isEven, "a");
+        expect(double).toHaveReturnedWith(isEven);
+        expect(double).not.toHaveBeenCalledWith(isEven, "b");
+        double(3, "a");
+        expect(double).not.toHaveBeenLastCalledWith(isEven, "a");
+      });
+
+      test("expect.objectContaining() and expect.arrayContaining() call asymmetricMatch()", () => {
+        expect({ n: 2, other: 1 }).toEqual(expect.objectContaining({ n: isEven }));
+        expect({ n: 3, other: 1 }).not.toEqual(expect.objectContaining({ n: isEven }));
+        expect([1, 2]).toEqual(expect.arrayContaining([isEven]));
+        expect([1, 3]).not.toEqual(expect.arrayContaining([isEven]));
+      });
+
+      test("asymmetricMatch() can be a class method", () => {
+        class AtLeast {
+          constructor(/** @type {number} */ minimum) {
+            this.minimum = minimum;
+          }
+          asymmetricMatch(/** @type {number} */ value) {
+            return value >= this.minimum;
+          }
+        }
+        expect({ n: 5 }).toEqual({ n: new AtLeast(5) });
+        expect({ n: 4 }).not.toEqual({ n: new AtLeast(5) });
+      });
+
+      test("an error thrown by asymmetricMatch() fails the assertion", () => {
+        const throws = {
+          asymmetricMatch() {
+            throw new RangeError("thrown by the matcher");
+          },
+        };
+        expect(() => expect([1]).toEqual([throws])).toThrow(new RangeError("thrown by the matcher"));
+        expect(() => expect({ n: 1 }).toMatchObject({ n: throws })).toThrow(new RangeError("thrown by the matcher"));
+      });
+
+      test("two matchers are compared as plain objects", () => {
+        const never = () => false;
+        expect({ asymmetricMatch: never }).toEqual({ asymmetricMatch: never });
+        expect({ asymmetricMatch: never, id: 1 }).not.toEqual({ asymmetricMatch: never, id: 2 });
+      });
+
+      test("asymmetricMatch is ignored if it isn't a function", () => {
+        expect([{ asymmetricMatch: true }]).toEqual([{ asymmetricMatch: true }]);
+        expect([1]).not.toEqual([{ asymmetricMatch: true }]);
+      });
+
+      test("toBe() ignores asymmetricMatch()", () => {
+        expect(2).not.toBe(isEven);
+        expect(isEven).toBe(isEven);
       });
     });
   });

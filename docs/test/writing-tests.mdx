@@ -832,6 +832,16 @@ test("the count is odd", () => {
 });
 ```
 
+Like in Jest and Vitest, you can also use any object with an `asymmetricMatch(value)` method as a matcher:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+const anyFunction = { asymmetricMatch: (value: unknown) => typeof value === "function" };
+
+test("the callback is a function", () => {
+  expect({ callback: () => {} }).toEqual({ callback: anyFunction });
+});
+```
+
 ## Best Practices
 
 ### Use Descriptive Test Names

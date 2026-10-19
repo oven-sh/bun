@@ -900,3 +900,26 @@ test("large diffs are exact rather than abandoned part-way", () => {
   expect(message.slice(-400)).toContain("\n-   49994,\n+   49995,\n    49995,\n");
   expect(message.slice(-120).trimEnd()).toEndWith(`\n\n- Expected  - ${changed}\n+ Received  + ${changed}`);
 });
+
+test("prints a Response once", () => {
+  let message = "";
+  try {
+    expect({ response: new Response("") }).toEqual({ response: 1 });
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message).toContain(`
+  {
+-   "response": 1,
++   "response": Response (0 KB) {
++     ok: true,
++     url: "",
++     status: 200,
++     statusText: "",
++     headers: Headers {},
++     redirected: false,
++     bodyUsed: false
++   },
+  }
+`);
+});

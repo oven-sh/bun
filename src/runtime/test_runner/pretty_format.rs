@@ -1560,6 +1560,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
+                        return Ok(());
                     } else if let Some(request) = value.as_::<crate::webcore::Request>() {
                         // SAFETY: see Response branch above.
                         let request = unsafe { &mut *request };
@@ -1598,6 +1599,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
+                        return Ok(());
                     } else if let Some(blob) = value.as_::<crate::webcore::Blob>() {
                         // SAFETY: see Response branch above.
                         let blob = unsafe { &mut *blob };

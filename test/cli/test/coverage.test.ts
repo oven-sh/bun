@@ -1061,14 +1061,19 @@ test("b", () => {
 });
 
 // The right operand of a short-circuit operator that was skipped is a basic
-// block of its own, so a line that holds only that operand is uncovered (#44722).
-test("a skipped short-circuit operand on its own line is uncovered", () => {
+// block of its own, so a line inside that operand is uncovered (#44722). The
+// lines asserted all hold a token of their own; the lines around a block are
+// charged differently by #38282.
+test("a skipped short-circuit operand is uncovered", () => {
   using dir = tempDir("cov-short-circuit", {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = true
+`,
     "short-circuit.ts": `
-export function fallback(value: unknown, missing: () => unknown) {
-  return (
-    value ??
-    missing()
+export function fallback(value: unknown, missing: (...args: unknown[]) => unknown) {
+  return value ?? missing(
+    value,
   );
 }
 export function guard(value: unknown, missing: () => unknown) {
@@ -1080,9 +1085,10 @@ export function guard(value: unknown, missing: () => unknown) {
   }
   return 2;
 }
-export function chain(object: { method(): number } | null) {
-  return object
-    ?.method();
+export function chain(object: { method(...args: unknown[]): number } | null) {
+  return object?.method(
+    object,
+  );
 }
 `,
     "short-circuit.test.ts": `
@@ -1100,27 +1106,36 @@ test("short-circuit", () => {
 `,
   });
 
-  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-skip-test-files"], {
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov"], {
     cwd: dir,
     env: bunEnv,
-    stdio: [null, null, "pipe"],
+    stdio: ["inherit", "inherit", "pipe"],
   });
-
-  const stderr = normalizeBunSnapshot(result.stderr.toString("utf-8"), dir);
-  expect(stderr).toMatchInlineSnapshot(`
-"short-circuit.test.ts:
-(pass) short-circuit
-------------------|---------|---------|-------------------
-File              | % Funcs | % Lines | Uncovered Line #s
-------------------|---------|---------|-------------------
-All files         |  100.00 |   66.67 |
- short-circuit.ts |  100.00 |   66.67 | 5,11-13,19
-------------------|---------|---------|-------------------
-
- 1 pass
- 0 fail
- 4 expect() calls
-Ran 1 test across 1 file."
-`);
+  expect(result.stderr.toString("utf-8")).toContain(" 1 pass");
   expect(result.exitCode).toBe(0);
+
+  const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+  const record = lcov.slice(lcov.indexOf("SF:short-circuit.ts"), lcov.indexOf("end_of_record", lcov.indexOf("SF:short-circuit.ts")));
+  const hits = new Map<number, number>();
+  for (const match of record.matchAll(/^DA:(\d+),(\d+)$/gm)) hits.set(Number(match[1]), Number(match[2]));
+  const executed = (line: number) => (hits.get(line) ?? 0) > 0;
+  expect({
+    fallbackReturn: executed(3),
+    fallbackSkippedArgument: executed(4),
+    guardCondition: executed(9),
+    guardSkippedOperand: executed(10),
+    guardSkippedBody: executed(12),
+    guardReturn: executed(14),
+    chainReturn: executed(17),
+    chainSkippedArgument: executed(18),
+  }).toEqual({
+    fallbackReturn: true,
+    fallbackSkippedArgument: false,
+    guardCondition: true,
+    guardSkippedOperand: false,
+    guardSkippedBody: false,
+    guardReturn: true,
+    chainReturn: true,
+    chainSkippedArgument: false,
+  });
 });

@@ -2645,6 +2645,8 @@ impl File<'_> {
             NodeData::Expr(e) => match self[e].kind {
                 ExprKind::Fn(f) => self[f].flags,
                 ExprKind::Class(c) => self[c].flags,
+                // The modifiers of an assignment are the tags of its JSDoc, such as `@private`.
+                ExprKind::Assign { .. } => self.jsdoc_modifiers_of(e),
                 _ => Flags::empty(),
             },
             NodeData::Type(_) | NodeData::Prop(_) => {

@@ -139,6 +139,22 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `getTypeOfSymbol(getSymbolOfDeclaration(e))` for `f.name = value` or `f[key] = value`: a key the binder could not name is late bound into the export of `f` that has its name, when there is one.
+    pub(super) fn type_of_expando(&mut self, file: FileId, e: ExprId) -> TypeId {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        let own = bound.symbol_of_expr(e);
+        let symbol = bound.symbol(own);
+        if symbol.name == known::computed
+            && let ExprKind::Assign { target, .. } = hir[e].kind
+            && let ExprKind::Index { index, .. } = hir[target].kind
+            && let Some(name) = self.declared_member_name(file, PropKey::Computed(index))
+            && let Some(early) = files.export(files.sym(file, symbol.parent), name)
+        {
+            return self.type_of_symbol(early);
+        }
+        self.type_of_symbol(files.sym(file, own))
+    }
+
     /// `EmitResolver.IsLateBound`
     pub(super) fn is_late_bound(&mut self, file: FileId, m: MemberId) -> bool {
         match self.late_bound_symbol(file, Decl::Member(m)) {

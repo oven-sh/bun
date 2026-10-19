@@ -150,6 +150,7 @@ impl Checker<'_, '_> {
         {
             let object = self.type_of_expr(file, obj);
             let object = self.apparent_type(object);
+            let name = self.exports_property_name(file, assignment, name);
             if let Some((prop, _)) = self.prop_ref(object, name)
                 && let PropSource::Symbol(sym) = prop.source
                 && self.files().decls_of(sym).len() > 1

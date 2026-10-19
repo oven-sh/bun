@@ -20,6 +20,8 @@ bun_core::comptime_string_set! {
 
 /// The result of `getNameExpressionPreferringIdentifier`.
 struct ExportName {
+    /// `name.Text()`, as the name of the export in the table of the file.
+    atom: Atom,
     /// `name.Text()`
     text: Vec<u8>,
     is_identifier: bool,
@@ -77,28 +79,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         // `wrapInCJSExportNamespace` puts the members one level deeper.
         let is_wrapped = self.cjs_export_assignment_name.is_some();
         for &(e, kind) in &declarations {
-            let name = match kind {
-                JsDeclarationKind::ExportsProperty(_) => match hir[e].kind {
-                    ExprKind::Assign { target, .. } => match hir[target].kind {
-                        ExprKind::Dot { name, .. } => ExportName {
-                            text: self.name(name).to_vec(),
-                            is_identifier: true,
-                        },
-                        ExprKind::Index { index, .. } => {
-                            self.name_expression_preferring_identifier(index)
-                        }
-                        _ => continue,
-                    },
-                    _ => continue,
-                },
-                JsDeclarationKind::ObjectDefinePropertyExports => {
-                    match define_property_call(hir, e) {
-                        Some((_, key)) => self.name_expression_preferring_identifier(key),
-                        None => continue,
-                    }
-                }
-                _ => continue,
+            let Some((atom, literal)) = self.name_of_commonjs_export(e, kind) else {
+                continue;
             };
+            let name = self.name_expression_preferring_identifier(atom, literal);
             if is_wrapped {
                 self.set_indent(self.indent + 1);
             }
@@ -114,31 +98,42 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
     }
 
-    /// `getNameExpressionPreferringIdentifier` for a string or numeric literal.
-    fn name_expression_preferring_identifier(&mut self, e: ExprId) -> ExportName {
+    /// `GetElementOrPropertyAccessName` of `exports.name = e`, or the key of `Object.defineProperty(exports, "name", d)`: the name, and the literal that spells it unless an identifier does.
+    fn name_of_commonjs_export(
+        &mut self,
+        e: ExprId,
+        kind: JsDeclarationKind,
+    ) -> Option<(Atom, ExprId)> {
         let file = self.file();
-        let text = match self.c.literal_key(file, e) {
-            Some(key) => self.name(key).to_vec(),
-            None => Vec::new(),
-        };
-        let is_numeric = matches!(self.c.hir(file)[e].kind, ExprKind::Number(_));
-        let is_identifier = !is_numeric
-            && bun_core::lexer::is_identifier(&text)
-            && (!KEYWORDS.contains(&text) || text == b"default");
-        ExportName {
-            text,
-            is_identifier,
+        let hir = self.c.hir(file);
+        match (kind, hir[e].kind) {
+            (JsDeclarationKind::ExportsProperty(name), ExprKind::Assign { target, .. }) => {
+                let literal = match hir[target].kind {
+                    ExprKind::Index { index, .. } => index,
+                    _ => ExprId::NONE,
+                };
+                Some((self.c.exports_property_name(file, e, name), literal))
+            }
+            (JsDeclarationKind::ObjectDefinePropertyExports, _) => {
+                let (_, key) = define_property_call(hir, e)?;
+                Some((self.c.literal_key(file, key)?, key))
+            }
+            _ => None,
         }
     }
 
-    /// `node.Symbol()`, of `exports.name = e` or `Object.defineProperty(exports, "name", d)`.
-    fn symbol_of_commonjs_export(&self, name: &ExportName) -> Option<Sym> {
-        let files = self.c.files();
-        let exports = files.exports(files.file_symbol(self.file()));
-        exports
-            .into_iter()
-            .find(|it| self.name(it.0) == &name.text[..])
-            .map(|it| it.1)
+    /// `getNameExpressionPreferringIdentifier` for the name `atom`, which `literal` spells unless an identifier does.
+    fn name_expression_preferring_identifier(&self, atom: Atom, literal: ExprId) -> ExportName {
+        let text = self.name(atom).to_vec();
+        let is_identifier = literal.is_none()
+            || !matches!(self.c.hir(self.file())[literal].kind, ExprKind::Number(_))
+                && bun_core::lexer::is_identifier(&text)
+                && (!KEYWORDS.contains(&text) || text == b"default");
+        ExportName {
+            atom,
+            text,
+            is_identifier,
+        }
     }
 
     /// `transformCommonJSExportWorker`
@@ -155,7 +150,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.result_has_scope_marker = true;
         let file = self.file();
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
-        let symbol = self.symbol_of_commonjs_export(name);
+        // For `node.Symbol()`, the export of the file by that name: the binder records no symbol for the assignment.
+        let symbol = files.export(files.file_symbol(file), name.atom);
         let value = match hir[input].kind {
             ExprKind::Assign { value, .. } => value,
             _ => ExprId::NONE,
@@ -491,16 +487,17 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             // `GetReferencedMemberValueDeclaration`
             let symbol = bound.symbol_of_expr(e);
             // `HasDynamicName`: an identifier is not `IsSimpleInlineableExpression`, so `this[name] = e` declares nothing here.
-            let name = match hir[target].kind {
-                ExprKind::Dot { name, .. } => Some(name),
-                ExprKind::Index { index, .. } if is_string_or_numeric_literal_like(hir, index) => {
-                    self.c.literal_key(file, index)
+            let is_named = match hir[target].kind {
+                ExprKind::Index { index, .. } => {
+                    is_string_or_numeric_literal_like_in_parentheses(hir, index)
                 }
-                _ => None,
+                _ => true,
             };
-            let (Some(name), true) = (name, symbol.is_some()) else {
+            if !is_named || symbol.is_none() {
                 continue;
-            };
+            }
+            // `GetNameOfDeclaration`, which skips the parentheses of a key: the name the binder declared the symbol by.
+            let name = bound.symbol(symbol).name;
             if seen.contains(&(name, is_static)) {
                 continue;
             }
@@ -508,7 +505,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let symbol = files.sym(file, symbol);
             if has_base {
                 self.tracker.report_inference_fallback(self.c, file, class);
-                if self.is_this_property_assignment_declaration_redundant(symbol, name) {
+                if self.is_this_property_assignment_declaration_redundant(symbol, name, is_static) {
                     continue;
                 }
             }
@@ -516,10 +513,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 continue;
             }
             let written = match hir[target].kind {
-                // `getLiteralTextOfNode`
-                ExprKind::Index { index, .. } => hir.text
-                    [hir[index].pos as usize..self.c.end_of_expr(file, index) as usize]
-                    .to_vec(),
+                // `getLiteralTextOfNode`: the key itself, without the parentheses around it.
+                ExprKind::Index { index, .. } => self.c.source_text(
+                    file,
+                    self.c.start_inside_parentheses(file, index),
+                    self.c.end_inside_parentheses(file, index),
+                ),
                 _ if bun_core::lexer::is_identifier(self.name(name)) => self.name(name).to_vec(),
                 _ => super::super::print::quoted(self.name(name), b'"', false),
             };
@@ -550,11 +549,16 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         &mut self,
         symbol: Sym,
         name: Atom,
+        is_static: bool,
     ) -> bool {
         let Some(parent) = self.c.files().parent_of_symbol(symbol) else {
             return false;
         };
-        let own = self.c.declared_type(parent);
+        // The property that `symbol` is: a static one is of the constructor, and the bases are compared by their instances all the same.
+        let own = match is_static {
+            true => self.c.type_of_symbol(parent),
+            false => self.c.declared_type(parent),
+        };
         let Some((own, own_mapper)) = self.c.get_property_of_type(own, name) else {
             return false;
         };
@@ -598,19 +602,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 let symbol = files.export(files.file_symbol(file), known::export_equals)?;
                 return Some(self.c.type_of_symbol(symbol));
             }
-            JsDeclarationKind::ExportsProperty(_) => match hir[e].kind {
-                ExprKind::Assign { target, .. } => match hir[target].kind {
-                    ExprKind::Dot { name, .. } => Some(name),
-                    ExprKind::Index { index, .. } => self.c.literal_key(file, index),
-                    _ => None,
-                },
-                _ => None,
-            },
-            JsDeclarationKind::ObjectDefinePropertyExports => {
-                define_property_call(hir, e).and_then(|(_, key)| self.c.literal_key(file, key))
-            }
-            _ => None,
-        }?;
+            kind => self.name_of_commonjs_export(e, kind)?.0,
+        };
         let symbol = files.export(files.file_symbol(file), name)?;
         Some(self.c.type_of_symbol(symbol))
     }

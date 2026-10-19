@@ -7933,8 +7933,9 @@ describe("css tests", () => {
 
   describe("font-face", () => {
     // format() is always printed in its string form. The bare keyword form is
-    // css-fonts-4 syntax that older browsers reject (they drop the whole src
-    // entry), so it is never emitted, matching lightningcss.
+    // css-fonts-4 syntax: Chrome before 108 and Firefox before 105 cannot parse
+    // it, and they then reject the whole `src` descriptor, not only that entry.
+    // So it is never emitted, matching lightningcss.
     for (const format of ["woff", "woff2", "truetype", "opentype", "embedded-opentype", "collection", "svg"]) {
       const expected = `@font-face{src:url(test.font)format("${format}")}`;
       minify_test(`@font-face { src: url("test.font") format(${format}) }`, expected);

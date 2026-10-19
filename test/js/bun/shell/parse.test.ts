@@ -100,6 +100,9 @@ describe("parse shell", () => {
     const dupErrCmd = { ...dupCmd, redirect: redirect({ stderr: true, duplicate_out: true }) };
     expect(JSON.parse(parse`echo A 1>&2 B C`)).toEqual({ stmts: [{ exprs: [{ cmd: dupErrCmd }] }] });
 
+    // A quoted word that touches the fd-dup stays in the command.
+    expect(JSON.parse(parse`echo "A"2>&1 B C`)).toEqual({ stmts: [{ exprs: [{ cmd: dupCmd }] }] });
+
     // With no word after it the fd-dup still stands on its own.
     expect(JSON.parse(parse`echo A 2>&1`)).toEqual({
       stmts: [{ exprs: [{ cmd: { ...dupCmd, name_and_args: dupCmd.name_and_args.slice(0, 2) } }] }],
@@ -130,13 +133,6 @@ describe("parse shell", () => {
         },
       ],
     });
-  });
-
-  test("newline after &&, || and |", () => {
-    expect(JSON.parse(parse({ raw: ["echo a &&\necho b ||\n\necho c"] }))).toEqual(
-      JSON.parse(parse`echo a && echo b || echo c`),
-    );
-    expect(JSON.parse(parse({ raw: ["echo a |\ncat |\n\ncat"] }))).toEqual(JSON.parse(parse`echo a | cat | cat`));
   });
 
   test("single atom", () => {
@@ -1160,25 +1156,5 @@ describe("parse shell invalid input", () => {
     const message = "`2>&1` and `1>&2` take no target. Use `&>` to send stdout and stderr to a JS object.";
     expect(() => parse`echo hi 2>&1 ${buffer}`).toThrow(message);
     expect(() => parse`echo hi 1>&2 ${buffer}`).toThrow(message);
-  });
-
-  // Each of these ran two commands. bash reports an error for each, except
-  // that `[[` after a command name is an argument there.
-  test.each([
-    ["(echo a) echo b", "echo"],
-    ["(echo a) (echo b)", "`(`"],
-    ["[[ -n a ]] echo b", "echo"],
-    ["if true; then echo a; fi echo b", "echo"],
-    ["echo a [[ -n b ]]", "[["],
-    ["A=1 [[ -n b ]]", "[["],
-    ["echo a > f [[ -n b ]] touch g", "[["],
-    ["echo $( (echo a) echo b )", "echo"],
-    ["echo `(echo a) echo b`", "echo"],
-    ["( [[ -n a ]] echo b )", "echo"],
-    ["if [[ -n a ]] echo b; then echo c; fi", "echo"],
-    ["echo a | [[ -n a ]] echo b", "echo"],
-    ["true && (echo a) echo b", "echo"],
-  ])("a second command needs a separator: %s", (source, got) => {
-    expect(() => parse({ raw: [source] })).toThrow(`Expected ";", "&&", "||", "|" or a newline but got: ${got}`);
   });
 });

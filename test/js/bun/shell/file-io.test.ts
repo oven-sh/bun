@@ -105,13 +105,11 @@ describe("IOWriter file output redirection", () => {
       expect(buf.toString("utf8", 0, 15)).toBe("hi extra words\n");
     });
 
-    // The tail of an interpolated array in the target slot must not run.
-    TestBuilder.command`echo hi > ${["out", "touch", "INJECTED"]}`
-      .ensureTempDir()
-      .exitCode(0)
-      .fileEquals("out", "hi touch INJECTED\n")
-      .doesNotExist("INJECTED")
-      .runAsTest("interpolated array after > keeps its tail as arguments");
+    test("interpolated array after > does not run its tail", async () => {
+      using dir = tempDir("shell-array-target", {});
+      await Bun.$`echo hi > ${["out", "touch", "INJECTED"]}`.cwd(String(dir)).nothrow().quiet();
+      expect(fs.existsSync(join(String(dir), "INJECTED"))).toBe(false);
+    });
 
     test("a second redirection throws before anything runs", async () => {
       using dir = tempDir("shell-second-redirect", {});

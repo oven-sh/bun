@@ -1495,6 +1495,34 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       });
     });
 
+    test("tab lists only the names that can follow a dot", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        // A key is any string. This one sets the title of the terminal and rings its bell.
+        send('globalThis.__keys = { "ab\\x1b]0;title\\x07": 1, abc: 2, abd: 3 }; "keys" + "Ready"\n');
+        await waitFor("keysReady");
+        send("__keys.ab");
+        await waitFor("__keys.ab");
+        send("\t");
+        const list = await waitFor("abd");
+        expect(list).toContain("abc");
+        expect(list).not.toContain("\x07");
+        expect(list).not.toContain("title");
+      });
+    });
+
+    test("tab inserts the only name that can follow a dot", async () => {
+      await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+        send('globalThis.__one = { "un-dashed": 1, unique: "oneMAR" + "KER" }; 0\n');
+        await waitFor(/\b0\b/);
+        send("__one.un");
+        await waitFor("__one.un");
+        send("\t\n");
+        send('"second" + "Input"\n');
+        await waitFor("secondInput");
+        expect(allOutput()).toContain("oneMARKER");
+      });
+    });
+
     test("suggestion is not evaluated on enter", async () => {
       await withTerminalRepl(
         async ({ send, waitFor }) => {

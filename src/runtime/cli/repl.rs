@@ -68,6 +68,8 @@ unsafe extern "C" {
 
 const MAX_HISTORY_SIZE: usize = 1000;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
+/// Tab lists its candidates up to this many, and above it prints only their count.
+const MAX_LISTED_COMPLETIONS: usize = 50;
 
 // ANSI escape codes
 const CSI: &str = concat!("\x1b", "[");
@@ -2761,75 +2763,83 @@ impl<'a> Repl<'a> {
             return;
         }
 
-        if len == 1 {
-            // Single completion - insert it
-            let item = match completions.get_index(global, 0) {
-                Ok(v) => v,
-                Err(_) => {
-                    global.clear_exception();
-                    JSValue::UNDEFINED
-                }
-            };
-            if item.is_string() {
-                let slice = match item.to_utf8(global) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        global.clear_exception();
-                        return;
-                    }
-                };
-                let completion = slice.slice();
-                if identifier::is_identifier(completion) {
+        // A candidate is a name that can follow a `.`, as for the ghost text. Any other key is
+        // text of the program's choosing, and this writes candidates to the terminal.
+        let mut listed = [0u32; MAX_LISTED_COMPLETIONS];
+        let mut count: usize = 0;
+        for index in 0..(len as u32) {
+            if completion_candidate(completions, global, index).is_none() {
+                continue;
+            }
+            if let Some(slot) = listed.get_mut(count) {
+                *slot = index;
+            }
+            count += 1;
+        }
+
+        match count {
+            0 => self.refresh_line(),
+            1 => {
+                if let Some(name) = completion_candidate(completions, global, listed[0]) {
                     while self.line_editor.cursor > word_start {
                         self.line_editor.backspace();
                     }
-                    let _ = self.line_editor.insert_slice(completion);
+                    let _ = self.line_editor.insert_slice(name.slice());
                 }
                 self.refresh_line();
             }
-        } else if len <= 50 {
-            // Multiple completions - show them
-            self.leave_input(b"");
-            let mut i: u32 = 0;
-            while i < (len as u32) {
-                let item = match completions.get_index(global, i) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        global.clear_exception();
-                        JSValue::UNDEFINED
-                    }
-                };
-                if item.is_string() {
-                    match item.to_utf8(global) {
-                        Ok(slice) => {
-                            self.print(format_args!(
-                                "  {}{}{}\n",
-                                Color::CYAN,
-                                BStr::new(slice.slice()),
-                                Color::RESET
-                            ));
-                        }
-                        Err(_) => {
-                            global.clear_exception();
-                            i += 1;
-                            continue;
-                        }
+            2..=MAX_LISTED_COMPLETIONS => {
+                self.leave_input(b"");
+                for &index in &listed[..count] {
+                    if let Some(name) = completion_candidate(completions, global, index) {
+                        self.print(format_args!(
+                            "  {}{}{}\n",
+                            Color::CYAN,
+                            BStr::new(name.slice()),
+                            Color::RESET
+                        ));
                     }
                 }
-                i += 1;
+                self.refresh_line();
             }
-            self.refresh_line();
-        } else {
-            self.leave_input(b"");
-            self.print(format_args!(
-                "{}{} completions{}\n",
-                Color::DIM,
-                len,
-                Color::RESET
-            ));
-            self.refresh_line();
+            _ => {
+                self.leave_input(b"");
+                self.print(format_args!(
+                    "{}{} completions{}\n",
+                    Color::DIM,
+                    count,
+                    Color::RESET
+                ));
+                self.refresh_line();
+            }
         }
     }
+}
+
+/// The name at `index` of the array of completions, when it is a name that can follow a `.`.
+fn completion_candidate(
+    completions: JSValue,
+    global: &JSGlobalObject,
+    index: u32,
+) -> Option<bun_core::Utf8Bytes<'static>> {
+    let item = match completions.get_index(global, index) {
+        Ok(item) => item,
+        Err(_) => {
+            global.clear_exception();
+            return None;
+        }
+    };
+    if !item.is_string() {
+        return None;
+    }
+    let name = match item.to_utf8(global) {
+        Ok(name) => name,
+        Err(_) => {
+            global.clear_exception();
+            return None;
+        }
+    };
+    identifier::is_identifier(name.slice()).then_some(name)
 }
 
 impl<'a> Drop for Repl<'a> {

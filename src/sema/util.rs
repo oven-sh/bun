@@ -13,13 +13,12 @@ use std::hash::Hasher;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The hash rustc uses, as in `bun_collections::AutoContext`: keys here are small integers and short
-/// tuples of them. Nothing may depend on the order in which a map or a set iterates.
+/// rustc's hash, which `bun_collections::AutoContext` also uses. It suits the keys here, which are
+/// small integers and short tuples of them. Nothing may depend on a map's or a set's iteration order.
 pub use rustc_hash::{FxBuildHasher as FxBuild, FxHashMap, FxHashSet, FxHasher};
 
-/// The sorts of slices, compiled once for the whole program: those of the standard library are compiled once for each
-/// type and closure, several KB each. They cost a list of indices and a call for each comparison, so they are not for
-/// what is sorted all the time.
+/// Slice sorts that are compiled once for the whole program. The standard library's sorts are compiled once per type
+/// and closure, at several KB each. These cost an index list and a call per comparison, so don't use them on hot paths.
 pub trait SharedSort<T> {
     fn shared_sort(&mut self)
     where
@@ -85,10 +84,10 @@ pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
     h.finish()
 }
 
-/// A number for each key that occurs more than once: 0, 1, .. in order of first occurrence.
+/// Numbers each key that occurs more than once: 0, 1, .. in order of first occurrence.
 pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<K, usize> {
     let mut numbers: FxHashMap<K, usize> = FxHashMap::default();
-    // Nearly always every key occurs once.
+    // Fast path: nearly always, every key occurs once.
     if keys.len() <= 32 && (1..keys.len()).all(|i| !keys[..i].contains(&keys[i])) {
         return numbers;
     }
@@ -300,18 +299,18 @@ impl<'a, T> IntoIterator for &'a List<'_, T> {
 
 const MAP_SHARDS: usize = 256;
 
-/// Mixes a hash into all of its bits: the top bits select the shard, the low half is the tag, which
-/// determines the slot in the table.
+/// Mixes a hash so that all of its bits are well distributed. The top bits select the shard, and the
+/// low half is the tag, which determines the slot in the table.
 #[inline]
 fn spread(hash: u64) -> u64 {
     (hash ^ (hash >> 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
 
-/// What differs between the tables that threads share and those of one task.
+/// The parameters that differ between tables shared by threads and a single task's tables.
 pub(crate) trait Placement {
-    /// The number of slots of the first table.
+    /// Slot count of the first table.
     const LEAST: usize;
-    /// The slot at which the search for a tag starts, modulo the number of slots.
+    /// Returns the slot where the search for a tag starts, modulo the slot count.
     fn start(tag: u32) -> usize;
 }
 
@@ -374,11 +373,11 @@ pub(crate) fn slots_for<P: Placement>(len: usize, old: usize) -> usize {
 }
 
 /// The slots of a grow-only open-addressed table that threads share. See `place_of` for the slot format. The table is
-/// split into shards. Reads are lock-free: when a shard's slots fill up, a bigger array replaces them, and the old array
-/// stays allocated for threads that are still reading it. Shards grow independently, so a resize moves only one shard,
-/// and that's the most an insert may have to wait for.
+/// split into shards. Reads are lock-free. When a shard's slots fill up, a bigger array replaces them, and the old
+/// array stays allocated for threads that are still reading it. Shards grow independently, so a resize moves only one
+/// shard, and that's the most an insert may have to wait for.
 pub(crate) struct Places<P, A: Allocator + Clone, S: Series<AtomicU64, A>> {
-    /// Their number is a power of two.
+    /// Each shard's slot count is a power of two.
     slots: Newest<AtomicU64, A, S>,
     placement: PhantomData<P>,
 }
@@ -391,8 +390,8 @@ impl<P: Placement, A: Allocator + Clone, S: Series<AtomicU64, A>> Places<P, A, S
         }
     }
 
-    /// The index of the entry that `is_it` accepts among those of `shard` with the hash `spread`. `order`: `Acquire` if
-    /// another thread may be inserting.
+    /// Returns the index of the entry that `is_it` accepts among those in `shard` with hash `spread`. `order` must be
+    /// `Acquire` if another thread may be inserting.
     #[inline]
     pub(crate) fn find(
         &self,
@@ -485,14 +484,14 @@ impl<A: Allocator + Clone, const N: usize> GrowingPlaces<A, N> {
         (self.places).find(shard_among(spread, N), spread, Ordering::Acquire, is_it)
     }
 
-    /// Calls `read` with every shard locked, so no thread can insert while it runs. This can't deadlock: the locks are
-    /// acquired in shard order, and no other code waits for a second shard lock while holding one.
+    /// Calls `read` with every shard locked, so no thread can insert while it runs. This can't deadlock, because the
+    /// locks are acquired in shard order, and no other code waits for a second shard lock while holding one.
     pub(crate) fn while_none_grows<R>(&self, read: impl FnOnce() -> R) -> R {
         let _held: Vec<_> = self.lens.iter().map(Guarded::lock).collect();
         read()
     }
 
-    /// The entry that `is_it` accepts, or else the one that `make` adds.
+    /// Returns the entry that `is_it` accepts. If there isn't one, adds the entry that `make` creates and returns it.
     pub(crate) fn find_or_add(
         &self,
         spread: u64,
@@ -565,7 +564,7 @@ impl Window {
     }
 }
 
-/// A key of a table that has a `WindowedPlaces`.
+/// A key for a table backed by a `WindowedPlaces`.
 pub trait Windowed: std::hash::Hash {
     fn window(&self) -> Window;
 }
@@ -576,7 +575,7 @@ pub(crate) fn spread_in_window<T: Windowed + ?Sized>(value: &T) -> u64 {
     spread_of(value.window(), fx_hash(value))
 }
 
-/// `spread_in_window` of a key that has `window` and the `fx_hash` `hash`.
+/// Returns `spread_in_window` for a key whose window is `window` and whose `fx_hash` is `hash`.
 #[inline]
 pub(crate) fn spread_of(window: Window, hash: u64) -> u64 {
     (u64::from(window.0) << 32) | (spread(hash) & u64::from(u32::MAX))
@@ -585,7 +584,8 @@ pub(crate) fn spread_of(window: Window, hash: u64) -> u64 {
 pub(crate) struct InWindow;
 
 impl Placement for InWindow {
-    /// A table that grows stays allocated beside the bigger one, so a smaller start takes more memory, not less.
+    /// When a table grows, the old one stays allocated next to the bigger one, so starting smaller uses more memory,
+    /// not less.
     const LEAST: usize = 32;
     #[inline]
     fn start(tag: u32) -> usize {
@@ -593,7 +593,7 @@ impl Placement for InWindow {
     }
 }
 
-/// Number of locks of a `WindowedPlaces`.
+/// Number of locks in a `WindowedPlaces`.
 const WINDOW_LOCKS: usize = 64;
 
 /// A `GrowingPlaces` with a shard for each `Window`.
@@ -617,14 +617,14 @@ impl<A: Allocator + Clone> WindowedPlaces<A> {
         (self.places).find((spread >> 32) as usize, spread, Ordering::Acquire, is_it)
     }
 
-    /// `find` while no thread inserts. Something must have ordered the earlier inserts before this
-    /// call. Plain loads.
+    /// `find` for when no thread is inserting. It uses relaxed loads, so something must have ordered
+    /// the earlier inserts before this call.
     #[inline]
     pub(crate) fn find_frozen(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
         (self.places).find((spread >> 32) as usize, spread, Ordering::Relaxed, is_it)
     }
 
-    /// The entry that `is_it` accepts, or else the one that `make` adds.
+    /// Returns the entry that `is_it` accepts. If there isn't one, adds the entry that `make` creates and returns it.
     pub(crate) fn find_or_add(
         &self,
         spread: u64,
@@ -654,7 +654,7 @@ impl<A: Allocator + Clone> WindowedPlaces<A> {
             }
             _ => self.places.add(window, before as usize, spread, index),
         }
-        // Only the holder of the lock writes it.
+        // Only the lock holder writes it.
         len.store(before + 1, Ordering::Relaxed);
         index
     }
@@ -679,8 +679,8 @@ pub(crate) const SHARDS: usize = MAP_SHARDS;
 /// is small.
 const LISTS: usize = 8;
 
-/// A concurrent memo table. Two threads may compute the same entry; they compute the same value. A
-/// lookup is lock-free and doesn't write to shared memory. An insert locks one of the `N` shards.
+/// A concurrent memo table. Two threads may compute the same entry, but they compute the same value.
+/// A lookup is lock-free and doesn't write to shared memory. An insert locks one of the `N` shards.
 pub struct ShardedMap<K, V, A: Allocator + Clone = Global, const N: usize = MAP_SHARDS> {
     /// Maps a hash to an entry's index in its list.
     places: Box<GrowingPlaces<A, N>, A>,
@@ -714,7 +714,7 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
         self.entries.iter().map(|list| list.len() as usize).sum()
     }
 
-    /// Stored values never move.
+    /// Returns the value of `key`. Stored values never move.
     #[inline]
     pub fn get_ref<Q>(&self, key: &Q) -> Option<&V>
     where
@@ -728,7 +728,7 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
             .map(|i| &list.get(i).1)
     }
 
-    /// Does not overwrite an existing value. Returns the stored value.
+    /// Inserts `value` unless `key` already has a value. Returns the stored value.
     pub fn insert_ref(&self, key: K, value: V) -> &V {
         let spread = spread_hash(&key);
         let list = self.list(spread);
@@ -747,7 +747,7 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
     }
 }
 
-/// A `ShardedMap` with a `WindowedPlaces`. Every `spread` is `spread_in_window(key)`.
+/// A `ShardedMap` backed by a `WindowedPlaces`. Every `spread` argument is `spread_in_window(key)`.
 pub(crate) struct WindowedMap<K, V, A: Allocator + Clone = Global> {
     /// Maps a hash to an entry's index in its list.
     places: Box<WindowedPlaces<A>, A>,
@@ -763,7 +763,7 @@ impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
         }
     }
 
-    /// Selects the list by the tag. Keys that are inserted around the same time have the same window.
+    /// Selects the list by the tag, because keys inserted around the same time have the same window.
     #[inline]
     fn list(&self, spread: u64) -> &AppendVec<(K, V), A> {
         &self.entries[shard_among(spread << 32, LISTS)]
@@ -773,7 +773,7 @@ impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
         self.entries.iter().map(|list| list.len() as usize).sum()
     }
 
-    /// `get_by_now` while no thread inserts: see `WindowedPlaces::find_frozen`.
+    /// `get_by_now` for when no thread is inserting. See `WindowedPlaces::find_frozen`.
     #[inline]
     pub(crate) fn get_frozen(&self, spread: u64, key: &K) -> Option<&V> {
         let list = self.list(spread);

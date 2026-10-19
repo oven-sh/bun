@@ -942,8 +942,8 @@ impl<'p, 's> Checker<'p, 's> {
         } = builder;
         let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
         let is_partial = flags.intersects(PropFlags::READ_PARTIAL | PropFlags::WRITE_PARTIAL);
-        // "No property was found, or, in a union, a property has a private or protected declaration in one constituent, but is missing
-        // or has a different declaration in another constituent."
+        // "No property was found, or, in a union, a property has a private or protected declaration in one constituent,
+        // but is missing or has a different declaration in another constituent."
         if prop_set.is_empty()
             || (prop_set.len() > 1 || is_partial)
                 && flags.intersects(access)

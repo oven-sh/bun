@@ -1,12 +1,11 @@
 //! Elaboration of a failed type relation: the lines under "Type 'A' is not assignable to type 'B'."
 //!
-//! The relation is in `relate.rs`, where `REPORT` is the `reportErrors` of `relater.go`. This file
-//! holds the error-only code: the entry points (`checkTypeRelatedToEx`), the error chain
+//! The relation itself is in `relate.rs`, where `REPORT` is `relater.go`'s `reportErrors`. This
+//! file has the error-only code: the entry points (`checkTypeRelatedToEx`), the error chain
 //! (`reportError`), and the reporting functions (`reportErrorResults`, `reportRelationError`,
 //! `reportUnmatchedProperty`). A pair that fails the non-reporting run is compared again with
-//! reporting. The result of that run is the error: its code, its node, its text
-//! (`relation_diagnostic`). That run can succeed, and then there is no error. None of its results
-//! enter the relation cache.
+//! reporting on. That second run produces the error's code, node and text (`relation_diagnostic`).
+//! If it succeeds, no error is reported. None of its results are written to the relation cache.
 
 use super::explain::Line;
 use super::explain::NOWHERE;
@@ -22,7 +21,7 @@ pub(super) struct ErrorChain {
     args: Box<[Box<[u8]>]>,
 }
 
-/// The most recently reported line comes first: it is the outermost.
+/// The most recently reported line comes first because it's the outermost.
 pub(super) type Chain = Option<Rc<ErrorChain>>;
 
 /// `errorState`
@@ -48,7 +47,7 @@ impl Relater {
         self.related_info.truncate(saved.related);
     }
 
-    /// `errorChain` without its first `count` lines.
+    /// Returns `errorChain` without its first `count` lines.
     fn chain_after(&self, count: usize) -> Chain {
         let mut at = self.error_chain.clone();
         for _ in 0..count {
@@ -139,8 +138,9 @@ pub(super) fn chain_depth(chain: &Chain) -> usize {
     depth
 }
 
-/// `createDiagnosticChainFromErrorChain`: the first line at `level`, each following line one level
-/// deeper. The return type markers are `ElidedInCompatibilityPyramid`.
+/// `createDiagnosticChainFromErrorChain`. The first line is at `level` and each following line is
+/// one level deeper. The return type markers are skipped because they're
+/// `ElidedInCompatibilityPyramid`.
 fn lines_of(chain: &Chain, level: u32) -> Vec<Line> {
     let mut lines = Vec::new();
     let mut at = chain.as_ref();
@@ -208,7 +208,7 @@ pub(super) fn visibility_to_string(flags: Flags) -> &'static [u8] {
 /// `createDiagnosticChainFromErrorChain(r.errorChain, r.errorNode, r.relatedInfo)`
 pub(super) struct RelationDiagnostic {
     pub(super) at: Place,
-    /// The first, at level 0, is the message.
+    /// The first line, at level 0, is the main message.
     pub(super) lines: Vec<Line>,
     pub(super) related: Vec<Reported>,
 }
@@ -274,10 +274,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.check_type_related_to_ex(source, target, relation, error_node, head_message, None)
     }
 
-    /// `checkTypeRelatedToEx`: at most one diagnostic, to `diagnostic_output` or else to the sink.
-    /// A non-reporting run comes first, because most pairs are related. tsgo has no such run, so it
-    /// caches no failure. Without an `error_node` it is the only run, as in tsgo. An undetermined
-    /// result counts as related, and nothing is reported.
+    /// `checkTypeRelatedToEx`. Reports at most one diagnostic, to `diagnostic_output` if given,
+    /// otherwise to the sink. Most pairs are related, so a non-reporting run comes first. tsgo has
+    /// no such run, so this one doesn't cache failures. Without an `error_node` it's the only run,
+    /// as in tsgo. An undetermined result counts as related and reports nothing.
     pub(super) fn check_type_related_to_ex(
         &mut self,
         source: TypeId,
@@ -288,8 +288,8 @@ impl<'p, 's> Checker<'p, 's> {
         diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let is_outermost = self.begin_comparison(error_node);
-        // `isRelatedToEx` calls `getNormalizedType` before any rule that `isTypeRelatedTo` begins
-        // with, and `getReducedType` asks for the types of properties.
+        // `isRelatedToEx` calls `getNormalizedType` before any of the rules `isTypeRelatedTo`
+        // starts with, and `getReducedType` resolves property types.
         if source != target {
             self.reduced(source);
             self.reduced(target);
@@ -321,8 +321,8 @@ impl<'p, 's> Checker<'p, 's> {
         is_related
     }
 
-    /// `isTypeRelatedTo`. `Err(2859)`: the comparison overflowed (`r.overflow`).
-    /// `is_trial`: tsgo has no comparison at this point, see `Relater::caches_failures`.
+    /// `isTypeRelatedTo`. Returns `Err(2859)` if the comparison overflowed (`r.overflow`).
+    /// `is_trial` means tsgo doesn't compare at this point, see `Relater::caches_failures`.
     pub(super) fn try_is_type_related_to(
         &mut self,
         source: TypeId,
@@ -355,8 +355,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The run of `checkTypeRelatedToEx` with `reportErrors`: whether the two are related, and the
-    /// diagnostic if they are not. `head`: the code of `headMessage`.
+    /// The `reportErrors` run of `checkTypeRelatedToEx`. Returns whether the two types are related,
+    /// and the diagnostic if they aren't. `head` is `headMessage`'s code.
     pub(super) fn relation_diagnostic(
         &mut self,
         source: TypeId,
@@ -369,19 +369,19 @@ impl<'p, 's> Checker<'p, 's> {
         r.error_node = error_node;
         r.set_relation_count(self.initial_relation_count(relation));
         let is_outermost = self.begin_comparison(Some(error_node).filter(|at| at.2 != 0));
-        // These two are never a `headMessage`: they are the defaults `reportRelationError` reports
-        // without one.
+        // These two are never a `headMessage`. They're the defaults `reportRelationError` uses when
+        // there isn't one.
         let head = head.filter(|&code| code != 2322 && code != 2678);
-        // State left behind by nested comparisons is for the caller of a query, and there is none
-        // here.
+        // Nested comparisons leave this state for a query's caller. There's no such caller here, so
+        // it's restored below.
         let too_complex = self.relation_too_complex;
         let reliability = self.reliability;
         r.head_message = head;
         let mut result =
             self.is_related_to_ex::<true>(&mut r, source, target, REC_BOTH, STATE_NONE);
-        // typescript-go has this run alone, and the overflow is what it reports. The run without
-        // `reportErrors` before this one can end sooner: `relateVariances` goes on to a structural
-        // comparison, for its elaboration, only with `reportErrors`.
+        // typescript-go only has this run, so an overflow here is what it reports. The earlier run
+        // without `reportErrors` can finish sooner, because `relateVariances` only continues to a
+        // structural comparison (for its elaboration) with `reportErrors`.
         let mut overflow = None;
         if r.overflow {
             result = Ternary::FALSE;
@@ -426,7 +426,7 @@ impl<'p, 's> Checker<'p, 's> {
         (result.holds(), diagnostic)
     }
 
-    /// The message `reportErrorResults` reports for the pair itself, without elaboration.
+    /// Returns the message `reportErrorResults` reports for the pair itself, without elaboration.
     pub(super) fn relation_error_without_reasons(
         &mut self,
         source: TypeId,
@@ -459,9 +459,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.report_error_results(r, original_source, original_target, source, target, head);
     }
 
-    /// All the lines of the error `checkTypeRelatedToEx(source, target, relation, node, head)`
-    /// reports, the first at `level`, and its `relatedInfo`. `head`: the code of `headMessage`.
-    /// Nothing if the two are related, or if the comparison overflows.
+    /// Returns every line of the error that
+    /// `checkTypeRelatedToEx(source, target, relation, node, head)` reports, the first at `level`,
+    /// plus its `relatedInfo`. `head` is `headMessage`'s code. Returns nothing if the two are
+    /// related or the comparison overflows.
     pub(super) fn relation_lines_with_related(
         &mut self,
         source: TypeId,
@@ -470,7 +471,7 @@ impl<'p, 's> Checker<'p, 's> {
         head: Option<u32>,
         level: u32,
     ) -> (Vec<Line>, Vec<Reported>) {
-        // No node: only the lines are requested.
+        // There's no node because the caller only wants the lines.
         let nowhere = (self.task.file.unwrap_or(FileId(0)), 0, 0);
         match self.relation_diagnostic(source, target, relation, nowhere, head) {
             (_, Some(mut diagnostic)) => {
@@ -487,20 +488,20 @@ impl<'p, 's> Checker<'p, 's> {
 // ───────────────────────────── names ─────────────────────────────
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `getParameterNameAtPosition` for a caller that has the parameters of a signature and not the
-    /// signature. The name of a rest parameter stands in for its declaration.
+    /// `getParameterNameAtPosition` for callers that have a signature's parameters but not the
+    /// signature. A rest parameter's name is used in place of its declaration.
     pub(super) fn parameter_name_at_position(&self, params: &[SigParam], pos: usize) -> Atom {
         self.parameter_name_at(None, params, pos)
     }
 
-    /// `getParameterNameAtPosition`. `params`: the parameters of `sig`.
+    /// `getParameterNameAtPosition`. `params` are `sig`'s parameters.
     pub(super) fn labeled_parameter_name_at_position(
         &self,
         mut sig: SigId,
         params: &[SigParam],
         pos: usize,
     ) -> Atom {
-        // The function whose parameters are the `ValueDeclaration` of the parameter symbols.
+        // Find the function whose parameters are the parameter symbols' `ValueDeclaration`s.
         let declaration = loop {
             sig = match *self.types().sig(sig) {
                 SigData::Decl { file, func, .. } | SigData::Construct { file, func, .. } => {
@@ -516,7 +517,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.parameter_name_at(declaration, params, pos)
     }
 
-    /// `declaration`: the function that declares `params`, if the caller has it.
+    /// `declaration` is the function that declares `params`, if the caller has it.
     fn parameter_name_at(
         &self,
         declaration: Option<(FileId, FnId)>,
@@ -571,7 +572,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getTupleElementLabelFromBindingElement`. `pat`: `node.Name()`.
+    /// `getTupleElementLabelFromBindingElement`. `pat` is `node.Name()`.
     pub(super) fn tuple_element_label_from_binding_element(
         &self,
         file: FileId,
@@ -657,7 +658,7 @@ impl<'p, 's> Checker<'p, 's> {
         text
     }
 
-    /// `valueToString` of the value of an enum member.
+    /// `valueToString` of an enum member's value.
     pub(super) fn enum_value_text(&self, value: EnumValue) -> Vec<u8> {
         match value {
             EnumValue::String(text) => {
@@ -668,7 +669,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getPropertiesOfType`: for a union, the properties that all its members have.
+    /// `getPropertiesOfType`. For a union, returns the properties every member has.
     pub(super) fn properties_of_type(&mut self, ty: TypeId) -> &'p [Prop<'p>] {
         let ty = self.reduced_apparent_type_as_object(ty);
         match self.members(ty) {
@@ -720,7 +721,8 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.equivalent_base_types.get(&self.task, &ty) {
             return known;
         }
-        // `ObjectFlagsIdenticalBaseTypeCalculated` is set before the base types are requested, so a recursive query gets nil.
+        // `ObjectFlagsIdenticalBaseTypeCalculated` is set before the base types are requested, so a
+        // recursive query gets nil.
         let mut in_progress = self.identical_base_types_in_progress.iter();
         if let Some(&(_, height)) = in_progress.find(|it| it.0 == ty) {
             self.close_cycle_above(height);
@@ -733,7 +735,8 @@ impl<'p, 's> Checker<'p, 's> {
             match decl {
                 Decl::Class(c) => {
                     let class = &hir[c];
-                    // `getMembersOfSymbol`: type parameters, the constructor, whatever is not static.
+                    // `getMembersOfSymbol`: type parameters, the constructor, and every non-static
+                    // member.
                     has_members |= !class.type_params.is_empty()
                         || class.members.iter().any(|m| {
                             !hir[m].flags.contains(Flags::STATIC)
@@ -766,11 +769,14 @@ impl<'p, 's> Checker<'p, 's> {
             self.identical_base_types_in_progress
                 .push((ty, self.stack.len()));
             let was_resolving = self.is_resolving(Query::Bases(target));
-            // With one checker they are resolved by now, and this is that resolution over again. Whether it began here, with the flag
-            // set, only the task of the declaring file knows, which reports 2310 if not. `checkClassLikeDeclaration` begins here: it
-            // checks the type arguments of the heritage clause first. So this is taken for a recursive query.
+            // A single checker would have resolved the base types already, so this task is
+            // repeating that resolution. Only the declaring file's task knows whether the original
+            // resolution started here with the flag set, and it reports 2310 if it didn't.
+            // `checkClassLikeDeclaration` does start here, because it checks the heritage clause's
+            // type arguments first, so treat this as a recursive query.
             let is_repeated = was_resolving && self.are_base_types_resolved_by_check(target);
-            // That file's task may not have got there yet. Then it would find what this task stores, and never report 2310.
+            // That file's task may not have reached this point yet. It would then read what this
+            // task stores and never report 2310.
             if is_repeated
                 && let Some(from) = self.stack.iter().position(|&q| q == Query::Bases(target))
             {
@@ -800,8 +806,9 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => None,
             };
             self.identical_base_types_in_progress.pop();
-            // Where `pushTypeResolution` fails, `getBaseTypes` returns `resolvedBaseTypes` as it is, and what follows from that stays.
-            // Otherwise `base` is final only if it was computed from the cached base types.
+            // When `pushTypeResolution` fails, `getBaseTypes` returns `resolvedBaseTypes` as is,
+            // and results derived from it are final. Otherwise `base` is final only if it was
+            // computed from the cached base types.
             let cached = self.p.base_types.get_ref(&self.task, &target);
             let is_final =
                 has_members || found_cycle || cached.map(|it| &it[..]) == Some(&bases[..]);
@@ -872,8 +879,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `error_node` as the location that `getJsxNamespaceAt` resolves a name from: the opening of
-    /// the innermost JSX element around it. `Node::FILE`: there is none.
+    /// Returns the location `getJsxNamespaceAt` resolves names from for `error_node`: the opening
+    /// of the innermost enclosing JSX element, or `Node::FILE` if there is none.
     fn jsx_element_around(&mut self, error_node: Place) -> Node {
         let (file, start, end) = error_node;
         if end == 0 {
@@ -888,8 +895,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `hasNonCircularBaseConstraint` of the `syntheticParam` of `reportErrorResults`: a clone of
-    /// the type parameter `source`, declared as `declared`, whose constraint is `target` with
+    /// `hasNonCircularBaseConstraint` of `reportErrorResults`'s `syntheticParam`. That's a clone of
+    /// the type parameter `source` (declared at `declared`) whose constraint is `target` with
     /// `source` replaced by the clone.
     fn copy_may_extend(
         &mut self,
@@ -897,15 +904,15 @@ impl<'p, 's> Checker<'p, 's> {
         declared: (FileId, TypeParamId),
         target: TypeId,
     ) -> bool {
-        // `cloneTypeParameter`. Results computed for a clone are cached, so each target has its own
-        // clone.
+        // `cloneTypeParameter`. Results computed for a clone are cached, so each target gets its
+        // own clone.
         let around = self.mapper_from(&[source], &[target]);
         let copy = self.cloned_type_param(declared.0, declared.1, around);
         let to_copy = self.mapper_from(&[source], &[copy]);
-        // A cycle through the clone says nothing about the enclosing resolutions in progress.
+        // A cycle through the clone tells us nothing about the enclosing in-progress resolutions.
         let cycles = (self.cycles, self.cycle_at);
-        // `getIntersectionTypeEx` requests the constraint of the clone in `T & {}`, which has none
-        // yet. That result is cached, in tsgo as here.
+        // `getIntersectionTypeEx` requests the clone's constraint for `T & {}` before the clone has
+        // one. tsgo caches that result, and so do we.
         let scope = self.begin_scope();
         let constraint = self.instantiate(target, to_copy);
         if let Ok(stored) = self.end_scope_as(scope, false) {
@@ -919,8 +926,8 @@ impl<'p, 's> Checker<'p, 's> {
         may_extend
     }
 
-    /// `getErrorRangeForNode` of `symbol.Declarations[0]` of the type parameter `tp` of `file`: the
-    /// whole declaration, starting at `const`, `in` or `out`.
+    /// `getErrorRangeForNode` of `symbol.Declarations[0]` for `file`'s type parameter `tp`. That's
+    /// the whole declaration, including a leading `const`, `in` or `out`.
     pub(super) fn place_of_type_parameter_declaration(
         &self,
         file: FileId,
@@ -959,8 +966,8 @@ impl<'p, 's> Checker<'p, 's> {
         (file, start as u32, self.end_of_type_param(file, tp))
     }
 
-    /// The property that makes the intersection `ty` uninhabited, and which of 18031 and 18032
-    /// reports it.
+    /// Returns the property that makes the intersection `ty` uninhabited, and the code that reports
+    /// it (18031 or 18032).
     pub(super) fn why_never_intersection(&mut self, ty: TypeId) -> Option<(u32, &'p Prop<'p>)> {
         let members = self.members(ty)?;
         // `isDiscriminantWithNeverType`
@@ -971,10 +978,10 @@ impl<'p, 's> Checker<'p, 's> {
             if prop.flags.contains(PropFlags::OPTIONAL) {
                 continue;
             }
-            // `CheckFlagsNonUniformAndLiteral` without `CheckFlagsHasNeverType`, which
-            // `createUnionOrIntersectionProperty` sets from the types of the constituents'
-            // properties, is tested before `getTypeOfSymbol(prop)`. FOR SPEED too: few properties
-            // that two members share get that far, and the type of each is a new intersection.
+            // tsc tests for `CheckFlagsNonUniformAndLiteral` without `CheckFlagsHasNeverType`
+            // before it calls `getTypeOfSymbol(prop)`. `createUnionOrIntersectionProperty` sets
+            // those flags from the constituents' property types. Also FOR SPEED: few properties
+            // shared by two members get that far, and each one's type is a new intersection.
             let mut list: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
             for part in parts.iter() {
                 list.push(self.type_of_prop(part, MapperId::IDENTITY));
@@ -1047,7 +1054,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let [source_name, generalized_source_name, target_name] =
             [&source_type, &generalized_source_type, &target_type].map(|name| Arg::Bytes(name));
-        // For `T[K]`, unless the source is an indexed access too, `T` is the type tested.
+        // For `T[K]`, test `T` instead, unless the source is an indexed access too.
         let is_type_parameter = match (self.data(target), self.data(source)) {
             (TypeData::IndexedAccess { obj, .. }, s)
                 if !matches!(s, TypeData::IndexedAccess { .. }) =>
@@ -1069,7 +1076,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.report_error(r, 5075, &[source_name, target_name, Arg::Type(constraint)]);
                 }
                 _ => {
-                    // Only this is reported.
+                    // This replaces everything reported so far.
                     r.error_chain = None;
                     self.report_error(r, 5082, &[target_name, generalized_source_name]);
                 }
@@ -1152,7 +1159,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The part of `hasExcessProperties` for an `errorNode` in a JSX opening element: 2551 or 2339.
+    /// The part of `hasExcessProperties` that handles an `errorNode` in a JSX opening element.
+    /// Reports 2551 or 2339.
     pub(super) fn report_unknown_jsx_attribute(
         &mut self,
         r: &mut Relater,
@@ -1185,7 +1193,7 @@ impl<'p, 's> Checker<'p, 's> {
 // ───────────────────────────── properties ─────────────────────────────
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `reportUnmatchedProperty`. `unmatched`: `getUnmatchedProperties`, of which there is at least one.
+    /// `reportUnmatchedProperty`. `unmatched` is the non-empty result of `getUnmatchedProperties`.
     pub(super) fn report_unmatched_property(
         &mut self,
         r: &mut Relater,

@@ -6,7 +6,7 @@ use bun_threading::Guarded;
 use std::io::Write;
 use std::sync::Arc;
 
-/// Every file under `dir` that the front end reads, including those in `node_modules`.
+/// Collects every file under `dir` that the front end reads, including those in `node_modules`.
 fn collect_sources(disk: &dyn Host, dir: &str, out: &mut Vec<String>) {
     const EXTENSIONS: [&[u8]; 8] = [
         b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs",
@@ -23,7 +23,7 @@ fn variable(name: &bun_core::ZStr) -> Option<String> {
     bun_core::getenv_z(name).map(text)
 }
 
-/// `--timing`: the ten tables whose shared parts use the most memory.
+/// `--timing`: prints the ten tables whose shared parts use the most memory.
 fn list_largest_tables(program: &bun_sema::check::Program) {
     let mut tables = program.table_footprints();
     tables.sort_by_key(|table| std::cmp::Reverse(table.1.touched));
@@ -37,7 +37,7 @@ fn list_largest_tables(program: &bun_sema::check::Program) {
     }
 }
 
-/// `BUN_SEMA_LIST=<file>`: the paths of all loaded files, one per line.
+/// `BUN_SEMA_LIST=<file>`: writes the paths of all loaded files there, one per line.
 fn list_loaded(program: &bun_sema::check::Program) {
     if let Some(to) = variable(bun_core::zstr!("BUN_SEMA_LIST")) {
         let paths: Vec<&[u8]> = program
@@ -63,8 +63,8 @@ fn main() {
 
 fn run(args: &[String]) {
     match args.first().map(String::as_str) {
-        // hir <files or directories> --print: the HIR the front end produces for each file. For
-        // detecting whether a change to the front end changes any HIR.
+        // hir <files or directories> --print: prints the HIR the front end produces for each file.
+        // Use it to detect whether a front end change alters any HIR.
         Some("hir") => {
             let mut files: Vec<String> = Vec::new();
             let disk = bun_sema_driver::host::Disk::with_already_read(1, Default::default(), b"/");
@@ -83,8 +83,8 @@ fn run(args: &[String]) {
             files.sort();
             let session = bun_sema::session::Session::new();
             let atoms = Interner::new_in(&session);
-            // --repeat=n [--threads=n]: all files are read first, then parsed n times, to measure
-            // parsing alone.
+            // --repeat=n [--threads=n]: reads all files first, then parses them n times, to measure
+            // only parsing.
             if let Some(repeat) = flag("--repeat=").and_then(|n| n.parse::<u64>().ok()) {
                 let threads = flag("--threads=").and_then(|n| n.parse().ok());
                 let read = |file: &String| read_file(file).unwrap_or_default();
@@ -113,12 +113,12 @@ fn run(args: &[String]) {
                 };
                 let path = &files[i];
                 let file = bun_sema_standalone::parse(session.arena(), path, &text, &atoms, false);
-                // Only parses and lowers: the cost is measured with `/usr/bin/time -l`.
+                // --quiet only parses and lowers, so the cost can be measured with `/usr/bin/time -l`.
                 if args.iter().any(|a| a == "--quiet") {
                     return;
                 }
                 if args.iter().any(|a| a == "--nodes") {
-                    // As the checker sees it: some kinds are determined by the spelling of a name.
+                    // The checker's files have their text, and some kinds depend on how a name is spelled.
                     let mut file = file;
                     file.text = text.into();
                     let nodes = bun_sema_standalone::hir_dump::nodes(&file);
@@ -128,7 +128,6 @@ fn run(args: &[String]) {
                 let (dump, orphans) =
                     bun_sema_standalone::hir_dump::dump_and_orphans(&file, &atoms);
                 let line = if args.iter().any(|a| a == "--orphans") {
-                    // The unreachable nodes.
                     if orphans.is_empty() {
                         return;
                     }
@@ -160,23 +159,23 @@ fn run(args: &[String]) {
             let arguments: Vec<&[u8]> = args[1..].iter().map(|arg| arg.as_bytes()).collect();
             let command_line = bun_sema_driver::parse_command_line(&arguments, cwd.as_bytes());
             for rejected in &command_line.rejected {
-                // A flag that is no compiler option is one of the tool's own, looked for below.
+                // A flag that isn't a compiler option is one of this tool's own flags, handled below.
                 if !matches!(rejected.error, bun_sema_driver::FlagError::Unknown) {
                     let flag = text(&rejected.flag);
                     error_line!("{flag} is left out: it has no value that it accepts");
                 }
             }
             let lib_dir = variable(bun_core::zstr!("BUN_SEMA_TS_LIB"));
-            // `--progress`: as `bun check` displays it on a terminal.
+            // `--progress`: shows progress the way `bun check` does on a terminal.
             let shows_progress = args.iter().any(|a| a == "--progress");
             let is_timed = args.iter().any(|a| a == "--timing");
             let progress = (shows_progress || is_timed)
                 .then(|| std::sync::Arc::new(bun_sema_driver::Progress::default()));
-            // `--timing`: the instruction count of loading, so that checking can be measured
+            // `--timing`: records the instruction count of loading, so that checking can be measured
             // separately. Loading opens every file, and the operating system's work for that varies
             // between runs.
             let instructions_of_loading = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-            // The HIRs of all files are live at that point.
+            // Every file's HIR is live when loading ends.
             let peak_memory_of_loading = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             if let (true, Some(progress)) = (is_timed, progress.clone()) {
                 let noted = Arc::clone(&instructions_of_loading);
@@ -211,7 +210,8 @@ fn run(args: &[String]) {
                     }
                 });
             }
-            // `--error-types`: the nodes whose type is the error type, in files without errors. Path, line, column, kind of node.
+            // `--error-types`: lists the nodes whose type is the error type, in files without errors, as path, line,
+            // column and node kind.
             let error_types: Guarded<Vec<(String, usize, usize, String)>> =
                 Guarded::new(Vec::new());
             let note_error_types =
@@ -235,8 +235,8 @@ fn run(args: &[String]) {
                     dyn Fn(&mut bun_sema::check::Checker<'_, '_>, bun_sema::program::FileId) + Sync
                 );
             let after_file = has("--error-types").then_some(&note_error_types as AfterFile<'_>);
-            // `--declarations-out=<directory>`: the declaration files of a `tsc -b` run, each at
-            // its absolute path inside that directory.
+            // `--declarations-out=<directory>`: writes the declaration files of a `tsc -b` run, each
+            // at its absolute path inside that directory.
             let declarations_out =
                 (args.iter()).find_map(|a| a.strip_prefix("--declarations-out="));
             let write_declaration_file = |path: &[u8], text: &[u8]| {
@@ -304,7 +304,7 @@ fn run(args: &[String]) {
                     .is_some()
                     .then_some(&write_declaration_file as &(dyn Fn(&[u8], &[u8]) + Sync)),
             };
-            // A binary without the flag ignores it silently. A script that tests start orders looks for this line.
+            // A binary without the flag silently ignores it, so a script that tests start orders looks for this line.
             if request.order != 1 {
                 error_line!("order {}", request.order);
             }
@@ -321,8 +321,7 @@ fn run(args: &[String]) {
                 );
             }
             if number("--repeat=", 0) > 0 {
-                // Memory that the allocator caches for future allocations is not memory retained by
-                // the checks.
+                // Memory that the allocator caches for future allocations isn't retained by the checks.
                 bun_alloc::mimalloc::mi_collect(true);
                 error_line!(
                     "after the allocator gave back what is free: {} MB held",
@@ -379,7 +378,7 @@ fn run(args: &[String]) {
                         report.check_time.as_secs_f64(),
                         bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64
                     );
-                    // Discover, link and merge are the wall time of one thread. The others are summed over all threads.
+                    // Discover, link and merge are one thread's wall time. The others are summed over all threads.
                     let phases = bun_sema::resolve::Phase::ALL.iter().zip(report.load_phases);
                     let phases: Vec<String> = phases
                         .map(|(phase, time)| format!("{phase:?} {:.3}", time.as_secs_f64()))
@@ -444,10 +443,10 @@ fn run(args: &[String]) {
             std::process::exit(i32::from(!report.is_ok()));
         }
         // each --out=<directory> [--jobs=<n>] [--limit=<seconds>]: for thousands of small programs,
-        // where launching a process costs more than checking. A line of standard input is a
+        // where launching a process costs more than checking. Each line of standard input is a
         // directory and the arguments to run there, separated by tabs. Line `n` runs in a fork of
-        // this process and writes `<n>.out` and `<n>.err`. `<n>.status` has its exit code, or the
-        // signal that ended it.
+        // this process and writes `<n>.out` and `<n>.err`. `<n>.status` gets its exit code, or the
+        // signal that killed it.
         #[cfg(unix)]
         Some("each") => {
             use bun_core::Fd;
@@ -458,7 +457,7 @@ fn run(args: &[String]) {
             let mut running: Vec<(libc::pid_t, usize)> = Vec::new();
             let wait_for_one = |running: &mut Vec<(libc::pid_t, usize)>| {
                 let mut status = 0;
-                // SAFETY: `status` is a valid place for the result.
+                // SAFETY: `status` is valid for the call to write the result to.
                 let pid = unsafe { libc::wait(&raw mut status) };
                 let Some(at) = running.iter().position(|it| it.0 == pid) else {
                     return;
@@ -471,7 +470,7 @@ fn run(args: &[String]) {
                 };
                 write_file_to_look_at(&format!("{out}/{number}.status"), status.as_bytes());
             };
-            // No thread has been started yet, so a fork has everything it needs.
+            // No thread has been started yet, so a fork is a complete copy of the process.
             for (number, line) in std::io::stdin().lines().map_while(Result::ok).enumerate() {
                 if running.len() == jobs {
                     wait_for_one(&mut running);
@@ -497,7 +496,7 @@ fn run(args: &[String]) {
                 if redirected.is_err() {
                     std::process::exit(127);
                 }
-                // SAFETY: no handler is installed, so the signal ends a program that hangs.
+                // SAFETY: no handler is installed, so the signal kills a program that hangs.
                 unsafe { libc::alarm(limit) };
                 let arguments: Vec<String> = fields.collect();
                 run(&arguments);

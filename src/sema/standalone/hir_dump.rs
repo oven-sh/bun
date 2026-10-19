@@ -1,8 +1,8 @@
-//! Dumps a `hir::File` as text, to compare the output of two front ends for the same source.
+//! Dumps a `hir::File` as text, to compare two front ends' output for the same source.
 //!
-//! The order in which the nodes were pushed into their vectors is an implementation detail, so no
-//! id is ever printed: the HIR is walked from `File::body`, a node is one line with all of its own
-//! data, and its children follow, indented, each after the name of its field.
+//! The order in which nodes were pushed into their vectors is an implementation detail, so ids are
+//! never printed. The dump walks the HIR from `File::body`. Each node is one line with all of its
+//! own data, followed by its children, indented and prefixed with their field names.
 //!
 //! ```text
 //! body[1]:
@@ -15,13 +15,13 @@
 use bun_sema::atom::{Atom, Intern, Interner};
 use bun_sema::hir::*;
 
-/// Nothing is printed below this depth: printing a cyclic HIR would otherwise never terminate.
+/// Printing stops below this depth. Otherwise a cyclic HIR would never finish printing.
 const MAX_DEPTH: usize = 2000;
 
-/// Placeholder for the node of an out-of-bounds id.
+/// Printed in place of a node whose id is out of bounds.
 const NO_SUCH_NODE: &str = "<no such node>";
 
-/// One line: `put!(self, depth, label, "format", arguments..)`.
+/// Prints one line: `put!(self, depth, label, "format", arguments..)`.
 macro_rules! put {
     ($self:ident, $depth:expr, $label:expr, $($format:tt)*) => {{
         let text = format!($($format)*);
@@ -29,8 +29,8 @@ macro_rules! put {
     }};
 }
 
-/// The node that `$id` refers to in `File::$arena`. If there is none to print, prints a line with
-/// the reason and returns from the function.
+/// Evaluates to the node that `$id` refers to in `File::$arena`. If there's no node to print, prints
+/// a line with the reason and returns from the enclosing function.
 macro_rules! node {
     ($self:ident, $depth:ident, $label:ident, $arena:ident, $id:ident) => {{
         if $id.is_none() {
@@ -53,15 +53,15 @@ struct Dump<'a, 's> {
     file: &'a File<'s>,
     atoms: &'a dyn Intern,
     out: String,
-    /// Every visited node: its vector and its index.
+    /// Every visited node, as its vector's name and its index.
     seen: bun_sema::util::FxHashSet<(&'static str, u32)>,
 }
 
-/// Also returns the unreachable nodes, which code that iterates over a whole vector still visits:
-/// `vector[index] pos=..`.
+/// Returns the dump and the unreachable nodes, each as `vector[index] pos=..`. Code that iterates
+/// over a whole vector still visits those.
 pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) {
-    // Every field is destructured by name, so that a new one must be handled. `error_pos` is only
-    // the position to report when a parser bailed out.
+    // Destructures every field by name so that a new field must be handled here. `error_pos` is
+    // only the position to report when a parser bailed out.
     let File {
         kind,
         has_module_syntax,
@@ -185,7 +185,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         "with_bodies[{}]: {with_bodies:?}",
         with_bodies.len()
     );
-    // Only in files with syntax errors.
+    // Non-empty only in files with syntax errors.
     if !after_skipped.is_empty() {
         put!(
             d,
@@ -278,7 +278,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         d.q(import_source)
     );
 
-    // Only in JavaScript.
+    // Non-empty only in JavaScript files.
     if !jsdoc_comments.is_empty() {
         put!(
             d,
@@ -333,7 +333,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         }
     }
 
-    // An expression is identified by its start and its kind.
+    // Identifies each expression by its start and kind.
     let mut around: Vec<(u32, &str, u32, u32)> = parens
         .iter()
         .map(|&(expr, open, end)| match file.exprs.get(expr.idx()) {
@@ -415,7 +415,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         members MemberId, props PropId, var_decls VarDeclId, cases CaseId, enum_members EnumMemberId, import_specs ImportSpecId,
         export_specs ExportSpecId, tuple_elems TupleElemId, fns FnId, classes ClassId
     );
-    // The two entries that are not nodes: node.rs.
+    // `stmts` and `pats` each have entries that aren't tsgo nodes (see node.rs).
     for (i, statement) in file.stmts.iter().enumerate() {
         let seen = d.seen.contains(&("stmts", i as u32));
         let has_parent = match statement.kind {
@@ -436,7 +436,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     (d.out, orphans)
 }
 
-/// `forEachChild` from the file down, one line per node: its depth, its `Kind`, its start.
+/// Walks the file with `forEachChild` and prints one line per node: depth, `Kind`, start.
 pub fn nodes(file: &File) -> String {
     let mut out = String::new();
     let mut open = vec![(Node::FILE, 0)];
@@ -469,7 +469,7 @@ impl Dump<'_, '_> {
         self.out.push('\n');
     }
 
-    /// A name in quotes, `-` for none.
+    /// Returns the name in quotes, or `-` if there is none.
     fn q(&self, atom: Atom) -> String {
         if atom.is_none() {
             return "-".to_owned();
@@ -492,7 +492,7 @@ impl Dump<'_, '_> {
         list.start as usize + list.len() <= self.file.ids.len()
     }
 
-    /// The parts of `A.B.C`, the texts of a template.
+    /// Formats a list of atoms, such as the parts of `A.B.C` or a template's texts.
     fn names(&self, list: IdList<Atom>) -> String {
         if !self.has_ids(list) {
             return NO_SUCH_NODE.to_owned();
@@ -508,7 +508,7 @@ impl Dump<'_, '_> {
         out
     }
 
-    /// `A.B.C`, with the position of each name.
+    /// Formats `A.B.C` with each name's position.
     fn entity_name(&self, names: Span<NameId>) -> String {
         if names.range().end > self.file.names.len() {
             return NO_SUCH_NODE.to_owned();
@@ -520,7 +520,7 @@ impl Dump<'_, '_> {
         format!("[{}]", names.join(", "))
     }
 
-    /// Prints `label[len]:`. Returns false if the elements of the list must not be printed.
+    /// Prints `label[len]:`. Returns false if the list is too deep for its elements to be printed.
     fn open_list(&mut self, depth: usize, label: &str, len: usize) -> bool {
         if depth > MAX_DEPTH {
             self.line(depth, label, "...");

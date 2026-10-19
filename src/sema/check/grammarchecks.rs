@@ -1,9 +1,9 @@
-//! grammarchecks.go of TypeScript 7.0.2, for signatures, members, object literals and variables.
-//! The walk (check_source_file.rs) and `checkObjectLiteral` call these where checker.go does. Each returns
-//! whether it reported, and the caller continues or stops as checker.go does.
+//! TypeScript 7.0.2's grammarchecks.go, for signatures, members, object literals and variables. The
+//! walk (check_source_file.rs) and `checkObjectLiteral` call these where checker.go does. Each
+//! returns whether it reported, and the caller continues or stops as checker.go does.
 //!
-//! Tokens are not nodes yet: the position of a `?`, `!`, `...`, `*` or `=` is found in the source
-//! text next to a node, once the token is known to exist.
+//! Tokens aren't nodes yet. Once a `?`, `!`, `...`, `*` or `=` is known to exist, its position is
+//! found in the source text next to a node.
 
 use super::errors_operators::language_version;
 use super::related::Place;
@@ -79,7 +79,8 @@ impl Checker<'_, '_> {
             && self.grammar_error_at((file, start, start + 1), code, &[])
     }
 
-    /// `checkGrammarForInvalidQuestionMark`, `checkGrammarForInvalidExclamationToken`: `node.PostfixToken()`, after the name at `name`.
+    /// `checkGrammarForInvalidQuestionMark` and `checkGrammarForInvalidExclamationToken` for
+    /// `node.PostfixToken()`, which follows the name at `name`.
     fn check_grammar_for_invalid_postfix_token(
         &mut self,
         file: FileId,
@@ -91,7 +92,7 @@ impl Checker<'_, '_> {
             .is_some_and(|end| self.grammar_error_on_token_after(file, end as u32, token, code))
     }
 
-    /// Both checks for a member of an object literal: 1162 1255. `start`: `Prop::postfix_token`.
+    /// Both checks for an object literal member: 1162 and 1255. `start` is `Prop::postfix_token`.
     fn check_grammar_for_invalid_postfix_token_in_object_literal(
         &mut self,
         file: FileId,
@@ -180,8 +181,9 @@ impl Checker<'_, '_> {
     }
 
     /// `checkGrammarTypeParameterList`: `<>`. Before an arrow function the parser rejects it. The
-    /// list is not stored: it is what precedes `anchor`, the token at which `parseParameters`
-    /// starts, a `(` or not. A signature that the reparser makes of JSDoc tags has none.
+    /// list isn't stored. It's whatever precedes `anchor`, the token where `parseParameters`
+    /// starts, whether or not that's a `(`. A signature that the reparser builds from JSDoc tags
+    /// has no list.
     fn check_grammar_type_parameter_list(&mut self, file: FileId, func: FnId) -> bool {
         let hir = self.hir(file);
         let (text, f) = (&hir.text[..], &hir[func]);
@@ -214,8 +216,8 @@ impl Checker<'_, '_> {
                 if i != f.params.len() - 1 {
                     return self.grammar_error_on_token_before(file, name, b"...", 1014);
                 }
-                // `checkGrammarForDisallowedTrailingComma`. A signature that the reparser makes of
-                // JSDoc tags has no written list.
+                // `checkGrammarForDisallowedTrailingComma`. A signature that the reparser builds
+                // from JSDoc tags has no list in the source.
                 if (f.kind == FnKind::Arrow || hir.text.get(f.anchor as usize) == Some(&b'('))
                     && !hir.is_ambient(hir.node(p))
                 {
@@ -231,7 +233,7 @@ impl Checker<'_, '_> {
                 }
             } else if is_optional {
                 seen_optional_parameter = true;
-                // A `?` synthesized from a `@param` tag is not in the source.
+                // A `?` synthesized from a `@param` tag isn't in the source.
                 if parameter.default.is_some() && !parameter.flags.contains(Flags::REPARSED) {
                     return self.grammar_error_on_node(file, parameter.pat, 1015, &[]);
                 }
@@ -419,7 +421,7 @@ impl Checker<'_, '_> {
         if !f.type_params.is_empty() {
             return self.grammar_error_on_node(file, name, 1094, &[]);
         }
-        // `doesAccessorHaveCorrectParameterCount`. `this` is not among `params`.
+        // `doesAccessorHaveCorrectParameterCount`. `this` isn't in `params`.
         let count = f.params.len() + usize::from(f.this_param.is_some());
         if f.accessor_this_parameter().is_none() && count != usize::from(!is_getter) {
             let code = if is_getter { 1054 } else { 1049 };
@@ -444,14 +446,14 @@ impl Checker<'_, '_> {
         parameter.default.is_some() && self.grammar_error_on_node(file, name, 1052, &[])
     }
 
-    /// `checkGrammarConstructorTypeParameters`. They are between the name and the `(`.
+    /// `checkGrammarConstructorTypeParameters`. They're between the name and the `(`.
     pub(super) fn check_grammar_constructor_type_parameters(
         &mut self,
         file: FileId,
         func: FnId,
     ) -> bool {
         let hir = self.hir(file);
-        // The reparser reports those of `@template` tags: it has the range of the tags.
+        // The reparser reports the ones from `@template` tags, because it has the tags' range.
         if let Some(first) = hir[func].type_params.iter().next()
             && hir.is_in_jsdoc(hir[first].pos)
         {
@@ -570,7 +572,7 @@ impl Checker<'_, '_> {
             && self.grammar_error_at((file, name, self.end_of_bracket_at(file, name)), code, &[])
     }
 
-    /// `checkAmbientInitializer`. `name`: the position of the variable's name, if it is a plain
+    /// `checkAmbientInitializer`. `name` is the position of the variable's name, if it's a plain
     /// identifier.
     fn check_ambient_initializer(
         &mut self,
@@ -591,7 +593,7 @@ impl Checker<'_, '_> {
             && self.grammar_error_at(at, 1254, &[])
     }
 
-    /// `isInvalidInitializer`, of `checkAmbientInitializer`.
+    /// `checkAmbientInitializer`'s `isInvalidInitializer`.
     fn is_invalid_ambient_initializer(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         if is_parenthesized(hir, e) {
@@ -619,8 +621,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `GetErrorRangeForNode` for an initializer. `name`: the position of the name of the variable
-    /// it initializes, if that is a plain identifier (`getAssignedName`).
+    /// `GetErrorRangeForNode` for an initializer. `name` is the position of the name of the
+    /// variable it initializes, if that's a plain identifier (`getAssignedName`).
     fn place_of_initializer(&self, file: FileId, e: ExprId, name: Option<u32>) -> Place {
         let hir = self.hir(file);
         match (hir[e].kind, name) {
@@ -638,7 +640,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkGrammarVariableDeclaration`. `list_parent`: `node.Parent.Parent.Kind`.
+    /// `checkGrammarVariableDeclaration`. `list_parent` is `node.Parent.Parent.Kind`.
     pub(super) fn check_grammar_variable_declaration(
         &mut self,
         file: FileId,
@@ -748,8 +750,8 @@ impl Checker<'_, '_> {
         false
     }
 
-    /// `GetPropertyNameForPropertyNameNode`, for the name `key` at `pos`.
-    /// `None`: `InternalSymbolNameMissing`.
+    /// `GetPropertyNameForPropertyNameNode` for the name `key` at `pos`. Returns `None` for
+    /// `InternalSymbolNameMissing`.
     pub(super) fn get_property_name_for_property_name_node(
         &self,
         file: FileId,
@@ -771,7 +773,7 @@ impl Checker<'_, '_> {
                 cat!(sign, crate::atom::number_to_string(hir.numbers[n as usize]))
             }
             PropKey::Computed(_) => return None,
-            // A name that declares nothing (`getDeclarationName`) is not stored.
+            // A name that declares nothing (`getDeclarationName`) isn't stored.
             PropKey::None if is_private_name_at(hir, pos) => self.declaration_name_at(file, pos),
             PropKey::None if is_bigint_literal_at(hir, pos) => {
                 crate::json::bigint_token_value(&self.declaration_name_at(file, pos))
@@ -781,8 +783,8 @@ impl Checker<'_, '_> {
         Some(self.atoms().intern(&text))
     }
 
-    /// `getEffectivePropertyNameForPropertyNameNode`, for the name of the property `p` of an object
-    /// literal.
+    /// `getEffectivePropertyNameForPropertyNameNode` for the name of the object literal property
+    /// `p`.
     fn get_effective_property_name_for_property_name_node(
         &mut self,
         file: FileId,
@@ -810,8 +812,8 @@ impl Checker<'_, '_> {
         properties: Span<PropId>,
     ) -> bool {
         let hir = self.hir(file);
-        // The text of the default library is not retained, and nothing is reported for a JSON file.
-        // `ImportAttributes` are stored as an object literal but are not one.
+        // The default library's text isn't retained, and nothing is reported for a JSON file.
+        // `ImportAttributes` are stored as an object literal but aren't one.
         if hir.text.is_empty()
             || hir.kind == FileKind::Json
             || hir.import_attributes.iter().any(|kept| kept.1 == node)
@@ -822,7 +824,7 @@ impl Checker<'_, '_> {
         // If every name is a literal name and all are distinct, there is nothing to report.
         let mut written: SmallVec<[Atom; 16]> = SmallVec::new();
         let mut is_all_written = true;
-        // The key of `#a` and of `1n` is not `name.Text()`.
+        // For `#a` and `1n`, the key isn't `name.Text()`.
         let mut has_other_text = false;
         for prop in properties.iter().map(|p| &hir[p]) {
             match prop.key {
@@ -837,7 +839,7 @@ impl Checker<'_, '_> {
                 n @ 0..=8 => (1..n).any(|i| written[..i].contains(&written[i])),
                 _ => !number_repeated(&written).is_empty(),
             };
-        // A computed name is evaluated (`getTypeOfExpression`) even if it is the only name.
+        // A computed name is evaluated (`getTypeOfExpression`) even if it's the only name.
         let may_repeat =
             !in_destructuring && (!is_all_written || properties.len() > 1 && has_repeated);
         // `lateBindMember`
@@ -851,7 +853,7 @@ impl Checker<'_, '_> {
             let prop = &hir[p];
             let current_kind = match prop.kind {
                 PropKind::Spread => {
-                    // A rest property cannot be destructured any further.
+                    // A rest property can't be destructured any further.
                     if in_destructuring
                         && prop.value.is_some()
                         && matches!(
@@ -941,7 +943,7 @@ impl Checker<'_, '_> {
 
 // ───────────────────────────── the syntax tree ─────────────────────────────
 
-/// `NodeFlagsAmbient`, of a declaration with `flags`. Every node of a declaration file has it.
+/// `NodeFlagsAmbient` for a declaration with `flags`. Every node in a declaration file has it.
 fn is_ambient(hir: &File, flags: Flags) -> bool {
     flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration
 }
@@ -954,9 +956,9 @@ fn is_string_or_number_literal_expression(hir: &File, e: ExprId) -> bool {
                 && matches!(hir[e].kind, ExprKind::Unary { op, .. } if op == UnOp::Minus))
 }
 
-/// `checkGrammarForInvalidDynamicName`: a computed name that is neither a literal nor `a.b.c`.
-/// Whether one that is `a.b.c` can be bound (`isLateBindableName`) makes no difference to it.
-/// `name`: the start of the name.
+/// `checkGrammarForInvalidDynamicName`. True for a computed name that's neither a literal nor
+/// `a.b.c`. Whether an `a.b.c` name can be bound (`isLateBindableName`) doesn't matter here. `name`
+/// is the start of the name.
 fn is_invalid_dynamic_name(hir: &File, key: PropKey, name: u32) -> bool {
     let text = &hir.text[..];
     if text.get(name as usize) != Some(&b'[') {
@@ -969,7 +971,7 @@ fn is_invalid_dynamic_name(hir: &File, key: PropKey, name: u32) -> bool {
     }
     match key {
         PropKey::Computed(e) => is_dynamic_name(hir, e) && !is_entity_name_expression(hir, e),
-        // `["a" as T]`, `["a"!]` and `[0 satisfies T]` are stored as the literal, which is not the
+        // `["a" as T]`, `["a"!]` and `[0 satisfies T]` are stored as the literal, which isn't the
         // whole name.
         PropKey::Name(_) => {
             let after = skip_trivia(text, token_end(text, literal, false));
@@ -984,7 +986,7 @@ fn is_invalid_dynamic_name(hir: &File, key: PropKey, name: u32) -> bool {
     }
 }
 
-/// `TypeFlagsEnumLike`: a member of an enum, or an enum.
+/// `TypeFlagsEnumLike`: an enum member or an enum.
 fn is_enum_like(c: &mut Checker<'_, '_>, ty: TypeId) -> bool {
     match c.data(ty) {
         TypeData::EnumLit { .. } | TypeData::Enum { .. } => true,
@@ -998,8 +1000,8 @@ fn is_enum_like(c: &mut Checker<'_, '_>, ty: TypeId) -> bool {
 
 // ───────────────────────────── the text ─────────────────────────────
 
-/// `BodyData().AsteriskToken` of the generator `f`: it precedes the name of a method, and follows
-/// the `function` keyword, which only modifiers precede.
+/// `BodyData().AsteriskToken` of the generator `f`. It precedes a method's name, and follows the
+/// `function` keyword, which only modifiers precede.
 fn asterisk_token(hir: &File, f: &Func) -> Option<u32> {
     let text = &hir.text[..];
     if f.kind == FnKind::Method {
@@ -1017,9 +1019,8 @@ fn asterisk_token(hir: &File, f: &Func) -> Option<u32> {
     (text.get(asterisk) == Some(&b'*')).then_some(asterisk as u32)
 }
 
-/// The end of the name of a property or variable that starts at `start`: an identifier, a string, a
-/// number, or brackets.
-/// `None`: it is not recognized.
+/// Returns the end of the property or variable name that starts at `start`: an identifier, a
+/// string, a number, or brackets. Returns `None` if it isn't recognized.
 fn end_of_name(text: &[u8], start: usize) -> Option<usize> {
     match *text.get(start)? {
         b'[' => end_of_brackets(text, start),
@@ -1027,7 +1028,8 @@ fn end_of_name(text: &[u8], start: usize) -> Option<usize> {
     }
 }
 
-/// The start of the `=` of the shorthand property `name = initializer`. A `?` or a `!` may follow the name.
+/// Returns the start of the `=` in the shorthand property `name = initializer`. A `?` or `!` may
+/// follow the name.
 fn equals_token_after_name(text: &[u8], name: u32) -> Option<u32> {
     let mut at = skip_trivia(text, end_of_name(text, name as usize)?);
     if matches!(text.get(at), Some(b'?' | b'!')) {

@@ -72,7 +72,7 @@ pub(super) struct SignatureLinks<'p> {
 }
 
 impl<'p> SignatureLinks<'p> {
-    /// Makes it equal to `SignatureLinks::default()` and keeps the memory.
+    /// Resets it to `SignatureLinks::default()` but keeps the allocations.
     pub(super) fn clear(&mut self) {
         let SignatureLinks {
             own,
@@ -188,7 +188,7 @@ impl<'p> SignatureLinks<'p> {
     }
 }
 
-/// Tells where `derive_return_type` reads a signature's return type from.
+/// Where `derive_return_type` reads a signature's return type from.
 enum ReturnTypeSource {
     /// `Program::resolved_return_types`
     Signature,
@@ -384,7 +384,7 @@ mod tests {
             assert_eq!(links.parameters(sig), None);
             assert_eq!(links.type_parameters(sig), None);
         }
-        // A row that is added now starts empty.
+        // A row added after `clear` starts empty.
         links.add_fact(sigs[0], fact::HAS_NO_TYPE_PARAMETERS);
         assert!(!links.has(sigs[0], fact::HAS_NO_THIS_PARAMETER));
         assert_eq!(links.cell(sigs[0], super::RETURN_TYPE), 0);

@@ -1,4 +1,4 @@
-//! What each node of a file is part of, and nothing else.
+//! Computes the parent (or owner) of each node in a file, and nothing else.
 
 use super::*;
 use crate::util::SharedSort;
@@ -19,7 +19,8 @@ const NO_FUNCTION: FnInfo = FnInfo {
     contains_this: false,
 };
 
-/// What is filled in, each as long as the list of the file and with nothing in it.
+/// The lists to fill in. Each is as long as the file's matching list and starts out with empty
+/// entries.
 struct Lists<'l> {
     expr_parent: &'l mut [PackedParent],
     stmt_parent: &'l mut [PackedParent],
@@ -36,24 +37,33 @@ struct Lists<'l> {
     class_scope: &'l mut [ScopeId],
     type_scope: &'l mut [ScopeId],
     type_param_scope: &'l mut [ScopeId],
-    /// For a linter: `Bound::expr_kinds` with `NOT_REACHED` in it, `Bound::expr_kind_counts` with zeros.
+    /// Lint only. `Bound::expr_kinds` starts as all `NOT_REACHED`, `Bound::expr_kind_counts` as all
+    /// zeros.
     expr_kinds: &'l mut [u8],
     expr_kind_counts: &'l mut [u32],
-    /// For a linter: `Bound::kind_counts` with zeros.
+    /// Lint only. `Bound::kind_counts` starts as all zeros.
     kind_counts: &'l mut [u32],
-    /// For a linter: the `return` statements are added, in the order of the list of the file.
+    /// Lint only. Receives the `return` statements, in the order of the file's statement list.
     returns: &'l mut Vec<u32>,
 }
 
-/// In place of the scope of what `bind` gets to.
+/// Stored instead of the real scope for every node that `bind` reaches.
 const REACHED: ScopeId = ScopeId(0);
 
-/// What comes from JSDoc comments is bound where the comment is.
+/// True if the file needs the full binder, because nodes that come from JSDoc comments are bound
+/// where the comment is.
 fn is_for_the_binder<S: Storage>(f: &FileIn<S>) -> bool {
     f.is_js && !f.jsdoc_comments.is_empty()
 }
 
-/// [`bind_for_format`] without an arena: see [`bind_for_lint_in`].
+/// [`bind`] for a formatter, which only needs each node's parent. Nothing is declared or resolved.
+/// The result lives in `recycled`, as with [`bind_for_lint_in`].
+///
+/// Fills in `expr_parent`, `stmt_parent`, `pat_parent`, `prop_owner`, `member_owner`, `param_fn`,
+/// `var_stmt`, `case_stmt`, `class_owner`, `enum_member_owner`, `type_query_operands` and the
+/// `owner` of each entry in `fns`. `class_scope`, `type_scope` and `type_param_scope` only have
+/// `REACHED` for each node that `bind` reaches. The few files that need the binder get the full
+/// result of `bind`.
 pub fn bind_for_format_in<'r>(
     f: &File,
     options: BindOptions,
@@ -66,9 +76,10 @@ pub fn bind_for_format_in<'r>(
     }
 }
 
-/// [`bind_for_format_in`] for a file whose lists are where the parser has left them. It reads nothing
-/// that `File::finish_nodes` computes. `None`: the file takes the binder, which takes a [`File`].
-/// Not generic and never inlined: so `fill_in` is compiled for it in this crate, with the options of this crate.
+/// [`bind_for_format_in`] for a file that's still in the parser's growable lists. It doesn't read
+/// anything that `File::finish_nodes` computes. Returns `None` if the file needs the binder, which
+/// takes a [`File`]. It isn't generic and is never inlined, so `fill_in` is compiled for it in this
+/// crate, with this crate's options.
 #[inline(never)]
 pub fn try_bind_for_format_in<'r>(
     f: &FileBuilder,
@@ -78,9 +89,9 @@ pub fn try_bind_for_format_in<'r>(
     fill_in::<Growable, false>(f, b).then_some(&*b)
 }
 
-/// Makes `b` what [`bind_for_format`] says. With `LINT` also `expr_kinds` and `expr_kind_counts`, and
-/// `ids` are the `return` statements, in the order of the list of the file. `false`: the file takes the
-/// binder.
+/// Fills in `b` as [`bind_for_format_in`] describes. With `LINT`, also fills in `expr_kinds`,
+/// `expr_kind_counts` and `kind_counts`, and puts the `return` statements in `ids`, in the order of
+/// the file's statement list. Returns false if the file needs the binder.
 pub(super) fn fill_in<S: Storage, const LINT: bool>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
     if is_for_the_binder(f) || !f.has_room_for_handles() {
         return false;
@@ -153,7 +164,8 @@ fn in_order(type_query_operands: &mut Vec<ExprId>) {
     type_query_operands.dedup();
 }
 
-/// `false`: it takes the binder. It also does if not [`is_all_part_of_something`].
+/// Returns false if the file needs the binder. It also does if [`is_all_part_of_something`] is
+/// false.
 fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     let Lists {
         expr_parent,
@@ -177,7 +189,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         returns,
     } = lists;
 
-    // An id that is `NONE` is the index of nothing.
+    // A `NONE` id is out of range, so it's skipped.
     macro_rules! set {
         ($list:ident[$id:expr] = $value:expr) => {
             if let Some(slot) = $list.get_mut($id.idx()) {
@@ -190,7 +202,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
         };
     }
-    // The types and the type parameters that `bind` gets to from a node.
+    // Marks the types and the type parameters that `bind` reaches from a node.
     macro_rules! ty {
         ($($ty:expr),*) => {{ $(set!(type_scope[$ty] = REACHED);)* }};
     }
@@ -225,14 +237,15 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         };
     }
 
-    // The expressions come first. What the parser has left behind are expressions, like the `A<T>` of
-    // `extends A<T>` and the `a = 1` of `({ a = 1 }) => 0`, whose operands are part of something that
-    // is not an expression. Of two expressions, the one that is made later is the one that is kept.
+    // Expressions go first so that the later passes overwrite them. The nodes that the parser
+    // abandons are expressions, like the `A<T>` of `extends A<T>` and the `a = 1` of
+    // `({ a = 1 }) => 0`, and their operands end up belonging to something that isn't an
+    // expression. If two expressions claim an operand, the parser kept the one it created later.
     let mut counts = [0u32; 2 * ExprTag::COUNT];
     for (i, e) in f.exprs.iter().enumerate() {
         let id = ExprId(i as u32);
         let me = Parent::Expr(id);
-        // What few expressions are is put right where they are met.
+        // The rare `+ 1` kinds are fixed up in the match arms below (`link!`).
         let kind = 2 * e.kind.tag() as u8;
         if LINT {
             set!(expr_kinds[id] = kind);
@@ -375,7 +388,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             others[kind_counts::TYPES + ty.kind.tag() as usize] += 1;
         }
         match ty.kind {
-            // An error. Its expression is part of what the type is in.
+            // This is an error. Its expression's parent is whatever contains the type.
             TypeNodeKind::Heritage { .. } => return false,
             TypeNodeKind::Typeof { expr, args, .. } => {
                 tys!(args);
@@ -418,7 +431,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             | TypeNodeKind::Predicate { ty: operand, .. } => ty!(operand),
             TypeNodeKind::Tuple(elements) => {
                 for e in elements.iter() {
-                    // Of `ty` and `written`, the one that contains the other.
+                    // Whichever of `ty` and `written` contains the other.
                     if let Some(element) = f.tuple_elems.get(e.idx()) {
                         ty!(match element.member_type {
                             TupleMemberType::Optional => element.ty,
@@ -434,7 +447,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
                 no,
             } => ty!(check, extends, yes, no),
             TypeNodeKind::IndexedAccess { obj, index } => ty!(obj, index),
-            // Not its default.
+            // Only its constraint, not its default.
             TypeNodeKind::Infer(param) => {
                 set!(type_param_scope[param] = REACHED);
                 ty!(f
@@ -618,7 +631,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         set!(param_fn[func.this_param] = id);
         type_params!(func.type_params);
         ty!(func.ret, func.this_ty(f));
-        // The decorators of a parameter of a member of a class are evaluated with the class.
+        // Decorators on a class member's parameters are evaluated with the class.
         let class = match fns[i].owner {
             FnOwner::Member(m) => match member_owner.get(m.idx()) {
                 Some(&MemberOwner::Class(class)) => class,
@@ -717,7 +730,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     true
 }
 
-/// The part of [`fill`] that is about the declarations of variables.
+/// The part of [`fill`] that handles variable declarations.
 fn fill_of_var_decls(
     declarations: &[VarDecl],
     expr_parent: &mut [PackedParent],
@@ -738,8 +751,9 @@ fn fill_of_var_decls(
     }
 }
 
-/// What nothing says to be a part of anything is what the parser has left behind, and what is in it
-/// has entries that `bind` does not have. That is rare enough to leave it to the binder.
+/// Returns false if some node has no parent. The parser abandoned such a node, and the nodes inside
+/// it now have entries that `bind` wouldn't give them. That's rare enough to fall back to the
+/// binder.
 #[inline(never)]
 fn is_all_part_of_something(
     expr_parent: &[PackedParent],
@@ -749,7 +763,8 @@ fn is_all_part_of_something(
     type_scope: &[ScopeId],
     type_param_scope: &[ScopeId],
 ) -> bool {
-    // Nearly always there is none, so a list is not left at the first: that way several entries are compared at once.
+    // There's almost never an orphan, so don't stop at the first one. Without an early exit the
+    // compiler can compare several entries at once.
     let has_orphan = |list: &[PackedParent]| {
         let is_orphan = |found, it: &PackedParent| found | (*it == PackedParent::default());
         list.iter().fold(false, is_orphan)

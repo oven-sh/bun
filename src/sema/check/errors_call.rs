@@ -1,14 +1,12 @@
-//! Errors about calls, `new` and tagged templates: the callee is not callable, or not with these
-//! arguments. The errors `resolveCall` reports for a decorator and for `instanceof` are reported
-//! here too.
+//! Errors about calls, `new` and tagged templates: the callee isn't callable, or not with these arguments. The errors
+//! `resolveCall` reports for a decorator and for `instanceof` are reported here too.
 //!
-//! The order of the checks, the messages and their positions follow `resolveCallExpression`,
-//! `resolveNewExpression`, `resolveTaggedTemplateExpression`, `resolveCall`, `chooseOverload`,
-//! `isSignatureApplicable`, `reportCallResolutionErrors` and `getArgumentArityError` of TypeScript
-//! 7.0.2's checker.go. One difference: an argument that is not a literal has a single type here,
-//! the one computed when the call was resolved, whereas tsgo rechecks it for each candidate
-//! (`arg_type_under`). Whenever that leaves the applicability of a candidate undecided, nothing is
-//! reported.
+//! The order of the checks, the messages and their positions mirror `resolveCallExpression`, `resolveNewExpression`,
+//! `resolveTaggedTemplateExpression`, `resolveCall`, `chooseOverload`, `isSignatureApplicable`,
+//! `reportCallResolutionErrors` and `getArgumentArityError` in TypeScript 7.0.2's checker.go. One difference: an
+//! argument that isn't a literal has a single type here, the one computed when the call was resolved, whereas tsgo
+//! rechecks it for each candidate (`arg_type_under`). Whenever that leaves a candidate's applicability undecided,
+//! nothing is reported.
 
 use super::call::{Arg, CallLike, CallState};
 use super::explain::{Line, NOWHERE};
@@ -17,15 +15,15 @@ use super::sink::{held, number_text};
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
 
-/// The argument counts the candidates of a call accept.
+/// The argument counts that a call's candidates accept.
 pub(super) struct ArgumentCounts {
     /// `minCount`
     pub(super) least: usize,
     /// `maxCount`
     pub(super) most: usize,
-    /// `maxBelow`: the largest minimum argument count that is below the number of arguments.
+    /// `maxBelow`: the largest minimum argument count that's below the number of arguments.
     pub(super) most_below: usize,
-    /// `minAbove`: the smallest parameter count that is above the number of arguments.
+    /// `minAbove`: the smallest parameter count that's above the number of arguments.
     pub(super) least_above: usize,
     pub(super) has_rest: bool,
 }
@@ -62,12 +60,13 @@ impl Checker<'_, '_> {
             hir.exprs[i].kind,
             ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
         ) || bound.is_unchecked(i)
-            // The ranges are those of the file of the task.
+            // The ranges only cover the task's file.
             || self.task.file == Some(file) && self.is_never_checked(hir.exprs[i].pos)
         {
             return;
         }
-        // `checkVariableLikeDeclaration` returns after `checkAliasSymbol` for `const x = require("m")`, so it never checks the call.
+        // `checkVariableLikeDeclaration` returns after `checkAliasSymbol` for `const x = require("m")`, so it never
+        // checks the call.
         if let Parent::VarInit(d) = bound.parent_of_expr(ExprId(i as u32))
             && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
             && self.external_module_require_argument(file, d).is_some()
@@ -115,7 +114,7 @@ impl Checker<'_, '_> {
     fn check_call(&mut self, file: FileId, e: ExprId, c: CallId, is_new: bool) {
         let hir = self.hir(file);
         let data = hir[c];
-        // The `super` of `new super()` is that of `super.x`: an instance of the base.
+        // The `super` of `new super()` is the same as in `super.x`: an instance of the base.
         if !is_new && matches!(hir[data.callee].kind, ExprKind::Super) {
             self.check_super_call(file, e, c);
             return;
@@ -145,14 +144,13 @@ impl Checker<'_, '_> {
             return;
         }
         let has_type_args = !data.type_args.is_empty();
-        // `getSignaturesOfType` uses `getReducedApparentType`: an intersection that reduces to
-        // never has no signatures.
+        // `getSignaturesOfType` uses `getReducedApparentType`: an intersection that reduces to never has no signatures.
         let reduced = self.reduced(apparent);
         // tsgo reports what the call found when it was resolved.
         let found_none = (self.p.calls_before_signatures)
             .get(&self.task, &(file, e))
             .is_some();
-        // The resolution around that one has gone on with the signatures.
+        // The enclosing resolution continued with the signatures.
         if found_none {
             self.report_call_resolution(file, e);
         }
@@ -161,7 +159,7 @@ impl Checker<'_, '_> {
         } else {
             self.signatures(reduced, false)
         };
-        // These are ignored where the callee can be called.
+        // These are ignored if the callee can be called.
         let construct_sigs = if !found_none && (is_new || call_sigs.is_empty()) {
             self.signatures(reduced, true)
         } else {
@@ -191,8 +189,7 @@ impl Checker<'_, '_> {
                     self.error_at((file, node_start, end), 2348, &[sink::Arg::Type(called)]);
                     return;
                 }
-                // `invocationErrorDetails`: a parenthesized access does not count as a called
-                // access.
+                // `invocationErrorDetails`: a parenthesized access doesn't count as a called access.
                 let is_bare = !is_parenthesized(hir, data.callee);
                 let start = match hir[data.callee].kind {
                     ExprKind::Dot { .. } if is_bare => hir.name_pos(data.callee),
@@ -301,15 +298,14 @@ impl Checker<'_, '_> {
         self.invocation_error(at, 2351, data.callee, apparent, (true, false), None);
     }
 
-    /// `getResolvedSignature(node) == silentNeverSignature`, for the call or the `new` expression
-    /// `e`: `resolveCallExpression` and `resolveNewExpression` have returned before they check an
-    /// argument.
+    /// `getResolvedSignature(node) == silentNeverSignature`, for the call or the `new` expression `e`:
+    /// `resolveCallExpression` and `resolveNewExpression` returned before checking any argument.
     pub(super) fn is_silent_never_signature(&mut self, file: FileId, e: ExprId) -> bool {
         let resolved = self.resolved_signature(file, e);
         resolved.sig.is_none() && resolved.ret == TypeId::SILENT_NEVER
     }
 
-    /// Error span of a callee: from the start of the (possibly parenthesized) expression to its error end.
+    /// A callee's error span: from the start of the (possibly parenthesized) expression to its error end.
     fn span_of_callee(&self, file: FileId, callee: ExprId) -> (FileId, u32, u32) {
         (
             file,
@@ -318,8 +314,8 @@ impl Checker<'_, '_> {
         )
     }
 
-    /// `invocationError`. `head`: the head message that `resolveDecorator` chains on top of
-    /// `invocationErrorDetails`, before `invocationErrorRecovery`.
+    /// `invocationError`. `head` is the head message that `resolveDecorator` chains on top of `invocationErrorDetails`,
+    /// before `invocationErrorRecovery`.
     pub(super) fn invocation_error(
         &mut self,
         at: (FileId, u32, u32),
@@ -340,10 +336,9 @@ impl Checker<'_, '_> {
         self.add_diagnostic(diagnostic);
     }
 
-    /// The related information `invocationError` adds to 2349, 6234 or 2351, reported for `target`,
-    /// whose apparent type is `apparent`.
-    /// `has_one_argument`: it is a call, not a `new` expression or a tagged template, with one
-    /// argument.
+    /// The related information `invocationError` adds to 2349, 6234 or 2351, reported for `target`, whose apparent type
+    /// is `apparent`. `has_one_argument` is true for a call with one argument, not for a `new` expression or a tagged
+    /// template.
     fn related_to_invocation_error(
         &mut self,
         file: FileId,
@@ -379,8 +374,8 @@ impl Checker<'_, '_> {
         related
     }
 
-    /// `exportTypeLinks.Get(t.symbol)` for a type created by `import * as ns`: its `target`, which
-    /// is the imported symbol, and 7038 at its `originatingImport`.
+    /// `exportTypeLinks.Get(t.symbol)` for a type created by `import * as ns`: its `target`, which is the imported
+    /// symbol, and 7038 at its `originatingImport`.
     pub(super) fn originating_import(&self, ty: TypeId) -> Option<(Sym, Reported)> {
         let TypeData::Anon {
             origin:
@@ -417,8 +412,8 @@ impl Checker<'_, '_> {
         Some((module, import))
     }
 
-    /// `invocationErrorDetails`: the messages chained under 2349, 6234 or 2351, for a callee with
-    /// the apparent type `apparent`.
+    /// `invocationErrorDetails`: the messages chained under 2349, 6234 or 2351, for a callee whose apparent type is
+    /// `apparent`.
     pub(super) fn invocation_error_lines(
         &mut self,
         apparent: TypeId,
@@ -465,8 +460,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkCallExpression`: 2776 and 2775 for a call that is an expression statement and whose
-    /// signature is an assertion.
+    /// `checkCallExpression`: 2776 and 2775 for a call that's an expression statement and whose signature is an
+    /// assertion.
     fn check_assertion_target(&mut self, file: FileId, e: ExprId, c: CallId, sig: Option<SigId>) {
         let hir = self.hir(file);
         let data = hir[c];
@@ -500,8 +495,8 @@ impl Checker<'_, '_> {
     /// `resolveCallExpression`, where the callee is `super`.
     fn check_super_call(&mut self, file: FileId, e: ExprId, c: CallId) {
         let hir = self.hir(file);
-        // `checkSuperExpression`: anywhere but in a constructor, with no intervening function,
-        // arrow or not, `super` is an error, and nothing else is reported.
+        // `checkSuperExpression`: anywhere but directly in a constructor, with no function or arrow function in
+        // between, `super` is an error, and nothing else is reported.
         let container = hir.get_super_container(hir.node(e), true);
         let Some(class) = hir.class_of(hir.parent(container)).some() else {
             return;
@@ -516,8 +511,8 @@ impl Checker<'_, '_> {
         if self.is_any(called) {
             return;
         }
-        // `getInstantiatedConstructorsForTypeArguments`: the base constructors that accept the
-        // number of type arguments in the `extends` clause, instantiated with them.
+        // `getInstantiatedConstructorsForTypeArguments`: the base constructors that accept the number of type arguments
+        // in the `extends` clause, instantiated with them.
         let actual = self.types_from_nodes(file, hir[class].extends_args);
         let mut sigs = Vec::new();
         for sig in self.signatures(called, true) {
@@ -558,7 +553,7 @@ impl Checker<'_, '_> {
             return;
         }
         if call_sigs.is_empty() {
-            // If it is parenthesized, the parenthesized expression is the array element.
+            // If it's parenthesized, the parenthesized expression is the array element.
             let is_element = !is_parenthesized(hir, e)
                 && matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)));
             let at = self.span_of_callee(file, data.callee);
@@ -596,12 +591,13 @@ impl Checker<'_, '_> {
                 }
     }
 
-    /// `invocationErrorDetails`: whether `e` is `a.b` or `a["b"]` where `b` has
-    /// `SymbolFlagsGetAccessor`. It is declared with `get` or with `accessor`.
+    /// `invocationErrorDetails`: true if `e` is `a.b` or `a["b"]` where `b` has `SymbolFlagsGetAccessor`, i.e. it's
+    /// declared with `get` or with `accessor`.
     fn is_get_accessor_access(&mut self, file: FileId, e: ExprId) -> bool {
         let (obj, name) = match self.hir(file)[e].kind {
             ExprKind::Dot { obj, name, .. } => (obj, name),
-            // `getPropertyTypeForIndexType` records the property as the symbol of the element access (`AccessFlagsCacheSymbol`).
+            // `getPropertyTypeForIndexType` records the property as the element access's symbol
+            // (`AccessFlagsCacheSymbol`).
             ExprKind::Index { obj, index, .. } => {
                 let key = self.type_of_expr(file, index);
                 let Some(name) = self.property_name_of_type(key) else {
@@ -631,7 +627,7 @@ impl Checker<'_, '_> {
             PropSource::Intersected(..) => {
                 prop.flags & (PropFlags::ACCESSOR | PropFlags::WRITE_ONLY) == PropFlags::ACCESSOR
             }
-            // It has the flags of the first.
+            // It has the first one's flags.
             PropSource::Copy(_, copied, true) => copied
                 .first()
                 .is_some_and(|first| self.has_get_accessor(first)),
@@ -639,15 +635,15 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `isConstructorAccessible`. `None`: it is. Else the accessibility modifiers of the
-    /// constructor, each of which is an error, and the class that declares it.
+    /// `isConstructorAccessible`. Returns `None` if it is, otherwise the constructor's accessibility modifiers, each of
+    /// which is an error, and the class that declares it.
     pub(super) fn inaccessible_constructor(
         &mut self,
         file: FileId,
         e: ExprId,
         sig: SigId,
     ) -> Option<(Flags, Sym)> {
-        // A cloned signature has the declaration of its original.
+        // A cloned signature has its original's declaration.
         let mut sig = sig;
         let mut steps = 0;
         let (declaring, of, func) = loop {
@@ -655,9 +651,8 @@ impl Checker<'_, '_> {
                 SigData::Construct {
                     class, file, func, ..
                 } => break (class, file, func),
-                // `getDefaultConstructSignatures` clones the signatures of the base constructor type.
-                // The base types are not asked for: `new a()` in the base expression of `a` is no
-                // 2310.
+                // `getDefaultConstructSignatures` clones the signatures of the base constructor type. The base types
+                // aren't requested, so that `new a()` in the base expression of `a` doesn't get 2310.
                 SigData::DefaultConstruct { base, .. } => {
                     steps += 1;
                     if steps > 64 {
@@ -689,9 +684,9 @@ impl Checker<'_, '_> {
         Some((modifiers, declaring))
     }
 
-    /// `typeHasProtectedAccessibleBase`: whether `class` derives from `target` through first base
-    /// types. (Members that `findMixins` would omit from an intersection are retained: it looks for
-    /// constructor types, and these are instance types.)
+    /// `typeHasProtectedAccessibleBase`: true if `class` derives from `target` through first base types. (Members that
+    /// `findMixins` would drop from an intersection are kept: it looks for constructor types, and these are instance
+    /// types.)
     fn has_protected_accessible_base(&mut self, target: Sym, class: Sym, depth: u32) -> bool {
         let Some(&first) = self.base_types(class).first() else {
             return false;
@@ -700,8 +695,7 @@ impl Checker<'_, '_> {
             return false;
         }
         match self.data(first) {
-            // For an intersection, its member classes and interfaces that are not instantiations of
-            // generic ones.
+            // For an intersection, its member classes and interfaces that aren't instantiations of generic ones.
             TypeData::Intersection(parts) => parts.iter().any(|&part| match self.data(part) {
                 TypeData::Ref {
                     target: base,
@@ -766,8 +760,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `isSignatureApplicable`: whether the receiver of the call is checked against the signature's
-    /// `this` type. Not for `new`, nor for a call of `super.m` in exactly that form.
+    /// `isSignatureApplicable`: true if the call's receiver is checked against the signature's `this` type. It isn't
+    /// for `new`, nor for a call of `super.m` in exactly that form.
     pub(super) fn checks_this_argument(&self, file: FileId, e: ExprId, node: CallLike) -> bool {
         let hir = self.hir(file);
         match (node, hir[e].kind) {
@@ -852,7 +846,7 @@ impl Checker<'_, '_> {
         func: FnId,
     ) -> (FileId, u32, u32) {
         let hir = self.hir(file);
-        // The source text of the default library is not stored.
+        // The default library's source text isn't stored.
         if hir.text.is_empty() {
             return (file, hir[func].start, hir[func].start);
         }
@@ -860,8 +854,7 @@ impl Checker<'_, '_> {
         (file, start, end)
     }
 
-    /// `The last overload is declared here.` for the candidate `last`. Empty if it has no
-    /// declaration.
+    /// `The last overload is declared here.` for the candidate `last`. Empty if it has no declaration.
     pub(super) fn last_overload_declared_here(&mut self, last: SigId) -> Vec<Reported> {
         let declared = self.declared_sig(last);
         match self.sig_decl(declared) {
@@ -873,9 +866,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The related information `reportCallResolutionErrors` adds to each diagnostic for `last`, the
-    /// last of `candidatesForArgumentError`.
-    /// `is_overloaded`: there is more than one candidate.
+    /// The related information `reportCallResolutionErrors` adds to each diagnostic for `last`, the last of
+    /// `candidatesForArgumentError`. `is_overloaded` is true if there's more than one candidate.
     fn related_to_failed_candidate(
         &mut self,
         s: &CallState<'_>,
@@ -899,9 +891,9 @@ impl Checker<'_, '_> {
         related
     }
 
-    /// `checkTypeArguments`: `typeArgumentTypes`, or `None` if one of `type_args` does not satisfy
-    /// its constraint. `error_nodes`: `typeArgumentNodes`, with `reportErrors`. A call that has a
-    /// `headMessage` has no type arguments.
+    /// `checkTypeArguments`: returns `typeArgumentTypes`, or `None` if one of `type_args` doesn't satisfy its
+    /// constraint. `error_nodes` is `typeArgumentNodes`, with `reportErrors`. A call that has a `headMessage` has no
+    /// type arguments.
     pub(super) fn check_type_arguments(
         &mut self,
         sig: SigId,
@@ -933,8 +925,7 @@ impl Checker<'_, '_> {
         Some(filled)
     }
 
-    /// `isSignatureApplicable`. Where something could not be determined the result is true, except
-    /// in the subtype pass.
+    /// `isSignatureApplicable`. If something couldn't be determined the result is true, except in the subtype pass.
     pub(super) fn is_signature_applicable(
         &mut self,
         s: &CallState<'_>,
@@ -956,8 +947,8 @@ impl Checker<'_, '_> {
         }
         let (file, e, node, args, this_arg) = (s.file, s.call, s.node, s.args, s.this_arg);
         let hir = self.hir(file);
-        // The arguments of a decorator are synthetic (`createSyntheticExpression`): an error about
-        // one is reported at the decorator expression.
+        // A decorator's arguments are synthetic (`createSyntheticExpression`), so an error about one is reported at the
+        // decorator expression.
         let decorator = match node {
             CallLike::Decorator(_) if report => Some(self.decorator_position(file, e)),
             _ => None,
@@ -995,8 +986,8 @@ impl Checker<'_, '_> {
             if matches!(hir[node].kind, ExprKind::Missing) {
                 continue;
             }
-            // `getTypeAtPosition(signature, i)`: a cycle through the type of a parameter is found
-            // here, and not for a parameter after the first argument that fails.
+            // `getTypeAtPosition(signature, i)`: a cycle through a parameter's type is found here, but not for a
+            // parameter after the first argument that fails.
             if is_open {
                 params = self.sig_params_up_to(sig, i + 1);
             }
@@ -1009,8 +1000,7 @@ impl Checker<'_, '_> {
                 }
                 _ => self.arg_type_under(file, arg, expected, check_mode),
             };
-            // `getRegularTypeOfObjectLiteral`: excess properties are not checked until all
-            // arguments are checked.
+            // `getRegularTypeOfObjectLiteral`: excess properties aren't checked until all arguments are checked.
             let actual = if check_mode.contains(CheckMode::SKIP_CONTEXT_SENSITIVE) {
                 self.regular_type_of_object_literal(actual)
             } else {
@@ -1093,7 +1083,8 @@ impl Checker<'_, '_> {
         true
     }
 
-    /// `maybeAddMissingAwaitInfo`. `place`: span of the argument. `reported`: index in `self.reported` of the first diagnostic for it.
+    /// `maybeAddMissingAwaitInfo`. `place` is the argument's span. `reported` is the index in `self.reported` of the
+    /// first diagnostic for it.
     fn maybe_add_missing_await_info(
         &mut self,
         place: (FileId, u32, u32),
@@ -1120,8 +1111,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `getEffectiveCheckNode`: `e` with enclosing `satisfies` stripped. (Parentheses are not
-    /// stored.)
+    /// `getEffectiveCheckNode`: `e` with enclosing `satisfies` stripped. (Parentheses aren't stored.)
     pub(super) fn effective_check_node(&self, file: FileId, mut e: ExprId) -> ExprId {
         while let ExprKind::Satisfies { expr, .. } = self.hir(file)[e].kind {
             e = expr;
@@ -1129,7 +1119,7 @@ impl Checker<'_, '_> {
         e
     }
 
-    /// `getErrorNodeForCallNode`: its span.
+    /// The span of `getErrorNodeForCallNode`.
     fn error_range_of_call_node(&self, file: FileId, e: ExprId, node: CallLike) -> (u32, u32) {
         let hir = self.hir(file);
         match (node, hir[e].kind) {
@@ -1185,8 +1175,8 @@ impl Checker<'_, '_> {
         counts
     }
 
-    /// `getArgumentArityError`: the parameter of `closestSignature` that corresponds to the first
-    /// omitted argument. `actual`: the number of arguments.
+    /// `getArgumentArityError`: the parameter of `closestSignature` that corresponds to the first omitted argument.
+    /// `actual` is the number of arguments.
     pub(super) fn parameter_without_argument(
         &mut self,
         sigs: &[SigId],
@@ -1208,8 +1198,8 @@ impl Checker<'_, '_> {
             return Vec::new();
         };
         let hir = self.hir(file);
-        // A `this` parameter is not in `params`. A signature synthesized for a union may have one
-        // where its declaration has none.
+        // `params` doesn't include a `this` parameter. A signature synthesized for a union may have one even if its
+        // declaration doesn't.
         let declares_this = hir[func].this_ty(hir).is_some();
         let has_this = match self.types().sig(sig) {
             SigData::Synth { this, .. } => this.is_some(),
@@ -1230,7 +1220,7 @@ impl Checker<'_, '_> {
             PatKind::Missing => (6210, vec![Vec::new()]),
         };
         let start = hir[param].pos;
-        // The source text of the default library is not stored.
+        // The default library's source text isn't stored.
         let end = if hir.text.is_empty() {
             start
         } else {
@@ -1239,8 +1229,7 @@ impl Checker<'_, '_> {
         vec![Reported::new((file, start, end), code, held(args))]
     }
 
-    /// `getArgumentArityError`: 2554 2555 2556 2575 2794 2810, and 1278 1279 for a decorator.
-    /// `head`: `headMessage`.
+    /// `getArgumentArityError`: 2554 2555 2556 2575 2794 2810, and 1278 1279 for a decorator. `head` is `headMessage`.
     fn report_argument_arity(&mut self, s: &CallState<'_>, sigs: &[SigId], head: Option<u32>) {
         let (file, e, node, args) = (s.file, s.call, s.node, s.args);
         if let Some(spread) = args.iter().find(|a| a.is_spread()) {
@@ -1274,7 +1263,7 @@ impl Checker<'_, '_> {
             && args.is_empty()
             && matches!(node, CallLike::Call(c) if self.is_promise_resolve_arity_error(file, e, c))
         {
-            // In JavaScript there is no type argument to put `void` in.
+            // In JavaScript there's no type argument to put `void` in.
             if self.hir(file).is_js { 2810 } else { 2794 }
         } else {
             2554
@@ -1303,8 +1292,8 @@ impl Checker<'_, '_> {
         self.add_diagnostic(diagnostic);
     }
 
-    /// `isPromiseResolveArityError`: the callee is the `resolve` of `new Promise((resolve) =>
-    /// ...)`. Not if `resolve`, the function or `Promise` is parenthesized: parentheses are nodes.
+    /// `isPromiseResolveArityError`: the callee is the `resolve` of `new Promise((resolve) => ...)`. Not if `resolve`,
+    /// the function or `Promise` is parenthesized, because parentheses are nodes.
     fn is_promise_resolve_arity_error(&mut self, file: FileId, e: ExprId, c: CallId) -> bool {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let callee = hir[c].callee;
@@ -1422,8 +1411,8 @@ impl Checker<'_, '_> {
     }
 }
 
-/// `IsLineBreak(rune(text[SkipTriviaEx(text, at, StopAfterLineBreak) - 1]))`: it looks at one byte,
-/// so U+2028 and U+2029, which are skipped as white space, do not count.
+/// `IsLineBreak(rune(text[SkipTriviaEx(text, at, StopAfterLineBreak) - 1]))`: it looks at one byte, so U+2028 and
+/// U+2029, which are skipped as white space, don't count.
 fn line_breaks_after(text: &[u8], at: usize) -> bool {
     let end = super::spans::skip_trivia_ex(text, at, true);
     matches!(text[..end].last(), Some(b'\n' | b'\r'))

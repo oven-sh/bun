@@ -1,11 +1,10 @@
-//! Conflicting declarations of one name: 2300 2451 2528 2567 2649 2699. And declarations that merge
-//! only under conditions: 2309 2323 2433 2434.
+//! Conflicting declarations of one name: 2300 2451 2528 2567 2649 2699. Also declarations that merge only under certain
+//! conditions: 2309 2323 2433 2434.
 //!
-//! In TypeScript 7.0.2 this is spread over `declareSymbolEx` and `declareModuleMember` of
-//! binder.go, which reject a declaration excluded by the symbol already in the table, `mergeSymbol`
-//! of checker.go, which does the same across files, `checkObjectTypeForDuplicateDeclarations`,
-//! `checkExternalModuleExports` and `checkTypeParameters`. The declarations the binder rejected are
-//! recorded (`Bound::redeclarations`) and are reported here.
+//! In TypeScript 7.0.2 this is spread over `declareSymbolEx` and `declareModuleMember` in binder.go, which reject a
+//! declaration excluded by the symbol already in the table, `mergeSymbol` in checker.go, which does the same across
+//! files, `checkObjectTypeForDuplicateDeclarations`, `checkExternalModuleExports` and `checkTypeParameters`. The
+//! declarations the binder rejected are recorded (`Bound::redeclarations`) and are reported here.
 
 use super::explain::NO_LENGTH;
 use super::late_bound::LateBoundConflict;
@@ -16,13 +15,12 @@ use crate::bind::{
 };
 use smallvec::SmallVec;
 
-/// A declaration of a symbol as in TypeScript: its location, and whether that symbol is the
-/// declaration's own symbol, to which it contributes its flags.
-/// The local symbol of a name in a module or a namespace also lists the declarations exported under
-/// the name, whose own symbol is a different one.
+/// A declaration of a symbol as in TypeScript: its location, and whether that symbol is the declaration's own symbol,
+/// to which it contributes its flags. The local symbol of a name in a module or a namespace also lists the declarations
+/// exported under the name, whose own symbol is a different one.
 type Declaration = (FileId, Decl, bool);
 
-/// `message` of `reportMergeSymbolError`. `either`: the flags of both symbols.
+/// `message` of `reportMergeSymbolError`. `either` is the union of both symbols' flags.
 fn code_of_merge_symbol_error(either: SymFlags) -> u32 {
     if either.intersects(SymFlags::ENUM) {
         2567
@@ -102,8 +100,8 @@ impl Checker<'_, '_> {
         })
     }
 
-    /// The reporting half of `declareSymbolEx`: one diagnostic for the rejected declaration and one for each earlier declaration of
-    /// the symbol. Equal diagnostics are merged later by `sort_and_deduplicate_diagnostics`.
+    /// The reporting half of `declareSymbolEx`: one diagnostic for the rejected declaration and one for each earlier
+    /// declaration of the symbol. Equal diagnostics are merged later by `sort_and_deduplicate_diagnostics`.
     fn report_redeclarations(&mut self, file: FileId) {
         let bound = self.bound(file);
         let place = |d: &Reported| {
@@ -141,8 +139,9 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `createDiagnosticForNode(GetNameOfDeclaration(node) ?? node, message, getDisplayName(node))`. The name argument is omitted
-    /// for messages without a placeholder (`messageNeedsName`). Returns `None` if the declaration has no range to report on.
+    /// `createDiagnosticForNode(GetNameOfDeclaration(node) ?? node, message, getDisplayName(node))`. The name argument
+    /// is omitted for messages without a placeholder (`messageNeedsName`). Returns `None` if the declaration has no
+    /// range to report on.
     fn new_diagnostic_for_declaration_name(
         &mut self,
         file: FileId,
@@ -151,8 +150,8 @@ impl Checker<'_, '_> {
     ) -> Option<Reported> {
         let (start, mut end) = self.range_of_declaration_name(file, node)?;
         let hir = self.hir(file);
-        // `getDisplayName`: the source text of the name node. `export = e` and `export default e` have no name node and use
-        // `getDeclarationName`.
+        // `getDisplayName`: the source text of the name node. `export = e` and `export default e` have no name node and
+        // use `getDeclarationName`.
         let display_name: &[u8] = match node {
             Decl::ExportExpr(it) if matches!(hir[it].kind, StmtKind::ExportAssign(_)) => b"export=",
             Decl::ExportExpr(_) => b"default",
@@ -218,11 +217,11 @@ impl Checker<'_, '_> {
         Some((start, self.end_of_token_at(file, start)))
     }
 
-    /// Whether the name of `decl` is a missing identifier.
+    /// True if the name of `decl` is a missing identifier.
     pub(super) fn is_declaration_name_missing(&self, file: FileId, decl: Decl) -> bool {
         let hir = self.hir(file);
         let name = match decl {
-            // The source has nothing at the position of the name, not even `""` or `[""]`.
+            // The source has nothing at the name's position, not even `""` or `[""]`.
             Decl::Member(m) => {
                 return hir[m].key == PropKey::Name(known::empty)
                     && !matches!(
@@ -249,8 +248,8 @@ impl Checker<'_, '_> {
         name == known::empty
     }
 
-    /// `getAdjustedNodeForError` for a declaration of a symbol that `mergeSymbol` is given: the
-    /// name of a module augmentation is a string literal.
+    /// `getAdjustedNodeForError` for a declaration of a symbol passed to `mergeSymbol`. A module augmentation's name is
+    /// a string literal.
     fn place_of_merged_declaration(
         &self,
         file: FileId,
@@ -265,9 +264,9 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `reportMergeSymbolError`: reports `code` at every declaration of both symbols, with related information for the declarations
-    /// of the other symbol. Skips a symbol whose first declaration is in a plain JavaScript file. `named`: the symbol whose name is
-    /// printed.
+    /// `reportMergeSymbolError`: reports `code` at every declaration of both symbols, with related information for the
+    /// other symbol's declarations. Skips a symbol whose first declaration is in a plain JavaScript file. `named` is
+    /// the symbol whose name is printed.
     fn report_merge_symbol_error(
         &mut self,
         file: FileId,
@@ -320,9 +319,10 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `addDuplicateDeclarationError`: reports `code` at `at` (`end == 0` means the token at `start`), with related information
-    /// for the other declarations of the name. tsgo's `lookupOrIssueError` only finds an existing diagnostic that has no related
-    /// information yet, so each call adds a diagnostic; `compactAndMergeRelatedInfos` merges the equal ones.
+    /// `addDuplicateDeclarationError`: reports `code` at `at` (`end == 0` means the token at `start`), with related
+    /// information for the name's other declarations. tsgo's `lookupOrIssueError` only finds an existing diagnostic
+    /// that has no related information yet, so each call adds a diagnostic, and `compactAndMergeRelatedInfos` merges
+    /// the equal ones.
     fn add_duplicate_declaration_error(
         &mut self,
         at: super::related::Place,
@@ -414,8 +414,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `bindNamespaceExportDeclaration`: the names of all `export as namespace N` in a file share one symbol table, where an alias
-    /// excludes an alias.
+    /// `bindNamespaceExportDeclaration`: the names of all `export as namespace N` in a file share one symbol table,
+    /// where an alias excludes an alias.
     fn check_duplicate_umd_globals(&mut self, file: FileId) {
         let bound = self.bound(file);
         for (i, &(name, symbol)) in bound.umd_globals.iter().enumerate() {
@@ -430,8 +430,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// From `checkModuleDeclaration`: 2433 2434, a namespace must follow the class or function it
-    /// merges with, in the same file.
+    /// From `checkModuleDeclaration`: 2433 2434. A namespace must follow the class or function it merges with, in the
+    /// same file.
     fn check_namespace_merge_order(&mut self, file: FileId, sym: Sym) {
         let files = self.files();
         let mut decls: Vec<Declaration> = Vec::new();
@@ -490,10 +490,9 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkExternalModuleExports`: 2309, 2323. tsgo reports at every declaration, in any file.
-    /// Here a file checks each module it has a declaration of, and keeps only the diagnostics
-    /// located in itself. The diagnostics of a file are collected right after its
-    /// `checkSourceFile`, so it has those that a file no later than itself has caused.
+    /// `checkExternalModuleExports`: 2309, 2323. tsgo reports at every declaration, in any file. Here a file checks
+    /// each module it has a declaration of, and keeps only the diagnostics located in itself. A file's diagnostics are
+    /// collected right after its `checkSourceFile`, so it only gets those caused by itself or an earlier file.
     fn check_external_module_exports(&mut self, file: FileId) {
         let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
         let own = files.module(file).is_module();
@@ -528,8 +527,8 @@ impl Checker<'_, '_> {
             {
                 self.error_at((file, start, end), 2309, &[]);
             }
-            // `getExportsOfModuleWorker` asks `getSymbolFlags` of everything exported next to an
-            // `export =`. That calls `resolveAlias`, which reports.
+            // `getExportsOfModuleWorker` calls `getSymbolFlags` on everything exported next to an `export =`. That
+            // calls `resolveAlias`, which reports.
             for (name, symbol) in files.each_export(module) {
                 if name != known::export_equals
                     && files.flags(symbol).contains(SymFlags::ALIAS)
@@ -539,9 +538,9 @@ impl Checker<'_, '_> {
                 }
             }
         }
-        // "It is a Syntax Error if the ExportedNames of ModuleItemList contains any duplicate
-        // entries. (TS Exceptions: namespaces, function overloads, enums, and interfaces)". The
-        // symbols as the table has them, without `getMergedSymbol`.
+        // "It is a Syntax Error if the ExportedNames of ModuleItemList contains any duplicate entries. (TS Exceptions:
+        // namespaces, function overloads, enums, and interfaces)". Uses the symbols as stored in the table, without
+        // `getMergedSymbol`.
         let exports = modules.iter().flat_map(|&(module, is_checked)| {
             let unmerged = files.unmerged_exports_of_module(module);
             let exports = files.exports_of_module(module).iter();
@@ -596,7 +595,7 @@ impl Checker<'_, '_> {
                     && is_not_overload(self, &it)
                     && let Some((start, end)) = self.error_range_of_declaration(file, decl)
                 {
-                    // `InternalSymbolNamePrefix` (0xFE) is not valid UTF-8, so it prints as U+FFFD.
+                    // `InternalSymbolNamePrefix` (0xFE) isn't valid UTF-8, so it prints as U+FFFD.
                     let name = match id == known::assignment_declaration {
                         true => Arg::Bytes("\u{FFFD}assignment".as_bytes()),
                         false => Arg::Atom(id),
@@ -646,9 +645,9 @@ impl Checker<'_, '_> {
         self.files().is_external_module_augmentation(file, m)
     }
 
-    /// Whether `checkExternalModuleExports` is called for `module` no later than `file` is
-    /// checked: by `checkSourceFile`, for a file that is a module, or by `checkExportAssignment`,
-    /// for the ambient module whose body has it as a statement.
+    /// True if `checkExternalModuleExports` is called for `module` no later than `file` is checked: by
+    /// `checkSourceFile`, for a file that's a module, or by `checkExportAssignment`, for the ambient module whose body
+    /// has it as a statement.
     pub(super) fn are_module_exports_checked(&self, module: Sym, file: FileId) -> bool {
         self.files().decls_of(module).iter().any(|&(of, decl)| {
             self.is_checked_no_later_than(of, file)
@@ -670,14 +669,14 @@ impl Checker<'_, '_> {
         })
     }
 
-    /// Whether `symbol` is the export `id` of a file that is checked before `file`.
-    /// `getExportsOfModule` includes what `export *` adds, so `checkExternalModuleExports` for that
-    /// file reports at the declarations in a module that it re-exports.
+    /// True if `symbol` is the export `id` of a file that's checked before `file`. `getExportsOfModule` includes what
+    /// `export *` adds, so `checkExternalModuleExports` for that file reports at the declarations in a module that it
+    /// re-exports.
     fn is_export_of_file_checked_before(&self, id: Atom, symbol: Sym, file: FileId) -> bool {
         let files = self.files();
         let before = files.rank_of_file(file) as usize;
         files.order.iter().take(before).any(|&other| {
-            // A file with an `export *` is no leaf, and what a leaf has is freed after its task.
+            // A file with an `export *` isn't a leaf, and a leaf's data is freed after its task.
             !files.module(other).is_leaf
                 && !self.bound(other).export_stars.is_empty()
                 && files.module(other).is_module()
@@ -686,17 +685,16 @@ impl Checker<'_, '_> {
         })
     }
 
-    /// `getBindAndCheckDiagnosticsWithChecker`: whether the checker of `collected` has visited
-    /// `visited` when it collects the diagnostics of `collected`, so that `collected` has what the
-    /// check of `visited` reports in it.
+    /// `getBindAndCheckDiagnosticsWithChecker`: true if the checker of `collected` has visited `visited` by the time it
+    /// collects the diagnostics of `collected`, so that `collected` gets what checking `visited` reports in it.
     pub(super) fn is_checked_no_later_than(&self, visited: FileId, collected: FileId) -> bool {
         let files = self.files();
         let (rank, last) = (files.rank_of_file(visited), files.rank_of_file(collected));
         rank <= last && self.reports_semantic_errors(visited)
     }
 
-    /// `report_conflicts_of_late_bound_members` for each class, interface and type literal whose
-    /// members something has asked for.
+    /// Runs `report_conflicts_of_late_bound_members` for each class, interface and type literal whose members have been
+    /// requested.
     fn check_duplicate_members(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let unchecked = self.unchecked_jsdoc_types(file);
@@ -724,8 +722,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The errors `lateBindMember` and `combineSymbolTables` report for one side of `container`,
-    /// restricted to `file`.
+    /// The errors `lateBindMember` and `combineSymbolTables` report for one side of `container`, restricted to `file`.
     pub(super) fn report_conflicts_of_late_bound_members(
         &mut self,
         file: FileId,
@@ -742,8 +739,8 @@ impl Checker<'_, '_> {
                     else {
                         continue;
                     };
-                    // `name := memberName`, `DeclarationNameToString(declName)` for a unique symbol. The default library's
-                    // text isn't stored.
+                    // `name := memberName`, `DeclarationNameToString(declName)` for a unique symbol. The default
+                    // library's text isn't stored.
                     let name = match self.hir(of).text.get(from as usize..to as usize) {
                         Some(written) if self.atoms().is_symbol_name(*name) => Arg::Bytes(written),
                         _ => Arg::Atom(*name),
@@ -774,8 +771,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkObjectTypeForDuplicateDeclarations`. `node`: the class, the interface or the type
-    /// literal that has `members`.
+    /// `checkObjectTypeForDuplicateDeclarations`. `node` is the class, interface or type literal that has `members`.
     pub(super) fn check_object_type_for_duplicate_declarations(
         &mut self,
         file: FileId,
@@ -784,8 +780,8 @@ impl Checker<'_, '_> {
         check_private_names: bool,
     ) {
         let hir = self.hir(file);
-        // FOR SPEED. A single member of an interface or a type literal has nothing to conflict
-        // with, unless it is static like the `prototype` of a class.
+        // FOR SPEED: a single member of an interface or a type literal has nothing to conflict with, unless it's static
+        // like a class's `prototype`.
         if !check_private_names
             && members.len() < 2
             && !members.iter().any(|m| hir[m].flags.contains(Flags::STATIC))
@@ -803,7 +799,7 @@ impl Checker<'_, '_> {
                 MemberKind::Constructor => None,
                 _ => self.declared_member_name(file, member.key),
             };
-            // The arguments of `checkPropertyOrAccessor`. 0: it is not called.
+            // The arguments of `checkPropertyOrAccessor`. A kind of 0 means it isn't called.
             let mut declared: SmallVec<[(Decl, Atom, u8, bool); 2]> = SmallVec::new();
             if member.kind == MemberKind::Constructor {
                 for p in hir[member.func].params.iter() {
@@ -891,12 +887,13 @@ impl Checker<'_, '_> {
                 // `symbolToString(symbol)`: the source text of the name in its first declaration.
                 let declarations = self.declarations_of_member(file, declaration);
                 let first = declarations.first().copied();
-                // The default library's text isn't stored. It writes a name without quotes, and `[Symbol.x]` as anyone does.
+                // The default library's text isn't stored. It writes names without quotes, and `[Symbol.x]` the usual
+                // way.
                 let is_stored = first.is_none_or(|(of, _)| !self.hir(of).text.is_empty());
                 let first = first.filter(|_| is_stored);
                 let first = first.and_then(|(of, first)| self.place_of_declaration(of, first));
                 let (of, from, to) = first.unwrap_or(place);
-                // `GetTextOfNode` does not skip the `*` before the name.
+                // `GetTextOfNode` doesn't skip the `*` before the name.
                 let from = super::spans::start_of_error_range(self.hir(of), from, to);
                 let text = match is_stored || self.atoms().is_symbol_name(name) {
                     true => Arg::Bytes(&self.hir(of).text[from as usize..to as usize]),
@@ -937,8 +934,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Reports TS2699 on the name of static member `m`. Arguments: the property name, and
-    /// `symbolToString` of the class, the interface or the type literal.
+    /// Reports TS2699 on the name of static member `m`. The arguments are the property name and `symbolToString` of the
+    /// class, interface or type literal.
     fn report_static_property_name_conflict(&mut self, file: FileId, m: MemberId, name: Atom) {
         let at = (
             file,

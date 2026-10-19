@@ -1,13 +1,12 @@
 //! Errors that block declaration emit: `Program.GetDeclarationDiagnostics`.
 //!
-//! tsgo runs the declaration transformer (`transformers/declarations`) over a file and collects its
-//! diagnostics. The transformer visits the exports of the file. An annotated type is visited for
-//! the names in it. An inferred type is serialized to syntax by the node builder
-//! (`checker/nodebuilderimpl.go`, `nodecopy.go`), which notifies the transformer's `SymbolTracker`
-//! of each symbol it references and of anything it cannot serialize. The same traversal is done
-//! here, and the same queries are made (`checker/symbolaccessibility.go`,
-//! `checker/emitresolver.go`). The text of the declaration file is only produced for a project that
-//! another project references (`Options::writes_declaration_files`).
+//! tsgo runs the declaration transformer (`transformers/declarations`) over a file and collects its diagnostics. The
+//! transformer visits the file's exports. An annotated type is visited for the names in it. An inferred type is
+//! serialized to syntax by the node builder (`checker/nodebuilderimpl.go`, `nodecopy.go`), which notifies the
+//! transformer's `SymbolTracker` of each symbol it references and of anything it can't serialize. This module does the
+//! same traversal and makes the same queries (`checker/symbolaccessibility.go`, `checker/emitresolver.go`). The text of
+//! the declaration file is only produced for a project that another project references
+//! (`Options::writes_declaration_files`).
 
 use super::enclosing_declaration::Enclosing;
 use super::errors_isolated_declarations::Emit;
@@ -51,15 +50,16 @@ pub(super) enum Meaning {
     #[cfg(feature = "baselines")]
     None,
     Value,
-    /// `SymbolFlagsValue | SymbolFlagsExportValue`, which `getQualifiedLeftMeaning` does not treat
-    /// as `SymbolFlagsValue`.
+    /// `SymbolFlagsValue | SymbolFlagsExportValue`, which `getQualifiedLeftMeaning` doesn't treat as
+    /// `SymbolFlagsValue`.
     ValueOfName,
     Type,
     Namespace,
 }
 
 impl Meaning {
-    /// Of `SymFlags::TYPE`, `NAMESPACE` or `VALUE`. `with_export_value`: `SymbolFlagsValue | SymbolFlagsExportValue`.
+    /// Converts `SymFlags::TYPE`, `NAMESPACE` or `VALUE`. `with_export_value` means `SymbolFlagsValue |
+    /// SymbolFlagsExportValue`.
     pub(super) fn of(meaning: SymFlags, with_export_value: bool) -> Meaning {
         if meaning == SymFlags::TYPE {
             Meaning::Type
@@ -125,7 +125,7 @@ pub(super) struct Access {
     accessibility: Accessibility,
     symbol_name: Vec<u8>,
     module_name: Vec<u8>,
-    /// `ErrorNode`: its span.
+    /// The span of `ErrorNode`.
     error_node: Option<(u32, u32)>,
 }
 
@@ -144,7 +144,7 @@ impl Access {
     }
 }
 
-/// `GetSymbolAccessibilityDiagnostic`, identified by how it is created.
+/// `GetSymbolAccessibilityDiagnostic`, identified by how it's created.
 #[derive(Copy, Clone)]
 enum Context {
     /// `createGetSymbolAccessibilityDiagnosticForNode`. With `NONE`, no diagnostic is reported.
@@ -153,8 +153,8 @@ enum Context {
     ForNodeName(Node),
     /// `transformExportAssignment`: 4082 at the statement.
     DefaultExport(Node),
-    /// `transformClassDeclaration` for a class that extends an expression that is not a name: 4020
-    /// at the `ExpressionWithTypeArguments`.
+    /// `transformClassDeclaration` for a class that extends an expression that isn't a name: 4020 at the
+    /// `ExpressionWithTypeArguments`.
     ExtendsClause(Node),
 }
 
@@ -167,8 +167,8 @@ struct Found {
     related: Vec<Reported>,
 }
 
-/// `SymbolTrackerImpl` with its `SymbolTrackerSharedState` (tracker.go), which are separate there
-/// so that the transformer can hold a pointer to the second. The checker is passed to it.
+/// `SymbolTrackerImpl` with its `SymbolTrackerSharedState` (tracker.go). They're separate there so that the transformer
+/// can hold a pointer to the second. The checker is passed to it.
 struct SymbolTrackerImpl {
     current_source_file: FileId,
     diagnostics: Vec<Found>,
@@ -178,12 +178,11 @@ struct SymbolTrackerImpl {
     late_marked_statements: Vec<StmtId>,
     watched_class_symbol: Option<Sym>,
     class_symbol_tracked: bool,
-    /// `state.isolatedDeclarations`, with the inputs and the results of
-    /// `getIsolatedDeclarationError`.
+    /// `state.isolatedDeclarations`, with the inputs and the results of `getIsolatedDeclarationError`.
     isolated_declarations: Option<Emit>,
 }
 
-/// What `ensureType` and `ensureNoInitializer` emit after the name of a declaration.
+/// The text `ensureType` and `ensureNoInitializer` emit after a declaration's name.
 enum Ensured {
     Nothing,
     Type(Vec<u8>),
@@ -201,7 +200,7 @@ impl Ensured {
     }
 }
 
-/// The statement kinds the transformer distinguishes after they are created.
+/// The statement kinds the transformer distinguishes after they're created.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum StatementKind {
     Import,
@@ -210,13 +209,13 @@ enum StatementKind {
     ExportAssignment,
     /// `IsAmbientModule`
     AmbientModule,
-    /// `KindJSTypeAliasDeclaration`, which is not `CanHaveModifiers`.
+    /// `KindJSTypeAliasDeclaration`, which isn't `CanHaveModifiers`.
     JsTypeAlias,
     Other,
 }
 
-/// A statement of the declaration file. The transformer edits it after it is created
-/// (`stripExportModifiers`), so its modifiers are stored separately.
+/// A statement of the declaration file. The transformer edits it after it's created (`stripExportModifiers`), so its
+/// modifiers are stored separately.
 #[derive(Clone)]
 struct Statement {
     kind: StatementKind,
@@ -307,7 +306,7 @@ const MODIFIERS: [(Flags, &[u8]); 15] = [
     (Flags::OUT, b"out"),
 ];
 
-/// `IsNonContextualKeyword`: the reserved words, and those of strict mode.
+/// `IsNonContextualKeyword`: the reserved words, including strict mode's.
 fn is_non_contextual_keyword(word: &[u8]) -> bool {
     is_reserved_word(word) || bun_core::lexer_tables::is_strict_mode_reserved_word(word)
 }
@@ -355,9 +354,9 @@ pub(super) fn is_reserved_word(word: &[u8]) -> bool {
     )
 }
 
-/// `emitComments`, with `commentSeparatorAfter`, for those of `comments` that pass
-/// `shouldWriteComment` under `OnlyPrintJSDocStyle`. They are emitted at the start of a line
-/// indented by `indent` levels, and so is the text that follows them.
+/// `emitComments`, with `commentSeparatorAfter`, for those of `comments` that pass `shouldWriteComment` under
+/// `OnlyPrintJSDocStyle`. They're emitted at the start of a line indented by `indent` levels, and so is the text that
+/// follows them.
 pub(super) fn comments_text(text: &[u8], comments: Vec<(usize, usize)>, indent: usize) -> Vec<u8> {
     let mut written = Vec::new();
     for (start, end) in comments {
@@ -392,10 +391,9 @@ fn has_trailing_new_line(text: &[u8], end: usize) -> bool {
     matches!(after, Some(b'\n' | b'\r'))
 }
 
-/// `Body` of the namespace `m`, if it is a `ModuleDeclaration`: the `B` of `namespace A.B`.
+/// `Body` of the namespace `m`, if it's a `ModuleDeclaration`: the `B` of `namespace A.B`.
 fn nested_module_declaration(hir: &File, m: ModuleId) -> Option<StmtId> {
-    // `global { }` and a namespace of `wrapInJSDocNamespace` start with their names too, but they
-    // are in a block.
+    // `global { }` and a namespace of `wrapInJSDocNamespace` start with their names too, but they're in a block.
     hir.nested_namespace(m).filter(|&inner| {
         matches!(hir[inner].kind, StmtKind::Module(it)
             if hir[it].name != ModuleName::Global && !hir[it].flags.contains(Flags::REPARSED))
@@ -407,8 +405,7 @@ fn positions_are_on_same_line(text: &[u8], pos1: usize, pos2: usize) -> bool {
     (pos1.min(pos2)..pos1.max(pos2)).all(|at| super::spans::line_break_len(text, at) == 0)
 }
 
-/// An element of a list. `range`: `Pos()` and `End()` of the node it is emitted for, which locate
-/// its comments.
+/// An element of a list. `range` is `Pos()` and `End()` of the node it's emitted for, which locate its comments.
 pub(super) struct Element {
     pub(super) range: Option<(usize, usize)>,
     pub(super) text: Vec<u8>,
@@ -417,7 +414,7 @@ pub(super) struct Element {
 /// `ListFormat`, as far as `emitListItems` depends on it.
 #[derive(Copy, Clone)]
 pub(super) struct ListFormat {
-    /// `LFMultiLine | LFIndented`, else `LFSingleLine | LFSpaceBetweenSiblings`.
+    /// `LFMultiLine | LFIndented` if true, otherwise `LFSingleLine | LFSpaceBetweenSiblings`.
     pub(super) is_multi_line: bool,
     /// `LFAllowTrailingComma`, for a list that has one.
     pub(super) has_trailing_comma: bool,
@@ -434,8 +431,8 @@ impl ListFormat {
     };
 }
 
-/// The subset of `EmitTextWriter` that a list with comments needs. `source`: the source text of the
-/// file that contains the comments.
+/// The subset of `EmitTextWriter` that a list with comments needs. `source` is the source text of the file that
+/// contains the comments.
 pub(super) struct Writer<'a> {
     source: &'a [u8],
     text: Vec<u8>,
@@ -507,8 +504,8 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// `emitTrailingComments`, and `emitTrailingCommentsOfPosition` with `prefixSpace`. The scan for
-    /// trailing comments stops at the line break, so a `/* */` has no `HasTrailingNewLine`.
+    /// `emitTrailingComments`, and `emitTrailingCommentsOfPosition` with `prefixSpace`. The scan for trailing comments
+    /// stops at the line break, so a `/* */` has no `HasTrailingNewLine`.
     fn emit_trailing_comments(&mut self, end: usize) {
         for comment in super::spans::get_trailing_comment_ranges(self.source, end) {
             if !should_write_comment(&self.source[comment.0..comment.1]) {
@@ -538,9 +535,8 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// `emitListItems`, between the opening and the closing token of the list. `delimiter`:
-    /// `writeDelimiter`, `,` or ` |` or ` &`. `parent_end`: `End()` of the node that contains the
-    /// list.
+    /// `emitListItems`, between the list's opening and closing tokens. `delimiter` is `writeDelimiter`: `,` or ` |` or
+    /// ` &`. `parent_end` is `End()` of the node that contains the list.
     pub(super) fn emit_list_items(
         &mut self,
         elements: &[Element],
@@ -604,8 +600,8 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// `emitListItems` for `LFParameters` that are synthesized, as is their parent. `range` is the
-    /// `CommentRange` of an element: `End()` of each is that of the parent, -1.
+    /// `emitListItems` for `LFParameters` that are synthesized, as is their parent. `range` is an element's
+    /// `CommentRange`. `End()` of each is the parent's, -1.
     pub(super) fn emit_synthesized_parameters(&mut self, elements: &[Element]) {
         for (i, child) in elements.iter().enumerate() {
             if i != 0 {
@@ -623,7 +619,7 @@ impl<'a> Writer<'a> {
     }
 }
 
-/// `writeCommentRangeWorker`, of a `/* */`.
+/// `writeCommentRangeWorker` for a `/* */`.
 fn write_comment_range(
     text: &[u8],
     start: usize,
@@ -651,8 +647,8 @@ fn write_comment_range(
     }
 }
 
-/// `node.Pos()`, computed from the start of the node's first token: the end of the previous token,
-/// or of a comment that trails that token.
+/// `node.Pos()`, computed from the start of the node's first token: the end of the previous token, or of a comment that
+/// trails that token.
 pub(super) fn pos_before(text: &[u8], start: usize) -> usize {
     let mut at = start.min(text.len());
     loop {
@@ -675,7 +671,7 @@ pub(super) fn pos_before(text: &[u8], start: usize) -> usize {
     }
 }
 
-/// Each with a space after it.
+/// The modifiers' keywords, each followed by a space.
 fn modifiers_text(modifiers: &[Flags]) -> Vec<u8> {
     let mut text = Vec::new();
     for modifier in modifiers {
@@ -687,19 +683,19 @@ fn modifiers_text(modifiers: &[Flags]) -> Vec<u8> {
     text
 }
 
-/// What `ensureModifierFlags` reads of the node whose modifiers it is given.
+/// The properties `ensureModifierFlags` reads from the node whose modifiers it's given.
 #[derive(Copy, Clone)]
 enum ModifiedNode {
     /// `parentIsFile`
     InFile {
-        /// `isAlwaysType`: it is an interface.
+        /// `isAlwaysType`: it's an interface.
         is_always_type: bool,
     },
     Nested,
 }
 
 impl ModifiedNode {
-    /// A node that is not an interface.
+    /// A node that isn't an interface.
     fn new(parent_is_file: bool) -> Self {
         match parent_is_file {
             true => ModifiedNode::InFile {
@@ -710,7 +706,7 @@ impl ModifiedNode {
     }
 }
 
-/// Whether the declaration file text is requested, not only the diagnostics.
+/// `Yes` if the declaration file's text is requested, not only the diagnostics.
 #[derive(Copy, Clone, Default)]
 enum Writes {
     /// All text is empty.
@@ -748,12 +744,12 @@ struct DeclarationEmit<'c, 'p, 's> {
     witnessed_cjs_exports: Vec<Vec<u8>>,
     /// `expandoHosts` for the variables that are emitted as functions, keyed by statement.
     expando_hosts: FxHashMap<StmtId, Vec<Statement>>,
-    /// `expandoMembers`, keyed by the statement of the host.
+    /// `expandoMembers`, keyed by the host's statement.
     expando_members: FxHashMap<StmtId, Vec<Statement>>,
 }
 
 impl Checker<'_, '_> {
-    /// `shouldStripInternal` for a node of `file` that is not a parameter. `pos`: `node.Pos()`.
+    /// `shouldStripInternal` for a node of `file` that isn't a parameter. `pos` is `node.Pos()`.
     pub(super) fn should_strip_internal(&self, file: FileId, pos: u32) -> bool {
         if !self.files().options.strips_internal_declarations {
             return false;
@@ -765,8 +761,7 @@ impl Checker<'_, '_> {
             .any(|(start, end)| strings::contains(&text[start..end], b"@internal"))
     }
 
-    /// `shouldStripInternal` for the parameter `p` of `file`. `previous_sibling`: the parameter
-    /// before it.
+    /// `shouldStripInternal` for the parameter `p` of `file`. `previous_sibling` is the parameter before it.
     fn should_strip_internal_parameter(
         &self,
         file: FileId,
@@ -802,9 +797,9 @@ impl<'p, 's> Checker<'p, 's> {
         self.transform_declarations(file, false);
     }
 
-    /// `emitDeclarationFile`: the text of the declaration file of `file`. `None`: there is none,
-    /// because none is emitted for such a file (`sourceFileMayBeEmitted`) or because the
-    /// transformer found a blocking error (`declBlocked`), which is reported.
+    /// `emitDeclarationFile`: the text of `file`'s declaration file. Returns `None` if there isn't one, either because
+    /// none is emitted for such a file (`sourceFileMayBeEmitted`) or because the transformer found a blocking error
+    /// (`declBlocked`), which is reported.
     pub fn emit_declaration_file(&mut self, file: FileId) -> Option<Vec<u8>> {
         self.transform_declarations(file, true)
     }
@@ -818,11 +813,10 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        // The `declarationLinks` of a new `EmitResolver`: what an earlier run of the transformer
-        // painted (`addVisibleAlias`) is not visible when this one starts.
+        // The `declarationLinks` of a new `EmitResolver`: aliases that an earlier run of the transformer made visible
+        // (`addVisibleAlias`) aren't visible when this one starts.
         self.emit_resolver_links.visibility.clear();
-        // All these queries run after everything is checked: a cycle through here is not reported
-        // as an error.
+        // All these queries run after everything is checked, so a cycle through here isn't reported as an error.
         let saved = self.relation_too_complex;
         let reported = self.reported.len();
         self.eager.push(self.stack.len());
@@ -842,8 +836,8 @@ impl<'p, 's> Checker<'p, 's> {
         };
         self.eager.pop();
         self.relation_too_complex = saved;
-        // `getDeclarationDiagnostics` returns the diagnostics of the transformer. Those of the
-        // checker are read by `checkSourceFile`, which has run.
+        // `getDeclarationDiagnostics` returns the transformer's diagnostics. The checker's are read by
+        // `checkSourceFile`, which has already run.
         if !self.emits_first() {
             self.reported.truncate(reported);
         }
@@ -855,7 +849,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.declaration_indent = None;
         let mut text = text.filter(|_| writes && !is_skipped);
-        // `getSourceMappingURL`, without `mapRoot`. Nothing follows it, not a line break either.
+        // `getSourceMappingURL`, without `mapRoot`. Nothing follows it, not even a line break.
         if files.options.writes_declaration_maps
             && let Some(text) = &mut text
             && let Some(output) =
@@ -927,8 +921,8 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
     }
 }
 
-/// What `isDeclarationVisible`, `getAccessibleSymbolChain`, `getAlternativeContainingModules`, `getExportsOfSymbol`,
-/// `getSymbolTableAliases` and `getSpecifierForModuleSymbol` memoize.
+/// The memos of `isDeclarationVisible`, `getAccessibleSymbolChain`, `getAlternativeContainingModules`,
+/// `getExportsOfSymbol`, `getSymbolTableAliases` and `getSpecifierForModuleSymbol`.
 #[derive(Default)]
 pub(super) struct EmitResolverLinks {
     /// `declarationLinks.isVisible`
@@ -940,9 +934,9 @@ pub(super) struct EmitResolverLinks {
     variable_matches: FxHashMap<(Sym, FileId, ScopeId), Rc<Vec<Sym>>>,
     exports: FxHashMap<Sym, Rc<Vec<(Atom, Sym)>>>,
     global_aliases: Option<Rc<Vec<(Atom, Sym)>>>,
-    /// The locals of the blocks `enterNewScope` has pushed in front of the enclosing declaration,
-    /// innermost first, for the duration of one symbol chain lookup from there. No symbol: it was
-    /// created by `instantiateSymbol`.
+    /// The locals of the blocks `enterNewScope` has pushed in front of the enclosing declaration, innermost first, for
+    /// the duration of one symbol chain lookup from there. An entry without a symbol was created by
+    /// `instantiateSymbol`.
     fake_locals: Vec<(Atom, SymFlags, Option<Sym>)>,
     /// `specifierCache`
     specifiers: FxHashMap<(Sym, FileId, ResolutionMode), Vec<u8>>,
@@ -960,9 +954,9 @@ impl EmitResolverLinks {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `lookupSymbolChain` for a symbol that is not a type parameter: whether the chain starts with
-    /// `globalThis`, and the rest of it.
-    /// `fake_locals`: the locals of the synthetic blocks `enterNewScope` has created around `at`.
+    /// `lookupSymbolChain` for a symbol that isn't a type parameter. Returns whether the chain starts with
+    /// `globalThis`, and the rest of it. `fake_locals` are the locals of the synthetic blocks `enterNewScope` has
+    /// created around `at`.
     pub(super) fn lookup_symbol_chain_at(
         &mut self,
         symbol: Sym,
@@ -989,8 +983,8 @@ impl<'p, 's> Checker<'p, 's> {
         (starts_with_global_this, chain)
     }
 
-    /// `lookup_symbol_chain_at` for the symbol `cloneTypeAsModuleType` created for
-    /// `originating_import`, with the value meaning.
+    /// `lookup_symbol_chain_at` for the symbol `cloneTypeAsModuleType` created for `originating_import`, with the value
+    /// meaning.
     pub(super) fn lookup_symbol_chain_of_module_clone_at(
         &mut self,
         originating_import: Sym,
@@ -1011,7 +1005,8 @@ impl<'p, 's> Checker<'p, 's> {
 // ───────────────────────────── symbols ─────────────────────────────
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `IsSymbolAccessible(symbol, enclosingDeclaration, meaning, false)`. `meaning`, `with_export_value`: see `Meaning::of`.
+    /// `IsSymbolAccessible(symbol, enclosingDeclaration, meaning, false)`. For `meaning` and `with_export_value`, see
+    /// `Meaning::of`.
     pub(super) fn is_symbol_accessible_at(
         &mut self,
         symbol: Sym,
@@ -1041,17 +1036,16 @@ impl<'p, 's> Checker<'p, 's> {
             .is_accessible()
     }
 
-    /// `exportTypeLinks.Get(symbol).target` of a symbol created by `cloneTypeAsModuleType`, which
-    /// has the flags, the name, the declarations, the parent and the exports of its target. Any
-    /// other symbol is returned unchanged.
+    /// `exportTypeLinks.Get(symbol).target` of a symbol created by `cloneTypeAsModuleType`, which has its target's
+    /// flags, name, declarations, parent and exports. Any other symbol is returned unchanged.
     fn target_of_module_clone(&self, symbol: Sym) -> Sym {
         self.files()
             .target_of_module_clone(symbol)
             .unwrap_or(symbol)
     }
 
-    /// The result of `resolveESModuleSymbol` for `originating_import`, the alias of an `import * as
-    /// ns` that does not resolve to the module symbol itself.
+    /// The result of `resolveESModuleSymbol` for `originating_import`, the alias of an `import * as ns` that doesn't
+    /// resolve to the module symbol itself.
     pub(super) fn module_clone(&self, originating_import: Sym) -> Sym {
         self.files()
             .module_clone(originating_import)
@@ -1097,8 +1091,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.create_expression_from_symbol_chain(&chain, at, never_ascii_escape)
     }
 
-    /// `enclosingDeclaration`, if it is one of the nodes of `isEnclosingDeclaration` that the
-    /// source has.
+    /// `enclosingDeclaration`, if it's one of the nodes of `isEnclosingDeclaration` that the source has.
     fn node_of_enclosing_declaration(&self, at: Enclosing) -> Node {
         if at.fake_scope != 0 || at.scope.is_none() {
             return Node::NONE;
@@ -1136,7 +1129,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_external_module_part(&self, part: Sym) -> bool {
         let files = self.files();
         files.symbol(part).decls.iter().any(|&decl| match decl {
-            // `IsExternalOrCommonJSModule`, which a JSON file is not.
+            // `IsExternalOrCommonJSModule`, which is false for a JSON file.
             Decl::File => {
                 files.module(part.file).is_module() && self.hir(part.file).kind != FileKind::Json
             }
@@ -1246,8 +1239,7 @@ impl<'p, 's> Checker<'p, 's> {
 // ───────────────────────────── visibility ─────────────────────────────
 
 impl<'p, 's> Checker<'p, 's> {
-    /// The statement of the declaration `decl`, or the statement that contains an import or an
-    /// export specifier.
+    /// The statement of the declaration `decl`, or the statement that contains an import or an export specifier.
     fn statement_of(&self, file: FileId, decl: Decl) -> Option<StmtId> {
         let hir = self.hir(file);
         match decl {
@@ -1259,8 +1251,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `isDeclarationVisible` for a statement container: a file, the block of a namespace, or
-    /// anything else.
+    /// `isDeclarationVisible` for a statement container: a file, a namespace's block, or anything else.
     fn is_container_visible(&mut self, file: FileId, container: Parent) -> bool {
         match container {
             Parent::File => true,
@@ -1269,9 +1260,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `isDeclarationVisible`
-    /// `IsImplicitlyExportedJSDocDeclaration` for a type alias or a namespace with `flags` in
-    /// `container`.
+    /// `IsImplicitlyExportedJSDocDeclaration` for a type alias or a namespace with `flags` in `container`.
     fn is_implicitly_exported_jsdoc_declaration(
         &self,
         file: FileId,
@@ -1284,6 +1273,7 @@ impl<'p, 's> Checker<'p, 's> {
             && (module.is_module() || module.is_commonjs())
     }
 
+    /// `isDeclarationVisible`
     pub(super) fn is_declaration_visible(&mut self, file: FileId, decl: Decl) -> bool {
         // One cache entry per binding name, whichever kind of declaration it is.
         let decl = match decl {
@@ -1323,8 +1313,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if is_empty || statement.is_none() {
                         return false;
                     }
-                    // `GetDeclarationContainer`: the declarations in a loop header belong to the
-                    // container of the loop.
+                    // `GetDeclarationContainer`: the declarations in a loop header belong to the loop's container.
                     let container = match bound.parent_of_stmt(statement) {
                         Parent::Stmt(around)
                             if matches!(
@@ -1395,8 +1384,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_container_visible(file, container)
     }
 
-    /// `isDeclarationVisible` for a function-like node. A type node is assumed to be in a visible
-    /// position.
+    /// `isDeclarationVisible` for a function-like node. A type node is assumed to be in a visible position.
     fn is_function_visible(&mut self, file: FileId, f: FnId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match bound.fns[f.idx()].owner {
@@ -1426,8 +1414,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `hasVisibleDeclarations`: `None` if some declaration of `symbol` is not and cannot be made
-    /// visible, or else the statements that must be emitted to make it visible. `paints`:
+    /// `hasVisibleDeclarations`: returns `None` if some declaration of `symbol` isn't visible and can't be made
+    /// visible, otherwise the statements that must be emitted to make it visible. `paints` is
     /// `shouldComputeAliasToMakeVisible`.
     pub(super) fn has_visible_declarations(
         &mut self,
@@ -1523,8 +1511,8 @@ impl<'p, 's> Checker<'p, 's> {
         Some(aliases)
     }
 
-    /// `isEntityNameVisible` for a name that starts with the identifier `first`. `start`: its
-    /// position in the file of `at`, for `ErrorNode`.
+    /// `isEntityNameVisible` for a name that starts with the identifier `first`. `start` is its position in the file of
+    /// `at`, for `ErrorNode`.
     pub(super) fn is_entity_name_visible(
         &mut self,
         first: Atom,
@@ -1576,8 +1564,8 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(target) = target.filter(|&target| target != file) else {
             return false;
         };
-        // `file.Symbol` is the symbol the binder created. The exports an `export *` adds come from
-        // the table of a merged module, which holds the merged symbols themselves.
+        // `file.Symbol` is the symbol the binder created. The exports that an `export *` adds come from a merged
+        // module's table, which contains the merged symbols themselves.
         let bound = self.bound(file);
         bound
             .table(bound.symbol(bound.file_symbol).exports)
@@ -1626,8 +1614,8 @@ impl<'p, 's> Checker<'p, 's> {
         let mut scope = at.scope;
         while scope.is_some() {
             let s = &bound.scopes[scope.idx()];
-            // `bindFunctionExpression`: the name of a function expression is in no table. Here it
-            // is alone in a scope around that of the function.
+            // `bindFunctionExpression`: a function expression's name isn't in any table. Here it's the only local of a
+            // scope around the function's.
             let only = match bound.table(s.locals) {
                 &[(_, only)] => bound.symbol(only).decls.first(),
                 _ => None,
@@ -1635,7 +1623,7 @@ impl<'p, 's> Checker<'p, 's> {
             let holds_function_name =
                 matches!(only, Some(&Decl::Fn(f)) if hir[f].kind == FnKind::Expr);
             match s.kind {
-                // `IsGlobalSourceFile`: the declarations of a script are global.
+                // `IsGlobalSourceFile`: a script's declarations are global.
                 ScopeKind::File if s.symbol.is_none() => {}
                 ScopeKind::Block if holds_function_name => {}
                 ScopeKind::File | ScopeKind::Module(_) => {
@@ -1648,8 +1636,8 @@ impl<'p, 's> Checker<'p, 's> {
                 // "Type parameters are bound into `members` lists so they can merge across declarations"
                 ScopeKind::Class(class) => {
                     let symbol = bound.class_symbol[class.idx()];
-                    // `getClassExpressionNameTable`: the locals of the scope around that of a named
-                    // class expression, which comes next.
+                    // `getClassExpressionNameTable`: the locals of the scope around a named class expression's scope,
+                    // which comes next.
                     tables.push(Table::TypeMembers(files.sym(at.file, symbol)));
                 }
                 ScopeKind::Interface(interface) => {
@@ -1664,8 +1652,8 @@ impl<'p, 's> Checker<'p, 's> {
         tables
     }
 
-    /// `symbols[name]` exactly as stored in the table: `mergeSymbol` merges into a clone, and a
-    /// table that is not merged still holds the original.
+    /// `symbols[name]` exactly as stored in the table: `mergeSymbol` merges into a clone, and a table that isn't merged
+    /// still has the original.
     fn lookup(&mut self, table: Table, name: Atom) -> Option<Sym> {
         if name.is_none() {
             return None;
@@ -1683,8 +1671,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let found = parameters.iter().find(|parameter| parameter.0 == name);
                 found.map(|parameter| parameter.1)
             }
-            // `bindClassLikeDeclaration`: `symbol.Exports[prototypeSymbol.Name] = prototypeSymbol`,
-            // and `mergeSymbol` does not merge a value of a namespace with it.
+            // `bindClassLikeDeclaration`: `symbol.Exports[prototypeSymbol.Name] = prototypeSymbol`, and `mergeSymbol`
+            // doesn't merge a namespace's value with it.
             Table::Exports(symbol)
                 if name == known::prototype && files.flags(symbol).contains(SymFlags::CLASS) =>
             {
@@ -1760,7 +1748,7 @@ impl<'p, 's> Checker<'p, 's> {
         aliases
     }
 
-    /// `getAccessibleSymbolChain`. Empty: there is none.
+    /// `getAccessibleSymbolChain`. Empty if there's none.
     fn accessible_symbol_chain(
         &mut self,
         symbol: Sym,
@@ -1771,7 +1759,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.accessible_symbol_chain_ex(symbol, at, meaning, &mut visited)
     }
 
-    /// `getAccessibleSymbolChainEx`. `visited`: `visitedSymbolTablesMap`.
+    /// `getAccessibleSymbolChainEx`. `visited` is `visitedSymbolTablesMap`.
     fn accessible_symbol_chain_ex(
         &mut self,
         symbol: Sym,
@@ -1779,7 +1767,7 @@ impl<'p, 's> Checker<'p, 's> {
         meaning: Meaning,
         visited: &mut Vec<(Sym, Table)>,
     ) -> Rc<Vec<Sym>> {
-        // A result found past the locals of a synthetic block is valid for that block only.
+        // A result found past a synthetic block's locals is valid only for that block.
         let is_cached = self.emit_resolver_links.fake_locals.is_empty();
         let key = (symbol, at.file, at.scope, meaning);
         if is_cached && let Some(known) = self.emit_resolver_links.chains.get(&key) {
@@ -1929,8 +1917,8 @@ impl<'p, 's> Checker<'p, 's> {
         aliases
     }
 
-    /// `getAccessibleSymbolChain(property, enclosingDeclaration, SymbolFlagsNone, ..)`. A property is in no table, so the chain is
-    /// an alias that resolves to it.
+    /// `getAccessibleSymbolChain(property, enclosingDeclaration, SymbolFlagsNone, ..)`. A property isn't in any table,
+    /// so the chain is an alias that resolves to it.
     #[cfg(feature = "baselines")]
     pub(super) fn accessible_alias_of_property(
         &mut self,
@@ -1984,7 +1972,7 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
-    /// `resolveAlias`. `None`: a property, which has no `Sym`.
+    /// `resolveAlias`. Returns `None` for a property, which has no `Sym`.
     fn resolve_alias_or_unknown(&mut self, alias: Sym) -> Option<Sym> {
         match self.resolve_alias(alias) {
             AliasTarget::Symbol(target) => Some(target),
@@ -2099,8 +2087,8 @@ impl<'p, 's> Checker<'p, 's> {
                     .decls_of(found)
                     .iter()
                     .any(|d| matches!(d.1, Decl::ExportSpec(_)));
-            // `getSymbolFlags(resolveAlias(symbolFromSymbolTable))`: what is merged with the alias
-            // does not count. `unknownSymbol` is a property.
+            // `getSymbolFlags(resolveAlias(symbolFromSymbolTable))`: anything merged with the alias doesn't count.
+            // `unknownSymbol` is a property.
             let flags = if resolves_alias {
                 self.flags_of_alias_target(found)
                     .unwrap_or(SymFlags::PROPERTY)
@@ -2155,9 +2143,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let files = self.files();
         let mut results = Vec::new();
-        // `resolveExternalModuleName(enclosingDeclaration, importRef)`: the location is not a
-        // specifier, so the module is resolved in the default mode of the file. An import that was
-        // resolved in another mode (`module: commonjs` with `bundler`) is not found.
+        // `resolveExternalModuleName(enclosingDeclaration, importRef)`: the location isn't a specifier, so the module
+        // is resolved in the file's default mode. An import that was resolved in another mode (`module: commonjs` with
+        // `bundler`) isn't found.
         let mode = self.files().default_resolution_mode_for_file(at.file);
         for &specifier in &self.bound(at.file).specifiers {
             if let Some(module) = files.module_of_specifier_as(at.file, specifier, mode)
@@ -2170,9 +2158,8 @@ impl<'p, 's> Checker<'p, 's> {
             // `c.program.SourceFiles()`
             for &file in files.order {
                 let module = files.module(file);
-                // A leaf file exports no alias. The task that checks it frees its HIR
-                // (`Files::free_tree`). Test `is_leaf`, which is immutable after loading, before
-                // reading `hir`.
+                // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
+                // `is_leaf`, which is immutable after loading, before reading `hir`.
                 if module.is_leaf && self.task.file != Some(file) {
                     continue;
                 }
@@ -2192,8 +2179,8 @@ impl<'p, 's> Checker<'p, 's> {
         results
     }
 
-    /// "look for a variable in scope with the container's type which may be acting like a namespace (eg, `Symbol` acts like a namespace
-    /// when looking up `Symbol.toStringTag`)"
+    /// "look for a variable in scope with the container's type which may be acting like a namespace (eg, `Symbol` acts
+    /// like a namespace when looking up `Symbol.toStringTag`)"
     fn variable_matches(
         &mut self,
         container: Sym,
@@ -2251,7 +2238,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             additional.push(module);
         }
-        // FOR SPEED: no module exports a member.
+        // FOR SPEED: modules don't export members.
         let reexports = match at.is_none() || self.is_member_symbol(symbol) {
             true => Rc::default(),
             false => self.alternative_containing_modules(symbol, at),
@@ -2268,7 +2255,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => None,
         };
         let mut result = Vec::with_capacity(2 + additional.len() + reexports.len());
-        // The real container comes first if it is in scope.
+        // The real container comes first if it's in scope.
         if is_in_scope {
             result.push(container);
             result.extend(additional);
@@ -2284,8 +2271,8 @@ impl<'p, 's> Checker<'p, 's> {
         result
     }
 
-    /// The part of `getContainersOfSymbol` for the class expression `e` on the right of `a.b = class ..`: the module for
-    /// `module.exports = ..` and `exports.b = ..`, otherwise what `a` resolves to.
+    /// The part of `getContainersOfSymbol` for the class expression `e` on the right of `a.b = class ..`: the module
+    /// for `module.exports = ..` and `exports.b = ..`, otherwise what `a` resolves to.
     fn container_of_assigned_class_expression(&mut self, file: FileId, e: ExprId) -> Option<Sym> {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let Parent::Expr(assignment) = bound.parent_of_expr(e) else {
@@ -2400,7 +2387,7 @@ impl<'p, 's> Checker<'p, 's> {
         best
     }
 
-    /// `IsAnySymbolAccessible`. `paints`: `shouldComputeAliasesToMakeVisible`.
+    /// `IsAnySymbolAccessible`. `paints` is `shouldComputeAliasesToMakeVisible`.
     fn is_any_symbol_accessible(
         &mut self,
         symbols: &[Sym],
@@ -2473,7 +2460,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.inaccessible(symbol, at, meaning)
     }
 
-    /// The end of `isSymbolAccessibleWorker`: `symbol` is not exported from its module, or is in another module and has no alias.
+    /// The end of `isSymbolAccessibleWorker`: `symbol` isn't exported from its module, or is in another module and has
+    /// no alias.
     fn inaccessible(&mut self, symbol: Sym, at: Enclosing, meaning: Meaning) -> Access {
         let mut result = Access {
             accessibility: Accessibility::NotAccessible,
@@ -2516,7 +2504,8 @@ impl SymbolTrackerImpl {
         });
     }
 
-    /// `getSymbolAccessibilityDiagnostic`: `diagnosticMessage`, `typeName`, `errorNode`. `None`: no diagnostic is reported.
+    /// `getSymbolAccessibilityDiagnostic`: `diagnosticMessage`, `typeName`, `errorNode`. Returns `None` if no
+    /// diagnostic is reported.
     fn accessibility_diagnostic(
         &self,
         c: &Checker<'_, '_>,
@@ -2539,8 +2528,7 @@ impl SymbolTrackerImpl {
             true => private_module,
             false => private_name,
         };
-        // The codes for a static member, for any other member of a class declaration, and for the
-        // rest.
+        // The codes for a static member, for any other member of a class declaration, and for the rest.
         let by_place = |member: Node, of_static: [u32; 3], in_class: [u32; 3], other: [u32; 2]| {
             if hir.is_static(member) {
                 by_module(of_static)
@@ -2586,7 +2574,7 @@ impl SymbolTrackerImpl {
             Kind::SetAccessor => (no_name_check([4036, 4037]), name, name),
             Kind::GetAccessor if hir.is_static(node) => (by_module([4038, 4039, 4040]), name, name),
             Kind::GetAccessor => (by_module([4041, 4042, 4043]), name, name),
-            // `getReturnTypeVisibilityDiagnosticMessage`, at the name, or else at the whole node.
+            // `getReturnTypeVisibilityDiagnosticMessage`, at the name if there is one, otherwise at the whole node.
             Kind::ConstructSignature
             | Kind::CallSignature
             | Kind::IndexSignature
@@ -2673,7 +2661,7 @@ impl SymbolTrackerImpl {
         })
     }
 
-    /// `handleSymbolAccessibilityError`. Whether an error is reported.
+    /// `handleSymbolAccessibilityError`. Returns true if an error is reported.
     fn handle_symbol_accessibility_error(&mut self, c: &Checker<'_, '_>, access: Access) -> bool {
         match access.accessibility {
             Accessibility::Accessible(aliases) => {
@@ -2793,7 +2781,7 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
         }
     }
 
-    /// `ReportTruncationError`, which is not deferred.
+    /// `ReportTruncationError`, which isn't deferred.
     fn report_truncation_error(&mut self, c: &mut Checker<'p, '_>) {
         if self.error_location().is_some() {
             let location =
@@ -2851,15 +2839,15 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         {
             statements.push(Statement::empty_exports());
         }
-        // `emitSourceFile`: `emitShebangIfNeeded`, `emitDetachedCommentsBeforeStatementList`, `emitTripleSlashDirectives`.
+        // `emitSourceFile`: `emitShebangIfNeeded`, `emitDetachedCommentsBeforeStatementList`,
+        // `emitTripleSlashDirectives`.
         let mut shebang = Vec::new();
         if hir.text.starts_with(b"#!") {
             let end = strings::index_of_char_usize(&hir.text, b'\n').unwrap_or(hir.text.len());
             shebang = [hir.text[..end].trim_end_with(|c| c == '\r'), b"\n"].concat();
         }
         let directives = self.reference_directives();
-        // `emitDetachedCommentsAfterStatementList`: `statements.Loc.End()` is the end of the last
-        // token of the file.
+        // `emitDetachedCommentsAfterStatementList`: `statements.Loc.End()` is the end of the file's last token.
         let written = hir
             .ids(hir.body)
             .filter(|&s| !hir.is_in_jsdoc(hir[s].start));
@@ -2878,8 +2866,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         .concat()
     }
 
-    /// `getReferencedFiles`, `getTypeReferences`, `getLibReferences`, `emitTripleSlashDirectives`:
-    /// those that have `preserve="true"`.
+    /// `getReferencedFiles`, `getTypeReferences`, `getLibReferences`, `emitTripleSlashDirectives`: the directives that
+    /// have `preserve="true"`.
     fn reference_directives(&self) -> Vec<u8> {
         let hir = self.c.hir(self.file());
         let mut text = Vec::new();
@@ -2957,8 +2945,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.c.declaration_indent = self.writes().then_some(indent);
     }
 
-    /// `emitLeadingComments`, under `OnlyPrintJSDocStyle`, for a node that is emitted at the start
-    /// of a line. `pos`: `node.Pos()`.
+    /// `emitLeadingComments`, under `OnlyPrintJSDocStyle`, for a node that's emitted at the start of a line. `pos` is
+    /// `node.Pos()`.
     fn leading_comments(&mut self, pos: u32) -> Vec<u8> {
         let Writes::Yes { detached_comments } = self.writes else {
             return Vec::new();
@@ -2979,8 +2967,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         )
     }
 
-    /// `emitCommentsBeforeNode`, `text`, `emitCommentsAfterNode`, for a node that continues a line.
-    /// `range`: its `Pos()`, if it differs from `containerPos`, and its `End()`.
+    /// `emitCommentsBeforeNode`, `text`, `emitCommentsAfterNode`, for a node that continues a line. `range` is its
+    /// `Pos()`, if that differs from `containerPos`, and its `End()`.
     fn with_comments(&self, range: (Option<u32>, u32), text: &[u8]) -> Vec<u8> {
         if !self.writes() || range.1 == 0 || self.c.files().options.remove_comments {
             return text.to_vec();
@@ -2994,8 +2982,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         writer.into_text()
     }
 
-    /// `emitDetachedComments` for the file: the comments at its start that a blank line separates
-    /// from what follows.
+    /// `emitDetachedComments` for the file: the comments at its start that a blank line separates from what follows.
     fn detached_comments_text(&mut self) -> Vec<u8> {
         let hir = self.c.hir(self.file());
         let text = &hir.text[..];
@@ -3035,7 +3022,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         comments_text(text, detached, self.indent)
     }
 
-    /// Each statement on a line of its own.
+    /// Puts each statement on its own line.
     fn statements_text(&self, statements: &[Statement]) -> Vec<u8> {
         let mut text = Vec::new();
         for statement in statements {
@@ -3048,8 +3035,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         text
     }
 
-    /// `{`, each of `lines` on its own line indented one more level, with `separator` between them,
-    /// and `}`.
+    /// `{`, each of `lines` on its own line indented one more level, with `separator` between them, and `}`.
     fn block(&self, lines: &[Vec<u8>], separator: &[u8]) -> Vec<u8> {
         let mut text = b"{\n".to_vec();
         for (i, line) in lines.iter().enumerate() {
@@ -3066,14 +3052,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         text
     }
 
-    /// `ensureModifiers`, `ensureModifierFlags`, `maskModifierFlags`. `written`: `node.Modifiers()`.
+    /// `ensureModifiers`, `ensureModifierFlags`, `maskModifierFlags`. `written` is `node.Modifiers()`.
     fn ensure_modifiers(&self, written: Span<ModifierId>, node: ModifiedNode) -> Vec<Flags> {
         self.ensure_modifiers_of_statement(written, Flags::empty(), Parent::None, node)
     }
 
-    /// The same for a statement in `container`. `declared`: the flags of its declaration. A
-    /// statement synthesized by the reparser has clones of the modifiers of its host, which are not
-    /// HIR nodes.
+    /// Same as `ensure_modifiers`, for a statement in `container`. `declared` are its declaration's flags. A statement
+    /// synthesized by the reparser has clones of its host's modifiers, which aren't HIR nodes.
     fn ensure_modifiers_of_statement(
         &self,
         written: Span<ModifierId>,
@@ -3143,8 +3128,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         super::print::quoted(self.name(spec), b'"', false)
     }
 
-    /// `NewUniqueNameEx(base, GeneratedIdentifierFlagsOptimistic)`, `makeUniqueName`: `base` if
-    /// nothing in the file has that name.
+    /// `NewUniqueNameEx(base, GeneratedIdentifierFlagsOptimistic)`, `makeUniqueName`: `base` if nothing in the file has
+    /// that name.
     fn unique_name(&mut self, base: &[u8]) -> Vec<u8> {
         let mut name = base.to_vec();
         let mut number = 0;
@@ -3204,13 +3189,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let Some(first) = type_parameters.iter().next() else {
             return Vec::new();
         };
-        // `Pos()` of the first: the end of the `<`. Only trivia is between the two.
+        // `Pos()` of the first: the end of the `<`. There's only trivia between the two.
         let start = hir[first].start;
         let before = match self.writes() && !hir.is_in_jsdoc(start) {
             true => &hir.text[..(start as usize).min(hir.text.len())],
             false => &[],
         };
-        // A comment between the two may have a `<` of its own.
+        // A comment between the two may contain a `<` too.
         let mut pos = (before.iter().enumerate().rev())
             .filter(|&(_, &byte)| byte == b'<')
             .take(4)
@@ -3230,7 +3215,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         [b"<", &list[..], b">"].concat()
     }
 
-    /// The same for type arguments, which have already been visited.
+    /// Same as `visit_type_parameters`, for type arguments, which have already been visited.
     fn type_arguments_text(&mut self, arguments: IdList<TypeNodeId>) -> Vec<u8> {
         let mut texts = Vec::with_capacity(arguments.len());
         for argument in self.c.hir(self.file()).ids(arguments) {
@@ -3242,8 +3227,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         [b"<", &texts.join(&b", "[..])[..], b">"].concat()
     }
 
-    /// `visitNestedExpression`, `transformExpandoAssignment` for each `f.name = value` that
-    /// declares a property. They come before all statements.
+    /// `visitNestedExpression`, `transformExpandoAssignment` for each `f.name = value` that declares a property. They
+    /// come before all statements.
     fn transform_expando_assignments(&mut self) {
         let file = self.file();
         let files = self.c.files();
@@ -3292,7 +3277,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if loc.is_some_and(|loc| self.c.should_strip_internal(file, loc.pos)) {
                 continue;
             }
-            // The function that is emitted for a variable.
+            // The function that's emitted for a variable.
             let mut variable: Option<(VarDeclId, FnId)> = None;
             match declaration {
                 Decl::Var(pat) => {
@@ -3361,9 +3346,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             {
                 continue;
             }
-            // `transformExpandoHost`: it is emitted as a function, replacing the whole statement. A
-            // function declaration emits the same when it is visited.
-            // `getExpandoHostId`
+            // `transformExpandoHost`: it's emitted as a function, replacing the whole statement. A function declaration
+            // emits the same when it's visited. `getExpandoHostId`
             let root = match variable {
                 Some((d, _)) => bound.var_stmt[d.idx()].some(),
                 None => self.c.files().statement_of_declaration(file, declaration),
@@ -3405,8 +3389,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if let ExprKind::Ident(right) = hir[value].kind
                 && !is_parenthesized(hir, value)
             {
-                // `transformBinaryExpressionToExportDeclaration`: it is emitted as `export { right
-                // as name }`.
+                // `transformBinaryExpressionToExportDeclaration`: it's emitted as `export { right as name }`.
                 self.check_entity_name_visibility(right, hir[value].pos, Meaning::ValueOfName);
                 added.push(export_of(if right == property {
                     export_name.to_vec()
@@ -3417,7 +3400,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 let holder = self.c.type_of_symbol(host);
                 if let Some(ty) = self.c.type_of_property(holder, property) {
                     self.tracker.error_name_node = Node::NONE;
-                    // It is emitted in the namespace of its host.
+                    // It's emitted in its host's namespace.
                     let around = root.map_or(Parent::None, |root| bound.parent_of_stmt(root));
                     let outer = self.indent;
                     self.set_indent(self.indent_of_statements(around) + 1);
@@ -3610,7 +3593,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         indent
     }
 
-    /// `transformAndReplaceLatePaintedStatements`. `parent_is_file`: `IsSourceFile(statement.Parent)`.
+    /// `transformAndReplaceLatePaintedStatements`. `parent_is_file` is `IsSourceFile(statement.Parent)`.
     fn transform_late_painted_statements(
         &mut self,
         visited: Vec<Visited>,
@@ -3620,7 +3603,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let next = self.tracker.late_marked_statements.remove(0);
             let parent = self.c.bound(self.file()).parent_of_stmt(next);
             let saved = std::mem::replace(&mut self.needs_declare, parent == Parent::File);
-            // It is emitted among the statements of its own container.
+            // It's emitted among the statements of its own container.
             let outer = self.indent;
             self.set_indent(self.indent_of_statements(parent));
             let written = self.transform_top_level_declaration(next);
@@ -3720,7 +3703,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.result_has_external_module_indicator = true;
             text.extend_from_slice(b" from ");
             match from_expression {
-                // `rewriteModuleSpecifier` leaves what is not a string literal as it is.
+                // `rewriteModuleSpecifier` doesn't change anything that isn't a string literal.
                 Some(&(_, e)) if e.is_some() => {
                     let (start, end) = (hir[e].pos, self.c.end_of_expr(self.file(), e));
                     text.extend_from_slice(&hir.text[start as usize..end as usize]);
@@ -3734,8 +3717,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         Statement::new(StatementKind::ExportDeclaration, text)
     }
 
-    /// `tryGetResolutionModeOverride`: the import attributes of the statement `s`, if they specify
-    /// a resolution mode.
+    /// `tryGetResolutionModeOverride`: the import attributes of the statement `s`, if they specify a resolution mode.
     fn resolution_mode_override_text(&self, s: StmtId, mode: ResolutionMode) -> Vec<u8> {
         let hir = self.c.hir(self.file());
         let statement = &hir.text[hir[s].start as usize..hir[s].loc.end as usize];
@@ -3755,8 +3737,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         [b" with { \"resolution-mode\": \"", word, b"\" }"].concat()
     }
 
-    /// `UpdateImportDeclaration`, `UpdateImportEqualsDeclaration`: `text` after `decl.Modifiers()`
-    /// of the statement `s`.
+    /// `UpdateImportDeclaration`, `UpdateImportEqualsDeclaration`: `text` after `decl.Modifiers()` of the statement
+    /// `s`.
     fn update_import(&self, kind: StatementKind, s: StmtId, text: Vec<u8>) -> Statement {
         let hir = self.c.hir(self.file());
         let modifiers = (hir.stmt_modifiers(s).iter()).filter_map(|m| match hir[m].kind {
@@ -3848,7 +3830,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
     }
 
-    /// `transformTopLevelDeclaration`. `None`: nothing is emitted for the statement.
+    /// `transformTopLevelDeclaration`. Returns `None` if nothing is emitted for the statement.
     fn transform_top_level_declaration(&mut self, s: StmtId) -> Option<Vec<Statement>> {
         self.tracker
             .late_marked_statements
@@ -3976,7 +3958,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 if self.expando_members.contains_key(&s) {
                     Some(self.expando_host(s, hir[f].name, &signature))
                 } else {
-                    // A function is not `IsImplicitlyExportedJSDocDeclaration`.
+                    // A function isn't `IsImplicitlyExportedJSDocDeclaration`.
                     let (written, declared) = (hir.stmt_modifiers(s), hir[f].flags);
                     let modifiers = self.ensure_modifiers_of_statement(
                         written,
@@ -4023,8 +4005,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         Some(self.create_full_expando_block(s, written))
     }
 
-    /// `transformExpandoHost` for a function: the function `name` with `signature`, replacing the
-    /// statement `s`.
+    /// `transformExpandoHost` for a function: the function `name` with `signature`, replacing the statement `s`.
     fn expando_host(&mut self, s: StmtId, name: Atom, signature: &[u8]) -> Vec<Statement> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         let parent_is_file = bound.parent_of_stmt(s) == Parent::File;
@@ -4052,8 +4033,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         host
     }
 
-    /// `createFullExpandoBlock`: `host`, which is emitted for the statement `s`, and a namespace
-    /// with its assigned properties.
+    /// `createFullExpandoBlock`: `host`, which is emitted for the statement `s`, and a namespace with its assigned
+    /// properties.
     fn create_full_expando_block(&mut self, s: StmtId, mut host: Vec<Statement>) -> Vec<Statement> {
         let Some(members) = self.expando_members.get(&s).cloned() else {
             return host;
@@ -4150,7 +4131,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let is_nested = matches!(container, Parent::Module(outer)
             if nested_module_declaration(hir, outer) == Some(s));
         let (kind, head) = match module.name {
-            // `IsAmbientModule`: `IsGlobalScopeAugmentation` too.
+            // `IsAmbientModule`, which includes `IsGlobalScopeAugmentation`.
             ModuleName::Global => (StatementKind::AmbientModule, b"global".to_vec()),
             ModuleName::String(name) => {
                 let written = hir.text.get(module.name_pos as usize).copied();
@@ -4161,7 +4142,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     [b"module ", &name[..]].concat(),
                 )
             }
-            // `emitNestedModuleName`: it follows the name of its parent.
+            // `emitNestedModuleName`: it follows its parent's name.
             ModuleName::Ident(name) if is_nested => {
                 (StatementKind::Other, self.name(name).to_vec())
             }
@@ -4219,8 +4200,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let body = self.statements_text(&statements);
         self.set_indent(self.indent - 1);
         (self.needs_scope_fix_marker, self.result_has_scope_marker) = saved;
-        // `rangeEndIsOnSameLineAsRangeStart` for the block, which starts after the name and ends
-        // the declaration.
+        // `rangeEndIsOnSameLineAsRangeStart` for the block, which starts after the name and ends the declaration.
         let is_on_one_line = || {
             let after_name = self.c.end_of_name_at(self.file(), module.name_pos);
             let open = self.c.skip_trivia_from(self.file(), after_name) as usize;
@@ -4377,8 +4357,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             Some(VarKind::Let) => b"let ",
             Some(VarKind::Const | VarKind::Using | VarKind::AwaitUsing) => b"const ",
         };
-        // `End()` of the declaration list, which emits the comments after its last declaration
-        // unless the statement ends there too.
+        // `End()` of the declaration list, which emits the comments after its last declaration unless the statement
+        // ends there too.
         let list_end = decls.iter().next_back().map_or(0, |d| hir[d].loc.end);
         let declarations =
             self.list_text_in(declarations, ListFormat::SINGLE_LINE, list_end as usize);
@@ -4395,8 +4375,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         Some(extra_imports)
     }
 
-    /// `recreateBindingPattern`, and `walkBindingPattern`, which does not check visibility: each
-    /// name with its type.
+    /// `recreateBindingPattern`, and `walkBindingPattern`, which doesn't check visibility. Returns each name with its
+    /// type.
     fn recreate_binding_pattern(&mut self, pat: PatId, only_visible: bool) -> Vec<Vec<u8>> {
         let hir = self.c.hir(self.file());
         let elements: Vec<PatId> = match hir[pat].kind {
@@ -4413,7 +4393,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 PatKind::Missing => {}
                 PatKind::Ident(name) => {
                     let ensured = self.ensure_type(hir.parent(hir.node(element)), false);
-                    // The declaration is synthesized. Its name is the node of the file.
+                    // The declaration is synthesized, but its name is the node from the file.
                     let pos = self.c.end_of_token_before(self.file(), hir[element].pos);
                     let name = self.with_comments((Some(pos), hir[element].end), self.name(name));
                     names.push([&name[..], &ensured.text()[..]].concat());
@@ -4535,7 +4515,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.tracker.get_symbol_accessibility_diagnostic = saved;
         }
         let mut written: Vec<Vec<u8>> = Vec::new();
-        // "When the class has at least one private identifier, create a unique constant identifier to retain the nominal typing behavior"
+        // "When the class has at least one private identifier, create a unique constant identifier to retain the
+        // nominal typing behavior"
         if (members.iter()).any(|m| matches!(hir[m].key, PropKey::Private(_))) {
             written.push(b"#private;".to_vec());
         }
@@ -4570,11 +4551,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     continue;
                 }
                 let components = self.c.index_components(info.components);
-                // `anyBaseTypeIndexInfo`: "inherited, but looks like a late-bound signature because it has no declarations"
+                // `anyBaseTypeIndexInfo`: "inherited, but looks like a late-bound signature because it has no
+                // declarations"
                 if components.is_empty() {
                     continue;
                 }
-                // `getIndexInfosOfIndexSymbol(instanceIndexSymbol, ..)`: those of the class itself.
+                // `getIndexInfosOfIndexSymbol(instanceIndexSymbol, ..)`: only the class's own.
                 let is_own = |component: &IndexComponent| {
                     matches!(*component, IndexComponent::Member(of, m)
                         if of == file && self.c.bound(of).member_owner[m.idx()] == MemberOwner::Class(c))
@@ -4602,7 +4584,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 }
                 if !components.is_empty() && names.len() == components.len() {
                     for (component, of, name) in names {
-                        // `hasLateBindableName`: it is preserved as a property.
+                        // `hasLateBindableName`: it's preserved as a property.
                         if self.c.member_name(of, PropKey::Computed(name)).is_some() {
                             continue;
                         }
@@ -4661,9 +4643,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         written
     }
 
-    /// The heritage clauses of a class, each preceded by a space. If the expression a class
-    /// declaration extends is not a name, it is emitted as a variable of its type, with the
-    /// statement that declares it.
+    /// The heritage clauses of a class, each preceded by a space. If a class declaration extends an expression that
+    /// isn't a name, the expression is emitted as a variable of its type, and the statement that declares the variable
+    /// is returned too.
     fn visit_class_heritage(&mut self, c: ClassId) -> (Option<Statement>, Vec<u8>) {
         let hir = self.c.hir(self.file());
         let (class, base) = (hir[c], hir.node(c).with(Part::Base));
@@ -4733,8 +4715,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         (variable, heritage)
     }
 
-    /// `transformExpressionWithTypeArguments` for a type that a class implements or an interface
-    /// extends.
+    /// `transformExpressionWithTypeArguments` for a type that a class implements or an interface extends.
     fn visit_heritage_type(&mut self, node: TypeNodeId) {
         let saved = self.tracker.get_symbol_accessibility_diagnostic;
         if !self.suppresses_new_contexts {
@@ -4845,7 +4826,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             _ => {}
         }
         self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(input);
-        // `IsPrimitiveLiteralValue`: it is emitted verbatim.
+        // `IsPrimitiveLiteralValue`: it's emitted verbatim.
         let ensured = if self.c.iso_is_primitive_literal(self.file(), e, true) {
             let literal = self.c.type_of_expr(self.file(), e);
             Ensured::Initializer(self.create_literal_const_value(literal))
@@ -4866,8 +4847,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
 
     // ───────────────────────────── members and signatures ─────────────────────────────
 
-    /// `IsImplementationOfOverload`. `getSignaturesOfSymbol` has one signature for each function
-    /// declaration, except the implementation.
+    /// `IsImplementationOfOverload`. `getSignaturesOfSymbol` has one signature for each function declaration, except
+    /// the implementation.
     fn is_implementation_of_overload(&mut self, f: FnId) -> bool {
         let (file, files) = (self.file(), self.c.files());
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
@@ -4918,8 +4899,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         let file = self.file();
         let hir = self.c.hir(file);
-        // `typeParametersToTypeParameterDeclarations` has those of a symbol with
-        // `SymbolFlagsFunction`.
+        // `typeParametersToTypeParameterDeclarations` only has those of a symbol with `SymbolFlagsFunction`.
         if !hir[f].type_params.is_empty()
             || hir.jsdoc_type(JsDocTypeOwner::Fn(f)).is_none()
             || !matches!(hir[f].kind, FnKind::Decl | FnKind::Expr | FnKind::Arrow)
@@ -4950,7 +4930,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         type_parameters
     }
 
-    /// `updateParamList`: the parameters, with `, ` between them.
+    /// `updateParamList`: the parameters, joined with `, `.
     fn update_param_list(&mut self, f: FnId) -> Vec<u8> {
         if self.is_private_function(f) {
             return Vec::new();
@@ -4968,7 +4948,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.list_text(parameters, ListFormat::SINGLE_LINE)
     }
 
-    /// `updateAccessorParamList`: the parameters, with `, ` between them.
+    /// `updateAccessorParamList`: the parameters, joined with `, `.
     fn update_accessor_param_list(&mut self, f: FnId, is_private: bool) -> Vec<u8> {
         let function = self.c.hir(self.file())[f];
         let mut new_params = Vec::with_capacity(2);
@@ -5006,7 +4986,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.list_text_in(elements, format, usize::MAX)
     }
 
-    /// The same, in a parent that may end where its last element ends.
+    /// Same as `list_text`, in a parent that may end where its last element ends.
     fn list_text_in(
         &self,
         mut elements: Vec<Element>,
@@ -5045,7 +5025,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         } else {
             b""
         };
-        // The name that the reparser gives the parameter of a `@this` tag is not in the source.
+        // The name that the reparser gives the parameter of a `@this` tag isn't in the source.
         let name = if self.c.is_this_parameter(file, p) {
             b"this".to_vec()
         } else {
@@ -5091,8 +5071,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.text_of(Written::TypeParameter(tp))
     }
 
-    /// `visitDeclarationSubtree` for a member of a class, an interface or a type literal. `None`:
-    /// nothing is emitted for it.
+    /// `visitDeclarationSubtree` for a member of a class, an interface or a type literal. Returns `None` if nothing is
+    /// emitted for it.
     fn visit_member(&mut self, m: MemberId) -> Option<Vec<u8>> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         let member = hir[m];
@@ -5105,7 +5085,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         {
             return None;
         }
-        // `HasDynamicName`: `[-1]` is none.
+        // `HasDynamicName`: `[-1]` isn't dynamic.
         let dynamic_name = match member.key {
             PropKey::Computed(key)
                 if !matches!(
@@ -5235,12 +5215,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         Some([self.leading_comments(member.loc.pos), written].concat())
     }
 
-    /// The modifiers and the name of the method `m`, which `reparseJSDocSignature` makes from an
-    /// `@overload` tag. The name is a clone of the name of the host and has its `Pos()`. `Pos()` of
-    /// `m` is in the tag, so `emitLeadingComments` writes the comments before the name.
+    /// The modifiers and the name of the method `m`, which `reparseJSDocSignature` makes from an `@overload` tag. The
+    /// name is a clone of the host's name and has its `Pos()`. `Pos()` of `m` is in the tag, so `emitLeadingComments`
+    /// writes the comments before the name.
     fn head_of_reparsed_method(&mut self, m: MemberId, modifiers: &[u8], name: &[u8]) -> Vec<u8> {
         let hir = self.c.hir(self.file());
-        // The host follows the methods that are made from its tags.
+        // The host follows the methods made from its tags.
         let mut host = m;
         while hir[host].flags.contains(Flags::REPARSED) {
             host = MemberId(host.0 + 1);
@@ -5275,8 +5255,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             .handle_symbol_accessibility_error(self.c, access);
     }
 
-    /// `visitDeclarationSubtree` for a type node. `is_alias_body`: it is the whole body of a type
-    /// alias.
+    /// `visitDeclarationSubtree` for a type node. `is_alias_body` is true if it's the whole body of a type alias.
     fn visit_type(&mut self, node: TypeNodeId, is_alias_body: bool) {
         if node.is_none() || self.c.is_stack_low() {
             return;
@@ -5402,7 +5381,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
 
     // ───────────────────────────── inferred types ─────────────────────────────
 
-    /// `shouldPrintWithInitializer`: the literal type of a constant that is emitted with its value.
+    /// `shouldPrintWithInitializer`: the literal type of a constant that's emitted with its value.
     fn literal_const_type(&mut self, node: Node) -> Option<TypeId> {
         let hir = self.c.hir(self.file());
         let ty = match hir.data(node) {
@@ -5419,8 +5398,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.c.is_fresh_literal(ty).then_some(ty)
     }
 
-    /// `CreateLiteralConstValue` for a type that is not `TypeFlagsEnumLike`. Its string literal is
-    /// without `EFNoAsciiEscaping`, unlike that of the node builder.
+    /// `CreateLiteralConstValue` for a type that isn't `TypeFlagsEnumLike`. Its string literal doesn't have
+    /// `EFNoAsciiEscaping`, unlike the node builder's.
     fn create_literal_const_value(&mut self, literal: TypeId) -> Vec<u8> {
         if let TypeData::StringLit { value, .. } = *self.c.data(literal) {
             return super::print::quoted(self.name(value), b'"', true);
@@ -5434,7 +5413,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     fn ensure_type(&mut self, node: Node, ignores_private: bool) -> Ensured {
         let file = self.file();
         let hir = self.c.hir(file);
-        // A private declaration gets no type, except the parameter of a private parameter property.
+        // A private declaration doesn't get a type, except the parameter of a private parameter property.
         if !ignores_private && hir.flags(node).contains(Flags::PRIVATE) {
             return Ensured::Nothing;
         }
@@ -5464,7 +5443,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             }
             return Ensured::Initializer(self.create_literal_const_value(literal));
         }
-        // An export assignment and a binding element have none.
+        // An export assignment and a binding element have no annotation.
         if let NodeData::Type(annotation) = hir.data(hir.type_node(node))
             && !matches!(hir.data(node), NodeData::Param(p)
                 if self.c.requires_adding_implicit_undefined(file, p, Some(self.enclosing)))
@@ -5631,7 +5610,7 @@ fn path_is_bare_specifier(path: &[u8]) -> bool {
     get_root_length(path) == 0 && !path_is_relative(path)
 }
 
-/// `ComparePaths` for two normalized file names: neither has a relative path segment.
+/// `ComparePaths` for two normalized file names, so neither has a relative path segment.
 fn compare_paths(a: &[u8], b: &[u8], is_case_sensitive: bool) -> std::cmp::Ordering {
     let (a_root, a_rest) = a.split_at(get_root_length(a));
     let (b_root, b_rest) = b.split_at(get_root_length(b));
@@ -5744,11 +5723,11 @@ fn prefers_ts_extension(allowed_endings: &[Ending]) -> bool {
     priority(Ending::Ts).is_some_and(|ts| priority(Ending::Js).is_some_and(|js| ts < js))
 }
 
-/// What `tryGetModuleNameFromExportsOrImports` compares with the strings in `exports` or `imports`.
+/// The paths `tryGetModuleNameFromExportsOrImports` compares with the strings in `exports` or `imports`.
 struct TargetFile<'a> {
     /// `targetFilePath`
     path: &'a [u8],
-    /// `extensionSwappedTarget`. Empty: `path` has no TypeScript extension.
+    /// `extensionSwappedTarget`. Empty if `path` has no TypeScript extension.
     extension_swapped: Vec<u8>,
     /// `outputFile`, `declarationFile`. Empty for `exports`.
     output_file: Vec<u8>,
@@ -5761,9 +5740,8 @@ struct TargetFile<'a> {
     is_case_sensitive: bool,
 }
 
-/// `tryGetModuleNameFromExportsOrImports`: the specifier under which an importer reaches `target`
-/// through `exports`, a value in the `exports` or `imports` of the `package.json` in
-/// `package_directory`. Empty: it cannot be imported.
+/// `tryGetModuleNameFromExportsOrImports`: the specifier under which an importer reaches `target` through `exports`, a
+/// value in the `exports` or `imports` of the `package.json` in `package_directory`. Empty if it can't be imported.
 fn try_get_module_name_from_exports_or_imports(
     target: &TargetFile<'_>,
     package_directory: &[u8],
@@ -5807,7 +5785,7 @@ fn try_get_module_name_from_exports_or_imports(
                         let (value, fragment) = (value.as_slice(), fragment.as_slice());
                         normalized_name(&[package_name, b"/", value, b"/", fragment].concat())
                     };
-                    // The arguments are in this order there.
+                    // tsgo passes the arguments in this order.
                     if target.can_try_ts_extension
                         && contains_path(target.path, &path_or_pattern, is_case_sensitive)
                     {
@@ -5962,7 +5940,7 @@ impl<'p, 's> Checker<'p, 's> {
             .collect()
     }
 
-    /// `resolutionMode` in `getSpecifierForModuleSymbol`. `mode`: `overrideImportMode`.
+    /// `resolutionMode` in `getSpecifierForModuleSymbol`. `mode` is `overrideImportMode`.
     fn resolution_mode_for_specifier(&self, at: Enclosing, mode: ResolutionMode) -> ResolutionMode {
         if mode != ResolutionMode::None {
             return mode;
@@ -5985,7 +5963,7 @@ impl<'p, 's> Checker<'p, 's> {
         files.default_resolution_mode_for_file(at.file)
     }
 
-    /// `getPreferredEnding`. `prefers_js`: `ImportModuleSpecifierEndingPreferenceJs`.
+    /// `getPreferredEnding`. `prefers_js` is `ImportModuleSpecifierEndingPreferenceJs`.
     fn preferred_ending(
         &self,
         importing: FileId,
@@ -5999,8 +5977,7 @@ impl<'p, 's> Checker<'p, 's> {
             mode
         };
         let is_node = files.options.resolves_like_node;
-        // `ExtensionsNotSupportingExtensionlessResolution` give no evidence of the preferred
-        // ending.
+        // `ExtensionsNotSupportingExtensionlessResolution` say nothing about the preferred ending.
         let is_telling = |text: &&[u8]| {
             !matches!(
                 known_extension(text),
@@ -6105,8 +6082,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match allowed.first() {
             Some(Ending::Minimal) | None => match no_extension.strip_suffix(b"/index") {
-                // `index` is preserved if a file has the same name as the directory. Only the files
-                // of the program are known.
+                // `index` is preserved if a file has the same name as the directory. Only the program's files are
+                // known.
                 Some(directory)
                     if ![
                         b".ts".as_slice(),
@@ -6235,8 +6212,8 @@ impl<'p, 's> Checker<'p, 's> {
         target
     }
 
-    /// `tryGetModuleNameFromPackageJsonImports`: the `#name` under which `importing` reaches the
-    /// file at `module_file_name` through the `imports` of its package. Empty: there is none.
+    /// `tryGetModuleNameFromPackageJsonImports`: the `#name` under which `importing` reaches the file at
+    /// `module_file_name` through its package's `imports`. Empty if there's none.
     fn try_get_module_name_from_package_json_imports(
         &self,
         module_file_name: &[u8],
@@ -6285,8 +6262,8 @@ impl<'p, 's> Checker<'p, 's> {
         Vec::new()
     }
 
-    /// `tryGetModuleNameAsNodeModule`: the specifier `importing` uses for the file at `path`, which
-    /// is in `node_modules`. Empty: it has no specifier through `node_modules`.
+    /// `tryGetModuleNameAsNodeModule`: the specifier `importing` uses for the file at `path`, which is in
+    /// `node_modules`. Empty if it has no specifier through `node_modules`.
     fn try_get_module_name_as_node_module(
         &self,
         path: &[u8],
@@ -6321,8 +6298,7 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         _ => mode,
                     };
-                    // A file that `exports` does not expose has no specifier through
-                    // `node_modules`.
+                    // A file that `exports` doesn't expose has no specifier through `node_modules`.
                     return try_get_module_name_from_exports(
                         &self.target_file(
                             path,
@@ -6339,7 +6315,7 @@ impl<'p, 's> Checker<'p, 's> {
                         &self.get_conditions(mode),
                     );
                 }
-                // The specifier of the main file is the package name.
+                // The main file's specifier is the package name.
                 let main = [b"typings".as_slice(), b"types", b"main"]
                     .iter()
                     .find_map(|field| json.get(field).and_then(Json::as_str))
@@ -6369,9 +6345,8 @@ impl<'p, 's> Checker<'p, 's> {
         package_name_from_types_package_name(&module_specifier[top_level_package_name + 1..])
     }
 
-    /// `GetEachFileNameOfModule`: the paths that reach one of `targets` through a symlink to a
-    /// directory that contains the file at `real`. Each path, here and below, is paired with
-    /// whether it `IsRedirect`.
+    /// `GetEachFileNameOfModule`: the paths that reach one of `targets` through a symlink to a directory that contains
+    /// the file at `real`. Each path, here and below, is paired with its `IsRedirect` flag.
     fn paths_through_links(
         &self,
         real: &[u8],
@@ -6384,7 +6359,7 @@ impl<'p, 's> Checker<'p, 's> {
         while !links.is_empty() && !directory.is_empty() && directory != b"/" {
             let mut to_here = links.iter().filter(|link| link.0 == directory).peekable();
             if to_here.peek().is_some() {
-                // A package does not import from itself by its name.
+                // A package doesn't import from itself by name.
                 if importing
                     .strip_prefix(directory)
                     .is_some_and(|rest| rest.starts_with(b"/"))
@@ -6406,8 +6381,8 @@ impl<'p, 's> Checker<'p, 's> {
         paths
     }
 
-    /// `getAllModulePathsWorker`, `computeModuleSpecifiers`, first result only: the specifier
-    /// `importing` uses for `target`, which all of `paths` resolve to.
+    /// `getAllModulePathsWorker`, `computeModuleSpecifiers`, first result only: the specifier `importing` uses for
+    /// `target`, which all of `paths` resolve to.
     fn compute_module_specifiers(
         &self,
         target: FileId,
@@ -6418,8 +6393,7 @@ impl<'p, 's> Checker<'p, 's> {
         prefers_js: bool,
     ) -> Vec<u8> {
         let from = dirname::<Posix>(self.files().module(importing).file_name());
-        // The number of directory levels from the importing file up to the directory that contains
-        // `path`.
+        // The number of directory levels from the importing file up to the directory that contains `path`.
         let distance = |path: &[u8]| {
             let (mut directory, mut up) = (from, 0);
             while !directory.is_empty()
@@ -6433,7 +6407,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             up
         };
-        // `comparePathsByRedirect`. Names that differ only in case are in no particular order there.
+        // `comparePathsByRedirect`. In tsgo, names that differ only in case are in no particular order.
         let is_case_sensitive = self.files().is_case_sensitive;
         paths.shared_sort_by(|a, b| {
             distance(&a.0)
@@ -6514,8 +6488,8 @@ impl<'p, 's> Checker<'p, 's> {
                     from_paths.get_or_insert(local);
                 }
             } else if !imported_file_is_in_node_modules || is_in_node_modules {
-                // A relative path to another package is not portable: the specifier through
-                // `node_modules` is used, which is reported.
+                // A relative path to another package isn't portable, so the specifier through `node_modules` is used,
+                // which is reported.
                 relative.get_or_insert(local);
             }
         }
@@ -6608,7 +6582,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
             let is_internal =
                 |path: &[u8]| contains_path(project_directory, path, files.is_case_sensitive);
-            // The import crosses the directory of the configuration file, or goes from one package to another.
+            // The import crosses the configuration file's directory, or goes from one package to another.
             return if is_internal(source_directory) != is_internal(module_file_name)
                 || self.package_json_directory(importing)
                     != self.nearest_ancestor_directory_with_package_json(
@@ -6632,7 +6606,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `GetNearestAncestorDirectoryWithPackageJson` of the directory of `file`. Empty: none.
+    /// `GetNearestAncestorDirectoryWithPackageJson` of the directory of `file`. Empty if there's none.
     fn package_json_directory(&self, file: FileId) -> &'p [u8] {
         let directory = self.files().module(file).package_json_directory;
         if directory.is_some() {
@@ -6642,11 +6616,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `GetNearestAncestorDirectoryWithPackageJson(GetDirectoryPath(path))` of a path that leads to
-    /// `target`, for an import in `importing`. For another path than the name of `target` (through
-    /// a link, of a copy of its package) the file system is not at hand: it is the nearest
-    /// directory that is known to have a `package.json`, which are those of the two files, the keys
-    /// of `package_jsons`, and the package in `node_modules` that `path` is in. Empty: none.
+    /// `GetNearestAncestorDirectoryWithPackageJson(GetDirectoryPath(path))` of a path that leads to `target`, for an
+    /// import in `importing`. If `path` isn't `target`'s own name (it goes through a link, or belongs to a copy of its
+    /// package), the file system isn't available. The result is then the nearest directory that's known to have a
+    /// `package.json`: those of the two files, the keys of `package_jsons`, and the package in `node_modules` that
+    /// `path` is in. Empty if there's none.
     fn nearest_ancestor_directory_with_package_json<'a>(
         &'a self,
         path: &'a [u8],
@@ -6706,8 +6680,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `tryGetModuleNameFromPaths`. `validateEnding` is true for every candidate: it runs
-    /// `processEnding` again, with the same host.
+    /// `tryGetModuleNameFromPaths`. `validateEnding` is true for every candidate, because it runs `processEnding` again
+    /// with the same host.
     fn try_get_module_name_from_paths(
         &self,
         relative_to_base_url: &[u8],
@@ -6780,8 +6754,8 @@ impl<'p, 's> Checker<'p, 's> {
         path.to_vec()
     }
 
-    /// `GetModuleSpecifiers`, first result only: the specifier `importing` uses for the file
-    /// `target`. `prefers_js`: `ImportModuleSpecifierEndingPreferenceJs`.
+    /// `GetModuleSpecifiers`, first result only: the specifier `importing` uses for the file `target`. `prefers_js` is
+    /// `ImportModuleSpecifierEndingPreferenceJs`.
     fn get_module_specifiers(
         &self,
         target: FileId,
@@ -6798,8 +6772,8 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // `GetModuleSpecifiersWithInfo`: "Use original source file name when file is from project reference output".
         let path = files.source_of_project_reference_if_output_included(target);
-        // `GetEachFileNameOfModule`. The output of a referenced project for the file comes first,
-        // then the source: the `exports` of its package map to one or the other.
+        // `GetEachFileNameOfModule`. A referenced project's output for the file comes first, then the source, because
+        // its package's `exports` map to one or the other.
         let reference_redirect = self.reference_redirect(path);
         let mut targets: Vec<(Vec<u8>, bool)> = Vec::with_capacity(2);
         targets.extend(reference_redirect.map(|output| (output, true)));
@@ -6964,8 +6938,8 @@ impl<'p, 's> Checker<'p, 's> {
                 break;
             }
         }
-        // A parent that is an anonymous type is not emitted, nor one that is an external module,
-        // unless the chain may start with it.
+        // A parent that's an anonymous type isn't emitted, nor is one that's an external module, unless the chain may
+        // start with it.
         let anonymous = SymFlags::TYPE_LITERAL | SymFlags::OBJECT_LITERAL;
         if chain.is_empty()
             && (end_of_chain == EndOfChain::Yes
@@ -6973,15 +6947,14 @@ impl<'p, 's> Checker<'p, 's> {
                     && (yield_module_symbol == YieldModuleSymbol::Yes
                         || !self.is_external_module_symbol(symbol)))
         {
-            // A symbol created by `cloneTypeAsModuleType` is emitted as its target, whose name and
-            // declarations it has.
+            // A symbol created by `cloneTypeAsModuleType` is emitted as its target, whose name and declarations it has.
             chain.push(self.target_of_module_clone(symbol));
         }
         chain
     }
 
-    /// The part of `symbolToTypeNode` that emits `import("specifier")` for `module`: the specifier,
-    /// and the `resolution-mode` attribute.
+    /// The part of `symbolToTypeNode` that emits `import("specifier")` for `module`. Returns the specifier and the
+    /// `resolution-mode` attribute.
     pub(super) fn import_type_specifier_and_mode(
         &mut self,
         module: Sym,
@@ -7064,7 +7037,7 @@ fn can_produce_diagnostics(kind: Kind) -> bool {
 fn get_name_of_declaration(hir: &hir::File, node: Node) -> Node {
     match hir.data(node) {
         NodeData::Expr(e) => match hir[e].kind {
-            // `GetElementOrPropertyAccessName`, or else the left operand.
+            // `GetElementOrPropertyAccessName`, falling back to the left operand.
             ExprKind::Assign { target, .. } => match hir[target].kind {
                 ExprKind::Index { index, .. }
                     if is_string_or_numeric_literal_like_in_parentheses(hir, index) =>

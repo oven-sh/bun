@@ -1,81 +1,84 @@
 //! Commits: how tasks share what they compute while they run.
 //!
-//! Every thread takes the next task of one list. What a task stores goes to its own part of the tables, as ever, and the
-//! key goes to a log (`crate::local::Log`). After every file, and from time to time within a file while nothing is in
-//! progress in it, the task commits (`Checker::commit`): on its own thread it stores what it has logged since its last
-//! commit in the shared part, where the tasks that are running find it. The records are shared already
-//! (`Sharing::Publishes`), so an entry needs no rewriting.
+//! Every thread takes the next task from one list. A task stores its results in its task-local part of the tables and
+//! logs each key (`crate::local::Log`). After every file, and occasionally within a file while it's idle, the task
+//! commits (`Checker::commit`): on its own thread, it stores everything it has logged since its last commit in the
+//! shared part, where running tasks find it. The records are already shared (`Sharing::Publishes`), so entries don't
+//! need rewriting.
 //!
-//! Which task is first anywhere depends on timing. These rules keep the report a function of the program:
+//! Which task gets anywhere first depends on timing. These rules keep the report a function of the program:
 //!
-//! - **One commit at a time.** They store under one mutex and are numbered from 1 in that order. The first entry for a key
-//!   stays.
-//! - **Whoever finds an entry finds what was stored before it.** He does not evaluate it, so he goes without whatever
-//!   that evaluation has stored on the way, unless he finds that too. A commit first stores what is keyed by a record, in
-//!   the order of the log, each with a release: an entry is there after everything that was stored while it was
-//!   evaluated. Then it stores what is keyed by a node or a symbol, each with the number of the commit beside it
-//!   (`ByNode::stamps`). Then it says that it has stored everything (`Numbers::stored`), and only then do the entries with
-//!   its number count for anybody. So they appear all at once, after the entries of the first kind.
-//! - **A file does not change under a statement.** The first time that a task looks at a table for a node of a file, hit or
-//!   miss, it notes the number of the last commit that has stored everything (`View::snapshot_of`). Until its own walk
-//!   comes to the next statement or deferred node with nothing in progress, an entry under a node of that file with a
-//!   higher number does not exist for it.
-//! - **The file that a task visits does not change during the visit.** Its number is noted when the visit begins and kept to
-//!   the end (`View::pin`). What the task stores itself it finds in its own part.
-//! - **A commit is valid or nothing of it is stored.** Some results depend on which of two evaluations came first in their
-//!   checker, and `Program::is_invalid` says which. The serial order that a commit is compared with is the order of the
-//!   commits. What is thrown away is what the task has done since its last commit. It ends then, and the driver rechecks the
-//!   file that it was visiting right away, on any thread. The new task starts after the commit that the old one
-//!   conflicted with, so it finds those variances and walks.
-//! - **A task that gives up at a limit is not believed** (`Checker::note_gave_up`). How far from a limit a computation
-//!   begins depends on what was computed before, which for a task includes what it has found. It is thrown away like an
+//! - **One commit at a time.** Commits store under one mutex and are numbered from 1 in that order. The first entry for
+//!   a key wins.
+//! - **A task that finds an entry also finds everything stored before it.** It doesn't evaluate the entry, so it misses
+//!   whatever that evaluation stored along the way unless it can find that too. A commit first stores the entries keyed
+//!   by a record, in log order, each with a release store, so an entry becomes visible after everything that was stored
+//!   while it was evaluated. Then it stores the entries keyed by a node or a symbol, each stamped with the commit's
+//!   number (`ByNode::stamps`). Then it announces that it has stored everything (`Numbers::stored`). Only then do the
+//!   entries with its number become visible, so they appear all at once, after the record-keyed entries.
+//! - **A file doesn't change under a statement.** The first time a task looks up a node of some file in a table, hit or
+//!   miss, it records the number of the last commit that has stored everything (`View::snapshot_of`). Until its own
+//!   walk reaches the next statement or deferred node with nothing in progress, entries under that file's nodes with a
+//!   higher number don't exist for it.
+//! - **The file a task visits doesn't change during the visit.** Its snapshot is taken when the visit begins and kept
+//!   to the end (`View::pin`). The task finds its own entries in its task-local part.
+//! - **A commit is valid or none of it is stored.** Some results depend on which of two evaluations came first in their
+//!   checker, and `Program::is_invalid` detects them. The serial order that a commit is compared with is the order of
+//!   the commits. An invalid commit discards what the task has done since its last commit. The task ends, and the
+//!   driver rechecks the file it was visiting right away, on any thread. The new task starts after the commit that the
+//!   old one conflicted with, so it finds those variances and walks.
+//! - **A task that gives up at a limit isn't trusted** (`Checker::note_gave_up`). How far from a limit a computation
+//!   starts depends on what was computed before, which for a task includes the entries it found. It's discarded like an
 //!   invalid one, but its file waits for the last round.
-//! - **A ring is entered from the first file that leads to it.** What a query gets that comes round to itself, or to what
-//!   it has in place, depends on where the checker came in (`Checker::close_ring_from`). `tsc --singleThreaded` comes in
-//!   from the first file in program order that leads there. So a task is believed about a ring only if every file before
-//!   the one that it visits is checked for good: none of those leads there, or the task would have found what the members
-//!   got (`Task::close_ring`). Any other task is discarded, and the driver rechecks its file once all earlier files are
-//!   done.
+//! - **A cycle is entered from the first file that leads to it.** What a query gets when it comes back around to
+//!   itself, or to a placeholder it has put in place, depends on where the checker entered the cycle
+//!   (`Checker::close_ring_from`). `tsc --singleThreaded` enters from the first file in program order that leads there.
+//!   So a task is only trusted about a cycle if every file before the one it's visiting is checked for good. None of
+//!   those files leads to the cycle, or the task would have found the members' results (`Task::close_ring`). Any other
+//!   task is discarded, and the driver rechecks its file once all earlier files are done.
 //!   - Earlier files that can't reach the cycle don't matter. If only importers of the current file can reach it, the task
 //!     is trusted once the earlier files of its own import cycle are done (`Checker::is_reachable_only_by_importers`).
 //!   - A discarded task stops at its next statement. The driver rechecks its file as soon as a commit resolves that cycle
 //!     (`Program::is_cycle_resolved`), on any thread. The recheck can be discarded at the file's next unresolved cycle.
 //!   - Once a file is discarded, one worker switches from the heavy files to the first unchecked files of the program, so
 //!     cycles that everything uses are resolved early.
-//! - **A ring is seen whole or not at all.** A task has a snapshot for each file, and none for the entries under records. So
-//!   it could miss one member of a ring and find the next, which closes no ring and is right from no entry. The commit of
-//!   a task that was believed about a ring follows a file, so nothing of it is withheld, and says so before it stores its
-//!   first entry (`Numbers::with_a_ring`). A task that has not been at rest since then writes nothing at once
-//!   (`Task::is_beside_a_ring`). It is lost if it has stored under a key that the commit lists for its cycles
-//!   (`Task::take_logged_at_cycles`): it has missed that one (`Checker::lose_what_has_missed_a_ring`).
-//! - **The last round** is one task that checks the files that are still discarded, in program order, while nothing else
-//!   runs. It finds all that was committed. What it computes at a limit is what counts, as with one checker. It commits
-//!   once, when it ends (`Checker::is_commit_due`).
-//! - **A diagnostic goes with the entry of the query that has reported it**, in the same commit, and stays if the task is
-//!   lost later: whoever checks the file again finds the entry and does not report. If the entry loses, so does the
-//!   diagnostic (`Program::drop_diagnostics_of_losers`). What the walk of a file reports belongs to the file, and goes when a
-//!   commit follows the end of the file. So does what the task has stored under the nodes of the file
-//!   (`Checker::withhold_until_the_file_ends`), with what was reported for it.
+//! - **A cycle is seen whole or not at all.** A task has a snapshot per file but none for the record-keyed entries. So
+//!   it could miss one member of a cycle and hit the next, which doesn't close a cycle and isn't what any entry point
+//!   produces. The commit of a task that was trusted about a cycle follows a file, so none of it is withheld, and it
+//!   announces itself before it stores its first entry (`Numbers::with_a_ring`). A task that hasn't been idle since
+//!   then publishes nothing immediately (`Task::is_beside_a_ring`). It's discarded if it has stored under a key that
+//!   the commit lists for its cycles (`Task::take_logged_at_cycles`), because that means it missed that entry
+//!   (`Checker::lose_what_has_missed_a_ring`).
+//! - **The last round** is one task that checks the files that are still discarded, in program order, while nothing
+//!   else runs. It finds everything that was committed. Whatever it computes at a limit is final, as with a single
+//!   checker. It commits once, when it ends (`Checker::is_commit_due`).
+//! - **A diagnostic travels with the entry of the query that reported it**, in the same commit. It stays even if the
+//!   task is discarded later, because the recheck hits the cached entry and never reports the error. If the entry loses
+//!   the race, its diagnostic is dropped too (`Program::drop_diagnostics_of_losers`). Diagnostics from a file's own
+//!   walk belong to the file and are published by the commit that follows the end of the file. So are the entries the
+//!   task stored under the file's nodes (`Checker::withhold_until_the_file_ends`), with the diagnostics reported for
+//!   them.
 //! - **The first task in program order that gets to an error decides whether it's reported.** tsc ignores an error that a
 //!   later file causes in an earlier one, so a task only reports in its own file and in later files
 //!   (`Checker::is_left_to_an_earlier_file`). And whether tsc reports an error can depend on the context in which it first
 //!   gets there. So a task ignores what a task of a later file has stored under a file, if the later task found an error
 //!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
 //!   never finds such entries of its own. This covers the entries under nodes, not those under records.
-//! - **What a task stores about an expression of the file that it visits never leaves the task**
-//!   (`crate::table::Location::KEEPS_THE_VISITED_FILE`). It is most of what a check stores, and hardly anybody else asks for it.
-//!   It is neither logged nor a `Task::hold_back`.
-//! - **An entry under a record does not wait for a commit if nothing that it rests on does** (`Task::may_write_at_once`):
-//!   neither its key nor its value is bound, and since its evaluation began nothing was stored that waits, and nothing was
-//!   read that holds only while the stack of the checker is as it is (`Task::hold_back`). So whatever its evaluation has
-//!   stored was written at once too, before it. What is written at once can't be taken back. So a task writes nothing
-//!   at once from the moment at which something happens for which it may be thrown away, or at which it stores the result
-//!   of a resolution cycle, until its next commit (`Task::stop_writing_at_once`).
-//! - **What depends on how deep the checker was never leaves the task**: a base constraint that was cut short, a comparison
-//!   that holds because two types inside it counted as deeply nested, and what follows from either
-//!   (`Checker::constraints_of_this_file`, `relations_of_this_file`). In a table the first of them would stay for
-//!   everybody.
-//! - Variances do not wait for a commit either. See `Claims`.
+//! - **What a task stores about an expression of the file it visits never leaves the task**
+//!   (`crate::table::Location::KEEPS_THE_VISITED_FILE`). That's most of what a check stores, and other tasks rarely
+//!   look it up. It's neither logged nor counted as a `Task::hold_back`.
+//! - **A record-keyed entry doesn't wait for a commit if nothing it depends on does** (`Task::may_write_at_once`). That
+//!   requires that neither its key nor its value is bound, and that since its evaluation began nothing was stored that
+//!   waits for a commit and nothing was read that's only valid for the checker's current stack (`Task::hold_back`).
+//!   Then everything its evaluation stored was also published immediately, before it. An entry that's published
+//!   immediately can't be rolled back. So a task stops publishing immediately from the moment something happens that
+//!   may get it discarded, or it stores the result of a resolution cycle, until its next commit
+//!   (`Task::stop_writing_at_once`).
+//! - **Results that depend on how deep the checker was never leave the task**: a base constraint that was cut short, a
+//!   comparison that succeeded because two types inside it counted as deeply nested, and whatever follows from either
+//!   (`Checker::constraints_of_this_file`, `relations_of_this_file`). In a shared table the first such result would
+//!   stick for every task.
+//! - Variances don't wait for a commit either. See `Claims`.
 
 use super::task::{Ended, Task, tables_of, tables_written_at_once};
 use super::{Checker, Program, Spare};
@@ -92,39 +95,39 @@ use std::time::{Duration, Instant};
 
 /// A field of `Program`.
 pub(super) struct Commits<'s> {
-    /// The mutex of `Checker::commit`.
+    /// `Checker::commit`'s mutex.
     committing: Guarded<Committing>,
     numbers: &'s Numbers,
     claims: Claims,
-    /// The commits of the tasks that `Task::close_ring` has believed, by number.
+    /// The commits of tasks that `Task::close_ring` trusted, ordered by number.
     rings: Guarded<Vec<Ring>>,
-    /// `Files::rank_of_file`, by file.
+    /// `Files::rank_of_file`, indexed by file.
     ranks_of_files: &'s [u32],
-    /// One bit for each file: a task that was checking another file has found an error while it evaluated something about
-    /// this one, and has committed. See `View::hides`.
+    /// One bit per file. Set once a task that was checking another file has found an error while evaluating something
+    /// about this file, and has committed. See `View::hides`.
     with_errors: &'s [AtomicU32],
     /// `tables_written_at_once`
     at_once: u128,
 }
 
-/// In an arena, so that a task can refer to it.
+/// Allocated in an arena so that tasks can refer to it.
 struct Numbers {
-    /// The number of the newest commit that has begun to store.
+    /// The number of the newest commit that has started storing.
     begun: AtomicU32,
-    /// That commit, and every one before it, has stored everything.
+    /// This commit and all earlier ones have stored everything.
     stored: AtomicU32,
-    /// The number of the newest commit of a task that `Task::close_ring` has believed.
+    /// The number of the newest commit by a task that `Task::close_ring` trusted.
     with_a_ring: AtomicU32,
-    /// For each commit, by number: the highest `Files::rank_of_file` of the files its task was checking. [0] is unused.
-    /// `Commits` frees it: nothing drops what is in an arena.
+    /// Indexed by commit number: the highest `Files::rank_of_file` among the files the commit's task was checking. [0]
+    /// is unused. `Commits` frees it, because arena contents are never dropped.
     ranks: Guarded<Vec<u32>>,
 }
 
-/// A commit of a task that `Task::close_ring` has believed.
+/// A commit by a task that `Task::close_ring` trusted.
 pub(super) struct Ring {
     number: u32,
-    /// The keys of `Task::take_logged_at_cycles`, sorted: those of the queries in the cycles, and of what was stored in the
-    /// same statements. Of a record: its table's slot and `Publish::identity_of_logged`.
+    /// The keys from `Task::take_logged_at_cycles`, sorted. They cover the queries in the cycles and whatever else was
+    /// stored in the same statements. A record key is its table's slot and `Publish::identity_of_logged`.
     of_records: Vec<(u32, u64)>,
     of_nodes: Vec<[u32; 3]>,
     /// Hashes of the queries in the cycles this commit resolves, sorted. See `Task::take_cycle_members`.
@@ -133,9 +136,9 @@ pub(super) struct Ring {
 
 #[derive(Default)]
 struct Committing {
-    /// Of the last commit.
+    /// The last commit's number.
     number: u32,
-    /// `Task::assignments_walked` of the commits so far, each with the number of its commit, in their order.
+    /// `Task::assignments_walked` of all commits so far, each with its commit's number, in commit order.
     walked: Vec<(u32, FileId, Node)>,
 }
 
@@ -174,7 +177,7 @@ impl<'s> Commits<'s> {
         *self.numbers.ranks.lock() = Vec::new();
     }
 
-    /// `ranks`: `Files::rank_of_file`, by file. Without this call no task hides anything: see `View::hides`.
+    /// `ranks` is `Files::rank_of_file`, indexed by file. Without this call, no task hides anything. See `View::hides`.
     pub(super) fn for_files(mut self, ranks: &'s [u32], arena: &'s Arena) -> Commits<'s> {
         let words = (0..ranks.len().div_ceil(32)).map(|_| AtomicU32::new(0));
         (self.ranks_of_files, self.with_errors) = (ranks, arena.alloc_slice_fill_iter(words));
@@ -186,7 +189,7 @@ impl<'s> Commits<'s> {
         self.numbers.ranks.lock().get(commit as usize).copied()
     }
 
-    /// For a task that begins. `files`: how many the program has.
+    /// Creates the view for a new task. `files` is the number of files in the program.
     pub(super) fn view(&self, files: usize) -> View<'s> {
         View {
             numbers: self.numbers,
@@ -204,8 +207,8 @@ impl<'s> Commits<'s> {
         }
     }
 
-    /// The part of the commit `number` of `task` that stores, in the order that the head of this file gives. The caller
-    /// has the mutex. `tables`: by slot. `log`: of the task. Returns how many entries it has stored.
+    /// Stores the entries of `task`'s commit `number`, in the order described at the top of this file. The caller holds
+    /// the mutex. `tables` is indexed by slot, and `log` is the task's. Returns how many entries it stored.
     pub(super) fn store(
         &self,
         tables: &[&dyn Publish<'s>],
@@ -216,7 +219,7 @@ impl<'s> Commits<'s> {
     ) -> u64 {
         let mut stored = 0;
         self.numbers.begun.store(number, Ordering::Release);
-        // Before the first entry: whoever finds one finds this.
+        // This comes before the first entry, so a task that finds an entry also sees this.
         if let Some(ring) = ring {
             self.rings.lock().push(Ring { number, ..ring });
             self.numbers.with_a_ring.store(number, Ordering::Release);
@@ -236,8 +239,8 @@ impl<'s> Commits<'s> {
     }
 }
 
-/// Returns, for each key of a record that `task` has logged, the table's slot and `Publish::identity_of_logged`.
-/// `tables`: by slot.
+/// Returns the table's slot and `Publish::identity_of_logged` for each record key that `task` has logged. `tables` is
+/// indexed by slot.
 fn identities_of<'s>(
     tables: &[&dyn Publish<'s>],
     task: &Task<'s>,
@@ -260,35 +263,36 @@ const KEYS_PER_COMMIT: usize = 1024;
 
 const NO_FILE: u32 = u32::MAX;
 
-/// What a task has of `Commits`: which entries under nodes and symbols exist for it.
+/// A task's view of `Commits`. It decides which entries under nodes and symbols are visible to the task.
 pub(crate) struct View<'s> {
     numbers: &'s Numbers,
     /// See `Commits`.
     ranks_of_files: &'s [u32],
     with_errors: &'s [AtomicU32],
-    /// `ranks_of_files` of `pinned`.
+    /// `ranks_of_files[pinned]`
     rank: Cell<u32>,
-    /// By file: one more than the number of the last commit that the task sees there. 0: the task has not looked at the
-    /// file since `forget`.
+    /// Indexed by file: one more than the number of the last commit the task sees there, or 0 if the task hasn't looked
+    /// at the file since `forget`.
     of_files: Box<[Cell<u32>]>,
-    /// The files that have a number there.
+    /// The files with a nonzero entry in `of_files`.
     touched: RefCell<Vec<u32>>,
     /// The file that the task is visiting, or `NO_FILE`.
     pinned: Cell<u32>,
     /// The number of the last commit that had stored everything when `forget` was last called.
     at_rest: Cell<u32>,
-    /// The commits up to this number have stored nothing under `pinned` that the task does not see.
+    /// Commits up to this number haven't stored anything under `pinned` that the task doesn't see.
     compared_with_pinned: Cell<u32>,
-    /// The lowest number that a file had while it was `pinned`, since the last commit of the task.
+    /// The lowest snapshot that a file had while it was `pinned`, since the task's last commit.
     oldest_pin: Cell<u32>,
-    /// The numbers of the commits of the task, ascending.
+    /// The task's own commit numbers, ascending.
     own: RefCell<Vec<u32>>,
-    /// How many times `state` has found a commit storing.
+    /// How many times `state` has caught a commit in the middle of storing.
     times_unsettled: Cell<u32>,
 }
 
 impl View<'_> {
-    /// The number of the last commit that the task sees in `file`. The caller is about to look at a table for a node of it.
+    /// Returns the number of the last commit the task sees in `file`. The caller is about to look up one of the file's
+    /// nodes in a table.
     #[inline]
     pub(crate) fn snapshot_of(&self, file: FileId) -> u32 {
         match self.of_files.get(file.idx()).map_or(0, Cell::get) {
@@ -307,7 +311,8 @@ impl View<'_> {
         stored
     }
 
-    /// Nothing is in progress in the task that has looked at a table.
+    /// Drops the snapshots of all files except the pinned one. Call when nothing in progress in the task has looked at
+    /// a table.
     pub(super) fn forget(&self) {
         self.at_rest
             .set(self.numbers.stored.load(Ordering::Acquire));
@@ -322,13 +327,13 @@ impl View<'_> {
         });
     }
 
-    /// Whether the task is visiting `file`, so that what it sees there stays the same until it visits another file.
+    /// True if the task is visiting `file`, so what it sees there stays the same until it visits another file.
     #[inline]
     pub(crate) fn is_pinned(&self, file: FileId) -> bool {
         self.pinned.get() == file.0
     }
 
-    /// The task begins to visit `file`.
+    /// Call when the task starts visiting `file`.
     pub(super) fn pin(&self, file: FileId) {
         self.pinned.set(NO_FILE);
         self.forget();
@@ -342,11 +347,11 @@ impl View<'_> {
 
     /// True if the task ignores what `commit` stored under `file`.
     ///
-    /// tsc checks the files in program order, and whether it reports an error can depend on the context in which it first
-    /// gets there. The first task in program order that gets to an error decides. So once a task has found an error while
-    /// it evaluated something about another file, the tasks that would still report in that file ignore what tasks of
-    /// later files stored under it: they run into the same cache misses as on one thread. Files without errors lose
-    /// nothing.
+    /// tsc checks the files in program order, and whether it reports an error can depend on the context in which it
+    /// first gets there. The first task in program order that gets to an error decides. So once a task has found an
+    /// error while it evaluated something about another file, the tasks that would still report in that file ignore
+    /// what tasks of later files stored under it. That way they run into the same cache misses as on one thread. Files
+    /// without errors lose nothing.
     #[inline]
     pub(crate) fn hides(&self, file: FileId, commit: u32) -> bool {
         let word = self.with_errors.get(file.idx() / 32);
@@ -381,7 +386,7 @@ impl View<'_> {
         self.own.borrow().binary_search(&commit).is_ok()
     }
 
-    /// The task has committed, under `number`.
+    /// Call after the task's commit `number`.
     pub(super) fn has_committed(&self, number: u32) {
         self.own.borrow_mut().push(number);
         self.forget();
@@ -391,11 +396,11 @@ impl View<'_> {
         });
     }
 
-    /// A greater number than last time if a commit may have added to the tables in between.
+    /// Returns a greater number than last time if a commit may have added to the tables in between.
     fn state(&self) -> u64 {
         let stored = self.numbers.stored.load(Ordering::Acquire);
         if self.numbers.begun.load(Ordering::Acquire) != stored {
-            // One is storing right now, and goes on after this. When it is through, `stored` is greater.
+            // A commit is storing right now and will continue after this read. Once it's done, `stored` is greater.
             let times = self.times_unsettled.get().wrapping_add(1);
             self.times_unsettled.set(times);
         }
@@ -405,42 +410,43 @@ impl View<'_> {
 
 /// The variances that are being measured right now.
 ///
-/// Tasks that begin at about the same time need the same variances, and none of them has committed when the others ask. A
-/// measurement can take seconds, and its result is a few flags for each type parameter of a symbol: no id is in it. So
-/// one thread measures, the others wait, and the result is shared when the measurement ends, not when its task commits.
+/// Tasks that start at about the same time need the same variances, and none of them has committed by the time the
+/// others look them up. A measurement can take seconds, and its result is just a few flags per type parameter of a
+/// symbol, with no ids in it. So one thread measures, the others wait, and the result is shared when the measurement
+/// ends, not when its task commits.
 ///
-/// - A thread that is about to begin an outermost measurement claims the symbol (`Program::claim_variances`).
+/// - A thread that's about to start an outermost measurement claims the symbol (`Program::claim_variances`).
 /// - A thread that finds the symbol claimed waits, and then takes the result.
-/// - When an outermost measurement ends, what it has measured is shared at once if `Checker::share_what_was_measured`
-///   finds that it may be: it goes to `Program::serial_variances`, where `variances_worker` looks before it measures and
-///   which a commit compares with. So every later commit agrees with it.
+/// - When an outermost measurement ends, its results are shared immediately if `Checker::share_what_was_measured`
+///   allows it. They go to `Program::serial_variances`, which `variances_worker` checks before it measures and which
+///   every commit is compared with. So every later commit agrees with them.
 /// - A claim that ends without a result wakes the waiters too. One of them claims the symbol, or they all measure.
 ///
-/// **No deadlock.** A thread waits here only if it is not measuring (`Checker::in_variance_computation`), and a thread has a
-/// claim only while it is measuring. So no thread that has a claim ever waits for one: every wait is for a thread that is
-/// running. That thread takes no lock that a waiter holds, because a waiter holds none: it is in the middle of a task,
-/// and the wait releases the lock of `table`. A measurement is finite, and `variances_worker` has one way out, which
-/// gives the claim back.
+/// **No deadlock.** A thread only waits here if it isn't measuring (`Checker::in_variance_computation`), and a thread
+/// only has a claim while it's measuring. So a thread with a claim never waits for one, and every wait is for a running
+/// thread. That thread never blocks on a lock held by a waiter, because a waiter holds none. It's in the middle of a
+/// task, and the wait releases `table`'s lock. A measurement is finite, and `variances_worker` has a single exit, which
+/// releases the claim.
 struct Claims {
-    /// Whoever takes the lock of `Program::serial_variances` as well takes this one first.
+    /// Lock order: take this lock before `Program::serial_variances`'s.
     table: Guarded<FxHashMap<Sym, Claim>>,
-    /// A claim has ended, or variances were shared.
+    /// Signaled when a claim ends or variances are shared.
     has_changed: Condvar,
 }
 
-/// A symbol that has no entry is not claimed, and no claim of it has ended without a result.
+/// A symbol without an entry isn't claimed, and no claim on it has ended without a result.
 #[derive(Default)]
 struct Claim {
     is_taken: bool,
     /// How many claims have ended without a result.
     failures: u8,
-    /// Nobody claims it again, and nobody waits: every thread measures for itself.
+    /// No thread claims it again or waits for it. Every thread measures for itself.
     is_given_up: bool,
 }
 
-/// What `Program::claim_variances` has found.
+/// The result of `Program::claim_variances`.
 pub(super) enum VarianceClaim<'s> {
-    /// They are shared, perhaps after a wait.
+    /// The variances are already shared, possibly after a wait.
     Known(&'s [u8]),
     /// The caller has the claim. It measures, and then calls `Program::share_variances`.
     Mine,
@@ -451,17 +457,18 @@ pub(super) enum VarianceClaim<'s> {
 /// Why a claim ends without a result.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum NotShared {
-    /// A thread that takes the result would not report it. So it will for every other thread.
+    /// The measurement reported a diagnostic, which a thread that takes the shared result wouldn't report. Every other
+    /// thread's measurement would end the same way.
     Diagnostic,
-    /// The measurement may have used something for which a commit can find this task invalid.
+    /// The measurement may have used something that can make this task's commit invalid.
     Notes,
     /// The result depends on a query that was in progress in this task, or was cut short.
     Open,
 }
 
 impl<'s> Program<'s> {
-    /// See `Claims`. The caller is about to begin an outermost measurement of the variances of `sym`: it is not measuring,
-    /// so it has no claim. `may_claim`: whether its result has a chance to be shared.
+    /// See `Claims`. The caller is about to start an outermost measurement of `sym`'s variances. It isn't measuring
+    /// yet, so it has no claim. `may_claim` is true if its result has a chance of being shared.
     pub(super) fn claim_variances(&self, sym: Sym, may_claim: bool) -> VarianceClaim<'s> {
         let claims = &self.commits.claims;
         let mut table = claims.table.lock();
@@ -483,14 +490,15 @@ impl<'s> Program<'s> {
         }
     }
 
-    /// See `Claims`. An outermost measurement has ended.
-    /// - `measured`: what it has stored. `may_share`: nothing in it depends on the task that has
-    ///   measured it, so it is shared.
-    /// - `claimed`: the symbol that the caller has the claim of, and why it is not shared, if it is not.
+    /// See `Claims`. Call when an outermost measurement ends.
+    /// - `measured` is what it stored. `may_share` means nothing in it depends on the task that measured it, so it's
+    ///   shared.
+    /// - `claimed` is the symbol the caller has claimed, with the reason it isn't shared, if any.
     ///
-    /// Returns what the caller goes on with although it is not what `serial_variances` has: there is another value, which
-    /// a task that entered a cycle elsewhere has registered in the meantime, or there is none and this one may not be shared. Nothing
-    /// has compared it with what other tasks use, so the caller notes it for its next commit.
+    /// Returns the variances that the caller keeps using even though `serial_variances` doesn't have them. Either
+    /// there's a different value, registered in the meantime by a task that entered a cycle elsewhere, or there's none
+    /// and this one may not be shared. Nothing has compared them with what other tasks use, so the caller notes them
+    /// for its next commit.
     pub(super) fn share_variances(
         &self,
         measured: &[(Sym, &'s [u8])],
@@ -524,7 +532,7 @@ impl<'s> Program<'s> {
                 let claim = table.entry(sym).or_default();
                 claim.is_taken = false;
                 claim.failures = claim.failures.saturating_add(1);
-                // Another thread may do better, once.
+                // Give one more thread a chance.
                 claim.is_given_up = claim.failures >= 2 || reason == NotShared::Diagnostic;
             }
         }
@@ -551,8 +559,8 @@ impl<'s> Program<'s> {
     }
 
     /// True if something the task has noted contradicts an earlier commit, so that this commit must be discarded.
-    /// - Variances are compared with every earlier commit. A task notes only what it has computed, which it does only if it
-    ///   has found nothing. The variances that it has noted stay noted, because it goes on using them.
+    /// - Variances are compared with every earlier commit. A task only notes variances it computed itself, which it
+    ///   only does if it found none. They stay noted, because the task keeps using them.
     /// - Walks: what `markNodeAssignments` finds about a variable depends on which of the functions around the assignments
     ///   was walked first. The task is invalid if it walked a function of the file it was visiting that contains, or is
     ///   nested in, a function that another task walked, unless it saw that task's commit in the file when its visit
@@ -579,7 +587,7 @@ impl<'s> Program<'s> {
         self.has_walked_across_earlier_walk(&task.assignments_walked.borrow(), &unseen)
     }
 
-    /// The commit `number` of `task` is valid: what the task has noted is what later commits are compared with.
+    /// Call once `task`'s commit `number` is known to be valid. Later commits are compared with what the task noted.
     fn register_notes(&self, task: &mut Task<'s>, committing: &mut Committing, number: u32) {
         {
             let mut serial = self.serial_variances.lock();
@@ -595,13 +603,13 @@ impl<'s> Program<'s> {
 }
 
 impl<'s> Checker<'_, 's> {
-    /// Right after `begin_task`: the task commits while it runs, and sees the commits of the others.
-    /// `is_alone`: no other task runs, as in the last round.
+    /// Call right after `begin_task`. Makes the task commit while it runs and see other tasks' commits. `is_alone`
+    /// means no other task runs, as in the last round.
     pub fn see_commits(&mut self, is_alone: bool) {
         let files = self.p.files.modules.len();
         let view = self.p.commits.view(files);
-        // Alone it writes nothing at once: nobody is there to read it, and at a limit it stores, and replaces, what tsgo
-        // does.
+        // When it's alone there's no reader, so nothing is published immediately. And at a limit it has to store, and
+        // later replace, the same entries as tsgo.
         let at_once = match is_alone {
             true => 0,
             false => self.p.commits.at_once,
@@ -609,9 +617,9 @@ impl<'s> Checker<'_, 's> {
         self.task.see_commits(view, is_alone, at_once);
     }
 
-    /// For a task that sees commits: a greater number than last time if a commit may have added to the tables in between.
-    /// A memo that keeps something on the strength of an absence keeps it no longer than this stays the same: an entry
-    /// that another task has computed in a cycle says what its absence did not.
+    /// For a task that sees commits, returns a greater number than last time if a commit may have added to the tables
+    /// in between. A memo that caches something because an entry was absent is only valid while this number stays the
+    /// same. An entry that another task computed in a cycle can give a different answer than its absence did.
     pub(super) fn state_of_commits(&self) -> u64 {
         self.task.view().map_or(0, View::state)
     }
@@ -622,7 +630,7 @@ impl<'s> Checker<'_, 's> {
         self.task.view().map_or(0, |view| u64::from(newest(view)))
     }
 
-    /// Between two statements or two deferred nodes of the task's own walk.
+    /// Call between two statements or two deferred nodes of the task's own walk.
     #[inline]
     pub(super) fn rest_between_statements(&mut self) {
         if self.task.commits()
@@ -635,19 +643,20 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
-    /// True if the task has logged enough keys to commit. The last round's task never has: no other task runs that could
-    /// read its entries, and a published entry can't be replaced. A comparison that overflows caches failures, and
-    /// typescript-go replaces them when a later statement repeats one of those comparisons to report an error.
+    /// True if the task has logged enough keys to commit. The last round's task never has, because no other task runs
+    /// that could read its entries, and a published entry can't be replaced. A comparison that overflows caches
+    /// failures, and typescript-go replaces them when a later statement repeats one of those comparisons to report an
+    /// error.
     fn is_commit_due(&self) -> bool {
         self.task.commits()
             && !self.task.is_believed()
             && self.task.buffer().logged() >= KEYS_PER_COMMIT
     }
 
-    /// Nothing is in progress that has looked at a table or is about to store in one.
+    /// Call when nothing in progress has looked at a table or is about to store in one.
     fn rest(&mut self) {
         self.lose_what_has_missed_a_ring();
-        // A commit here would store the members of a ring that are in other files, and withhold those in this one.
+        // A commit here would store the members of a cycle that are in other files, and withhold those in this one.
         if self.is_commit_due() && !self.task.is_lost() && !self.task.has_closed_a_ring() {
             let is_between_files = false;
             self.commit(is_between_files);
@@ -657,11 +666,12 @@ impl<'s> Checker<'_, 's> {
         self.task.note_what_is_logged_at_rest();
     }
 
-    /// At rest. The task is lost if it has missed a member of a ring that a commit has: then it finds the other members, which
-    /// closes no ring and is right from no entry.
-    /// - See `Task::is_beside_a_ring`. Whoever misses a member evaluates it, and stores it: the task has stored, since it
-    ///   was last at rest, under a key that the commit has.
-    /// - The file that the task visits does not change during the visit: the commit has a key in that file.
+    /// Call when the task is idle. Discards the task if it missed a member of a cycle that some commit has. Such a task
+    /// hits the other members, which doesn't close a cycle and isn't what any entry point produces. There are two signs
+    /// of a miss:
+    /// - The task has stored, since it was last idle, under a key that the commit has. A task that misses a member
+    ///   evaluates it and stores it. See `Task::is_beside_a_ring`.
+    /// - The commit has a key in the file the task is visiting, which doesn't change during the visit.
     fn lose_what_has_missed_a_ring(&self) {
         let Some(view) = self.task.view() else {
             return;
@@ -671,7 +681,7 @@ impl<'s> Checker<'_, 's> {
         if newest <= at_rest.min(compared) {
             return;
         }
-        // Copies: `identities_of` asks for the task's buffer again.
+        // Copied because `identities_of` borrows the task's buffer again.
         let (of_records, of_nodes) = self.task.logged_since_rest();
         let (of_records, of_nodes) = (of_records.to_vec(), of_nodes.to_vec());
         let of_records = identities_of(&tables_of(self.p), &self.task, &of_records);
@@ -701,7 +711,7 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
-    /// True if the task is discarded: its files will be rechecked, and nothing it computes from now on is kept.
+    /// True if the task is discarded. Its files will be rechecked, and nothing it computes from now on is kept.
     pub fn is_lost(&self) -> bool {
         self.task.is_lost()
     }
@@ -717,31 +727,31 @@ impl<'s> Checker<'_, 's> {
         self.task.take_cycle_members()
     }
 
-    /// Before `check_file`: see `Task::set_first_in_order`.
+    /// Call before `check_file`. See `Task::set_first_in_order`.
     pub fn set_first_in_order(&self, is_first: bool, is_first_in_component: bool) {
         (self.task).set_first_in_order(is_first, is_first_in_component);
     }
 
-    /// Call after `check_file` and whatever is asked about the file afterwards. `is_last`: the task ends with this file.
+    /// Call after `check_file` and any later queries about the file. `is_last` means the task ends with this file.
     ///
     /// Returns true if the file is checked for good. Otherwise the task is discarded and the file has to be rechecked. A
     /// commit follows every file, so a discarded task never takes an earlier file with it. The exception is the last
     /// round's task.
     pub fn commit_after_file(&mut self, is_last: bool) -> bool {
         self.lose_what_has_missed_a_ring();
-        // The last round's task commits once, when it ends: see `is_commit_due`. It is never discarded.
+        // The last round's task commits once, when it ends. See `is_commit_due`. It's never discarded.
         if self.task.is_believed() && !is_last && !self.task.is_lost() {
             return true;
         }
         self.commit(true)
     }
 
-    /// See the head of this file. Nothing is in progress in the task.
-    /// `is_between_files`: no file is being checked.
-    /// Returns whether the task goes on: it is not lost.
+    /// See the top of this file. Nothing may be in progress in the task.
+    /// `is_between_files` means no file is being checked.
+    /// Returns true if the task continues, that is, if it isn't discarded.
     ///
-    /// Every valid commit stores, also the last one of a thread. A task that begins later counts the walks of this commit as
-    /// seen (`Program::is_invalid`), so it has to find what was evaluated along with them.
+    /// Every valid commit stores, even a thread's last one. A task that starts later counts this commit's walks as seen
+    /// (`Program::is_invalid`), so it has to find what was evaluated along with them.
     fn commit(&mut self, is_between_files: bool) -> bool {
         let p = self.p;
         let Some([of_entries_written_at_once, mut reported]) =
@@ -793,7 +803,7 @@ impl<'s> Checker<'_, 's> {
         }
         let number = committing.number + 1;
         committing.number = number;
-        // Before the commit stores: whoever finds one of its entries finds these too.
+        // Set before the commit stores, so a task that finds one of its entries also sees these.
         for file in self.files_with_errors.drain() {
             if let Some(word) = p.commits.with_errors.get(file.idx() / 32) {
                 word.fetch_or(1 << (file.0 % 32), Ordering::Relaxed);
@@ -821,10 +831,10 @@ impl<'s> Checker<'_, 's> {
         true
     }
 
-    /// What the task has stored under the nodes and symbols of a file that it has visited waits for a commit that follows
-    /// the file. If the task is lost before that, another one checks the file again, and has to evaluate what this one
-    /// has: to evaluate an expression is also to leave notes for the later passes over the file, like
-    /// `unresolved_identifiers`, and whoever finds an entry leaves none.
+    /// Entries the task stored under the nodes and symbols of a file it visited wait for the commit that follows the
+    /// file. If the task is discarded before that, another task rechecks the file and has to evaluate the same things
+    /// again. Evaluating an expression also leaves notes for the later passes over the file, like
+    /// `unresolved_identifiers`, and a task that hits a cached entry doesn't leave them.
     fn withhold_until_the_file_ends(&mut self, log: &mut Log, is_between_files: bool) {
         let withheld = &mut self.withheld_until_the_file_ends;
         if is_between_files {

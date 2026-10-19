@@ -11,8 +11,8 @@ impl Checker<'_, '_> {
             return;
         }
         let index = self.exprs_by_kind(file);
-        // Indexed by symbol: the end of its declaring statement, plus one. Every branch of the rule
-        // accepts a use after that position, so most uses cost one comparison. 0: not computed yet.
+        // Indexed by symbol: the end of its declaring statement, plus one. Every branch of the rule accepts a use after
+        // that position, so most uses cost one comparison. 0 means not computed yet.
         let mut declared_by = vec![0u32; bound.symbols.len()];
         for &e in index.of(ExprTag::Ident) {
             let local = bound.symbol_of_expr(e);
@@ -43,8 +43,7 @@ impl Checker<'_, '_> {
                 self.check_resolved_block_scoped_variable(file, result, hir.node(e));
             }
         }
-        // In a file without a class, only the contents of member initializers and static blocks are
-        // checked.
+        // In a file without a class, only the contents of member initializers and static blocks are checked.
         if hir.classes.is_empty() && !hir.members.iter().any(|m| m.init.is_some()) {
             return;
         }
@@ -60,9 +59,9 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The end of the statement that declares `local`, plus one, read from the binder's tables.
-    /// Only for a symbol with a single declaration that is a variable, a class statement or an
-    /// enum. 0: the tables do not determine it.
+    /// The end of the statement that declares `local`, plus one, read from the binder's tables. Only for a symbol with
+    /// a single declaration that's a variable, a class statement or an enum. Returns 0 if the tables don't determine
+    /// it.
     fn end_of_declaring_statement(&self, file: FileId, local: SymbolId) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let symbol = bound.symbol(local);
@@ -99,7 +98,7 @@ impl Checker<'_, '_> {
         if statement.is_none() {
             return 0;
         }
-        // The head of a `for` is in that statement.
+        // A `for` statement's head is inside that statement.
         if let Parent::Stmt(around) = bound.parent_of_stmt(statement)
             && matches!(
                 hir[around].kind,
@@ -111,8 +110,8 @@ impl Checker<'_, '_> {
         hir[statement].loc.end + 1
     }
 
-    /// The declaration `checkResolvedBlockScopedVariable` checks for `result`. `NONE`: it checks
-    /// none, or one in another file than `file`, where the order cannot be determined.
+    /// The declaration `checkResolvedBlockScopedVariable` checks for `result`. Returns `NONE` if it doesn't check one,
+    /// or if the declaration isn't in `file`, in which case the order can't be determined.
     fn block_scoped_declaration(&self, file: FileId, result: Sym) -> Node {
         let files = self.files();
         let flags = files.flags(result);
@@ -171,8 +170,8 @@ impl Checker<'_, '_> {
         self.report_use_before_declaration(file, at, code, name, declaration);
     }
 
-    /// Reports the error `code` at `at`, with the source text at `name` as its argument, and the
-    /// related information `'{0}' is declared here.` at `declaration`.
+    /// Reports the error `code` at `at`, with the source text at `name` as its argument, and the related information
+    /// `'{0}' is declared here.` at `declaration`.
     fn report_use_before_declaration(
         &mut self,
         file: FileId,
@@ -374,8 +373,8 @@ impl Checker<'_, '_> {
         found.is_some()
     }
 
-    /// `isPropertyInitializedInStaticBlocks` for the property `declaration` and the static blocks
-    /// of its class that start no later than `end`.
+    /// `isPropertyInitializedInStaticBlocks` for the property `declaration` and the static blocks of its class that
+    /// start no later than `end`.
     fn is_property_initialized_in_static_blocks(
         &mut self,
         file: FileId,
@@ -445,8 +444,7 @@ impl Checker<'_, '_> {
     /// `prop.ValueDeclaration`
     fn value_declaration_of(&mut self, prop: &Prop) -> Option<(FileId, Node)> {
         let (mut file, mut decl) = self.value_declaration_of_prop(prop)?;
-        // `mergeSymbol`, `SetValueDeclaration`: a late bound declaration takes the place of an
-        // assignment, and of nothing else.
+        // `mergeSymbol`, `SetValueDeclaration`: a late bound declaration replaces an assignment, and nothing else.
         if matches!(decl, Decl::ThisProperty(_) | Decl::Expando(_))
             && let Some(&PropSource::Symbol(sym)) = Self::value_declaration(prop)
         {

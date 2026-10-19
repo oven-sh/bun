@@ -1,4 +1,4 @@
-//! transform.go, the functions that only JavaScript reaches: CommonJS exports, and `this.name = e` in a class.
+//! The functions of transform.go that only JavaScript reaches: CommonJS exports, and `this.name = e` in a class.
 
 use super::*;
 use crate::bind::{JsDeclarationKind, assignment_declaration_kind, define_property_call};
@@ -37,7 +37,8 @@ impl ExportName {
 }
 
 impl<'p> DeclarationEmit<'_, 'p, '_> {
-    /// `cjsExportAssignmentVisitor`, then the CommonJS cases of `expressionVisitor` (`visitNestedExpression`), over the whole file.
+    /// `cjsExportAssignmentVisitor`, then the CommonJS cases of `expressionVisitor` (`visitNestedExpression`), over the
+    /// whole file.
     pub(super) fn transform_commonjs_exports(&mut self) {
         let file = self.file();
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
@@ -131,7 +132,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
     }
 
-    /// `node.Symbol()`, of `exports.name = e` or `Object.defineProperty(exports, "name", d)`.
+    /// `node.Symbol()` of `exports.name = e` or `Object.defineProperty(exports, "name", d)`.
     fn symbol_of_commonjs_export(&self, name: &ExportName) -> Option<Sym> {
         let files = self.c.files();
         let exports = files.exports(files.file_symbol(self.file()));
@@ -249,7 +250,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         Some(vec![statement, export])
     }
 
-    /// `transformCommonJSExportWorker`, where the right side is a class expression: a class declaration instead of a typed variable.
+    /// `transformCommonJSExportWorker`, where the right side is a class expression: emits a class declaration instead
+    /// of a typed variable.
     fn transform_commonjs_class_export(
         &mut self,
         c: ClassId,
@@ -290,8 +292,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.tracker.watched_class_symbol = Some(self.c.class_sym(file, c));
         self.tracker.class_symbol_tracked = false;
         let names_differ = !name.is_identifier || class_name != name.text;
-        // In the namespace the class is one level deeper, and whether it refers to itself is known
-        // once it is emitted.
+        // In the namespace the class is one level deeper, and whether it refers to itself is only known once it's
+        // emitted.
         let mut class = None;
         if !names_differ {
             class =
@@ -452,16 +454,16 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
     }
 
-    /// `collectThisPropertyAssignments`, `visitThisPropertyAssignments`: a property declaration for each name that is only assigned to.
+    /// `collectThisPropertyAssignments`, `visitThisPropertyAssignments`: a property declaration for each name that's
+    /// only assigned to.
     pub(super) fn collect_this_property_assignments(&mut self, c: ClassId) -> Vec<Vec<u8>> {
         let file = self.file();
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
         if !hir.is_js {
             return Vec::new();
         }
-        // `thisPropertyAssignmentKey`: the name, `isStatic`. `getThisPropertyAssignmentKey`: a name
-        // that is dynamic, or whose text `TryGetTextOfPropertyName` does not know (`[+1]`), is a
-        // key of its own, which no assignment has.
+        // `thisPropertyAssignmentKey`: the name, `isStatic`. `getThisPropertyAssignmentKey`: a name that's dynamic, or
+        // whose text `TryGetTextOfPropertyName` can't get (`[+1]`), gets a unique key, which no assignment matches.
         let mut seen: Vec<(Atom, bool)> = Vec::new();
         for m in hir[c].members.iter() {
             if let Some(name) = hir[m].key.name() {
@@ -490,7 +492,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             };
             // `GetReferencedMemberValueDeclaration`
             let symbol = bound.symbol_of_expr(e);
-            // `HasDynamicName`: an identifier is not `IsSimpleInlineableExpression`, so `this[name] = e` declares nothing here.
+            // `HasDynamicName`: an identifier isn't `IsSimpleInlineableExpression`, so `this[name] = e` doesn't declare
+            // anything here.
             let name = match hir[target].kind {
                 ExprKind::Dot { name, .. } => Some(name),
                 ExprKind::Index { index, .. } if is_string_or_numeric_literal_like(hir, index) => {
@@ -582,8 +585,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         false
     }
 
-    /// `getTypeOfSymbol(getSymbolOfDeclaration(e))` for an assignment or a call that is a
-    /// declaration in JavaScript.
+    /// `getTypeOfSymbol(getSymbolOfDeclaration(e))` for an assignment or a call that's a declaration in JavaScript.
     pub(super) fn type_of_commonjs_declaration(&mut self, e: ExprId) -> Option<TypeId> {
         let file = self.file();
         let (hir, files) = (self.c.hir(file), self.c.files());

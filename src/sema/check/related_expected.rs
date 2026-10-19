@@ -1,24 +1,24 @@
-//! The origin of the expected type of a subexpression: the related information `elaborateError`
-//! adds to its errors.
+//! Where a subexpression's expected type comes from. `elaborateError` attaches this to its errors
+//! as related information.
 
 use super::related::Place;
 use super::*;
 use crate::bind::Decl;
 
 impl Checker<'_, '_> {
-    /// The end of `elaborateElement`: the related information of the error about the property or
-    /// the element `name` of the expression compared with `target`.
+    /// The tail of `elaborateElement`. Returns the related information for an error about property
+    /// or element `name` of an expression compared with `target`.
     pub(super) fn expected_property(&mut self, target: TypeId, name: Atom) -> Option<Reported> {
-        // Comparisons made along the way are independent of the comparison being reported.
+        // Comparisons made here aren't part of the comparison being reported, so its flag is
+        // restored.
         let too_complex = self.relation_too_complex;
         let related = self.related_info_for_expected_property(target, name);
         self.relation_too_complex = too_complex;
         related
     }
 
-    /// 6501 at the index signature of `target` that applies to `name`, or 6500 at the declaration
-    /// of the property, or else of `target`.
-    /// Nothing in the default library is referenced.
+    /// Returns 6501 at `target`'s index signature that applies to `name`, or 6500 at the property's
+    /// declaration, falling back to `target`'s declaration. Never points into the default library.
     fn related_info_for_expected_property(
         &mut self,
         target: TypeId,
@@ -52,8 +52,8 @@ impl Checker<'_, '_> {
         ))
     }
 
-    /// The span, computed by `range`, of the node that starts at `start` in `file`. Where the text
-    /// of the default library is not stored, end positions in it are unknown.
+    /// Returns the span that `range` computes for the node at `start` in `file`. If the default
+    /// library's text isn't stored, its end positions are unknown and the span is empty.
     fn place_in_file(
         &self,
         file: FileId,
@@ -67,8 +67,8 @@ impl Checker<'_, '_> {
         (file, start, end)
     }
 
-    /// `GetErrorRangeForNode` of `getPropertyOfType(ty, name).Declarations[0]`. `None`: no such
-    /// property. `Some(None)`: it has no declaration.
+    /// `GetErrorRangeForNode` of `getPropertyOfType(ty, name).Declarations[0]`. `None` if there's
+    /// no such property, `Some(None)` if it has no declaration.
     fn first_declaration_of_property(&mut self, ty: TypeId, name: Atom) -> Option<Option<Place>> {
         let (prop, _) = self.get_property_of_type(ty, name)?;
         Some(self.place_of_first_prop_declaration(prop))
@@ -113,7 +113,7 @@ impl Checker<'_, '_> {
     }
 
     /// `getApplicableIndexInfo(target, nameType).declaration`, where `nameType` is the name type of
-    /// the property `name`.
+    /// property `name`.
     fn declaration_of_applicable_index_signature(
         &mut self,
         target: TypeId,

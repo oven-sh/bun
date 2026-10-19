@@ -1,22 +1,22 @@
-//! The memory of one check: one arena per thread, all freed together.
+//! Memory for one check: one arena per thread, all freed together.
 //!
-//! `bun_alloc::Arena` is a mimalloc heap. A block in it can be freed or resized on its own, so a
-//! container that is dropped early returns its memory to the heap. Destroying the heap frees every
-//! block that is still allocated. Only the thread that created an arena allocates in it. Any thread
+//! `bun_alloc::Arena` is a mimalloc heap. Its blocks can be freed or resized individually, so a
+//! container that's dropped early returns its memory to the heap. Destroying the heap frees every
+//! block that's still allocated. Only the thread that created an arena allocates in it. Any thread
 //! may read or free a block of any arena.
 //!
-//! Everything that is allocated here borrows the `Session`, so the borrow checker proves that the
-//! session is dropped last.
+//! Every allocation made here borrows the `Session`, so the borrow checker proves that the session
+//! is dropped last.
 //!
-//! What lives until the check ends is here, and no destructor runs for it: the program is itself in
-//! an arena (`Arena::alloc`). So nothing that is reachable from the program owns memory on the
-//! regular heap, except what `Session::keep` has taken over. What a function or a task builds and
-//! throws away is on the regular heap, in std containers.
+//! Data that lives until the check ends is allocated here, and its destructors never run, because
+//! the program itself is in an arena (`Arena::alloc`). So nothing reachable from the program owns
+//! memory on the regular heap, except values passed to `Session::keep`. Temporary data that a
+//! function or a task builds and discards uses std containers on the regular heap.
 //!
-//! - A container that one thread fills holds `&Arena`: `ArenaVec`, `ArenaHashMap`, `LocalVec`.
-//! - A container that several threads add to holds `&Session`, which allocates in the arena of the
-//!   calling thread: `AppendVec`, `Cells`, `Newest`.
-//! - A list that never changes after it is built is `&[T]`, from `Arena::alloc_slice_copy`.
+//! - A container filled by one thread holds `&Arena`: `ArenaVec`, `ArenaHashMap`, `LocalVec`.
+//! - A container that several threads append to holds `&Session`, which allocates in the calling
+//!   thread's arena: `AppendVec`, `Cells`, `Newest`.
+//! - A list that never changes once it's built is a `&[T]` from `Arena::alloc_slice_copy`.
 
 pub use bun_alloc::{Arena, ArenaBox, ArenaVec, ArenaVecExt, transfer_arena, vec_from_iter_in};
 
@@ -45,10 +45,10 @@ pub fn set_in<K>(arena: &Arena) -> ArenaHashSet<'_, K> {
 
 /// Owns the arena of every thread that has allocated for one check.
 pub struct Session {
-    /// A linked list that only grows. A thread appends its own node, so each arena is created by
+    /// An append-only linked list. Each thread appends its own node, so each arena is created by
     /// the thread that allocates in it.
     first: Link,
-    /// What `keep` was given.
+    /// Values passed to `keep`.
     kept: AppendVec<Box<dyn Any + Send + Sync>>,
 }
 
@@ -74,9 +74,9 @@ impl Session {
         }
     }
 
-    /// The arena of the calling thread. The first call from a thread creates it.
+    /// Returns the calling thread's arena, creating it on the thread's first call.
     ///
-    /// The search is linear in the number of threads. A task calls it once and stores the result.
+    /// The lookup is linear in the number of threads, so a task calls this once and stores the result.
     pub fn arena(&self) -> &Arena {
         let thread = std::thread::current().id();
         let mut link = &self.first;
@@ -95,25 +95,25 @@ impl Session {
         }
     }
 
-    /// The bytes that are in use in the arenas. For a moment at which no thread allocates in them.
+    /// Returns the bytes in use across all arenas. Call it only while no thread is allocating in them.
     pub fn allocated_bytes(&self) -> usize {
         std::iter::successors(self.first.get(), |node| node.next.get())
             .map(|node| node.arena.allocated_bytes())
             .sum()
     }
 
-    /// Takes over a value that owns memory on the regular heap, and drops it with the session. For
-    /// what the program refers to, since nothing drops the program.
+    /// Takes ownership of a value that owns memory on the regular heap and drops it with the session.
+    /// Use it for values the program refers to, since nothing drops the program.
     pub fn keep<T: Send + Sync + 'static>(&self, value: T) -> &T {
         let at = self.kept.push(Box::new(value));
         let kept: &(dyn Any + Send + Sync) = &**self.kept.get(at);
         kept.downcast_ref().expect("it was boxed as a `T`")
     }
 
-    /// Drops `sessions` right before the process exits, in parallel, and returns their memory to the OS immediately. What
-    /// `keep` took over is dropped first. Then the arenas are destroyed: each thread prefers its own, and afterwards
-    /// returns the free pages that the allocator retains for it, which by then include those of the kept values. Without
-    /// this, a single thread unmaps everything at exit, which costs about 70 ms per GB.
+    /// Drops `sessions` in parallel right before the process exits and returns their memory to the OS immediately.
+    /// Values passed to `keep` are dropped first, then the arenas are destroyed. Each thread prefers its own arena, and
+    /// after destroying it returns the free pages the allocator caches for that thread, which by then include the kept
+    /// values' pages. Without this, a single thread unmaps everything at exit, which costs about 70 ms per GB.
     /// `in_parallel(n, f)` must call `f(i)` for every `i < n`, on any number of threads, starting them in ascending order.
     pub fn drop_before_the_process_ends(
         sessions: Vec<Session>,
@@ -163,10 +163,11 @@ impl Session {
 }
 
 impl Drop for Session {
-    /// A loop, so that the stack depth does not depend on the number of threads.
+    /// Unlinks the nodes in a loop so the stack depth doesn't depend on the number of threads.
     ///
-    /// On any thread, while the threads that allocated work for other sessions: `mi_heap_destroy`
-    /// detaches what a thread holds of the heap under that thread's lock (`_mi_heap_detach_theaps`).
+    /// This can run on any thread, even while the threads that allocated are working for other
+    /// sessions, because `mi_heap_destroy` detaches each thread's part of the heap under that
+    /// thread's lock (`_mi_heap_detach_theaps`).
     fn drop(&mut self) {
         let mut next = self.first.take();
         while let Some(mut node) = next {
@@ -176,12 +177,12 @@ impl Drop for Session {
 }
 
 // SAFETY: every method forwards to `&Arena`, which upholds the contract for its own blocks: a block
-// is valid until it is freed or the arena is dropped, and the arena is dropped with the session,
-// which `&Session` borrows. A block may come from the arena of another thread than the one that
-// frees or resizes it. `&Arena` allows that: it frees with `mi_free`, which finds the heap of a
-// block from its address, and it resizes with `mi_heap_realloc_aligned`, which either leaves the
-// block in place or copies it to the given heap and calls `mi_free`. `bun_alloc::transfer_arena`
-// relies on the same two properties.
+// is valid until it's freed or the arena is dropped, and the arena is dropped with the session,
+// which `&Session` borrows. The thread that frees or resizes a block may not be the one whose arena
+// it came from. `&Arena` allows that, because it frees with `mi_free`, which finds a block's heap
+// from its address, and it resizes with `mi_heap_realloc_aligned`, which either leaves the block in
+// place or copies it to the given heap and calls `mi_free`. `bun_alloc::transfer_arena` relies on
+// the same two properties.
 unsafe impl Allocator for &Session {
     #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
@@ -233,7 +234,7 @@ unsafe impl Allocator for &Session {
     }
 }
 
-/// mimalloc is foreign code, which Miri does not run.
+/// Miri can't run mimalloc, which is foreign code.
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
@@ -373,7 +374,7 @@ mod tests {
         let session = Session::new();
         let layout = Layout::array::<u64>(1 << 12).unwrap();
         let block = (&session).allocate_zeroed(layout).unwrap();
-        // SAFETY: the block was allocated with this length and is initialized with zeros.
+        // SAFETY: the block was allocated with this length and is zero-initialized.
         let bytes = unsafe { block.as_ref() };
         assert!(bytes.len() >= layout.size());
         assert!(bytes.iter().all(|&byte| byte == 0));

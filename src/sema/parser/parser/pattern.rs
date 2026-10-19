@@ -29,7 +29,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         pat
     }
 
-    /// `parseBindingIdentifierWithDiagnostic`, at a token that is none.
+    /// `parseBindingIdentifierWithDiagnostic`, at a token that isn't a binding identifier.
     #[cold]
     #[track_caller]
     pub(crate) fn missing_binding_identifier(&mut self, code_of_private_name: u32) -> PatId {
@@ -158,7 +158,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_pat(PatKind::Object(properties), start, end)
     }
 
-    /// `parseObjectBindingElement`, after its `...` if it has one. `pos`: its first token.
+    /// `parseObjectBindingElement`, after its `...` if it has one. `pos`: the start of its first token.
     #[inline(always)]
     fn object_binding_element(&mut self, pos: u32) -> PatProp {
         let is_identifier = self.is_binding_identifier();
@@ -168,11 +168,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if matches!(key, PropKey::Private(_)) {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
         }
-        // In a type nothing asks whether the name is in quotes.
+        // In a type, nothing needs to know whether the name was quoted.
         if name_kind == NameKind::StringLiteral && self.has_context(ctx::TYPE) {
             name_kind = NameKind::Identifier;
         }
-        // `name.Text()` ends with the `n`.
+        // `name.Text()` keeps the `n` suffix.
         if let Some(written) = bigint {
             key = PropKey::Name(self.atom(&bun_sema::json::bigint_token_value(written)));
         }
@@ -201,15 +201,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// The same after `...`, where `checkGrammarBindingElement` reports a property name and an
-    /// initializer.
+    /// `object_binding_element` after `...`, where `checkGrammarBindingElement` reports a property
+    /// name or an initializer.
     #[cold]
     #[inline(never)]
     fn rest_binding_element(&mut self, pos: u32) -> PatProp {
         let is_identifier = self.is_binding_identifier();
         let mut property = self.object_binding_element(pos);
         property.is_rest = true;
-        // `...a`: the identifier is the binding, and there is no property name.
+        // `...a`: the identifier is the binding, and there's no property name.
         let value = self.f.pats.get(property.value.idx());
         if is_identifier && value.is_some_and(|pat| pat.pos == property.key_pos) {
             property.key = PropKey::None;

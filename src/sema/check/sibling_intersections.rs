@@ -2,28 +2,28 @@
 //!
 //! `X & (A | B) & (C | D)` is a union of four intersections that share most of their members
 //! (`getCrossProductIntersections`). `getReducedType` reduces each of them, and for each one it combines the properties
-//! that several members have. That asks for the type of every such property again. MUI's
-//! `ComponentsPropsList[keyof ComponentsPropsList]` as an assignment target is a union of 81 intersections. Each has 398
-//! members, in which 46,000 properties share 870 names.
+//! that several members have, which computes the type of every such property again. MUI's
+//! `ComponentsPropsList[keyof ComponentsPropsList]` as an assignment target is a union of 81 intersections. Each has
+//! 398 members, in which 46,000 properties share 870 names.
 //!
-//! So while `reduced_members` filters a union, `combine_props` remembers what it found out about each property of each
-//! member (`Fact`), and reads that instead of asking again.
+//! So while `reduced_members` filters a union, `combine_props` caches what it learned about each property of each
+//! member (`Fact`) and reads that instead of recomputing it.
 //!
-//! tsgo asks again, so not asking must not be observable. The rules are those of check/infer_memo.rs:
+//! tsgo recomputes, so skipping the calls must not be observable. The rules are the same as in check/infer_memo.rs:
 //!
-//! - A fact is about one property under one mapper. Nothing else goes into the calls that it replaces.
-//! - A call whose result is kept left no trace (`Checker::traces_of_inference`), so all its lookups hit the type store or
-//!   a table. It also didn't taint a frame or call `Task::hold_back`.
-//! - What such a call does every time is kept and replayed. See `Effects`.
-//! - The facts are void after the next cycle or limit (`disturbances_for_siblings`). A lookup that misses without
-//!   starting an evaluation only gets another answer later if a cycle or a limit produced the new entry. If it was this
-//!   task that met the cycle or the limit, it gives the facts up until the next union: a property type that depends on
-//!   a query in progress meets the cycle every time it's asked for, so no fact would live long enough to be read.
-//! - No instantiation is in progress (`Checker::may_reuse_for_siblings`). While a mapper is active, `instantiate` counts a
-//!   type only once.
-//! - The facts live as long as `reduced_members` filters one union. Nothing that was in progress when a fact was kept has
-//!   ended when it's read. A reduction takes them out of the checker while it uses them, so the reductions nested in it,
-//!   which have more in progress, don't find them.
+//! - A fact is about one property under one mapper. The calls it replaces have no other input.
+//! - A call's result is cached only if the call left no trace (`Checker::traces_of_inference`), so all its lookups hit
+//!   the type store or a table. It also didn't taint a frame or call `Task::hold_back`.
+//! - The effects such a call has every time it runs are recorded and replayed. See `Effects`.
+//! - The next cycle or limit invalidates the facts (`disturbances_for_siblings`). A lookup that misses without starting
+//!   an evaluation only gets a different answer later if a cycle or a limit produced the new entry. If this task itself
+//!   hit the cycle or the limit, it stops using facts until the next union. A property type that depends on a query in
+//!   progress hits the cycle on every request, so no fact would live long enough to be read.
+//! - No instantiation is in progress (`Checker::may_reuse_for_siblings`). While a mapper is active, `instantiate`
+//!   counts a type only once.
+//! - The facts live only while `reduced_members` filters one union. Anything that was in progress when a fact was
+//!   cached is still in progress when it's read. A reduction takes the facts out of the checker while it uses them, so
+//!   nested reductions, which have more in progress, don't find them.
 //!
 //! The facts belong to one `Checker`. No other task sees them.
 
@@ -35,7 +35,7 @@ use super::{Members, PropOfConstituent};
 /// A member of an intersection that has a property, and the property.
 pub(super) type Holder<'p> = (Members<'p>, &'p Prop<'p>);
 
-/// What a call does every time.
+/// The side effects a call has every time it runs.
 #[derive(Copy, Clone)]
 enum Effects {
     /// The call hasn't run yet, or it left a trace.
@@ -50,7 +50,7 @@ enum Effects {
     },
 }
 
-/// The type of a property, and what `combine_props` asks about it.
+/// A property's type, and what `combine_props` needs to know about it.
 #[derive(Copy, Clone)]
 pub(super) struct TypeOfProp {
     pub(super) ty: TypeId,
@@ -58,18 +58,18 @@ pub(super) struct TypeOfProp {
     pub(super) is_literal: bool,
 }
 
-/// What `combine_props` has found out about a property of a member. It reads one for each property of each intersection,
-/// so a fact is half a cache line.
+/// The facts `combine_props` has learned about one property of one member. It reads one `Fact` for each property of
+/// each intersection, so a `Fact` is kept to half a cache line.
 #[derive(Copy, Clone)]
 #[repr(align(32))]
 struct Fact {
-    /// What `instantiation_of_prop` returns.
+    /// The result of `instantiation_of_prop`.
     instantiation: PropInstantiation,
     of_instantiation: Effects,
-    /// What `types_of_instantiated_prop` returns first.
+    /// The first type `types_of_instantiated_prop` returns.
     ty: TypeId,
     of_type: Effects,
-    /// 1 + the number of the `PropOfConstituent`. 0: it has no number yet.
+    /// 1 + the `PropOfConstituent`'s number, or 0 if it has no number yet.
     symbol: u32,
     /// `SiblingIntersections::generation` when the calls ran. In any other generation their effects are unknown.
     generation: u16,
@@ -95,26 +95,26 @@ type Disturbances = [u64; 9];
 
 #[derive(Default)]
 pub(in super::super) struct SiblingIntersections<'p> {
-    /// A number for each distinct `Members`, by the address of its shape and its mapper.
+    /// A number for each distinct `Members`, keyed by its shape's address and its mapper.
     members: FxHashMap<(usize, MapperId), u32>,
     /// For each number, a fact for each property of the shape.
     facts: Vec<Box<[Fact]>>,
     /// A number for each distinct property under a mapper.
     symbols: FxHashMap<PropOfConstituent<'p>, u32>,
-    /// For each of `symbols`: the last `name` for which `combine_props` has seen it.
+    /// For each entry of `symbols`, the last `name` for which `combine_props` saw it.
     seen_for: Vec<u32>,
-    /// Counts the calls of `combine_props`.
+    /// Counts calls to `combine_props`.
     name: u32,
-    /// `disturbances_for_siblings` at the beginning of this generation.
+    /// `disturbances_for_siblings` at the start of this generation.
     disturbances: Disturbances,
-    /// Counts the commits that have made facts void.
+    /// Counts the commits that invalidated facts.
     generation: u16,
-    /// This task has met a cycle or a limit since the facts were begun.
+    /// This task has hit a cycle or a limit since the facts were created.
     is_given_up: bool,
 }
 
 impl<'p> SiblingIntersections<'p> {
-    /// Returns the number of each of `all`.
+    /// Returns the number of each element of `all`.
     pub(super) fn numbers_of(&mut self, all: &[Members]) -> Vec<u32> {
         let mut number_of = |it: &Members| {
             let shape = std::ptr::from_ref(it.resolved).addr();
@@ -129,11 +129,11 @@ impl<'p> SiblingIntersections<'p> {
         all.iter().map(&mut number_of).collect()
     }
 
-    /// What the calls have returned so far is void. The numbers stay: they say nothing about types.
+    /// Invalidates the results cached so far. The numbers stay, because they don't depend on types.
     fn begin_generation(&mut self, disturbances: &Disturbances) {
         self.disturbances = *disturbances;
         self.generation = self.generation.wrapping_add(1);
-        // The facts of 65,536 generations ago would count as new.
+        // After a wraparound, facts from 65,536 generations ago would look current.
         if self.generation == 0 {
             for fact in self.facts.iter_mut().flat_map(|it| it.iter_mut()) {
                 (fact.of_instantiation, fact.of_type) = (Effects::Unknown, Effects::Unknown);
@@ -142,10 +142,10 @@ impl<'p> SiblingIntersections<'p> {
     }
 }
 
-/// The facts, and where those of the properties of a name are.
+/// The facts, and where to find the ones for the properties with one name.
 pub(super) struct FactsOfName<'a, 'p> {
     all: &'a mut SiblingIntersections<'p>,
-    /// `SiblingIntersections::numbers_of` the members of the intersection.
+    /// `SiblingIntersections::numbers_of` for the intersection's members.
     numbers: &'a [u32],
     /// For each property: the index of its member in `numbers`, and its position in the member's shape.
     places: &'a [(u32, u32)],
@@ -165,7 +165,7 @@ impl<'a, 'p> FactsOfName<'a, 'p> {
         }
     }
 
-    /// `nth`: an index into `places`.
+    /// `nth` is an index into `places`.
     #[inline]
     fn fact(&mut self, nth: usize) -> Option<&mut Fact> {
         let &(at, position) = self.places.get(nth)?;
@@ -179,7 +179,8 @@ impl<'a, 'p> FactsOfName<'a, 'p> {
         Some(fact)
     }
 
-    /// `propSet.Add`: returns false if an equal `symbol` was added since `new`. `nth`: where the property is in `places`.
+    /// `propSet.Add`: returns false if an equal `symbol` was added since `new`. `nth` is the property's index in
+    /// `places`.
     #[inline]
     pub(super) fn add_symbol(&mut self, nth: usize, symbol: PropOfConstituent<'p>) -> bool {
         let known = self.fact(nth).map_or(0, |it| it.symbol);
@@ -205,7 +206,7 @@ impl<'a, 'p> FactsOfName<'a, 'p> {
     }
 }
 
-/// Everything that a trace would change.
+/// Every value that a call leaving a trace would change.
 #[derive(PartialEq, Eq)]
 struct Readings {
     traces: [u64; 14],
@@ -219,9 +220,9 @@ struct BeforeRun {
     readings: Readings,
     instantiation_count: u32,
     stack_in_use: usize,
-    /// What the call's caller had set in `Checker::reliability`, which is empty during the call.
+    /// The bits the caller had set in `Checker::reliability`, which is cleared for the call.
     reliability: u8,
-    /// `Checker::deepest_stack`, which is 0 during the call.
+    /// `Checker::deepest_stack`, which is reset to 0 for the call.
     deepest_stack: usize,
 }
 
@@ -233,8 +234,8 @@ impl<'p, 's> Checker<'p, 's> {
             && self.unresolved_members.is_empty()
     }
 
-    /// `inference_disturbances`, but of the commits of other tasks only those that resolve a cycle count. A task stores
-    /// what it computed in a cycle only in such a commit, and what it computed at a limit never leaves it.
+    /// `inference_disturbances`, except that other tasks' commits count only if they resolve a cycle. A task publishes
+    /// what it computed in a cycle only in such a commit, and never publishes what it computed at a limit.
     fn disturbances_for_siblings(&self) -> Disturbances {
         let mut disturbances = self.inference_disturbances();
         disturbances[COMMITS] = self.newest_commit_with_a_cycle();
@@ -249,7 +250,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `now`: `disturbances_for_siblings`. A cycle or a limit may have followed the facts.
+    /// `now` is the current `disturbances_for_siblings`. Starts a new generation if only commits
+    /// happened since the facts were cached, and gives the facts up if this task hit a cycle or a
+    /// limit.
     fn note_disturbances(facts: &mut SiblingIntersections<'p>, now: &Disturbances) {
         if facts.disturbances == *now {
             return;
@@ -262,7 +265,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Call before the facts are read. Returns false if they're given up.
+    /// Call this before reading the facts. Returns false if they've been given up.
     pub(super) fn may_still_use(&self, facts: &mut SiblingIntersections<'p>) -> bool {
         Self::note_disturbances(facts, &self.disturbances_for_siblings());
         !facts.is_given_up
@@ -277,8 +280,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Does what a call with these effects does, if neither the count limit in `instantiate` nor an `is_stack_low` check
-    /// would have stopped it.
+    /// Applies the effects of a cached call. Returns false and applies nothing if the effects are unknown, or if the
+    /// count limit in `instantiate` or an `is_stack_low` check would have stopped the call.
     #[inline]
     fn replay(&mut self, effects: Effects) -> bool {
         let Effects::Known {
@@ -303,8 +306,8 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// Runs `call`. Also returns its effects, which are known if it left no trace. Notes in `facts` if it met a cycle or a
-    /// limit.
+    /// Runs `call` and returns its result and its effects, which are known if it left no trace. Records in `facts`
+    /// whether it hit a cycle or a limit.
     fn run_for_a_fact<R>(
         &mut self,
         facts: &mut SiblingIntersections<'p>,
@@ -350,7 +353,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `instantiation_of_prop(prop, mapper)`. `nth`: where the property is in `facts`.
+    /// `instantiation_of_prop(prop, mapper)`. `nth` is the property's index in `facts`.
     pub(super) fn instantiation_of_prop_with_facts(
         &mut self,
         facts: Option<&mut FactsOfName<'_, 'p>>,
@@ -374,8 +377,9 @@ impl<'p, 's> Checker<'p, 's> {
         instantiation
     }
 
-    /// The first type that `types_of_instantiated_prop(prop, instantiation)` returns. `nth`: where the property is in
-    /// `facts`. `instantiation`: what `instantiation_of_prop_with_facts` has returned for it, or `None` under the identity.
+    /// The first type that `types_of_instantiated_prop(prop, instantiation)` returns. `nth` is the property's index in
+    /// `facts`. `instantiation` is what `instantiation_of_prop_with_facts` returned for it, or `None` under the
+    /// identity mapper.
     pub(super) fn type_of_prop_with_facts(
         &mut self,
         facts: Option<&mut FactsOfName<'_, 'p>>,

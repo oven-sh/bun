@@ -1,9 +1,9 @@
-//! What the options of a project say about the globals of its files, without a file of the project being read: which
-//! libraries it has, which packages of types, and whether it checks its JavaScript.
+//! Derives what determines the globals in a project's files from its options, without reading any of those files: its
+//! libraries, its type packages, and whether it checks its JavaScript.
 //!
-//! The project of a file is the one that `Projects::owner_of` finds under
-//! `PlanOptions::only_in_a_project_that_includes`. It is found otherwise: the configuration files by asking for them,
-//! directory by directory, or of who has listed the directories; what a project includes by its patterns.
+//! A file's project is the one that `Projects::owner_of` finds under `PlanOptions::only_in_a_project_that_includes`.
+//! It's found differently here. Configuration files are found by probing directory by directory, or taken from a caller
+//! that has already listed the directories. What a project includes is decided from its patterns.
 
 use crate::host::{Asking, from_native};
 use crate::{installed_typescript, lacks_its_packages, major_of_typescript_at};
@@ -23,9 +23,10 @@ use std::sync::{Arc, OnceLock, Weak};
 pub struct Outline {
     /// In the checker's format.
     pub config_path: Vec<u8>,
-    /// `lib`, or else what `target` stands for: the `N` of each `lib.N.d.ts`. What these refer to is not among them.
+    /// `lib`, or by default the libraries that `target` implies, as the `N` of each `lib.N.d.ts`. The libraries these
+    /// refer to aren't included.
     pub libs: Vec<Vec<u8>>,
-    /// The entries of `types`, with the packages that a `*` stands for, each with where it is.
+    /// The entries of `types`, with `*` expanded to the packages it matches, each with its location.
     pub types: Vec<(Vec<u8>, Vec<u8>)>,
     /// `checkJs`
     pub checks_javascript: bool,
@@ -33,30 +34,31 @@ pub struct Outline {
 
 struct Project {
     roots: Roots,
-    /// The configuration files.
+    /// The referenced projects' configuration files.
     references: Vec<Vec<u8>>,
     options: Options,
-    /// Made when a file of the project asks. `None`: what it depends on is not installed, so what its files can use is
-    /// not known.
+    /// Built the first time a file of the project needs it. `None`: the project's dependencies aren't installed, so the
+    /// globals its files can use are unknown.
     outline: OnceLock<Option<Arc<Outline>>>,
-    /// `Outlines::reached_from`. `Outlines::projects` keeps them.
+    /// `Outlines::reached_from`. `Outlines::projects` keeps them alive.
     reached: OnceLock<Vec<Weak<Project>>>,
 }
 
-/// Where a project is read into, by the first that asks for it. `None`: it cannot be read.
+/// The slot a project is read into by the first thread that needs it. `None`: it can't be read.
 type Place = Arc<OnceLock<Option<Arc<Project>>>>;
 
-/// The outlines of the projects of a run. Each is made when a file of it is first asked about.
+/// The outlines of a run's projects. Each is built the first time one of its files is queried.
 pub struct Outlines {
     host: Asking<'static>,
     /// `Host::extended_config`
     extended: Guarded<FxHashMap<Vec<u8>, Kept>>,
-    /// By the directory of an installed TypeScript: `major_of_typescript_at`.
+    /// `major_of_typescript_at`, by the directory of an installed TypeScript.
     majors: Guarded<FxHashMap<Vec<u8>, Option<(Vec<u8>, Json)>>>,
     cwd: Vec<u8>,
-    /// Every directory below one of these in which a file is asked about has been listed, and the directories between.
+    /// The caller has listed every directory below one of these that contains a queried file, and the directories in
+    /// between.
     listed_below: Vec<Vec<u8>>,
-    /// The configuration files that were there.
+    /// The configuration files found in those listings.
     listed: FxHashSet<Vec<u8>>,
     /// By directory.
     nearest: Guarded<FxHashMap<Vec<u8>, Option<Vec<u8>>>>,
@@ -67,12 +69,13 @@ pub struct Outlines {
 }
 
 impl Outlines {
-    /// All are native paths. `listed_below`, `listed`: who has searched these directories for the files that are asked
-    /// about says which `tsconfig.json` and `jsconfig.json` it has come by, and the system is not asked for them again.
+    /// All paths are native. `listed_below`, `listed`: a caller that has already searched these directories for the
+    /// files it queries passes the `tsconfig.json` and `jsconfig.json` files it saw, so the system isn't queried for
+    /// them again.
     pub fn new(cwd: &[u8], listed_below: &[Vec<u8>], listed: &[Vec<u8>]) -> Outlines {
         let cwd = from_native(cwd);
         let host = Asking::new(&cwd);
-        // Where the case of a name does not count, `Tsconfig.json` is one.
+        // On a case-insensitive file system, `Tsconfig.json` counts too.
         let as_it_is_asked_for = |path: &Vec<u8>| {
             let mut path = from_native(path);
             let name = path.len().saturating_sub(b"tsconfig.json".len());
@@ -94,7 +97,8 @@ impl Outlines {
         }
     }
 
-    /// Of the project that includes the file at `path`, a native path. `None`: there is none, or `Project::outline`.
+    /// Returns the outline of the project that includes the file at `path`, a native path. `None`: there's no such
+    /// project, or see `Project::outline`.
     pub fn of(&self, path: &[u8]) -> Option<Arc<Outline>> {
         let path = from_native(path);
         let host = self.asking(false);
@@ -104,7 +108,7 @@ impl Outlines {
             let Some(project) = self.read_into(place, config) else {
                 continue;
             };
-            // What it references is read only if it has not got the file itself.
+            // Its references are only read if it doesn't include the file itself.
             let owner = match has_it(project) {
                 true => Some(Arc::clone(project)),
                 false => {
@@ -120,8 +124,8 @@ impl Outlines {
         None
     }
 
-    /// The configuration files that are asked for a file in `directory`, in that order: the nearest, then
-    /// `getAncestorConfigFileName`. None is read for it.
+    /// Returns the configuration files to try for a file in `directory`, in order: the nearest, then
+    /// `getAncestorConfigFileName`. Doesn't read any of them.
     fn above(&self, directory: &[u8]) -> Arc<Vec<(Vec<u8>, Place)>> {
         if let Some(known) = self.above.lock().get(directory) {
             return Arc::clone(known);
@@ -141,7 +145,8 @@ impl Outlines {
         all
     }
 
-    /// The `N` of each `/// <reference lib="N" />` in the `index.d.ts` of the package at `path`, of `Outline::types`.
+    /// Returns the `N` of each `/// <reference lib="N" />` in the `index.d.ts` of the package at `path`, which comes
+    /// from `Outline::types`.
     pub fn libs_referenced_by(&self, path: &[u8]) -> Vec<Vec<u8>> {
         libs_referenced_by(&self.host, &inside(path, b"index.d.ts"))
     }
@@ -188,13 +193,13 @@ impl Outlines {
         found
     }
 
-    /// The projects that `project` references, directly or not, in the order in which `Projects::find_project_with`
-    /// asks them for a file.
+    /// Returns the projects that `project` references, directly or indirectly, in the order in which
+    /// `Projects::find_project_with` searches them for a file.
     fn reached_from(&self, project: &Project) -> Vec<Weak<Project>> {
         let is_case_sensitive = self.host.is_case_sensitive();
         let mut all = Vec::new();
         let mut seen = vec![project.options.config_path.clone()];
-        // Those to look at, the next one last.
+        // The configuration files still to visit, next one last.
         let mut pending: Vec<Vec<u8>> = project.references.iter().rev().cloned().collect();
         while let Some(config) = pending.pop() {
             if (seen.iter()).any(|it| is_same_path(it, &config, is_case_sensitive)) {
@@ -218,7 +223,7 @@ impl Outlines {
         }
     }
 
-    /// One thread reads it. The others wait: they have nothing to lint before they know.
+    /// One thread reads it. The others wait, because they have nothing to lint until they know.
     fn read_into<'p>(&self, place: &'p Place, config: &[u8]) -> Option<&'p Arc<Project>> {
         let read = || self.read(config).map(Arc::new);
         place.get_or_init(read).as_ref()
@@ -259,9 +264,9 @@ impl Outlines {
         }))
     }
 
-    /// `Outline::types`. `None`: an entry of `types` is not installed (2688). Where `ResolveTypeReferenceDirective`
-    /// looks for it, there is a directory or a declaration file of its name: that is all that is asked. What is in it,
-    /// the program finds out if it is ever loaded.
+    /// `Outline::types`. Returns `None` if an entry of `types` isn't installed (2688). This only checks that a
+    /// directory or a declaration file with that name exists where `ResolveTypeReferenceDirective` looks for it. The
+    /// program finds out what's in it if it's ever loaded.
     fn types_of(&self, options: &Options) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let host = self.asking(true);
         let names = options.types.as_deref().unwrap_or_default();

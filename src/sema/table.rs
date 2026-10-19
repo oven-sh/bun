@@ -1,14 +1,14 @@
 //! Tables indexed by a dense id.
 //!
 //! Nodes and symbols are numbered within their file, and types in creation order, so a result
-//! computed for one needs no hashing: it is stored in an array. A cell starts as zero, meaning "not
+//! computed for one is stored in an array and needs no hashing. A cell starts at zero, meaning "not
 //! computed", and is written once. A read is one load.
 //!
-//! The memory comes zero-filled from the allocator, which for arrays of this size means from the
-//! operating system: a page that is never touched is never resident.
+//! The memory comes zero-filled from the allocator, which for arrays of this size gets it from the
+//! operating system, so a page that's never touched is never resident.
 //!
-//! The third type parameter of a table determines who writes an entry and when it becomes visible
-//! to whom: `Frozen`, `Buffered`, `FileLocal`. See `Policy`.
+//! A table's third type parameter determines who writes an entry and when it becomes visible to
+//! whom: `Frozen`, `Buffered`, `FileLocal`. See `Policy`.
 
 use crate::check::task::{Stored, Task};
 use crate::local::{
@@ -26,9 +26,10 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-/// The allocator of the shared part of a table: any thread may allocate. `&Session`, or `Global`.
+/// The allocator for a table's shared part, which any thread may allocate from. Either `&Session` or
+/// `Global`.
 pub trait Alloc: Allocator + Clone + Send + Sync {
-    /// A list of numbers in its memory that several tables hold.
+    /// A list of numbers, allocated from it, that several tables share.
     type Shared: std::ops::Deref<Target = [u32]> + Clone + Send + Sync;
     fn share(&self, list: &[u32]) -> Self::Shared;
 }
@@ -40,7 +41,7 @@ impl Alloc for Global {
     }
 }
 
-/// Nothing frees it before the session ends, so nothing counts who holds it.
+/// The list isn't freed before the session ends, so it needs no reference count.
 impl<'s> Alloc for &'s Session {
     type Shared = &'s [u32];
     fn share(&self, list: &[u32]) -> &'s [u32] {
@@ -54,10 +55,11 @@ pub trait Cell: Zeroed + Sync + Send {
     type Raw: Copy + PartialEq + Default;
     fn widen(raw: Self::Raw) -> u64;
     fn narrow(raw: u64) -> Self::Raw;
-    /// A relaxed load, for a table that no thread is writing. The caller orders earlier writes
-    /// before it.
+    /// A relaxed load, for a table that no thread is writing to. The caller must order earlier
+    /// writes before it.
     fn load(&self) -> Self::Raw;
-    /// Returns the value the cell holds afterwards: `raw`, or the value that was already there.
+    /// Stores `raw` if the cell is empty. Returns the cell's value afterwards: `raw`, or the value
+    /// that was already there.
     fn put_if_empty(&self, raw: Self::Raw) -> Self::Raw;
     /// `put_if_empty` for the bit field `mask` that starts at bit `shift`. The other bits of the
     /// cell belong to other keys.
@@ -116,8 +118,8 @@ cell!(AtomicU64, u64);
 /// A value that fits in a cell. Its packed form is never zero.
 pub trait Packed: Copy {
     type Cell: Cell;
-    /// Bit width of a packed value, if the values of several keys share a cell. 0: each value has
-    /// its own cell.
+    /// Bit width of a packed value if several keys' values share a cell, or 0 if each value has its
+    /// own cell.
     const BITS: u32 = 0;
     fn pack(self) -> <Self::Cell as Cell>::Raw;
     fn unpack(raw: <Self::Cell as Cell>::Raw) -> Self;
@@ -136,7 +138,7 @@ impl Packed for bool {
     }
 }
 
-/// For a set: a table of `()`.
+/// A table of `()` is a set.
 impl Packed for () {
     type Cell = AtomicU32;
     const BITS: u32 = 1;
@@ -206,7 +208,7 @@ impl Packed for (Option<crate::types::SigId>, bool) {
 pub trait Id: Copy {
     fn number(self) -> u32;
     fn from_number(number: u32) -> Self;
-    /// `Some`: the id is task-local, and this is its index among the task's ids.
+    /// Returns the id's index among the task's ids if it's task-local, or `None` if it isn't.
     #[inline]
     fn local_number(self) -> Option<u32> {
         let number = self.number();
@@ -257,8 +259,8 @@ macro_rules! packed_ids {
         }
     )*};
 }
-/// Files and nodes are numbered before the first task. For `ByKey` keys that contain one alongside
-/// an id.
+/// Files and nodes are numbered before the first task starts, so they're never task-local. These
+/// impls are for `ByKey` keys that contain one alongside an id.
 impl MaybeLocal for FileId {
     #[inline]
     fn is_local(&self) -> bool {
@@ -307,7 +309,7 @@ impl Packed for Option<Sym> {
 // ───────────────────────────── by node ─────────────────────────────
 
 /// For each file, the start index of its nodes of one kind when the nodes of all files are
-/// concatenated. A final entry is the end index.
+/// concatenated. The last entry is the end index.
 ///
 /// The second list is empty, or has each file's node count. See `with_counts`.
 pub struct Bases<A: Alloc = Global>(A::Shared, A::Shared);
@@ -324,7 +326,7 @@ impl<A: Alloc> Bases<A> {
         let mut bases = vec![0u32];
         for len in lengths {
             total += len;
-            bases.push(u32::try_from(total).expect("more nodes of a kind than fit 32 bits"));
+            bases.push(u32::try_from(total).expect("too many nodes of one kind for 32 bits"));
         }
         Bases(alloc.share(&bases), alloc.share(&[]))
     }
@@ -336,7 +338,7 @@ impl<A: Alloc> Bases<A> {
         Bases(self.0, alloc.share(&counts))
     }
 
-    /// No file has a node.
+    /// Returns the bases for a table in which no file has a node.
     pub(crate) fn none_in(alloc: &A) -> Self {
         Bases(alloc.share(&[0]), alloc.share(&[]))
     }
@@ -354,16 +356,17 @@ impl<A: Alloc> Bases<A> {
         *self.0.last().unwrap() as usize
     }
 
-    /// `None`: there is no such node. Callers occasionally pass `NONE`.
+    /// Returns the node's index in the concatenation, or `None` if there's no such node. Callers
+    /// occasionally pass `NONE`.
     #[inline]
     fn at(&self, file: FileId, index: u32) -> Option<usize> {
-        // The higher index is read first: if it is in bounds so is the lower one, which is then not
+        // Reads the higher index first. If it's in bounds, so is the lower one, which then isn't
         // bounds-checked.
         let (end, start) = (self.0[file.idx() + 1], self.0[file.idx()]);
         (index < end - start).then(|| (start + index) as usize)
     }
 
-    /// Where the nodes of `file` are in the concatenation.
+    /// Returns the range of `file`'s nodes in the concatenation.
     fn of_file(&self, file: FileId) -> std::ops::Range<usize> {
         let (end, start) = (self.0[file.idx() + 1], self.0[file.idx()]);
         start as usize..end as usize
@@ -407,24 +410,24 @@ pub trait Policy {
     const SLOT: u32 = NO_SLOT;
 }
 
-/// Not buffered: `insert` writes the shared cell with a compare-and-swap, and the first value wins,
-/// so several threads can fill one table concurrently. `get` is plain loads, so the caller orders
-/// another thread's write before its read. For the tables of the loader and the type store.
+/// Not buffered. `insert` writes the shared cell with a compare-and-swap, and the first value wins,
+/// so several threads can fill one table concurrently. `get` uses relaxed loads, so the caller must
+/// order another thread's write before its read. Used for the loader's and the type store's tables.
 pub struct Frozen;
 
-/// The default for a field of `Program`. A task's stores go to its task-local part
+/// The default for a field of `Program`. A task stores into the table's task-local part
 /// (`crate::local::Half`), which no other task sees. The table holds the shared part. Commits write
 /// to it (`Publish::store_logged`), and so does `insert` where `Task::may_write_at_once` allows it.
 pub struct Buffered<W: Location = AtRunTime>(PhantomData<fn() -> W>);
 
-/// Where a task has the task-local part of a `Buffered` table.
+/// Where a task stores the task-local part of a `Buffered` table.
 pub trait Location {
-    /// The slot of the table. `NO_SLOT`: only `set_slot` says.
+    /// The table's slot, or `NO_SLOT` if it's only known at run time, from `set_slot`.
     const SLOT: u32;
-    /// For a table keyed by node: what a task stores under a node of the file that it is visiting never leaves the task. For
-    /// what is computed about an expression: nearly all of it is computed by the task that checks the file, which is
-    /// the only one that asks for all of it. Another task gets to an expression on the way to the type of a
-    /// declaration. What it stores is shared, and the task that checks the file finds it.
+    /// For a table keyed by node. If true, entries that a task stores under a node of the file it's visiting never
+    /// leave the task. Used for results about expressions. Nearly all of those are computed by the task that checks the
+    /// file, which is the only one that looks up all of them. Another task only reaches an expression on the way to a
+    /// declaration's type. Its entries are shared, and the task that checks the file finds them.
     const KEEPS_THE_VISITED_FILE: bool = false;
 }
 
@@ -435,7 +438,7 @@ impl Location for AtRunTime {
     const SLOT: u32 = NO_SLOT;
 }
 
-/// The slot is part of the type of the table, so its task-local part is at a fixed distance from the task.
+/// The slot is part of the table's type, so its task-local part is at a fixed offset from the task.
 pub(crate) struct At<const SLOT: u32>;
 
 impl<const SLOT: u32> Location for At<SLOT> {
@@ -450,7 +453,7 @@ impl<const SLOT: u32> Location for OfExpressions<SLOT> {
     const KEEPS_THE_VISITED_FILE: bool = true;
 }
 
-/// The entries are task-local and are dropped when the task finishes the file it is visiting. No
+/// The entries are task-local and are dropped when the task finishes the file it's visiting. No
 /// other task ever sees one.
 pub struct FileLocal;
 
@@ -462,18 +465,18 @@ impl Policy for FileLocal {
     const IS_FILE_LOCAL: bool = true;
 }
 
-/// The memory usage of a table, for `--timing`. Computing it reads every cell.
+/// A table's memory usage, for `--timing`. Computing it reads every cell.
 #[derive(Copy, Clone, Default, Debug)]
 pub struct Footprint {
     /// Bytes requested from the allocator: cells, map entries, and stored values, excluding the
     /// memory they point to.
     pub allocated: usize,
-    /// `allocated` without the pages of a cell array in which every cell is zero. Such a page of a zeroed allocation was never written, so
-    /// it is not resident.
+    /// `allocated` minus the pages of a cell array in which every cell is zero. In a zeroed allocation such a page was
+    /// never written, so it isn't resident.
     pub touched: usize,
-    /// Cells that are not zero, or map entries.
+    /// Nonzero cells, or map entries.
     pub entries: usize,
-    /// Kept values.
+    /// Values stored out of line.
     pub kept: usize,
 }
 
@@ -515,10 +518,10 @@ impl Footprint {
 
 // ───────────────────────────── the tables ─────────────────────────────
 
-/// No slot: `number_tables` has not assigned one yet. A `Frozen` table needs none.
+/// `number_tables` hasn't assigned a slot yet. A `Frozen` table doesn't need one.
 const NO_SLOT: u32 = u32::MAX;
 
-/// The slot of a table with the policy `P`, whose field says `slot`.
+/// Returns the slot of a table with policy `P` whose `slot` field is `slot`.
 #[inline]
 fn known_slot<P: Policy>(slot: u32) -> u32 {
     match P::SLOT {
@@ -531,22 +534,22 @@ fn known_slot<P: Policy>(slot: u32) -> u32 {
 pub struct ByNode<K, V: Packed, P: Policy = Frozen, A: Alloc = Global> {
     bases: Bases<A>,
     cells: FixedCells<V::Cell, A>,
-    /// For each key, the number of the commit that has stored its entry: see `crate::check::commit`. 0, or no cell: no
-    /// commit has.
+    /// For each key, the number of the commit that stored its entry (see `crate::check::commit`). 0 or a missing cell
+    /// means that no commit has.
     stamps: Cells<AtomicU32, A>,
-    /// The index at which a task holds the task-local part of this table.
+    /// Index of this table's task-local part within a task.
     slot: u32,
     key: PhantomData<fn(K, P)>,
 }
 
 impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
-    /// How many keys share a cell.
+    /// Number of keys that share a cell.
     const PER_CELL: usize = if V::BITS != 0 {
         size_of::<V::Cell>() * 8 / V::BITS as usize
     } else {
         1
     };
-    /// Mask for the bits of one key after they are shifted down.
+    /// Mask for one key's bits after they're shifted down.
     const MASK: u64 = if V::BITS != 0 {
         (1 << V::BITS) - 1
     } else {
@@ -577,27 +580,27 @@ impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
         self.slot = slot;
     }
 
-    /// Which cell the key at `at` in the concatenation of all keys has, and the bit offset of the key within the cell.
+    /// Returns the cell index of the key at `at` in the concatenation of all keys, and the key's bit offset in it.
     #[inline]
     fn place_of(at: usize) -> (usize, u32) {
         (at / Self::PER_CELL, (at % Self::PER_CELL) as u32 * V::BITS)
     }
 
-    /// What the cell of the key at `at` holds, shifted down to the bits of the key, with the bits of the keys above.
+    /// Returns the cell contents for the key at `at`, shifted down to the key's bits. Higher keys' bits aren't masked.
     #[inline]
     fn bits_at(&self, at: usize, load: impl FnOnce(&V::Cell) -> <V::Cell as Cell>::Raw) -> u64 {
         let (cell, shift) = Self::place_of(at);
         (self.cells.existing(cell)).map_or(0, |cell| V::Cell::widen(load(cell)) >> shift)
     }
 
-    /// The cell of the key at `at`, for one who writes to it, and the bit offset of the key within the cell.
+    /// Returns the cell of the key at `at` for writing, and the key's bit offset in the cell.
     #[inline]
     fn field_at(&self, at: usize) -> (&V::Cell, u32) {
         let (cell, shift) = Self::place_of(at);
         (self.cells.cell(cell), shift)
     }
 
-    /// `field_at`. `None`: there is no such node.
+    /// `field_at` for `key`, or `None` if there's no such node.
     #[inline]
     fn field(&self, key: K) -> Option<(&V::Cell, u32)> {
         Some(self.field_at(self.bases.at(key.file(), key.index())?))
@@ -635,8 +638,9 @@ impl<K: NodeKey, A: Alloc> ByNode<K, RawWord, Frozen, A> {
     }
 }
 
-/// The index of a value in an indirect table. With `LOCAL`: in the task-local part. A handle is not
-/// a value: it is not an id of the type store. See `ByIdIndirect::hold_handles_of`.
+/// The index of a value in an indirect table. With `LOCAL` set, it indexes the task-local part. A
+/// handle isn't a value, because it isn't an id of the type store. See
+/// `ByIdIndirect::hold_handles_of`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Handle(pub u32);
 packed_ids!(Handle);
@@ -648,7 +652,7 @@ impl Follow for Handle {
     }
 }
 
-/// A value too large for a cell, for some of the nodes of one kind. It is stored out of line and
+/// A value too large for a cell, for some of the nodes of one kind. It's stored out of line and
 /// never moves.
 pub struct ByNodeIndirect<K, T, P: Policy = Frozen, A: Alloc = Global> {
     handles: ByNode<K, Handle, P, A>,
@@ -677,7 +681,7 @@ impl<K: NodeKey, T, P: Policy, A: Alloc> ByNodeIndirect<K, T, P, A> {
     }
 }
 
-/// A value for each id of a kind that is numbered in creation order.
+/// A value for each id of a kind that's numbered in creation order.
 pub struct ById<I, V: Packed, P: Policy = Frozen, A: Alloc = Global> {
     cells: Cells<V::Cell, A>,
     slot: u32,
@@ -714,7 +718,7 @@ impl<I: Id, V: Packed, P: Policy, A: Alloc> ById<I, V, P, A> {
     }
 }
 
-/// A value too large for a cell, for some of the ids of a kind that is numbered in creation order.
+/// A value too large for a cell, for some of the ids of a kind that's numbered in creation order.
 pub struct ByIdIndirect<I, T, P: Policy = Frozen, A: Alloc = Global> {
     handles: ById<I, Handle, P, A>,
     kept: AppendVec<T, A>,
@@ -767,7 +771,7 @@ impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc> ByKey<K, V, P, A> {
         }
     }
 
-    /// Excludes the index of the map, which takes a few bytes per entry.
+    /// Excludes the map's index, which takes a few bytes per entry.
     pub fn footprint(&self) -> Footprint {
         let entries = self.published.entries();
         let bytes = entries * size_of::<(K, V)>();
@@ -801,7 +805,7 @@ impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, Frozen, A> {
         (raw != Default::default()).then(|| V::unpack(raw))
     }
 
-    /// Does not overwrite an existing value. Returns the stored value.
+    /// Doesn't overwrite an existing value. Returns the stored value.
     #[inline]
     pub fn insert(&self, key: K, value: V) -> V {
         match self.field(key) {
@@ -820,7 +824,7 @@ impl<K: NodeKey, T, A: Alloc> ByNodeIndirect<K, T, Frozen, A> {
         self.handles.get(key).map(|handle| self.kept.get(handle.0))
     }
 
-    /// Does not overwrite an existing value. Returns the stored value. The value is written before
+    /// Doesn't overwrite an existing value. Returns the stored value. The value is written before
     /// its handle is stored in a cell. If the cell already holds another handle, the new value is
     /// unreachable.
     pub fn insert_ref(&self, key: K, value: T) -> &T {
@@ -845,14 +849,14 @@ impl<K: NodeKey, T, A: Alloc> ByNodeIndirect<K, T, Frozen, A> {
 }
 
 impl<I: Id, V: Packed, A: Alloc> ById<I, V, Frozen, A> {
-    /// `None` for an id with `LOCAL`: no entry is published for it.
+    /// Returns `None` for an id with `LOCAL`, because no entry is ever published for one.
     #[inline]
     pub fn get(&self, key: &I) -> Option<V> {
         let raw = self.cells.existing(key.number())?.load();
         (raw != Default::default()).then(|| V::unpack(raw))
     }
 
-    /// Does not overwrite an existing value. Returns the stored value.
+    /// Doesn't overwrite an existing value. Returns the stored value.
     #[inline]
     pub fn insert(&self, key: I, value: V) -> V {
         assert!(key.local_number().is_none());
@@ -862,42 +866,43 @@ impl<I: Id, V: Packed, A: Alloc> ById<I, V, Frozen, A> {
 
 // ───────────────────────────── `Buffered`: what a task reads and writes ─────────────────────────────
 //
-// `get`: a hit on a published entry is one load. The task-local part is queried only if the cell is
-// empty. An id with `LOCAL` has no shared cell: it is looked up in the dense task-local part.
-// `insert`: stores into the task-local part. It does not overwrite an existing entry, published or
+// `get`: a hit on a published entry is one load. The task-local part is searched only if the cell is
+// empty. An id with `LOCAL` has no shared cell, so it's looked up in the dense task-local part.
+// `insert`: stores into the task-local part. It doesn't overwrite an existing entry, published or
 // not, and returns the stored value, which `get` returns from then on.
 // `rewrite`: replaces the task-local entry. A published entry is unchanged.
 //
-// A checker without a task runs while nothing commits, so its loads are relaxed. For a task that sees commits
-// (`Task::view`) the shared part is written while it reads, so its loads are `Acquire`, and:
-// - A published entry can turn up at any time. `get` returns it from then on, also if the task has an entry of its own by
-//   then.
-// - An entry under a node or a symbol that a commit has stored which the task does not see in that file counts as absent,
-//   for `get` and for `insert`: `ByNode::seen`. The task computes its own entry, which loses when it commits.
-// - A value that is stored out of line goes to the shared `kept` when it is inserted, unless the entry is bound: a commit
+// A checker without a task runs while nothing commits, so its loads are relaxed. A task that sees commits
+// (`Task::view`) reads the shared part while it's being written, so its loads are `Acquire`, and:
+// - A published entry can appear at any time. From then on `get` returns it, even if the task already has its own
+//   entry.
+// - An entry under a node or a symbol counts as absent, for `get` and for `insert`, if it was stored by a commit that
+//   the task doesn't see in that file (`ByNode::seen`). The task computes its own entry, which loses when it commits.
+// - A value that's stored out of line goes to the shared `kept` when it's inserted, unless the entry is bound. A commit
 //   stores only the handle.
-// - `insert` and `rewrite` of a table keyed by a record store into the shared part at once where
-//   `Task::may_write_at_once` allows it. `get` is the same: the shared part, then the task-local part, which has what
-//   waits for a commit and what is bound.
-// - What the task sees under the nodes of the file that it is visiting stays the same for as long as it does. It is copied
-//   into the task-local part, which then answers alone: `ByNode::adopt`.
+// - `insert` and `rewrite` of a table keyed by a record store into the shared part immediately where
+//   `Task::may_write_at_once` allows it. `get` doesn't change. It reads the shared part, then the task-local part,
+//   which has the entries that are bound or waiting for a commit.
+// - What the task sees under the nodes of the file it's visiting doesn't change during the visit. It's copied into the
+//   task-local part, which then answers without the shared part (`ByNode::adopt`).
 
-/// Whether an entry under `key` that may be written at once stays in the task all the same, and is freed with it.
+/// True if an entry under `key` that may be written immediately stays in the task anyway and is freed with it.
 ///
-/// Nine entries in ten are never read by another task, and they are most of what a check holds at its end. What is made of
-/// the syntax of a file is asked about by the task that visits the file, and seldom by another. So that task keeps what
-/// it finds out about such a record. Another task that needs it works it out again, and shares it, because the file
-/// is not one of its own.
+/// Nine out of ten entries are never read by another task, and they're most of what a check holds at its end. A record
+/// made from a file's syntax is looked up by the task that visits the file, and rarely by another. So that task doesn't
+/// share its entries about such a record. Another task that needs one recomputes it and shares it, because it hasn't
+/// visited the file.
 ///
-/// What may be written at once is a function of its key, and nothing that it rests on waits. So nobody misses it, and it
-/// is no `Task::hold_back`.
+/// An entry that may be written immediately is a function of its key, and nothing it depends on is waiting for a
+/// commit. So no other task is affected by not finding it, and it isn't a `Task::hold_back`.
 #[inline]
 fn stays_in_task(task: &Task, key: &impl Follow) -> bool {
     key.is_of_visited_file(&task.own)
 }
 
-/// Whether an entry with a published key and `value` could be written at once, if its table and its `Stored` allow it: the task
-/// does that at all, and the value is not bound. If it then goes to the task-local part, that is a `Task::hold_back`.
+/// True if an entry with a published key and `value` can be written immediately, provided its table and its `Stored`
+/// allow it. That requires a task that writes immediately at all and a value that isn't bound. If such an entry goes to
+/// the task-local part anyway, that's a `Task::hold_back`.
 #[inline]
 fn is_for_all_tasks(task: &Task, value: &impl Follow) -> bool {
     task.writes_at_once() && !value.is_bound(&task.own)
@@ -909,13 +914,13 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         known_slot::<Buffered<W>>(self.slot)
     }
 
-    /// 0: nothing is published for the key at `at`.
+    /// Returns the published entry of the key at `at`, or 0 if there is none.
     #[inline]
     fn published_at(&self, at: usize) -> u32 {
         (self.bits_at(at, |cell| cell.load(Ordering::Relaxed)) & Self::MASK) as u32
     }
 
-    /// `published_at`, for a task that sees the commits up to `snapshot` in the file of the key.
+    /// `published_at` for a task that sees the commits up to `snapshot` in the key's file.
     #[inline]
     fn seen_up_to(&self, snapshot: u32, at: usize) -> u32 {
         let raw = (self.bits_at(at, |cell| cell.load(Ordering::Acquire)) & Self::MASK) as u32;
@@ -925,12 +930,12 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         }
     }
 
-    /// `published_at`, as far as `task` sees it. `file`: of the key.
+    /// `published_at`, limited to what `task` sees. `file` is the key's file.
     #[inline]
     fn seen_at(&self, task: &Task, file: u32, at: usize) -> u32 {
         match task.view() {
             None => self.published_at(at),
-            // Before the look: a miss is a look at the file too.
+            // `snapshot_of` runs before the load, because a miss counts as a look at the file too.
             Some(view) => {
                 let raw = self.seen_up_to(view.snapshot_of(FileId(file)), at);
                 match raw != 0 && view.hides(FileId(file), self.stamp_at(at)) {
@@ -941,15 +946,15 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         }
     }
 
-    /// `stamps` of the key at `at`, whose entry the caller has loaded.
+    /// Returns the `stamps` value of the key at `at`. The caller has already loaded the key's entry.
     #[inline]
     fn stamp_at(&self, at: usize) -> u32 {
         let stamp = self.stamps.existing_by_now(at as u32);
         stamp.map_or(0, |stamp| stamp.load(Ordering::Relaxed))
     }
 
-    /// The number of the commit that has stored the entry under `key`. `None`: nothing is published there. For a time
-    /// when no commit is storing.
+    /// Returns the number of the commit that stored the entry under `key`, or `None` if nothing is published there.
+    /// Call it only while no commit is storing.
     pub(crate) fn commit_of(&self, key: K) -> Option<u32> {
         let at = self.bases.at(key.file(), key.index())?;
         (self.published_at(at) != 0).then(|| self.stamp_at(at))
@@ -965,22 +970,22 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         (raw != 0).then(|| V::unpack(raw))
     }
 
-    /// Whether the row of `file`, which `task` is visiting, can answer for the published part too: what the task sees of
-    /// that stays what it is for as long as it visits the file.
+    /// True if the row of `file`, which `task` is visiting, can answer for the published part too. It can if what the
+    /// task sees of the published part doesn't change while it visits the file.
     #[inline]
     fn has_a_whole_row(task: &Task, file: u32) -> bool {
         task.view().is_none_or(|view| view.is_pinned(FileId(file)))
     }
 
-    /// What `task` sees of the published part for the node, and where the node is among the nodes of all files. A node
-    /// that `Bases` does not count has no cell, and nothing is ever published for it.
+    /// Returns the published entry that `task` sees for the node, and the node's index among the nodes of all files. A
+    /// node that `Bases` doesn't count has no cell, and nothing is ever published for it.
     #[inline]
     fn seen(&self, task: &Task, file: u32, index: u32) -> (u32, Option<usize>) {
         let at = self.bases.at(FileId(file), index);
         (at.map_or(0, |at| self.seen_at(task, file, at)), at)
     }
 
-    /// `get`, if `Buffer::in_row` has no answer.
+    /// `get` for when `Buffer::in_row` returns `None`.
     #[inline(never)]
     fn get_outside_the_row(&self, task: &Task, file: u32, index: u32) -> u32 {
         let (slot, buffer) = (self.own_slot(), task.buffer());
@@ -994,9 +999,9 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         }
     }
 
-    /// The task is visiting `file`, and asks this table about it for the first time, or stores something for the first
-    /// time: from now on the file has the row, and the row has what the task sees of the published part.
-    /// `buffer`: of `task`, here and below.
+    /// Called when the task, which is visiting `file`, first reads or writes this table for that file. From now on the
+    /// row belongs to `file` and holds the published entries that the task sees. `buffer` is `task`'s buffer, here and
+    /// below.
     #[cold]
     #[inline(never)]
     fn adopt(&self, task: &Task, buffer: &mut Buffer<'_>, file: u32) {
@@ -1021,8 +1026,8 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         buffer.set_whole(slot, has_seeds);
     }
 
-    /// The cell that holds the task's entry for the node, or that a new entry goes into. `Err`: the task sees a published
-    /// entry, this one.
+    /// Returns the cell that holds the task's entry for the node, or that a new entry goes into. If the task sees a
+    /// published entry, returns `Err` with that entry.
     fn cell_for<'b>(
         &self,
         task: &Task,
@@ -1040,7 +1045,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
                 self.adopt(task, buffer, file);
             }
         }
-        // What a whole row has is the task's own, unless something is published for a node of the file.
+        // Everything in a whole row is the task's own, unless something is published for a node of the file.
         if buffer.has_whole_row(slot, file) && !buffer.has_seeds(slot) {
             return Ok(buffer.cell_in_row(slot, index));
         }
@@ -1050,7 +1055,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         }
     }
 
-    /// `insert`, or with `replaces` `rewrite`, of a packed value. Returns what `get` finds from now on.
+    /// `insert` of a packed value, or `rewrite` if `replaces` is set. Returns what `get` returns from now on.
     #[inline(never)]
     fn put(&self, task: &Task, file: u32, index: u32, raw: u32, replaces: bool) -> u32 {
         let buffer = task.buffer();
@@ -1074,8 +1079,8 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         if is_stored {
             buffer.log_node(self.own_slot(), file, index);
         }
-        // The entry waits for a commit in the task-local part. Not if `Bases` does not count the node: nothing is ever
-        // published under it, so no other task could find the entry.
+        // The entry waits in the task-local part for a commit, unless `Bases` doesn't count the node. Nothing is ever
+        // published under such a node, so no other task could find the entry.
         if task.writes_at_once() && self.bases.at(FileId(file), index).is_some() {
             task.hold_back();
         }
@@ -1105,13 +1110,13 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ById<I, V, Buffe
         known_slot::<Buffered<W>>(self.slot)
     }
 
-    /// 0: nothing is published for the id `number`.
+    /// Returns the published entry of the id `number`, or 0 if there is none.
     #[inline]
     fn published(&self, number: u32) -> u32 {
         (self.cells.existing(number)).map_or(0, |cell| cell.load(Ordering::Relaxed))
     }
 
-    /// `published`, for `task`.
+    /// `published`, as `task` sees it.
     #[inline]
     fn seen(&self, task: &Task, number: u32) -> u32 {
         if !task.commits() {
@@ -1120,7 +1125,7 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ById<I, V, Buffe
         (self.cells.existing_by_now(number)).map_or(0, |cell| cell.load(Ordering::Acquire))
     }
 
-    /// The entry that `task` has in its own part under the published id `number`. 0: none.
+    /// Returns `task`'s own entry under the published id `number`, or 0 if there is none.
     #[inline]
     fn in_task(&self, task: &Task, number: u32) -> u32 {
         task.buffer().published_id(self.own_slot(), number)
@@ -1160,8 +1165,8 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ById<I, V, Buffe
         })
     }
 
-    /// Stores `raw` in the shared cell of the published id `number` unless there is an entry, there or in the task-local
-    /// part. Returns what the key has afterwards.
+    /// Stores `raw` in the shared cell of the published id `number`, unless the key already has an entry there or in
+    /// the task-local part. Returns the key's entry afterwards.
     #[inline]
     fn put_at_once(&self, task: &Task, number: u32, raw: u32) -> u32 {
         let own = self.in_task(task, number);
@@ -1181,8 +1186,8 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
         self.insert_where::<true>(task, key, value, stored)
     }
 
-    /// `insert` for an entry that isn't a function of its key only, so another task might not work out the same: it never
-    /// `stays_in_task`.
+    /// `insert` for an entry that isn't a function of only its key, so another task might compute a different value. It
+    /// never `stays_in_task`.
     #[inline]
     pub fn insert_for_every_task(&self, task: &Task, key: I, value: V, stored: Stored) -> V {
         self.insert_where::<false>(task, key, value, stored)
@@ -1208,15 +1213,15 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
         self.insert_in_task(task, key, value)
     }
 
-    /// `put_at_once`, and the self-check.
+    /// `put_at_once` for a value that isn't packed yet.
     #[inline]
     fn put_value_at_once(&self, task: &Task, key: I, value: V) -> V {
         let raw = value.pack();
         V::unpack(self.put_at_once(task, key.number(), raw))
     }
 
-    /// An entry that was written at once is published, so it is unchanged. Whoever stores an entry that is to be replaced
-    /// stores it with `Stored::held_back`.
+    /// An entry that was written immediately is published, so this doesn't change it. Code that stores an entry it will
+    /// replace later must store it with `Stored::held_back`.
     pub fn rewrite(&self, task: &Task, key: I, value: V, stored: Stored) -> V {
         let Some(number) = key.local_number() else {
             let number = key.number();
@@ -1241,13 +1246,13 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
     }
 }
 
-/// The task-local values of an indirect table, each with its key in the encoding of the task-local
-/// part, indexed by handle without `LOCAL`.
+/// An indirect table's task-local values, each with its key as the task-local part encodes it,
+/// indexed by handle without `LOCAL`.
 type IndirectInTask<T> = ListInTask<(u64, T)>;
 
-/// The value `handle` refers to. The reference has the lifetime of the table. A reference to a
-/// task-local value is valid only until the task ends (`Task::finish`, `Task::begin`, the drop):
-/// any holder, for example a cache of the checker, must release it by then.
+/// Returns the value `handle` refers to. The reference has the table's lifetime, but a reference to
+/// a task-local value is valid only until the task ends (`Task::finish`, `Task::begin`, the drop).
+/// Any holder, such as one of the checker's caches, must release it by then.
 #[inline]
 fn indirect_at<'p, 's, T: Send + 's, A: Alloc>(
     kept: &'p AppendVec<T, A>,
@@ -1259,8 +1264,7 @@ fn indirect_at<'p, 's, T: Send + 's, A: Alloc>(
         None => kept.get(handle.0),
         Some(number) => {
             let value = &task.buffer().typed(slot).unwrap().get(number).1;
-            // SAFETY: an element of a `LocalVec` does not move, and lives until the task ends. See
-            // above.
+            // SAFETY: a `LocalVec` element never moves and lives until the task ends. See above.
             unsafe { &*std::ptr::from_ref(value) }
         }
     }
@@ -1275,8 +1279,9 @@ fn store_in_task<'s, T: Send + 's>(
     Handle(task.buffer().typed_or_new(slot).push((key, value)) | LOCAL)
 }
 
-/// Where the value of a new entry goes. `may_be_shared`: nothing but `value` can make the entry bound.
-/// A value in `kept` whose handle no commit stores stays there, unreachable, until the program is freed.
+/// Stores a new entry's value, in the shared `kept` or in the task, and returns its handle. `may_be_shared` means that
+/// only `value` can make the entry bound. A value in `kept` whose handle is never committed stays there, unreachable,
+/// until the program is freed.
 fn keep<'s, T: Follow + Send + 's, A: Alloc>(
     (kept, slot): (&AppendVec<T, A>, &Slot<IndirectInTask<T>>),
     task: &Task<'s>,
@@ -1303,7 +1308,7 @@ impl<'s, K: NodeKey, T: Follow + Send + 's, W: Location, A: Alloc>
         self.handles.commit_of(key)
     }
 
-    /// Does not overwrite an existing value. Returns the stored value.
+    /// Doesn't overwrite an existing value. Returns the stored value.
     pub fn insert_ref(&self, task: &Task<'s>, key: K, value: T, stored: Stored) -> &T {
         let slot = &self.in_task;
         let handle = self.handles.get(task, &key).unwrap_or_else(|| {
@@ -1352,14 +1357,14 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
         indirect_at(&self.kept, &self.in_task, task, handle)
     }
 
-    /// Does not overwrite an existing value. Returns the stored value.
+    /// Doesn't overwrite an existing value. Returns the stored value.
     pub fn insert_ref(&self, task: &Task<'s>, key: I, value: T, stored: Stored) -> (Handle, &T) {
         let known = self.handles.get(task, &key);
         let handle = known.unwrap_or_else(|| self.insert_absent(task, key, value, stored));
         (handle, self.at(task, handle))
     }
 
-    /// `insert_ref` for a key for which the task has just found nothing.
+    /// `insert_ref` for a key that the task has just looked up and not found.
     fn insert_absent(&self, task: &Task<'s>, key: I, mut value: T, stored: Stored) -> Handle {
         let is_for_all = key.local_number().is_none()
             && task.shares_what_it_stores()
@@ -1369,7 +1374,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
             let kept = store_in_task(&self.in_task, task, u64::from(key.number()), value);
             return self.handles.insert_for_this_task(task, key, kept);
         }
-        // A handle with `LOCAL` means nothing to another task.
+        // A handle with `LOCAL` is meaningless to another task.
         let holds_own =
             (self.held_handle).is_some_and(|field| field(&mut value).local_number().is_some());
         if !is_for_all || holds_own {
@@ -1379,7 +1384,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
             let kept = store_in_task(&self.in_task, task, u64::from(key.number()), value);
             return self.handles.insert_in_task(task, key, kept);
         }
-        // A value that loses stays, and nothing refers to it.
+        // A value that loses the race stays allocated, and nothing refers to it.
         let kept = Handle(self.kept.push(value));
         self.handles.insert(task, key, kept, stored)
     }
@@ -1399,9 +1404,9 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
         self.insert_ref(task, key, value, stored).1.clone()
     }
 
-    /// The values of this table hold handles of `held`, in the field that `field` returns. A value
-    /// whose handle is task-local stays in the task. `held` comes before this table in
-    /// `buffered_fields!`. Call after `set_slot`.
+    /// Declares that this table's values hold handles of `held`, in the field that `field` returns. A
+    /// value whose handle is task-local stays in the task. `held` must come before this table in
+    /// `buffered_fields!`. Call this after `set_slot`.
     pub(crate) fn hold_handles_of<J: Id, U, X: Location>(
         &mut self,
         held: &ByIdIndirect<J, U, Buffered<X>, A>,
@@ -1417,8 +1422,9 @@ where
     K: Windowed + Eq + Clone + MaybeLocal + Follow + Send + 's,
     V: Copy + Follow + Send + 's,
 {
-    /// `Ok`: the entry went to the shared part, or another task was first: what the key has there now. `Err`: the
-    /// caller stores the entry in the task-local part, and whether a commit is to store it. `spread`: the hash of `key`.
+    /// Tries to store the entry in the shared part. Returns `Ok` with the key's shared entry if that worked or another
+    /// task got there first. Returns `Err` if the caller has to store the entry in the task-local part, with true if a
+    /// commit should store it later. `spread` is `key`'s hash.
     #[inline]
     fn put_at_once(
         &self,
@@ -1429,7 +1435,7 @@ where
         if !task.writes_at_once() || key.is_bound(&task.own) || value.is_bound(&task.own) {
             return Err(true);
         }
-        // What the task holds back under the key stays what it goes by.
+        // If the task already has a deferred entry under the key, it keeps using that one.
         let own = || task.buffer().typed(&self.slot)?.get(spread, key).copied();
         if !task.may_write_at_once(self.slot.number(), stored) || own().is_some() {
             task.hold_back();
@@ -1445,7 +1451,7 @@ where
         (self.published.get_by_now(spread, key).copied()).ok_or(true)
     }
 
-    /// `spread`: the hash of `key`.
+    /// `spread` is `key`'s hash.
     #[inline]
     fn published(&self, task: &Task<'s>, spread: u64, key: &K) -> Option<V> {
         if key.is_local() {
@@ -1457,8 +1463,8 @@ where
         }
     }
 
-    /// Stores at once, or else in the task-local part. `replaces`: an entry that is there, or else that one stays. Returns
-    /// what the key has afterwards.
+    /// Stores immediately if possible, otherwise in the task-local part. An existing task-local entry is replaced if
+    /// `replaces` is set, and stays otherwise. Returns the key's entry afterwards.
     #[inline]
     fn put(
         &self,
@@ -1481,7 +1487,7 @@ where
             }
             false => *own.insert(spread, key, value),
         };
-        // An entry that was there is logged already, and a commit stores what it holds by then.
+        // An existing entry is already logged, and a commit stores whatever value it has at that point.
         if is_shared && own.len() != place {
             task.buffer().log_record(self.slot.number(), place as u32);
         }
@@ -1506,8 +1512,8 @@ where
         self.put(task, (spread, key, value), stored, false)
     }
 
-    /// An entry that was written at once is published, so it is unchanged. Whoever stores an entry that is to be replaced
-    /// stores it with `Stored::held_back`.
+    /// An entry that was written immediately is published, so this doesn't change it. Code that stores an entry it will
+    /// replace later must store it with `Stored::held_back`.
     pub fn rewrite(&self, task: &Task<'s>, key: K, value: V, stored: Stored) {
         let spread = spread_in_window(&key);
         if self.published(task, spread, &key).is_none() {
@@ -1515,7 +1521,7 @@ where
         }
     }
 
-    /// `get`. `Err`: the hash of `key`, for `insert_absent` and `rewrite_absent`.
+    /// `get`, but a miss returns `Err` with `key`'s hash, for `insert_absent` and `rewrite_absent`.
     #[inline]
     pub fn get_or_hash(&self, task: &Task<'s>, key: &K) -> Result<V, u64> {
         let spread = spread_in_window(key);
@@ -1528,8 +1534,8 @@ where
             .ok_or(spread)
     }
 
-    /// `insert`, for a key for which `get_or_hash` has returned `spread` in this task. If a commit
-    /// has stored an entry in the meantime, `get` returns that one from now on.
+    /// `insert` for a key for which `get_or_hash` returned `Err(spread)` in this task. If a commit has
+    /// stored an entry in the meantime, `get` returns that one from now on.
     #[inline]
     pub fn insert_absent(
         &self,
@@ -1542,7 +1548,7 @@ where
         self.put(task, (spread, key, value), stored, false)
     }
 
-    /// `rewrite`, likewise.
+    /// `rewrite` for a key for which `get_or_hash` returned `Err(spread)` in this task.
     #[inline]
     pub fn rewrite_absent(&self, task: &Task<'s>, spread: u64, key: K, value: V, stored: Stored) {
         self.put(task, (spread, key, value), stored, true);
@@ -1551,34 +1557,35 @@ where
 
 // ───────────────────────────── `Buffered`: commits ─────────────────────────────
 
-/// The interface of a `Buffered` table that a commit uses.
+/// The part of a `Buffered` table's interface that commits use.
 pub(crate) trait Publish<'s>: Sync {
-    /// Runs in a commit of `task`, on its thread, under the mutex of the commits, while other tasks read the table.
-    /// `key`: from the `Log` of the task. `number`: of the commit. Stores the entry that the task has under `key` in the
-    /// shared part, unless it is bound or there is one. Returns whether it has. The task keeps its entry.
+    /// Stores `task`'s entry under `key` in the shared part, unless the entry is bound or the shared part already has
+    /// one. Returns true if it was stored. The task keeps its entry. Runs in a commit of `task`, on its thread, under
+    /// the commit mutex, while other tasks read the table. `key` comes from the task's `Log`. `number` is the commit's
+    /// number.
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool;
 
-    /// Returns a number that identifies the entry that `task` has logged under `key`, and that is the same in every task
-    /// that stores an entry for the same thing. A published id and a node are such numbers already.
+    /// Returns a number that identifies the entry `task` has logged under `key`, and that's the same in every task that
+    /// stores an entry for the same thing. A published id and a node are already such numbers.
     fn identity_of_logged(&self, _task: &Task<'s>, key: u64) -> u64 {
         key
     }
 }
 
-/// The shared part of a table with one cell per key, as a commit uses it. A key of the shared part
-/// is one number: the index of the node in the concatenation of all nodes, or the number of the id.
+/// The shared part of a table with one cell per key, as commits use it. A shared-part key is one
+/// number: the node's index in the concatenation of all nodes, or the id's number.
 pub(crate) trait Dense: Sync {
     type Value: Packed<Cell = AtomicU32>;
-    /// 0: nothing.
+    /// Returns the published entry, or 0 if there is none.
     fn load(&self, key: u32) -> u32;
     /// Precondition: the cell is empty, and the caller is the only thread that writes to the table.
-    /// A release: in a commit, other threads read.
+    /// The store is a release, because other threads read during a commit.
     fn store(&self, key: u32, raw: u32);
-    /// The entry that a task has under `key`, which is from its `Log`. 0: none.
+    /// Returns a task's entry under `key`, which comes from its `Log`, or 0 if there is none.
     fn own(&self, buffer: &Buffer<'_>, key: u64) -> u32;
-    /// The key of the shared part for `key`, which is from a `Log`. `None`: `key -> value` is bound.
+    /// Returns the shared-part key for `key`, which comes from a `Log`, or `None` if `key -> value` is bound.
     fn shared_key(&self, key: u64, value: &impl Follow, own: &OwnStore) -> Option<u32>;
-    /// In the commit `number`: stores `raw` under `key` unless there is an entry. Returns whether it has.
+    /// Called in commit `number`. Stores `raw` under `key` unless there's already an entry. Returns true if it stored.
     fn store_in_commit(&self, key: u32, raw: u32, number: u32) -> bool;
 }
 
@@ -1620,7 +1627,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
         (!file.is_bound(own) && !value.is_bound(own)).then_some(at as u32)
     }
 
-    /// Only commits write to the table, one at a time. The number is there before the entry.
+    /// Only commits write to the table, one at a time. The commit number is stored before the entry.
     #[inline]
     fn store_in_commit(&self, key: u32, raw: u32, number: u32) -> bool {
         let is_first = self.load(key) == 0;
@@ -1658,7 +1665,8 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
         (!id.is_bound(own) && !value.is_bound(own)).then_some(key as u32)
     }
 
-    /// Other tasks write to the table at once meanwhile. An entry under a record counts as soon as it is stored.
+    /// Other tasks may write to the table immediately at the same time. An entry under a record is visible to every
+    /// task as soon as it's stored.
     #[inline]
     fn store_in_commit(&self, key: u32, raw: u32, _: u32) -> bool {
         let cell = self.cells.cell(key);
@@ -1666,7 +1674,7 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
     }
 }
 
-/// `Publish::store_logged` of a table with one cell per key.
+/// `Publish::store_logged` for a table with one cell per key.
 fn store_logged_cell<D: Dense<Value: Follow>>(
     table: &D,
     task: &Task,
@@ -1684,7 +1692,7 @@ fn store_logged_cell<D: Dense<Value: Follow>>(
     table.store_in_commit(shared_key, raw, number)
 }
 
-/// .. of an indirect table. A value whose handle has `LOCAL` is bound: see `keep`.
+/// `Publish::store_logged` for an indirect table. A value whose handle has `LOCAL` is bound (see `keep`).
 fn store_logged_handle<D: Dense<Value = Handle>>(
     handles: &D,
     task: &Task,
@@ -1726,7 +1734,7 @@ where
     K: Windowed + Eq + Clone + Follow + Send + Sync + 's,
     V: Copy + Follow + Send + Sync + 's,
 {
-    /// `key`: the place of the entry in the `Hashed` of the task.
+    /// `key` is the entry's index in the task's `Hashed`.
     fn store_logged(&self, task: &Task<'s>, key: u64, _: u32) -> bool {
         let own = task.buffer().typed(&self.slot);
         let Some((key, value)) = own.and_then(|own| own.entry(key as u32)) else {
@@ -1739,8 +1747,8 @@ where
         self.published.add_if_absent(spread, key, *value)
     }
 
-    /// `key` is a place in the task's own `Hashed`, which says nothing to another task. Only keys without task-local ids
-    /// are logged, so the hash is the same in every task.
+    /// `key` is an index into the task's own `Hashed`, which is meaningless to another task. Only keys without
+    /// task-local ids are logged, so the hash is the same in every task.
     fn identity_of_logged(&self, task: &Task<'s>, key: u64) -> u64 {
         let own = task.buffer().typed(&self.slot);
         own.and_then(|own| own.entry(key as u32))
@@ -1750,16 +1758,16 @@ where
 
 // ───────────────────────────── `FileLocal` ─────────────────────────────
 
-/// Where a `FileLocal` table has the value of a node.
+/// Where a `FileLocal` table stores a node's value.
 struct Place {
-    /// The index of the word among those of the file.
+    /// Index of the word among the file's words.
     word: u32,
-    /// The bit offset of the node within the word.
+    /// Bit offset of the node's value within the word.
     shift: u32,
 }
 
-/// There is no shared part. The storage is in 64-bit words. A value of one or two bits shares its
-/// word with the values of the neighbouring nodes.
+/// There's no shared part. Values are stored in 64-bit words. A one- or two-bit value shares its word
+/// with the neighboring nodes' values.
 impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, FileLocal, A> {
     #[inline]
     fn place(index: u32) -> Place {
@@ -1782,7 +1790,7 @@ impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, FileLocal, A> {
         (raw != 0).then(|| V::unpack(V::Cell::narrow(raw)))
     }
 
-    /// Does not overwrite an existing value. Returns the stored value.
+    /// Doesn't overwrite an existing value. Returns the stored value.
     #[inline]
     pub fn insert(&self, task: &Task, key: K, value: V) -> V {
         // Callers occasionally pass `NONE`.

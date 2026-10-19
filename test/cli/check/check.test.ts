@@ -18,14 +18,14 @@ import { modulesInRings } from "./differential";
 
 afterAll(endChildren);
 
-// The directory of the `lib.*.d.ts` files of the `typescript7` package, which has them in a package for the platform.
+// Directory with the `typescript7` package's `lib.*.d.ts` files. They ship in its platform-specific package.
 const typescript7 = (() => {
   try {
     const paths = [dirname(require.resolve("typescript7/package.json"))];
     const name = `@typescript/typescript-${process.platform}-${process.arch}`;
     return join(dirname(require.resolve(`${name}/package.json`, { paths })), "lib");
   } catch {
-    // There is none for this system.
+    // No native package for this platform.
   }
 })();
 
@@ -58,7 +58,7 @@ function project(files: Record<string, string>) {
   });
 }
 
-// Whether the file system takes `A` for `a`, where the projects of these tests are.
+// True if the temp directory's file system is case-insensitive.
 const foldsCase = (() => {
   using dir = tempDir("bun-check", { "probe": "" });
   return existsSync(join(String(dir), "PROBE"));
@@ -72,7 +72,7 @@ const env = {
   REPL_ID: undefined,
   GITHUB_ACTIONS: undefined,
   GITHUB_WORKSPACE: undefined,
-  // Of the script that runs the tests.
+  // Set by the package.json script that runs the tests.
   npm_lifecycle_event: undefined,
   npm_package_json: undefined,
   BUN_INTERNAL_SCRIPTS_OF_COMMANDS: undefined,
@@ -80,7 +80,7 @@ const env = {
   NO_COLOR: "1",
 };
 
-/** `timeout`: for what may never end. Less than that of the test, after which nothing ends the process. */
+/** `timeout`: for commands that might hang. Keep it below the test's own timeout, which doesn't kill the process. */
 async function run(cwd: string, cmd: string[], extra: Record<string, string | undefined> = {}, timeout?: number) {
   await using proc = spawn({
     cmd: [bunExe(), ...cmd],
@@ -91,7 +91,7 @@ async function run(cwd: string, cmd: string[], extra: Record<string, string | un
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // A crash, an assertion or a sanitizer report: the test that asserts the exit code says nothing about why.
+  // A crash, a failed assertion or a sanitizer report. The test's exit code assertion won't show why, so print stderr.
   if (exitCode !== 0 && exitCode !== 1 && exitCode !== 2) {
     console.error(`bun ${cmd.join(" ")} exited with ${exitCode}:\n${stderr}`);
   }
@@ -117,7 +117,7 @@ const hasTerminal = (() => {
   }
 })();
 
-// Runs `cmd` as a person does: in a terminal, with colors. The progress line is drawn at once instead of after 300 ms.
+// Runs `cmd` in a terminal with colors, like a person would. The progress line is drawn immediately, not after 300 ms.
 async function inTerminal(cwd: string, cmd: string[]) {
   const decoder = new TextDecoder();
   let output = "";
@@ -144,7 +144,7 @@ async function inTerminal(cwd: string, cmd: string[]) {
 }
 
 describe.concurrent("bun check", () => {
-  test("colors change nothing but the colors", async () => {
+  test("prints the same text with and without colors", async () => {
     using dir = project({
       "index.ts": `interface User {\n  id: number;\n}\n\nconst ada: User = {\n  id: "1",\n};\nconsole.log(\`\${ada.nmae}\`);\n`,
     });
@@ -163,8 +163,8 @@ describe.concurrent("bun check", () => {
     expect(colored.exitCode).toBe(1);
   });
 
-  // As after `git clone`.
-  test("dependencies that are not installed", async () => {
+  // The state right after `git clone`.
+  test("suggests `bun install` when dependencies in package.json aren't installed", async () => {
     const options = JSON.parse(tsconfig).compilerOptions;
     const source = `import "react";\nimport "@scope/a/deep";\nimport "typed";\nimport "unlisted";\nimport "./missing";\nimport "node:fs";\n`;
     const manifest = {
@@ -182,7 +182,7 @@ describe.concurrent("bun check", () => {
     using unlisted = project({ "a.ts": `import "unlisted";\n`, "package.json": JSON.stringify(manifest) });
     using plugAndPlay = project({ "a.ts": source, "package.json": JSON.stringify(manifest), ".pnp.cjs": "" });
     using olderPlugAndPlay = project({ "a.ts": source, "package.json": JSON.stringify(manifest), ".pnp.js": "" });
-    // In a workspace, what a package lists may be installed at the root.
+    // In a workspace, a package's dependencies may be installed at the root.
     using workspace = project({
       "packages/a/a.ts": `import "react";\nimport "@scope/a";\n`,
       "packages/a/package.json": JSON.stringify(manifest),
@@ -191,13 +191,13 @@ describe.concurrent("bun check", () => {
     const bun = { "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, types: ["bun"] } }), "a.ts": "" };
     using listed = project({ ...bun, "package.json": `{ "devDependencies": { "@types/bun": "1" } }` });
     using notListed = project({ ...bun, "package.json": `{}` });
-    // What it declares is used, and `types` does not ask for it.
+    // Uses what `@types/bun` declares without listing `bun` in `types`.
     using used = project({
       "console.d.ts": "",
       "a.ts": `import "bun:test";\nconsole.log(Bun.version);\n`,
       "package.json": `{ "devDependencies": { "@types/bun": "1" } }`,
     });
-    // An optional peer of a package: the project does not list it, and `bun install` does not install it.
+    // An installed package's optional peer. The project doesn't list it and `bun install` doesn't install it.
     using ofAPackage = project({
       "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, skipLibCheck: false } }),
       "a.ts": `import "installed";\n`,
@@ -205,9 +205,9 @@ describe.concurrent("bun check", () => {
       "node_modules/installed/package.json": `{ "name": "installed", "version": "1.0.0", "types": "index.d.ts", "peerDependencies": { "peer": "1" } }`,
       "node_modules/installed/index.d.ts": `import "peer";\nexport {};\n`,
     });
-    // It is not Bun's to declare.
+    // `document` isn't one of Bun's globals, so there's no note.
     using dom = project({ "a.ts": `export const a = document;\n` });
-    // `bun install` here does not install what the applications further down list.
+    // `bun install` at the root doesn't install the dependencies of the apps in subdirectories.
     const application = (name: string) => ({
       [`apps/${name}/a.ts`]: `import "react";\nimport "@scope/a";\n`,
       [`apps/${name}/package.json`]: JSON.stringify(manifest),
@@ -247,7 +247,7 @@ describe.concurrent("bun check", () => {
       [],
       [],
       ["note: 1 dependency in packages/a/package.json is not installed. Run: bun install --cwd=packages/a"],
-      // What `types` asks for is missing: that is an error in the options.
+      // A missing `types` entry is an options error, which stops the type check.
       ["note: 1 dependency in package.json is not installed. Run: bun install", stopped],
       [
         "note: Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: bun add -d @types/bun",
@@ -272,7 +272,7 @@ describe.concurrent("bun check", () => {
     ]);
     expect(results[9].stdout).toContain("node_modules/installed/index.d.ts(1,8): error TS2882");
     expect(results[10].stdout).toContain("TS2584: Cannot find name 'document'.");
-    // Where `bun install` reads that `package.json`, from the directory itself and from below it.
+    // No `--cwd` when `bun install` already finds that `package.json` in the working directory or above it.
     const inside = await Promise.all(
       ["apps/a", "apps/a/src"].map(cwd => run(join(String(deeper), cwd), ["check", "-p", String(deeper)])),
     );
@@ -282,8 +282,8 @@ describe.concurrent("bun check", () => {
     ]);
   });
 
-  // As in `tsc`, an error in the syntax, the options or the global types of a program is all that is reported for it.
-  test("what stops the type check says how many files it leaves", async () => {
+  // Like `tsc`, a program with syntax, options or global type errors reports only those.
+  test("prints how many files weren't type checked after syntax, options or global type errors", async () => {
     const options = JSON.parse(tsconfig).compilerOptions;
     const config = (more: object) => JSON.stringify({ compilerOptions: { ...options, ...more } });
     const note = (text: string) => text.split("\n").filter(line => line.startsWith("note: "));
@@ -296,7 +296,7 @@ describe.concurrent("bun check", () => {
       return await check(dir, args);
     };
 
-    // What is left is what is checked without that error.
+    // The note counts the files that are checked when that error isn't there.
     const whole = await checkedWith({});
     expect(whole.stdout).toContain("a.ts(1,14): error TS2322");
     expect(note(whole.stderr)).toEqual([]);
@@ -327,14 +327,14 @@ describe.concurrent("bun check", () => {
       })),
     );
 
-    // Nothing is left where nothing is wrong, and where there is no program.
+    // No note when there are no errors, or when the project doesn't exist.
     const others = await Promise.all([checkedWith({ "a.ts": "" }), checkedWith({}, ["-p", "nowhere"])]);
     expect(others.map(it => [note(it.stderr), it.exitCode])).toEqual([
       [[], 0],
       [[], 1],
     ]);
 
-    // Each project stops by itself, and so does what a file imports.
+    // Each project of a build stops on its own, and so does `bun --check` on one file.
     const composite = config({ composite: true, noEmit: false, emitDeclarationOnly: true, outDir: "out" });
     using solution = project({
       "tsconfig.json": `{ "files": [], "references": [{ "path": "./one" }, { "path": "./two" }] }`,
@@ -355,15 +355,15 @@ describe.concurrent("bun check", () => {
     expect(note(file.stderr)).toEqual(stoppedBefore("1 file"));
   });
 
-  // `[eval]` and `[stdin]` are on no disk, so nothing can be found out about the disk from them.
+  // `[eval]` and `[stdin]` aren't on disk, so they can't be used to probe the file system's case sensitivity.
   test.skipIf(!foldsCase)(
-    "an entry point that is only in memory, and a file that is imported in two cases",
+    "--check accepts a file imported under two casings when the entry point is -e or stdin",
     async () => {
       const options = { ...JSON.parse(tsconfig).compilerOptions, forceConsistentCasingInFileNames: false };
       const main = `import "./src/Button";\nimport "./src/other";\n`;
       using dir = project({
         "tsconfig.json": JSON.stringify({ compilerOptions: options }),
-        // Not a module: twice in the program, it declares `g` twice.
+        // A script, not a module. Loaded under both names, it would declare `g` twice.
         "src/button.ts": `const g = 1;\n`,
         "src/other.ts": `import "./button";\nexport {};\n`,
         "main.ts": main,
@@ -390,9 +390,9 @@ describe.concurrent("bun check", () => {
     },
   );
 
-  // `lib.*.d.ts` are in the executable, so they are those of the TypeScript that the type checker is a port of.
+  // The `lib.*.d.ts` files are embedded in the executable, so they match the TypeScript the checker is ported from.
   describe("TypeScript's library files", () => {
-    test("nothing has to be installed, and no configuration file is needed", async () => {
+    test("are available without installing anything and without a tsconfig.json", async () => {
       using dir = tempDir("bun-check", {
         "index.ts": `const all: Promise<number[]> = Promise.all([1]);\nexport const first: string = [1].at(0);\nexport { all };\n`,
       });
@@ -404,8 +404,8 @@ describe.concurrent("bun check", () => {
       expect(exitCode).toBe(1);
     });
 
-    // Nothing in it is about the type checker.
-    test("bunfig.toml is not read", async () => {
+    // None of its settings affect the type checker.
+    test("are loaded without reading bunfig.toml", async () => {
       using dir = project({
         "index.ts": `export const a: number = "1";\n`,
         "bunfig.toml": `[install]\nglobalDir = 1\n`,
@@ -415,7 +415,7 @@ describe.concurrent("bun check", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("those of an installed typescript package are not read", async () => {
+    test("are never read from an installed typescript package", async () => {
       const older = `interface Array<T> {}\n`;
       using dir = project({
         "index.ts": `export const first: string = [1].at(0);\n`,
@@ -428,8 +428,8 @@ describe.concurrent("bun check", () => {
       expect(stdout).not.toContain("node_modules");
     });
 
-    // The default `target` needs the newest of them, with the DOM.
-    test("without `target` and `lib`", async () => {
+    // The default `target` needs the newest lib files, including the DOM.
+    test("default to the newest ones and the DOM without `target` and `lib`", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "noEmit": true, "types": [] } }`,
         "console.d.ts": "",
@@ -440,19 +440,19 @@ describe.concurrent("bun check", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("a declaration in one of them is shown where it is", async () => {
+    test("show up as bundled:///libs/ paths in related information", async () => {
       using dir = project({ "index.ts": `export const a = [1].lenght;\n` });
       const { stdout } = await check(dir, ["--pretty"]);
       expect(stdout).toContain("TS2551: Property 'lenght' does not exist on type 'number[]'. Did you mean 'length'?");
       expect(stdout).toMatch(/at bundled:\/\/\/libs\/lib\.es5\.d\.ts:\d+:\d+/);
     });
 
-    test.skipIf(!typescript7)("process.versions.typescript is their version", () => {
+    test.skipIf(!typescript7)("have the version in process.versions.typescript", () => {
       expect(process.versions.typescript).toBe(require("typescript7/package.json").version);
     });
 
-    // A worker has no DOM, and its library is stored as what it adds to that of the DOM.
-    test("the library of a worker", async () => {
+    // A worker has no DOM, but its lib file is stored compressed with lib.dom.d.ts as the dictionary.
+    test("include lib.webworker.d.ts, which doesn't pull in lib.dom.d.ts", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "noEmit": true, "types": [], "lib": ["esnext", "webworker"] } }`,
         "console.d.ts": "",
@@ -465,8 +465,8 @@ describe.concurrent("bun check", () => {
       expect(stdout).not.toContain("bundled:///libs/lib.dom.d.ts");
     });
 
-    // scripts/update-typescript-libs.ts writes the file.
-    test.skipIf(!typescript7)("are those of TypeScript 7, byte for byte", () => {
+    // scripts/update-typescript-libs.ts writes typescript_libs.bin.
+    test.skipIf(!typescript7)("match TypeScript 7's byte for byte", () => {
       const bundle = readFileSync(join(import.meta.dir, "../../../src/runtime/cli/typescript_libs.bin"));
       const dictionaries = [undefined, "lib.es5.d.ts", "lib.dom.d.ts"].map(
         name => name && readFileSync(join(typescript7!, name)),
@@ -485,7 +485,7 @@ describe.concurrent("bun check", () => {
     });
   });
 
-  // The progress line is drawn by a thread of its own, and only for a person at a terminal.
+  // A dedicated thread draws the progress line, and only when a person is at a terminal.
   test.skipIf(isWindows || !hasTerminal)("shows progress in a terminal", async () => {
     using dir = project({ "index.ts": `const wrong: string = 1;\n` });
     let output = "";
@@ -509,7 +509,7 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a project without errors", async () => {
+  test("exits 0 and prints nothing to stdout for a project without errors", async () => {
     using dir = project({
       "index.ts": `import { double } from "./math";\nconsole.log(double(2).toFixed(1));\n`,
       "math.ts": `export const double = (n: number) => n * 2;\n`,
@@ -589,8 +589,8 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
-  // GitHub takes `file` from the root of the repository, wherever the step runs.
-  test("annotations on GitHub Actions are relative to GITHUB_WORKSPACE", async () => {
+  // GitHub resolves `file` from the repository root, wherever the step runs.
+  test("prints GitHub Actions annotations relative to GITHUB_WORKSPACE", async () => {
     using dir = project({
       "packages/app/tsconfig.json": tsconfig,
       "packages/app/src/a.ts": `export const a: string = 1;\n`,
@@ -617,7 +617,7 @@ describe.concurrent("bun check", () => {
     `);
   });
 
-  test("output is sorted by file and position, independent of thread scheduling", async () => {
+  test("sorts output by file and position, independent of thread scheduling", async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 60; i++) {
       files[`src/m${String(i).padStart(2, "0")}.ts`] =
@@ -633,8 +633,8 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
-  // `user.js` is checked after `lib.js`, so tsc ignores what `user.js` makes it report in `lib.js`. `lib.js` reports the same
-  // errors itself, unless it gets a cache hit on what the task of `user.js` computed first.
+  // `user.js` is checked after `lib.js`, so tsc ignores what `user.js` makes it report in `lib.js`. `lib.js` reports
+  // the same errors itself, unless it gets a cache hit on what `user.js`'s task computed first.
   test("reports implicit any in a destructured parameter that another file resolves first", async () => {
     using dir = project({
       "tsconfig.json": JSON.stringify({
@@ -667,9 +667,9 @@ module.exports = { scope };
     }
   });
 
-  // `a.ts`, `b.ts` and `c.ts` import each other, and the type of `routes` depends on itself. What tsc reports depends on where
-  // it enters that cycle: here from `0first.ts`, which doesn't import those files. It gets there through a declaration that
-  // a file outside the import cycle makes visible to everyone.
+  // `a.ts`, `b.ts` and `c.ts` import each other, and the type of `routes` depends on itself. What tsc reports depends
+  // on where it enters that cycle. Here that's `0first.ts`, which doesn't import those files. It gets there through a
+  // declaration that a file outside the import cycle makes visible everywhere.
   describe("reports a circular type the same way on every thread count when the first file reaches it through", () => {
     const fromC = `import type { routes } from "./c";\n`;
     const inGlobal = (declaration: string) => ({ "g.ts": `${fromC}declare global { ${declaration} }\nexport {};\n` });
@@ -769,8 +769,8 @@ const whole: never = routes;
     });
   });
 
-  // The members of `Loop` depend on themselves through its base type. `decl.ts` enters that cycle at the base type, when it
-  // checks the declaration, and `Loop` ends up without `b`. `user.ts` would enter it at the members of `Loop`.
+  // `Loop`'s members depend on themselves through its base type. `decl.ts` enters that cycle at the base type, when it
+  // checks the declaration, and `Loop` ends up without `b`. `user.ts` would enter it at `Loop`'s members.
   test("reports the same members on every thread count for an interface whose base type picks from itself", async () => {
     using dir = project({
       "decl.ts": `export interface Big { a: 1; b: 2; c: 3 }
@@ -960,7 +960,7 @@ export ${f3}
     [`function f2() { return [slot.port, 1 * slot]; }`, 40, wrongOperand, ""],
     [`function f2(q = 1 * slot) { return q; }`, 21, wrongOperand, ""],
     // It doesn't check the arguments of a resolved call again, nor an initializer whose type it has cached, and it doesn't
-    // compare the operands of `===` when it only wants the type.
+    // compare the operands of `===` when it only needs the type.
     [`function f2() { return String(slot.port = "zq"); }`, 0, "", ""],
     [`function f2() { const v = 1 * slot; return v; }`, 0, "", ""],
     [`function f2() { const v = slot instanceof slot; return v; }`, 0, "", ""],
@@ -1033,7 +1033,7 @@ let x: Intl.DateTimeFormatPart['type'];
     expect(exitCode).toBe(0);
   });
 
-  // The message names the member as its first declaration writes it, and that one is in the default library.
+  // The message spells the member's name like its first declaration, which is in the default library.
   test.each([
     [`interface Error { cause?: unknown; cause?: unknown }`, "cause", [19, 36]],
     [`interface Error { "cause"?: unknown; cause?: unknown }`, "cause", [19, 38]],
@@ -1092,9 +1092,9 @@ export const api = { f1 };
     }
   });
 
-  // Nothing in `base.js` asks for the type of `args`. `x.js` does, and it comes before `base.js` in program order, because the
-  // two import each other: so tsc reports the error. `u.js` asks too, but it comes later, where tsc ignores the error.
-  // `u.js` is larger, so it's checked first, and `x.js` must not take its answer.
+  // Nothing in `base.js` needs the type of `args`. `x.js` does, and since the two import each other it comes before
+  // `base.js` in program order, so tsc reports the error. `u.js` needs it too, but it comes later, where tsc ignores
+  // the error. `u.js` is larger, so it's checked first, and `x.js` must not reuse its result.
   // This held before, because entries with a dropped error weren't shared. It fails if only the file's own task ignores
   // later files' entries.
   test("reports an error that an earlier file causes, when a later file gets there first", async () => {
@@ -1154,9 +1154,9 @@ module.exports = Base;
     },
   );
 
-  // The annotation of `t` refers to `X`, which contains `B0`, so TypeScript reports a cycle at `t`. It's the only error. The
-  // other files come later in program order, and their checks get to `t` too. Only the check of `d.ts` reports the
-  // cycle, and for that it has to go round by itself, whichever check runs first.
+  // The annotation of `t` refers to `X`, which contains `B0`, so TypeScript reports a cycle at `t`. It's the only
+  // error. The other files come later in program order, and their checks get to `t` too. Only `d.ts`'s check reports
+  // the cycle, so it has to walk the whole cycle itself, whichever check runs first.
   const reversed = [0, 1, 2, 3].map(
     i =>
       `type Y = ${i % 2 ? "(B1 | B0) & (A1 | A0)" : "(A0 | A1) & (B0 | B1)"};\ndeclare let x: Y;\nconst ok = x.k;\nexport {};\n`,
@@ -1193,9 +1193,9 @@ type X = (A0 | A1) & (B0 | B1);
     },
   );
 
-  // The defaults of `T` and `U` lead to each other, and TypeScript calls the one circular that it asks for twice. The check
-  // of `d.ts` comes first in program order and begins at the type in `T`'s default, so that's `U`. The other files begin
-  // at `T`, and their checks may run first. With one type parameter there's no choice, but its error can still go missing.
+  // `T`'s and `U`'s defaults refer to each other, and TypeScript calls the one it requests twice circular. `d.ts`'s
+  // check comes first in program order and starts at the type in `T`'s default, so that's `U`. The other files start at
+  // `T`, and their checks may run first. With one type parameter there's no choice, but its error can still go missing.
   test.each([
     ["U", true, "d.ts(62,24)", `export interface P<T = Q> { t: T }\nexport interface Q<U = P> { u: U }\n`],
     ["U", false, "d.ts(62,24)", `export interface P<T = Q> { t: T }\nexport interface Q<U = P> { u: U }\n`],
@@ -1226,11 +1226,11 @@ type X = (A0 | A1) & (B0 | B1);
     },
   );
 
-  // `Folder`'s base type mentions `Folder` in a conditional type, and comparing `Folder` asks for its base types again.
-  // TypeScript reports that if the base types are what was asked for first, as `root.size` does, and not if the class
+  // `Folder`'s base type mentions `Folder` in a conditional type, and comparing `Folder` requests its base types again.
+  // TypeScript reports that if the base types were requested first, as `root.size` does, but not if the class
   // declaration's own check gets there first. `model.ts` comes first in program order, because `util.ts` imports it.
-  // `util.ts` asks too, and its check must not answer for `model.ts` if it happens to run first. Checking the default library
-  // changes which files are checked together.
+  // `util.ts` requests them too, and `model.ts` must not reuse its result if `util.ts` happens to be checked first.
+  // Checking the default library changes which files are checked together.
   test.each([
     [true, true],
     [false, true],
@@ -1277,7 +1277,7 @@ export class Folder extends Store<Wire<Folder>> {
   // The same for a name that doesn't resolve. `caller.ts` is larger, so it's checked first, but it comes later in program
   // order, because the two import each other. An unresolved name in another file is left to that file's own check, which first
   // gets to it two error messages deep, where TypeScript discards the error.
-  test("reports no unresolved name that tsc discards, when a later file gets there first", async () => {
+  test("doesn't report an unresolved name that tsc discards, when a later file gets there first", async () => {
     const filler = Array.from(
       { length: 400 },
       (_, i) => `function pad${i}() { return [${i}, "${i}"].map(it => typeof it).join(""); }\n`,
@@ -1305,10 +1305,11 @@ export type Forth = Back;
     }
   });
 
-  // https://github.com/oven-sh/bun/issues/45733, without the package. `b.ts` and `c.ts` both instantiate `Folded<string[]>`, on
-  // two threads. Which files there are decides how they're spread over the threads, so this doesn't use `project`.
+  // https://github.com/oven-sh/bun/issues/45733, without the package. `b.ts` and `c.ts` both instantiate
+  // `Folded<string[]>`, on two threads. The set of files decides how they're split across threads, so `project` isn't
+  // used.
   test.each([1, 2, 3, 4, 8])(
-    "reports no excessive stack depth that depends on the number of threads: %d",
+    "doesn't report an excessive stack depth error that depends on the thread count: %d",
     async threads => {
       using dir = tempDir("bun-check", {
         "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "skipLibCheck": true, "types": [], "lib": ["es2022"] } }\n`,
@@ -1376,7 +1377,7 @@ class C2 extends Base<Cond<C2>> { x = 1 }
     `);
   });
 
-  describe("a file that is too long for control flow analysis takes no error from another file", () => {
+  describe("a file too large for control flow analysis (TS2563) doesn't hide errors in other files", () => {
     const long = (end: string) => "const data = [];\n" + repeat("data[0] = 0;\n", 3000) + end;
     const right = `type S = { k: "a" } | { k: "b" };\ndeclare function assertNever(x: never): never;\nexport function f(s: S) {\n  switch (s.k) {\n    case "a":\n      return 1;\n    case "b":\n      return 2;\n    default:\n      return assertNever(s);\n  }\n}\n`;
     const wrong = `declare let s: string;\nexport const a: number = s;\nexport function f(x: string): number {\n  return x;\n}\nexport const b = s.nope;\n`;
@@ -1386,10 +1387,10 @@ class C2 extends Base<Cond<C2>> { x = 1 }
       "wrong.ts(6,20): error TS2339: Property 'nope' does not exist on type 'string'.",
     ];
     test.each([
-      ["it is checked", "a-generated.ts", {}, [], long("export default data;\n"), wrong, errors],
-      // 2563 is not among the errors of a JavaScript file that is not checked.
+      ["when it's type checked", "a-generated.ts", {}, [], long("export default data;\n"), wrong, errors],
+      // TS2563 isn't reported in a JavaScript file without `checkJs`.
       [
-        "it is JavaScript that is not checked, as with the tsconfig.json of bun init",
+        "when it's unchecked JavaScript, as with bun init's tsconfig.json",
         "a-generated.js",
         { allowJs: true },
         ["--checkJs"],
@@ -1398,7 +1399,7 @@ class C2 extends Base<Cond<C2>> { x = 1 }
         errors,
       ],
       [
-        "it reads a variable of the other file behind its limit",
+        "when it reads another file's variable past the limit",
         "a-generated.ts",
         {},
         [],
@@ -1423,7 +1424,7 @@ class C2 extends Base<Cond<C2>> { x = 1 }
         check(dir, [...shows]),
         ...[1, 2, 8].map(threads => check(dir, ["--threads", String(threads)])),
       ]);
-      // In a debug build the stack can run out before the 2,000 levels of TS2563.
+      // A debug build can run out of stack before it reaches TS2563's 2,000 levels.
       if (!isDebug && !isASAN) expect(control.stdout).toContain(`${generated}(1,1): error TS2563:`);
       for (const { stdout, exitCode } of runs) {
         const others = stdout.split("\n").filter(line => !line.startsWith("a-generated."));
@@ -1432,7 +1433,7 @@ class C2 extends Base<Cond<C2>> { x = 1 }
       }
     });
 
-    test("nor does another file that is too long switch it on again", async () => {
+    test("reports only TS2563 in each of two such files, one importing the other", async () => {
       using dir = project({
         "a-generated.ts":
           `import { last } from "./c-generated";\n` +
@@ -1447,7 +1448,7 @@ class C2 extends Base<Cond<C2>> { x = 1 }
       for (const { stdout, exitCode } of await Promise.all(
         [1, 2, 8].map(threads => check(dir, ["--threads", String(threads)])),
       )) {
-        // In a debug build the stack can run out before the 2,000 levels of TS2563.
+        // A debug build can run out of stack before it reaches TS2563's 2,000 levels.
         if (isDebug || isASAN) {
           expect(stdout.split("\n").filter(line => line.startsWith("wrong.ts"))).toEqual(errors);
         } else {
@@ -1460,7 +1461,7 @@ class C2 extends Base<Cond<C2>> { x = 1 }
 
   // The walk goes from `x` back to the start of the loop, then from the end of the loop back to its start again. So it
   // gets 2,000 levels deep with half as many flow nodes. A debug build can run out of stack before it hits the limit.
-  test.skipIf(isDebug || isASAN)("a loop body counts twice toward the control flow limit", async () => {
+  test.skipIf(isDebug || isASAN)("counts a loop body twice toward the TS2563 control flow limit", async () => {
     const loop = (statements: number) =>
       `export {};\ndeclare const c: boolean, b: number;\ndeclare function must(v: unknown): asserts v;\n` +
       `let x: string | number | undefined = 0;\nwhile (b) {\n  if (c) x = "s";\n${repeat("  must(b);\n", statements)}  x;\n}\n`;
@@ -1472,15 +1473,15 @@ class C2 extends Base<Cond<C2>> { x = 1 }
     expect(exitCode).toBe(1);
   });
 
-  // The time was cubic and worse: 16 s for 1,000 lines in a release build, where it now takes 0.2 s.
-  test("an array without a type that is filled line by line", async () => {
+  // This used to be cubic or worse: 16 s for 1,000 lines in a release build. Now it takes 0.2 s.
+  test("doesn't slow down on an untyped array filled by 1,000 assignments or `push` calls", async () => {
     const n = isDebug || isASAN ? 200 : 1000;
     const lines = (line: (i: number) => string, count = n) => Array.from({ length: count }, (_, i) => line(i)).join("");
     const end = "export const probe: never = rows;\n";
     using dir = project({
       "assigned.ts": "const rows = [];\n" + lines(i => `rows[${i}] = { id: ${i} };\n`) + end,
       "pushed.ts": "const rows = [];\n" + lines(i => `rows.push({ id: ${i} });\n`) + end,
-      // Half as many: each line has three flow nodes, and 2,000 levels are the limit of TS2563.
+      // Half as many lines, because each has three flow nodes and TS2563's limit is 2,000 levels.
       "pushed-if.ts":
         "declare const c: boolean;\nconst rows = [];\n" + lines(i => `if (c) rows.push({ id: ${i} });\n`, n / 2) + end,
     });
@@ -1495,11 +1496,11 @@ class C2 extends Base<Cond<C2>> { x = 1 }
     expect(exitCode).toBe(1);
   });
 
-  // The time was quadratic: over 60 s for these 60,000 `paths` in a release build.
-  test("a configuration file with an object of many keys", async () => {
+  // This used to be quadratic: over 60 s for these 60,000 `paths` in a release build.
+  test("doesn't slow down on a tsconfig.json with 60,000 `paths` keys", async () => {
     const n = isDebug || isASAN ? 10_000 : 60_000;
     const paths = Array.from({ length: n }, (_, i) => `"@m/${i}": ["./one.ts"]`);
-    // Of a key that is written twice, the last value counts.
+    // When a key appears twice, the last value wins.
     const again = [0, n / 2, n - 1].map(i => `"@m/${i}": ["./two.ts"]`);
     const imported = [0, 1, n / 2 - 1, n / 2, n - 2, n - 1];
     using dir = tempDir("bun-check", {
@@ -1516,9 +1517,9 @@ class C2 extends Base<Cond<C2>> { x = 1 }
     expect(exitCode).toBe(1);
   });
 
-  // It is declared in one place if only one of them declares it: the property of a mapped type has no declaration of
-  // its own. Then it has the modifiers that are written there. What `tsc` reports.
-  test("`readonly`, `private` and `protected` on a property that several members of an intersection or a union have", async () => {
+  // A mapped type's property has no declaration of its own, so if only one constituent declares the property, that
+  // declaration's modifiers apply. The expected output is tsc's.
+  test("keeps `readonly`, `private` and `protected` on a property shared with a mapped type in an intersection or union", async () => {
     using dir = tempDir("bun-check", {
       "tsconfig.json": JSON.stringify({
         compilerOptions: {
@@ -1599,9 +1600,9 @@ u.balance
     expect(exitCode).toBe(1);
   });
 
-  // Each error about an entry parsed the file again and looked through all the entries: 18 s for 4,000 in a release build.
+  // Each error about an entry used to reparse the file and scan all the entries: 18 s for 4,000 in a release build.
   // `tsc` takes 75 s for 60,000.
-  test("a configuration file with an error in each of many `paths`", async () => {
+  test("doesn't slow down on a tsconfig.json with an error in each of 120,000 `paths` entries", async () => {
     const n = isDebug || isASAN ? 2_000 : 60_000;
     const notRelative = Array.from({ length: n }, (_, i) => `"@m/${i}": ["one.ts"]`);
     const twoStars = Array.from({ length: n }, (_, i) => `"@*/${i}/*": ["./one.ts"]`);
@@ -1623,7 +1624,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
   });
 
   // `tsc` 7 prints `{0}` for the files. TypeScript 6 lists them.
-  test("TS18000 lists the configuration files that extend each other in a circle", async () => {
+  test("TS18000 lists the tsconfig files that extend each other in a cycle", async () => {
     const options = `"compilerOptions": { "noEmit": true, "types": [], "lib": ["es5"] }`;
     const source = { "a.ts": `const sentinel: number = "";\n` };
     const bad = `a.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.`;
@@ -1632,13 +1633,13 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
     using three = tempDir("bun-check", {
       ...source,
       "tsconfig.json": `{ ${options}, "extends": "./one.json" }`,
-      // `two.json` is extended twice, and the circle is reported once.
+      // `two.json` is extended twice, and the cycle is reported once.
       "one.json": `{ "extends": ["./two.json", "./sub/../three"] }`,
       "two.json": `{ "extends": "./three.json" }`,
       "three.json": `{ "extends": "./one.json" }`,
       "sub/keep.txt": "",
     });
-    // The file that closes the circle is extended again, and is reported once.
+    // The file that closes the cycle is extended a second time but reported once.
     await Bun.write(join(String(three), "again.json"), `{ ${options}, "files": ["a.ts"], "extends": "./three.json" }`);
     const results = await Promise.all([check(itself), check(three), check(three, ["-p", "again.json"])]);
     expect(results.map(it => it.stdout.split("\n"))).toEqual([
@@ -1666,8 +1667,8 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
     }
   });
 
-  // It is parsed once for all of them. What `tsc -b` reports.
-  describe("projects of a build that extend one configuration file", () => {
+  // The shared file is parsed once for all of them. The expected output is `tsc -b`'s.
+  describe("projects of a build that extend the same tsconfig file", () => {
     const common = `"strict": true, "composite": true, "emitDeclarationOnly": true, "types": [], "lib": ["es5"]`;
     const own = (extended: string, options = "") =>
       `{ "extends": ${extended}, "compilerOptions": { "outDir": "./out", "rootDir": "."${options} }, "files": ["a.ts"] }`;
@@ -1687,7 +1688,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
 
     test.concurrent.each<[string, Record<string, string>, string[]]>([
       [
-        "its errors are reported for each",
+        "report its errors once per project",
         {
           "base.json": `{ "compilerOptions": { ${common},\n"nope": 1 } }`,
           ...projects([own(`"../base.json"`), own(`"../base.json"`), own(`"../base.json"`)], bad),
@@ -1695,7 +1696,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
         [0, 1, 2].flatMap(i => [`base.json(2,1): error TS5023: Unknown compiler option 'nope'.`, isBad(i)]),
       ],
       [
-        "`${configDir}` is the directory of each",
+        "resolve `${configDir}` to their own directory",
         {
           "base.json": `{ "compilerOptions": { ${common}, "outDir": "\${configDir}/out", "rootDir": "\${configDir}",
             "paths": { "@own": ["\${configDir}/own.ts"] } }, "include": ["\${configDir}/*.ts"] }`,
@@ -1709,7 +1710,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
         [0, 1].map(i => `p${i}/a.ts(2,14): error TS2322: Type '${i}' is not assignable to type 'never'.`),
       ],
       [
-        "one is extended by a project, and through another file by the next",
+        "get the right options whether they extend it directly or through another file",
         {
           "base2.json": `{ "compilerOptions": { ${common}, "strictNullChecks": false } }`,
           "base.json": `{ "extends": "./base2.json", "compilerOptions": { "strictNullChecks": true } }`,
@@ -1732,8 +1733,8 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
         ]),
       ],
       [
-        // What `tsc -p` reports for each. In `tsc -b` it depends on which project was loaded first.
-        "a cycle that the projects enter at each of its files gives each the options that it has alone",
+        // The expected output is `tsc -p`'s for each project. `tsc -b`'s depends on which project was loaded first.
+        "get the same options as when checked alone if they enter an `extends` cycle at different files",
         {
           "a.json": `{ "extends": "./b.json", "compilerOptions": { ${common}, "noUnusedLocals": true } }`,
           "b.json": `{ "extends": "./a.json", "compilerOptions": { "noImplicitAny": false } }`,
@@ -1744,7 +1745,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
             `function unused() {}\nexport function f(x) { return x; }\n` + bad,
           ),
         },
-        // The files as TypeScript 6 lists them. `tsc` 7 prints `{0}` in their place.
+        // TypeScript 6 lists the files like this. `tsc` 7 prints `{0}` instead.
         [0, 1, 2, 3].flatMap(i => [
           `error TS18000: Circularity detected while resolving configuration: <dir>/p${i}/tsconfig.json -> ` +
             (i % 2 ? `<dir>/b.json -> <dir>/a.json -> <dir>/b.json` : `<dir>/a.json -> <dir>/b.json -> <dir>/a.json`),
@@ -1753,7 +1754,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
         ]),
       ],
       [
-        "`null` unsets what one of them inherits, and a file is missing for two",
+        "can unset an inherited option with `null`, and each report TS5083 if the file is missing",
         {
           "base.json": `{ "compilerOptions": { ${common}, "noUnusedLocals": true } }`,
           ...projects(
@@ -1784,8 +1785,8 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
     });
   });
 
-  // The time was cubic: 16 s for 2,000 interfaces in a release build, where it now takes 0.7 s.
-  test("a long chain of interfaces, each of which extends the last", async () => {
+  // This used to be cubic: 16 s for 2,000 interfaces in a release build. Now it takes 0.7 s.
+  test("doesn't slow down on a chain of 2,000 interfaces that each extend the previous one", async () => {
     const n = isDebug || isASAN ? 300 : 2000;
     const chain = (member: (i: number) => string) =>
       `interface I0 { ${member(0)} }\n` +
@@ -1805,8 +1806,8 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
     expect(exitCode).toBe(1);
   });
 
-  // Cubic too: over 25 s for 1,000 generic interfaces in a release build, where it now takes 0.5 s.
-  test("a long chain whose members mention `this` or a type parameter, or have no annotation", async () => {
+  // This used to be cubic too: over 25 s for 1,000 generic interfaces in a release build. Now it takes 0.5 s.
+  test("doesn't slow down on a long `extends` chain whose members use `this`, a type parameter or no annotation", async () => {
     const n = isDebug || isASAN ? 150 : 1000;
     const chain = (kind: string, member: (i: number) => string, parameters = "", argument = "") =>
       `${kind} I0${parameters} { ${member(0)} }\n` +
@@ -1831,8 +1832,8 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
     expect(exitCode).toBe(1);
   });
 
-  // One thread checks the files in program order, like `tsc --singleThreaded`: see differential.test.ts.
-  test("modules that enter the same cycles produce the same output on any number of threads above one", async () => {
+  // One thread checks the files in program order, like `tsc --singleThreaded`. differential.test.ts covers that.
+  test("prints the same output on 2, 3, 8 and 16 threads for modules that enter the same cycles", async () => {
     const n = isDebug || isASAN ? 24 : 60;
     using dir = project(modulesInRings(n));
     const [two, ...others] = await Promise.all(
@@ -2003,8 +2004,8 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(plain.stdout.split("\n")).toHaveLength(64);
     });
 
-    test("file lists are never truncated", async () => {
-      // The same error in 60 files, so it is grouped.
+    test("never truncates file lists", async () => {
+      // The same error in 60 files, so it's grouped.
       using dir = project(
         Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`f${i}.ts`, `console.lgo(${i});\nexport {};\n`])),
       );
@@ -2015,7 +2016,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(stdout + stderr).not.toContain("more files");
     });
 
-    test("an error that two projects report is printed for each, in build order, as by tsc -b", async () => {
+    test("prints an error in a file shared by two projects once per project, in build order, like tsc -b", async () => {
       const compilerOptions = {
         ...JSON.parse(tsconfig).compilerOptions,
         ...{ composite: true, noEmit: false, emitDeclarationOnly: true, outDir: "out", rootDir: ".." },
@@ -2048,7 +2049,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
         "one/a.ts",
         "shared/s.ts",
       ]);
-      // `tsc -b --pretty`: "Found 4 errors in 4 files.", and the files by name.
+      // `tsc -b --pretty` prints "Found 4 errors in 4 files." and lists the files by name.
       expect(located.stderr).toContain("Found 4 errors in 4 files");
       expect(located.stderr.split("\n").filter(line => /^ +\d+ {2}/.test(line))).toEqual([
         "  1  one/a.ts:1",
@@ -2061,12 +2062,12 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
         "error TS2688: Cannot find type definition file for 'missing'.",
       ]);
       expect(global.stderr).toContain("Found 2 errors,");
-      // A directory that is named has what `bun check` says about its files.
+      // Passing a directory prints what a plain `bun check` reports for its files.
       expect(named.stdout.split("\n").map(line => line.split("(")[0])).toEqual(["shared/s.ts", "shared/s.ts"]);
     });
 
-    test("an error without a file has no place", async () => {
-      // More kinds of error than are shown in full.
+    test("prints no file position for an error that isn't in a file", async () => {
+      // More distinct errors than are printed in full.
       const types = Array.from({ length: 60 }, (_, i) => `missing${i}`);
       const compilerOptions = { ...JSON.parse(tsconfig).compilerOptions, types };
       using dir = project({ "tsconfig.json": JSON.stringify({ compilerOptions }), "a.ts": "" });
@@ -2077,10 +2078,10 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
         "  1  TS2688  Cannot find type definition file for 'missing20'.",
       ]);
       expect(forAgents[0]).toBe(`<error code="TS2688">`);
-      // Nothing like `:0`.
+      // No stray `:0` position.
       expect([...inATerminal, ...forAgents].filter(line => /(^|[\s>]):\d/.test(line))).toEqual([]);
 
-      // Two projects say the same, so each kind is there twice.
+      // Two projects report the same errors, so each one occurs twice.
       const config = JSON.stringify({
         compilerOptions: {
           ...compilerOptions,
@@ -2108,7 +2109,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect([...twiceInATerminal, ...twiceForAgents].filter(line => /(^|[\s>]):\d/.test(line))).toEqual([]);
     });
 
-    test("50 errors are not grouped", async () => {
+    test("doesn't group 50 errors", async () => {
       using dir = project({
         "a.ts": Array.from({ length: 50 }, (_, i) => `console.lgo(${i});`).join("\n") + `\nexport {};\n`,
       });
@@ -2167,7 +2168,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       `);
     });
 
-    test("every spelling of a flag", async () => {
+    test("accepts every spelling of its flags", async () => {
       using dir = project({
         "a.ts": `export const a: string = 1;\n`,
         "other/tsconfig.json": tsconfig,
@@ -2177,11 +2178,11 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       const whole = `${error("a.ts")}\n${error("other/b.ts")}`;
       const cases: [string[], string][] = [
         [[], whole],
-        // One line per error, whatever else is said.
+        // `--no-pretty` wins over `--pretty` in either order.
         [["--no-pretty"], whole],
         [["--pretty", "--no-pretty"], whole],
         [["--no-pretty", "--pretty"], whole],
-        // It never emits.
+        // `bun check` never emits, so these are no-ops.
         [["--no-emit"], whole],
         [["--noEmit"], whole],
         [["-p", "other"], error("other/b.ts")],
@@ -2203,7 +2204,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       );
     });
 
-    test("a flag with a value that it does not take", async () => {
+    test("rejects an invalid flag value with exit code 1", async () => {
       using dir = project({ "a.ts": `export const a = 1;\n` });
       const cases: [string[], string][] = [
         [["--pretty", "maybe", "a.ts"], ""],
@@ -2213,14 +2214,14 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
         [["-b", "a", "b"], `--build takes one project`],
         [["-b", "-p", "a", "b"], `--build takes one project`],
         [["--cwd", "nowhere"], `Could not change directory to "nowhere"`],
-        // What `tsc` does instead of compiling.
+        // `tsc` flags that do something other than compile.
         [["--version"], `Unknown flag "--version"`],
         [["--init"], `Unknown flag "--init"`],
       ];
       const results = await Promise.all(cases.map(([args]) => check(dir, args)));
-      // `maybe` is not a value of `--pretty`, so it is a path.
+      // `maybe` isn't a valid `--pretty` value, so it's treated as a path.
       expect(results[0].stdout).toContain("TS6053");
-      // What it says instead, if it is something else or ends in another way.
+      // On a mismatch, the failure shows the actual stderr.
       expect(
         results
           .slice(1)
@@ -2228,7 +2229,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       ).toEqual(cases.slice(1).map(() => ["", ""]));
     });
 
-    test("--timing", async () => {
+    test("--timing prints load and check times to stderr", async () => {
       using dir = project({ "a.ts": `export const a = 1;\n` });
       const [timed, plain] = await Promise.all([check(dir, ["--timing"]), check(dir)]);
       expect(timed.stderr).toMatch(/\d+ files loaded in [\d.]+ms, \d+ checked in [\d.]+ms/);
@@ -2236,10 +2237,10 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect([timed.stdout, timed.exitCode]).toEqual(["", 0]);
     });
 
-    // TypeScript 7.0.2 finds nothing in them. `Pick` and `Omit` ask the union for the properties that they keep, by name, and a
-    // property of a union is created with the types of those that it combines: that of `shape` is what is being resolved.
+    // TypeScript 7.0.2 reports no errors here. `Pick` and `Omit` look up the properties they keep by name. Creating a
+    // union's property resolves the types of the properties it combines, and `shape`'s is still being resolved.
     test.each([`Pick<N, "id">`, `Omit<N, "shape">`, `Pick<N, Exclude<keyof N, "shape">>`])(
-      "%s of a union does not ask for the types of the other properties",
+      "accepts %s of a union whose other property's type is still being resolved",
       async picked => {
         using dir = project({
           "tsconfig.json": JSON.stringify({
@@ -2261,10 +2262,10 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       },
     );
 
-    // `/proc` lists processes, not their other threads. So it is with the snapshots of a file system, and with what an
-    // automounter has yet to mount.
+    // `/proc` lists processes but not their other threads. File system snapshots and directories an automounter hasn't
+    // mounted yet behave the same way.
     test.skipIf(process.platform !== "linux")(
-      "a project below a directory that the one above does not list",
+      "finds a project under a directory that its parent's listing omits",
       async () => {
         using dir = project({ "tsconfig.json": tsconfig, "a.ts": `export const a: number = "";\n` });
         const thread = readdirSync("/proc/self/task").find(it => it !== String(process.pid));
@@ -2274,9 +2275,9 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       },
     );
 
-    // `RLIMIT_AS`, as on the nodes of a cluster. It counts the addresses that a process has reserved like the memory that
-    // it uses. A sanitizer reserves terabytes.
-    test.skipIf(!isLinux || isASAN)("a process that may have 4 GB of addresses", async () => {
+    // `RLIMIT_AS`, as set on cluster nodes. It counts reserved address space as well as memory in use. A sanitizer
+    // reserves terabytes.
+    test.skipIf(!isLinux || isASAN)("runs with the address space limited to 4 GB", async () => {
       using dir = project({ "a.ts": `export const a: number = "";\n` });
       await using proc = spawn({
         cmd: ["sh", "-c", `ulimit -v 4000000; exec "$0" check --threads 8`, bunExe()],
@@ -2291,7 +2292,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(exitCode).toBe(1);
     });
 
-    test("two directories", async () => {
+    test("checks two directories passed on the command line", async () => {
       using dir = project({
         "a/a.ts": `export const a: string = 1;\n`,
         "b/b.ts": `export const b: string = 1;\n`,
@@ -2319,8 +2320,8 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(results.map(it => it.stdout)).toEqual([error, error, error, ""]);
     });
 
-    // `subst` gives the directory a drive letter.
-    test.skipIf(!isWindows)("a project at the root of a drive", async () => {
+    // `subst` maps the directory to a drive letter.
+    test.skipIf(!isWindows)("checks a project at the root of a drive", async () => {
       using dir = project({
         "a.ts": `export const a: string = 1;\n`,
         "sub/b.ts": `export const b: string = 1;\n`,
@@ -2353,7 +2354,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       }
     });
 
-    test("without a tsconfig.json, a file that is named is loaded with what it imports and nothing else", async () => {
+    test("without a tsconfig.json, a file argument loads only that file and its imports", async () => {
       using dir = tempDir("bun-check", {
         "a.ts": `import "./imported";\nexport const a = elsewhere;\n`,
         "imported.ts": `export {};\n`,
@@ -2370,8 +2371,8 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(own.map(line => line.replace(/^\S*\//, ""))).toEqual(["imported.ts", "a.ts"]);
     });
 
-    // Not that of the file system that has `bun`.
-    test("the case of a file name matters if it does to the file system of the project", async () => {
+    // The project's file system decides, not the one `bun` is installed on.
+    test("reports TS2307 for a wrongly cased import only on a case-sensitive file system", async () => {
       using dir = project({
         "button.ts": `export const button = 1;\n`,
         "a.ts": `import { button } from "./Button";\nexport const a: number = button;\n`,
@@ -2381,7 +2382,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(stdout.includes("TS2307")).toBe(!isFound);
     });
 
-    test("a directory outside the project, without a tsconfig.json of its own", async () => {
+    test("checks a directory argument outside the project that has no tsconfig.json", async () => {
       using dir = tempDir("bun-check", {
         "packages/my-application/tsconfig.json": tsconfig,
         "packages/my-application/a.ts": `export const a: string = 1;\n`,
@@ -2391,8 +2392,8 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(stdout).toBe(`../lib/b.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
     });
 
-    test("a directory with a link that leads back up", async () => {
-      // Without a tsconfig.json at the root, so that those below are looked for.
+    test("doesn't loop on a directory with a symlink to its parent", async () => {
+      // No tsconfig.json at the root, so the subdirectories are searched for one.
       using dir = tempDir("bun-check", {
         "pkg/tsconfig.json": tsconfig,
         "pkg/a.ts": `export const a: string = 1;\n`,
@@ -2402,7 +2403,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(stdout).toBe(`pkg/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
     });
 
-    test("links to a file and to directories, side by side in one directory", async () => {
+    test("follows symlinks to a file and to directories in the same directory", async () => {
       using dir = project({
         "real/file.ts": `export const file: string = 1;\n`,
         "real/one/index.ts": `export const one: string = 1;\n`,
@@ -2433,7 +2434,7 @@ export const a: number[] = [file, one, two];
       expect(exitCode).toBe(1);
     });
 
-    test("a path on the command line is relative to the working directory, as in tsc", async () => {
+    test("resolves a path in a flag relative to the working directory, like tsc", async () => {
       using dir = project({
         "packages/server/tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include: ["src"] }),
         "packages/server/src/a.ts": `export const a: number = 1;\n`,
@@ -2450,8 +2451,8 @@ export const a: number[] = [file, one, two];
       expect(fromTheConfig.exitCode).toBe(1);
     });
 
-    // The administrative share of the drive, as in test/js/node/fs/cp.test.ts.
-    test.skipIf(!isWindows)("a project on a network share", async () => {
+    // Uses the drive's administrative share, like test/js/node/fs/cp.test.ts.
+    test.skipIf(!isWindows)("checks a project on a network share", async () => {
       using dir = project({ "a.ts": `export const a: string = 1;\n` });
       const real = realpathSync(String(dir));
       const share = `\\\\localhost\\${real[0]}$\\${real.slice(3)}`;
@@ -2461,10 +2462,10 @@ export const a: number[] = [file, one, two];
       expect(named.stdout).toStartWith("//localhost/");
     });
 
-    // `LONG-D~1` is also what NTFS calls `long-directory-name`, unless short names are turned off for the volume. The
-    // temporary directory of a GitHub runner is C:\Users\RUNNER~1\AppData\Local\Temp.
+    // `LONG-D~1` is also NTFS's short name for `long-directory-name`, unless short names are turned off for the volume.
+    // A GitHub runner's temp directory is C:\Users\RUNNER~1\AppData\Local\Temp.
     test.each(["LONG-D~1", ...(isWindows ? ["long-directory-name"] : [])])(
-      "a project that is reached as LONG-D~1 and is called %s",
+      "checks a project reached as LONG-D~1 whose directory is named %s",
       async name => {
         using dir = tempDir("bun-check", {
           [`${name}/tsconfig.json`]: tsconfig,
@@ -2494,7 +2495,7 @@ export const a: number[] = [file, one, two];
       expect(byFile.stdout).toBe(byDirectory.stdout);
     });
 
-    test("path arguments: checks those files and their imports with the compiler options of the project", async () => {
+    test("path arguments: checks those files and their imports with the project's compiler options", async () => {
       using dir = project({
         "a.ts": `import "./b";\nlet a;\nexport const x: string = a;\n`,
         "b.ts": `export const b: string = 1;\n`,
@@ -2507,7 +2508,7 @@ export const a: number[] = [file, one, two];
       `);
     });
 
-    test("path arguments: global declarations of the whole project stay visible", async () => {
+    test("path arguments: the whole project's global declarations stay visible", async () => {
       using dir = project({
         // These two files are not imported, but their global declarations are visible in every file.
         "globals.ts": `declare global {\n  var answer: number;\n}\nexport {};\n`,
@@ -2524,7 +2525,7 @@ export const a: number[] = [file, one, two];
       expect(exitCode).toBe(0);
     });
 
-    test("include and exclude", async () => {
+    test("honors `include` and `exclude`", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({
           ...JSON.parse(tsconfig),
@@ -2541,7 +2542,7 @@ export const a: number[] = [file, one, two];
       );
     });
 
-    test("a directory that is named has the files that the project does not exclude", async () => {
+    test("a directory argument skips what `exclude` and `outDir` exclude, a file argument doesn't", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({
           compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, outDir: "src/written" },
@@ -2572,8 +2573,8 @@ export const a: number[] = [file, one, two];
       expect(written.stdout).toBe(error("src/a.ts"));
     });
 
-    // Opening such a pipe waits until somebody opens it for writing. The file is opened to look for a "check" script.
-    test.skipIf(isWindows)("package.json can be a link to a named pipe that nobody writes to", async () => {
+    // Opening such a pipe blocks until a writer opens it. package.json is opened to look for a "check" script.
+    test.skipIf(isWindows)("doesn't hang when package.json is a symlink to a named pipe with no writer", async () => {
       using dir = project({ "a.ts": `export {};\n` });
       expect(Bun.spawnSync(["mkfifo", join(String(dir), "pipe")]).exitCode).toBe(0);
       symlinkSync("pipe", join(String(dir), "package.json"));
@@ -2581,7 +2582,7 @@ export const a: number[] = [file, one, two];
     });
 
     // Every write to /dev/full fails with ENOSPC, as on a full disk.
-    test.skipIf(!isLinux)("what can't be written to standard output is an error with exit code 2", async () => {
+    test.skipIf(!isLinux)("exits 2 with an error when stdout can't be written", async () => {
       using dir = project({ "a.ts": `export {};\n` });
       await using proc = spawn({
         cmd: ["sh", "-c", 'exec "$0" "$@" > /dev/full', bunExe(), "check", "--listFilesOnly"],
@@ -2595,7 +2596,7 @@ export const a: number[] = [file, one, two];
       expect(exitCode).toBe(2);
     });
 
-    test("--listFiles and --listFilesOnly", async () => {
+    test("--listFiles lists the files after the errors, --listFilesOnly lists them without checking", async () => {
       using dir = project({
         "a.ts": `import "./b";\nexport const a: string = 1;\n`,
         "b.ts": `export {};\n`,
@@ -2615,7 +2616,7 @@ export const a: number[] = [file, one, two];
       expect(only.exitCode).toBe(0);
     });
 
-    test("--traceResolution", async () => {
+    test("--traceResolution prints tsc's resolution trace", async () => {
       using dir = project({
         "a.ts": `import { b } from "./b";\nimport { c } from "pkg";\nexport const a: string = b + c;\n`,
         "b.ts": `export const b = 1;\n`,
@@ -2624,7 +2625,7 @@ export const a: number[] = [file, one, two];
       });
       const { stdout, exitCode } = await check(dir, ["--traceResolution"]);
       const lines = stdout.replaceAll(realpathSync(String(dir)).replaceAll("\\", "/"), "<dir>").split("\n");
-      // What is above the project depends on the machine.
+      // Lookups above the project depend on the machine.
       const inProject = lines.filter(line => !/^(File|Found 'package\.json' at|Directory) '(?!<dir>)/.test(line));
       expect(inProject.map(line => line.replaceAll("<dir>", ""))).toEqual([
         "======== Resolving module './b' from '/a.ts'. ========",
@@ -2655,7 +2656,7 @@ export const a: number[] = [file, one, two];
       expect(exitCode).toBe(1);
     });
 
-    test("--traceResolution: an `import()` is resolved once more for each `import` or `require` in it", async () => {
+    test("--traceResolution: resolves an `import()` once more for each `import` or `require` in its text", async () => {
       // typescript-go finds them by searching the text for those words.
       using dir = project({
         "a.ts": `export const a = [import("./plain"), import("./require-me"), import(/* import */ "./import-import")];\n`,
@@ -2676,7 +2677,7 @@ export const a: number[] = [file, one, two];
       expect(exitCode).toBe(0);
     });
 
-    test("extends, with comments and trailing commas", async () => {
+    test("reads `extends`, comments and trailing commas in tsconfig.json", async () => {
       using dir = project({
         "base.json": `{\n  // the options everybody has\n  "compilerOptions": ${JSON.stringify(JSON.parse(tsconfig).compilerOptions)},\n}`,
         "tsconfig.json": `{ "extends": "./base.json", "compilerOptions": { "noImplicitAny": false, }, }`,
@@ -2688,7 +2689,7 @@ export const a: number[] = [file, one, two];
       );
     });
 
-    test("without a tsconfig.json", async () => {
+    test("checks a file argument without a tsconfig.json", async () => {
       using dir = tempDir("bun-check", { "a.ts": `export const a: string = 1;\n` });
       const { stdout, exitCode } = await check(dir, ["a.ts"]);
       expect(stdout).toMatchInlineSnapshot(
@@ -2697,9 +2698,9 @@ export const a: number[] = [file, one, two];
       expect(exitCode).toBe(1);
     });
 
-    test.skipIf(process.platform === "win32")("a named pipe in the project directory is ignored", async () => {
+    test.skipIf(process.platform === "win32")("ignores a named pipe in the project directory", async () => {
       using dir = project({ "a.ts": `export const a: string = 1;\n` });
-      // Reading a pipe that nobody writes to blocks forever.
+      // Reading a pipe without a writer blocks forever.
       expect(Bun.spawnSync(["mkfifo", join(String(dir), "pipe.ts")]).exitCode).toBe(0);
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(
@@ -2708,11 +2709,11 @@ export const a: number[] = [file, one, two];
       expect(exitCode).toBe(1);
     });
 
-    test("without a tsconfig.json at the root: each file has the options nearest to it, or else the default ones", async () => {
+    test("without a root tsconfig.json, checks each file with the nearest tsconfig.json or the default options", async () => {
       const implicitAny = `export function f(x) {\n  return x;\n}\n`;
       const loose = JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, strict: false } });
       using dir = tempDir("bun-check", {
-        // It has no say in this.
+        // `workspaces` doesn't affect which projects are found.
         "package.json": JSON.stringify({ workspaces: ["packages/*", "!packages/left-out", "tools"] }),
         "packages/loose/tsconfig.json": loose,
         "packages/loose/index.ts": implicitAny,
@@ -2802,7 +2803,7 @@ export const a: number[] = [file, one, two];
         ...extra,
       });
 
-    test("a `this` parameter in the declaration file of a referenced project", async () => {
+    test("keeps a `this` parameter in a referenced project's declaration file", async () => {
       const compilerOptions = JSON.parse(tsconfig).compilerOptions;
       using dir = project({
         "tsconfig.json": JSON.stringify({ compilerOptions, files: ["b.ts"], references: [{ path: "./a" }] }),
@@ -2819,7 +2820,7 @@ export const a: number[] = [file, one, two];
       );
     });
 
-    test("a project sees the declaration files of the projects before it, whether it references them or not", async () => {
+    test("a project sees declaration files emitted by earlier projects, whether it references them or not", async () => {
       const compilerOptions = {
         ...options,
         module: "nodenext",
@@ -2840,16 +2841,17 @@ export const a: number[] = [file, one, two];
       });
       const expected = `b/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.
 c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.`;
-      // Whichever of them are built at the same time.
+      // Regardless of which projects are built at the same time.
       for (const threads of ["1", "8"]) {
         const { stdout } = await check(dir, ["--threads", threads]);
         expect(stdout).toBe(expected);
       }
     });
 
-    // The projects of one check share what they read. `tsc -b` shares it by path alone, so there `late` and `later`
-    // get the old file too, although it has written the new one by then, and the next `tsc -b` finds the new one in all.
-    test("an old declaration file on the disk is what a project before the one that emits it sees, and no other", async () => {
+    // Projects in one check share the files they read. `tsc -b` shares them by path only, so there `late` and `later`
+    // get the stale file too, even though the new one is already written. The next `tsc -b` sees the new one
+    // everywhere.
+    test("only a project built before the emitting one sees a stale declaration file on disk", async () => {
       const compilerOptions = { ...options, outDir: "dist", rootDir: "src" };
       const config = (references: { path: string }[]) =>
         JSON.stringify({ compilerOptions, files: ["src/index.ts"], references });
@@ -2880,7 +2882,7 @@ later/src/index.ts(3,14): error TS2322: Type '"fresh"' is not assignable to type
         const { stdout, exitCode } = await check(dir, ["--threads", threads]);
         expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 1 });
       }
-      // Each directory is a build of its own. What `lib` emits for `late` is not on the disk, where `later` looks.
+      // Each directory is its own build. What `lib` emits for `late` isn't written to disk, where `later` looks.
       const separately = `late/src/index.ts(2,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
 late/src/index.ts(3,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
 later/src/index.ts(2,14): error TS2322: Type '"stale"' is not assignable to type 'never'.
@@ -2951,8 +2953,8 @@ after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to ty
       }
     });
 
-    // The directories share one check of the libraries, except for the one that redeclares `Array`.
-    test("directories checked together report what each reports alone, also in the libraries", async () => {
+    // The directories share one check of the lib files, except the one that redeclares `Array`.
+    test("directories checked together report what each reports on its own, including errors in lib files", async () => {
       const names = ["a", "b", "c", "clash", "d"];
       const files: Record<string, string> = { "clash/globals.ts": `declare const Array: number;\n` };
       for (const name of names) {
@@ -2971,7 +2973,7 @@ after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to ty
       }
     });
 
-    // Threads of the finished small projects join the large one.
+    // Threads that finish the small projects join the large one.
     test("a large project next to small ones reports the same errors with any number of threads", async () => {
       const small = ["a", "b", "c", "d", "e"];
       const numbers = Array.from({ length: 150 }, (_, i) => String(i).padStart(3, "0"));
@@ -3084,7 +3086,7 @@ after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to ty
       mkdirSync(join(modules, "@scope"), { recursive: true });
       symlinkSync(join(String(dir), "packages/lib"), join(modules, "lib"), "junction");
       symlinkSync(join(String(dir), "packages/scoped"), join(modules, "@scope/pkg"), "junction");
-      // A file has the same errors when it is named, which is what `--check` does.
+      // A file reports the same errors when it's passed as an argument, which is what `--check` does.
       const [{ stdout }, file, directory] = await Promise.all([
         check(dir),
         check(dir, ["packages/app/src/index.ts"]),
@@ -3097,8 +3099,8 @@ after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to ty
       expect([file.stdout, directory.stdout]).toEqual([stdout, stdout]);
     });
 
-    // What `create vite` writes: the nearest tsconfig.json has no files and no options of its own.
-    test("path arguments: under a solution, a file is checked in the project that has it", async () => {
+    // The layout `create vite` generates. The nearest tsconfig.json has no files or options of its own.
+    test("path arguments: under a solution tsconfig.json, checks a file in the project that includes it", async () => {
       using dir = project({
         "console.d.ts": "",
         "tsconfig.json": JSON.stringify({
@@ -3119,15 +3121,15 @@ after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to ty
         "src/App.tsx": `export const App: number = 1;\n`,
         "src/main.tsx": `import { App } from "./App.tsx";\nexport const element = <div />;\nexport const a: string = App;\n`,
         "vite.config.ts": `export const port: number = "1";\n`,
-        // No project has it.
+        // Not in any project.
         "scripts/s.ts": `export const s: number = "1";\n`,
-        // Its only file is JavaScript, which the solution itself does not allow.
+        // Its only file is JavaScript, which the solution's own options don't allow.
         "tsconfig.worker.json": JSON.stringify({
           compilerOptions: { ...options, allowJs: true, checkJs: true, emitDeclarationOnly: true },
           files: ["worker.js"],
         }),
         "worker.js": `/** @type {number} */\nexport const w = "1";\n`,
-        // A project of its own, which the solution does not reference: `bun check` leaves it alone.
+        // A separate project that the solution doesn't reference, so a plain `bun check` skips it.
         "examples/x/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, composite: false } }),
         "examples/x/e.ts": `export const e: number = "1";\n`,
       });
@@ -3161,14 +3163,14 @@ after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to ty
         other("examples/x/e.ts"),
         main,
       ]);
-      // As much work, too. Nothing is to be said about a directory that was named.
+      // The same summary too, minus the note, which isn't printed for an explicit directory.
       expect(results[1].stderr).toBe(results[0].stderr.replace(/^note: tsconfig.json has no files .*\n/, ""));
       expect(results[9].stderr).toBe(results[3].stderr);
       expect(results[10].stderr).toContain("TS2322");
       expect(results[10].stderr).not.toMatch(/TS17004|TS5097|TS6142/);
     });
 
-    test("path arguments: each is checked with the compiler options of its own project", async () => {
+    test("path arguments: checks each file with its own project's compiler options", async () => {
       using dir = project({
         "console.d.ts": "",
         "strict/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, composite: false, strict: true } }),
@@ -3216,7 +3218,7 @@ after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to ty
       expect(exitCode).toBe(1);
     });
 
-    test("a referenced project is seen through its declaration files", async () => {
+    test("sees a referenced project through its declaration files", async () => {
       using dir = monorepo({
         "packages/lib/tsconfig.json": JSON.stringify({
           compilerOptions: { ...options, stripInternal: true },
@@ -3249,7 +3251,6 @@ export const n: string = new Box().grow();
         "packages/app/src/index.ts(4,11): error TS2339: Property 'open' does not exist on type 'Box'.
         packages/app/src/index.ts(5,14): error TS2322: Type 'number' is not assignable to type 'string'."
       `);
-      // Nothing is written.
       expect(existsSync(join(String(dir), "packages/lib/src/index.d.ts"))).toBe(false);
     });
 
@@ -3297,7 +3298,7 @@ export const n: string = new Box().grow();
           compilerOptions: { ...options, rootDir: ".", outDir: "build" },
           include: ["src"],
         }),
-        // Not emitted: from build/src/index.d.ts, "../types/id" is not there.
+        // Not emitted, so "../types/id" doesn't exist relative to build/src/index.d.ts.
         "packages/lib/types/id.d.ts": `export type Id = string;\n`,
         "packages/lib/src/index.ts": `import type { Id } from "../types/id";\nexport declare const id: Id;\n`,
         "packages/app/src/index.ts": `import { id } from "../../lib/src/index";\nexport const n: number = id;\n`,
@@ -3334,7 +3335,7 @@ export const c: 1 = handler;
       `);
     });
 
-    test("a type of a referenced package whose exports point at its sources can be named", async () => {
+    test("can name a type from a referenced package whose `exports` point at its sources", async () => {
       using dir = monorepo({
         "packages/lib/package.json": JSON.stringify({ name: "lib", exports: { "./*": "./src/*.ts" } }),
         "packages/lib/tsconfig.json": JSON.stringify({
@@ -3343,7 +3344,7 @@ export const c: 1 = handler;
         }),
         "packages/lib/src/Types.ts": `export interface Box<T> {\n  value: T;\n}\n`,
         "packages/lib/src/Make.ts": `import type { Box } from "./Types";\nexport declare function make<T>(value: T): Box<T>;\n`,
-        // The declaration file says `import("lib/Types").Box<number>`, which index.ts does not import.
+        // The declaration file contains `import("lib/Types").Box<number>`, which index.ts doesn't import.
         "packages/app/src/index.ts": `import { make } from "lib/Make";\nexport const made = make(1);\nexport const wrong: string = made.value;\n`,
       });
       mkdirSync(join(String(dir), "packages/app/node_modules"), { recursive: true });
@@ -3354,7 +3355,7 @@ export const c: 1 = handler;
       );
     });
 
-    test("a generated declaration file names a dependency by its package name in a project with paths", async () => {
+    test("a generated declaration file refers to a dependency by its package name in a project with `paths`", async () => {
       using dir = monorepo({
         "packages/lib/tsconfig.json": JSON.stringify({
           compilerOptions: { ...options, rootDir: "src", outDir: "dist", paths: { "@/*": ["./src/client/*"] } },
@@ -3482,7 +3483,7 @@ const kind: number = Shape.kind;
       });
 
       test("has no declaration files under noEmit", async () => {
-        // A `helpers.d.ts` next to `helpers.js` would be resolved in its place by the second project.
+        // The second project would resolve a `helpers.d.ts` next to `helpers.js` instead of `helpers.js`.
         const compilerOptions = {
           ...options,
           module: "nodenext",
@@ -3514,13 +3515,13 @@ const kind: number = Shape.kind;
         ).toEqual(["one/index.js(1,26): error TS6307: File '", "two/index.js(1,26): error TS6307: File '"]);
       });
 
-      test("is imported without allowJs where an untyped import is no error", async () => {
+      test("can be imported without allowJs when noImplicitAny is off", async () => {
         using dir = monorepo({ ...library, "packages/app/tsconfig.json": app({ noImplicitAny: false }) });
         const { stdout } = await check(dir);
         expect(stdout.split("\n").filter(line => line.includes("error TS")).length).toBe(9);
       });
 
-      test("cannot be imported by a project that does not allow JavaScript", async () => {
+      test("reports TS7016 when imported by a project without allowJs", async () => {
         using dir = monorepo({ ...library, "packages/app/tsconfig.json": app({}) });
         const { stdout } = await check(dir);
         expect(stdout.split("\n").map(line => line.slice(0, line.indexOf(":", line.indexOf("TS"))))).toEqual([
@@ -3581,7 +3582,7 @@ const kind: number = Shape.kind;
   });
 
   describe("modules", () => {
-    test("typed, untyped and missing packages", async () => {
+    test("resolves a typed package, reports TS7016 for an untyped one and TS2307 for a missing one", async () => {
       using dir = project({
         "node_modules/typed/package.json": `{ "name": "typed", "types": "./types.d.ts", "main": "./index.js" }`,
         "node_modules/typed/types.d.ts": `export declare function typed(): number;\n`,
@@ -3598,7 +3599,7 @@ const kind: number = Shape.kind;
       `);
     });
 
-    test("an untyped module of a workspace package that has declaration files", async () => {
+    test("reports TS7016 for an untyped module of a workspace package that has declaration files", async () => {
       using dir = project({
         "packages/pkg/package.json": JSON.stringify({
           name: "@scope/pkg",
@@ -3619,7 +3620,7 @@ const kind: number = Shape.kind;
       `);
     });
 
-    test("paths, exports conditions and JSON", async () => {
+    test("resolves `paths`, `exports` conditions and JSON modules", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({
           compilerOptions: {
@@ -3662,7 +3663,7 @@ const kind: number = Shape.kind;
   });
 
   describe("language features", () => {
-    test("@ts-expect-error, @ts-ignore and @ts-nocheck", async () => {
+    test("honors @ts-expect-error, @ts-ignore and @ts-nocheck", async () => {
       using dir = project({
         "a.ts": `// @ts-expect-error\nexport const a: string = 1;\n// @ts-ignore\nexport const b: string = 2;\n// @ts-expect-error\nexport const c: string = "fine";\n`,
         "b.ts": `// @ts-nocheck\nexport const d: string = 3;\n`,
@@ -3671,7 +3672,7 @@ const kind: number = Shape.kind;
       expect(stdout).toMatchInlineSnapshot(`"a.ts(5,1): error TS2578: Unused '@ts-expect-error' directive."`);
     });
 
-    test("syntax errors", async () => {
+    test("reports syntax errors", async () => {
       using dir = project({ "a.ts": `export const a = (;\nexport const b: string = 1;\n` });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`"a.ts(1,19): error TS1109: Expression expected."`);
@@ -3693,7 +3694,7 @@ const kind: number = Shape.kind;
       `);
     });
 
-    test("JSX", async () => {
+    test("checks JSX attributes and intrinsic elements", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({
           compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "preserve" },
@@ -3710,7 +3711,7 @@ const kind: number = Shape.kind;
       `);
     });
 
-    test("CRLF line endings, tabs and multi-byte characters", async () => {
+    test("counts columns correctly with CRLF line endings, tabs and multi-byte characters", async () => {
       using dir = project({
         "a.ts": `const é = "é";\r\n\tconst 名前: number = é;\r\nconst s = "😀😀"; const n: number = s;\r\nexport { 名前, n };\r\n`,
       });
@@ -3735,7 +3736,7 @@ const kind: number = Shape.kind;
       `);
     });
 
-    test("generics, overloads, narrowing and conditional types", async () => {
+    test("checks generics, overloads, narrowing and conditional types", async () => {
       using dir = project({
         "a.ts": `
 function pick<T, K extends keyof T>(o: T, k: K): T[K] { return o[k]; }
@@ -3774,10 +3775,10 @@ export { n, area, u };
   });
 
   describe("cases not covered by TypeScript's test suite", () => {
-    // `sortByBestName` orders two modules by their specifiers, and a module and a namespace by their places. With modules
-    // on both sides of the namespace that goes in a circle.
+    // `sortByBestName` orders two modules by their specifiers, and a module and a namespace by their positions. With
+    // modules on both sides of the namespace, that ordering is cyclic.
     test.each([9, 11, 40])(
-      "a type of a namespace that 10 modules before it and %i after it export again",
+      "doesn't crash naming a namespace's type re-exported by 10 modules before it and %i after it",
       async after => {
         const two = (i: number) => String(i).padStart(2, "0");
         const before = Array.from({ length: 9 }, (_, i) => `features/shared/f${two(i)}`);
@@ -3798,7 +3799,7 @@ export { n, area, u };
             "declare namespace Legacy { interface Options { verbose: boolean } }\ndeclare function defaults(): Legacy.Options;\n",
           "features/shared/shim.ts": "export import Options = Legacy.Options;\n",
           ...Object.fromEntries(before.map(name => [`${name}.ts`, 'export * from "./shim";\n'])),
-          // It sorts before legacy.d.ts, so what it imports is loaded before that.
+          // Sorts before legacy.d.ts, so its imports are loaded first.
           "app.ts": `${before.map(name => `import "./${name}";\n`).join("")}export {};\n`,
           ...Object.fromEntries(
             Array.from({ length: after }, (_, i) => [`page${two(i)}.ts`, 'export * from "./features/shared/shim";\n']),
@@ -3811,8 +3812,8 @@ export { n, area, u };
       },
     );
 
-    // The first after the sort is the module that names the type. Here no module can, so the error quotes it. Where the
-    // comparison goes in a circle, which one is first depends on how the list is sorted. The names are those of tsc 7.0.2.
+    // The first module after the sort is the one used to name the type. Here no module can be used, so the error quotes
+    // it. Where the ordering is cyclic, which one comes first depends on the sort algorithm. The names are tsc 7.0.2's.
     test.each([
       [5, 5, "lib/shared/shim"],
       [10, 11, "page08"],
@@ -3821,7 +3822,7 @@ export { n, area, u };
       [20, 30, "page00"],
       [40, 45, "page00"],
     ])(
-      "the module that names a type of a namespace that %i modules before it and %i after it export again",
+      "TS2883 quotes tsc's module for a namespace's type re-exported by %i modules before it and %i after it",
       async (before, after, named) => {
         const names = (count: number, start: string) =>
           Array.from({ length: count }, (_, i) => start + String(i).padStart(2, "0"));
@@ -3865,7 +3866,7 @@ export { n, area, u };
       },
     );
 
-    test("a type with optional properties and nothing else takes no type that shares none of them", async () => {
+    test("reports TS2559 when a source shares no property with an all-optional (weak) type", async () => {
       using dir = project({
         "a.ts": `
 type None = {};
@@ -3966,7 +3967,7 @@ export {};
       `);
     });
 
-    test("two literal types of one kind, of two kinds, of enums, and template literal types", async () => {
+    test("reports TS2322, TS2367 and TS2678 for unrelated literal, enum and template literal types", async () => {
       using dir = project({
         "a.ts": `
 enum E { A = 1, B = 2 }
@@ -4130,7 +4131,7 @@ export {};
       `);
     });
 
-    test("what depends on the kinds of types in a union or an intersection", async () => {
+    test("checks assignments, operators and exhaustiveness on unions and intersections of mixed kinds", async () => {
       using dir = project({
         "a.ts": `
 enum E { A = 1, B = 2 }
@@ -4251,7 +4252,7 @@ export {};
       `);
     });
 
-    test("an intersection with the empty object type, with and without a type variable", async () => {
+    test("normalizes an intersection with `{}`, with and without a type variable", async () => {
       using dir = project({
         "a.ts": `
 function normalize<T, K extends keyof T>(a: Partial<T>[K] & {}, b: T[K] & {}, c: T & {}, d: T & null, e: { x: 1 } & {}, f: ({ x: 1 } | { y: 2 }) & { z: 3 }, g: { x: 1 } & { y?: 2 }) {
@@ -4288,8 +4289,8 @@ export {};
       `);
     });
 
-    // The comparisons in progress are searched as a list while there are up to 32 of them.
-    test.each([3, 31, 32, 33, 34, 70])("two rings of %i interfaces that refer to each other", async count => {
+    // In-progress comparisons are kept in a list that's searched linearly up to 32 entries.
+    test.each([3, 31, 32, 33, 34, 70])("compares two rings of %i mutually referencing interfaces", async count => {
       const ring = (last: string) =>
         Array.from({ length: count }, (_, i) => {
           const rest = (of: string) => `next: ${of}${(i + 1) % count}; skip: ${of}${(i * 2 + 2) % count}; }`;
@@ -4316,8 +4317,8 @@ export {};
       ]);
     });
 
-    // What is found out about a type without resolving anything is kept with the type, for every file that comes to it.
-    test("types without type variables, and unions with and without generic members, in several files", async () => {
+    // Facts about a type that need no resolution are cached on the type and shared by every file that uses it.
+    test("reports the same errors in every file that uses shared non-generic types and unions with generic members", async () => {
       const pairs = Array.from({ length: 30 }, (_, i) => `export type P${i + 1} = Pair<P${i}, P${i}>;\n`).join("");
       const use = (i: number) => `
 import type { Closed, Homomorphic, Keys, P30, Plain, WithMapped, WithPattern, WithTemplate, WithTuple } from "./types";
@@ -4393,7 +4394,7 @@ export declare function both<T>(pair: Pair<T, P30>, closed: P30): T;
       expect(stdout).toBe(files.map(errors).join("").trim());
     });
 
-    test("type references whose type arguments are type parameters, at any depth", async () => {
+    test("reports TS2322 between type references whose type arguments are unrelated type parameters, at any depth", async () => {
       using dir = project({
         "a.ts": `
 interface Box<T> { value: T; map<U>(f: (value: T) => U): Box<U> }
@@ -4471,7 +4472,7 @@ export {};
       `);
     });
 
-    test("members that mention `this`, at the top or nested, and members that do not, own and inherited", async () => {
+    test("instantiates `this` in own and inherited members, whether it's at the top level, nested or absent", async () => {
       using dir = project({
         "a.ts": `
 class Base {
@@ -4558,7 +4559,7 @@ export {};
       `);
     });
 
-    test("whether a literal keeps its type under a contextual type, by the kinds of types in that", async () => {
+    test("keeps or widens a literal's type depending on the kinds of types in its contextual type", async () => {
       using dir = project({
         "a.ts": `
 enum E { A = "a", N = 1 }
@@ -4671,7 +4672,7 @@ export {};
       `);
     });
 
-    test("fresh and regular literal types, and what depends on a kind of type among the members of a union", async () => {
+    test("widens fresh literal types, and checks operations that depend on the kinds of a union's members", async () => {
       using dir = project({
         "a.ts": `
 enum E { A = "a", N = 1 }
@@ -4801,7 +4802,7 @@ export {};
       `);
     });
 
-    test("a property of each kind of type", async () => {
+    test("resolves a property access on every kind of type, and reports TS2339 where it's missing", async () => {
       using dir = project({
         "types.ts": `export interface OnlyType { a: 1 }
 export class Both { b = 1; }
@@ -4940,7 +4941,7 @@ export {};
       `);
     });
 
-    test("what is kept for a type: simplified, reduced, widened and apparent types", async () => {
+    test("simplifies, reduces and widens types and finds apparent types like tsc", async () => {
       using dir = project({
         "a.ts": `
 function indexed<T extends { a: 1; b: 2 }, K extends keyof T, U extends { a: string }>(
@@ -5061,8 +5062,8 @@ export {};
       `);
     });
 
-    // What is kept for the nodes of a file that nothing imports is dropped for several such files together.
-    test.each(["", "--threads=1"])("many files that nothing imports %s", async threads => {
+    // Per-node caches of files that nothing imports are freed in batches of several files.
+    test.each(["", "--threads=1"])("reports every error in 60 files that nothing imports %s", async threads => {
       const leaf = (i: number) => `import { call, type Shape } from "./shared";
 ${Array.from({ length: 40 }, (_, n) => `call({ a: ${n}, b: "${i}" }, y => y.a + y.b.length);`).join("\n")}
 const circle: Shape = { kind: "circle", on: r => r.toFixed() };
@@ -5089,10 +5090,11 @@ export type Shape = { kind: "circle"; on: (r: number) => string } | { kind: "squ
       );
     });
 
-    // What is kept for the nodes of a file that is not being checked is in pages of 64 nodes, and 64 pages have a list, by
-    // the number of a node among those of all files. So no page begins where a file does. Once the file is being checked, it
-    // is in a row of the file's own. Every declaration here is asked for, and a wrong neighbour would be a wrong type.
-    test("the declarations of another file, and of the files of a ring, one by one", async () => {
+    // Per-node caches for a file that isn't being checked live in pages of 64 nodes, with a list per 64 pages, indexed
+    // by the node's number across all files. So pages don't start at file boundaries. Once the file is being checked,
+    // its caches live in the file's own row. This test requests every declaration, and reading a neighbor's slot would
+    // give the wrong type.
+    test("resolves each of thousands of declarations in another file and in a ring of files to its own type", async () => {
       const lines = (from: number, to: number, line: (i: number) => string) =>
         Array.from({ length: to - from }, (_, i) => `${line(from + i)}\n`).join("");
       const shared = lines(
@@ -5105,14 +5107,15 @@ export type Shape = { kind: "circle"; on: (r: number) => string } | { kind: "squ
             `export interface C${i} { p: ${i} }`,
           ][i % 3],
       );
-      // `wrong`: those that are said to be one more than they are.
+      // `wrong`: the indexes annotated with a type that's one too high.
       const user = (from: number, to: number, wrong: number[]) =>
         `import * as s from "./shared";\n` +
         lines(from, to, i => {
           const value = [`s.c${i}`, `s.c${i}()`, `(null! as s.C${i}).p`][i % 3];
           return `const u${i}: ${wrong.includes(i) ? i + 1 : i} = ${value};`;
         });
-      // Each file takes its constants from the next, the last has them, and its functions go on to the first.
+      // Each file gets its constants from the next one. The last one defines them, and its functions read from the
+      // first.
       const ring = (k: number) =>
         `import * as next from "./ring${(k + 1) % 4}";\n` +
         lines(0, 150, i =>
@@ -5144,7 +5147,7 @@ export type Shape = { kind: "circle"; on: (r: number) => string } | { kind: "squ
       for (const { stdout } of await Promise.all(runs)) expect(stdout.split("\n")).toEqual(expected);
     });
 
-    test("a variable referenced in a callback inside its own initializer", async () => {
+    test("reports TS7022 for a variable referenced in a callback inside its own initializer", async () => {
       using dir = project({
         "a.ts": `
 interface Server<W> { port: number | undefined; data: W }
@@ -5168,7 +5171,7 @@ export {};
       `);
     });
 
-    test("a comparison in a function whose return type is first asked for in a loop of another function", async () => {
+    test("reports comparison errors in a function whose return type is first requested from another function's loop", async () => {
       using dir = project({
         "a.ts": `declare const r: {};
 export function many() { let re; while (re !== r) { re = rule(); } }
@@ -5184,7 +5187,7 @@ function rule() { const O: void = undefined; return O === r || {} === r || O ===
       ]);
     });
 
-    test("two versions of a package that declare the same module", async () => {
+    test("doesn't merge classes from two declaration files that declare the same module", async () => {
       using dir = project({
         "one.d.ts": `declare module "thing" {\n  class Thing {\n    constructor(size: number);\n    one: string;\n  }\n}\n`,
         "two.d.ts": `declare module "thing" {\n  class Thing {\n    constructor(size: number);\n    two: string;\n  }\n}\n`,
@@ -5232,7 +5235,7 @@ export {};
       `);
     });
 
-    test("an intersection with a type parameter is reduced by the constraint of the parameter", async () => {
+    test("reduces an intersection with a type parameter using the parameter's constraint", async () => {
       using dir = project({
         "a.ts": `
 type R<D extends { ok: 1 }> = D;
@@ -5282,7 +5285,7 @@ export {};
       );
     });
 
-    test("constraint of a distributive conditional type over an inferred type parameter", async () => {
+    test("computes the constraint of a distributive conditional type over an inferred type parameter", async () => {
       using dir = project({
         "a.ts": `
 type Fn = (...args: any[]) => unknown;
@@ -5313,7 +5316,7 @@ export {};
       `);
     });
 
-    test("constraint of a recursive conditional type", async () => {
+    test("computes the constraint of a recursive conditional type", async () => {
       using dir = project({
         "a.ts": `
 type Type = { values: string };
@@ -5359,7 +5362,7 @@ export {};
       `);
     });
 
-    test("members of a mapped type requested while they are being resolved", async () => {
+    test("accepts a mapped type whose members are requested while they're being resolved", async () => {
       using dir = project({
         "a.ts": `
 type Property<T> = T extends Doc ? T : Converted<T>;
@@ -5382,7 +5385,7 @@ export {};
       expect(stdout).toBe("");
     });
 
-    test("the return type of a union call signature is resolved lazily", async () => {
+    test("resolves the return type of a union call signature lazily", async () => {
       using dir = project({
         "a.ts": `
 class Query<Row> {
@@ -5432,8 +5435,8 @@ export const c: 1 = { icon: "gear" } satisfies { icon?: "gear" | (string & NonNu
       `);
     });
 
-    // As in TypeScript 7.1. In 7.0 the one that is created first comes first.
-    test("instantiations of one mapped type are ordered by their type arguments in a union", async () => {
+    // Matches TypeScript 7.1. In 7.0 the instantiation created first comes first.
+    test("orders instantiations of one mapped type by their type arguments in a union", async () => {
       using dir = project({
         "a.ts": `
 type Flat<T> = { [K in keyof T]: T[K] } & {};
@@ -5449,8 +5452,8 @@ export const x: 1 = null! as typeof first | typeof second;
       );
     });
 
-    // As in TypeScript 7.1. In 7.0 the union has the alias of the one that is created first.
-    test("a mapped type over a union with a primitive, and the union of its results", async () => {
+    // Matches TypeScript 7.1. In 7.0 the union gets the alias of whichever is created first.
+    test("prints `Partial<A | string>` and `Partial<A> | string` the same way in either order", async () => {
       using dir = project({
         "a.ts": `
 interface A { a: 1 } interface B { b: 2 }
@@ -5512,7 +5515,7 @@ export const x: never = infer(source).p;
       `);
     });
 
-    test("a parameter annotation that depends on the parameter types of its own function", async () => {
+    test("reports TS2502 for a parameter annotation that depends on its own function's type", async () => {
       using dir = project({
         "a.ts": `
 function f(a: ReturnType<typeof f>) {
@@ -5546,7 +5549,7 @@ export function g<N extends never>(part: { type: "a"; id: string } | { type: "b"
       expect(stdout).toBe("");
     });
 
-    test("a type assertion to an intersection with a deferred conditional type", async () => {
+    test("accepts a type assertion to an intersection with a deferred conditional type", async () => {
       using dir = project({
         "a.ts": `
 type Output<O> = [O] extends [never] ? { a?: undefined } : { a: O };
@@ -5644,7 +5647,7 @@ export {};
       expect(stdout).toBe("");
     });
 
-    test("keeps it too when a variance measurement is the first to check the initializer", async () => {
+    test("keeps a re-entrant comparison's first result when a variance measurement checks the initializer first", async () => {
       using dir = project({
         "a.ts": `
 declare let text: Box<string>, anything: Box<unknown>;
@@ -6061,7 +6064,7 @@ export {};
       expect(exitCode).toBe(0);
     });
 
-    test("an intersection with a conditional type whose constraint is any", async () => {
+    test("accepts an intersection with a conditional type whose constraint is any", async () => {
       using dir = project({
         "a.ts": `
 type Values = Record<string, any>;
@@ -6088,8 +6091,8 @@ export class Chain<M extends Model | Runnable<string, string>> extends Base {
       expect(stdout).toBe("");
     });
 
-    test("an inference from a string literal to keyof T that does not satisfy the constraint of T", async () => {
-      // The object made up for the literal has no implicit index signature, so T is its constraint.
+    test("falls back to T's constraint when a keyof T inference from a string literal doesn't satisfy it", async () => {
+      // The object type synthesized for the literal has no implicit index signature, so T falls back to its constraint.
       using dir = project({
         "a.ts": `
 type ToolSet = Record<string, { input: any }>;
@@ -6107,7 +6110,7 @@ export const wrong: number = has("weather");
       );
     });
 
-    test("the members of a spread union of named unions are in the order of the named unions", async () => {
+    test("prints a spread union of named unions with its members in the named unions' order", async () => {
       using dir = project({
         "a.ts": `
 type Out = { execute: () => void } | { execute?: never };
@@ -6128,7 +6131,7 @@ export const wrong: number = { ...tool, kind: 1 };
     test.each([
       ["in a module", {}, "export {};"],
       ['under `"moduleDetection": "force"`', { moduleDetection: "force" }, ""],
-    ])("a top-level arrow function whose first parameter is named `await`, %s", async (_, options, lastLine) => {
+    ])("accepts `await` as a top-level arrow function's first parameter name, %s", async (_, options, lastLine) => {
       using dir = project({
         "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, ...options } }),
         "a.ts": `declare function g(x: unknown): void;
@@ -6147,7 +6150,7 @@ ${lastLine}
       expect(exitCode).toBe(1);
     });
 
-    test("an initializer after `[name]`, `get` or `set` in an interface or a type literal is no syntax error", async () => {
+    test("an initializer after `[name]`, `get` or `set` in an interface or type literal doesn't stop the type check", async () => {
       using dir = project({
         "a.ts": `declare const e: unique symbol;
 export interface I { [e] = 1 }
@@ -6166,11 +6169,11 @@ export const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
-    test("a type that is nested too deeply to be printed whole loses no error", async () => {
-      // An optimised build prints about 700 levels, and the check itself runs out of stack at about 3,000. The frames of
-      // another build are larger, by how much depends on the system: there the type may be printed whole.
-      const isOptimised = !isDebug && !isASAN;
-      const depth = isOptimised ? 1500 : 100;
+    test("still reports the error when a type is nested too deeply to print in full", async () => {
+      // An optimized build prints about 700 levels, and the check itself runs out of stack at about 3,000. Other builds
+      // have larger frames, by a platform-dependent amount, so they use a depth at which the whole type may be printed.
+      const isOptimized = !isDebug && !isASAN;
+      const depth = isOptimized ? 1500 : 100;
       using dir = project({
         "a.ts": `declare const x: ${repeat("{ a: ", depth)}1${repeat(" }", depth)};
 export const wrong: number = x;
@@ -6179,7 +6182,7 @@ export const wrong: number = x;
       const { stdout, stderr, exitCode } = await check(dir, ["--noErrorTruncation"]);
       const levels = stdout.split("{ a: ").length - 1;
       expect(levels).toBeGreaterThanOrEqual(50);
-      if (isOptimised) expect(levels).toBeLessThan(depth);
+      if (isOptimized) expect(levels).toBeLessThan(depth);
       const innermost = levels < depth ? "any" : "1";
       expect(stdout).toBe(
         `a.ts(2,14): error TS2322: Type '${repeat("{ a: ", levels)}${innermost}${repeat("; }", levels)}' is not assignable to type 'number'.`,
@@ -6197,7 +6200,7 @@ export const wrong: number = x;
         "Type 'string' is not assignable to type 'number'.",
       ],
       [
-        "1,200 conditional expressions, each in the last branch of the one before",
+        "1,200 conditional expressions nested in each other's last branch",
         `declare const c: boolean;\nexport const x: string = ${repeat("c ? 1 : ", 1_200)}2;`,
         "Type 'number' is not assignable to type 'string'.",
       ],
@@ -6207,11 +6210,11 @@ export const wrong: number = x;
         "Type 'number | boolean' is not assignable to type 'string'.",
       ],
       [
-        "`!` 1,200 times",
+        "`!` repeated 1,200 times",
         `declare const c: boolean;\nexport const x: string = ${repeat("!", 1_200)}c;`,
         "Type 'boolean' is not assignable to type 'string'.",
       ],
-    ])("%s", async (_, source, message) => {
+    ])("checks %s without running out of stack", async (_, source, message) => {
       using dir = project({ "a.ts": `${source}\n` });
       const { stdout, stderr, exitCode } = await check(dir);
       expect(stdout.split("\n")[0]).toBe(`a.ts(2,14): error TS2322: ${message}`);
@@ -6219,8 +6222,9 @@ export const wrong: number = x;
       expect(exitCode).toBe(1);
     });
 
-    // The stack ends somewhere in this range. Where depends on the platform, so this tries every depth: none may crash.
-    test.skipIf(isDebug || isASAN)("`!` from 1,000 to 8,000 times", async () => {
+    // The stack runs out somewhere in this range. Where depends on the platform, so this tries many, and none may
+    // crash.
+    test.skipIf(isDebug || isASAN)("doesn't crash on `!` repeated 1,000 to 8,000 times", async () => {
       const files: Record<string, string> = {};
       for (let depth = 1_000; depth < 8_000; depth = Math.ceil(depth * 1.05)) {
         files[`not-${depth}.ts`] = `export const x: string = ${repeat("!", depth)}1;\n`;
@@ -6231,8 +6235,8 @@ export const wrong: number = x;
       expect(exitCode).toBe(1);
     });
 
-    // TypeScript's parser tries each as a part of the one before, one level of the stack for each, and throws away what it
-    // has read so. The reader of comments does not read it: 2,000,000 of them take no stack, and a second.
+    // TypeScript's parser tries each tag as a child of the previous one, one stack frame per tag, and then discards the
+    // attempt. Our JSDoc parser doesn't, so 2,000,000 tags use no extra stack and take a second.
     test.each([
       "@overload",
       "@callback",
@@ -6240,7 +6244,7 @@ export const wrong: number = x;
       "@param {object[]} a",
       "@template T @param {Object} a",
       "@callback @param {Object} a",
-    ])("a JSDoc comment of 20,000 times %j", async tags => {
+    ])("parses a JSDoc comment with %j repeated 20,000 times", async tags => {
       using dir = project({
         "a.ts": `/** {@link f} ${repeat(`${tags} `, 20_000)}*/
 export function f() {}
@@ -6257,7 +6261,7 @@ const wrong: number = "";
     });
 
     // The parser reads a run of `[]` in a loop, so nothing bounds the depth of the type.
-    test("an array of arrays, 100,000 deep", async () => {
+    test("reports running out of stack, and the file's other error, for an array type nested 100,000 deep", async () => {
       using dir = project({
         "a.ts": `export type T = number${repeat("[]", 100_000)};\nexport const wrong: number = "";\n`,
       });
@@ -6269,10 +6273,11 @@ const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
-    // Up to some depth the type is computed, beyond another the parser refuses the file. Between the two the check runs out
-    // of stack, and took hours to say so. Where that is depends on the platform and the build: so every depth.
+    // Up to some depth the type is computed, and beyond a larger one the parser rejects the file. In between, the check
+    // runs out of stack, and it used to take hours to report that. Where those depths are depends on the platform and
+    // the build, so this tries many.
     test.skipIf(isDebug || isASAN).each([5_000, 6_000, 6_500, 7_000, 7_250, 7_500, 7_750, 8_000])(
-      "type arguments %d deep",
+      "finishes within 10 s on type arguments nested %d deep",
       async depth => {
         using dir = project({
           "a.ts": `export type T = ${repeat("Array<", depth)}number${repeat(">", depth)};\nexport const wrong: number = "";\n`,
@@ -6293,16 +6298,16 @@ const wrong: number = "";
           },
         ]).toContainEqual({ stdout, stderr: stderr.split("\n")[0], exitCode });
       },
-      // Longer than the child may take, which does not outlive the test then.
+      // Longer than the child's own timeout, so the child never outlives the test.
       20_000,
     );
 
-    // What matches a path with a pattern of `include` called itself for each `**`, and tried every number of directories for
-    // each of them in turn: the stack, and time that grows like a power of their number.
+    // The `include` pattern matcher used to recurse for each `**` and try every number of directories for each one.
+    // That overflowed the stack, and the time grew exponentially with the number of `**`.
     test.each([
       ["200,000 in a row", [`${repeat("**/", 200_000)}*.ts`], "a.ts"],
       ["16 that match nothing, 34 directories", [`${repeat("**/a/", 16)}b.ts`, "**/*.ts"], `${repeat("a/", 34)}a.ts`],
-    ])("`**` in `include`: %s", async (_, include, file) => {
+    ])("handles many `**` in an `include` pattern: %s", async (_, include, file) => {
       using dir = project({
         "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include }),
         [file]: `export const wrong: number = "";\n`,
@@ -6312,8 +6317,9 @@ const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
-    // Whether a function is sensitive to its context was asked of each from every one around it, each time down to the last:
-    // the cube of their number: 25 s, and with a literal or a condition between them a minute and a half for fewer.
+    // Every enclosing function used to recompute whether each function inside it is context-sensitive, all the way
+    // down, which is cubic in the nesting depth. That took 25 s, and a minute and a half at a smaller depth with a
+    // literal or a conditional in between.
     test.skipIf(isDebug || isASAN).each([
       ["arrows", "(a: number) => ", "", 2_000],
       ["functions", "function (a: number) { return ", " }", 2_000],
@@ -6322,7 +6328,7 @@ const wrong: number = "";
       ["methods of object literals", "{ m(a: number) { return ", " } }", 1_400],
       ["arrows in conditions", "c ? 0 : (a: number) => ", "", 1_400],
     ])(
-      "%s in each other",
+      "finishes within 10 s on deeply nested %s",
       async (_, open, close, depth) => {
         using dir = project({
           "a.ts": `declare const c: boolean;\nexport const g = ${repeat(open, depth)}0${repeat(close, depth)};\nexport const wrong: number = "";\n`,
@@ -6331,12 +6337,12 @@ const wrong: number = "";
         expect(stdout).toContain(`a.ts(3,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
         expect(exitCode).toBe(1);
       },
-      // Longer than the child may take, which does not outlive the test then.
+      // Longer than the child's own timeout, so the child never outlives the test.
       20_000,
     );
 
-    // What reads a tsconfig.json called itself for each file that is extended, on the main thread.
-    test("a chain of 5,000 configuration files that extend each other", async () => {
+    // The tsconfig.json reader used to recurse for each extended file, on the main thread.
+    test("reads a chain of 5,000 tsconfig files that each extend the next", async () => {
       const files: Record<string, string> = { "tsconfig.json": '{ "extends": "./t0.json" }', "t5000.json": tsconfig };
       for (let i = 0; i < 5_000; i++) files[`t${i}.json`] = `{ "extends": "./t${i + 1}.json" }`;
       using dir = project({ ...files, "a.ts": `export const wrong: number = "";\n` });
@@ -6345,11 +6351,12 @@ const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
-    // The parser reads `A.A.A` in a loop and holds more levels of a pattern than three walks of the checker did, which are no
-    // queries and did not ask the stack: a little before the depth at which the file is refused they ran over its end. Where
-    // that is depends on the platform and the build: so every depth.
+    // The parser reads `A.A.A` in a loop, and it accepts deeper patterns than three of the checker's tree walks could
+    // handle. Those walks aren't queries, so they didn't check the remaining stack, and they overflowed it a little
+    // below the depth at which the file is rejected. Where that is depends on the platform and the build, so this tries
+    // many depths.
     test.skipIf(isDebug || isASAN)(
-      "namespaces and patterns of every depth from 1,000 to 40,000",
+      "doesn't crash on namespaces and binding patterns nested 1,000 to 40,000 deep",
       async () => {
         const files: Record<string, string> = {};
         for (let depth = 1_000; depth < 40_000; depth = Math.ceil(depth * 1.025)) {
@@ -6359,7 +6366,7 @@ const wrong: number = "";
           files[`patterns-${depth}.ts`] =
             `export {};\ndeclare let y: any; let ${repeat("{ a: ", depth)}b${repeat(" }", depth)} = y; let x: string = b;\n`;
         }
-        // Slower, and it fell at every depth from 4,600 to 17,500.
+        // Slower to check. It used to crash at every depth from 4,600 to 17,500.
         for (let depth = 4_000; depth < 20_000; depth = Math.ceil(depth * 1.1)) {
           files[`parameters-${depth}.ts`] =
             `export {};\nfunction f(${repeat("{ a: ", depth)}b${repeat(" }", depth)}) {}\n`;
@@ -6371,12 +6378,12 @@ const wrong: number = "";
         );
         expect(exitCode).toBe(1);
       },
-      // 26 seconds of processor time, shared with 19 other tests.
+      // Takes 26 s of CPU time, and 19 other tests run concurrently.
       90_000,
     );
 
     test(
-      "an import of a path with 30,000 segments",
+      "reports TS2882 for an import of a path with 30,000 segments",
       async () => {
         using dir = project({
           "a.ts": `import "./${repeat("a/", 30_000)}a";\nexport const wrong: number = "";\n`,
@@ -6392,17 +6399,17 @@ const wrong: number = "";
       isDebug || isASAN ? 120_000 : undefined,
     );
 
-    // The system takes what is before it for the whole name. For tsc nothing is at such a path.
+    // The OS treats the part before the NUL as the whole name. For tsc, no file exists at such a path.
     test.each([
       ["extends", { extends: "./\0base.json" }, "error TS5083: Cannot read file '<dir>/\0base.json'.\n", ""],
       [
-        "extends, after the name of a file that is there",
+        "extends, after the name of an existing file",
         { extends: "./base.json\0x" },
         "",
         "\ntsconfig.json(1,12): error TS6053: File './base.json\0x' not found.",
       ],
       ["typeRoots", { compilerOptions: { typeRoots: ["./\0x"], types: undefined } }, "", ""],
-    ])("a NUL in a path of a configuration file: %s", async (_, more, before, after) => {
+    ])("never finds a file at a tsconfig.json path that contains a NUL: %s", async (_, more, before, after) => {
       const { compilerOptions, ...rest } = more as { compilerOptions?: object };
       using dir = project({
         "tsconfig.json": JSON.stringify({
@@ -6419,7 +6426,7 @@ const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
-    test("100,000 signs that begin a decorator", async () => {
+    test("reports that a file with 100,000 `@` in a row is nested too deeply", async () => {
       using dir = project({
         "a.ts": `${repeat("@", 100_000)}\n`,
         "b.ts": `export const wrong: number = "";\n`,
@@ -6451,12 +6458,12 @@ const wrong: number = "";
     // The parser reads a run of `!` in a loop, so nothing bounds its length.
     test.each([
       [
-        "an initializer",
+        "in an initializer",
         (run: string) => `export const z: number = x${run};`,
         "a.ts(5,14): error TS2322: Type '{ a: number; }' is not assignable to type 'number'.",
       ],
       [
-        "an argument",
+        "in an argument",
         (run: string) => `take(x${run});`,
         "a.ts(5,6): error TS2345: Argument of type '{ a: number; }' is not assignable to parameter of type 'number'.",
       ],
@@ -6471,36 +6478,36 @@ const wrong: number = "";
         "a.ts(5,60011): error TS2339: Property 'b' does not exist on type 'number'.",
       ],
       [
-        "an assignment target",
+        "on an assignment target",
         (run: string) => `y${run} = "";`,
         "a.ts(5,1): error TS2322: Type 'string' is not assignable to type 'number'.",
       ],
       [
-        "an operand of ++",
+        "on an operand of ++",
         (run: string) => `x${run}++;`,
         "a.ts(5,1): error TS2588: Cannot assign to 'x' because it is a constant.",
       ],
       [
-        "a condition over an optional chain",
+        "in a condition over an optional chain",
         (run: string) => `if (f()?.a${run}.b) take(1);`,
         "a.ts(5,60012): error TS2339: Property 'b' does not exist on type 'number'.",
       ],
       [
-        "an object literal with a contextual type",
+        "on an object literal with a contextual type",
         (run: string) => `export const o: { a: 1 } = ({ a: 2 })${run};`,
         "a.ts(5,14): error TS2322: Type '{ a: 2; }' is not assignable to type '{ a: 1; }'.\n  Types of property 'a' are incompatible.\n    Type '2' is not assignable to type '1'.",
       ],
       [
-        "an arrow function with a contextual type",
+        "on an arrow function with a contextual type",
         (run: string) => `export const g: (n: number) => void = ((n) => n.b)${run};`,
         "a.ts(5,49): error TS2339: Property 'b' does not exist on type 'number'.",
       ],
       [
-        "an array literal with a contextual type",
+        "on an array literal with a contextual type",
         (run: string) => `export const l: 1[] = [2]${run};`,
         "a.ts(5,14): error TS2322: Type '2[]' is not assignable to type '1[]'.\n  Type '2' is not assignable to type '1'.",
       ],
-    ])("60,000 non-null assertions in a row, %s", async (_where, statement, expected) => {
+    ])("checks 60,000 non-null assertions in a row %s", async (_where, statement, expected) => {
       using dir = project({
         "a.ts": `declare const x: { a: number } | undefined;
 declare let y: number | undefined;
@@ -6514,8 +6521,8 @@ ${statement(repeat("!", 60_000))}
       expect(exitCode).toBe(1);
     });
 
-    // `T[][][]` is read in a loop as well. Its type is as deep as it looks, so what a build says about the
-    // type depends on the size of its stack frames. The errors after it do not.
+    // `T[][][]` is parsed in a loop as well. Its type really is that deep, so what a build reports about the type
+    // depends on its stack frame size. The errors after it don't.
     test.each([
       [
         "the type of a class property",
@@ -6537,7 +6544,7 @@ a.js(6,32): error TS2339: Property 'nope' does not exist on type 'number'.`,
         `a.js(7,14): error TS2322: Type 'string' is not assignable to type 'number'.
 a.js(8,32): error TS2339: Property 'nope' does not exist on type 'number'.`,
       ],
-    ])("200,000 array types in a row, %s", async (_where, name, declaration, errorsAfterIt) => {
+    ])("reports the errors after 200,000 `[]` in a row in %s", async (_where, name, declaration, errorsAfterIt) => {
       using dir = project({
         [name]: `${declaration(repeat("[]", 200_000))}
 /** @type {number} */
@@ -6550,8 +6557,8 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
-    // The binder asks at every link whether what is below it can be narrowed. The chain is too deep to be checked.
-    test("100,000 optional property accesses in a row", async () => {
+    // At every link, the binder checks whether the expression below it can be narrowed. The chain is too deep to check.
+    test("doesn't crash or hang on 100,000 optional property accesses in a row", async () => {
       using dir = project({
         "a.ts": `declare const a: any;\nexport const r = a${repeat("?.b", 100_000)};\n`,
         "b.ts": `export const wrong: number = "";\n`,
@@ -6561,8 +6568,8 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
-    // A question about an argument first resolves the calls around it, and gets to the outermost call by call.
-    test("5,500 generic calls, each the argument of the last", async () => {
+    // A query about an argument first resolves the enclosing calls, and walks out to the outermost one call by call.
+    test("doesn't crash on 5,500 generic calls nested as each other's argument", async () => {
       using dir = project({
         "a.ts": `declare function g<T>(a: T): T;\ndeclare const a: any;\nexport const r = ${repeat("g(", 5_500)}a${repeat(")", 5_500)};\n`,
         "b.ts": `export const wrong: number = "";\n`,
@@ -6572,12 +6579,13 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
-    // Where the stack runs out in an expression, that a question was refused used to be forgotten: the walk over the tree asked
-    // again at every level, each time down to where the last was refused, and about an argument first about every call around
-    // it: minutes to days. Now the whole expression is refused: the file is said to be incomplete, and what is wrong deeper
-    // in it than the checker got is not reported. The last column is an error in the expression that tsc reports too. The
-    // checker finds it with two thirds of its stack, so that larger frames on another platform don't lose it. For array and
-    // object literals more than 100 deep tsc also reports TS2321, which `bun check` doesn't do yet.
+    // When the stack ran out inside an expression, the checker used to forget that a query had been rejected. The tree
+    // walk retried at every level, each time down to where the last query was rejected, and a query about an argument
+    // first asked about every enclosing call. That took minutes to days. Now the checker gives up on the whole
+    // expression. The file is reported as incomplete, and errors deeper than the checker got aren't reported. The last
+    // column is an error in the expression that tsc reports too. The checker finds it with two thirds of its stack, so
+    // larger frames on another platform don't lose it. For array and object literals more than 100 deep tsc also
+    // reports TS2321, which `bun check` doesn't do yet.
     test.skipIf(isDebug || isASAN).each([
       ["calls", "f(", ")", 3_000, ""],
       ["new", "new f(", ")", 3_000, ""],
@@ -6602,7 +6610,7 @@ export const alsoWrong = wrong.nope;
       ["!", "!", "", 15_000, ""],
       ["typeof", "typeof ", "", 15_000, ""],
     ])(
-      "%s in each other",
+      "finishes within 10 s on %s nested deeper than the stack allows",
       async (_, open, close, depth, inTheExpression) => {
         using dir = project({
           "a.ts": `declare const f: any;\ndeclare let a: any;\nexport const r = ${repeat(open, depth)}1${repeat(close, depth)};\nexport const wrong: number = "";\n`,
@@ -6613,23 +6621,23 @@ export const alsoWrong = wrong.nope;
         );
         expect(exitCode).toBe(1);
       },
-      // Longer than the child may take, which does not outlive the test then.
+      // Longer than the child's own timeout, so the child never outlives the test.
       20_000,
     );
 
-    // The literal has its members when the properties that assignments declare are added, and above eight properties
-    // a name is looked up in an index.
+    // The literal's members are already resolved when the properties declared by assignments are added, and with more
+    // than eight properties names are looked up through an index.
     test.each([
-      ["allowJs alone", [], "", 0],
+      ["with only allowJs", [], "", 0],
       [
-        "checkJs",
+        "with checkJs",
         ["--checkJs"],
         `a.js(5,5): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type '{ a(): void; b(): void; c(): void; d(): void; e(): void; f(): void; g(): void; h(): void; i(): void; }'.
 a.js(5,10): error TS2304: Cannot find name 'k'.`,
         1,
       ],
     ])(
-      "an object literal of nine methods in JavaScript, one of which assigns to this[k], %s",
+      "checks a JavaScript object literal with nine methods, one of which assigns to this[k], %s",
       async (_, flags, expected, code) => {
         using dir = project({
           "a.js": `const o = {
@@ -6648,10 +6656,10 @@ a.js(5,10): error TS2304: Cannot find name 'k'.`,
       },
     );
 
-    // The way Kobalte types a component that renders as any element. Where `Elements[keyof Elements]` is a
-    // parameter its members meet in one intersection. Whether that is `never` is decided name by name, and
-    // comparing every pair of members for every name took minutes here.
-    test("a polymorphic component over 2,000 element types", async () => {
+    // This is how Kobalte types a component that can render as any element. Where `Elements[keyof Elements]` is a
+    // parameter type, its members end up in one intersection. Whether that intersection is `never` is decided property
+    // by property, and comparing every pair of members for every property took minutes here.
+    test("doesn't slow down on a polymorphic component over 2,000 element types", async () => {
       const kinds = ["string", "number", "boolean | undefined", "(event: { target: T }) => void", "T | undefined"];
       const lines = (count: number, line: (i: number) => string) => Array.from({ length: count }, (_, i) => line(i));
       const source = [
@@ -6694,7 +6702,7 @@ export const wrong: number = "";`,
 
     const isolatedDeclarations = ["--declaration", "true", "--isolatedDeclarations", "true"];
 
-    test("isolatedDeclarations: every property of `export default {} satisfies T` is reported", async () => {
+    test("isolatedDeclarations: reports every property of `export default {} satisfies T`", async () => {
       using dir = project({
         "satisfies.ts": `export default { list: ["x"], nested: { list: ["y"] } } satisfies object;
 `,
@@ -6708,7 +6716,7 @@ export const wrong: number = "";`,
       expect(exitCode).toBe(1);
     });
 
-    test("isolatedDeclarations: a method whose return type is circular needs an annotation", async () => {
+    test("isolatedDeclarations: reports TS9008 for a method whose return type is circular", async () => {
       using dir = project({
         "recursive.ts": `export class Registry {
   static next(n: number) {
@@ -6728,7 +6736,7 @@ export const wrong: number = "";`,
       expect(exitCode).toBe(1);
     });
 
-    test("isolatedDeclarations: a property assigned to an overloaded function makes its value visible", async () => {
+    test("isolatedDeclarations: reports TS9010 for a variable assigned to a property of an overloaded function", async () => {
       using dir = project({
         "overloads.ts": `let hidden = new Date("");
 export function create(): number;
@@ -6806,7 +6814,7 @@ export const T = type({ top: "number", deep: { first: "string", second: "number"
       expect(exitCode).toBe(1);
     });
 
-    test("printing `[Symbol.iterator]` resolves the type of every variable in scope", async () => {
+    test("reports TS7022 because printing `[Symbol.iterator]` resolves the type of every variable in scope", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions":{"strict":true,"noEmit":true,"target":"esnext","module":"esnext","moduleResolution":"bundler","lib":["esnext"],"types":[],"skipLibCheck":true}}`,
         "a.ts": `export function f(key: any) {
@@ -6824,7 +6832,7 @@ export const T = type({ top: "number", deep: { first: "string", second: "number"
       expect(exitCode).toBe(1);
     });
 
-    test("a generator with a return type annotation needs the global IterableIterator too", async () => {
+    test("reports TS2318 for a missing global IterableIterator on a generator with a return type annotation", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions":{"strict":true,"noEmit":true,"target":"esnext","module":"esnext","moduleResolution":"bundler","lib":["es5"],"types":[],"skipLibCheck":true}}`,
         "a.ts": `interface Shape { x: number }
@@ -6842,8 +6850,8 @@ export async function* async(): Shape { yield 1; }
       expect(exitCode).toBe(1);
     });
 
-    // Two installed copies of one version of a package are one package: the second is redirected to the first.
-    test("a redirected copy of a package is named through the links to the copy in the program", async () => {
+    // Two installed copies of the same package version count as one package. The second is redirected to the first.
+    test("TS2883 refers to a redirected package copy through the symlink to the copy that's in the program", async () => {
       const store = (hash: string) => `node_modules/.pnpm/tsup@8.5.0_${hash}/node_modules/tsup`;
       const copy = (hash: string) => ({
         [`${store(hash)}/package.json`]: `{ "name": "tsup", "version": "8.5.0", "types": "./dist/index.d.ts" }
@@ -6874,7 +6882,7 @@ export default defineConfig({});
       expect(exitCode).toBe(1);
     });
 
-    test("a redirected copy of a package is named by the copy next to the importing file", async () => {
+    test("doesn't report TS2883 when a copy of the redirected package sits next to the importing file", async () => {
       const copy = (at: string) => ({
         [`${at}/node_modules/x/package.json`]: `{ "name": "x", "version": "1.0.0", "types": "./index.d.ts" }
 `,
@@ -6900,7 +6908,7 @@ export const d = c;
       expect(exitCode).toBe(0);
     });
 
-    test("a class has no construct signatures while its static index signatures are computed", async () => {
+    test("reports TS2351 for `new C()` evaluated while C's static index signatures are being computed", async () => {
       using dir = project({
         "a.ts": `declare const first: any, second: any;
 export class C {
@@ -6958,7 +6966,7 @@ export const made = new C(1);
       );
     });
 
-    test("two instantiations of an alias for a union are printed again, which counts towards the length limit", async () => {
+    test("prints each instantiation of a union alias again, which counts toward the truncation limit", async () => {
       using dir = project({
         "a.ts": `type Base<I, O, C> = { input: I; output: O; context: C; execute?: () => void; needsApproval?: boolean; onInputAvailable?: () => void };
 type FunctionTool<I, O, C> = Base<I, O, C> & { type?: "function" };
@@ -6987,7 +6995,7 @@ export const q: number = u.x;
       expect(exitCode).toBe(1);
     });
 
-    test("an array in an object in an array that is explained is a tuple", async () => {
+    test("prints an array literal as a tuple when elaborating an error inside an object in an array", async () => {
       using dir = project({
         "a.ts": `interface GError { message: string; path: ReadonlyArray<string | number>; locations: number; nodes: number; source: number; positions: number; a: 1; b: 1 }
 declare function enqueue(chunk: { completed: { id: string; errors: GError[] }[]; hasNext: boolean }): void;
@@ -7012,7 +7020,7 @@ export const fn: { v: () => number[]; w: number }[] = [{ v: () => [1, 2] }];
       expect(exitCode).toBe(1);
     });
 
-    test("a \`unique symbol\` that is no key of a type is named with its module", async () => {
+    test("TS7053 prints a `unique symbol` that isn't a key of the type with its module name", async () => {
       using dir = project({
         "a.ts": `import { KEY, NS, C } from "./lib/deep/keys";
 import * as all from "./lib/deep/keys";
@@ -7048,7 +7056,7 @@ export class C { static readonly S: unique symbol = Symbol("s"); }
       expect(exitCode).toBe(1);
     });
 
-    test("two types with one name are told apart by their modules", async () => {
+    test("qualifies two types that share a name with `import(...)` in the message", async () => {
       using dir = project({
         "a.ts": `import { use } from "one";
 import { plugin, options } from "two";
@@ -7091,7 +7099,7 @@ export = ts;
       expect(exitCode).toBe(1);
     });
 
-    test("a well-known symbol is named without \`Symbol.\` where no declaration names it", async () => {
+    test("prints a well-known symbol key without `Symbol.` when the property has no declaration", async () => {
       using dir = project({
         "a.ts": `type S = { [Symbol.toStringTag]: string; [Symbol.iterator]?: number };
 declare function asClause<T>(): { [K in keyof T as K]: "x" };
@@ -7121,7 +7129,7 @@ export const g: number = byKeys<typeof own>();
       expect(exitCode).toBe(1);
     });
 
-    test("an alias that does not use its type parameter is instantiated", async () => {
+    test("instantiates an alias that doesn't use its type parameter", async () => {
       using dir = project({
         "a.ts": `type H<T> = string | number;
 declare const pair: H<1>[] & H<2>[];
@@ -7139,7 +7147,7 @@ export const z: boolean = brands;
       expect(exitCode).toBe(1);
     });
 
-    test("the type of an object literal with a spread is printed from the literal", async () => {
+    test("prints the type of an object literal with a spread from the literal's syntax", async () => {
       using dir = project({
         "a.ts": `interface Many { adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; p6?: number; p7?: number; p8?: number; p9?: number }
 declare const many: Many;
@@ -7177,7 +7185,7 @@ take({ ...new K() });
       expect(exitCode).toBe(1);
     });
 
-    test("an aliased intersection with a class is named by its members where it is indexed", async () => {
+    test("TS7053 prints an aliased intersection with a class by its members", async () => {
       using dir = project({
         "a.ts": `class User { id = 1 }
 declare const s1: unique symbol;
@@ -7218,7 +7226,7 @@ export const r6 = q[sym];
       expect(exitCode).toBe(1);
     });
 
-    test("a union of more than forty object types is reduced", async () => {
+    test("reduces a union of more than forty object types", async () => {
       using dir = project({
         "tsconfig.json": withResolveJsonModule,
         "a.ts": `import big from "./big.json";
@@ -7236,7 +7244,7 @@ export const b: number = big.versions[0][0];
       expect(exitCode).toBe(1);
     });
 
-    test("the type of a JSON file is printed from its text", async () => {
+    test("prints the type of a JSON file from its text", async () => {
       using dir = project({
         "tsconfig.json": withResolveJsonModule,
         "a.ts": `import big from "./big.json";
@@ -7255,7 +7263,7 @@ export const a: number = big;
       expect(exitCode).toBe(1);
     });
 
-    test('the replacement suggested for `baseUrl: ".."` starts with `./`', async () => {
+    test('TS5102 suggests a `paths` replacement that starts with `./` for `baseUrl: ".."`', async () => {
       using dir = project({
         "sub/tsconfig.json": `{ "compilerOptions": { "baseUrl": "..", "noEmit": true, "types": [], "lib": ["esnext"] }, "files": ["../a.ts"] }
 `,
@@ -7270,7 +7278,7 @@ export const a: number = big;
       expect(exitCode).toBe(1);
     });
 
-    test("an object literal is not printed from its text if an array in it has objects of several shapes", async () => {
+    test("doesn't print an object literal from its text if an array in it has objects of several shapes", async () => {
       using dir = project({
         "tsconfig.json": withResolveJsonModule,
         "obj.json": `{ "obj": { "items": [{ "x": 12 }, { "x": 12, "y": 12 }, { "x": 0, "err": true }] } }
@@ -7291,7 +7299,7 @@ export const b: number = obj;
       expect(exitCode).toBe(1);
     });
 
-    test("a file that is imported twice by one file has the second reason where the second import is", async () => {
+    test("TS6059 lists both imports when one file imports the file outside `rootDir` twice", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "rootDir": "in", "outDir": "dist", "types": [], "lib": ["esnext"], "module": "esnext", "moduleResolution": "bundler" }, "include": ["in"] }
 `,
@@ -7323,7 +7331,7 @@ export type A = number;
       expect(exitCode).toBe(1);
     });
 
-    test("a reference whose type arguments refer to it in a union is compared with its syntax", async () => {
+    test("prints `Rec` for a type reference whose type argument is a union that contains `Rec`", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "strict": true, "declaration": true, "emitDeclarationOnly": true, "outDir": "dist", "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true } }
 `,
@@ -7344,7 +7352,7 @@ export const wrong: number = { a: make() };
       expect(exitCode).toBe(1);
     });
 
-    test("the default library of \`target: es5\` is lib.d.ts", async () => {
+    test("reports only TS5108 for `target: es5`, which still loads lib.d.ts", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "target": "es5", "noEmit": true, "types": [] } }
 `,
@@ -7358,7 +7366,7 @@ export const wrong: number = { a: make() };
       expect(exitCode).toBe(1);
     });
 
-    test("the default library is checked without \`skipLibCheck\`", async () => {
+    test("checks the default library when `skipLibCheck` is off", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({
           compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, skipLibCheck: false },
@@ -7384,10 +7392,10 @@ export const wrong: number = { a: make() };
       expect(exitCode).toBe(1);
     });
 
-    test("a name that is printed from the text counts with the white space before it", async () => {
+    test("counts the whitespace before a name printed from source text toward the truncation limit", async () => {
       using dir = project({
         "tsconfig.json": withResolveJsonModule,
-        // The white space in it counts.
+        // The whitespace in this text affects where the type is truncated.
         "package.json": `{"exports": {"./entry0": {"types": "t", "default": "d"}, "./entry1": {"types": "t", "node": null, "default": "d"}, "./entry2": {"types": "t", "default": "d"}, "./entry3": {"types": "t", "default": "d"}, "./entry4": {"types": "t", "default": "d"}, "./entry5": {"types": "t", "default": "d"}, "./entry6": {"types": "t", "default": "d"}, "./entry7": {"types": "t", "default": "d"}, "./entry8": {"types": "t", "default": "d"}, "./entry9": {"types": "t", "default": "d"}, "./entry10": {"types": "t", "default": "d"}, "./entry11": {"types": "t", "default": "d"}, "./entry12": {"types": "t", "default": "d"}, "./entry13": {"types": "t", "default": "d"}}}`,
         "a.ts": `import json from "./package.json";
 export const a: number = json.exports;
@@ -7426,7 +7434,7 @@ export const wrong: Two<string> = one;
       expect(exitCode).toBe(1);
     });
 
-    test("a parenthesized mapped type with type arguments in its key, after `|` or `&`", async () => {
+    test("parses a parenthesized mapped type with type arguments in its key after `|` or `&`", async () => {
       using dir = project({
         "types.ts": `type J<T, S> = string;
 type P2<T, D> = string[];
@@ -7450,7 +7458,7 @@ export type After = 2;
       expect(exitCode).toBe(0);
     });
 
-    test("a constraint `typeof C<T>` is instantiated with what is inferred for `T`", async () => {
+    test("instantiates a `typeof C<T>` constraint with the type inferred for `T`", async () => {
       using dir = project({
         "a.ts": `type Map1 = Record<string, (...args: any[]) => void>;
 declare class N<T extends Map1 = Record<never, never>> { _m?: T; }
@@ -7477,7 +7485,7 @@ export const r5 = same("s", NumBox);
       expect(exitCode).toBe(1);
     });
 
-    test("a mapped type over `T` is an array in the true branch of `T extends X[]`", async () => {
+    test("treats a mapped type over `T` as an array in the true branch of `T extends X[]`", async () => {
       using dir = project({
         "a.ts": `interface Z { z: 1 }
 interface V { v: 1 }
@@ -7497,7 +7505,7 @@ export const r: A1<[Z, Z]> = [{ v: 1 }, { v: 1 }];
       expect(exitCode).toBe(0);
     });
 
-    test("an unknown option that is `null` is not reported", async () => {
+    test("doesn't report an unknown compiler option set to `null`", async () => {
       using dir = project({
         "tsconfig.json": `{
   "compilerOptions": {
@@ -7526,7 +7534,7 @@ export const r: A1<[Z, Z]> = [{ v: 1 }, { v: 1 }];
       expect(exitCode).toBe(1);
     });
 
-    test("a protected member is accessible through `this` narrowed by `this is X`", async () => {
+    test("allows access to a protected member through `this` narrowed by `this is X`", async () => {
       using dir = project({
         "a.ts": `interface Resolved { readonly model: { id: string } }
 export class Base {
@@ -7557,7 +7565,7 @@ export function outside(b: Base) {
       expect(exitCode).toBe(1);
     });
 
-    test("a method of the contextual `this` that returns `never` ends the flow", async () => {
+    test("a call to a method of the contextual `this` that returns `never` ends control flow", async () => {
       using dir = project({
         "a.ts": `interface Context { skip(): never; retries(n: number): this; }
 declare function setup(fn: (this: Context) => void): void;
@@ -7595,7 +7603,7 @@ export { host };
       expect(exitCode).toBe(1);
     });
 
-    test("the member of a union that is an instantiation of the same alias explains the error", async () => {
+    test("elaborates with the union member that instantiates the same alias as the source", async () => {
       using dir = project({
         "a.ts": `type Box<T> = { value: T };
 declare let b: Box<boolean>;
@@ -7611,7 +7619,7 @@ export const x: Box<string> | Box<number> = b;
       expect(exitCode).toBe(1);
     });
 
-    test("the type arguments of an interface merged with an imported value are checked", async () => {
+    test("reports TS2344 for a type argument of an interface merged with an imported value", async () => {
       using dir = project({
         "main.ts": `import { A } from "./v";
 interface A<T extends string> { x: T }
@@ -7628,7 +7636,7 @@ export const v = A;
       expect(exitCode).toBe(1);
     });
 
-    test("an alias of a constant is not read-only for `delete`", async () => {
+    test("reports TS2790, not a read-only error, for `delete` on a re-exported constant", async () => {
       using dir = project({
         "a.ts": `import * as ns from "./re";
 delete ns.reexported;
@@ -7648,7 +7656,7 @@ export let own = 1;
       expect(exitCode).toBe(1);
     });
 
-    test("an error about a named function or class expression is at its name", async () => {
+    test("reports an error about a named function or class expression at its name", async () => {
       using dir = project({
         "a.ts": `declare function on(cb: (x: number) => void): void;
 on(function handler(x: string) {});
@@ -7678,7 +7686,7 @@ export const arrow = (): number => function body() {};
       expect(exitCode).toBe(1);
     });
 
-    test("an element beyond the longest tuple of a union is not elaborated", async () => {
+    test("doesn't elaborate an element beyond the longest tuple of a union", async () => {
       using dir = project({
         "a.ts": `export const t: [number] | [number, string] = [1, "a", true];
 export const u: [number] | [number, string] = [1, 2];
@@ -7694,7 +7702,7 @@ export const u: [number] | [number, string] = [1, 2];
       expect(exitCode).toBe(1);
     });
 
-    test("an assertion method is found on a union whose members declare it once", async () => {
+    test("narrows with an assertion method called on a mapped type or on a union that declares it once", async () => {
       using dir = project({
         "a.ts": `type Asserts = { isStr(v: unknown): asserts v is string };
 declare const mapped: { [K in keyof Asserts]: Asserts[K] };
@@ -7708,7 +7716,7 @@ export function n(v: unknown) { union.isStr(v); return v.length; }
       expect(exitCode).toBe(0);
     });
 
-    test("a type argument is compared with its constraint as seen from that type: `this` in the constraint", async () => {
+    test("accepts a type argument whose constraint mentions `this`, with the argument substituted for `this`", async () => {
       using dir = project({
         "a.ts": `interface Comparable { compareTo: (o: this) => number }
 class Num implements Comparable { v = 0; compareTo = (o: Num) => this.v - o.v; }
@@ -7835,7 +7843,7 @@ export function good<R extends typeof Res<Msg>>() { type X = NeedsNumber<R>; ret
       expect(exitCode).toBe(1);
     });
 
-    test("the type arguments of an `extends` clause are compared with the constraint as it is", async () => {
+    test("compares the type arguments of an `extends` clause with the constraint as written", async () => {
       using dir = project({
         "a.ts": `declare class Emitter { on(event: string): this; }
 declare class Dispatcher<T, Parent extends Scope> extends Emitter { object: T; parent: Parent | undefined; }
@@ -7851,7 +7859,7 @@ export type Reference<Parent extends Page | Frame> = Dispatcher<3, Parent>;
       expect(exitCode).toBe(0);
     });
 
-    test("an enum member as a condition is reported for a local enum, not for one that the module exports", async () => {
+    test("reports TS2845 for an enum member used as a condition only if the enum isn't exported", async () => {
       using dir = project({
         "a.ts": `export const enum S { Before = -1, After = 1 }
 export enum P { Zero = 0, One = 1 }
@@ -7876,7 +7884,7 @@ export const c5 = N.E.A ? 1 : 2;
       expect(exitCode).toBe(1);
     });
 
-    test("a property is narrowed in a union that has a member with a template literal index signature", async () => {
+    test("narrows a property in a union that has a member with a template literal index signature", async () => {
       using dir = project({
         "a.ts": `type A = { k: "a"; v: string } | { k: "b"; v: number };
 export function template(o: { readonly u: A } | { readonly [k: \`u\${string}\`]: A }) {
@@ -7922,7 +7930,7 @@ export function arr(o: readonly [A] | readonly A[]) {
       expect(exitCode).toBe(0);
     });
 
-    test("a discriminant that an index signature provides, under `noUncheckedIndexedAccess`", async () => {
+    test("narrows by a discriminant that comes from an index signature under `noUncheckedIndexedAccess`", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "noUncheckedIndexedAccess": true}}`,
         "a.ts": `type U = { k: "a"; a: 1 } | { k: "b"; b: 1 } | { [x: string]: "c" | 1 };
@@ -7958,7 +7966,7 @@ export function h(o: V) {
       expect(exitCode).toBe(1);
     });
 
-    test("narrowing by `in`: a union with a member that reduces to `never`", async () => {
+    test("narrows by `in` a union with a member that reduces to `never`", async () => {
       using dir = project({
         "a.ts": `type A = { a: 1 }; type B = { b?: 2 }; type I = { [k: string]: 3 }; type P = { [k: \`a\${string}\`]: 4 };
 declare const sym: unique symbol;
@@ -8184,7 +8192,7 @@ export function i<T extends string>(x: (\`a\${T}\` & { tag: 1 }) | { k: 1 }) {
       expect(exitCode).toBe(1);
     });
 
-    test("a type guard that is a member of the narrowed reference, after the member itself was narrowed", async () => {
+    test("narrows `x` with the type guard `x.m(x)` after `x.m` itself was narrowed", async () => {
       using dir = project({
         "a.ts": `type G = (v: unknown) => v is { a: 1 };
 export function byTypeof(x: { m: string | G; a?: 1 }) {
@@ -8325,7 +8333,7 @@ export type X = [J, K];
       expect(exitCode).toBe(1);
     });
 
-    test("an optional property that includes `void` against an index signature", async () => {
+    test("accepts an optional property that includes `void` against an index signature", async () => {
       using dir = project({
         "a.ts": `declare const o: { a?: void | number };
 export const r: { [k: string]: number } = o;
@@ -8372,7 +8380,7 @@ export const k: K = { widtha: 1, widthb: 2, width: 3 };
       expect(exitCode).toBe(1);
     });
 
-    test("a mapped type takes `readonly` from a property of `Function`", async () => {
+    test("a mapped type copies `readonly` from a property of `Function`", async () => {
       using dir = project({
         "a.ts": `type A = { x?: number; y: string };
 type B = { x: number; y: string };
@@ -8411,11 +8419,12 @@ ss.length = 2;
       expect(exitCode).toBe(1);
     });
 
-    // TypeScript 7.0 assigns the list of properties of `Style` once. If that is while the members of the mapped type are being
-    // resolved, the list lacks them for good, and the error in y.ts is missing when y.ts comes first. TypeScript 7.1 reports
-    // it in either order, and so does `bun check`, on any number of threads. The files are large enough for a thread each.
+    // TypeScript 7.0 computes `Style`'s property list once. If that happens while the mapped type's members are being
+    // resolved, the list never gets them, and the error in y.ts is missing when y.ts comes first. TypeScript 7.1
+    // reports it in either order, and so does `bun check`, on any thread count. The files are large enough to get a
+    // thread each.
     test.each([[["x.ts", "y.ts"]], [["y.ts", "x.ts"]]])(
-      "an intersection with a mapped type that refers to it has all its properties, whichever file asks first: %j",
+      "an intersection with a mapped type that refers back to it has all its properties in either file order: %j",
       async order => {
         const constants = (prefix: string) =>
           Array.from({ length: 2000 }, (_, i) => `export const ${prefix}${i} = ${i};\n`).join("");
@@ -8457,9 +8466,9 @@ ${constants("y")}`,
       },
     );
 
-    // What TypeScript 7.1 reports. 7.0 leaves out 12 of these lines and prints 8 with a type that lacks the properties of the
-    // mapped type. Which ones depends on what comes first.
-    test("such an intersection is asked for its properties in seven ways, each of them first once", async () => {
+    // The expected output is TypeScript 7.1's. 7.0 omits 12 of these lines and prints 8 with a type that lacks the
+    // mapped type's properties. Which ones depends on what comes first.
+    test("reports the same errors whichever of seven uses of a self-referential intersection comes first", async () => {
       const uses = [
         "css({ ':hover': { notAProperty: '1' } });",
         "export const assigned: Style = { ':hover': { notAProperty: '1' } };",
@@ -8557,7 +8566,7 @@ export declare function css(style: Style): void;
       }
     });
 
-    test("an assertion to a union is explained by the member that the comparison in progress selects", async () => {
+    test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };
 declare const s: { k: string; x: boolean };
@@ -8583,7 +8592,7 @@ export const same = s === t;
       expect(exitCode).toBe(1);
     });
 
-    test("a method found through `Function`, `Object` or a union is not narrowed by an assignment", async () => {
+    test("doesn't narrow a method found through `Function`, `Object` or a union by assignment", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "exactOptionalPropertyTypes": true, "noUncheckedIndexedAccess": true}}`,
         "a.ts": `declare let u: { a?: number } | { a?: string };
@@ -8746,7 +8755,7 @@ declare function await0(n: number): number;
       expect(exitCode).toBe(1);
     });
 
-    test("a constraint is circular through a conditional type, a template literal or a string mapping", async () => {
+    test("reports TS2313 for a constraint that's circular through a conditional type, template literal or string mapping", async () => {
       using dir = project({
         "a.ts": `export function f1<T extends U, U extends T>(t: T, u: U) { t.x; u.x; const a: U = t; return a; }
 export function f2<T extends T["a"]>(t: T) { return t.a; }
@@ -8912,7 +8921,7 @@ export function f5<T extends readonly unknown[]>(fn: (first: boolean, ...rest: [
       expect(exitCode).toBe(1);
     });
 
-    test("the position of an error about a function, a class or a `satisfies` expression as an operand", async () => {
+    test("reports an error about a function, class or `satisfies` expression operand at tsc's position", async () => {
       using dir = project({
         "a.ts": `declare let n: number;
 declare const o: { [k: string]: number };
@@ -9005,7 +9014,7 @@ interface Thing { propertyB: number }
       expect(exitCode).toBe(1);
     });
 
-    test("an indexed access into a mapped type with a remapped key", async () => {
+    test("reports TS2536 for an invalid indexed access into a mapped type with a remapped key", async () => {
       using dir = project({
         "a.ts": `type M<T extends string> = { [K in "a" | "b" as \`\${K}\${T}\`]: K };
 export type A1<T extends string> = M<T>[\`a\${T}\`];
@@ -9067,7 +9076,7 @@ export class Impl4 implements Disc {}
       expect(exitCode).toBe(1);
     });
 
-    test("`(a.p) += v` is checked against the type that is read", async () => {
+    test("reports TS2322 for `(a.p) += v`, which is checked against the getter's type", async () => {
       using dir = project({
         "a.ts": `class A { get p(): number { return 1; } set p(v: number | string) {} }
 declare const a: A;
@@ -9092,7 +9101,7 @@ a[k] += "s";
     });
 
     // TypeScript 7.0 reports TS2321 at the type reference. 7.1 assumes that the types are related at 100 levels.
-    test("a comparison without an error node that is over 100 levels deep reports nothing", async () => {
+    test("reports nothing for a comparison without an error node that's over 100 levels deep", async () => {
       using dir = project({
         "a.ts": `type UnionToIntersect<U> = (U extends unknown ? (arg: U) => 0 : never) extends (arg: infer I) => 0 ? I : never;
 type UnionLast<U> = UnionToIntersect<U extends unknown ? (x: U) => 0 : never> extends (x: infer L) => 0 ? L : never;
@@ -9109,7 +9118,7 @@ export type Result<T extends string> = Wrap<Assert<UnionToTuple<{ [K in T]: Lite
       expect(exitCode).toBe(0);
     });
 
-    test("a call of a variable without an annotation, in a loop that assigns the result to it", async () => {
+    test("reports TS2722 for calling an unannotated variable in a loop that assigns the result back to it", async () => {
       using dir = project({
         "a.ts": `export function l1(xs: number[]) {
   let v = undefined;
@@ -9152,7 +9161,7 @@ export function l5() {
       expect(exitCode).toBe(1);
     });
 
-    test("a function in a JSX attribute of a JavaScript file has a minimum argument count", async () => {
+    test("reports too few arguments for a function with a parameter in a JSX attribute of a JavaScript file", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"noEmit": true, "allowJs": true, "checkJs": true, "strict": true, "noImplicitAny": false, "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "moduleDetection": "force", "jsx": "preserve", "types": []}, "files": ["d.d.ts", "a.js", "b.jsx", "c.tsx"]}`,
         "a.js": `take(async (v) => v * 2);
@@ -9208,7 +9217,7 @@ declare function Button(props: { action: () => Promise<any>; children?: any }): 
       expect(exitCode).toBe(1);
     });
 
-    test("a variable initialized by a call in a loop that assigns it back: the quick type, overloads and a second constant", async () => {
+    test("reports TS7022 for a call result assigned back in a loop, unless the call has one non-generic signature", async () => {
       using dir = project({
         "a.ts": `interface S { nxt: S | null; get(): S | null; over(a: string): S; over(a: number): S | null; gen<T>(x: T): T; self: S }
 declare function mk(): S; declare function one(s: S): S | null; declare function gen<T>(x: T): T;
@@ -9247,7 +9256,7 @@ export function c14() { let s: S | null = mk(); for (;;) { const t = s.get(); if
       expect(exitCode).toBe(1);
     });
 
-    test("a variable in a loop that is assigned back is circular for every kind of initializer that is checked", async () => {
+    test("reports TS7022 for a variable assigned back in a loop, for every kind of initializer that's checked", async () => {
       using dir = project({
         "a.ts": `interface S { nxt: S | null; id: string; n: number; kids: S[]; gen<T>(x: T): T; over(a: string): S; over(a: number): S | null; p: Promise<S | null> }
 declare function mk(id?: string): S; declare function idf<T>(x: T): T; declare const c: boolean; declare class G<T> { constructor(x: T); v: T } declare function tg<T>(s: TemplateStringsArray, x: T): T; declare function ov(a: S): S | null; declare function ov(a: null): null;
@@ -9334,7 +9343,7 @@ export async function a38() { let s: S | null = mk(); while (s) { const cur = [s
       expect(exitCode).toBe(1);
     });
 
-    test("a variable in a loop is circular for every kind of expression that assigns it back", async () => {
+    test("reports TS7022 for a variable in a loop, for every kind of expression that assigns it back", async () => {
       using dir = project({
         "a.ts": `interface S { nxt: S | null; id: string; n: number; kids: S[]; gen<T>(x: T): T; over(a: string): S; over(a: number): S | null; p: Promise<S | null>; get(): S | null }
 declare function mk(id?: string): S; declare function mkN(s: S | null): S | null; declare function idf<T>(x: T): T; declare const c: boolean; declare class G<T> { constructor(x: T); v: T } declare class H { constructor(x: S | null); v: S | null } declare function tg<T>(s: TemplateStringsArray, x: T): T; declare function ov(a: S): S | null; declare function ov(a: null): null; declare function pr(s: S | null): Promise<S | null>;
@@ -9414,7 +9423,7 @@ export async function a35() { let s: S | null = mk(); while (s) { const cur = s.
       expect(exitCode).toBe(1);
     });
 
-    test("a call with a single signature is circular if it is read through a second constant", async () => {
+    test("reports TS7022 for a call with a single signature if it's read through a second constant", async () => {
       using dir = project({
         "a.ts": `interface S { nxt: S | null; get(): S | null } declare function mk(): S; declare function mkN(s: S | null): S | null;
 export function a15() { let s: S | null = mk(); while (s) { const t = s.get(), u = t; s = u; } }
@@ -9444,7 +9453,7 @@ export function b8() { let s: S | null = mk(); while (s) { const t = s.get(); co
       expect(exitCode).toBe(1);
     });
 
-    test("a generic assertion in a loop is resolved for every reference", async () => {
+    test("resolves a generic assertion in a loop for every reference, which reports TS7022", async () => {
       using dir = project({
         "a.ts": `declare function deep<T>(a: unknown, e: T): asserts a is T;
 interface Sess { exec(c: string): { out: string; code: number }; id: string }
@@ -9485,7 +9494,7 @@ export function t7(c: boolean) {
       expect(exitCode).toBe(1);
     });
 
-    test("a compound assignment to an accessor compares with the type of the setter as narrowed", async () => {
+    test("compares a compound assignment to an accessor with the setter's type as narrowed", async () => {
       using dir = project({
         "a.ts": `export class Ac {
   get v(): string { return ""; }
@@ -9517,9 +9526,9 @@ export function t7(c: boolean) {
       expect(exitCode).toBe(1);
     });
 
-    test("where a long type is cut off does not depend on how many declarations come before it", async () => {
+    test("truncates a long type at the same place however many declarations come before it", async () => {
       using dir = project({
-        // The estimate of the length counts the internal name of a property that a `unique symbol` names.
+        // The length estimate counts the internal name of a property keyed by a `unique symbol`.
         "index.ts": `${Array.from({ length: 1200 }, (_, i) => `declare const d${i}: ${i};`).join("\n")}
 declare const NamedGroupsS: unique symbol; declare const CapturedGroupsArrS: unique symbol; declare const ValueS: unique symbol; declare const FlagsS: unique symbol;
 declare const r: RegExp;
@@ -9533,7 +9542,7 @@ export const m: { [NamedGroupsS]: string; [CapturedGroupsArrS]: (string | undefi
       expect(exitCode).toBe(1);
     });
 
-    test("a recursive type behind a signature in a conditional type is cut off one level later", async () => {
+    test("truncates a recursive type behind a signature in a conditional type one level later", async () => {
       using dir = project({
         "a.ts": `type U<A> =
   A extends (...args: infer T) => infer R ? (...args: T) => U<R> :
@@ -9600,7 +9609,7 @@ export const m8: number = q2.clone();
       expect(exitCode).toBe(1);
     });
 
-    test("a type node in the false branch of a conditional type depends on its infer type parameters", async () => {
+    test("instantiates a type node in a conditional type's false branch that depends on its `infer` type parameters", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext", "dom", "dom.iterable"], "types": [], "skipLibCheck": true}}`,
         "a.ts": `interface JSHandle<T = any> { h(): T; dispose(): Promise<void> }
@@ -9648,7 +9657,7 @@ export function go(input: RequestInfo, init?: RequestInit) {
       expect(exitCode).toBe(1);
     });
 
-    test("types written in the false branch of a conditional type that has an infer type", async () => {
+    test("instantiates types written in the false branch of a conditional type that has an `infer` type", async () => {
       using dir = project({
         "a.ts": `interface Cast<t> { cast: t }
 type Fn<A> = A extends Cast<infer R> ? R : (x: A) => A;
@@ -9727,7 +9736,7 @@ export const e7: UU<Req> = null! as Req; export const e8: Req = null! as UU<Req>
       expect(exitCode).toBe(1);
     });
 
-    test("a template literal type whose placeholder is tagged with an object type is not generic", async () => {
+    test("resolves a conditional type over a template literal whose placeholder is tagged with a generic object type", async () => {
       using dir = project({
         "a.ts": `interface Tag<T> { t: T }
 export function f<T>() {
@@ -9750,7 +9759,7 @@ export function f<T>() {
       expect(exitCode).toBe(1);
     });
 
-    test("a member of a literal whose contextual type is never has the contextual type never", async () => {
+    test("a member of a literal whose contextual type is never also gets the contextual type never", async () => {
       using dir = project({
         "a.ts": `declare function idf<T>(v: T): T;
 declare function k4<T>(cb: (x: number) => T): T;
@@ -9810,7 +9819,7 @@ export function b5<T extends never>(): T { return [mk()]; }
       expect(exitCode).toBe(1);
     });
 
-    test("an element of an array literal whose contextual type is never", async () => {
+    test("infers `const` type arguments for nested array literals whose contextual type is never", async () => {
       using dir = project({
         "a.ts": `declare function lit<const T>(t: T): T;
 export function f(): never { return lit({ a: [1, { b: "x" }] }); }
@@ -9831,7 +9840,7 @@ declare function take(x: never): void; take({ a: [1] } as const);
       expect(exitCode).toBe(1);
     });
 
-    test("a variable without an annotation is assigned a literal that contains it, in a loop", async () => {
+    test("reports TS7034 and TS7005 for an unannotated variable assigned a literal that contains it, in a loop", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean; declare function idf<T>(v: T): T;
 export function a1() { let x = []; while (c) { x = { v: x }; } return x; }
@@ -9911,7 +9920,7 @@ export function b7() { let x = []; while (c) { x = (x, 1); } return x; }
       expect(exitCode).toBe(1);
     });
 
-    test("the type of an object literal that reads the incomplete type of a loop", async () => {
+    test("infers the type of an object literal that reads a loop's incomplete type", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean; declare const o: { k: 1 };
 export function t1() { let x; while (c) { x = { v: x }; } const r: never = x; }
@@ -9958,7 +9967,7 @@ export function u4() { let x; while (c) { const y = { v: x }; x = y; } const r: 
       expect(exitCode).toBe(1);
     });
 
-    test("x = { v: x } in loops, where x has no annotation", async () => {
+    test("checks `x = { v: x }` in loops where `x` has no annotation", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;
 export function a1() { let x; while (c) { x = { v: x }; } const r: never = x; }
@@ -9989,7 +9998,7 @@ export function a6() { let x = null; for (const i of [1]) { x = { v: x }; } x.fo
       expect(exitCode).toBe(1);
     });
 
-    test("object literals between a loop variable and what is assigned back to it", async () => {
+    test("reports TS7022 when an object literal sits between a loop variable and what's assigned back to it", async () => {
       using dir = project({
         "a.ts": `interface S { nxt: S | null; id: string; kids: S[]; gen<T>(x: T): T; over(a: string): S; over(a: number): S | null }
 declare function mk(id?: string): S; declare function wrap<T>(x: T): { w: T }; declare const c: boolean;
@@ -10039,7 +10048,7 @@ export function k8() { let s: S | null = mk(); while (s) { const cur = s.kids.at
       expect(exitCode).toBe(1);
     });
 
-    test("return f() checks the callee f while another resolution is in progress", async () => {
+    test("reports TS7022 and TS7023 when `return f()` checks the callee while another resolution is in progress", async () => {
       using dir = project({
         "a.ts": `export function p1() { const a = (x = (b() as any)) => x; function b() { return a(); } }
 export function p2() { const a = (x = b()) => x; function b() { return a(); } }
@@ -10081,7 +10090,7 @@ export function q3() { const a = (x = (b() as any)) => x; function b() { return 
       expect(exitCode).toBe(1);
     });
 
-    test("a type predicate is inferred from the body of a function that is being checked", async () => {
+    test("reports TS7022 when a type predicate is inferred from the body of a function that's being checked", async () => {
       using dir = project({
         "a.ts": `declare function g2<R>(f: ((v: number) => R) | null): R[];
 declare function h1<R>(f?: (v: number) => R): R[];
@@ -10127,7 +10136,7 @@ export const e11 = [1].filter(x => e11.length === x);
       expect(exitCode).toBe(1);
     });
 
-    test("unique symbol types of constants that are exported and of those that are not", async () => {
+    test("prints the `unique symbol` type of an exported constant with its module, and of a local one without", async () => {
       using dir = project({
         "a.ts": `export const s1 = Symbol(), s2 = Symbol("d");
 export const t1: typeof s1 = s2;
@@ -10164,7 +10173,7 @@ export const t9: string = { [s1]: 1, [L.k]: 2 };
       expect(exitCode).toBe(1);
     });
 
-    test("eleven shapes of interfaces and classes that extend each other", async () => {
+    test("reports TS2310 and TS2506 for eleven shapes of interfaces and classes that extend each other", async () => {
       using dir = project({
         "a.ts": `// Each namespace is one shape of cycle. \`never\` puts the type of an inherited member in the message.
 namespace C3 { export interface A extends B { a: 1 } export interface B extends C { b: 2 } export interface C extends A { c: 3 } }
@@ -10259,7 +10268,7 @@ export const key = [kya.a, kya.b, kyb.a, kyb.b];
       expect(exitCode).toBe(1);
     });
 
-    test("the first use of an interface that extends itself through another", async () => {
+    test("reports TS2339 at the first use of an interface that extends itself through another", async () => {
       using dir = project({
         "a.ts": `declare const v: F;
 v.e;
@@ -10282,7 +10291,7 @@ export {};
       expect(exitCode).toBe(1);
     });
 
-    test("interfaces and classes in several files that extend each other", async () => {
+    test("reports TS2310 and TS2506 for interfaces and classes in several files that extend each other", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": false}, "files": ["a.d.ts", "b.d.ts", "c.d.ts", "d.ts", "e.ts", "u.ts"]}`,
         "a.d.ts": `interface A2 extends B2 { a: 1; m?: 1 }
@@ -10359,7 +10368,7 @@ const us = [s2.s1, s2.s2, s1.s1, s1.s2];
       expect(exitCode).toBe(1);
     });
 
-    test("interfaces and classes in declaration files that extend each other, with skipLibCheck", async () => {
+    test("with skipLibCheck, hides TS2310 in declaration files that extend each other but keeps the missing properties", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true}, "files": ["a.d.ts", "b.d.ts", "c.d.ts", "d.ts", "e.ts", "u.ts"]}`,
         "a.d.ts": `interface A2 extends B2 { a: 1; m?: 1 }
@@ -10421,7 +10430,7 @@ const us = [s2.s1, s2.s2, s1.s1, s1.s2];
       expect(exitCode).toBe(1);
     });
 
-    test("a property that is lost because two interfaces in a declaration file extend each other", async () => {
+    test("reports TS2339 for a property lost because two interfaces in a declaration file extend each other", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true}, "files": ["a.d.ts", "u.ts"]}`,
         "a.d.ts": `interface A2 extends B2 { a: 1 }
@@ -10436,7 +10445,7 @@ export const u = b2.a;
       expect(exitCode).toBe(1);
     });
 
-    test("an interface and a base of it that extend each other through namespaces in three files", async () => {
+    test("reports TS2310 for an interface and its base that extend each other through namespaces in three files", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": false}, "files": ["a.d.ts", "b.d.ts", "c.d.ts", "u.ts"]}`,
         "a.d.ts": `interface D { [k: string]: string | undefined }
@@ -10470,7 +10479,7 @@ export const p3: N.PE = {};
       expect(exitCode).toBe(1);
     });
 
-    test("errors about the base types of a merged interface are at its first declaration in the program", async () => {
+    test("reports errors about a merged interface's base types at its first declaration in the program", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": false}, "files": ["a.d.ts", "b.d.ts", "c.ts", "d.ts"]}`,
         "a.d.ts": `export {};
@@ -10533,7 +10542,7 @@ declare global {
       expect(exitCode).toBe(1);
     });
 
-    test("an interface merged from a script and from declare global extends incorrectly", async () => {
+    test("reports TS2430 for an interface merged from a script and from `declare global`", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": false}, "files": ["a.d.ts", "b.d.ts", "c.ts"]}`,
         "a.d.ts": `export {};
@@ -10564,7 +10573,7 @@ interface I { s: string }
       expect(exitCode).toBe(1);
     });
 
-    test("two declarations of a property need identical types, not types assignable to each other", async () => {
+    test("reports TS2717 unless two declarations of a property have identical types, not just mutually assignable ones", async () => {
       using dir = project({
         "a.ts": `export interface A { x?: object | undefined; y: object; z: object[]; w: object | null }
 export interface A { x?: {} | undefined; y: {}; z: {}[]; w: {} | null }
@@ -10590,7 +10599,7 @@ export interface D { x: {} | null | undefined; y: unknown }
       expect(exitCode).toBe(1);
     });
 
-    test("a symbol that is the result of a merge is visible in the scope of its module", async () => {
+    test("resolves a merged symbol in its module's scope", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": false}, "files": ["a.d.ts", "b.d.ts", "c.ts"]}`,
         "a.d.ts": `declare module "m" {
@@ -10625,7 +10634,7 @@ export const r: [never, never, never] = [c, d, e];
       expect(exitCode).toBe(1);
     });
 
-    test("an exported name that also has an interface declaration in another file", async () => {
+    test("reports TS2484 for an exported name that also has an interface declaration in another file", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": false}, "files": ["a.d.ts", "b.d.ts"]}`,
         "a.d.ts": `declare module "m" {
@@ -10648,9 +10657,9 @@ export const r: [never, never, never] = [c, d, e];
       expect(exitCode).toBe(1);
     });
 
-    // In program order more-patterns.d.ts comes first. An import in the body of an ambient module is not among
-    // `file.Imports()`: no file has `only/nested.svg` or `icons/big/nested.png` there.
-    test("of the ambient module patterns that match a specifier, the longest prefix wins, then the first", async () => {
+    // more-patterns.d.ts comes first in program order. An import in the body of an ambient module isn't in
+    // `file.Imports()`, so no file has `only/nested.svg` or `icons/big/nested.png` there.
+    test("picks the ambient module pattern with the longest matching prefix, then the first one declared", async () => {
       using dir = project({
         "augments.ts": `import a, { added } from "a.svg";
 import z, { added as missing } from "z.svg";
@@ -10766,9 +10775,10 @@ export const all: never[] = [null! as typeof a, null! as typeof b, null! as D, n
       expect(exitCode).toBe(1);
     });
 
-    // `cloneTypeAsModuleType` and `combineValueAndTypeSymbols` make a symbol for an alias. Which aliases get one is
-    // decided before the first file is checked: from the symbol tables, or where `export =` is an alias, by resolving it.
-    test("`import * as ns` and names imported from `export =`", async () => {
+    // `cloneTypeAsModuleType` and `combineValueAndTypeSymbols` create a symbol for an alias. Which aliases get one is
+    // decided before the first file is checked, from the symbol tables or, where `export =` is an alias, by resolving
+    // that.
+    test("resolves `import * as ns` and names imported from `export =` the same way on any thread count", async () => {
       using dir = project({
         "ambient.d.ts": `declare module "emitter" {
   class Emitter { on(): "on"; }
@@ -10947,7 +10957,7 @@ export = obj;
       expect(exitCode).toBe(1);
     });
 
-    test("declarations augmented through a chain of two re-exports", async () => {
+    test("applies augmentations made through a chain of two re-exports", async () => {
       using dir = project({
         "aug1.ts": `export {};
 declare module "./types" { interface K { one: 1 } interface C { one: 1 } }
@@ -11016,7 +11026,7 @@ export const t: [E1, E2, E3] = [0 as never as E3, 0 as never as E1, 0 as never a
       expect(exitCode).toBe(1);
     });
 
-    test("an interface augmented through export * of a named re-export, by three import paths", async () => {
+    test("sees an interface augmented through `export *` of a named re-export from all three import paths", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": false}, "files": ["use.ts", "aug.ts"]}`,
         "aug.ts": `export {};
@@ -11045,7 +11055,7 @@ export const c: C = { k: 1 };
       expect(exitCode).toBe(1);
     });
 
-    test("a merge that is refused reports what the two symbols were at that moment", async () => {
+    test("reports a rejected merge according to what the two symbols were at that moment", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": false}, "files": ["a.d.ts", "b.d.ts", "c.d.ts"]}`,
         "a.d.ts": `declare module "con" {
@@ -11084,7 +11094,7 @@ declare class late {}
       expect(exitCode).toBe(1);
     });
 
-    test("a variable, a namespace and another variable of one name in three files", async () => {
+    test("reports TS2451 for a variable, a namespace and another variable with one name in three files", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": false}, "files": ["a.d.ts", "b.d.ts", "c.d.ts"]}`,
         "a.d.ts": `declare module "con" {
@@ -11108,7 +11118,7 @@ declare class late {}
       expect(exitCode).toBe(1);
     });
 
-    test("an instantiation that ended at the depth limit is not reported again", async () => {
+    test("reports TS2589 only once for an instantiation that ended at the depth limit", async () => {
       using dir = project({
         "a.ts": `type Ser<T> = T extends Function ? never : T extends Promise<infer U> ? Ser<U> : T extends string & {} ? T : T extends Record<string, any> ? { [K in keyof T]: Ser<T[K]> } : T;
 type DeepPartial<T> = T extends Function ? T : T extends Record<string, any> ? { [P in keyof T]?: DeepPartial<T[P]> } : T;
@@ -11137,7 +11147,7 @@ export declare const a4: A4; export const n4: never = a4;
       expect(exitCode).toBe(1);
     });
 
-    test("keyof of a mapped type pays for its as clause on every request", async () => {
+    test("reports TS2589 because keyof of a mapped type counts its `as` clause on every request", async () => {
       const keys = Array.from({ length: 1000 }, (_, i) => `"k${i}"`).join(" | ");
       let name = "K";
       for (let i = 0; i < 50; i++) name = `${i % 2 ? "Lowercase" : "Uppercase"}<${name}>`;
@@ -11155,7 +11165,7 @@ export type R = Loop<600>;
       expect(exitCode).toBe(1);
     });
 
-    test("the value type of a decorated member keeps this", async () => {
+    test("keeps `this` in the value type of a decorated member", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": false, "noEmit": true, "target": "es2022", "module": "esnext", "moduleResolution": "bundler", "lib": ["es5", "esnext.decorators", "decorators"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.ts": `declare function Dec(target: object, key: string): void;
@@ -11176,7 +11186,7 @@ export class Book {
       expect(exitCode).toBe(1);
     });
 
-    test("the members that a class declares are in place while its base types are instantiated", async () => {
+    test("has a class's own members in place while its base types are instantiated", async () => {
       using dir = project({
         "a.ts": `declare abstract class Schema<Output = any> { readonly _output: Output; parse(): Output; }
 declare class RecordSchema<Value extends Schema> extends Schema<Record<string, Value["_output"]>> {}
@@ -11228,7 +11238,7 @@ export const mutual: never = (null! as FromA<unknown>)._output;
       expect(exitCode).toBe(1);
     });
 
-    test("+readonly and +? of a mapped type are printed as written", async () => {
+    test("prints `+readonly` and `+?` of a mapped type as written", async () => {
       using dir = project({
         "a.ts": `export function f1<T>(m: { +readonly [P in keyof T]+?: T[P] }) { const r: never = m; }
 export function f2<T>(m: { readonly [P in keyof T]?: T[P] }) { const r: never = m; }
@@ -11257,7 +11267,7 @@ const h: never = g;
       expect(exitCode).toBe(1);
     });
 
-    test("the hint to install @types needs a package id, which some ways of resolution do not give", async () => {
+    test("TS7016 suggests installing @types only if the resolution produced a package id", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "paths": {"zlib": ["./node_modules/browserify-zlib"], "zfile": ["./node_modules/browserify-zlib/lib/index.js"], "zstem": ["./node_modules/browserify-zlib/lib/index"]}}, "files": ["a.ts"]}`,
         "a.ts": `import * as asDirectory from "zlib";
@@ -11289,7 +11299,7 @@ export { asDirectory, asFile, asStem, fromNodeModules, relative };
       expect(exitCode).toBe(1);
     });
 
-    test("the package id is that of the package.json the resolution went through, not of the real path", async () => {
+    test("takes the package id from the package.json the resolution went through, not from the real path", async () => {
       using dir = project({
         "package.json": `{ "name": "app", "version": "2.0.0", "exports": { "./x": { "types": "./missing.d.ts", "default": "./x.js" } }, "imports": { "#y": "./y.js" } }\n`,
         "a.ts": `import linked from "pkg";
@@ -11322,7 +11332,7 @@ export { linked, inLinked, ownName, ownImports, relative };
       expect(exitCode).toBe(1);
     });
 
-    test("a unique symbol type is qualified where both sides of an error would print the same", async () => {
+    test("qualifies a `unique symbol` type where both sides of an error would print the same", async () => {
       using dir = project({
         "a.ts": `import { K, C, o } from "./m";
 declare const H: unique symbol;
@@ -11372,9 +11382,9 @@ export declare const o: { readonly L: unique symbol };
       expect(exitCode).toBe(1);
     });
 
-    // 200 comparisons deep. The stack frames of a debug build are several times larger, and it runs out of stack first.
+    // 200 comparisons deep. A debug build's stack frames are several times larger, so it runs out of stack first.
     test.skipIf(isDebug || isASAN)(
-      "a comparison that is over 100 levels deep while its error is elaborated",
+      "reports TS2322 when the comparison gets over 100 levels deep while its error is elaborated",
       async () => {
         using dir = project({
           "a.ts": `interface T0<A> { a: A; next: T1<A[]> | null; take(x: T1<A>): void }
@@ -11440,7 +11450,7 @@ export const v: T0<string> = null! as T0<unknown>;
       },
     );
 
-    test("a constant in a nested loop whose initializer calls a method of the loop variable", async () => {
+    test("reports TS7022 for a constant in a nested loop whose initializer calls a method of the loop variable", async () => {
       using dir = project({
         "a.ts": `interface S { nxt: S | null; get(): S | null }
 declare function mk(): S; declare const c: boolean;
@@ -11461,7 +11471,7 @@ export function n8() { let s: S | null = mk(); while (s) { do { const cur = s.ge
       expect(exitCode).toBe(1);
     });
 
-    test("a parameter default that refers to its own function", async () => {
+    test("reports TS7022 for a parameter default that refers to its own function", async () => {
       using dir = project({
         "a.ts": `export const h1 = (a = h1()) => a;
 export const h2 = (a = h2) => 1;
@@ -11499,7 +11509,7 @@ h10; h11;
       expect(exitCode).toBe(1);
     });
 
-    test("`delete` of a property whose type is generic", async () => {
+    test("reports TS2790 for `delete` of a property whose generic type can't be undefined", async () => {
       using dir = project({
         "a.ts": `export function i1<T>(x: { t: T }) { delete x.t; }
 export function i2<T extends string>(x: { t: T }) { delete x.t; }
@@ -11543,7 +11553,7 @@ export function k7(x: { get t(): number | undefined; set t(v) }) { delete x.t; }
       expect(exitCode).toBe(1);
     });
 
-    test("a recursive conditional type that reaches the depth limit in several declarations", async () => {
+    test("reports TS2589 once per distinct instantiation of a recursive conditional type used in several declarations", async () => {
       using dir = project({
         "a.ts": `type Ser<T> = T extends Function ? never : T extends Promise<infer U> ? Ser<U> : T extends string & {} ? T : T extends Record<string, any> ? { [K in keyof T]: Ser<T[K]> } : T;
 type Nest = (string | Nest)[];
@@ -11574,7 +11584,7 @@ export type W2 = { w: Wrap<[1]> };
       expect(exitCode).toBe(1);
     });
 
-    test("a mapped type whose `as` clause is a larger instantiation of itself at every level", async () => {
+    test("doesn't hang on a mapped type whose `as` clause is a larger instantiation of itself at every level", async () => {
       using dir = project({
         "a.ts": `
 export type A<T> = { [K in "a" as A<T[]>]: 1 };
@@ -11591,7 +11601,7 @@ export type C<T> = { [K in keyof T as C<T[]> & string]: 1 };
       expect(exitCode).toBe(1);
     });
 
-    test("a callback in a loop whose receiver depends on the variable of the loop", async () => {
+    test("reports TS7022 and TS7006 for a callback in a loop whose receiver depends on the loop variable", async () => {
       using dir = project({
         "a.ts": `interface S { nxt: S | null; id: string; n: number; kids: S[]; gen<T>(x: T): T; over(a: string): S; over(a: number): S | null; p: Promise<S | null>; get(): S | null }
 declare function mk(id?: string): S; declare function mkN(s: S | null): S | null; declare function idf<T>(x: T): T; declare const c: boolean; declare class G<T> { constructor(x: T); v: T } declare class H { constructor(x: S | null); v: S | null } declare function tg<T>(s: TemplateStringsArray, x: T): T; declare function ov(a: S): S | null; declare function ov(a: null): null; declare function pr(s: S | null): Promise<S | null>;
@@ -11631,7 +11641,7 @@ export function f4() { let s: S | null = mk(); while (s) { const cur = s.nxt; co
       expect(exitCode).toBe(1);
     });
 
-    test("a parameter default asserted to the return type of its own function", async () => {
+    test("reports TS7022 for a parameter default asserted to its own function's return type", async () => {
       using dir = project({
         "a.ts": `export function t5(a = 1 as ReturnType<typeof t5>) { return a; }
 `,
@@ -11643,7 +11653,7 @@ export function f4() { let s: S | null = mk(); while (s) { const cur = s.nxt; co
       expect(exitCode).toBe(1);
     });
 
-    test("the parameter of a callback in a loop has its contextual type", async () => {
+    test("gives the parameter of a callback in a loop its contextual type", async () => {
       using dir = project({
         "a.ts": `interface S { nxt: S | null; id: string; n: number; kids: S[]; gen<T>(x: T): T; over(a: string): S; over(a: number): S | null; p: Promise<S | null>; get(): S | null }
 declare function mk(id?: string): S; declare function mkN(s: S | null): S | null; declare function idf<T>(x: T): T; declare const c: boolean; declare class G<T> { constructor(x: T); v: T } declare class H { constructor(x: S | null); v: S | null } declare function tg<T>(s: TemplateStringsArray, x: T): T; declare function ov(a: S): S | null; declare function ov(a: null): null; declare function pr(s: S | null): Promise<S | null>;
@@ -11673,7 +11683,7 @@ export function f2() { let s: S | null = mk(); while (s) { const cur = s.nxt; co
       expect(exitCode).toBe(1);
     });
 
-    test("functions that return a variable whose initializer calls them", async () => {
+    test("reports TS7022 and TS7023 for functions that return a variable whose initializer calls them", async () => {
       using dir = project({
         "a.ts": `export function p1() { const b = a; const a = [g(), h()]; function g() { return a; } function h() { return a; } return b; }
 export function p2() { const a = [g(), h()]; function g() { return a; } function h() { return a; } }
@@ -11723,7 +11733,7 @@ export function q6() { const b = typeof a; const a = { x: g(), y: h() }; functio
       expect(exitCode).toBe(1);
     });
 
-    test("an interface augmented through two levels of `export *`", async () => {
+    test("merges enum and namespace augmentations made through two levels of re-exports like tsc", async () => {
       using dir = project({
         "aug1.ts": `export {};
 declare module "./types" { interface K { one: 1 } interface C { one: 1 } }
@@ -11760,7 +11770,7 @@ export const t: [E1, E4] = [0 as never as E4, 0 as never as E1];
       expect(exitCode).toBe(1);
     });
 
-    test("an interface augmented through a module that re-exports it by name", async () => {
+    test("sees a class augmented through a module that re-exports it by name from every import path", async () => {
       using dir = project({
         "a.ts": `export {};
 declare module "./m" { interface X { two: 2 } }
@@ -11807,7 +11817,7 @@ export const e: [XT, XI, XM] = [null! as XI, null! as XM, null! as XT];
       expect(exitCode).toBe(1);
     });
 
-    test("two augmentations of an interface through a module that re-exports it", async () => {
+    test("reports TS2305 for an interface added by an augmentation when it's imported through `export *`", async () => {
       using dir = project({
         "a.ts": `export {};
 declare module "./m" { interface X { two: 2 } }
@@ -11836,7 +11846,7 @@ export const b: never = null! as NT;
       expect(exitCode).toBe(1);
     });
 
-    test("augmentations of re-exported names through several modules", async () => {
+    test("matches tsc on which interfaces added to a re-exporting module by several augmentations are visible", async () => {
       using dir = project({
         "a.ts": `export {};
 declare module "./i" { interface A1 { a: 1 } }
@@ -11874,7 +11884,7 @@ export const d: never = null! as import("./i").B1;
       expect(exitCode).toBe(1);
     });
 
-    test("type references that each need a member of all the others for their base type", async () => {
+    test("resolves ten type references that each need a member of all the others for their base type", async () => {
       using dir = project({
         "a.ts": `// Ten type references that each need a member of all the others to instantiate their base type.
 declare abstract class Schema<Out = any> { readonly _output: Out; }
@@ -11905,7 +11915,7 @@ export const y: never = t._output;
       expect(exitCode).toBe(1);
     });
 
-    test("an instantiation that reaches the depth limit from two places is reported at the first", async () => {
+    test("reports TS2589 at the first of two places from which an instantiation reaches the depth limit", async () => {
       using dir = project({
         "a.ts": `// Each family: the same instantiation reaches the depth limit from two places. It is reported at the first.
 type S0<T> = T extends Function ? never : T extends Record<string, any> ? { [K in keyof T]: S0<T[K]> } : T; type U0 = [string, U0?];
@@ -11948,7 +11958,7 @@ export type B7 = S7<[U7]>;
       expect(exitCode).toBe(1);
     });
 
-    test("a recursive conversion between two families of generic classes", async () => {
+    test("accepts a recursive conversion between two families of generic classes", async () => {
       using dir = project({
         "a.ts": `// A conversion from validators to schemas, both recursive. The key of a record is a union of ten, so each level has ten \`SRec\` references.
 type Opt = "o" | "r";
@@ -11977,7 +11987,7 @@ export function convert<X extends GV>(schema: Schema): From<X> { return schema a
       expect(exitCode).toBe(0);
     });
 
-    test("a class field whose initializer compares `this` with a type", async () => {
+    test("reports TS7022 for a class field whose initializer compares `this` with a type", async () => {
       using dir = project({
         "a.ts": `export class T1 { x = \`\${this}\`; }
 export class T2 { get g() { return \`\${this}\`; } }
@@ -12023,7 +12033,7 @@ export function f4() { return f4 instanceof Function; }
       expect(exitCode).toBe(1);
     });
 
-    test("a class field initialized with a spread of an instance of its class", async () => {
+    test("reports TS7022 for a field initialized with a spread of its class's instance only if the field's type is needed", async () => {
       using dir = project({
         "a.ts": `declare function fe(v: {}): 1; declare function fy(v: { y: number }): 1;
 export class D1 { x = { a: fe({ ...new D1() }) }; y = 1; }
@@ -12045,7 +12055,7 @@ export class D9 { x = { a: { ...new D9() } }; y = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("inference from an instance of the class whose field is being resolved", async () => {
+    test("accepts inference from an instance of the class whose field is being resolved", async () => {
       using dir = project({
         "a.ts": `declare function obj(v: object): 1; declare function ovl(v: object): 1; declare function ovl(v: {}): 2;
 export class A1<T = any> { x = new A1() satisfies object; y!: T; }
@@ -12062,7 +12072,7 @@ export class A7<T = any> { x = new A7<number>() satisfies object; y!: T; }
       expect(exitCode).toBe(0);
     });
 
-    test("an index signature of a class and the members of the interface it merges with", async () => {
+    test("reports TS2411 and TS2413 between a class's index signature and the interface it merges with", async () => {
       using dir = project({
         "a.ts": `export class C1 { [k: string]: number; } export interface C1 { m: string; }
 export class C2 { [k: string]: number; } export interface C2 { [k: number]: string; }
@@ -12086,7 +12096,7 @@ class B7 { m = ""; } export class C7 extends B7 {} export interface C7 { [k: str
       expect(exitCode).toBe(1);
     });
 
-    test("an element access on `super` for a name that the base class lacks", async () => {
+    test("reports TS7053 for an element access on `super` with a name the base class lacks", async () => {
       using dir = project({
         "a.ts": `class K { k = 1; static s = 1; m() { return 1; } static sm() { return 1; } }
 export class C1 extends K { static m1() { return super["k"]; } }
@@ -12138,7 +12148,7 @@ export const o = { __proto__: new K(), m1() { return super["nope"]; } };
       expect(exitCode).toBe(1);
     });
 
-    test("a rest element in a destructuring assignment whose value is an object literal", async () => {
+    test("reports TS2698 and TS2322 for a rest element in a destructuring assignment from an object literal", async () => {
       using dir = project({
         "a.ts": `declare let n: number, u: unknown, a: any, o: object, s: string, nu: number | undefined, v: void, nl: null, nv: never, arr: number[], fn: () => void, e: {};
 declare const w: { n: number; u: unknown; o: object };
@@ -12198,7 +12208,7 @@ export function t3() { ({ k: n, ...u } = { k: 1, z: 2 }); }
       expect(exitCode).toBe(1);
     });
 
-    test("`delete` of a property of type void", async () => {
+    test("reports TS2790 for `delete` of a property of type void", async () => {
       using dir = project({
         "a.ts": `declare const o: { n: number; v: void; u: undefined; nu: number | undefined; vu: void | number; a: any; k: unknown; nv: never; nl: null; op?: number; opv?: void; };
 delete o.n;
@@ -12231,7 +12241,7 @@ export function h<T>(x: { t: T | undefined }) { delete x.t; }
       expect(exitCode).toBe(1);
     });
 
-    test("the static side of a class that extends an intersection or a mixin", async () => {
+    test("reports TS2417 for the static side of a class that extends an intersection or a mixin", async () => {
       using dir = project({
         "a.ts": `class K { k = 1; static s = 1; }
 declare const inter: typeof K & (new () => { z: 1 });
@@ -12274,7 +12284,7 @@ export class C6 extends K { static s = "x"; }
       expect(exitCode).toBe(1);
     });
 
-    test("a static member named prototype", async () => {
+    test("reports TS2699 for a static member named prototype", async () => {
       using dir = project({
         "a.ts": `class K { k = 1; }
 export class C1 { static prototype = 1; }
@@ -12307,7 +12317,7 @@ export class C9<T> extends K { static prototype = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("a private name after `typeof this.` in a type", async () => {
+    test("reports TS1003 for a private name after `typeof this.` in a type", async () => {
       using dir = project({
         "a.ts": `export class C1 { #m = 1; a!: typeof this.#m; }
 export class C2 { #m = 1; u(x: C2) { let a: typeof x.#m; } }
@@ -12332,7 +12342,7 @@ export class C7 { m = { n: 1 }; a!: typeof this.m.#n; }
       expect(exitCode).toBe(1);
     });
 
-    test("a call of an auto-accessor", async () => {
+    test("reports TS6234 for a call of an auto-accessor", async () => {
       using dir = project({
         "a.ts": `export class C1 { accessor m = 1; u() { this.m(); } }
 export class C2 { get m() { return 1; } u() { this.m(); } }
@@ -12377,7 +12387,7 @@ export class D1 extends C1 { v() { this.m(); super.m(); } }
       expect(exitCode).toBe(1);
     });
 
-    test("`abstract` and `static` on a parameter property", async () => {
+    test("reports what follows from an invalid `abstract` or `static` modifier on a parameter property", async () => {
       using dir = project({
         "a.ts": `// Each class has a grammar error that both report. What follows from the modifier differs.
 export abstract class A1 { constructor(protected abstract m: number) {} }
@@ -12412,7 +12422,7 @@ export class R4 { readonly set m(v: number) {} u() { this.m = 2; } }
       expect(exitCode).toBe(1);
     });
 
-    test("`typeof` followed by a type assertion in a type", async () => {
+    test("reports TS1003 for `typeof` followed by a type assertion in a type", async () => {
       using dir = project({
         "a.ts": `export class C1 { m = 1; u() { let a: typeof (<C1>this).m; } }
 `,
@@ -12455,7 +12465,7 @@ export type T10 = typeof [x];
       expect(exitCode).toBe(1);
     });
 
-    test("the static side of a class whose base is an interface with a construct signature", async () => {
+    test("reports TS2417 for the static side of a class whose base is an interface with a construct signature", async () => {
       using dir = project({
         "a.ts": `interface BCtor { new (): { x: number }; s: number; }
 declare const B: BCtor;
@@ -12503,7 +12513,7 @@ export class C7 extends K { static p = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("messages that print a spread of an instance whose field is being resolved", async () => {
+    test("prints a spread of an instance whose field is being resolved in error messages", async () => {
       using dir = project({
         "a.ts": `declare function fz(v: { z?: 1 }): 1; declare function fn(v: { y: string }): 1; declare function idf<T>(v: T): T;
 export class D1 { x = { a: fz({ ...new D1() }) }; y = 1; }
@@ -12538,7 +12548,7 @@ export const r2: string = h(new D6<number>()).y;
       expect(exitCode).toBe(1);
     });
 
-    test("a class expression that refers to what holds it", async () => {
+    test("reports TS7022 and TS2502 for a class expression that refers to the variable it's assigned to", async () => {
       using dir = project({
         "a.ts": `declare const any0: any;
 // a property of a class expression, without an initializer, whose type refers to the variable
@@ -12605,7 +12615,7 @@ export const g = (() => class { p?: typeof g; })();
       expect(exitCode).toBe(1);
     });
 
-    test("a class expression whose optional member has the type of its variable", async () => {
+    test("reports TS2310 and TS2506 for a class whose base expression is asserted to `InstanceType<typeof C>`", async () => {
       using dir = project({
         "a.ts": `declare const any0: any;
 export class C extends (any0 as InstanceType<typeof C>) {}
@@ -12619,7 +12629,7 @@ export class C extends (any0 as InstanceType<typeof C>) {}
       expect(exitCode).toBe(1);
     });
 
-    test("a class expression in a call whose index signature has the type of its variable", async () => {
+    test("reports TS2502 for a method whose `this` parameter is typed `typeof this`", async () => {
       using dir = project({
         "a.ts": `export class A { k = 1; p(this: typeof this) { return this; } }
 `,
@@ -12631,7 +12641,7 @@ export class C extends (any0 as InstanceType<typeof C>) {}
       expect(exitCode).toBe(1);
     });
 
-    test("a class whose base expression refers to the class", async () => {
+    test("reports TS2310 and TS2506 for every way a class's base expression can refer to the class", async () => {
       using dir = project({
         "a.ts": `declare const any0: any;
 export class C1 extends (any0 as C1) {}
@@ -12668,7 +12678,7 @@ export class C9 extends (any0 as ReturnType<() => C9>) {}
       expect(exitCode).toBe(1);
     });
 
-    test("JSX attributes: a later spread, a spread child, a repeated name, type arguments", async () => {
+    test("checks JSX attributes with a later spread, a spread child, a repeated name or type arguments", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "jsx": "preserve"}}`,
         "a.tsx": `// an explicit attribute that a later spread overwrites still makes the attributes fresh
@@ -12743,7 +12753,7 @@ declare function Ov(p: { req: string; children?: string }): JSX.Element; declare
       expect(exitCode).toBe(1);
     });
 
-    test("a name that is repeated in an object literal or in JSX attributes", async () => {
+    test("reports TS1117 and TS17001 for a name repeated in an object literal or in JSX attributes", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "jsx": "preserve"}}`,
         "a.tsx": `// the first of several declarations of one name is the ValueDeclaration
@@ -12833,7 +12843,7 @@ declare function Ov(p: { req: string; children?: string }): JSX.Element; declare
       expect(exitCode).toBe(1);
     });
 
-    test("the attributes of a self-closing element whose type arguments no signature takes", async () => {
+    test("skips the attributes of a self-closing JSX element if no signature accepts its type arguments", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "jsx": "preserve", "noUnusedLocals": true}}`,
         "a.tsx": `// nothing in the attributes of a self-closing element is checked if no signature takes the type arguments
@@ -12936,7 +12946,7 @@ declare function Ov(p: { req: string; children?: string }): JSX.Element; declare
       expect(exitCode).toBe(1);
     });
 
-    test("a name that is used only in a node that is never checked", async () => {
+    test("reports TS6133 for a name used only in a node that's never checked", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "jsx": "preserve", "noUnusedLocals": true}}`,
         "a.ts": `// a reference in a node that is never checked is no reference
@@ -12964,7 +12974,7 @@ export function m(a = () => { const z = 1; yield z; }) { return a; }
       expect(exitCode).toBe(1);
     });
 
-    test("an assertion function that CommonJS exports", async () => {
+    test("reports TS2775 only for the CommonJS-exported assertion functions that tsc rejects", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "c1.js": `/** @param {unknown} a @returns {asserts a is string} */
@@ -13012,7 +13022,7 @@ export function use(x) {
       expect(exitCode).toBe(1);
     });
 
-    test("which references have an explicit type for an assertion call", async () => {
+    test("reports TS2775 for an assertion call unless every name in the call target has an explicit type", async () => {
       using dir = project({
         "a.ts": `interface A<T> {
   f: (x: unknown) => asserts x is T;
@@ -13141,7 +13151,7 @@ export function t2(x: unknown, fs: ((x: unknown) => asserts x is string)[], { g 
       expect(exitCode).toBe(1);
     });
 
-    test("a read-only property through a spread, a rest element, `Pick` and an intersection", async () => {
+    test("keeps or drops `readonly` through a spread, a rest element, `Pick` and an intersection like tsc", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "d.js": `const v = 1;
@@ -13230,7 +13240,7 @@ const show = [rest, pk, c];
       expect(exitCode).toBe(1);
     });
 
-    test("an optional member whose initializer compares `this`", async () => {
+    test("reports TS7022 for an optional member whose initializer compares `this`", async () => {
       using dir = project({
         "a.ts": `export class C1 { x? = \`\${this}\` as const; }
 `,
@@ -13242,7 +13252,7 @@ const show = [rest, pk, c];
       expect(exitCode).toBe(1);
     });
 
-    test("a call of an accessor of a union or an intersection", async () => {
+    test("reports TS6234 or TS2349 for a call of an accessor of a union or an intersection", async () => {
       using dir = project({
         "a.ts": `export class G<T> { get m(): T { return null!; } }
 export class GS<T> { get m(): T { return null!; } set m(v: T) {} }
@@ -13373,7 +13383,7 @@ function tp<T extends G<number>>(t: T, u: T | undefined) { t.m(); u!.m(); }
       expect(exitCode).toBe(1);
     });
 
-    test("a call of a getter, with and without a setter", async () => {
+    test("reports TS6234 for a call of a getter, with and without a setter", async () => {
       using dir = project({
         "a.ts": `export class P1 { get #m() { return 1; } u() { this.#m(); } }
 export class P2 { static get #m() { return 1; } static u() { P2.#m(); } }
@@ -13411,7 +13421,7 @@ declare const i9: P7<number> & { z: 1 }; i9.m();
       expect(exitCode).toBe(1);
     });
 
-    test("a template literal with `this` in a class that has optional members", async () => {
+    test("reports TS7022 for a template literal with `this` in a class that has optional members", async () => {
       using dir = project({
         "a.ts": `export class A1 { x = \`\${this}\` as const; }
 export class A2 { get p() { return \`\${this}\` as const; } }
@@ -13465,7 +13475,7 @@ export class C9 { accessor x = \`\${this}\` as const; }
       expect(exitCode).toBe(1);
     });
 
-    test("a spread of a union in a class field", async () => {
+    test("reports TS7022 for a class field initialized with a spread of a union that includes its class", async () => {
       using dir = project({
         "a.ts": `declare function fe(v: {}): 1; declare const c: boolean;
 export class D1 { x = { a: fe({ ...(null! as D1 | { x: 1; y: 2 }) }) }; y = 1; }
@@ -13495,7 +13505,7 @@ export class D8 { x = { a: g(null! as D8) }; y = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("functions that return a member of a class whose initializer calls them", async () => {
+    test("reports TS7022 and TS7023 for functions that return a class member whose initializer calls them", async () => {
       using dir = project({
         "a.ts": `export function r1() { class K { static p = [g(), h()]; } function g() { return K.p; } function h() { return K.p; } return K; }
 export function r2() { class K { p = [g(), h()]; } function g() { return new K().p; } function h() { return new K().p; } return K; }
@@ -13588,7 +13598,7 @@ export function u7() { const o = { a: [g(), h()] }; const { a } = o; function g(
       expect(exitCode).toBe(1);
     });
 
-    test("a conditional type as the type argument of a base class that refers to its own members", async () => {
+    test("resolves a conditional type passed as the type argument of a base class that refers to its own members", async () => {
       using dir = project({
         "a.ts": `declare abstract class Schema<Output = any> { readonly _output: Output; }
 declare class C0<Value extends Schema> extends Schema<Value extends { _output: "yes" } ? "yes" : "no"> {}
@@ -13659,7 +13669,7 @@ export const second: never = (null! as FromB<unknown>)._output;
       expect(exitCode).toBe(1);
     });
 
-    test("variance annotations of interfaces that refer to each other", async () => {
+    test("reports TS2636 for wrong variance annotations on interfaces that refer to each other", async () => {
       using dir = project({
         "a.ts": `export interface A0<in T> { f: (x: A<T>) => void }
 export interface A<in T> extends A0<T> {}
@@ -13722,7 +13732,7 @@ export interface S<in T> { h: R<T> }
       expect(exitCode).toBe(1);
     });
 
-    test("variance annotations of interfaces that refer to each other across files", async () => {
+    test("reports TS2636 for wrong variance annotations on interfaces that refer to each other across files", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true}, "files": ["a.ts", "b.ts", "c.ts", "e.ts"]}`,
         "a.ts": `import type { Sb } from "./b";
@@ -13771,7 +13781,7 @@ declare global { interface G<in T> {} }
       expect(exitCode).toBe(1);
     });
 
-    test("the order in which variance annotations are checked", async () => {
+    test("reports TS2636 depending on the order in which variance annotations are checked, like tsc", async () => {
       using dir = project({
         "a.ts": `export interface R1<in T> { f: (x: S1<T>) => void }
 export interface S1<in T> {}
@@ -13805,7 +13815,7 @@ export interface Q5<in T> { f: () => S5<T> }
       expect(exitCode).toBe(1);
     });
 
-    test("a labeled tuple built twice is one type, also in a file that nothing imports", async () => {
+    test("a labeled tuple built twice is one type, even in a file that nothing imports", async () => {
       using dir = project({
         "a.ts": `import { twice as imported } from "./b";
 function f(p: string, q: number) {}
@@ -13879,7 +13889,7 @@ export const n12: never = g;
       expect(exitCode).toBe(1);
     });
 
-    test("inference to `keyof T` from string literals and enum members", async () => {
+    test("infers `T` from `keyof T` for string literals and enum members", async () => {
       using dir = project({
         "a.ts": `enum SE { A = "a", B = "b" }
 declare function k<T>(a: keyof T): T;
@@ -13924,7 +13934,7 @@ kk("a");
       expect(exitCode).toBe(1);
     });
 
-    test("inference to `keyof T` from names that look like numbers", async () => {
+    test("infers `T` from `keyof T` for names that look like numbers", async () => {
       using dir = project({
         "a.ts": `enum SE { A = "a", B = "b", "x-y" = "c", D = "a" }
 declare function k<T>(a: keyof T): T;
@@ -13981,13 +13991,13 @@ export const f1 = kv(SE.A, { A: 1 }); export const f2 = kv(SE.A, { a: 1 }); expo
       expect(exitCode).toBe(1);
     });
 
-    // What a long walk from a source type to a target type has inferred is kept, and is written down in place of the
+    // The result of a long inference walk from a source type to a target type is cached, and replayed instead of the
     // next walk from the same state. A walk is long from 16 steps on: one for the two types, and one for each part of
-    // the target that mentions a type parameter. It is kept the second or the third time it is made, and only if it did
-    // nothing but infer. So each program says the same thing eight times, in sizes on both sides of what is long, and
-    // gets the same answer every time: that of TypeScript 7.0.2.
-    describe("inference between the same types again and again", () => {
-      /** `text(0)`, `text(1)` .. up to `count` of them. */
+    // the target that mentions a type parameter. It's cached the second or third time it's made, and only if it did
+    // nothing but infer. So each program repeats the same thing eight times, in sizes on both sides of that threshold,
+    // and expects the same result every time, which is TypeScript 7.0.2's.
+    describe("infers the same types every time the same inference is repeated", () => {
+      /** Joins `text(0)` to `text(count - 1)`. */
       const each = (count: number, text: (i: number) => string, separator = " | ") =>
         Array.from({ length: count }, (_, i) => text(i)).join(separator);
       const properties = (count: number, type: (i: number) => string) => each(count, i => `p${i}: ${type(i)}`, "; ");
@@ -13997,15 +14007,15 @@ export const f1 = kv(SE.A, { A: 1 }); export const f2 = kv(SE.A, { a: 1 }); expo
         sizes: number[];
         /** The start of the file. */
         declarations: (count: number) => string;
-        /** What comes after it `times` times. */
+        /** Appended `times` times after `declarations`. */
         round: (i: number, count: number) => string;
-        /** The errors in `declarations`, after the name of the file. */
+        /** Errors in `declarations`, without the file name. */
         declared?: string;
-        /** The errors in each `round`, with the line counted from where it starts. */
+        /** Errors in each `round`, with line numbers relative to its start. */
         repeated: string;
       };
       const programs: Record<string, Repeated> = {
-        "a call in a list of a union, from which its return type is extracted": {
+        "a call in an array of a union from which its return type is extracted": {
           sizes: [2, 3, 4, 5, 8, 30],
           declarations: count => `
 type Event = ${each(count, i => `{ type: "t${i}"; data: { v${i}: ${i} } }`)};
@@ -14201,7 +14211,7 @@ export const d${i}: never = both(other, concrete);`,
         Type 'number' is not assignable to type 'bigint'.
 `,
         },
-        "a walk that makes types": {
+        "a walk that creates types": {
           sizes: [6, 7, 8, 9, 40],
           declarations: count => `
 interface Keys<T> { ${properties(count, () => "keyof T")} }
@@ -14302,7 +14312,7 @@ export function loop${i}(more: boolean) {
   Type 'string' is not assignable to type 'never'.
 `,
         },
-        "a property whose type reaches the limit of instantiations": {
+        "a property whose type reaches the instantiation limit": {
           sizes: [12, 13, 14, 15, 40],
           declarations: count => `
 interface Target<T> { ${properties(count, () => "T")}; deep: T }
@@ -14369,7 +14379,7 @@ export const c${i}: never = get({ ...a, extra${i}: ${i} });`,
 (+3,14): error TS2322: Type '[string, number]' is not assignable to type 'never'.
 `,
         },
-        "more candidates than are kept": {
+        "more candidates than are cached": {
           sizes: [15, 503, 504, 520],
           declarations: count => `
 interface Wide<T> { ${properties(count, () => "T")} }
@@ -14382,7 +14392,7 @@ export const w${i}: never = wide(literals);`,
 (+1,14): error TS2322: Type '["last", "no more"]' is not assignable to type 'never'.
 `,
         },
-        "more walks than there are places for at first": {
+        "more walks than the cache's initial capacity": {
           sizes: [63, 64, 65, 66, 321],
           declarations: count => `
 interface Target<T> { ${properties(16, () => "T")} }
@@ -14429,7 +14439,7 @@ export function f${i}<V extends string>(only: Only<V> | Box0<V>) {
   Type 'string' is not assignable to type 'never'.
 `,
         },
-        "functions that take the types of their parameters from the target": {
+        "functions that get their parameter types from the target": {
           sizes: [3, 4, 5, 6, 40],
           declarations: count => `
 interface Handlers<T> { seed: T; ${properties(count, () => "(value: T) => T")} }
@@ -14467,7 +14477,8 @@ export const a${i}: never = take(a);`,
 (+1,14): error TS2322: Type 'string[]' is not assignable to type 'never'.
 `,
         },
-        // A walk ends when it has been everywhere, however long that takes: "last" is in the last of 211,600 pairs.
+        // A walk only ends once it has visited everything, however long it takes. "last" is in the last of 211,600
+        // pairs.
         "each member of a long union to each member of another": {
           sizes: [20, 440, 460],
           declarations: count => `
@@ -14482,7 +14493,7 @@ export const picked${i}: never = pick(concrete);`,
   Type '"last"' is not assignable to type 'never'.
 `,
         },
-        "optional properties to an index signature, between other questions about undefined": {
+        "optional properties to an index signature, between other queries about undefined": {
           sizes: [11, 12, 13, 14, 40],
           declarations: count => `
 type Meta = { id?: "id"; title?: "title" | undefined; hidden?: boolean; size: 1 };
@@ -14500,7 +14511,7 @@ export const b${i}: "${i}.0" = present${i}()[0];`,
 (+1,14): error TS2322: Type '["p", "id" | "title" | 1 | boolean]' is not assignable to type 'never'.
 `,
         },
-        "generic functions that are composed, with type parameters of one name": {
+        "composed generic functions whose type parameters share a name": {
           sizes: [13, 14, 15, 16, 40],
           declarations: count => `
 interface Wide<A> { ${properties(count, () => "A")} }
@@ -14540,7 +14551,7 @@ export const f${i}: never = first(null! as Other<"f">);`,
           const found: Record<string, string[][]> = {};
           let part: string[] = [];
           for (const line of lines(stdout)) {
-            // The lines that explain an error come after it, indented.
+            // An error's elaboration lines follow it, indented.
             const error = /^size(\d+)\.ts\((\d+)(,.*)$/.exec(line);
             if (error) {
               const after = +error[2] - 1 - newlines(declarations(+error[1]));
@@ -14554,7 +14565,7 @@ export const f${i}: never = first(null! as Other<"f">);`,
         }
       });
 
-      // What is kept lasts from one file to the next.
+      // The cache carries over from one file to the next.
       test("in several files", async () => {
         const users = Array.from({ length: 8 }, (_, i) => i);
         using dir = project({
@@ -14594,7 +14605,7 @@ user${i}.ts(7,14): error TS2322: Type 'string[]' is not assignable to type 'neve
       });
     });
 
-    test("array literals as inference candidates", async () => {
+    test("picks among array literals as inference candidates like tsc", async () => {
       using dir = project({
         "a.ts": `declare function two<B>(a: () => B, b: () => B): B;
 declare function three<B>(a: B, b: B, c: B): B;
@@ -14652,7 +14663,7 @@ export const k2 = three({ f: [1] }, { f: ["a"] }, { f: [] });
       expect(exitCode).toBe(1);
     });
 
-    test("a function argument against an overload that has an index signature", async () => {
+    test("reports TS2345 for a function argument against an index signature inferred from `keyof T`", async () => {
       using dir = project({
         "a.ts": `declare function m<T>(a: T, b: keyof T): T;
 declare const un: string | number; declare const st: string; declare const nu: number; declare const ul: "a" | "b";
@@ -14721,7 +14732,7 @@ export const v3 = o3(x => {});
       expect(exitCode).toBe(1);
     });
 
-    test("an argument beyond the elements of a rest tuple", async () => {
+    test("still checks an argument beyond the last parameter or rest tuple element", async () => {
       using dir = project({
         "a.ts": `declare function f0(): void;
 declare function f1(a: number): void;
@@ -14771,7 +14782,7 @@ f1(1, x => x);
       expect(exitCode).toBe(1);
     });
 
-    test("an enum against a weak type", async () => {
+    test("reports TS2559 for an enum assigned to a weak type", async () => {
       using dir = project({
         "a.ts": `enum E { A, B } enum SE { A = "a", B = "b" } enum One { A }
 declare const e: E; declare const se: SE; declare const b: boolean; declare const one: One; declare const u: 1 | 2; declare const eb: E | boolean;
@@ -14803,7 +14814,7 @@ export const w9: Partial<{ p: number }> = e;
       expect(exitCode).toBe(1);
     });
 
-    test("the minimum argument count of a union of signatures", async () => {
+    test("reports TS2555 with the right minimum argument count for a union of signatures", async () => {
       using dir = project({
         "a.ts": `declare const ar: number[];
 declare const g1: ((...a: number[]) => 5) | ((a: string) => 2);
@@ -14844,7 +14855,7 @@ export const t1: never = g1; export const p1: Parameters<typeof g1> = null!; exp
       expect(exitCode).toBe(1);
     });
 
-    test("the minimum argument count of a union of three signatures", async () => {
+    test("reports TS2555 with the right minimum argument count for a union of three signatures", async () => {
       using dir = project({
         "a.ts": `declare const ar: number[]; declare const nv: never[];
 declare const h1: ((...a: number[]) => 1) | ((a: string) => 2);
@@ -14900,7 +14911,7 @@ export const u1: typeof h9 extends (...a: infer P) => unknown ? P : 0 = null!; e
       expect(exitCode).toBe(1);
     });
 
-    test("an error at a parenthesized argument that could be called", async () => {
+    test("reports TS2345 inside the parentheses of a parenthesized function argument", async () => {
       using dir = project({
         "a.ts": `enum E { A, B } enum SE { A = "a" } declare class C { c: 1 }
 declare function two<B>(a: B, b: B): B;
@@ -14934,7 +14945,7 @@ two(E.A, (() => 1) satisfies unknown);
       expect(exitCode).toBe(1);
     });
 
-    test("the order of instantiated generic functions in a union", async () => {
+    test("orders instantiated generic functions in a union like tsc", async () => {
       using dir = project({
         "a.ts": `declare function box<T>(v: T): { v: T };
 declare function wrap<T>(x: T): { w: T };
@@ -14982,7 +14993,7 @@ export const r8 = un(cond ? box : wrap); export const s8: never = r8;
       expect(exitCode).toBe(1);
     });
 
-    test("a class that extends a union of constructors", async () => {
+    test("checks a class that extends a union of constructors, and reports TS2507 if the union includes null", async () => {
       using dir = project({
         "a.ts": `declare class C { p: number } declare class E { q: string }
 declare const k1: (new () => C) | (new () => E);
@@ -15009,7 +15020,7 @@ export class Q5 extends k1 { constructor() { super(); const t: never = this; } }
       expect(exitCode).toBe(1);
     });
 
-    test("`call` and `apply` of an intersection of a function and a constructor", async () => {
+    test("resolves `call` and `apply` on an intersection of a function and a constructor", async () => {
       using dir = project({
         "a.ts": `declare class C { p: number }
 interface IC { new (a: number): C } interface IF { (a: number): number }
@@ -15034,7 +15045,7 @@ export const r6: never = k1.apply(null, [1]);
       expect(exitCode).toBe(1);
     });
 
-    test("a member of `Function` or `Object` on an intersection", async () => {
+    test("resolves a member of `Function` or `Object` on an intersection", async () => {
       using dir = project({
         "a.ts": `interface IF { (a: number): number } interface IC { new (a: number): {} }
 declare const k4: { a: 1 } & IF;
@@ -15084,7 +15095,7 @@ export const r16: keyof typeof k5 = null!; export const r17: never = r16;
       expect(exitCode).toBe(1);
     });
 
-    test("the elaboration of a callback parameter of an instantiated signature", async () => {
+    test("elaborates a mismatched callback parameter of an instantiated signature", async () => {
       using dir = project({
         "a.ts": `declare const s1: <T>(a: T, b: T) => T;
 export const t1: <A, B, C>(f: (a: A) => B, g: (b: B) => C) => (a: A) => C = s1;
@@ -15118,7 +15129,7 @@ export const t4: (f: (a: number) => void, g: (b: string) => void) => void = s4;
       expect(exitCode).toBe(1);
     });
 
-    test("the instantiation depth limit in an assignment, a declaration and a `return`", async () => {
+    test("reports TS2589 when an assignment, a declaration or a `return` reaches the instantiation depth limit", async () => {
       using dir = project({
         "a.ts": `// The DEPTH limit, reached by a comparison that no expression check encloses on our side. One module for each position: tsgo reports the limit once for each type.
 type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
@@ -15155,7 +15166,7 @@ export function f(b: B<string>) { function g(a: A<string>) {} g(b); }
       expect(exitCode).toBe(1);
     });
 
-    test("default type arguments that need a member of a union that is being resolved", async () => {
+    test("accepts default type arguments that need a member of a union that's being resolved", async () => {
       using dir = project({
         "a.ts": `// A conversion from validators to schemas, both recursive. The key of a record is a union of ten, so each level has ten \`SRec\` references.
 type Opt = "o" | "r";
@@ -15196,7 +15207,7 @@ export const converted = arr(conv(element));
       expect(exitCode).toBe(0);
     });
 
-    test("`this` types in the JSDoc comments of a class", async () => {
+    test("accepts `this` types in a class's JSDoc comments, and reports TS2526 where there's no `this` type", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `// VALID: tsgo reports nothing in this file but the three lines marked
@@ -15242,7 +15253,7 @@ export class B {
       expect(exitCode).toBe(1);
     });
 
-    test("two `@type` tags on one assignment", async () => {
+    test("reports TS1223 for two `@type` tags, and uses the last one on an assignment", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export {};
@@ -15316,7 +15327,7 @@ class V4c {
       expect(exitCode).toBe(1);
     });
 
-    test("`@extends`, `@this` and `@typedef` tags in unusual places", async () => {
+    test("parses `@extends`, `@this` and `@typedef` tags in unusual places next to a file with syntax errors", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export {};
@@ -15362,7 +15373,7 @@ export async function w() { const f = () => (await { a: 1 }); }
       expect(exitCode).toBe(1);
     });
 
-    test("a `this` parameter of type `typeof this`", async () => {
+    test("reports TS2502 for a `this` parameter typed `typeof this` or `typeof this.k`", async () => {
       using dir = project({
         "a.ts": `declare const any0: any;
 // a \`this\` parameter whose type refers to \`this\`
@@ -15400,7 +15411,7 @@ export const d7s: never = new D7().m;
       expect(exitCode).toBe(1);
     });
 
-    test("an export that `Object.defineProperty` defines stays read-only", async () => {
+    test("reports TS2540 on a write to an export defined with `Object.defineProperty`", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "d.js": `const v = 1;
@@ -15446,7 +15457,7 @@ export {};
       expect(exitCode).toBe(1);
     });
 
-    test("a dotted `@typedef` name on a member of an object literal", async () => {
+    test("reports TS1235 for a dotted `@typedef` name on a class member, but not on an object literal's member", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export {};
@@ -15495,7 +15506,7 @@ const a3 = 1;
       expect(exitCode).toBe(1);
     });
 
-    test("the type of a JSDoc `@type` tag on an assignment is not checked, only resolved", async () => {
+    test("resolves but doesn't check the type in a JSDoc `@type` tag on an assignment", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export {};
@@ -15556,7 +15567,7 @@ const /** @type {U8} */ u8 = 1;
       expect(exitCode).toBe(1);
     });
 
-    test("the types of a JSDoc signature on a function are not checked, only resolved", async () => {
+    test("resolves but doesn't check the types of a JSDoc signature on a function", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export {};
@@ -15622,7 +15633,7 @@ F.d = undefined;
       expect(exitCode).toBe(1);
     });
 
-    test("a parameter whose name a return type queries, in an instantiated signature", async () => {
+    test("prints `typeof a` for a return type that queries a parameter, in an instantiated signature", async () => {
       using dir = project({
         "a.ts": `export class D7 {
   m = (a: string): typeof a => a;
@@ -15687,7 +15698,7 @@ export const e18: never = t2;
       expect(exitCode).toBe(1);
     });
 
-    test("a parameter whose name a return type queries, in a message", async () => {
+    test("prints `typeof a` for a return type that queries a parameter, in an error message", async () => {
       using dir = project({
         "a.ts": `export class D7 {
   m = (a: string): typeof a => a;
@@ -15725,7 +15736,7 @@ export const e8: never = new G<number>().k;
       expect(exitCode).toBe(1);
     });
 
-    test("`new` on a function that has a `@this` tag", async () => {
+    test("reports TS7009 for `new` on a function that has a `@this` tag", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export {};
@@ -15789,7 +15800,7 @@ new C6();
       expect(exitCode).toBe(1);
     });
 
-    test("`satisfies const` under `as const`", async () => {
+    test("reports TS2304 and TS1355 for `satisfies const`, also under `as const`", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.ts": `export const a1 = (1 satisfies const) as const;
@@ -15833,7 +15844,7 @@ export const k5 = /** @satisfies {const} */ (/** @type {const} */ (1));
       expect(exitCode).toBe(1);
     });
 
-    test("`await` in parentheses in an arrow function that is not async", async () => {
+    test("reports syntax errors for `await` in parentheses in an arrow function that isn't async", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.ts": `export async function w1() { const f = () => (await { a: 1 }); }
@@ -15879,7 +15890,7 @@ export async function w18() { const f = () => (await this); }
       expect(exitCode).toBe(1);
     });
 
-    test("an intersection with a class whose field is being resolved", async () => {
+    test("reports TS7022 for an intersection with a class whose field is being resolved", async () => {
       using dir = project({
         "a.ts": `declare function fy(v: { y: unknown }): 1; declare function fe(v: {}): 1; declare function fo(v: { y?: unknown }): 1;
 export class C1 { x = { a: fy(null! as C1 & { x: unknown }) }; y = 1; }
@@ -15918,7 +15929,7 @@ export class E5 { x? = { a: fy(null! as E5 & { x?: unknown }) }; y = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("a mapped type over a class whose field is being resolved", async () => {
+    test("reports TS7022 and TS2615 for a mapped type over a class whose field is being resolved", async () => {
       using dir = project({
         "a.ts": `declare function fe(v: {}): 1;
 export class M1 { x = { a: fe({ ...(null! as Readonly<M1>) }) }; y = 1; }
@@ -15950,7 +15961,7 @@ export class M7 { x = { a: (null! as { [K in keyof M7]: M7[K] }).x }; y = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("a failed `satisfies` in a class field prints both types", async () => {
+    test("prints both types for a failed `satisfies` in a class field", async () => {
       using dir = project({
         "a.ts": `export class P1 { x = ((({ ...new P1() }) satisfies { y: unknown }), 1); y?: number }
 export class P2 { x = typeof ((({ ...new P2() }) satisfies { y: unknown })); y?: number }
@@ -15992,7 +16003,7 @@ export class P8 { x = !(({ ...new P8() }) satisfies { y: unknown }); y?: number 
       expect(exitCode).toBe(1);
     });
 
-    test("a spread that fails `satisfies` in a class field", async () => {
+    test("reports TS7022 and TS1360 for a spread that fails `satisfies` in a class field", async () => {
       using dir = project({
         "a.ts": `export class C1 { x = (({ ...new C1() }) satisfies { y: unknown }, 1); y?: number; }
 export class C2 { x = typeof (({ ...new C2() }) satisfies { y: unknown }); y?: number; }
@@ -16014,7 +16025,7 @@ export const c3 = ({ ...new C3() }) satisfies { y: unknown };
       expect(exitCode).toBe(1);
     });
 
-    test("`Object.assign({}, this)` in the initializer of a property", async () => {
+    test("accepts `Object.assign({}, this)` in a property's initializer and infers `{} & E1`", async () => {
       using dir = project({
         "a.ts": `declare function both<A, B>(a: A, b: B): A & B;
 export class E1 { x = Object.assign({}, this); y = 1; }
@@ -16037,7 +16048,7 @@ export const e5: never = new E5().x();
       expect(exitCode).toBe(1);
     });
 
-    test("JSDoc: the tag that TS1223 names, and two accessibility tags", async () => {
+    test("JSDoc: TS1223 prints the repeated tag's name, and two accessibility tags report TS1028", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export {};
@@ -16148,7 +16159,7 @@ const /** @type {never} */ d7s = new D7().m;
       expect(exitCode).toBe(1);
     });
 
-    test("an overload and an implementation whose name is computed", async () => {
+    test("reports TS2389 and TS2512 for an overload whose implementation has a computed name", async () => {
       using dir = project({
         "a.ts": `export class A1 { m(): void; ["m"]() {} }
 export class A2 { static m(): void; ["m"]() {} }
@@ -16194,7 +16205,7 @@ export class D7 { accessor b?: number = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test('`this["z"]` in an optional property, in an intersection with the class whose property is being resolved', async () => {
+    test('reports TS7022 for `this["z"]` in a property, in an intersection with the class whose `z` is being resolved', async () => {
       using dir = project({
         "a.ts": `declare function fy(v: { y: unknown }): 1;
 export class A1 { p?: this["z"]; z = { a: fy(null! as A1 & { p?: unknown }) }; y = 1; }
@@ -16231,7 +16242,7 @@ export class B7 { p?: this["z"]; z = fy(null! as B7 & { p?: unknown }); y = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("a class expression in a parameter default that extends the type of a call of the function", async () => {
+    test("reports TS7023 and TS7022 for a class in a parameter default that extends `typeof` a call of the function", async () => {
       using dir = project({
         "a.ts": `export function a(x = class extends (typeof a()) {}) { return x; }
 `,
@@ -16245,7 +16256,7 @@ export class B7 { p?: this["z"]; z = fy(null! as B7 & { p?: unknown }); y = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("`new a()` in a method of the class expression that `a` extends", async () => {
+    test("reports TS2506 for `new a()` in a method of the class expression that `a` extends", async () => {
       using dir = project({
         "a.ts": `declare class Base { p: unknown; m(): unknown; static s: unknown } declare function deco(v: unknown): (...a: any[]) => any; declare function one(v: unknown): number;
 export function f1() { class a extends (class extends Base { m() { return new (a)(); } }) {} }
@@ -16289,7 +16300,7 @@ export function g4() { class a extends (class extends Base { m() { return new a;
       expect(exitCode).toBe(1);
     });
 
-    test("an overload whose return type is a conditional type over the method", async () => {
+    test("accepts an overload whose return type is a conditional type over the method", async () => {
       using dir = project({
         "a.ts": `declare const any0: any;
 type RT1<T> = T extends (...a: any) => infer R ? R : any;
@@ -16313,7 +16324,7 @@ export class B7 { m(): RT7<B7["m"]>; m(x: number): number; m(): unknown { return
       expect(exitCode).toBe(0);
     });
 
-    test("a class expression in a destructured array that refers to the element", async () => {
+    test("accepts a class expression in a destructured array that refers to the element", async () => {
       using dir = project({
         "a.ts": `declare const any0: any; declare class Base { p: unknown; m(): unknown; static s: unknown }
 export function f1() { const [a] = [class extends Base { m(): typeof a { return any0; } }]; }
@@ -16324,7 +16335,7 @@ export function f1() { const [a] = [class extends Base { m(): typeof a { return 
       expect(exitCode).toBe(0);
     });
 
-    test("a class in a function that refers to a variable without an annotation", async () => {
+    test("reports TS7034 and TS7005 for a class in a function that refers to an unannotated variable", async () => {
       using dir = project({
         "a.ts": `export function f1() { let a; a = 1; class C { p!: { x: typeof a } } a; }
 export function f2() { let a; a = 1; class C { p!: typeof a } a; }
@@ -16359,7 +16370,7 @@ export function g6() { let a; a = 1; class C { p!: { (): typeof a } } a; }
       expect(exitCode).toBe(1);
     });
 
-    test("a conditional type over a method in the return type of its first overload", async () => {
+    test("reports TS2577 for some conditional types over a method in its first overload's return type", async () => {
       using dir = project({
         "a.ts": `declare const any0: any;
 type X0<T> = T extends (...a: any) => infer R ? 1 : 2; export class B0 { m(): X0<B0["m"]>; m(x: number): number; m(): unknown { return any0; } }
@@ -16410,7 +16421,7 @@ export class I18 { m(): I18["m"] extends (...a: any) => void ? 1 : 2; m(x: numbe
       expect(exitCode).toBe(1);
     });
 
-    test("JSDoc: a `@typedef` with a qualified name in a function", async () => {
+    test("JSDoc: reports TS1235 for a `@typedef` with a qualified name in a function", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export {};
@@ -16476,7 +16487,7 @@ if (o) {
       expect(exitCode).toBe(1);
     });
 
-    test("JSDoc: `@template` and `@type` on an assignment to `this.m`", async () => {
+    test("JSDoc: ignores `@template` with `@type` on an assignment to `this.m`, so `T` isn't found (TS2304)", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export {};
@@ -16528,7 +16539,7 @@ D5.prototype.s = { a: 1 };
       expect(exitCode).toBe(1);
     });
 
-    test("JSDoc: a function type with two parameters of one name in a `@type` that is not checked", async () => {
+    test("JSDoc: reports TS2300 for a function type with two parameters of one name in an unchecked `@type`", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true, "noUnusedLocals": true, "noUnusedParameters": true}}`,
         "a.js": `export class C {
@@ -16607,7 +16618,7 @@ D5.prototype.s = { a: 1 };
       expect(exitCode).toBe(1);
     });
 
-    test("JSDoc: `typeof` of a name that does not exist in a `@type` that is not checked", async () => {
+    test("JSDoc: reports TS2552 for `typeof` of a missing name in an unchecked `@type`", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export {};
@@ -16670,7 +16681,7 @@ function f(a, ...b) {}
       expect(exitCode).toBe(1);
     });
 
-    test("JSDoc: modifiers on the members of a type literal in a `@type` that is not checked", async () => {
+    test("JSDoc: ignores most modifiers on a type literal's members in an unchecked `@type`", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export class C {
@@ -16719,7 +16730,7 @@ export const v = { a: "" };
       expect(exitCode).toBe(1);
     });
 
-    test("JSDoc: a binding pattern in a function type in a `@type` that is not checked", async () => {
+    test("JSDoc: accepts a binding pattern in a function type in an unchecked `@type`", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true, "noUnusedLocals": true, "noUnusedParameters": true}}`,
         "a.js": `export class C {
@@ -16737,7 +16748,7 @@ export const v = { a: "" };
       expect(exitCode).toBe(0);
     });
 
-    test("an intersection with a class that is reduced before the property is resolved", async () => {
+    test("reports TS7022 for an intersection with a class even if it was reduced before the property is resolved", async () => {
       using dir = project({
         "a.ts": `declare function fy(v: { y: unknown }): 1;
 export class E5 { x? = { a: fy(null! as E5 & { x?: unknown }) }; y = 1; }
@@ -16800,7 +16811,7 @@ export class G9 { p?: typeof this.z; z = { a: fy(null! as G9 & { p?: unknown }) 
       expect(exitCode).toBe(1);
     });
 
-    test("an immediately invoked function whose argument spreads an instance of the class", async () => {
+    test("reports TS7022 for an immediately invoked function whose argument spreads an instance of the class", async () => {
       using dir = project({
         "a.ts": `declare function idf<T>(v: T): T;
 export class V1 { x = ((v) => 1)({ ...new V1() }); y = 1 }
@@ -16890,7 +16901,7 @@ export class W5 { x = idf(({ y } = { ...new W5() }) => y)(); y = 1 }
       expect(exitCode).toBe(1);
     });
 
-    test("a function expression whose parameter type refers to the accessor that returns it", async () => {
+    test("reports TS7023 for a function expression whose parameter type refers to the accessor that returns it", async () => {
       using dir = project({
         "a.ts": `export {};
 class A { get x() { return ((v: A["x"]) => 1); } y = 1 }
@@ -16923,7 +16934,7 @@ declare const c: boolean;
       expect(exitCode).toBe(1);
     });
 
-    test("the type node of an assertion in a parameter default", async () => {
+    test("reports TS7022 for an assertion's type node in a parameter default that needs the property", async () => {
       using dir = project({
         "a.ts": `export {};
 type Has<T extends { y: unknown }> = 1;
@@ -16957,7 +16968,7 @@ class K { x = ((v = null! satisfies { p: K["x"] }) => 1); y = 1 }
       expect(exitCode).toBe(1);
     });
 
-    test("an immediately invoked function with a binding pattern, called with the variable that is being declared", async () => {
+    test("reports TS2448 for an IIFE with a binding pattern that's called with the variable being declared", async () => {
       using dir = project({
         "a.ts": `export {};
 declare function idf<T>(v: T): T;
@@ -17029,7 +17040,7 @@ class F { x = { a: (({ y }) => y)([new F()]) }; y = 1 }
       expect(exitCode).toBe(1);
     });
 
-    test("a generic call whose argument is an assertion to a type that needs the property", async () => {
+    test("reports TS7022 for a generic call whose argument is an assertion to a type that needs the property", async () => {
       using dir = project({
         "a.ts": `export {};
 declare function idf<T>(v: T): T;
@@ -17056,7 +17067,7 @@ class I { x = [null! as Pick<I & { x: 1 }, "y">].length; y = 1 }
       expect(exitCode).toBe(1);
     });
 
-    test("a type predicate that refers to the variable that holds the function", async () => {
+    test("reports TS7022 for a type predicate that refers to the variable that holds the function", async () => {
       using dir = project({
         "a.ts": `export {};
 var A = { x: ((v: unknown): v is { [K in keyof typeof A]: 1 } => true), y: 1 };
@@ -17082,7 +17093,7 @@ class F { x = ((v: ReturnType<() => F["x"]>) => true); y = 1 }
       expect(exitCode).toBe(1);
     });
 
-    test("a mapped type whose `as` clause reads the type that is being resolved is TS2589", async () => {
+    test("reports TS2589 for a mapped type whose `as` clause reads the type that's being resolved", async () => {
       using dir = project({
         "a.ts": `declare class D { static x: { [K in keyof typeof D as (typeof D)[K] & string]: 1 }; }
 `,
@@ -17094,7 +17105,7 @@ class F { x = ((v: ReturnType<() => F["x"]>) => true); y = 1 }
       expect(exitCode).toBe(1);
     });
 
-    test("the type node of an assertion in the initializer of a property", async () => {
+    test("reports TS7022 for an assertion's type node in a property initializer that needs the property", async () => {
       using dir = project({
         "a.ts": `declare function one(v: unknown): 1; declare function g0<T>(): 1; declare class G<T> { p: 1 } declare function tag<T>(s: TemplateStringsArray): 1;
 type Has<T extends { y: unknown }> = 1;
@@ -17144,7 +17155,7 @@ export class C3 { x = { a: () => null! as { p: C3["x"] } }; y = 1 }
       expect(exitCode).toBe(1);
     });
 
-    test("an immediately invoked function with a binding pattern whose argument spreads an instance", async () => {
+    test("reports TS7022 for an immediately invoked function with a binding pattern whose argument spreads an instance", async () => {
       using dir = project({
         "a.ts": `declare function idf<T>(v: T): T;
 export class A1 { x = (({ y }) => y)({ ...new A1() }); y = 1 }
@@ -17183,7 +17194,7 @@ export class B5 { readonly x = { a: (({ y, ...r }) => r)(new B5()) }; y = 1 }
       expect(exitCode).toBe(1);
     });
 
-    test("a property and an accessor of one name", async () => {
+    test("reports TS2300 for a property and an accessor with the same name", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true}, "files": ["a.ts"]}`,
         "a.ts": `export function f1() { class C { m: number = 1; get m(): string { return ""; } } }
@@ -17272,7 +17283,7 @@ export function f16() { class C { m(a: any) {} async m() {} } }
       expect(exitCode).toBe(1);
     });
 
-    test("two members of one name: parameter properties, static members, private names, a merged interface", async () => {
+    test("reports TS2300 for same-named parameter properties, static members, private names and merged interface members", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true}, "files": ["a.ts"]}`,
         "a.ts": `export function g1() { class C { m: string = ""; accessor m = 1; } const r: never = new C().m; }
@@ -17377,7 +17388,7 @@ export function h3() { const a = Mix(K); const b = Mix(a); const r: never = b; c
       expect(exitCode).toBe(1);
     });
 
-    test("TS2417 for a private static member of a mixin", async () => {
+    test("reports TS2417 for a private static member of a mixin", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true}, "files": ["a.ts"]}`,
         "a.ts": `export function f2_7_0_10_5() { function Mix<X extends new (...a: any[]) => {}>(b: X) { return class extends b { private static m?: number; }; } class C extends Mix(Object) { static override m: number = 1; } }
@@ -17392,7 +17403,7 @@ export function h3() { const a = Mix(K); const b = Mix(a); const r: never = b; c
       expect(exitCode).toBe(1);
     });
 
-    test("an instantiated `{}` in an intersection", async () => {
+    test("keeps an instantiated `{}` in an intersection", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true}, "files": ["a.ts"]}`,
         "a.ts": `declare function both<T extends {}, U>(t: T, u: U): T & U;
@@ -17422,7 +17433,7 @@ export function k9() { class C { y = 1; } function f<T>(t: T) { const q = both({
       expect(exitCode).toBe(1);
     });
 
-    test("TS2305 names the module as the first import of the file does", async () => {
+    test("TS2305 spells the module like the file's first import of it", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "paths": {"@/*": ["./src/*"]}}, "include": ["src"]}`,
         "node_modules/dep/lib/index.d.ts": `export declare const ok: number;
@@ -17483,7 +17494,7 @@ export { a1, a2, a3 };
       expect(exitCode).toBe(1);
     });
 
-    test("the run that reports an error stores its failures in the relation cache", async () => {
+    test("caches failed relations from the run that reports an error", async () => {
       using dir = project({
         "a.ts": `interface AB { bt(): ABT; z: number }
 interface ABT { connect(w: string, o?: number): Promise<AB>; connect(o: { w?: string }): Promise<AB>; launch(): Promise<AB>; other(): AC }
@@ -17540,7 +17551,7 @@ export class D implements ABT {
       expect(exitCode).toBe(1);
     });
 
-    test("an optional static member of a mixin", async () => {
+    test("reports TS2417 for an optional static member of a mixin", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "noErrorTruncation": true}}`,
         "a.ts": `export function f1() { function Mix<X extends new (...a: any[]) => {}>(b: X) { return class extends b { static m?: number; }; } class C extends Mix(Object) { static m: string = ""; } }
@@ -17574,7 +17585,7 @@ export declare class P3 { static ["m"]: any; static get m(); }
       expect(exitCode).toBe(1);
     });
 
-    test("`super(..)` in a nested position is checked against the base constructor", async () => {
+    test("checks `super(..)` in a nested position against the base constructor", async () => {
       using dir = project({
         "a.ts": `class B { constructor(x: number) {} }
 export class D1 extends B { constructor() { const { a = super("s") } = {} as { a?: any }; } }
@@ -17630,7 +17641,7 @@ export function nt() { const { a = new.target } = {} as { a?: undefined }; const
       expect(exitCode).toBe(1);
     });
 
-    test("a spread and a `for..in` of `null` or `undefined`", async () => {
+    test("reports TS2488 for a spread of `null` or `undefined`, and checks `for..in` over them", async () => {
       using dir = project({
         "a.ts": `declare function g(...a: any[]): void; declare function h(a: number, ...b: number[]): void; declare function k<T extends any[]>(...a: T): T;
 export function f1(v: null) { return [...v]; }
@@ -17685,7 +17696,7 @@ export function f23(v: null) { return { a: [...v] }; }
       expect(exitCode).toBe(1);
     });
 
-    test("TS2354 where an emit helper is needed in a computed name, an enum initializer or an interface", async () => {
+    test("reports TS2354 where an emit helper is needed in a computed name, an enum initializer or an interface", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2015", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "importHelpers": true, "experimentalDecorators": true, "skipLibCheck": true}}`,
         "cexpr.ts": `export const C = class { [(async () => "k") as any]() {} };
@@ -17751,7 +17762,7 @@ export function f23(v: null) { return { a: [...v] }; }
       expect(exitCode).toBe(1);
     });
 
-    test("`delete` of a property of a union with `void`", async () => {
+    test("reports TS2339 or TS2790 for `delete` of a property of a union with `void`", async () => {
       using dir = project({
         "a.ts": `interface O { p: number; q?: number }
 export function d1(v: O | void) { delete v.p; }
@@ -17810,7 +17821,7 @@ export function d18(v: O & { r: 1 } | void) { delete v.p; }
       expect(exitCode).toBe(1);
     });
 
-    test("two `NoInfer<..>` in one list of type arguments are cut off at half the length", async () => {
+    test("truncates two `NoInfer<..>` in one type argument list at half the length", async () => {
       using dir = project({
         "a.ts": `import type { Far, Near } from "./m";
 type H<R, S> = { r: R; s: S } | ((c: R, s: S) => void);
@@ -17853,7 +17864,7 @@ export interface Near { near: 1 }
       expect(exitCode).toBe(1);
     });
 
-    test("two elided types in one tuple count as identifier references", async () => {
+    test("counts two elided types in one tuple as identifier references when truncating", async () => {
       using dir = project({
         "a.ts": `namespace M100 { declare function f(): { both: [ReturnType<typeof f>, ReturnType<typeof g>]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2 }; u: [1, 2, 3, 4, 5, 6, 7, 8] }; declare function g(): { gg: [ReturnType<typeof f>, ReturnType<typeof g>] }; const v: ReturnType<typeof f> = null; }
 namespace M105 { declare function f(): { both: [ReturnType<typeof f>, ReturnType<typeof g>]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2 }; u: [1, 2, 3, 4, 5, 6, 7, 8] }; declare function g(): { gg: [ReturnType<typeof f>, ReturnType<typeof g>] }; const v: ReturnType<typeof f> = null; }
@@ -17877,7 +17888,7 @@ namespace M125 { declare function f(): { both: [ReturnType<typeof f>, ReturnType
       expect(exitCode).toBe(1);
     });
 
-    test("an alias of a lone named union is that union", async () => {
+    test("prints an alias of a lone named union as that union", async () => {
       using dir = project({
         "a.ts": `type U<T> = T | undefined;
 type W<T> = U<T> | undefined;
@@ -17941,7 +17952,7 @@ declare function c9<P>(p: P, h: W<U<P>>): void; c9({ a: 1 }, null);
       expect(exitCode).toBe(1);
     });
 
-    test("an assignment, a comparison or `delete` in the initializer of what its operand refers to", async () => {
+    test("reports TS7022 for an assignment, comparison or `delete` in the initializer of what its operand refers to", async () => {
       using dir = project({
         "a.ts": `declare let t1: { p: typeof a1 }; export const a1 = (t1 = { p: 1 as any });
 declare let t2: { p: typeof a2 }; declare let u2: { p: number }; export const a2 = t2 === u2;
@@ -17994,7 +18005,7 @@ declare let t20: { p: typeof a20 }; export const a20 = \`\${t20}\`;
       expect(exitCode).toBe(1);
     });
 
-    test("a rest element in a destructuring assignment", async () => {
+    test("reports TS2322 for a rest element assigned to a non-object target in a destructuring assignment", async () => {
       using dir = project({
         "a.ts": `declare let n: number; declare let z: unknown; declare const s: { a: 1; b: 2 }; declare const v: any; declare const u: unknown; declare let q: { b: string };
 export function f1() { ({ ...n } = v); }
@@ -18028,7 +18039,7 @@ export function f10(w: undefined) { return Math.max(...w); }
       expect(exitCode).toBe(1);
     });
 
-    test("read-only members that are optional", async () => {
+    test("reports TS2704 and TS2540 for `delete` of and writes to optional read-only members", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "commonjs", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.ts": `import * as w from "./w"; import * as m from "./m"; import w2 = require("./w");
@@ -18095,7 +18106,7 @@ Object.defineProperty(exports, "wr", { value: 1, writable: true });
       expect(exitCode).toBe(1);
     });
 
-    test("a comment before the constraint of a type parameter", async () => {
+    test("reports an error about a parenthesized type with a leading comment at the opening parenthesis", async () => {
       using dir = project({
         "a.ts": `export class C<T extends ( /*c*/ T)> {}
 export function f(): ( /*c*/ number) {}
@@ -18118,7 +18129,7 @@ export async function j(): ( /*c*/ number) { return 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("a type parameter whose constraint refers to the function", async () => {
+    test("reports TS7022 for a type parameter whose constraint or default refers to the function", async () => {
       using dir = project({
         "a.ts": `export const a1 = <T extends { p: typeof a1 }>(x: T) => 1;
 export const a2 = <T = typeof a2>(x: T) => 1;
@@ -18178,7 +18189,7 @@ export const a25 = (x: (typeof a25) extends infer Q ? Q : never) => 1;
       expect(exitCode).toBe(1);
     });
 
-    test("a default in a binding pattern that mentions a type parameter", async () => {
+    test("instantiates a binding pattern default that mentions a type parameter", async () => {
       using dir = project({
         "a.ts": `function f1<T>(x: T, o: { a?: undefined }) { const { a = { v: x } } = o; return a; }
 export const n1: number = f1(1, {}).v;
@@ -18214,7 +18225,7 @@ export const n12: number = f12(1, []).v;
       expect(exitCode).toBe(1);
     });
 
-    test('a surrogate pair in the "types" of a package.json', async () => {
+    test('resolves a surrogate pair escape in the "types" of a package.json', async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "module": "nodenext", "target": "esnext", "types": [], "skipLibCheck": true}, "files": ["a.ts"]}`,
         "a.ts": `import { x } from "p";
@@ -18232,7 +18243,7 @@ export const s: string = x;
       expect(exitCode).toBe(1);
     });
 
-    test("a package.json that does not parse is still the scope of its directory", async () => {
+    test("a package.json that doesn't parse is still the scope of its directory", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "module": "nodenext", "target": "esnext", "types": [], "skipLibCheck": true}, "files": ["sub/a.ts", "empty/b.ts", "c.ts"]}`,
         "c.ts": `export const m = import.meta.url;
@@ -18255,7 +18266,7 @@ export const s: string = x;
       expect(exitCode).toBe(1);
     });
 
-    test("package.json is strict JSON, and the last of two keys counts", async () => {
+    test("reads package.json as strict JSON, and uses the last of two duplicate keys", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "module": "nodenext", "target": "esnext", "types": [], "skipLibCheck": true}, "files": ["a.ts"]}`,
         "a.ts": `import { x as comment } from "comment";
@@ -18330,10 +18341,10 @@ export const s_escape: string = escape;
       expect(exitCode).toBe(1);
     });
 
-    // The route strings of the app become a tree of objects and functions, by template literal types and recursive
-    // conditional types over the type of the app.
-    test("the client that Eden Treaty infers from an Elysia app", async () => {
-      // Elysia is a peer dependency of Eden, so it is next to it in the store.
+    // Template literal types and recursive conditional types over the app's type turn its route strings into a tree of
+    // objects and functions.
+    test("checks the client that Eden Treaty infers from an Elysia app", async () => {
+      // Elysia is a peer dependency of Eden, so it sits next to it in the store.
       const eden = realpathSync(join(import.meta.dir, "..", "..", "node_modules", "@elysia", "eden"));
       const elysia = join(eden, "..", "..", "elysia");
       using dir = project({
@@ -18431,7 +18442,7 @@ export async function wrong() {
       expect(exitCode).toBe(1);
     });
 
-    test("narrowing of an outer constant in a callback, after a branch in the callback", async () => {
+    test("keeps the narrowing of an outer constant in a callback after a branch in the callback", async () => {
       using dir = project({
         "a.ts": `declare const values: Set<string | null>;
 declare const record: Record<string, number>;
@@ -18473,7 +18484,7 @@ export function ownParameterIsNotNarrowedOutside(key: string | null) {
       expect(exitCode).toBe(1);
     });
 
-    test("a type assertion in an argument of a generic call, to a mapped type over an intersection with what is being declared", async () => {
+    test("reports TS7022 for a generic call argument asserted to a mapped type that includes what's being declared", async () => {
       using dir = project({
         "a.ts": `export {};
 declare function idf<T>(v: T): T;
@@ -18496,7 +18507,7 @@ namespace N { export const x = idf(null! as Readonly<typeof N & { x: 1 }>); expo
       expect(exitCode).toBe(1);
     });
 
-    test("a class expression in a callback of a generic call whose method refers to the result of the call", async () => {
+    test("reports TS2416 for a class expression in a generic call's callback whose method refers to the call's result", async () => {
       using dir = project({
         "a.ts": `export {};
 declare class Base { p: {}; m(): {} }
@@ -18532,7 +18543,7 @@ const d = call(function () { return class extends Base { m(): typeof d | undefin
       expect(exitCode).toBe(1);
     });
 
-    test("`@this` whose type refers to `this`", async () => {
+    test("reports TS2502 for `@this` whose type refers to `this`", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "allowJs": true, "checkJs": true, "target": "esnext", "module": "esnext", "lib": ["esnext"], "types": [], "skipLibCheck": true}, "files": ["a.js"]}`,
         "a.js": `class C {
@@ -18559,7 +18570,7 @@ const o = {
       expect(exitCode).toBe(1);
     });
 
-    test("an unresolved name from another file is printed as an unresolved import of this file", async () => {
+    test("prints an unresolved name from another file as an unresolved import of this file", async () => {
       using dir = project({
         "a.ts": `import type { Elsewhere, Generic } from "./nowhere1";
 import type * as NS from "./nowhere1";
@@ -18657,7 +18668,7 @@ export { Late };
       expect(exitCode).toBe(1);
     });
 
-    test("a union is `unknown` where a property is read if the constraint of a generic member is `unknown`", async () => {
+    test("treats a union as `unknown` on a property read if a generic member's constraint is `unknown`", async () => {
       using dir = project({
         "a.ts": `type Cond<N> = N extends string ? { type: "a"; n: N } : unknown
 type Other<N> = N extends string ? { type: "b" } | { type: "c" } : never
@@ -18692,7 +18703,7 @@ export function i<T>(parts: Array<Part<T>>) {
       expect(exitCode).toBe(1);
     });
 
-    test("a member with the name of a type parameter of its class or interface comes first", async () => {
+    test("lists a member named like a type parameter of its class or interface first", async () => {
       using dir = project({
         "a.ts": `export interface Key<out Identifier, out Shape> {
   readonly first: 1
@@ -18722,7 +18733,7 @@ export const bad: Keys = 0
       expect(exitCode).toBe(1);
     });
 
-    test("a mapped type whose key has a circular constraint reports nothing else about the key", async () => {
+    test("reports only TS2313 about the key of a mapped type whose key has a circular constraint", async () => {
       using dir = project({
         "a.ts": `export declare const catchTags: {
   <
@@ -18748,7 +18759,7 @@ export type N<Cases extends { a: 1 }> = { [K in Exclude<Cases, "a">]: never }
       expect(exitCode).toBe(1);
     });
 
-    test("an `infer` type parameter that the extends type does not mention is not inferred when conditional types are compared", async () => {
+    test("doesn't infer an `infer` type parameter that the extends type doesn't mention when comparing conditional types", async () => {
       using dir = project({
         "a.ts": `type Ignore<X> = string;
 type Simple<T, E> = T extends Ignore<infer A> ? [A, E] : E;
@@ -18770,7 +18781,7 @@ export const wider: <T>(x: T) => Simple<T, 1 | 2 | 3> = make;
       expect(exitCode).toBe(1);
     });
 
-    test("type arguments are inferred from a union to a union of conditional types that differ where there is no type parameter", async () => {
+    test("infers type arguments from a union to a union of conditional types that differ only outside type parameters", async () => {
       using dir = project({
         "a.ts": `type Ev =
   | { type: "a"; data: { x: number } }
@@ -18808,7 +18819,7 @@ export {};
       expect(exitCode).toBe(1);
     });
 
-    test("a conditional type that recurs through a type node that is not deferred reaches the instantiation limit", async () => {
+    test("reports TS2589 for a conditional type that recurs through a type node that isn't deferred", async () => {
       using dir = project({
         "a.ts": `type H<X> = X;
 type Template<T> = T extends string ? \`x\${Template<any>}\` : never;
@@ -18825,7 +18836,7 @@ export const deferred: Deferred<"a"> = 1;
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      // The type has a level for every round up to the limit.
+      // The type has one level per round, up to the limit.
       expect(stdout.replace(repeat("x", 99), "<99 x>")).toMatchInlineSnapshot(`
         "a.ts(2,43): error TS2589: Type instantiation is excessively deep and possibly infinite.
         a.ts(3,40): error TS2589: Type instantiation is excessively deep and possibly infinite.
@@ -18840,7 +18851,7 @@ export const deferred: Deferred<"a"> = 1;
       expect(exitCode).toBe(1);
     });
 
-    test("a member with the name of a type parameter of its class or interface is printed as the type parameter is written", async () => {
+    test("prints a member named like a type parameter of its class or interface the way the type parameter is written", async () => {
       using dir = project({
         "a.ts": `interface A<Rebuild> { readonly "Rebuild": Rebuild; b: number }
 export const x: A<1> = {};
@@ -18862,7 +18873,7 @@ export const w: D<1> = {};
       expect(exitCode).toBe(1);
     });
 
-    test("`this` counts where the parameters of an immediately invoked function are matched with its arguments", async () => {
+    test("counts `this` when matching an immediately invoked function's parameters with its arguments", async () => {
       using dir = project({
         "a.ts": `export const one = (function (this: unknown, a, b) { return [a, b]; })(1);
 export const two = (function (a, b) { return [a, b]; })(1);
@@ -18886,7 +18897,7 @@ export const seven: number = six;
       expect(exitCode).toBe(1);
     });
 
-    test("a parenthesized list with a colon that turns out not to be the parameters of an arrow function", async () => {
+    test("reports tsc's syntax errors for a parenthesized list with a colon that isn't an arrow function's parameters", async () => {
       using dir = project({
         "a.ts": `declare const map: any, f: any, name: string
 export const x = (a: any) => map(f(a), (b: any) => ([name]: b }, { ...a) as any)
@@ -18908,7 +18919,7 @@ export const x = (a: any) => map(f(a), (b: any) => ([name]: b }, { ...a) as any)
       expect(exitCode).toBe(1);
     });
 
-    test("a name and type parameters in an object literal are a method", async () => {
+    test("parses a name followed by type parameters in an object literal as a method", async () => {
       using dir = project({
         "a.ts": `export const O = {
   Complete: <A>(value: A): A => ({ _tag: "Complete"),
@@ -18957,7 +18968,7 @@ export interface N<out Version extends string = "a"> {
       expect(exitCode).toBe(1);
     });
 
-    test("the parameters of an arrow function are not parsed as expressions", async () => {
+    test("doesn't parse an arrow function's parameters as expressions", async () => {
       using dir = project({
         "a.ts": `export const annotate = (text: string, ...styles: Array<string<string>>) => {
   const flat = styles.flat()
@@ -18975,7 +18986,7 @@ export interface N<out Version extends string = "a"> {
       expect(exitCode).toBe(1);
     });
 
-    test("of two copies of a package the one that is reached first, depth first, is in the program", async () => {
+    test("of two copies of a package, loads the one reached first, depth first", async () => {
       using dir = project({
         "a.ts": `import "x";
 import "y";
@@ -19008,7 +19019,7 @@ import "y";
       expect(exitCode).toBe(1);
     });
 
-    test("three copies of a package are one package, and another version with the same text is another", async () => {
+    test("treats three copies of a package as one package, and another version with the same text as another", async () => {
       // A package with its own copy of `dup`.
       const dependent = (name: string, version: string) => ({
         [`node_modules/${name}/package.json`]: `{ "name": "${name}", "version": "1.0.0", "types": "index.d.ts" }
@@ -19060,7 +19071,7 @@ export const all: never[] = [new A().value, new OfW().value, new OfOther().value
       expect(exitCode).toBe(1);
     });
 
-    test("a `main` that ends in a slash is only looked up as a directory", async () => {
+    test("looks up a `main` that ends in a slash only as a directory", async () => {
       using dir = project({
         "a.ts": `import { a } from "p";
 export const s: string = a;
@@ -19079,7 +19090,7 @@ export const s: string = a;
       expect(exitCode).toBe(1);
     });
 
-    test("an aliased intersection with a class is named by its members where its properties are compared", async () => {
+    test("prints an aliased intersection with a class by its members where its properties are compared", async () => {
       using dir = project({
         "a.ts": `declare class Base {
   href: string;
@@ -19100,7 +19111,7 @@ export const second: Target = two;
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      // The head message is left out if the next one names the same two types.
+      // The head message is omitted if the next one mentions the same two types.
       expect(stdout).toMatchInlineSnapshot(`
         "a.ts(15,14): error TS2322: Type 'WithThisType' is not assignable to type 'Target'.
           Type 'Base & { brand: "x"; }' is missing the following properties from type 'Target': a, b
@@ -19109,7 +19120,7 @@ export const second: Target = two;
       expect(exitCode).toBe(1);
     });
 
-    test("a property copied from `export { a as b }` by a spread is not narrowed", async () => {
+    test("doesn't narrow a property copied from `export { a as b }` by a spread", async () => {
       using dir = project({
         "utils.ts": `declare const _n: string | undefined;
 export { _n as n };
@@ -19149,7 +19160,7 @@ export class B {
       expect(exitCode).toBe(1);
     });
 
-    test("an import shadowed by a variable counts as used where `a.b` is resolved as an entity name", async () => {
+    test("counts an import shadowed by a variable as used where `a.b` is resolved as an entity name", async () => {
       const file = (returned: string, type: string) => `import { policy, used } from "./a";
 export function f(s: { data: ${type} }) {
   const policy = s.data;
@@ -19252,7 +19263,7 @@ class Book {
       expect(exitCode).toBe(1);
     });
 
-    test("an export that cannot merge is still the value its own block refers to", async () => {
+    test("an export that can't merge is still the value its own block refers to", async () => {
       const declarations = `declare module "m" {
   const key: unique symbol;
   interface Options {
@@ -19270,7 +19281,7 @@ class Book {
       expect(exitCode).toBe(1);
     });
 
-    test("a property picked from a union of intersections with a conditional type keeps its modifiers", async () => {
+    test("keeps the modifiers of a property picked from a union of intersections with a conditional type", async () => {
       using dir = project({
         "a.ts": `
 type Cond<T> = T extends string ? { a?: never } : { a: T };
@@ -19289,9 +19300,9 @@ export function f<T>(rest: T) {
       expect(exitCode).toBe(1);
     });
 
-    test("the type of a parameter is instantiated when it is asked for", async () => {
+    test("instantiates a parameter's type only when it's requested", async () => {
       using dir = project({
-        // `useLoaderData()` of TanStack Router, where the contextual type is inferred for `Selected`.
+        // TanStack Router's `useLoaderData()`, where the contextual type is inferred for `Selected`.
         "a.ts": `
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 type PageData = { flags: Record<string, Json> };
@@ -19344,9 +19355,9 @@ export const loaded = loader.load(key, options, key);
       expect(exitCode).toBe(1);
     });
 
-    // What TypeScript 7.0.2 reports about each program.
-    describe("the parts of conditional and mapped types, and aliases, asked for again and again", () => {
-      test("conditional types in relations, in inference and in messages", async () => {
+    // The expected output of each program is TypeScript 7.0.2's.
+    describe("cached parts of conditional types, mapped types and aliases", () => {
+      test("checks conditional types in relations, in inference and in messages", async () => {
         using dir = project({
           "a.ts": `type IsString<T> = T extends string ? "yes" : "no";
 type Boxed<T> = [T] extends [string] ? { s: T } : { o: T };
@@ -19442,7 +19453,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("mapped types with `as` clauses and modifiers, over keys, unions, arrays and tuples", async () => {
+      test("checks mapped types with `as` clauses and modifiers over keys, unions, arrays and tuples", async () => {
         using dir = project({
           "a.ts": `type Getters<T> = { [K in keyof T as \`get\${Capitalize<K & string>}\`]: () => T[K] };
 type OnlyStrings<T> = { [K in keyof T as T[K] extends string ? K : never]: T[K] };
@@ -19608,7 +19619,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("mapped types before and after one whose key type is circular", async () => {
+      test("checks mapped types before and after one whose key type is circular", async () => {
         using dir = project({
           "a.ts": `type Plain<T> = { [K in keyof T]: T[K] };
 function before<T>(a: Plain<T>, b: Plain<T[]>) {
@@ -19656,7 +19667,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("aliases with no, one, four and five type arguments, and two names for one structure", async () => {
+      test("prints aliases with zero, one, four and five type arguments, and two names for one structure", async () => {
         using dir = project({
           "a.ts": `type None = { a: 1 };
 type One<A> = { a: A };
@@ -19791,7 +19802,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("what is asked for while something that mentions it is in progress, or after a limit", async () => {
+      test("resolves types requested while something that mentions them is in progress, or after a limit is hit", async () => {
         using dir = project({
           "a.ts": `type D<T> = T extends string ? [T] : { t: T };
 type M<T> = { [K in keyof T as K extends string ? \`_\${K}\` : never]?: D<T[K]> };
@@ -19860,9 +19871,10 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("recursive conditional types at the depth limit and one step over it", async () => {
+      test("reports TS2589 for recursive conditional types one step over the depth limit, but not at it", async () => {
         const wrap = `type Wrap<N extends number, T = 1, A extends 1[] = []> = A["length"] extends N ? T : Wrap<N, { v: T }, [...A, 1]>;`;
-        // The last depth without an error, and the program. Each file has types of its own, so none finds what another has instantiated.
+        // Each entry is the last depth without an error, and the program. Each file has its own types, so none hits
+        // another's cached instantiations.
         const shapes: Record<string, [number, (depth: number) => string]> = {
           tail: [
             999,
@@ -19909,7 +19921,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("a mapped and a conditional type under many type arguments", async () => {
+      test("instantiates a mapped and a conditional type with many different type arguments", async () => {
         const numbers = Array.from({ length: 40 }, (_, i) => i + 10);
         using dir = project({
           "a.ts": `
@@ -19944,7 +19956,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test.each([1, 8])("generic types of one file that many files instantiate, on %d threads", async threads => {
+      test.each([1, 8])("instantiates one file's generic types from many files, on %d threads", async threads => {
         const numbers = Array.from({ length: 12 }, (_, i) => i + 10);
         using dir = project({
           "types.ts": `
@@ -20005,7 +20017,7 @@ use${i}.ts(10,7): error TS2322: Type '[[string], [string], M<{ shared: string; }
         expect(exitCode).toBe(1);
       });
 
-      test("the constraints of conditional types that wait for a type parameter, with and without `infer`", async () => {
+      test("computes the constraints of deferred conditional types, with and without `infer`", async () => {
         using dir = project({
           "a.ts": `type Plain<T> = T extends string ? { s: T } : { o: T };
 type One<T> = T extends (infer E)[] ? { e: E } : { n: T };
@@ -20186,7 +20198,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("the same check and extends types in one conditional type after another, and type parameters that are renamed", async () => {
+      test("resolves many conditional types with the same check and extends types, and with renamed type parameters", async () => {
         using dir = project({
           "a.ts": `// Every conditional type that is resolved compares the check type with the extends type twice, once with every type
 // parameter replaced by a wildcard and once with its constraint taken away.
@@ -20356,7 +20368,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("mapped types over the keys of a type parameter that can only be an array or a tuple", async () => {
+      test("checks mapped types over the keys of a type parameter that can only be an array or a tuple", async () => {
         using dir = project({
           "a.ts": `type Boxes<T> = { [K in keyof T]: { box: T[K] } };
 type Loose<T> = { [K in keyof T]?: T[K] };
@@ -20429,9 +20441,9 @@ export {};
       });
     });
 
-    // What TypeScript 7.0.2 reports about each program.
-    describe("what a signature, a literal type, a member and a scope are asked again and again", () => {
-      test("type predicates that are declared: of functions, methods, unions of signatures and optional calls", async () => {
+    // The expected output of each program is TypeScript 7.0.2's.
+    describe("cached facts about signatures, literal types, members and scopes", () => {
+      test("narrows by declared type predicates of functions, methods, unions of signatures and optional calls", async () => {
         using dir = project({
           "a.ts": `interface A { kind: "a"; a: 1 }
 interface B { kind: "b"; b: 2 }
@@ -20532,7 +20544,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("type predicates that follow from the body, and functions whose syntax rules one out", async () => {
+      test("infers type predicates from function bodies, except where the syntax rules one out", async () => {
         using dir = project({
           "a.ts": `const isString = (x: unknown) => typeof x === "string";
 const isNumberOrString = (x: unknown) => typeof x === "number" || isString(x);
@@ -20604,7 +20616,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("a return type or the type of a predicate that is asked for while it is resolved", async () => {
+      test("reports TS7023 for a return type or a predicate's type that's requested while it's being resolved", async () => {
         using dir = project({
           "a.ts": `// The type of the predicate, or the return type, is asked for while it is being resolved.
 function isLikeA(x: unknown): x is typeof a { return true; }
@@ -20644,7 +20656,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("return types: declared, from the body, of instantiations, of unions and of optional calls", async () => {
+      test("resolves return types that are declared, inferred, instantiated, of unions and of optional calls", async () => {
         using dir = project({
           "a.ts": `function annotated(x: number): string | number { return x; }
 function fromBody(x: number) { return x ? { x } : null; }
@@ -20713,7 +20725,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("type parameters and `this` parameters that a function takes from its contextual signature", async () => {
+      test("gives a function the type parameters and `this` parameter of its contextual signature", async () => {
         using dir = project({
           "a.ts": `// A function expression takes type parameters and a \`this\` parameter from its contextual signature, if it is context sensitive.
 const identity: <T>(x: T) => T = x => x;
@@ -20786,7 +20798,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("the fresh and the regular type of a literal, and the object of a const enum", async () => {
+      test("distinguishes a literal's fresh and regular types, and reports TS2475 for a const enum used as an object", async () => {
         using dir = project({
           "a.ts": `enum E { A, B = "b" }
 const enum CE { A, B = "b" }
@@ -20851,7 +20863,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("members that mention `this`, inherited, in cycles of base types and beside computed names", async () => {
+      test("instantiates members that mention `this` when inherited, in base type cycles and beside computed names", async () => {
         using dir = project({
           "a.ts": `class Base { plain = 1; text: string = ""; me: this = this; list: this[] = []; self() { return this; } same(other: this) { return other; } maybe?: string | number; fn: () => void = () => {}; }
 class Derived extends Base { more = 2; }
@@ -20906,7 +20918,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("array literals where the contextual type has a property `0` or a `length`", async () => {
+      test("checks array literals whose contextual type has a property `0` or a `length`", async () => {
         using dir = project({
           "a.ts": `const a0: { 0: string } = ["a"], a1: { 0: string; 1: number } = ["a", 1], a2: { 0: string } = [1];
 const a3: ArrayLike<string> = ["a"], a4: { length: 2 } & string[] = ["a", "b"], a5: { length: number; [i: number]: 1 } = [1, 2];
@@ -20926,7 +20938,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("calls with too few and too many arguments", async () => {
+      test("reports TS2554 and TS2555 for calls with too few or too many arguments", async () => {
         using dir = project({
           "a.ts": `declare function two(a: number, b: number): void;
 declare function optional(a: number, b?: number): void;
@@ -20967,7 +20979,7 @@ export {};
         expect(exitCode).toBe(1);
       });
 
-      test("signatures of another file, on any number of threads", async () => {
+      test("resolves another file's signatures the same way on any thread count", async () => {
         const users = [0, 1, 2, 3, 4, 5];
         using dir = project({
           "shared.ts": `export interface A { kind: "a" }
@@ -21025,7 +21037,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         }
       });
 
-      test("object literals in more scopes than the latest answers are kept for", async () => {
+      test("infers object literals in more scopes than the scope cache holds", async () => {
         const functions = Array.from({ length: 140 }, (_, i) => i);
         using dir = project({
           "a.ts": [
@@ -21049,17 +21061,17 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       });
     });
 
-    // `instantiateType` fails at 100 calls within each other. What TypeScript 7.0.2 reports about each program.
-    test("the depth at which a recursive type is too deep, for every way to recur", async () => {
-      // `E` is the element type of the tuples that count, and no two files have the same: asking a tuple for its length
-      // the first time takes two levels more, and the tuple types are those of the program.
+    // `instantiateType` fails at 100 nested calls. The expected output of each program is TypeScript 7.0.2's.
+    test("reports TS2589 at the same recursion depth as tsc for every way a type can recur", async () => {
+      // `E` is the element type of the counting tuples, and it's different in every file. The first `length` lookup on
+      // a tuple takes two more levels, and tuple types are shared by the whole program.
       const wrap = `type Wrap<N extends number, T = 1, A extends E[] = []> = A["length"] extends N ? T : Wrap<N, { v: T }, [...A, E]>;`;
       const waiting = `type D<T> = T extends string ? [T] : { t: T };`;
       type Shape = {
         declarations: string;
         constraint: string;
         argument: (depth: number) => string;
-        // The first depth with an error, and the same where everything is one level further in.
+        // The first depth with an error, and the same with everything nested one level deeper.
         first: [number, number];
       };
       const shapes: Record<string, Shape> = {
@@ -21116,7 +21128,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
           argument: depth => `${depth}`,
           first: [48, 48],
         },
-        // The tuples were asked for their lengths before, nearer the top.
+        // The tuples' lengths were already looked up, at a shallower depth.
         "length-again": {
           declarations:
             'type F<N extends number, A extends E[] = []> = A["length"] extends N ? "" : `x${F<N, [...A, E]>}`;\n' +
@@ -21133,7 +21145,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
           first: [48, 48],
         },
       };
-      // Inside a generic function, where a conditional type that waits for `T` is compared at every level.
+      // Inside a generic function, where a conditional type deferred on `T` is compared at every level.
       const generic: Record<string, Shape> = {
         waiting: {
           declarations: `${waiting}\ntype F<T, W> = W extends { v: infer V } ? ({ a: D<T> } extends { a: [T] | { t: T } | W } ? F<T, V> | 0 : never) : W;\n${wrap}`,
@@ -21152,7 +21164,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       };
       const files: Record<string, string> = {};
       const expected: string[] = [];
-      // `use`: the last line, given the type. `column`: where the error is in it.
+      // `use`: builds the last line from the type. `column`: the error's column in that line.
       function add(name: string, shape: Shape, pad: string, use: (type: string) => string, column: number) {
         for (const furtherIn of [0, 1]) {
           for (const over of [0, 1]) {
@@ -21228,7 +21240,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(existsSync(join(String(dir), "out"))).toBe(false);
     });
 
-    test("list options and invalid values", async () => {
+    test("accept list values, and reject invalid, missing and unknown ones", async () => {
       using dir = project({ ...files, "a.ts": `export const p = new Promise<void>(r => r());\n` });
       const [es5, bad, missing, unknown] = await Promise.all([
         check(dir, ["--lib", "es5"]),
@@ -21278,7 +21290,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
   });
 
   describe("startup errors", () => {
-    test("invalid tsconfig.json", async () => {
+    test("reports invalid values and unknown options in tsconfig.json", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "strict": "yes", "target": "es1", "nonsense": true } }`,
         "a.ts": `export const a = 1;\n`,
@@ -21293,7 +21305,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
-    test("compiler options that TypeScript 7 removed are unknown options", async () => {
+    test("reports TS5023 for compiler options that TypeScript 7 removed", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "suppressImplicitAnyIndexErrors": true, "out": "x.js" } }`,
       });
@@ -21305,7 +21317,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
-    test("an empty input set is an error", async () => {
+    test("reports an error when there's nothing to check", async () => {
       using dir = tempDir("bun-check", { "README.md": "", "empty/README.md": "" });
       for (const args of [[], ["empty"]]) {
         const { stdout, stderr, exitCode } = await check(dir, args);
@@ -21313,7 +21325,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         expect(stderr).toMatchInlineSnapshot(`"Found 1 error, checked 0 files [time]"`);
         expect(exitCode).toBe(1);
       }
-      // As for tsc, a tsconfig.json that extends another one may select no files.
+      // Like tsc, a tsconfig.json that extends another one may select no files.
       using empty = project({
         "base.json": tsconfig,
         "tsconfig.json": `{ "extends": "./base.json", "files": [], "include": [] }`,
@@ -21335,9 +21347,9 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
-    // The superuser can read every file.
+    // Root can read every file.
     const canReadEverything = isWindows || isRoot;
-    test.skipIf(canReadEverything)("a source file that cannot be read is reported", async () => {
+    test.skipIf(canReadEverything)("reports TS5083 for a source file that can't be read", async () => {
       using dir = project({ "a.ts": `import "./secret";\n`, "secret.ts": `export {};\n` });
       chmodSync(join(String(dir), "secret.ts"), 0o000);
       const { stdout, exitCode } = await check(dir);
@@ -21345,8 +21357,8 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
-    // The projects of a build are read at the same time.
-    test.skipIf(canReadEverything)("a source file that cannot be read is reported by its project", async () => {
+    // A build's projects are read concurrently.
+    test.skipIf(canReadEverything)("reports an unreadable source file with its own project's errors", async () => {
       const names = ["a", "b", "c", "d", "e", "f"];
       const config = JSON.stringify({
         compilerOptions: { composite: true, emitDeclarationOnly: true, outDir: "out", lib: ["es5"], types: [] },
@@ -21396,12 +21408,12 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       }
     });
 
-    // As in tsc: without its options nothing can be checked. To a build the file is not there.
+    // Like tsc, nothing can be checked without the options. A build treats the file as missing.
     test.skipIf(canReadEverything).each([
       [[], "error TS5083: Cannot read file '<dir>/tsconfig.json'."],
       [["-p", "."], "error TS5083: Cannot read file '<dir>/tsconfig.json'."],
       [["-b"], "error TS6053: File '<dir>/tsconfig.json' not found."],
-    ])("a tsconfig.json that cannot be read stops the check: %j", async (args, expected) => {
+    ])("an unreadable tsconfig.json stops the check: %j", async (args, expected) => {
       using dir = project({ "tsconfig.json": `{}`, "a.ts": `export const wrong: number = "";\n` });
       chmodSync(join(String(dir), "tsconfig.json"), 0o000);
       const { stdout, exitCode } = await check(dir, args);
@@ -21412,7 +21424,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
     test.skipIf(canReadEverything).each([
       [[], []],
       [["-b"], ["error TS6053: File '<dir>/lib/tsconfig.json' not found."]],
-    ])("a referenced tsconfig.json that cannot be read is not found: %j", async (args, first) => {
+    ])("reports TS6053 for a referenced tsconfig.json that can't be read: %j", async (args, first) => {
       const compilerOptions = { composite: true, emitDeclarationOnly: true, outDir: "out", lib: ["es5"], types: [] };
       using dir = project({
         "tsconfig.json": JSON.stringify({ compilerOptions, files: ["a.ts"], references: [{ path: "./lib" }] }),
@@ -21427,9 +21439,9 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
-    // How deep the parser goes depends on the stack of the platform. Whatever it says, the file can be read.
+    // How deep the parser gets depends on the platform's stack. Whatever it reports, the file counts as readable.
     test.each([[[]], [["-b"]]])(
-      "the files of a tsconfig.json that is nested too deeply are checked: %j",
+      "still checks the files of a tsconfig.json that's nested too deeply: %j",
       async args => {
         const depth = 100_000;
         using dir = project({
@@ -21443,7 +21455,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       },
     );
 
-    test("-p with a path that does not exist", async () => {
+    test("reports TS5058 for -p with a path that doesn't exist", async () => {
       using dir = project({});
       const { stdout, stderr, exitCode } = await check(dir, ["-p", "nowhere"]);
       expect(stdout + stderr).toMatchInlineSnapshot(
@@ -21452,7 +21464,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
-    test("unknown flag", async () => {
+    test("rejects an unknown flag", async () => {
       using dir = project({});
       const { stderr, exitCode } = await check(dir, ["--frobnicate"]);
       expect(stderr).toMatchInlineSnapshot(`
@@ -21462,7 +21474,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
-    test("flags are parsed as for Bun's other commands", async () => {
+    test("parses flags like Bun's other commands", async () => {
       using dir = project({
         "sub/tsconfig.json": tsconfig,
         "sub/a.ts": `export const a: number = "1";\n`,
@@ -21492,9 +21504,9 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
     });
   });
 
-  // What `bun check` reports for a file or in a directory is what is reported when that is named, however it is
-  // spelled, from wherever, and by whichever command.
-  describe("a path means the same however it is spelled", () => {
+  // Passing a file or a directory reports what a plain `bun check` reports for it, however the path is spelled, from
+  // any working directory, and with any of the commands.
+  describe("reports the same errors however a path argument is spelled", () => {
     const bad = `export const bad: string = 1;\n`;
     const options = {
       ...JSON.parse(tsconfig).compilerOptions,
@@ -21554,7 +21566,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         file: "packages/x/src/deep/b.ts",
         directory: "packages/x/src",
       },
-      "a tsconfig.json below that of the project": {
+      "a tsconfig.json nested below the project's": {
         files: {
           "a.ts": bad,
           "nested/tsconfig.json": tsconfig,
@@ -21568,7 +21580,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
     };
 
     // Each starts up to 29 processes at once.
-    test.serial.each(Object.keys(layouts))("%s", async layout => {
+    test.serial.each(Object.keys(layouts))("with %s", async layout => {
       const { files, file, directory } = layouts[layout];
       using dir = project(files);
       const root = String(dir);
@@ -21587,7 +21599,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       const reported = (cwd: string, text: string) =>
         [
           ...text.matchAll(/^(.+?)\((\d+),(\d+)\): error TS(\d+):/gm),
-          // As the bundler prints it.
+          // The bundler's format.
           ...[...text.matchAll(/^error: TS(\d+):.*\n\s+at (.+?):(\d+):(\d+)$/gm)].map(it => [
             it[0],
             it[2],
@@ -21600,7 +21612,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
           .sort();
 
       const below = join(root, dirname(file));
-      // What is named, where `bun` is started, its arguments, and what the paths that it prints are relative to.
+      // The kind of path passed, the working directory, the arguments, and what printed paths are relative to.
       const commands: ["file" | "directory", string, string[], string?][] = [
         ["file", root, ["check", file]],
         ["file", root, ["check", `./${file}`]],
@@ -21620,11 +21632,10 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         ["file", root, ["build", "--check", file, "--outdir", "out"]],
         ["file", below, ["build", "--check", `./${basename(file)}`, "--outdir", "out"]],
       ];
-      // Where the file system takes one spelling of a name for another, so does `bun check`. It prints the name that the
-      // directory has.
+      // On a case-insensitive file system, `bun check` accepts any casing too. It prints the name as stored on disk.
       const inUpperCaseDirectories = `${dirname(file).toUpperCase()}/${basename(file)}`;
       if (foldsCase) {
-        // On Windows the working directory is spelled as whoever started the process spelled it.
+        // On Windows the working directory keeps the casing that the parent process used.
         const respelled = join(dirname(root), basename(root).toUpperCase());
         commands.push(
           ["file", respelled, ["check", file], root],
@@ -21661,7 +21672,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
           it.exitCode,
         ]),
       ).toEqual(commands.map(command => [name(command), expected[command[0]], 1]));
-      // As it is printed: from the working directory, however that is spelled.
+      // Printed paths are relative to the working directory, however that's spelled.
       for (const [i, [kind, cwd, cmd]] of commands.entries()) {
         if (cwd.startsWith(root) || cmd[0] !== "check") continue;
         const above = cmd[1] === "." ? `${directory}/` : "";
@@ -21674,7 +21685,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         });
       }
 
-      // The bundler names a file as its entry point is spelled, in its own errors too.
+      // The bundler prints a file's name the way its entry point was spelled, in its own errors too.
       if (foldsCase) {
         const built = await run(root, ["build", "--check", inUpperCaseDirectories, "--outdir", "out"]);
         expect([reported(root, built.stderr), built.exitCode]).toEqual([
@@ -21684,8 +21695,8 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       }
     });
 
-    // The name in `files` is the name of the file in the program. The argument is spelled as the directory has it.
-    test.skipIf(!foldsCase)("a file that the configuration file spells differently", async () => {
+    // The program uses the file's name as spelled in `files`. The argument may use the casing on disk.
+    test.skipIf(!foldsCase)("finds a file that tsconfig.json spells with a different casing", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["Src/One.ts"] }),
         "src/one.ts": bad,
@@ -21703,13 +21714,13 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
     });
   });
 
-  test("-h is --help", async () => {
+  test("-h prints the same as --help", async () => {
     using dir = project({});
     const [short, long] = await Promise.all([check(dir, ["-h"]), check(dir, ["--help"])]);
     expect([short.stdout, short.exitCode]).toEqual([long.stdout, 0]);
   });
 
-  test("--help", async () => {
+  test("--help prints the usage and the flags", async () => {
     using dir = project({});
     const { stdout, exitCode } = await check(dir, ["--help"]);
     expect(stdout).toContain("Usage: bun check [flags] [...files or directories]");
@@ -21765,36 +21776,36 @@ describe.concurrent("@types/bun", () => {
 });
 
 describe.concurrent("--check", () => {
-  test("a `check` script keeps `bun check`, and `bun --check` is the type checker everywhere", async () => {
+  test("`bun check` runs a package.json `check` script if there is one, and `bun --check` always type checks", async () => {
     const files = { "a.ts": `export const a: number = "1";\n`, "src/empty.txt": "" };
     using scripted = project({
       ...files,
       "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
     });
-    // The word is there, the script is not.
+    // Contains the word "check", but no `check` script.
     using unscripted = project({
       ...files,
       "package.json": JSON.stringify({ description: "check", scripts: { "check:all": "echo no", lint: "check" } }),
     });
     const bun = `"${bunExe().replaceAll("\\", "/")}"`;
-    // The script is the type checker, with an option.
+    // The script runs the type checker with a flag.
     using wrapped = project({
       ...files,
       "package.json": JSON.stringify({ scripts: { check: `${bun} check --pretty false` } }),
     });
-    // By way of another script.
+    // The script runs it through another script.
     using aggregate = project({
       ...files,
       "package.json": JSON.stringify({
         scripts: { "check": `${bun} run check:types`, "check:types": `${bun} check --pretty false` },
       }),
     });
-    // Before the script, which is part of running it.
+    // `precheck` runs as part of the script.
     using before = project({
       ...files,
       "package.json": JSON.stringify({ scripts: { precheck: `${bun} check --pretty false`, check: "echo no" } }),
     });
-    // The script of another package is a script all the same.
+    // Inside a script, `bun check` in another package still runs that package's script.
     using nested = project({
       ...files,
       "package.json": JSON.stringify({ scripts: { check: `cd sub && ${bun} check` } }),
@@ -21815,13 +21826,13 @@ describe.concurrent("--check", () => {
       run(String(scripted), ["--check"]),
       run(String(unscripted), ["check"]),
       run(String(unscripted), ["--check"]),
-      // The arguments are those of `bun`.
+      // These are `bun`'s own flags.
       run(join(String(scripted), "src"), ["--cwd", "..", "--check"]),
       run(String(scripted), ["--silent", "--check", "--no-install"]),
-      // `bun run` looks for the script where it is, since what follows the name is for the script.
+      // `bun run` looks for the script in the working directory, because arguments after the name belong to the script.
       run(String(unscripted), ["check", "--cwd", String(scripted)]),
     ]);
-    // It is about scripts, and there is none.
+    // `--if-present` is about scripts, and there's no `check` script.
     const ifPresent = await run(String(unscripted), ["--if-present", "check"]);
     expect([ifPresent.stdout, ifPresent.exitCode]).toEqual(["", 0]);
     expect([script, below, elsewhere].map(it => [it.stdout, it.exitCode])).toEqual([
@@ -21840,7 +21851,7 @@ describe.concurrent("--check", () => {
     expect(sameFlag.stderr).toBe(command.stderr);
   });
 
-  test("`bun run --check` without a script or a file is `bun check`", async () => {
+  test("`bun run --check` without a script or file name behaves like `bun check`", async () => {
     const files = { "a.ts": `export const a: number = "1";\n`, "src/empty.txt": "" };
     using scripted = project({
       ...files,
@@ -21872,7 +21883,8 @@ describe.concurrent("--check", () => {
       [error, 1],
     ]);
 
-    // Without the flag it lists the scripts, as before. With a name, the project is checked and the script is not run.
+    // Without the flag it still lists the scripts. With a script name, the project is checked first, and its errors
+    // keep the script from running.
     const [list, named] = await Promise.all([
       run(String(unscripted), ["run"]),
       run(String(unscripted), ["run", "--check", "lint"]),
@@ -21882,13 +21894,13 @@ describe.concurrent("--check", () => {
       false,
       0,
     ]);
-    // The output of a script is its own, so the errors are not in it.
+    // stdout belongs to the script, so the errors go to stderr.
     expect([named.stdout, named.stderr.includes(error), named.exitCode]).toEqual(["", true, 1]);
   });
 
-  // Runs `bun` until the test ends. `until` does `first`, once, and waits for a condition on what `bun` has printed. A
-  // file that is written again and again would start the check again and again.
-  // `printed` is called at once with all that it has printed.
+  // Runs `bun` until the test ends. `until` calls `first` once, then waits for a condition on `bun`'s output. Writing a
+  // file repeatedly would restart the check each time.
+  // `printed` is called on every chunk with all the output so far.
   type Output = { stdout: string; stderr: string };
   const watching = (dir: { toString(): string }, cmd: readonly string[], printed = (_: Output) => {}) => {
     const proc = spawn({
@@ -21923,7 +21935,7 @@ describe.concurrent("--check", () => {
     };
   };
 
-  // The error is in a file that is imported, which nothing has loaded but the type checker.
+  // The error is in an imported file, which only the type checker has loaded so far.
   test.each([
     [["--watch", "--check", "a.ts"], "stdout", "ran 1"],
     [["--hot", "--check", "a.ts"], "stdout", "ran 1"],
@@ -21944,7 +21956,7 @@ describe.concurrent("--check", () => {
     );
   });
 
-  // The file watcher knows a file before the check reads it. The file is written once.
+  // The file watcher has to be watching a file before the check reads it. The file is written only once.
   test.each([
     [["--watch", "--check", "a.ts"], "stdout", "ran 1"],
     [["test", "--watch", "--check", "a.test.ts"], "stderr", "1 pass"],
@@ -21964,8 +21976,8 @@ describe.concurrent("--check", () => {
     await bun.until(() => bun.output[stream].includes(expected));
   });
 
-  // The file that changes only has types, so nothing loads it when the program runs.
-  test.each(["--watch", "--hot"])("bun %s --check checks again before it runs again", async flag => {
+  // The changed file only has types, so the runtime never loads it.
+  test.each(["--watch", "--hot"])("bun %s --check rechecks before it reruns", async flag => {
     using dir = project({
       "types.ts": `export type N = number;\n`,
       "a.ts": `import type { N } from "./types";\nconst n: N = 1;\nconsole.log("ran", n);\n`,
@@ -21979,11 +21991,11 @@ describe.concurrent("--check", () => {
     expect(bun.output.stdout.match(/ran/g)).toHaveLength(1);
   });
 
-  // Nothing is emitted for a file that is only named, so where the project emits from is not about it.
+  // Nothing is emitted for a file that's only passed as an argument, so the project's emit options don't apply to it.
   test.each([
     ["rootDir", { rootDir: "src" }],
     ["composite", { composite: true, noEmit: false, emitDeclarationOnly: true }],
-  ])("a file outside `include` is checked in a project with %s", async (_, more) => {
+  ])("checks a file outside `include` in a project with %s", async (_, more) => {
     using dir = project({
       "tsconfig.json": JSON.stringify({
         compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, ...more },
@@ -22009,7 +22021,7 @@ describe.concurrent("--check", () => {
     expect(results[3].stdout).toBe("ran 2");
   });
 
-  test("`rootDir` is still about what the project itself brings in", async () => {
+  test("still reports TS6059 for files that the project itself imports from outside `rootDir`", async () => {
     using dir = project({
       "tsconfig.json": JSON.stringify({
         compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, rootDir: "src" },
@@ -22028,7 +22040,7 @@ describe.concurrent("--check", () => {
     ]).toEqual([true, false, 1]);
   });
 
-  test("a JavaScript entry point under a solution has the options of the project that would have it", async () => {
+  test("checks a JavaScript entry point under a solution with the options of the project that would include it", async () => {
     const options = {
       ...JSON.parse(tsconfig).compilerOptions,
       noEmit: false,
@@ -22043,7 +22055,7 @@ describe.concurrent("--check", () => {
         include: ["src", "scripts"],
       }),
       "src/console.d.ts": `declare var console: { log(...args: unknown[]): void };\n`,
-      // Only a type: when it runs, `paths` are those of `tsconfig.json`.
+      // Only a type, because at run time `paths` come from `tsconfig.json`.
       "src/config.ts": `export type Config = number;\n`,
       "src/db.ts": `import type { Config } from "@/config";\nexport const db: Config = 1;\n`,
       "scripts/seed.js": `import { db } from "../src/db";\nconsole.log("ran", db);\n`,
@@ -22053,7 +22065,7 @@ describe.concurrent("--check", () => {
   });
 
   // `allowJs` cannot be specified with `isolatedDeclarations`.
-  test("a JavaScript entry point leaves the options of the project as they are", async () => {
+  test("doesn't change the project's options for a JavaScript entry point", async () => {
     const files = (n: string) => ({
       "tsconfig.json": JSON.stringify({
         compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, declaration: true, isolatedDeclarations: true },
@@ -22084,7 +22096,7 @@ describe.concurrent("--check", () => {
     );
   });
 
-  test("what precedes `check` is for `bun`, like what BUN_OPTIONS has", async () => {
+  test("treats flags before `check`, and those in BUN_OPTIONS, as `bun`'s own", async () => {
     using dir = project({ "a.ts": `export const a: number = "1";\n` });
     const root = String(dir);
     const results = await Promise.all([
@@ -22092,9 +22104,9 @@ describe.concurrent("--check", () => {
       run(root, ["check", "a.ts"], { BUN_OPTIONS: "--silent --no-install" }),
       run(root, ["--silent", "check"]),
       run(root, ["--bun", "check", "--pretty", "false"]),
-      // `check` is not a path.
+      // `check` is the command here, not a path.
       run(root, ["--strict", "check"]),
-      // `--bun`, not `--build`, which would take `a.ts` for the project.
+      // `-b` means `--bun` here. `--build` would treat `a.ts` as the project.
       run(root, ["-b", "check", "a.ts"]),
       run(root, ["check", "a.ts"], { BUN_OPTIONS: "-b" }),
       run(root, ["-b", "check", "-b"]),
@@ -22106,7 +22118,7 @@ describe.concurrent("--check", () => {
     expect([after.stderr.split("\n")[0], after.exitCode]).toEqual([`error: Unknown flag "--smol"`, 1]);
   });
 
-  describe("`--build` is what follows `check`, in every spelling", () => {
+  describe("`-b` means `--build` only after `check`", () => {
     const project = ["-p", "tsconfig.json"];
     const expected: Record<string, [string[], string][]> = {
       "a check": [
@@ -22128,8 +22140,8 @@ describe.concurrent("--check", () => {
         [["-b", "check", "-bp", "tsconfig.json"], "TS5096"],
       ],
     };
-    test.each(Object.keys(expected))("%s", async kind => {
-      // Only a build minds that nothing may be emitted: TS5096.
+    test.each(Object.keys(expected))("these command lines run %s", async kind => {
+      // TS5096 is about emitting, so only a build reports it.
       using dir = tempDir("bun-check-build-flag", {
         "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [], "allowImportingTsExtensions": true } }`,
         "a.ts": `export const a: number = "1";\n`,
@@ -22141,8 +22153,9 @@ describe.concurrent("--check", () => {
     });
   });
 
-  // `bun check <args>` reports what `tsc <args> --noEmit` reports. Where tsc checks nothing, it says what it does.
-  describe("which projects are reported", () => {
+  // `bun check <args>` reports what `tsc <args> --noEmit` reports. Where tsc checks nothing, it explains what it does
+  // instead.
+  describe("which projects are checked", () => {
     const base = JSON.parse(tsconfig).compilerOptions;
     const composite = { ...base, noEmit: false, composite: true, outDir: "dist" };
     const wrong = (name: string) => `export const ${name}: number = "";\n`;
@@ -22156,7 +22169,7 @@ describe.concurrent("--check", () => {
       [["--noEmit"], [error("src/main.ts", 2)]],
       [["src/main.ts"], [error("src/main.ts", 2)]],
       [["-b"], [error("../lib/src/index.ts"), error("src/main.ts", 2)]],
-    ])("in a project with files and references, which are not built: %j", async (args, expected) => {
+    ])("checks a project's own files but not its unbuilt references, except with -b: %j", async (args, expected) => {
       using dir = project({
         "app/tsconfig.json": JSON.stringify({
           compilerOptions: composite,
@@ -22173,7 +22186,7 @@ describe.concurrent("--check", () => {
       expect(exitCode).toBe(1);
     });
 
-    // A flag is for the projects that are reported.
+    // A flag applies to every project that's checked.
     test.concurrent.each([
       [["--strict"], ["scripts/s.ts"]],
       [
@@ -22185,7 +22198,7 @@ describe.concurrent("--check", () => {
         ["packages/a/a.ts", "scripts/s.ts"],
       ],
       [["."], []],
-    ])("in a project with files, and references below it: %j", async (args, files) => {
+    ])("checks referenced projects below a project with files only for `.` and -b: %j", async (args, files) => {
       const loose = { ...composite, strict: false };
       const implicitAny = `export function f(x) {\n  return x;\n}\n`;
       using dir = project({
@@ -22204,7 +22217,7 @@ describe.concurrent("--check", () => {
       );
     });
 
-    test.concurrent("nothing is written, so no file would be overwritten, with references too", async () => {
+    test.concurrent("never reports that output would overwrite a JavaScript input, with references too", async () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({
           compilerOptions: { ...base, noEmit: false, allowJs: true },
@@ -22224,7 +22237,7 @@ describe.concurrent("--check", () => {
       [[], true],
       [["-b"], false],
       [["."], false],
-    ])("in a project with nothing but references: %j", async (args, says) => {
+    ])("checks the referenced projects of a tsconfig.json with only references: %j", async (args, says) => {
       using dir = project({
         "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "a" }, { path: "b" }] }),
         "a/tsconfig.json": JSON.stringify({ compilerOptions: composite, include: ["*.ts"] }),
@@ -22252,7 +22265,7 @@ describe.concurrent("--check", () => {
     };
 
     test.concurrent(
-      "without a tsconfig.json here or above, those below are listed and nothing is checked",
+      "without a tsconfig.json in the working directory or above, lists the ones below and checks nothing",
       async () => {
         using dir = below();
         const { stdout, exitCode } = await check(dir);
@@ -22267,11 +22280,11 @@ describe.concurrent("--check", () => {
       },
     );
 
-    // The list proposes commands that run nothing.
+    // The commands that the list suggests wouldn't run the script.
     test.concurrent.each([
       ["export const s = 1;\n", 0],
       [wrong("s"), 1],
-    ])("there, `bun run --check` checks what is below and then runs the script: %j", async (source, code) => {
+    ])("no tsconfig.json: `bun run --check` checks projects below, then runs the script: %j", async (source, code) => {
       using dir = project({
         "package.json": JSON.stringify({ scripts: { build: "echo the script ran" } }),
         "packages/server/tsconfig.json": tsconfig,
@@ -22288,7 +22301,7 @@ describe.concurrent("--check", () => {
     test.concurrent.each([
       [["."], [error("loose.ts"), error("packages/server/s.ts"), error("packages/web/w.ts")]],
       [["-p", "packages/server/tsconfig.json"], [error("packages/server/s.ts")]],
-    ])("and what the message proposes works: %j", async (args, expected) => {
+    ])("the commands suggested when no tsconfig.json is found work: %j", async (args, expected) => {
       using dir = below();
       const { stdout, exitCode } = await check(dir, args);
       expect(stdout.split("\n")).toEqual(expected);
@@ -22296,25 +22309,25 @@ describe.concurrent("--check", () => {
     });
   });
 
-  describe("the command line is read as tsc reads it", () => {
+  describe("parses the command line like tsc", () => {
     const assignment = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
     const parameter = `a.ts(2,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`;
     const strict = `${assignment}\n${parameter}`;
-    // What tsc 7.0.2 prints, except where it says otherwise.
+    // tsc 7.0.2's output, except where noted.
     const expected: Record<string, [string[], string][]> = {
-      "a response file": [
+      "reads a response file": [
         [["@args.txt"], assignment],
         [["@quoted.txt"], assignment],
         [["@outer.txt"], assignment],
         [["@args.txt", "--strict"], strict],
         [["@missing.txt"], `error TS5083: Cannot read file '<dir>/missing.txt'.`],
         [["@open.txt"], `error TS6045: Unterminated quoted string in response file '<dir>/open.txt'.`],
-        // tsc reads past the end of a file that does not end in white space, and crashes.
+        // tsc reads past the end of a file that doesn't end in whitespace, and crashes.
         [["@lines.txt"], assignment],
         // tsc reads these until its stack overflows.
         [["@self.txt"], `error TS5083: Cannot read file '<dir>/self.txt'.`],
         [["@one.txt"], `error TS5083: Cannot read file '<dir>/one.txt'.`],
-        // So it does with a long chain of files. Here 64 can be open at a time.
+        // It also overflows on a long chain of files. `bun check` allows 64 nested files.
         [["@chain0.txt"], `error TS5083: Cannot read file '<dir>/chain64.txt'.`],
       ],
       "`null` unsets an option": [
@@ -22322,14 +22335,14 @@ describe.concurrent("--check", () => {
         [["--strict", "null"], strict],
         [["--strict", "false", "--strict", "null"], strict],
       ],
-      "`--quiet` prints no diagnostic": [
+      "`--quiet` prints no diagnostics": [
         [["--quiet"], ""],
         [["-q"], ""],
         [["--quiet", "false"], strict],
         [["--quiet", "--quiet", "false"], strict],
         [["--quiet", "false", "--quiet"], ""],
       ],
-      "a project that is not there": [
+      "reports a project that doesn't exist": [
         [["-b", "nowhere"], `error TS6053: File '<dir>/nowhere/tsconfig.json' not found.`],
         [["-p", "nowhere"], `error TS5058: The specified path does not exist: '<dir>/nowhere'.`],
         [
@@ -22358,7 +22371,7 @@ describe.concurrent("--check", () => {
       );
     });
 
-    test("`--quiet` leaves the list of files", async () => {
+    test("`--quiet` still prints the file list", async () => {
       using dir = project({ "a.ts": `export const a: number = "";\n` });
       const { stdout, exitCode } = await check(dir, ["--quiet", "--listFilesOnly"]);
       expect(stdout.split("\n").filter(line => !/\/lib\.[\w.]+\.d\.ts$/.test(line))).toEqual([
@@ -22369,7 +22382,7 @@ describe.concurrent("--check", () => {
     });
   });
 
-  test("a page that is imported stands for its scripts", async () => {
+  test("checks the scripts of an imported HTML page", async () => {
     const html = `declare module "*.html" {\n  const page: unknown;\n  export default page;\n}\n`;
     const page = (src: string) => `<!doctype html><script type="module" src="${src}"></script>\n`;
     const server = (from: string) => `import it from "${from}";\nconsole.log("ran", typeof it);\n`;
@@ -22390,7 +22403,7 @@ describe.concurrent("--check", () => {
       "routes.ts": `import page from "./web/index.html";\nexport default { "/": page };\n`,
       "server.ts": server("./routes"),
     });
-    // The page is not in the project of the server. In its own, a parameter needs no type, and there is a `document`.
+    // The page isn't in the server's project. Its own project allows untyped parameters and has `document`.
     using separate = project({
       "tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["server.ts", "*.d.ts"] }),
       "html.d.ts": html,
@@ -22426,7 +22439,7 @@ describe.concurrent("--check", () => {
     expect(built.exitCode).toBe(1);
   });
 
-  test("--conditions are those of the check too", async () => {
+  test("resolves with --conditions in the type check too", async () => {
     using dir = project({
       "a.ts": `import { which } from "custom";\nconsole.log("ran", which);\n`,
       "node_modules/custom/package.json": JSON.stringify({
@@ -22446,8 +22459,8 @@ describe.concurrent("--check", () => {
     expect([mine.stdout, mine.exitCode]).toEqual(["", 1]);
   });
 
-  // It is checked as what Bun runs it as.
-  test("an entry point whose name does not say what it is: no extension, -e, -p, stdin", async () => {
+  // It's checked with the loader that Bun runs it with.
+  test("checks an entry point without a known extension, and -e, -p and stdin", async () => {
     const wrong = `const n: number = "1";\nconsole.log("ran", n);\nexport {};\n`;
     using dir = project({
       "own": `#!/usr/bin/env bun\n${wrong}`,
@@ -22456,7 +22469,7 @@ describe.concurrent("--check", () => {
       "fine": `import { g } from "./right";\nconsole.log("ran", g);\n`,
       "right.ts": `export const g: number = 1;\n`,
       "odd.extension": wrong,
-      // Not a type assertion.
+      // Parsed as JSX, not as a type assertion.
       "with-jsx": `export const e = <div />;\n`,
       "mapped.script": `const n = 1;\nn.nope;\nconsole.log("ran");\nexport {};\n`,
     });
@@ -22504,8 +22517,8 @@ describe.concurrent("--check", () => {
     ]);
   });
 
-  // These take a shorter way to the file, on which less is set up.
-  test("bun --check with an entry point that starts with `./` or is absolute", async () => {
+  // These take a fast path to the file that sets up less.
+  test("checks an entry point that starts with `./` or is absolute", async () => {
     using dir = project({
       "good.ts": `export const n: number = 1;\nconsole.log("ran", n);\n`,
       "bad.ts": `export const n: number = "1";\nconsole.log("ran", n);\n`,
@@ -22523,9 +22536,9 @@ describe.concurrent("--check", () => {
     ]);
   });
 
-  // `./` takes a shorter way to the page, on which less is set up.
+  // `./` takes a fast path to the page that sets up less.
   test.each(["index.html", "./index.html"])(
-    "bun --check %s: a script that the page names from its root",
+    "bun --check %s finds a script that the page references with a root-relative path",
     async page => {
       using dir = project({
         "index.html": `<!doctype html>\n<script type="module" src="/src/main.ts"></script>\n`,
@@ -22538,16 +22551,16 @@ describe.concurrent("--check", () => {
     },
   );
 
-  // What is served is checked: every page, also those that a pattern stands for.
+  // Every page that's served is checked, including the ones a glob matches.
   test.each([
     [["index.html", "about.html"]],
     [["./index.html", "./pages/contact.html"]],
     [["./*.html"]],
     [["./**/*.html"]],
-    // Not the first: `bun` looks for a file with that name.
+    // A glob can't come first, because `bun` looks for a file with that name.
     [["index.html", "{about,none}.html"]],
     [["index.html", "./pages/*.html"]],
-  ])("bun --check %j: the scripts of every page", async pages => {
+  ])("bun --check %j checks the scripts of every page", async pages => {
     const page = (script: string) => `<!doctype html>\n<script type="module" src="${script}"></script>\n`;
     using dir = project({
       "index.html": page("./src/index.ts"),
@@ -22574,12 +22587,12 @@ describe.concurrent("--check", () => {
     });
   });
 
-  // A directory is the tsconfig.json in it, as for `tsc -p`.
+  // A directory means the tsconfig.json in it, as with `tsc -p`.
   test.each([
     ["tsconfig.build.json", "tsconfig.build.json", "."],
     ["configs", "configs/tsconfig.json", ".."],
     ["./configs/", "configs/tsconfig.json", ".."],
-  ])("--tsconfig-override %s is the tsconfig.json of the check too", async (named, file, root) => {
+  ])("--tsconfig-override %s applies to the type check too", async (named, file, root) => {
     using dir = project({
       [file]: JSON.stringify({
         compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, paths: { "@/*": [`${root}/src/*`] } },
@@ -22600,8 +22613,8 @@ describe.concurrent("--check", () => {
     expect([alone.exitCode, ran.stdout, ran.exitCode, built.exitCode]).toEqual([0, "ran 1", 0, 0]);
   });
 
-  // npm, pnpm and yarn say which script they run, and the first two of which package.
-  test("a `check` script that another package manager runs", async () => {
+  // npm, pnpm and yarn set which script they're running, and the first two also set which package it belongs to.
+  test("`bun check` type checks inside a `check` script run by another package manager", async () => {
     using dir = project({
       "a.ts": `export const a: number = "1";\n`,
       "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
@@ -22613,18 +22626,18 @@ describe.concurrent("--check", () => {
     const cases: [Record<string, string>, string][] = [
       [{}, "the script ran"],
       [{ npm_lifecycle_event: "lint" }, "the script ran"],
-      // In the script, `bun check` is the type checker.
+      // Inside the script, `bun check` is the type checker.
       [{ npm_lifecycle_event: "check" }, error],
       [{ npm_lifecycle_event: "check", npm_package_json: own }, error],
-      // The script of another package is running.
+      // Another package's script is running.
       [{ npm_lifecycle_event: "check", npm_package_json: other }, "the script ran"],
     ];
     const results = await Promise.all(cases.map(([extra]) => check(dir, [], extra)));
     expect(results.map(it => it.stdout)).toEqual(cases.map(it => it[1]));
   });
 
-  // `bun run` says which script it runs in the place of what the other package manager has said.
-  test("a `check` script that another package manager runs, and that runs other scripts", async () => {
+  // `bun run` overwrites the other package manager's variables with the script it runs.
+  test("`bun check` type checks in scripts nested under a `check` script run by another package manager", async () => {
     const bun = `"${bunExe().replaceAll("\\", "/")}"`;
     using dir = project({
       "a.ts": `export const a: number = "1";\n`,
@@ -22639,12 +22652,12 @@ describe.concurrent("--check", () => {
     });
     const own = join(String(dir), "package.json");
     const other = join(String(dir), "other", "package.json");
-    // What the `check` script runs first, as it is started in each of these.
+    // Runs the script that `check` starts first, with each of these environments.
     const cases: [Record<string, string>, boolean][] = [
       [{ npm_lifecycle_event: "check" }, false],
       [{ npm_lifecycle_event: "check", npm_package_json: own }, false],
       [{ npm_lifecycle_event: "precheck", npm_package_json: own }, false],
-      // Nobody runs the `check` script of this package: `bun check` does.
+      // This package's `check` script isn't running yet, so `bun check` runs it.
       [{ npm_lifecycle_event: "check", npm_package_json: other }, true],
       [{ npm_lifecycle_event: "lint", npm_package_json: own }, true],
       [{}, true],
@@ -22652,7 +22665,7 @@ describe.concurrent("--check", () => {
     const results = await Promise.all(cases.map(([extra]) => run(String(dir), ["run", "types"], extra)));
     expect(
       results.map(it => ({
-        // Once, where it does.
+        // At most once.
         ranTheScript: it.stdout.split("the script ran").length - 1,
         reported: it.stdout.split("a.ts(1,14): error TS2322").length - 1,
         exitCode: it.exitCode,
@@ -22660,9 +22673,9 @@ describe.concurrent("--check", () => {
     ).toEqual(cases.map(([, runs]) => ({ ranTheScript: Number(runs), reported: 1, exitCode: 1 })));
   });
 
-  // yarn does not say of which package the script is: of the one that `bun` is started in, not of
-  // each that it goes to.
-  test("a `check` script that another package manager runs, and that runs the scripts of other packages", async () => {
+  // yarn doesn't set which package the script belongs to. It's assumed to be the one `bun` is started in, not every
+  // package that `--filter` visits.
+  test("`bun check` runs another package's `check` script even under a `check` script run by another package manager", async () => {
     const bun = `"${bunExe().replaceAll("\\", "/")}"`;
     using dir = project({
       "package.json": JSON.stringify({ workspaces: ["packages/*"], scripts: { check: "echo no" } }),
@@ -22684,7 +22697,7 @@ describe.concurrent("--check", () => {
     ]);
   });
 
-  test("the `check` scripts of several packages are scripts, and each runs once", async () => {
+  test("runs each package's `check` script once with --workspaces, --filter, --parallel and --sequential", async () => {
     const bun = `"${bunExe().replaceAll("\\", "/")}"`;
     const files = {
       // It has no `check` script of its own.
@@ -22695,7 +22708,7 @@ describe.concurrent("--check", () => {
       }),
       "packages/a/src/a.ts": `export const a: number = 1;\n`,
     };
-    // Where `bun` is started, and where the script then runs.
+    // The directory `bun` is started in, and the one the script runs in.
     const cases = [
       [".", "packages/a", ["--workspaces", "check"]],
       [".", "packages/a", ["--filter=*", "check"]],
@@ -22717,8 +22730,8 @@ describe.concurrent("--check", () => {
     expect(seen).toEqual(cases.map(() => [0, false, "ran"]));
   });
 
-  // What separates the entries of PATH is a character like any other in the name of a directory.
-  test("a `check` script that is the type checker, in a directory with a delimiter in its name", async () => {
+  // The PATH delimiter is an ordinary character in a directory name.
+  test("a `check` script can run the type checker in a directory with the PATH delimiter in its name", async () => {
     const bun = `"${bunExe().replaceAll("\\", "/")}"`;
     const name = `a${delimiter}b`;
     using dir = project({
@@ -22735,7 +22748,7 @@ describe.concurrent("--check", () => {
 
   // The path is compared as `bun run` spells it.
   test.skipIf(isWindows)(
-    "in a `check` script that a Bun with only `bun check` has started, `bun check` is the type checker",
+    "`bun check` type checks in a `check` script started by a Bun that sets only BUN_INTERNAL_CHECK_SCRIPTS",
     async () => {
       using dir = project({
         "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
@@ -22745,7 +22758,7 @@ describe.concurrent("--check", () => {
       const cwd = String(dir);
       const results = await Promise.all([
         run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `${Buffer.byteLength(cwd)}:${cwd}` }),
-        // Of another package.
+        // Another package's path.
         run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `2:/x` }),
       ]);
       expect(
@@ -22804,7 +22817,7 @@ describe.concurrent("--check", () => {
     expect(bun.output.stderr).not.toContain("a/a.test.ts(2,12)");
   });
 
-  test("bun --watch --check watches the configuration files that tsconfig.json extends", async () => {
+  test("bun --watch --check watches the files that tsconfig.json extends", async () => {
     const options = JSON.parse(tsconfig).compilerOptions;
     using dir = project({
       "tsconfig.json": JSON.stringify({ extends: "./configs/middle.json" }),
@@ -22820,7 +22833,7 @@ describe.concurrent("--check", () => {
     );
   });
 
-  // These draw the same progress line as `bun check`, on a thread of its own, and the process goes on afterwards.
+  // These draw the same progress line as `bun check`, on a dedicated thread, and the process keeps running afterwards.
   describe.skipIf(isWindows || !hasTerminal)("in a terminal", () => {
     const files = (n: string) => ({
       "package.json": JSON.stringify({ scripts: { hello: "echo ran 1" } }),
@@ -22835,7 +22848,7 @@ describe.concurrent("--check", () => {
       [["test", "--check", "a.test.ts"], "1 pass"],
     ];
 
-    test.each(commands)("bun %j does its job after the check", async (cmd, expected) => {
+    test.each(commands)("bun %j runs after the check passes", async (cmd, expected) => {
       using dir = project(files("1"));
       const { output, exitCode, signalCode } = await inTerminal(String(dir), cmd);
       expect(output).toContain("Loading");
@@ -22844,7 +22857,7 @@ describe.concurrent("--check", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("errors are shown with the source and in color", async () => {
+    test("prints errors with source excerpts and colors", async () => {
       using dir = project(files(`"1"`));
       const { output, hasColors, exitCode, signalCode } = await inTerminal(String(dir), ["--check", "a.ts"]);
       expect(output).toContain(`1 | const n: number = "1";`);
@@ -22856,7 +22869,7 @@ describe.concurrent("--check", () => {
     });
   });
 
-  test("a JavaScript entry point is loaded for its imports regardless of allowJs", async () => {
+  test("loads a JavaScript entry point for its imports regardless of allowJs", async () => {
     using dir = project({
       "good.js": `import { n } from "./n";\nconsole.log("ran", n);\n`,
       "n.ts": `export const n: number = 1;\n`,
@@ -22893,8 +22906,8 @@ describe.concurrent("--check", () => {
     expect(stopped.exitCode).toBe(1);
   });
 
-  // There is no watcher to wait for without a test file.
-  test("bun test --watch --check without a test file ends", async () => {
+  // Without a test file there's no watcher to wait for.
+  test("bun test --watch --check exits if there are no test files", async () => {
     using dir = project({
       "bunfig.toml": `[test]\npreload = ["./setup.ts"]\n`,
       "setup.ts": `export const a: number = "1";\n`,
@@ -22904,14 +22917,14 @@ describe.concurrent("--check", () => {
     expect(exitCode).toBe(1);
   });
 
-  // Neither has an entry point to start from, like a script of a package.json.
+  // Like a package.json script, neither has an entry point to start from.
   describe.each([
     ["an executable in node_modules/.bin", ["--check", "tool"]],
     ["an executable in node_modules/.bin, with arguments", ["--check", "tool", "build", "--flag"]],
     ["bun run and an executable in node_modules/.bin", ["run", "--check", "tool"]],
     ["a shell script", ["--check", "./tool.sh"]],
   ])("bun --check with %s", (_, cmd) => {
-    // There it would have to be a program: `bun` does not start a batch file.
+    // On Windows it would have to be a real executable, because `bun` doesn't start batch files.
     test.skipIf(isWindows && cmd.includes("tool"))("type checks the project first", async () => {
       const files = { "tool.sh": `echo ran\n`, "node_modules/.bin/tool": `#!/bin/sh\necho ran\n` };
       using good = project({ ...files, "a.ts": `export const a: number = 1;\n` });
@@ -22952,14 +22965,14 @@ describe.concurrent("--check", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("without --check the same file runs", async () => {
+  test("without --check, a file with type errors still runs", async () => {
     using dir = project({ "a.ts": `const s: string = 1 as any as number;\nconsole.log("ran", s);\n` });
     const { stdout, exitCode } = await run(String(dir), ["a.ts"]);
     expect(stdout).toBe("ran 1");
     expect(exitCode).toBe(0);
   });
 
-  test("bun build --check", async () => {
+  test("bun build --check writes no output if there are type errors", async () => {
     using dir = project({
       "good.ts": `export const good: number = 1;\nconsole.log(good);\n`,
       "bad.ts": `export const bad: number = "1";\nconsole.log(bad);\n`,
@@ -23007,8 +23020,8 @@ describe.concurrent("--check", () => {
     expect(bad.exitCode).toBe(1);
   });
 
-  // What is checked is what the bundler resolved the entry point to, whatever it is written like.
-  test("bun build --check checks an entry point that is written without its extension, or as its directory", async () => {
+  // The check uses the file that the bundler resolved the entry point to, however it was written.
+  test("bun build --check checks an entry point written without its extension or as its directory", async () => {
     using dir = project({
       "src/index.ts": `export const value: number = "1";\n`,
     });
@@ -23028,7 +23041,7 @@ describe.concurrent("--check", () => {
   });
 
   // Prints what `Bun.build` returns or throws, with paths relative to the working directory. `run` turns every
-  // backslash into a slash, so the sources have no double quotes: JSON would escape them.
+  // backslash into a slash, so the sources avoid double quotes, which JSON would escape.
   const buildScript = `
     import { relative } from "node:path";
     const [options] = process.argv.slice(2);
@@ -23062,7 +23075,7 @@ describe.concurrent("--check", () => {
     lineText,
   });
 
-  test("Bun.build({ check: true })", async () => {
+  test("Bun.build({ check: true }) returns or throws type errors and writes no output", async () => {
     using dir = project({
       "build.mjs": buildScript,
       "good.ts": `export const good: number = 1;\nconsole.log(good);\n`,
@@ -23080,7 +23093,7 @@ describe.concurrent("--check", () => {
     expect(bad.result).toEqual({ success: false, outputs: 0, logs: [error] });
     expect(thrown.result).toEqual({ thrown: "AggregateError", errors: [error] });
     expect(unchecked.result).toEqual({ success: true, outputs: 1, logs: [] });
-    // Nothing is printed: the errors are values.
+    // Nothing is printed, because the errors are returned or thrown.
     expect([good.stderr, bad.stderr, thrown.stderr]).toEqual(["", "", ""]);
     const written = (outdir: string, file: string) => Bun.file(join(String(dir), outdir, file)).exists();
     expect(await written("out-good", "good.js")).toBe(true);
@@ -23104,9 +23117,9 @@ describe.concurrent("--check", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The type checker takes the text of a file of the bundle from the bundler and does not open the file. What is on
-  // disk and what is bundled differ here, so the result shows which of the two was checked.
-  test("the files of the bundle are not read again", async () => {
+  // The type checker gets the text of a bundled file from the bundler instead of opening the file. Here the text on
+  // disk differs from what's bundled, so the result shows which of the two was checked.
+  test("Bun.build({ check: true }) checks the bundler's text of a file, not what's on disk", async () => {
     using dir = project({
       "build.mjs": buildScript,
       "right-on-disk.ts": `export const value: number = 1;\n`,
@@ -23129,13 +23142,13 @@ describe.concurrent("--check", () => {
     expect(right.result).toEqual({ success: true, outputs: 1, logs: [] });
   });
 
-  test("a file that is only in memory is checked like one on the disk", async () => {
+  test("Bun.build({ check: true }) checks a file that's only in `files` like one on disk", async () => {
     using dir = project({
       "tsconfig.json": JSON.stringify({
         compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowImportingTsExtensions: true },
       }),
       "build.mjs": buildScript,
-      // The bundler finds such a file by its whole name.
+      // The bundler only finds such a file by its full name, with the extension.
       "on-disk.ts": `import { value } from './in/memory/imported.ts';\nexport const other: number = value;\n`,
     });
     const at = (file: string) => join(String(dir), file);
@@ -23160,7 +23173,7 @@ describe.concurrent("--check", () => {
     });
   });
 
-  test("what is checked is what is written, not what an onLoad plugin makes of it", async () => {
+  test("checks a file's source text, not what an onLoad plugin returns for it", async () => {
     using dir = project({
       "build.mjs": `
         const [entrypoint, contents] = process.argv.slice(2);
@@ -23188,7 +23201,7 @@ describe.concurrent("--check", () => {
     });
   });
 
-  test("what only a plugin provides: an entry point in another language, and a file that is nowhere else", async () => {
+  test("checks what only a plugin provides: an entry point in another language, and a file that isn't on disk", async () => {
     using dir = project({
       "build.mjs": `
         import { join } from "node:path";
@@ -23212,12 +23225,12 @@ describe.concurrent("--check", () => {
       "node_modules/runtime/index.js": `// @ts-check\n/** @type {number} */\nexport const runtime = '1';\n`,
     });
     const build = async (...args: string[]) => JSON.parse((await run(String(dir), ["build.mjs", ...args])).stdout);
-    // It cannot be named, so what it imports is.
+    // A `.svelte` file can't be a root of the program, so the files it imports are.
     const importsStore = `import { n } from './store';\nexport const a: number = n;\n`;
     const [imported, throughAnother, installed] = await Promise.all([
       build("App.svelte", importsStore),
       build("Outer.svelte", importsStore),
-      // What a plugin makes of it imports the plugin's own runtime, which is not of the project.
+      // The plugin's output imports the plugin's own runtime, which isn't part of the project.
       build("App.svelte", `import { runtime } from 'runtime';\nexport const a = runtime;\n`),
     ]);
     for (const result of [imported, throughAnother]) {
@@ -23240,7 +23253,7 @@ describe.concurrent("--check", () => {
     });
   });
 
-  test("a file that is only in memory can be in two programs", async () => {
+  test("a file that's only in `files` can be in two programs", async () => {
     const config = JSON.stringify({
       compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowImportingTsExtensions: true },
     });
@@ -23261,7 +23274,7 @@ describe.concurrent("--check", () => {
   });
 
   // The bundler asserts that the path of an entry point is absolute.
-  test.skipIf(isDebug || isASAN)("a file that is only in memory can have a relative name", async () => {
+  test.skipIf(isDebug || isASAN)("a file that's only in `files` can have a relative name", async () => {
     using dir = project({ "build.mjs": buildScript });
     const { result } = await build(dir, {
       entrypoints: ["./entry.ts"],
@@ -23275,7 +23288,7 @@ describe.concurrent("--check", () => {
     });
   });
 
-  test("bun build --check: an error of the bundler comes first", async () => {
+  test("bun build --check reports only the bundler's errors if there are any", async () => {
     using dir = project({
       "syntax.ts": `export const a: number = "1";\nexport const b = ;\n`,
       "unresolved.ts": `import "./missing";\nexport const a: number = "1";\n`,
@@ -23291,7 +23304,7 @@ describe.concurrent("--check", () => {
     expect([syntax.exitCode, unresolved.exitCode]).toEqual([1, 1]);
   });
 
-  test("bun build --no-bundle --check", async () => {
+  test("bun build --no-bundle --check prints no output if there are type errors", async () => {
     using dir = project({
       "good.ts": `export const good: number = 1;\n`,
       "bad.ts": `export const bad: number = "1";\n`,
@@ -23312,9 +23325,9 @@ describe.concurrent("--check", () => {
     expect(bad.exitCode).toBe(1);
   });
 
-  // Each check loads TypeScript's library, some 40 MB. All of it is in the arenas of the check's session.
-  // A debug build takes a second per check, and a sanitizer keeps freed memory for a while.
-  test.skipIf(isDebug || isASAN)("repeated builds with `check: true` in one process do not grow", async () => {
+  // Each check loads TypeScript's lib files, about 40 MB, all of it in the arenas of the check's session.
+  // A debug build takes a second per check, and a sanitizer holds on to freed memory for a while.
+  test.skipIf(isDebug || isASAN)("repeated builds with `check: true` in one process don't leak memory", async () => {
     using dir = project({
       "build.mjs": `
         const once = () => Bun.build({ entrypoints: ["a.ts"], check: true });
@@ -23333,7 +23346,7 @@ describe.concurrent("--check", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("bun test --check", async () => {
+  test("bun test --check doesn't run tests if there are type errors", async () => {
     using dir = project({
       "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n  export function expect(value: unknown): { toBe(expected: unknown): void };\n}\n`,
       "good.test.ts": `import { test, expect } from "bun:test";\ntest("good", () => expect(1).toBe(1));\n`,
@@ -23353,7 +23366,7 @@ describe.concurrent("--check", () => {
   // A file that the parser gives up on must not disappear from the result. Each file here ends with a type error, so
   // each has to report something: a syntax error, or that type error.
   test("half-written code is never reported as clean", async () => {
-    // What once made a file disappear.
+    // Inputs that once made a file disappear.
     const cases = [
       "type T = { (x: number, : string): void };",
       "<T extends(T,",
@@ -23450,7 +23463,8 @@ describe.concurrent("--check", () => {
       const reported = new Set([...stdout.matchAll(/^(\w+\.ts)\(\d+,\d+\): error TS/gm)].map(match => match[1]));
       return among.filter(name => !reported.has(name));
     };
-    // Syntax errors end the run before anything is checked, as in tsc. What has none is checked on its own.
+    // As in tsc, syntax errors end the run before anything is type checked. Files without any are then checked
+    // separately.
     const parsed = await withoutErrors(names);
     expect(parsed.length).toBeGreaterThan(names.length / 8);
     expect(parsed.length).toBeLessThan(names.length / 2);
@@ -23458,12 +23472,12 @@ describe.concurrent("--check", () => {
     expect(await withoutErrors(parsed)).toEqual([]);
   });
 
-  // Nothing here is slow or deep unless the cost of a construct grows faster than its size. An exponential walk does not
+  // Nothing here is slow or deep unless the cost of a construct grows faster than its size. An exponential walk doesn't
   // finish at these sizes, and one that gives up at a limit loses a narrowing and reports a false error, as happened
   // after a `finally` block in vscode.
-  describe("programs of growing size", () => {
+  describe("large programs", () => {
     const range = (n: number) => Array.from({ length: n }, (_, i) => i);
-    // The stack frames of a debug build are several times larger.
+    // A debug build's stack frames are several times larger.
     const size = isDebug || isASAN ? 50 : 400;
     // Lines, not depth: nothing here nests.
     const long = isDebug || isASAN ? 3000 : 40000;
@@ -23556,14 +23570,14 @@ describe.concurrent("--check", () => {
       ],
       ["nested object literals", size, n => `export const r = ${repeat("{ a: ", n)}1${repeat(" }", n)};`],
       [
-        // Whether the end of the function can be reached is asked at its end, and the way back is as long as the function.
-        "`if` statements that return",
+        // Reachability of the function's end is computed from the end, and the walk back is as long as the function.
+        "thousands of `if` statements that return",
         isDebug || isASAN ? 10_000 : 20_000,
         n => `declare class C {}\nexport function f() {\n${repeat("if (C) return 1;\nif (C) return;\n", n)}}`,
       ],
       [
-        // The binder asks of each whether there is a value in it.
-        "namespaces in namespaces",
+        // The binder checks whether each one contains a value.
+        "deeply nested namespaces",
         isDebug || isASAN ? 100 : 1000,
         n =>
           `${range(150)
@@ -23571,7 +23585,7 @@ describe.concurrent("--check", () => {
             .join("\n")}\nexport {};`,
       ],
       [
-        "nested array types",
+        "deeply nested array types",
         size,
         n => `export type T = ${repeat("Array<", n)}number${repeat(">", n)};\nexport declare const t: T;`,
       ],
@@ -23582,7 +23596,7 @@ describe.concurrent("--check", () => {
           `type Build<N extends number, A extends unknown[] = []> = A["length"] extends N ? A : Build<N, [...A, 1]>;\nexport type R = Build<${n}>["length"];\nexport const r: R = ${n};`,
       ],
       [
-        "overloads",
+        "many overloads",
         size,
         n =>
           `${range(n)
@@ -23640,20 +23654,20 @@ describe.concurrent("--check", () => {
             .join("\n")}`,
       ],
     ];
-    test.each(templates)("%s", async (_, n, source) => {
+    test.each(templates)("finishes without errors on %s", async (_, n, source) => {
       using dir = project({ "index.ts": source(n) + "\n" });
       const { stdout, stderr, exitCode } = await check(dir);
       expect(stdout).toBe("");
-      // `console.d.ts` is not checked: `skipLibCheck`.
+      // `skipLibCheck` skips `console.d.ts`.
       expect(stderr).toBe("✓ No type errors in 1 file [time]");
       expect(exitCode).toBe(0);
     });
 
-    // The limit of 5,000,000 instantiations is for one statement or expression. Under `exactOptionalPropertyTypes` one of
-    // these comparisons takes about 45,000. After 110 of them every instantiation in the file gave the error type, to
-    // which anything is assignable.
+    // The limit of 5,000,000 instantiations applies per statement or expression. Under `exactOptionalPropertyTypes` one
+    // of these comparisons takes about 45,000. After 110 of them, every instantiation in the file used to return the
+    // error type, which anything is assignable to.
     test.skipIf(isDebug || isASAN).each([130])(
-      "%i comparisons that are over 100 levels deep do not hide the next error",
+      "%i comparisons over 100 levels deep don't hide the next error",
       async n => {
         using dir = project({
           "tsconfig.json": JSON.stringify({
@@ -23677,11 +23691,11 @@ describe.concurrent("--check", () => {
       },
     );
 
-    // At 100 levels TypeScript 7.1 assumes that the types are related. 7.0 gives up there, reports TS2321 and caches the
-    // pairs from `I0` and `J0` to `I99` and `J99` as failed, so what it says about `I69` and `J69` depends on what it
-    // compared before.
+    // At 100 levels TypeScript 7.1 assumes that the types are related. 7.0 gives up there, reports TS2321 and caches
+    // the pairs from `I0` and `J0` to `I99` and `J99` as failed, so what it reports about `I69` and `J69` depends on
+    // what it compared before.
     test.each([0, 800])(
-      "types over 100 levels deep are related, and still are when they are compared again %i statements later",
+      "treats types over 100 levels deep as related, also when they're compared again %i statements later",
       async n => {
         const chain = (name: string) =>
           `${range(100)
@@ -23747,7 +23761,7 @@ export const far: I69 extends J69 ? 1 : 2 = 0;
       });
       const threads = [1, 1, 2, 2, 2, 8, 8, 8];
       for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
-        // The lines under an error are indented.
+        // Elaboration lines are indented.
         expect(stdout.split("\n").filter(line => /^\S/.test(line))).toEqual([
           "second.ts(2,7): error TS2322: Type 'I70' is not assignable to type 'J70'.",
         ]);
@@ -23755,9 +23769,9 @@ export const far: I69 extends J69 ? 1 : 2 = 0;
       }
     });
 
-    // `first.ts` assumes that `I0` and `J0` are related, and with them `I70` and `J70`, so it would take `C` for 1.
-    // What it finds depends on whether `second.ts` has compared `I70` and `J70` yet. So a file that compares types
-    // over 100 levels deep is checked after all the others.
+    // `first.ts` assumes that `I0` and `J0` are related, and with them `I70` and `J70`, so it would resolve `C` to 1.
+    // What it finds depends on whether `second.ts` has compared `I70` and `J70` yet. So a file that compares types over
+    // 100 levels deep is checked after all the others.
     test("a conditional type is the same in two files if one compares its types from 100 levels up", async () => {
       const chain = (name: string, last: number) =>
         `${range(100)
@@ -23783,7 +23797,7 @@ export const far: I69 extends J69 ? 1 : 2 = 0;
 
     // `y = x` takes 1,000 x 2,051 comparisons, more than the 2,000,000 that one comparison may take. tsc reports TS2859
     // and caches the comparison of `S` and `T`, which was in progress, as failed. `t = s` repeats it to report the
-    // error. Most of its parts are cached by now, so it succeeds, and tsc replaces the cached failure.
+    // error. Most of its parts are already cached, so it succeeds, and tsc replaces the cached failure.
     test.skipIf(isDebug || isASAN)(
       "a comparison that failed at the complexity limit succeeds when the next statement repeats it",
       async () => {
@@ -23839,9 +23853,10 @@ export const related: S extends T ? 1 : 2 = 0;
       },
     );
 
-    // A parser as PEG.js generates it, as in the release bundle of Yarn: rules that call each other in a ring and collect
-    // what they get in arrays, in loops. It took seven times as long for each alternative of the last rule.
-    test("a generated parser with a rule of 16 alternatives", async () => {
+    // A parser like the ones PEG.js generates, as found in Yarn's release bundle. Its rules call each other in a cycle
+    // and collect their results in arrays, in loops. Each alternative of the last rule used to make the check seven
+    // times slower.
+    test("finishes within 30 s on a generated parser with a rule of 16 alternatives", async () => {
       let tried = "(J = r, J !== r ? (O = J) : (W = O, O = r))";
       for (const _ of range(15)) tried = `(J = r, J !== r ? (O = J) : (W = O, O = r), O === r && ${tried})`;
       using dir = project({
@@ -23868,7 +23883,7 @@ export const related: S extends T ? 1 : 2 = 0;
       expect(exitCode).toBe(1);
     }, 60_000);
 
-    test("variables in a loop that each need the one before", async () => {
+    test("reports TS7022 for each of many variables in a loop that depend on the previous one", async () => {
       const n = size / 2;
       using dir = project({
         "index.ts": `interface S { nxt: S | null }\ndeclare function mk(): S;\nexport function g() { let s: S | null = mk(); while (s) { const c0 = s.nxt; ${range(

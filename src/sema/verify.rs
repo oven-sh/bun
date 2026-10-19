@@ -1,4 +1,4 @@
-//! Configuration diagnostics that do not depend on the program: 5051 5052 5053 5059 5061 5062 5063 5066 5067 5069 5074 5089 5090 5091
+//! Configuration diagnostics that don't depend on the program: 5051 5052 5053 5059 5061 5062 5063 5066 5067 5069 5074 5089 5090 5091
 //! 5095 5096 5102 5108 5109 5110 6266 6304 6379 18035.
 //!
 //! A port of `verifyCompilerOptions` (TypeScript 7.0.2, compiler/program.go) without the checks that depend on output paths.
@@ -30,8 +30,8 @@ fn path_is_absolute(path: &[u8]) -> bool {
     get_root_length(path) != 0
 }
 
-/// The elements of a list option as tsoptions parses it. `None` is Go's nil slice: `value` is not an array, or it is a non-empty array
-/// of nothing but `null`.
+/// Returns a list option's elements as tsoptions parses them. `None` is Go's nil slice: `value` isn't an array, or it's a non-empty
+/// array of only `null`s.
 fn parsed_list(value: &Json) -> Option<&[Json]> {
     value
         .as_array()
@@ -45,7 +45,7 @@ pub(crate) fn is_identifier_text(text: &[u8]) -> bool {
         && lexer::end_of_run(text, size, lexer::is_type_script_identifier_part) == text.len()
 }
 
-/// A token, as far as `parseEntityName` tells tokens apart.
+/// The token kinds that `parseEntityName` distinguishes.
 #[derive(PartialEq, Eq)]
 enum Token {
     /// `KindIdentifier`, or a keyword.
@@ -63,8 +63,8 @@ struct Scanner<'a> {
 }
 
 impl<'a> Scanner<'a> {
-    /// `scanIdentifier`, and what `Scan` does at a `\`: the end of the identifier that starts at
-    /// `at`, if one does.
+    /// `scanIdentifier`, plus what `Scan` does at a `\`. Returns the end of the identifier that starts
+    /// at `at`, if there is one.
     fn scan_identifier(&self, at: usize) -> Option<usize> {
         let (first, size) = match self.text.get(at)? {
             b'\\' => lexer::peek_unicode_escape(self.text, at)?,
@@ -74,7 +74,7 @@ impl<'a> Scanner<'a> {
             .then(|| lexer::scan_identifier_parts(self.text, at + size))
     }
 
-    /// `Scan`. `None`: a token that is in no entity name, or an error of the scanner.
+    /// `Scan`. Returns `None` for a token that can't be part of an entity name, or on a scanner error.
     fn scan(&mut self) -> Option<Token> {
         let text = self.text;
         loop {
@@ -118,8 +118,8 @@ impl<'a> Scanner<'a> {
     }
 }
 
-/// `ParseIsolatedEntityName`: the identifiers of `text`, from left to right. `None`: it is neither
-/// an identifier nor a qualified name.
+/// `ParseIsolatedEntityName`: returns the identifiers in `text`, from left to right, or `None` if
+/// `text` is neither an identifier nor a qualified name.
 pub(crate) fn parse_isolated_entity_name(text: &[u8]) -> Option<Vec<Cow<'_, [u8]>>> {
     let mut scanner = Scanner {
         text,
@@ -127,8 +127,8 @@ pub(crate) fn parse_isolated_entity_name(text: &[u8]) -> Option<Vec<Cow<'_, [u8]
         pos: 0,
     };
     // `tokenIsIdentifierOrKeyword` is true for a private identifier, so `parseEntityName` accepts
-    // `#a` as the first name. `parseRightSideOfDot` rejects it after a dot. What its look-ahead
-    // rejects, a name after the name, is not the end of the text either.
+    // `#a` as the first name. `parseRightSideOfDot` rejects it after a dot. Its look-ahead rejects a
+    // name followed by another name, which fails here anyway because the text doesn't end there.
     let first = scanner.scan()?;
     if first != Token::Identifier && first != Token::PrivateIdentifier {
         return None;
@@ -147,7 +147,7 @@ pub(crate) fn parse_isolated_entity_name(text: &[u8]) -> Option<Vec<Cow<'_, [u8]
     }
 }
 
-/// The location in the configuration file at which an options diagnostic is reported.
+/// Where in the configuration file an options diagnostic is reported.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub enum Place {
     /// `NewCompilerDiagnostic`
@@ -158,7 +158,7 @@ pub enum Place {
     /// `createDiagnosticForOption`: at the name of whichever of two options appears first in the
     /// file. The second may be `""`.
     Key(&'static [u8], &'static [u8]),
-    /// At the value of the option.
+    /// At the option's value.
     Value(&'static [u8]),
     /// `createDiagnosticForOptionPaths`: at a pattern in `paths`, or at its list of substitutions.
     PathsKey(Vec<u8>),
@@ -168,14 +168,14 @@ pub enum Place {
     /// `ForEachTsConfigPropArray`: at the value of a property that is a sibling of
     /// `compilerOptions`.
     Top(&'static [u8]),
-    /// `GetTsConfigPropArrayElementValue`: at the string in that array. No location if it is not in
+    /// `GetTsConfigPropArrayElementValue`: at the string in that array. No location if it isn't in
     /// this file.
     TopElement(&'static [u8], Vec<u8>),
     /// `CreateDiagnosticAtReferenceSyntax`: at an element of `references`. No location if the index
     /// is out of range.
     Reference(usize),
-    /// `GetOptionsSyntaxByArrayElementValue`: at the string in the array that is the value of the
-    /// option. No location if it is not there.
+    /// `GetOptionsSyntaxByArrayElementValue`: at the string in the array that is the option's value.
+    /// No location if the array doesn't contain it.
     Element(&'static [u8], Vec<u8>),
 }
 
@@ -184,8 +184,8 @@ pub enum Place {
 pub struct Problem {
     pub code: u32,
     pub args: Vec<Vec<u8>>,
-    /// `AddMessageChain`: the chained messages below it. For each: its indentation level, its code,
-    /// its message arguments.
+    /// `AddMessageChain`: the chained messages below it, each as indentation level, code and message
+    /// arguments.
     pub chain: Vec<(u32, u32, Vec<Vec<u8>>)>,
     pub at: Place,
     /// `RelatedInformation`: the file, which can be `IN_CONFIGURATION`, the span, and the code of a
@@ -193,8 +193,8 @@ pub struct Problem {
     pub related: Vec<(crate::program::FileId, u32, u32, u32)>,
 }
 
-/// What `Problem::span_in` finds for `Place::TopElement(name, spec)`, for every `spec` at once:
-/// thousands of entries of `files` can each be asked about.
+/// Returns what `Problem::span_in` finds for `Place::TopElement(name, spec)`, for every `spec` in
+/// one pass. `files` can have thousands of entries that each need a lookup.
 pub fn spans_of_top_elements(
     file: &TsConfigSourceFile,
     name: &[u8],
@@ -231,7 +231,7 @@ impl Problem {
         self
     }
 
-    /// Its span in the configuration file. `None`: it has no location in the file.
+    /// Returns its span in the configuration file, or `None` if it has no location there.
     pub fn span_in(&self, file: &TsConfigSourceFile) -> Option<(u32, u32)> {
         if self.at == Place::Nowhere {
             return None;
@@ -289,9 +289,9 @@ pub(crate) fn relative_from_file(from: &[u8], to: &[u8], is_case_sensitive: bool
     ensure_path_is_non_module_name(relative)
 }
 
-/// `verifyProjectReferences`: the diagnostics for the projects `root` references, directly or
-/// transitively, each with the configuration file that references it. `resolved`:
-/// `configToProjectReference`, the project of the configuration file with a `tspath.Path`, if the
+/// `verifyProjectReferences`: returns the diagnostics for the projects `root` references, directly
+/// or transitively, each with the configuration file that references it. `resolved` is
+/// `configToProjectReference`: it maps a configuration file's `tspath.Path` to its project, if the
 /// file can be read.
 pub fn verify_project_references<'a>(
     root: &'a Project,
@@ -364,8 +364,8 @@ impl ModuleResolutionKind {
     }
 }
 
-/// `options` was built from `compiler`, the raw `compilerOptions`, in the configuration file at
-/// `config_path`, which is empty if there is none.
+/// `verifyCompilerOptions`. `options` was built from `compiler`, the raw `compilerOptions` of the
+/// configuration file at `config_path`, which is empty if there's no file.
 pub fn verify_compiler_options(
     compiler: &Json,
     options: &Options,
@@ -515,7 +515,7 @@ pub fn verify_compiler_options(
                 ));
                 continue;
             };
-            // `options.Paths` keeps only the strings of each list.
+            // `options.Paths` keeps only the strings in each list.
             let substitutions: Vec<&[u8]> = items.iter().filter_map(Json::as_str).collect();
             if substitutions.is_empty() {
                 out.push(Problem::new(

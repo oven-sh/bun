@@ -1,17 +1,14 @@
-//! Helpers that are imported instead of emitted: 2343 2354 2807, and 2306 for a `tslib` that is not
-//! a module.
+//! Helpers that are imported instead of emitted: 2343 2354 2807, and 2306 for a `tslib` that isn't a module.
 //!
-//! With `importHelpers`, syntax the target does not support is emitted as calls of functions
-//! imported from `tslib`, which must exist. Follows `checkExternalEmitHelpers`,
-//! `resolveHelpersModule`, `getHelperNames` and the callers of the first, of TypeScript 7.0.2's
-//! checker.go.
+//! With `importHelpers`, syntax the target doesn't support is emitted as calls to functions imported from `tslib`,
+//! which must exist. Mirrors `checkExternalEmitHelpers`, `resolveHelpersModule`, `getHelperNames` and the callers of
+//! the first, in TypeScript 7.0.2's checker.go.
 //!
-//! A file requests each helper once, where `checkSourceFile` first reaches syntax that needs it. So
-//! the requesting positions are collected and sorted in the order it visits them: source order,
-//! except for nodes that `checkNodeDeferred` defers until everything else is checked. An expression
-//! that is checked early because something requests its type is sorted at the point of that request
-//! (`emit_helpers_checked_out_of_order`). If an earlier file's check makes the request, that file's
-//! task reports the error (`check_external_emit_helpers_of_later_files`).
+//! A file requests each helper once, where `checkSourceFile` first reaches syntax that needs it. So the requesting
+//! positions are collected and sorted in the order it visits them: source order, except for nodes that
+//! `checkNodeDeferred` defers until everything else is checked. An expression that's checked early because something
+//! requests its type is sorted at the point of that request (`emit_helpers_checked_out_of_order`). If an earlier file's
+//! check makes the request, that file's task reports the error (`check_external_emit_helpers_of_later_files`).
 
 use super::sink::held;
 use super::*;
@@ -73,21 +70,21 @@ fn helper_names(helper: u32, legacy_decorators: bool) -> &'static [&'static str]
 /// A call of `checkExternalEmitHelpers`.
 #[derive(Copy, Clone)]
 struct Request {
-    /// The number of deferrals on the way to it, and its position in the file. For an expression
-    /// that is checked early those of the node that was being checked, and its rank among such
-    /// expressions, from 1.
+    /// The number of deferrals on the way to it, and its position in the file. For an expression that's checked early,
+    /// these are the values of the node that was being checked, followed by the expression's rank among such
+    /// expressions, starting at 1.
     order: (u32, u32, u32),
     /// `GetErrorRangeForNode` of the location.
     start: u32,
     end: u32,
     helpers: u32,
-    /// The expression whose check makes the request (`emit_helpers_checked_out_of_order`). `NONE`
-    /// if checking something else makes it, which only the file's own `checkSourceFile` reaches.
+    /// The expression whose check makes the request (`emit_helpers_checked_out_of_order`). `NONE` if checking something
+    /// else makes it, which only the file's own `checkSourceFile` reaches.
     expression: ExprId,
 }
 
-/// A diagnostic of `checkExternalEmitHelpers` in `file`, which the check of an earlier file, the one
-/// with `rank`, has reported at `start`.
+/// A diagnostic of `checkExternalEmitHelpers` in `file`, reported at `start` while checking an earlier file, the one
+/// with `rank`.
 pub(super) struct EarlierEmitHelperError {
     pub(super) file: FileId,
     pub(super) code: u32,
@@ -96,9 +93,8 @@ pub(super) struct EarlierEmitHelperError {
     pub(super) start: u32,
 }
 
-/// Returns `Request::order` for the request that checking `expression` makes. `regular` is the
-/// number of deferrals on the way to it and its position. `checked` is the first list from
-/// `emit_helpers_checked_out_of_order`.
+/// Returns `Request::order` for the request that checking `expression` makes. `regular` is the number of deferrals on
+/// the way to it and its position. `checked` is the first list from `emit_helpers_checked_out_of_order`.
 fn order_of_expression(
     expression: (FileId, ExprId),
     regular: (u32, u32),
@@ -123,8 +119,8 @@ struct AllAccessorDeclarations {
 
 impl Checker<'_, '_> {
     pub(super) fn check_external_emit_helpers(&mut self, file: FileId) {
-        // FOR SPEED: skips the walk if this file's `tslib` has every helper, even though a later
-        // file may resolve to a different `tslib`.
+        // FOR SPEED: skips the walk if this file's `tslib` has every helper, even though a later file may resolve to a
+        // different `tslib`.
         if !self.files().options.import_helpers || self.emit_helpers_lacks_none(file) {
             return;
         }
@@ -147,10 +143,9 @@ impl Checker<'_, '_> {
             && (module.hir.has_module_syntax || is_commonjs_module)
     }
 
-    /// `checkExternalEmitHelpers` where the check of `visited` has come to an expression of a file
-    /// that is checked later: `requestedExternalEmitHelpers` belongs to the file of the location,
-    /// so that file does not report the same again. Its task does not see this one:
-    /// `finish_file` takes back what it has reported instead.
+    /// `checkExternalEmitHelpers` where checking `visited` reached an expression of a file that's checked later.
+    /// `requestedExternalEmitHelpers` belongs to the location's file, so that file doesn't report the same error again.
+    /// Its task can't see this one's report, so `finish_file` drops what that task reported instead.
     fn check_external_emit_helpers_of_later_files(
         &mut self,
         visited: FileId,
@@ -165,7 +160,7 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            // In the order of the checks.
+            // Sorted in the order of the checks.
             let place = |request: &Request| {
                 let mut checks = elsewhere.iter();
                 checks.position(|&it| it == (file, request.expression))
@@ -190,8 +185,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// FOR SPEED. Whether `checkExternalEmitHelpers` reports nothing in `file`, whatever is asked
-    /// for: its `tslib` has every helper.
+    /// FOR SPEED: true if `checkExternalEmitHelpers` can't report anything in `file`, whichever helper is requested,
+    /// because its `tslib` has every helper.
     fn emit_helpers_lacks_none(&mut self, file: FileId) -> bool {
         let files = self.files();
         let mode = files.module(file).default_mode;
@@ -204,14 +199,14 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkExternalEmitHelpers` for each of `requests` of `file`, in that order. Nothing has been
-    /// requested before.
+    /// `checkExternalEmitHelpers` for each of `requests` of `file`, in that order. Assumes nothing has been requested
+    /// before.
     fn emit_helpers_check_requests(&mut self, file: FileId, requests: Vec<Request>) {
         let hir = self.hir(file);
         // `externalHelpersModule`, `requestedExternalEmitHelpers`
         let (mut resolved, mut requested) = (None, 0);
         for request in requests {
-            // `checkWithStatement` does not check the body.
+            // `checkWithStatement` doesn't check the body.
             if hir.is_in_with(request.start) {
                 continue;
             }
@@ -232,8 +227,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// What `checkExternalEmitHelpers` reports where `helper` is first asked of `helpers_module`:
-    /// the codes and the arguments.
+    /// The codes and arguments `checkExternalEmitHelpers` reports the first time `helper` is requested from
+    /// `helpers_module`.
     fn emit_helpers_errors_of(
         &mut self,
         helpers_module: Sym,
@@ -272,8 +267,8 @@ impl Checker<'_, '_> {
         request: Request,
     ) -> Option<Sym> {
         let mode = self.files().module(file).default_mode;
-        // `GetImportHelpersImportSpecifier`: the specifier of the synthetic import the loader
-        // added, which has no import clause and is nowhere in the text.
+        // `GetImportHelpersImportSpecifier`: the specifier of the synthetic import the loader added, which has no
+        // import clause and isn't in the text.
         let location = SpecifierUse {
             spec: known::tslib,
             pos: u32::MAX,
@@ -289,7 +284,7 @@ impl Checker<'_, '_> {
             .module_of_specifier_as(file, known::tslib, mode)
     }
 
-    /// `hasSignatureWithArityGreaterThan` for the symbol `symbol` aliases (`resolveSymbol`).
+    /// `hasSignatureWithArityGreaterThan` for the symbol that `symbol` aliases (`resolveSymbol`).
     fn emit_helpers_has_signature_with_arity_greater_than(
         &mut self,
         symbol: Sym,
@@ -327,7 +322,7 @@ impl Checker<'_, '_> {
         false
     }
 
-    // ───────────────────────────── who asks ─────────────────────────────
+    // ───────────────────────────── requests ─────────────────────────────
 
     /// `checked`, here and below, is the first list from `emit_helpers_checked_out_of_order`.
     fn emit_helpers_requests(
@@ -351,10 +346,10 @@ impl Checker<'_, '_> {
         requests
     }
 
-    /// The number of times `checkNodeDeferred` defers a direct child of `at`. Deferred are the body
-    /// of a function expression, of an arrow function and of a method of an object literal, the
-    /// whole of an accessor of an object literal, the members of a class expression, the operand of
-    /// `void`, and the contents of a JSX element. `None`: it is ambient (`NodeFlagsAmbient`).
+    /// The number of times `checkNodeDeferred` defers a direct child of `at`. It defers the body of a function
+    /// expression, an arrow function or an object literal method, all of an object literal accessor, the members of a
+    /// class expression, the operand of `void`, and the contents of a JSX element. Returns `None` if `at` is ambient
+    /// (`NodeFlagsAmbient`).
     fn emit_helpers_span(&self, file: FileId, mut at: Parent) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut deferred = 0;
@@ -365,7 +360,7 @@ impl Checker<'_, '_> {
                     return (!hir[m].flags.contains(Flags::AMBIENT)).then_some(deferred);
                 }
                 Parent::VarInit(d) if hir[d].flags.contains(Flags::AMBIENT) => return None,
-                // `checkObjectLiteral` checks every computed name at once.
+                // `checkObjectLiteral` checks every computed name immediately.
                 Parent::MethodKey(p) => Parent::Expr(bound.prop_owner[p.idx()]),
                 Parent::FnBody(f) => self.emit_helpers_out_of_fn(file, f, false, &mut deferred)?,
                 Parent::ParamDefault(p) | Parent::ParamDecorator(p) => {
@@ -420,7 +415,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `emit_helpers_span`, one step: out of the function `f`, from its parameters (`is_head`) or from its body.
+    /// One step of `emit_helpers_span`: out of the function `f`, from its parameters (`is_head`) or from its body.
     fn emit_helpers_out_of_fn(
         &self,
         file: FileId,
@@ -449,7 +444,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `emit_helpers_span`, one step: out of the type node `t`.
+    /// One step of `emit_helpers_span`: out of the type node `t`.
     fn emit_helpers_out_of_type(
         &self,
         file: FileId,
@@ -534,8 +529,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkImportDeclaration`, `checkImportBinding`, `checkExportDeclaration`, `checkExportSpecifier`, `checkForOfStatement`,
-    /// `checkVariableDeclarationList`
+    /// `checkImportDeclaration`, `checkImportBinding`, `checkExportDeclaration`, `checkExportSpecifier`,
+    /// `checkForOfStatement`, `checkVariableDeclarationList`
     fn emit_helpers_of_statements(
         &self,
         file: FileId,
@@ -551,8 +546,8 @@ impl Checker<'_, '_> {
         };
         for (i, stmt) in hir.stmts.iter().enumerate() {
             let (s, around) = (StmtId(i as u32), bound.parent_of_stmt(StmtId(i as u32)));
-            // `checkGrammarModuleElementContext`, `checkExternalImportOrExportDeclaration`:
-            // elsewhere a module can only be referenced in an ambient context.
+            // `checkGrammarModuleElementContext`, `checkExternalImportOrExportDeclaration`: elsewhere a module can only
+            // be referenced in an ambient context.
             let is_module_element = is_commonjs && around == Parent::File;
             let mut ask = |deferred: u32, (start, end): (u32, u32), helpers: u32| {
                 requests.push(Request {
@@ -671,9 +666,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Whether `checkImportDeclaration` reaches the bindings of the clause of `import`, the
-    /// top-level statement `s`: `checkExternalImportOrExportDeclaration` and
-    /// `checkGrammarImportClause` report no error for it.
+    /// True if `checkImportDeclaration` reaches the bindings in the clause of `import`, the top-level statement `s`:
+    /// `checkExternalImportOrExportDeclaration` and `checkGrammarImportClause` don't report an error for it.
     fn emit_helpers_import_clause_is_checked(
         &self,
         file: FileId,
@@ -684,12 +678,12 @@ impl Checker<'_, '_> {
         if hir[import].spec.is_none() || !self.emit_helpers_has_only_string_attributes(file, s) {
             return false;
         }
-        // `grammarErrorOnNode` reports nothing in a file with parse errors, and then no check bails
-        // out.
+        // `grammarErrorOnNode` doesn't report anything in a file with parse errors, so no check bails out.
         has_parse_diagnostics(hir) || self.grammar_error_of_import_clause(file, import).is_none()
     }
 
-    /// `checkExternalImportOrExportDeclaration`: every import attribute of the statement `s` is given as a string literal.
+    /// `checkExternalImportOrExportDeclaration`: true if every import attribute of the statement `s` is a string
+    /// literal.
     fn emit_helpers_has_only_string_attributes(&self, file: FileId, s: StmtId) -> bool {
         let hir = self.hir(file);
         if hir.import_attributes.is_empty() {
@@ -708,8 +702,7 @@ impl Checker<'_, '_> {
             })
     }
 
-    /// Start of the import or export specifier whose first name is at `name`: its `type` modifier,
-    /// if it has one.
+    /// Start of the import or export specifier whose first name is at `name`: its `type` modifier, if it has one.
     fn emit_helpers_start_of_specifier(&self, file: FileId, name: u32, type_only: bool) -> u32 {
         let end = self.end_of_token_before(file, name) as usize;
         let is_after_type =
@@ -732,7 +725,7 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for (i, element) in hir.pat_props.iter().enumerate() {
             let p = PatPropId(i as u32);
-            // `renamedBindingElementsInTypes`: `checkVariableLikeDeclaration` returns before.
+            // `renamedBindingElementsInTypes`: `checkVariableLikeDeclaration` returns before it gets there.
             if element.is_rest
                 && !(self.is_renamed_binding_element(file, p)
                     && self.returns_before_type_of_symbol(file, element.value))
@@ -754,7 +747,7 @@ impl Checker<'_, '_> {
             let ExprKind::Object(props) = hir[e].kind else {
                 continue;
             };
-            // One that is not the last is rejected (2462).
+            // One that isn't last is rejected (2462).
             let Some(last) = props.iter().next_back().map(|p| hir[p]) else {
                 continue;
             };
@@ -779,8 +772,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Whether `checkDestructuringAssignment` destructures the object literal `e`. Parenthesized,
-    /// it is an ordinary expression (`checkReferenceAssignment`).
+    /// True if `checkDestructuringAssignment` destructures the object literal `e`. When parenthesized, it's an ordinary
+    /// expression (`checkReferenceAssignment`).
     fn emit_helpers_is_destructured(&self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut node = e;
@@ -880,7 +873,7 @@ impl Checker<'_, '_> {
                     DecoratorOwner::Param(_) => {}
                 }
             }
-            // `markLinkedReferences` does nothing under `verbatimModuleSyntax`.
+            // `markLinkedReferences` is a no-op under `verbatimModuleSyntax`.
             if options.emit_decorator_metadata && !options.verbatim_module_syntax {
                 helpers |= METADATA;
             }
@@ -888,8 +881,8 @@ impl Checker<'_, '_> {
                 continue;
             }
             let (start, end) = self.emit_helpers_range_of_decorator(file, e);
-            // `checkDecorators(node)` comes before anything else that the check of `node` asks for,
-            // and modifiers can precede the first decorator.
+            // `checkDecorators(node)` comes before anything else that checking `node` requests, and modifiers can
+            // precede the first decorator.
             let node = match owner {
                 DecoratorOwner::Class(class) => hir.node(class),
                 DecoratorOwner::Member(m) => hir.node(m),
@@ -953,9 +946,9 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `ClassElementOrClassElementParameterIsDecorated` for the member `node` of the class
-    /// `parent`, with `useLegacyDecorators` as the options say: `refused_decorators` holds what
-    /// `NodeCanBeDecorated` answers for that.
+    /// `ClassElementOrClassElementParameterIsDecorated` for the member `node` of the class `parent`, with
+    /// `useLegacyDecorators` taken from the options. `refused_decorators` has the results of `NodeCanBeDecorated` for
+    /// that setting.
     fn class_element_or_class_element_parameter_is_decorated(
         &self,
         file: FileId,
@@ -993,14 +986,14 @@ impl Checker<'_, '_> {
                     .any(|parameter| node_is_decorated(DecoratorOwner::Param(parameter)))
     }
 
-    /// `getFirstTransformableStaticClassElement`: `GetErrorRangeForNode` of it.
+    /// `GetErrorRangeForNode` of `getFirstTransformableStaticClassElement`.
     fn emit_helpers_first_transformable_static_element(
         &self,
         file: FileId,
         class: ClassId,
         target: ScriptTarget,
     ) -> Option<(u32, u32)> {
-        // `willTransformPrivateElementsOrClassStaticBlocks`. Otherwise decorators are not transformed either.
+        // `willTransformPrivateElementsOrClassStaticBlocks`. Otherwise decorators aren't transformed either.
         if target >= ScriptTarget::ESNext {
             return None;
         }
@@ -1039,11 +1032,11 @@ impl Checker<'_, '_> {
         None
     }
 
-    /// Returns the expressions whose check calls `checkExternalEmitHelpers` and that the check of
-    /// `file` reaches because something requests a type, in the order it reaches them. The first
-    /// list is the expressions of `file` that are reached before their regular position, each with
-    /// its `emit_helpers_order_of_early_check`. The second list is the expressions of files that
-    /// are checked later. `emit_helpers_requests` tests the conditions and makes the requests.
+    /// Returns the expressions whose check calls `checkExternalEmitHelpers` and that checking `file` reaches because
+    /// something requests a type, in the order it reaches them. The first list is the expressions of `file` that are
+    /// reached before their regular position, each with its `emit_helpers_order_of_early_check`. The second list is the
+    /// expressions of files that are checked later. `emit_helpers_requests` tests the conditions and makes the
+    /// requests.
     fn emit_helpers_checked_out_of_order(
         &mut self,
         file: FileId,
@@ -1072,9 +1065,9 @@ impl Checker<'_, '_> {
         (early, elsewhere)
     }
 
-    /// Returns `Request::order` for `e` when something requests its type while `c.currentNode`, as
-    /// set by `checkSourceElement` or `checkDeferredNode`, is `node`. Returns `None` if `node` is
-    /// the innermost source element around `e`, because `e` is then checked in its regular order.
+    /// Returns `Request::order` for `e` when something requests its type while `c.currentNode`, as set by
+    /// `checkSourceElement` or `checkDeferredNode`, is `node`. Returns `None` if `node` is the innermost source element
+    /// around `e`, because `e` is then checked in its regular order.
     fn emit_helpers_order_of_early_check(
         &self,
         file: FileId,
@@ -1091,8 +1084,8 @@ impl Checker<'_, '_> {
         Some((deferred, hir.start(node)))
     }
 
-    /// The innermost node, `node` or around it, that `checkSourceElement` or `checkDeferredNode` is
-    /// called with and that can contain an expression, and the `Parent` of what is directly in it.
+    /// The innermost node, `node` or an ancestor, that `checkSourceElement` or `checkDeferredNode` is called with and
+    /// that can contain an expression, plus the `Parent` of its direct children.
     fn emit_helpers_source_element(hir: &hir::File, node: Node) -> (Node, Parent) {
         let is_source_element = |n: Node| match hir.data(n) {
             NodeData::Stmt(_)
@@ -1169,8 +1162,7 @@ impl Checker<'_, '_> {
             {
                 node = outer;
             }
-            // `IsNamedEvaluationSource`, and whether the name source is a property with a computed
-            // name.
+            // `IsNamedEvaluationSource`, and whether the name source is a property with a computed name.
             let has_computed_name = match bound.parent_of_expr(node) {
                 Parent::Prop(p) => {
                     let (prop, owner) = (hir[p], bound.prop_owner[p.idx()]);

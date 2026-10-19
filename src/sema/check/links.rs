@@ -84,14 +84,14 @@ pub(super) enum FixedMapper {
 /// derivation short.
 const STACK_OF_KEPT_PART: usize = 64 << 10;
 
-/// What a derivation does every time it runs, besides returning its result.
+/// Side effects that a derivation repeats every time it runs.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct Repeated {
     /// Amount it adds to `Checker::instantiation_count`.
     instantiations: u32,
     /// Amount it adds to `Checker::instantiations_computed`.
     computed: u32,
-    /// Number of levels it adds to `Checker::instantiation_depth` where it is deepest.
+    /// Number of levels it adds to `Checker::instantiation_depth` at its deepest point.
     levels: u32,
     /// Bytes of native stack it uses.
     stack: u32,
@@ -114,8 +114,9 @@ struct BeforeDerivation {
     reliability: u8,
 }
 
-/// A result that tsgo computes on every request, with what the first derivation did. tsgo has no cache of instantiations,
-/// so there every request does that much. `Checker::repeat` does it in place of the later derivations.
+/// A result that tsgo recomputes on every request, plus the first derivation's side effects. tsgo doesn't cache
+/// instantiations, so every request there has those effects. `Checker::repeat` applies them instead of running the
+/// later derivations.
 pub(super) type OnEveryRequest<V> = (V, Repeated);
 
 /// Number of published types per page of `ByType`.
@@ -127,14 +128,14 @@ pub(super) struct ByType {
     /// Numbers of the task's own types, indexed by `TypeId::local_number`.
     own: Vec<u32>,
     /// Indexed by a published type's id divided by `PAGE`. Each item is 1 + the index of the page in `published`, or 0
-    /// if no number on the page is set. Pages are allocated on demand because a task only asks about a few of the
+    /// if no number on the page is set. Pages are allocated on demand because a task only looks up a few of the
     /// published types.
     pages: Vec<u32>,
     published: Vec<[u32; PAGE]>,
 }
 
 impl ByType {
-    /// Resets every number to 0 and keeps the memory.
+    /// Resets every number to 0 but keeps the allocations.
     pub(super) fn clear(&mut self) {
         let ByType {
             own,
@@ -204,7 +205,7 @@ pub(super) struct TypeLinks {
     infer_type_parameters: Vec<TypeId>,
     /// `getIndexTypeForMappedType` of mapped types that have a name type.
     index_types: Vec<OnEveryRequest<TypeId>>,
-    /// Whether `isGenericMappedType` finds the name type of a mapped type generic.
+    /// True if `isGenericMappedType` considers the mapped type's name type generic.
     generic_names: Vec<OnEveryRequest<bool>>,
     /// 0 if nothing is cached for the type. Otherwise 1 + the index of its row in `with_fixed_mappers`.
     fixed_mapper_rows: ByType,
@@ -223,8 +224,8 @@ pub(super) struct TypeLinks {
 }
 
 impl TypeLinks {
-    /// Makes it equal to `TypeLinks::default()` and keeps the memory. Every field is listed, so a new one is a compile
-    /// error.
+    /// Resets to `TypeLinks::default()` but keeps the allocations. Every field is destructured, so adding a field
+    /// without clearing it here is a compile error.
     pub(super) fn clear(&mut self) {
         let TypeLinks {
             rows,
@@ -529,7 +530,8 @@ impl<'p, 's> Checker<'p, 's> {
         (part, stored)
     }
 
-    /// `derive_settled`, which also measures what `derive` does. `None` in place of that: `instantiation_count` was reset.
+    /// Like `derive_settled`, but also measures `derive`'s side effects. They're `None` if `instantiation_count` was
+    /// reset during the derivation.
     pub(super) fn derive_measured<V>(
         &mut self,
         derive: impl FnOnce(&mut Self) -> V,
@@ -555,7 +557,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Returns what was done since `begin_measuring`. See `derive_measured`.
+    /// Returns the side effects since `begin_measuring`. See `derive_measured`.
     fn end_measuring(&mut self, before: &BeforeDerivation) -> Option<Repeated> {
         let levels = (self.deepest_instantiation).saturating_sub(before.instantiation_depth);
         self.deepest_instantiation = (self.deepest_instantiation).max(before.deepest_instantiation);
@@ -574,8 +576,9 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// Does what a derivation with these effects does. Returns false, and does nothing, if a limit of `instantiate` or an
-    /// `is_stack_low` check could stop it: then it has to run, and report what it reports.
+    /// Applies a derivation's recorded side effects without running it. Returns false and does nothing if one of
+    /// `instantiate`'s limits or an `is_stack_low` check could stop the derivation. It then has to run so that it
+    /// reports its errors.
     pub(super) fn repeat(&mut self, repeated: &Repeated) -> bool {
         let count = (self.instantiation_count).saturating_add(repeated.instantiations);
         let levels = self.instantiation_depth + repeated.levels;
@@ -745,7 +748,7 @@ mod tests {
         assert_eq!(links.infer_type_parameters(TypeId(8)), None);
         assert_eq!((links.times_forgotten, links.left_open), (0, 0));
         assert!(!links.has_found_circular_mapped_constraint);
-        // A row that is added now starts empty.
+        // A row added after `clear` starts empty.
         links.keep(types[0], Kind::Mapped, 1, 60, Stored::new());
         assert_eq!(links.cell(types[0], Kind::Mapped, 0), 0);
         assert_eq!(links.cell(types[0], Kind::Mapped, 1), 60);

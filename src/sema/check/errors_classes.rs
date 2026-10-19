@@ -5,24 +5,22 @@
 //! position of the `super()` call); 2715 (an abstract property read during instance
 //! initialization).
 //!
-//! Follows `checkClassLikeDeclaration`, `checkBaseTypeAccessibility`,
-//! `checkMembersForOverrideModifier`, `checkMemberForOverrideModifier`, `isValidBaseType`,
-//! `checkInterfaceDeclaration`, `checkClassNameCollisionWithObject`, `checkConstructorDeclaration`
-//! and `checkPropertyAccessibilityAtLocation` of TypeScript 7.0.2's checker.go.
+//! Mirrors `checkClassLikeDeclaration`, `checkBaseTypeAccessibility`, `checkMembersForOverrideModifier`,
+//! `checkMemberForOverrideModifier`, `isValidBaseType`, `checkInterfaceDeclaration`,
+//! `checkClassNameCollisionWithObject`, `checkConstructorDeclaration` and `checkPropertyAccessibilityAtLocation` in
+//! TypeScript 7.0.2's checker.go.
 
 use super::*;
 use crate::bind::MemberOwner;
 
-/// The results of `getBaseConstructorTypeOfClass` and `getBaseTypes` for a class with an `extends`
-/// clause.
+/// The results of `getBaseConstructorTypeOfClass` and `getBaseTypes` for a class with an `extends` clause.
 #[derive(Copy, Clone)]
 enum ClassBase {
     /// Undetermined.
     Unknown,
     /// It has no `extends` clause, or no base types.
     Nothing,
-    /// `constructor`: the type of the expression after `extends`. `base`: the first of its base
-    /// types.
+    /// `constructor` is the type of the expression after `extends`, and `base` is the first of its base types.
     Is { constructor: TypeId, base: TypeId },
 }
 
@@ -37,8 +35,8 @@ struct Overrider {
     param: ParamId,
 }
 
-/// The code `checkMemberForOverrideModifier` reports in a JavaScript file in place of `code`: the message names the `@override`
-/// tag instead of the modifier. 4116 has no such variant.
+/// The code `checkMemberForOverrideModifier` reports in a JavaScript file in place of `code`. The message mentions the
+/// `@override` tag instead of the modifier. 4116 has no such variant.
 fn js_override_code(code: u32) -> u32 {
     match code {
         4112 => 4121,
@@ -54,7 +52,8 @@ fn js_override_code(code: u32) -> u32 {
 impl<'p> Checker<'p, '_> {
     // ───────────────────────────── heritage clauses of a class ─────────────────────────────
 
-    /// `checkClassLikeDeclaration`, from `baseTypeNode` to the `implements` clauses, and `checkClassNameCollisionWithObject`.
+    /// `checkClassLikeDeclaration`, from `baseTypeNode` to the `implements` clauses, and
+    /// `checkClassNameCollisionWithObject`.
     pub(super) fn report_class_like_declaration(&mut self, file: FileId, c: ClassId, sym: Sym) {
         let hir = self.hir(file);
         let class = &hir[c];
@@ -82,8 +81,7 @@ impl<'p> Checker<'p, '_> {
                 Some(super::errors_small::SymbolAtLocation::Symbol(symbol))
                     if self.files().flags(symbol).contains(SymFlags::CLASS)
             ) {
-                // A base constructor that is not a class must return the same type from every
-                // construct signature.
+                // A base constructor that isn't a class must return the same type from every construct signature.
                 let mut returns = Vec::new();
                 for sig in self.super_constructor_sigs(sym) {
                     returns.push(self.sig_return(sig));
@@ -103,8 +101,8 @@ impl<'p> Checker<'p, '_> {
                 let end = self.end_of_expr(file, expr);
                 self.error_at((file, hir[node].pos, end), 2500, &[]);
             }
-            // `checkTypeReferenceNode`. `checkSourceElement` does not visit the element:
-            // `c.currentNode` stays the class until the type arguments are visited.
+            // `checkTypeReferenceNode`. `checkSourceElement` doesn't visit the element, so `c.currentNode` stays the
+            // class until the type arguments are visited.
             self.check_type_node_worker(file, node);
             if !matches!(hir[node].kind, TypeNodeKind::Ref { .. }) {
                 continue;
@@ -139,7 +137,8 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// `checkBaseTypeAccessibility`: TS2675. A class with a private constructor can only be extended inside its own declaration.
+    /// `checkBaseTypeAccessibility`: TS2675. A class with a private constructor can only be extended inside its own
+    /// declaration.
     fn check_base_type_accessibility(&mut self, file: FileId, c: ClassId, apparent: TypeId) {
         let Some(&first) = self.signatures(apparent, true).first() else {
             return;
@@ -164,14 +163,14 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// Whether the resolution of `ty` is final: all of it is known, and it is not deferred on type
-    /// parameters that do not exist.
+    /// True if the resolution of `ty` is final: all of it is known, and it isn't deferred on type parameters that don't
+    /// exist.
     pub(super) fn is_settled_base(&self, ty: TypeId) -> bool {
         self.has_type_variables(ty) || !self.is_deferred(ty)
     }
 
-    /// `isValidBaseType`: `any`, an object type with statically known members, or an intersection
-    /// of such types. A type that could not be resolved is accepted.
+    /// `isValidBaseType`: `any`, an object type with statically known members, or an intersection of such types. A type
+    /// that couldn't be resolved is accepted.
     pub(super) fn is_valid_base_type(&mut self, ty: TypeId) -> bool {
         if matches!(
             self.data(ty),
@@ -243,7 +242,7 @@ impl<'p> Checker<'p, '_> {
         let visits_all = self.p.files.options.no_implicit_override;
         for m in class.members.iter() {
             let member = &hir[m];
-            // `ModifierFlags()`: what is written before `static { }` is only in its list.
+            // `ModifierFlags()`: the modifiers written before `static { }` are only in its list.
             let flags = match member.kind {
                 MemberKind::StaticBlock => member.flags | hir.modifiers_to_flags(member.modifiers),
                 _ => member.flags,
@@ -259,8 +258,8 @@ impl<'p> Checker<'p, '_> {
             {
                 continue;
             }
-            // `HasAmbientModifier`: the member itself has `declare`. Every member of an ambient
-            // class has `Flags::AMBIENT`.
+            // `HasAmbientModifier`: the member itself has `declare`. Every member of an ambient class has
+            // `Flags::AMBIENT`.
             if hir
                 .find_modifier(member.modifiers, Flags::AMBIENT)
                 .is_some()
@@ -346,7 +345,7 @@ impl<'p> Checker<'p, '_> {
             return;
         }
         let base_type = if is_static { constructor } else { base };
-        // `#x` of a class is not the `#x` of its base class.
+        // A class's `#x` isn't its base class's `#x`.
         let base_prop = if matches!(member.key, PropKey::Private(_)) {
             None
         } else {
@@ -413,9 +412,9 @@ impl<'p> Checker<'p, '_> {
     fn suggested_member(&mut self, ty: TypeId, name: Atom) -> Option<&'p Prop<'p>> {
         // `ast.SymbolName`: a private name is compared by its source text.
         let written = self.written_name(name);
-        // The name of a symbol-keyed member is compared like any other. In tsgo it is
-        // `\xFE@description@<symbol id>` (`getESSymbolLikeTypeForNode`). Here the id
-        // is assumed to have two digits, the fewest it has in a program with a default library.
+        // A symbol-keyed member's name is compared like any other. In tsgo it's `\xFE@description@<symbol id>`
+        // (`getESSymbolLikeTypeForNode`). Here the id is assumed to have two digits, the fewest it has in a program
+        // with a default library.
         let late_bound = written
             .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)
             .map(|described| {
@@ -430,9 +429,8 @@ impl<'p> Checker<'p, '_> {
         let members = self.members(apparent)?;
         let mut candidates = Vec::new();
         for prop in &members.shape().props {
-            // `getCandidateName`: an internal name is never suggested, and only
-            // `SymbolFlagsClassMember` counts, which the exports of a namespace merged with the
-            // class are not.
+            // `getCandidateName`: an internal name is never suggested, and only `SymbolFlagsClassMember` counts, which
+            // excludes the exports of a namespace merged with the class.
             let candidate = self.written_name(prop.name);
             if matches!(candidate.first(), Some(b'"' | 0xFE))
                 || matches!(prop.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym))
@@ -446,8 +444,8 @@ impl<'p> Checker<'p, '_> {
             .map(|found| found.2)
     }
 
-    /// Whether `prop` has any declarations, and whether one of them is `abstract`. `None`: its
-    /// origin is not recorded.
+    /// Returns whether `prop` has any declarations, and whether one of them is `abstract`. `None` if its origin isn't
+    /// recorded.
     fn declarations_of_base_property(&self, prop: &Prop) -> Option<(bool, bool)> {
         match &prop.source {
             PropSource::Symbol(sym) => {
@@ -479,7 +477,7 @@ impl<'p> Checker<'p, '_> {
                 }
                 Some((is_declared, is_abstract))
             }
-            // The `prototype` of a class is synthesized.
+            // A class's `prototype` is synthesized.
             PropSource::Type(_) if prop.name == known::prototype => Some((false, false)),
             _ => None,
         }
@@ -487,10 +485,9 @@ impl<'p> Checker<'p, '_> {
 
     // ───────────────────────────── position of the `super()` call ─────────────────────────────
 
-    /// The end of `checkConstructorDeclaration`: 2377 17005 2401 2376.
-    /// When fields are initialized by assignments emitted into the constructor, the assignments go
-    /// directly after the `super` call, which must therefore be a top-level statement of the
-    /// constructor, and the first that relates to `this`.
+    /// The end of `checkConstructorDeclaration`: 2377 17005 2401 2376. When fields are initialized by assignments
+    /// emitted into the constructor, the assignments go directly after the `super` call. So that call must be a
+    /// top-level statement of the constructor, and the first that refers to `this`.
     pub(super) fn check_super_call_in_constructor(&mut self, file: FileId, m: MemberId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_super_call = |e: ExprId| matches!(hir[e].kind, ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Super));

@@ -1,8 +1,8 @@
-//! The diagnostics of a file. The resolver answers queries and never reports. This pass visits
-//! every node of the file once, queries the resolver, and reports the inconsistencies.
+//! A file's diagnostics. The resolver answers queries and never reports. This pass visits every node of the file once,
+//! queries the resolver, and reports the inconsistencies.
 //!
-//! The codes are the TypeScript compiler's. An error that depends on something the resolver could
-//! not resolve is not reported: a false negative is preferred to a false positive.
+//! The codes are the TypeScript compiler's. An error that depends on something the resolver couldn't resolve isn't
+//! reported. A false negative is better than a false positive.
 
 use super::enclosing_declaration::Enclosing;
 use super::errors_aliases::Directives;
@@ -16,32 +16,31 @@ use crate::program::SymbolTable;
 use crate::util::{PositionSet, SharedSort};
 use bun_core::strings;
 
-/// The diagnostics `check_file` passes to `Program::finish_file`, finalized. Diagnostics reported
-/// inside a query are in the buffer of their file.
+/// The finalized diagnostics that `check_file` passes to `Program::finish_file`. Diagnostics reported inside a query
+/// are in their file's buffer instead.
 pub struct Checked {
     /// `GetSyntacticDiagnostics`
     syntactic: Vec<Reported>,
-    /// The part of `getBindAndCheckDiagnostics` that was reported with no query in flight, and
-    /// `JSDocDiagnostics`. `None`: the file is not checked.
+    /// The part of `getBindAndCheckDiagnostics` that was reported with no query in flight, plus `JSDocDiagnostics`.
+    /// `None` if the file isn't checked.
     semantic: Option<Vec<Reported>>,
     /// `GetDeclarationDiagnostics`
     declaration: Vec<Reported>,
-    /// `GetIncludeProcessorDiagnostics`, without those that a directive suppresses.
+    /// `GetIncludeProcessorDiagnostics`, minus those that a directive suppresses.
     include: Vec<Reported>,
     /// `Checker::expected_errors`
     expected_errors: Vec<Reported>,
     never_checked: Vec<(u32, u32)>,
-    /// The private members that `checkUnusedClassMembers` has reported, and where. See
+    /// The private members that `checkUnusedClassMembers` reported, and where. See
     /// `Program::properties_referenced_before`.
     unused_private_members: Vec<(Sym, u32)>,
-    /// `Options::writes_declaration_files`: the emitted text of the file's declaration file, if it
-    /// has one.
+    /// `Options::writes_declaration_files`: the emitted text of the file's declaration file, if it has one.
     pub declaration_file: Option<Vec<u8>>,
 }
 
 impl Checked {
-    /// Moves the declaration diagnostics (`GetDeclarationDiagnostics`) into a `Checked` of their own, so that `finish_file` converts them
-    /// separately. `None` if there are none.
+    /// Moves the declaration diagnostics (`GetDeclarationDiagnostics`) into their own `Checked`, so that `finish_file`
+    /// converts them separately. Returns `None` if there are none.
     pub fn take_declaration_diagnostics(&mut self) -> Option<Checked> {
         (!self.declaration.is_empty()).then(|| Checked {
             syntactic: Vec::new(),
@@ -57,13 +56,12 @@ impl Checked {
 }
 
 impl Program<'_> {
-    /// Returns the errors of `file`. Call it after the last task has ended. It runs no query and reads no HIR.
+    /// Returns the errors of `file`. Call it after the last task has ended. It doesn't run queries or read the HIR.
     pub fn finish_file(&self, file: FileId, checked: Checked) -> Vec<Explained> {
         let mut out = Vec::new();
         if let Some(semantic) = checked.semantic {
             out = semantic;
-            // Diagnostics for nodes `checkSourceFile` never reaches are not reported, whichever
-            // task evaluated them.
+            // Diagnostics for nodes `checkSourceFile` never reaches aren't reported, whichever task evaluated them.
             let is_checked = |d: &Reported| {
                 let mut never_checked = checked.never_checked.iter();
                 d.by_emit
@@ -71,7 +69,8 @@ impl Program<'_> {
                     || !never_checked.any(|&(from, to)| (from..to).contains(&d.start))
             };
             out.extend(self.take_buffer(file).into_iter().filter(is_checked));
-            // `requestedExternalEmitHelpers`: first come, whichever file was being checked.
+            // `requestedExternalEmitHelpers`: only the first request for a helper reports, whichever file was being
+            // checked.
             if self.files.options.import_helpers {
                 let earlier = self.emit_helper_errors_of_earlier_files.lock();
                 out.retain(|d| {
@@ -102,12 +101,11 @@ impl Program<'_> {
             out.extend(expected.filter(|unused| used.binary_search(&unused.start).is_err()));
             out.extend(checked.include);
         }
-        // `GetSyntacticDiagnostics`, `GetDeclarationDiagnostics`: no comment directive suppresses
-        // these.
+        // No comment directive suppresses `GetSyntacticDiagnostics` or `GetDeclarationDiagnostics`.
         out.extend(checked.declaration);
         out.extend(checked.syntactic);
-        // A diagnostic without an end and arguments duplicates a complete one with the same start and code. It is dropped unless it
-        // has related info, which `compactAndMergeRelatedInfos` merges into the complete one.
+        // A diagnostic without an end and arguments duplicates a complete one with the same start and code. It's
+        // dropped unless it has related info, which `compactAndMergeRelatedInfos` merges into the complete one.
         let complete: Vec<(u32, u32)> = out
             .iter()
             .filter(|d| !d.was_bare)
@@ -122,7 +120,7 @@ impl Program<'_> {
     }
 }
 
-/// What `getControlFlowContainer` finds.
+/// The result of `getControlFlowContainer`.
 #[derive(Copy, Clone, Debug)]
 pub(super) enum Container {
     File,
@@ -132,8 +130,8 @@ pub(super) enum Container {
     Module(ModuleId),
     /// `IsPropertyDeclaration`
     Member(MemberId),
-    /// In a type literal, whose parent is not stored. It compares equal to nothing: no variable is
-    /// declared there.
+    /// In a type literal, whose parent isn't stored. It compares unequal to everything, itself included, because no
+    /// variable is declared there.
     Other,
 }
 
@@ -160,14 +158,13 @@ pub(super) struct CheckedLeaves {
 }
 
 impl Checker<'_, '_> {
-    /// Drops the memos of this checker that are keyed by a node of `file`, which `is_leaf` and has
-    /// been checked: no other file refers to it, so nothing evaluates one of its nodes again. A
-    /// task checks dozens of such files. The capacity stays for the next one.
+    /// Drops this checker's memos that are keyed by a node of `file`, a leaf (`is_leaf`) that has been checked. No
+    /// other file refers to it, so none of its nodes is evaluated again. A task checks dozens of such files. The
+    /// capacity is kept for the next one.
     ///
-    /// A sweep costs time proportional to the memo's size, however few entries it drops, and the
-    /// number of entries kept for other files only grows. So the nodes of several files are dropped
-    /// in one sweep, once the memos have doubled in size. Until then nothing reads the stale
-    /// entries, and they use no more memory than the entries that are kept.
+    /// A sweep takes time proportional to the memo's size, however few entries it drops, and the number of entries kept
+    /// for other files only grows. So one sweep drops the nodes of several files, once the memos have doubled in size.
+    /// Until then nothing reads the stale entries, and they use no more memory than the entries that are kept.
     fn forget_nodes_of_leaf(&mut self, file: FileId) {
         if !self.checked_leaves.is_any {
             let files = self.files().modules.len();
@@ -218,8 +215,8 @@ impl Checker<'_, '_> {
             + self.circular_before_parameter_symbol.len()
     }
 
-    /// Runs every check that queries `file`. Diagnostics it causes in other files, or other files
-    /// cause in this one, are in the sink.
+    /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
+    /// one, go to the sink.
     pub fn check_file(&mut self, file: FileId) -> Checked {
         if let Some(previous) = self.task.file
             && previous != file
@@ -236,8 +233,8 @@ impl Checker<'_, '_> {
         self.work_trap = WORK_TRAP_DISARMED;
         self.limits_in_earlier_files += self.limits + self.instantiation_limit_hits;
         self.limits = 0;
-        // tsgo never resets it, so each of its checkers reports nothing that needs the type of a
-        // reference in the files after one whose module body got 2563.
+        // tsgo never resets it. Once a module body gets 2563, each of its checkers stops reporting anything that needs
+        // a reference's type in all later files.
         self.flow_analysis_disabled.clear();
         self.outermost_comparison = None;
         self.checked_type_references.0 = None;
@@ -263,15 +260,16 @@ impl Checker<'_, '_> {
         if hir.ran_out_of_stack {
             self.ran_out_of_stack.set(true);
         }
-        // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate: only the second depends on whether the
-        // file is checked.
+        // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate. Only the second depends
+        // on whether the file is checked.
         self.report_hir_diagnostics(file, &[DiagnosticKind::Parse, DiagnosticKind::Js]);
         self.get_additional_js_syntactic_diagnostics(file);
-        // `getBindAndCheckDiagnostics` reports nothing for a JSON file.
+        // `getBindAndCheckDiagnostics` doesn't report anything for a JSON file.
         let is_json = hir.kind == FileKind::Json;
         let is_checked = match self.expected {
             Requested::All => true,
-            // There the types depend on what was checked before, and the rules do not ask in the order of the file.
+            // In such a file the types depend on what was checked earlier, and the lint rules don't query in file
+            // order.
             Requested::Types => self.bound(file).has_types_that_depend_on_order(),
             Requested::Syntactic | Requested::Declaration => false,
         };
@@ -286,8 +284,9 @@ impl Checker<'_, '_> {
             return self.checked(syntactic, declaration);
         }
         let syntactic = std::mem::take(&mut self.reported);
-        // `hasParseDiagnostics`: parse errors suppress `grammarErrorOnNode` and similar, and the binder's `checkContextualIdentifier`
-        // and `checkPrivateIdentifier`. They do not suppress errors reported through a plain `c.error`.
+        // `hasParseDiagnostics`: parse errors suppress `grammarErrorOnNode` and similar, and the binder's
+        // `checkContextualIdentifier` and `checkPrivateIdentifier`. They don't suppress errors reported through a plain
+        // `c.error`.
         let has_parse_diagnostics = hir.has_parse_diagnostics;
         if !has_parse_diagnostics {
             self.report_hir_diagnostics(file, &[DiagnosticKind::Grammar]);
@@ -338,20 +337,20 @@ impl Checker<'_, '_> {
         self.check_circularities(file);
         self.check_assignments(file);
         self.check_x_aliases(file);
-        // It removes the diagnostics reported for specifiers that are never resolved.
+        // Removes the diagnostics reported for specifiers that are never resolved.
         self.check_x_modules(file);
         self.produce_deferred_diagnostics(file);
         self.check_x_typenodes(file);
-        // They replace messages that were already reported: for assignments, for unresolved names.
+        // These replace messages that were already reported, for assignments and for unresolved names.
         self.check_x_operators(file);
         self.check_x_enums_names(file);
         self.report_unresolved_identifiers();
         self.check_external_emit_helpers(file);
-        // It removes the diagnostics reported for misplaced decorators.
+        // Removes the diagnostics reported for misplaced decorators.
         self.report_decorators(file);
         self.check_strict_mode_statements(file);
-        // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: diagnostics in the
-        // nodes they never check are removed, whichever check reported them.
+        // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: removes diagnostics in the nodes they
+        // never check, whichever check reported them.
         self.remove_diagnostics_in_unchecked_ranges(file);
         // `MarkLinkedReferencesRecursively` visits those nodes too.
         if self.p.files.options.emits_first && self.elides_imports(file) {
@@ -360,9 +359,8 @@ impl Checker<'_, '_> {
         self.produce_type_not_iterable_errors(logged);
         self.resolve_marked_assignment_targets(file);
         self.report_unresolved_identifiers();
-        // `GetDeclarationDiagnostics`: no comment directive suppresses these, and plain JavaScript
-        // gets them too.
-        // A diagnostic located in another file goes to the buffer of that file at the next commit.
+        // `GetDeclarationDiagnostics`: no comment directive suppresses these, and plain JavaScript gets them too. A
+        // diagnostic located in another file goes to that file's buffer at the next commit.
         let reported = std::mem::take(&mut self.reported).into_iter();
         let (semantic, elsewhere): (Vec<_>, Vec<_>) = reported.partition(|d| d.file == file);
         self.reported = elsewhere;
@@ -376,13 +374,13 @@ impl Checker<'_, '_> {
         let mut semantic: Vec<Reported> =
             (semantic.filter_map(|d| self.settled(d, &mut directives))).collect();
         let expected_errors = self.expected_errors(file);
-        // The diagnostics of the file have been collected: diagnostics from queries first evaluated
-        // while processing the directives are dropped.
+        // The file's diagnostics have been collected, so diagnostics from queries first evaluated while processing the
+        // directives are dropped.
         self.reported.clear();
         let mut checked = self.checked(syntactic, declaration);
         checked.expected_errors = expected_errors;
         if hir.check_directive != Some(false) {
-            // `JSDocDiagnostics`: after the filters of `settled`, and a directive suppresses them.
+            // `JSDocDiagnostics` skip the filters of `settled`, but a directive still suppresses them.
             if !self.is_plain_js(file) {
                 self.report_hir_diagnostics(file, &[DiagnosticKind::JsDoc]);
                 for mut d in std::mem::take(&mut self.reported) {
@@ -391,8 +389,8 @@ impl Checker<'_, '_> {
                     semantic.push(d);
                 }
             }
-            // `GetIncludeProcessorDiagnostics`: skipped under `SkipTypeChecking`. Its directive filter is a separate pass that does not
-            // mark directives as used.
+            // `GetIncludeProcessorDiagnostics`: skipped under `SkipTypeChecking`. Its directive filter is a separate
+            // pass that doesn't mark directives as used.
             self.include_processor_diagnostics(file);
             checked.include = std::mem::take(&mut self.reported);
             (checked.include).retain(|d| directives.preceding(file, hir, d.start) == NO_DIRECTIVE);
@@ -404,7 +402,8 @@ impl Checker<'_, '_> {
         checked
     }
 
-    /// `GetDeclarationDiagnostics`. It also runs for files that are not type-checked. `self.reported` must be empty on entry.
+    /// `GetDeclarationDiagnostics`. It also runs for files that aren't type-checked. `self.reported` must be empty on
+    /// entry.
     fn get_declaration_diagnostics(&mut self, file: FileId) -> Vec<Reported> {
         let options = &self.files().options;
         if options.emits_declarations && options.writes_declaration_files {
@@ -431,9 +430,9 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `d`, a diagnostic of `getBindAndCheckDiagnostics`, with the fields that need the HIR of its
-    /// file filled in: its end, and the comment directive that suppresses it. `None`: its file does
-    /// not report it. Runs on the task's thread, before `d` leaves it.
+    /// Fills in the fields of `d`, a diagnostic of `getBindAndCheckDiagnostics`, that need its file's HIR: its end, and
+    /// the comment directive that suppresses it. Returns `None` if its file doesn't report it. Runs on the task's
+    /// thread, before `d` leaves it.
     pub(super) fn settled(&self, mut d: Reported, directives: &mut Directives) -> Option<Reported> {
         if d.file == NOWHERE.0 {
             return Some(d);
@@ -470,9 +469,8 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── modules ─────────────────────────────
 
-    /// `CreateModuleNotFoundChain`: the hint for `spec`, which resolves into `package`, which has
-    /// no type declarations.
-    /// `alternate`: `AlternateResult`.
+    /// `CreateModuleNotFoundChain`: the hint for `spec`, which resolves into `package`, which has no type declarations.
+    /// `alternate` is `AlternateResult`.
     fn module_not_found_hint(
         &self,
         spec: &[u8],
@@ -518,8 +516,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The callers of `resolveExternalModule` other than the import and export declarations. 2322
-    /// 2880 for the options of `import()`.
+    /// The callers of `resolveExternalModule` other than import and export declarations. Also reports 2322 and 2880 for
+    /// the options of `import()`.
     fn check_modules(&mut self, file: FileId) {
         let hir = self.hir(file);
         let is_ambient = hir.kind == FileKind::Declaration;
@@ -562,8 +560,9 @@ impl Checker<'_, '_> {
                 self.resolve_external_module(file, written, site);
             }
         }
-        // `checkAliasSymbol` for the names that `const a = require("m")` declares, `resolveExternalModuleTypeByLiteral` for every other
-        // `require("m")`. JavaScript only. Both report at the string.
+        // `checkAliasSymbol` for the names that `const a = require("m")` declares, and
+        // `resolveExternalModuleTypeByLiteral` for every other `require("m")`. JavaScript only. Both report at the
+        // string.
         if hir.is_js {
             let bound = self.bound(file);
             let is_identifier = |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_));
@@ -575,8 +574,8 @@ impl Checker<'_, '_> {
                 if !bound.specifiers.contains(&spec) {
                     continue;
                 }
-                // `bindVariableDeclarationOrBindingElement`: the name, or each identifier directly in the binding pattern, is an alias,
-                // whatever `require` resolves to.
+                // `bindVariableDeclarationOrBindingElement`: the name, or each identifier directly in the binding
+                // pattern, is an alias, whatever `require` resolves to.
                 let declares_alias = match bound.parent_of_expr(call) {
                     Parent::None => continue,
                     Parent::VarInit(decl)
@@ -603,8 +602,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `resolveExternalModuleName` for `argument`, the argument of `require(spec)`: whether the
-    /// module is found.
+    /// `resolveExternalModuleName` for `argument`, the argument of `require(spec)`. Returns true if the module is
+    /// found.
     fn resolve_required_module(&mut self, file: FileId, argument: ExprId, spec: Atom) -> bool {
         let written = SpecifierUse {
             spec,
@@ -615,8 +614,8 @@ impl Checker<'_, '_> {
         self.resolve_external_module(file, written, SpecifierSite::default())
     }
 
-    /// The same for the module that the variable declaration or the binding element with the name
-    /// `name` is initialized to (`getTargetOfImportEqualsDeclaration`, `getExternalModuleMember`).
+    /// Same as `resolve_required_module`, for the module that initializes the variable declaration or binding element
+    /// named `name` (`getTargetOfImportEqualsDeclaration`, `getExternalModuleMember`).
     pub(super) fn resolve_module_required_by(&mut self, file: FileId, name: PatId) -> bool {
         let PatParent::Var(decl) = root_declaration(self.bound(file), name) else {
             return false;
@@ -629,7 +628,7 @@ impl Checker<'_, '_> {
             && self.resolve_required_module(file, argument, spec)
     }
 
-    /// What `checkImportCallExpression` does with `options`, the second argument.
+    /// The part of `checkImportCallExpression` that handles `options`, the second argument.
     fn check_import_call_options(&mut self, file: FileId, options: ExprId) {
         let hir = self.hir(file);
         let operand_type = self.type_of_expr(file, options);
@@ -658,8 +657,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The errors `getTargetOfAliasDeclaration` reports for the declaration `decl` in `file` of the
-    /// alias `sym`, if its module resolves: `getTargetOfModuleDefault`, `getExternalModuleMember`.
+    /// The errors `getTargetOfAliasDeclaration` reports for `decl`, the declaration in `file` of the alias `sym`, if
+    /// its module resolves: `getTargetOfModuleDefault`, `getExternalModuleMember`.
     pub(super) fn check_target_of_alias_declaration(&mut self, file: FileId, sym: Sym, decl: Decl) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         if files.declaration_of_alias_symbol(sym) != Some((file, decl)) {
@@ -678,7 +677,7 @@ impl Checker<'_, '_> {
         let Some(module) = files.module_of_specifier_as(file, spec, mode) else {
             return;
         };
-        // `node.PropertyNameOrName()`, and `getEmitSyntaxForModuleSpecifierExpression` of the specifier.
+        // `node.PropertyNameOrName()`, and the specifier's `getEmitSyntaxForModuleSpecifierExpression`.
         let (start, usage) = match decl {
             Decl::ImportSpec(s) => (hir[s].imported_pos, files.emit_syntax_of_import(file)),
             Decl::ExportSpec(s) => (hir[s].local_pos, files.emit_syntax_of_import(file)),
@@ -692,7 +691,7 @@ impl Checker<'_, '_> {
         let target = files.module_value(module);
         // `TryGetModuleSpecifierFromDeclaration(node)`: nil for a binding element.
         let node = (file, (!matches!(decl, Decl::Require(_))).then_some(mode));
-        // In a binding pattern too: `symbolFromModule == nil && nameText == InternalSymbolNameDefault`.
+        // This applies in a binding pattern too: `symbolFromModule == nil && nameText == InternalSymbolNameDefault`.
         if name == known::default {
             if self.module_has_default(usage, module) {
                 return;
@@ -730,9 +729,9 @@ impl Checker<'_, '_> {
             .extend(related);
     }
 
-    /// `errorNoModuleMemberSymbol`: `name`, at `start` in `from`, is imported from `module`, which
-    /// has no such export. `target`: the value `module` exports with `export =`, or else `module`.
-    /// `specifier_mode`: `GetModeForUsageLocation` of the module specifier of `node`.
+    /// `errorNoModuleMemberSymbol`: `name`, at `start` in `from`, is imported from `module`, which has no such export.
+    /// `target` is the value `module` exports with `export =`, or else `module`. `specifier_mode` is
+    /// `GetModeForUsageLocation` of `node`'s module specifier.
     fn error_no_module_member_symbol(
         &mut self,
         module: Sym,
@@ -791,8 +790,8 @@ impl Checker<'_, '_> {
         self.error_at(at, code, args).related_information = related;
     }
 
-    /// `reportNonDefaultExport`: the first `export *` of `module` that targets a module with a
-    /// default export, which is not re-exported.
+    /// `reportNonDefaultExport`: the first `export *` of `module` that targets a module with a default export, which
+    /// `export *` doesn't re-export.
     fn export_star_past_a_default(&self, module: Sym) -> Option<(FileId, u32, u32)> {
         let files = self.files();
         for part in files.parts(module) {
@@ -817,10 +816,9 @@ impl Checker<'_, '_> {
         None
     }
 
-    /// `getTargetOfModuleDefault`: whether `module` has a default export: its export
-    /// `"module.exports"`, its own default or a synthetic one. `usage`: the syntax the specifier is
-    /// emitted as (`getEmitSyntaxForModuleSpecifierExpression`), regardless of the resolution mode
-    /// it specifies.
+    /// `getTargetOfModuleDefault`: true if `module` has a default export, which is its export `"module.exports"`, its
+    /// own default or a synthetic one. `usage` is the syntax the specifier is emitted as
+    /// (`getEmitSyntaxForModuleSpecifierExpression`), regardless of the resolution mode it specifies.
     fn module_has_default(&mut self, usage: ResolutionMode, module: Sym) -> bool {
         let files = self.files();
         if files.is_commonjs_import_of_esm_file(usage, module)
@@ -834,8 +832,8 @@ impl Checker<'_, '_> {
             || self.has_export_by_name(module, known::default)
     }
 
-    /// `resolveExportByName(module, name, ..) != nil`: for a module with `export =`, a property of
-    /// the exported value.
+    /// `resolveExportByName(module, name, ..) != nil`. For a module with `export =`, it looks for a property of the
+    /// exported value.
     fn has_export_by_name(&mut self, module: Sym, name: Atom) -> bool {
         let files = self.files();
         match files.export(module, known::export_equals) {
@@ -844,10 +842,9 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `errorNoModuleMemberSymbol`, `reportNonExportedMember`,
-    /// `reportInvalidImportEqualsExportMember`. The arguments are those of
-    /// `error_no_module_member_symbol`. 2724 comes with the suggested name, 2460 with the name it
-    /// is exported as.
+    /// `errorNoModuleMemberSymbol`, `reportNonExportedMember`, `reportInvalidImportEqualsExportMember`. Takes the same
+    /// arguments as `error_no_module_member_symbol`. 2724 comes with the suggested name, 2460 with the name it's
+    /// exported as.
     fn why_no_module_member(
         &mut self,
         from: FileId,
@@ -858,8 +855,8 @@ impl Checker<'_, '_> {
     ) -> (u32, Option<Sym>) {
         let files = self.files();
         let text = self.atoms().bytes(name);
-        // `getSuggestedSymbolForNonexistentModule`: for an identifier, not for a string literal,
-        // and only among module members (`SymbolFlagsModuleMember`).
+        // `getSuggestedSymbolForNonexistentModule`: only for an identifier, not a string literal, and only among module
+        // members (`SymbolFlagsModuleMember`).
         let is_identifier = !matches!(self.hir(from).text.get(start as usize), Some(b'"' | b'\''));
         let module_member = SymFlags::VARIABLE
             | SymFlags::FUNCTION
@@ -929,8 +926,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `errorOnImplicitAnyModule` with `isError`: 7016 at `at` for `spec`, which is one of the
-    /// `untyped_imports` of `file` in `mode`.
+    /// `errorOnImplicitAnyModule` with `isError`: reports 7016 at `at` for `spec`, which is one of `file`'s
+    /// `untyped_imports` in `mode`.
     pub(super) fn error_on_implicit_any_module(
         &mut self,
         file: FileId,
@@ -960,8 +957,8 @@ impl Checker<'_, '_> {
         self.add_diagnostic(diagnostic);
     }
 
-    /// `getModeForUsageLocation` for the argument of `require(spec)`: CommonJS. Falls back to the first mode the loader resolved `spec`
-    /// in, in the order of `Files::module_of_specifier`, if it did not resolve it as CommonJS.
+    /// `getModeForUsageLocation` for the argument of `require(spec)`: CommonJS. If the loader didn't resolve `spec` as
+    /// CommonJS, falls back to the first mode it did resolve it in, in the order of `Files::module_of_specifier`.
     fn require_resolution_mode(&self, file: FileId, spec: Atom) -> ResolutionMode {
         let module = self.files().module(file);
         [
@@ -978,8 +975,9 @@ impl Checker<'_, '_> {
         .unwrap_or(ResolutionMode::Require)
     }
 
-    /// `getExternalModuleRequireArgument`: the argument of `require("m")` and its text, if `IsVariableDeclarationInitializedToRequire`
-    /// holds for `decl`: JavaScript, no `export`, no type annotation, and the initializer is the call itself.
+    /// `getExternalModuleRequireArgument`: the argument of `require("m")` and its text, if
+    /// `IsVariableDeclarationInitializedToRequire` is true for `decl`: JavaScript, no `export`, no type annotation, and
+    /// the initializer is the call itself.
     pub(super) fn external_module_require_argument(
         &self,
         file: FileId,
@@ -992,8 +990,8 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── uninitialized variables ─────────────────────────────
 
-    /// `symbol.ValueDeclaration` of the symbol the identifier `e` resolves to, if that is a `var`,
-    /// `let` or `const` of this file: the binding name, and the declaration that contains it.
+    /// `symbol.ValueDeclaration` of the symbol the identifier `e` resolves to, if that's a `var`, `let` or `const` of
+    /// this file. Returns the binding name and the declaration that contains it.
     fn value_declaration_of_variable(&self, file: FileId, e: ExprId) -> Option<(PatId, VarDeclId)> {
         let bound = self.bound(file);
         let s = bound.symbols.get(bound.symbol_of_expr(e).idx())?;
@@ -1004,7 +1002,7 @@ impl Checker<'_, '_> {
             return None;
         }
         let sym = self.files().sym(file, bound.symbol_of_expr(e));
-        // In another file it is ambient, or an outer variable: initialized either way.
+        // In another file it's ambient or an outer variable, so it's initialized either way.
         let Some((of, Decl::Var(pat))) = self.files().value_declaration(sym) else {
             return None;
         };
@@ -1022,18 +1020,17 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Whether `stmt` declares the variable of a `for`-`in` or a `for`-`of`.
+    /// True if `stmt` declares the variable of a `for`-`in` or a `for`-`of`.
     pub(super) fn declares_loop_variable(&self, file: FileId, stmt: StmtId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         matches!(bound.parent_of_stmt(stmt), Parent::Stmt(owner)
             if matches!(hir[owner].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt))
     }
 
-    /// `checkIdentifier`: whether the variable the identifier `e` reads, whose type is `declared`,
-    /// is assumed to be initialized at the start of its control flow container
-    /// (`assumeInitialized`).
+    /// `checkIdentifier`: true if the variable that the identifier `e` reads, whose type is `declared`, is assumed to
+    /// be initialized at the start of its control flow container (`assumeInitialized`).
     pub(super) fn assumes_initialized(&self, file: FileId, e: ExprId, declared: TypeId) -> bool {
-        // FOR SPEED: it is evaluated last, unless the answer depends on what has been asked before.
+        // FOR SPEED: evaluated last, unless the answer depends on which queries ran before it.
         let is_never_initialized = (self.has_order_dependent_assignment_marks(file))
             .then(|| self.is_never_initialized(file, e));
         let is_automatic = self.is_automatic_type(declared);
@@ -1061,7 +1058,7 @@ impl Checker<'_, '_> {
         {
             return true;
         }
-        // `x!`. Not `(x)!`: only the immediate syntactic parent counts.
+        // `x!`, but not `(x)!`: only the immediate syntactic parent counts.
         if let Parent::Expr(x) = parent
             && matches!(hir[x].kind, ExprKind::NonNull(_))
             && !is_parenthesized(hir, e)
@@ -1073,8 +1070,7 @@ impl Checker<'_, '_> {
         {
             return true;
         }
-        // `isSameScopedBindingElement`. FOR SPEED: nodes in the pattern are numbered before the
-        // initializer.
+        // `isSameScopedBindingElement`. FOR SPEED: nodes in the pattern are numbered before the initializer.
         if decl.pat != pat && e.0 < decl.init.0 {
             let binding_element = hir.find_ancestor_kind(hir.node(e), Kind::BindingElement);
             if binding_element.is_some() && hir.get_root_declaration(binding_element) == hir.node(d)
@@ -1082,15 +1078,15 @@ impl Checker<'_, '_> {
                 return true;
             }
         }
-        // `isOuterVariable`, which uses the flow container before it is moved out of function
-        // expressions.
+        // `isOuterVariable`, which uses the flow container before it's moved out of function expressions.
         let declared_in = bound.parent_of_stmt(stmt);
         if self.get_control_flow_container(file, parent)
             == self.get_control_flow_container(file, declared_in)
         {
             return false;
         }
-        // Its assignments by the time this code runs are unknown, unless it is never assigned.
+        // It's an outer variable, so what's been assigned by the time this code runs is unknown, unless it's never
+        // assigned.
         !is_never_initialized.unwrap_or_else(|| self.is_never_initialized(file, e))
     }
 
@@ -1124,9 +1120,8 @@ impl Checker<'_, '_> {
                 && !self.files().module(file).is_module())
     }
 
-    /// 2564: a property that requires a value has no initializer and is not definitely assigned in
-    /// the constructor.
-    /// `checkPropertyInitialization`
+    /// `checkPropertyInitialization`. Reports 2564: a property that requires a value has no initializer and isn't
+    /// definitely assigned in the constructor.
     pub(super) fn check_property_initialization(&mut self, file: FileId, c: ClassId) {
         let (options, hir) = (&self.p.files.options, self.hir(file));
         let class = &hir[c];
@@ -1159,8 +1154,8 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            // The name of the symbol, and `getTypeOfSymbol` of the declaration: the declared type,
-            // with `this` uninstantiated.
+            // The symbol's name, and `getTypeOfSymbol` of the declaration: the declared type, with `this`
+            // uninstantiated.
             let (name, ty) = match self.declared_member_name(file, member.key) {
                 Some(name) => {
                     let sym = self.class_sym(file, c);
@@ -1168,8 +1163,8 @@ impl Checker<'_, '_> {
                     let Some((prop, _)) = self.prop_ref(instance, name) else {
                         continue;
                     };
-                    // The declarations of one symbol have one type: that of `m: string = ""; m?: number`
-                    // is `string`. A declaration that `declareSymbolEx` refused has a symbol of its own.
+                    // A symbol's declarations share one type: `m: string = ""; m?: number` has type `string`. A
+                    // declaration that `declareSymbolEx` rejected has its own symbol.
                     let own = (self.bound(file).member_symbol[m.idx()].is_some())
                         .then(|| self.symbol_of_member(file, m));
                     let ty = match prop.source {
@@ -1180,13 +1175,13 @@ impl Checker<'_, '_> {
                     };
                     (Some(name), ty)
                 }
-                // `[k]: T` is subject to the check whatever `k` is.
+                // `[k]: T` is checked whatever `k` is.
                 None if matches!(member.key, PropKey::Computed(_)) => (None, None),
                 None => continue,
             };
             let ty = match ty {
                 Some(ty) => ty,
-                // The type includes `undefined`, except that of an `accessor` field.
+                // The type includes `undefined`, except for an `accessor` field.
                 None if member.flags.contains(Flags::OPTIONAL)
                     && !member.flags.contains(Flags::ACCESSOR) =>
                 {
@@ -1201,8 +1196,8 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            // `isPropertyInitializedInConstructor`: the reference is `this.name`, or `this[k]` for
-            // the name `[k]`, whatever symbol that declares.
+            // `isPropertyInitializedInConstructor`: the reference is `this.name`, or `this[k]` for the name `[k]`,
+            // whatever symbol that declares.
             let is_assigned = constructor.is_some_and(|func| {
                 let key = match member.key {
                     PropKey::Computed(k) => self.access_key(file, k),
@@ -1246,9 +1241,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `node.Parent` of the node `parent` represents, as far as `Parent` can express it: a pattern
-    /// is skipped. `None`: for a member of a type literal and for a function type, whose parents
-    /// are not stored.
+    /// `node.Parent` of the node that `parent` represents, as far as `Parent` can express it. Patterns are skipped.
+    /// Returns `Parent::None` for a member of a type literal and for a function type, whose parents aren't stored.
     pub(super) fn parent_of_node(&self, file: FileId, parent: Parent) -> Parent {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let of_class = |c: ClassId| bound.class_owner[c.idx()].to_parent();
@@ -1285,7 +1279,7 @@ impl Checker<'_, '_> {
             Parent::MemberInit(m) => of_member(m),
             Parent::PatPropDefault(p) | Parent::PatKey(p) => of_pattern(hir[p].value),
             Parent::PatElemDefault(p) => of_pattern(hir[p].pat),
-            // The name and the decorators of a member or a parameter are its children.
+            // A member's or parameter's name and decorators are its children.
             Parent::MethodKey(p) => match hir[hir[p].value].kind {
                 ExprKind::Fn(f) => Parent::FnBody(f),
                 _ => Parent::None,
@@ -1304,9 +1298,9 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `getControlFlowContainer`: a static block is not function-like, and an immediately invoked
-    /// function expression (`GetImmediatelyInvokedFunctionExpression`), `async` or not, belongs to
-    /// the enclosing container. Returns the class or the call, if `f` is one of these.
+    /// `getControlFlowContainer`: a static block isn't function-like, and an immediately invoked function expression
+    /// (`GetImmediatelyInvokedFunctionExpression`), `async` or not, belongs to the enclosing container. Returns the
+    /// class or the call if `f` is one of these.
     fn immediately_invoked_container(&self, file: FileId, f: FnId) -> Option<Parent> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match (hir[f].kind, bound.fns[f.idx()].owner) {
@@ -1325,9 +1319,9 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── unresolved names ─────────────────────────────
 
-    /// `getResolvedSymbol`, where `resolveName` finds nothing for the identifier `e`. The error is
-    /// created on the first call, so `addDiagnostic` discards it or not by the state of that call.
-    /// In another file that depends on the order of the files: `check_file` of that file decides.
+    /// `getResolvedSymbol`, where `resolveName` finds nothing for the identifier `e`. The error is created on the first
+    /// call, so that call's state determines whether `addDiagnostic` discards it. For an identifier in another file
+    /// that would depend on the file order, so that file's `check_file` decides.
     pub(super) fn note_unresolved_identifier(&mut self, file: FileId, e: ExprId, name: Atom) {
         if self.task.file == Some(file) {
             let is_discarded = self.serialization_level >= MAX_SERIALIZATION_LEVEL;
@@ -1340,11 +1334,12 @@ impl Checker<'_, '_> {
         self.unresolved_identifiers.push((file, e, name));
     }
 
-    /// `addLazyDiagnostic`, which `onFailedToResolveSymbol` is wrapped in in checker.ts. Choosing the message queries the members of
-    /// classes, which would close a cycle with a query in flight. So it is reported when no query is in flight.
+    /// `addLazyDiagnostic`, which wraps `onFailedToResolveSymbol` in checker.ts. Choosing the message queries class
+    /// members, which would close a cycle with a query in flight. So it's reported when no query is in flight.
     ///
-    /// Only for the file being checked. No other task stores the entry of an unresolved identifier (`is_noted_for_check_file`), so
-    /// `check_file` of another file evaluates its own identifiers itself, before its last call of this function.
+    /// Only for the file being checked. No other task stores an unresolved identifier's entry
+    /// (`is_noted_for_check_file`), so another file's `check_file` evaluates its own identifiers itself, before its
+    /// last call of this function.
     pub(super) fn report_unresolved_identifiers(&mut self) {
         while !self.unresolved_identifiers.is_empty() {
             let mut unresolved = std::mem::take(&mut self.unresolved_identifiers);
@@ -1357,14 +1352,13 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `getResolvedSymbol`, where `resolveName` finds nothing: `name`, the identifier `e`, resolves
-    /// to no value.
+    /// `getResolvedSymbol`, where `resolveName` finds nothing: `name`, the identifier `e`, doesn't resolve to a value.
     fn report_unresolved_identifier(&mut self, file: FileId, e: ExprId, name: Atom) {
         self.report_unresolved_identifier_if(file, e, name, true);
     }
 
-    /// `is_checked`: whether it is reported for an identifier that `checkSourceFile` resolves, or
-    /// for one that it does not.
+    /// `is_checked` selects which identifiers are reported: those that `checkSourceFile` resolves if true, those that
+    /// it doesn't if false.
     fn report_unresolved_identifier_if(
         &mut self,
         file: FileId,
@@ -1382,17 +1376,16 @@ impl Checker<'_, '_> {
         else {
             return;
         };
-        // `await x` where it is not allowed: the parser treated the keyword as an identifier, and
-        // has reported the error.
+        // `await x` where it isn't allowed: the parser treated the keyword as an identifier and already reported the
+        // error.
         if hir.has_diagnostic(hir[e].pos, 1308) {
             return;
         }
         let other = SymFlags::TYPE | SymFlags::NAMESPACE;
         let is_resolved_by_check = !bound.is_unchecked(e.idx())
             && match bound.parent_of_expr(e) {
-                // `checkExportAssignment`: `export = A` and `export default A` resolve `A` with any
-                // meaning, `(A)` is checked as an expression. In a namespace they are invalid, and
-                // neither is checked.
+                // `checkExportAssignment`: `export = A` and `export default A` resolve `A` with any meaning, while
+                // `(A)` is checked as an expression. In a namespace they're invalid, and neither is checked.
                 Parent::Stmt(s)
                     if matches!(
                         hir[s].kind,
@@ -1427,8 +1420,8 @@ impl Checker<'_, '_> {
             Ok(_) => {
                 let message = self.get_cannot_find_name_diagnostic_for_name(file, location, name);
                 let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
-                // `getTargetOfAliasLikeExpression` has `checkExpressionCached` run while aliases
-                // are in progress, and a second time if that interrupts the first.
+                // `getTargetOfAliasLikeExpression` runs `checkExpressionCached` while aliases are in progress, and a
+                // second time if that interrupts the first.
                 let lookups = self.files().failed_lookups_of(file, e);
                 let runs = lookups.iter().map(|it| it.aliases_in_progress);
                 for in_progress in runs.chain(lookups.is_empty().then_some(&[][..])) {
@@ -1444,7 +1437,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `getResolvedSymbol` for the identifiers named `arguments` that are not expressions. Only
+    /// `getResolvedSymbol` for the identifiers named `arguments` that aren't expressions. Only
     /// `containsArgumentsReference` resolves them.
     fn resolve_names_for_arguments(&mut self, file: FileId) {
         let name = known::arguments;
@@ -1480,7 +1473,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Whether `ImportElisionTransformer` runs on `file`: `emitJSFile`, `sourceFileMayBeEmitted`,
+    /// True if `ImportElisionTransformer` runs on `file`: `emitJSFile`, `sourceFileMayBeEmitted`,
     /// `importElisionEnabled`, `canCollectSymbolAliasAccessibilityData`.
     fn elides_imports(&self, file: FileId) -> bool {
         let (files, hir) = (self.files(), self.hir(file));
@@ -1493,14 +1486,14 @@ impl Checker<'_, '_> {
             || module.is_from_external_library)
     }
 
-    /// `markIdentifierAliasReferenced`, `markPropertyAliasReferenced`: `getResolvedSymbol` for the
-    /// identifiers that are emitted as expressions. `is_checked`: as for
-    /// `report_unresolved_identifier_if`. If set, only for those in a range of `never_checked`,
-    /// once what the passes have reported there is removed.
+    /// `markIdentifierAliasReferenced`, `markPropertyAliasReferenced`: `getResolvedSymbol` for the identifiers that are
+    /// emitted as expressions. `is_checked` is passed on to `report_unresolved_identifier_if`. If it's set, only
+    /// identifiers in a `never_checked` range are visited. Call it after the passes' diagnostics in those ranges have
+    /// been removed.
     fn mark_identifier_aliases_referenced(&mut self, file: FileId, is_checked: bool) {
         let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
         let never_checked = self.never_checked.borrow().clone();
-        // `MarkLinkedReferencesRecursively` does not descend into these.
+        // `MarkLinkedReferencesRecursively` doesn't descend into these.
         let is_import = |n: Node| {
             matches!(hir.data(n), NodeData::Stmt(s) if match hir[s].kind {
                 StmtKind::Import(_) => true,
@@ -1534,12 +1527,12 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            // `getTargetOfAliasLikeExpression` checks an `A` that has no meaning at all.
+            // `getTargetOfAliasLikeExpression` only checks an `A` that has no meaning at all.
             let other = SymFlags::TYPE | SymFlags::NAMESPACE;
             if is_exported && files.resolve_name(file, scope, name, other).is_some() {
                 continue;
             }
-            // As in `type_of_identifier`.
+            // Same as in `type_of_identifier`.
             let is_unresolved = match self.resolve_identifier(file, e, name, true) {
                 Err(_) => true,
                 Ok(None) => !(name == known::arguments && bound.is_arguments_object(e)),
@@ -1553,11 +1546,10 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `MarkLinkedReferencesRecursively`, which `ImportElisionTransformer` runs before a file is
-    /// emitted. `markIdentifierAliasReferenced` and `markPropertyAliasReferenced` call
-    /// `getResolvedSymbol` on every identifier that is emitted as an expression. The check resolves
-    /// nearly all of them too. What is reported for the others shows only in tsgo's test harness,
-    /// which counts the errors with and without `Emit` (TS-1).
+    /// `MarkLinkedReferencesRecursively`, which `ImportElisionTransformer` runs before a file is emitted.
+    /// `markIdentifierAliasReferenced` and `markPropertyAliasReferenced` call `getResolvedSymbol` on every identifier
+    /// that's emitted as an expression. The check resolves nearly all of them too. Errors for the others only show up
+    /// in tsgo's test harness, which counts the errors with and without `Emit` (TS-1).
     fn mark_linked_references_recursively(&mut self, file: FileId) {
         let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
         if !self.elides_imports(file) {
@@ -1585,8 +1577,8 @@ impl Checker<'_, '_> {
             }
         }
         self.mark_identifier_aliases_referenced(file, false);
-        // The `this` of `typeof this.a` is an identifier, which `checkTypeQuery` does not resolve.
-        // It resolves to a `this` parameter, which `bindParameter` declares like any other.
+        // The `this` of `typeof this.a` is an identifier, which `checkTypeQuery` doesn't resolve. It resolves to a
+        // `this` parameter, which `bindParameter` declares like any other.
         for (i, node) in hir.types.iter().enumerate() {
             let TypeNodeKind::Typeof { expr, .. } = node.kind else {
                 continue;
@@ -1605,8 +1597,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The error `resolveEntityName` reports for `names`, which do not resolve. `meaning`: the
-    /// meaning required of the last name.
+    /// The error `resolveEntityName` reports for `names`, which don't resolve. `meaning` is the meaning required of the
+    /// last name.
     pub(super) fn report_unresolved_entity_name(
         &mut self,
         file: FileId,
@@ -1661,8 +1653,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkAndReportErrorForInvalidInitializer`: 2301 2844, with the property. Without one: the
-    /// errors `Resolve` reports itself, 2302 2467 2562.
+    /// `checkAndReportErrorForInvalidInitializer`: reports 2301 or 2844 if there's a `property`. Without one, reports
+    /// `code`, one of the errors `Resolve` reports itself: 2302, 2467, 2562.
     fn check_and_report_error_for_invalid_initializer(
         &mut self,
         file: FileId,
@@ -1755,7 +1747,7 @@ impl Checker<'_, '_> {
     ) -> u32 {
         let (hir, text) = (self.hir(file), self.atoms().bytes(name));
         if let Some(&(with_all_types, otherwise)) = CANNOT_FIND_NAME_DIAGNOSTICS.get(text) {
-            // `UsesWildcardTypes`: there is nothing to add to `types` then.
+            // `UsesWildcardTypes`: in that case there's nothing to add to `types`.
             let types = self.p.files.options.types.as_ref();
             return if types.is_some_and(|t| t.iter().any(|t| t == b"*")) {
                 with_all_types
@@ -1770,8 +1762,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `onFailedToResolveSymbol`. `scope`: the scope of `location`. `at`: the error position, if
-    /// not `location`: a tag, for a node synthesized from it.
+    /// `onFailedToResolveSymbol`. `scope` is the scope of `location`. `at` is the error position if that isn't
+    /// `location`. It's a tag, for a node synthesized from it.
     pub(super) fn on_failed_to_resolve_symbol(
         &mut self,
         file: FileId,
@@ -1875,7 +1867,7 @@ impl Checker<'_, '_> {
         }
         // `checkAndReportErrorForUsingValueAsType`
         if meaning.intersects(SymFlags::TYPE.difference(SymFlags::NAMESPACE)) {
-            // `argumentsSymbol`, which is in no table, is a property.
+            // `argumentsSymbol`, which isn't in any table, is a property.
             let flags = if name == known::arguments
                 && (self.bound(file)).is_in_function_with_arguments(hir, scope)
             {
@@ -1890,7 +1882,7 @@ impl Checker<'_, '_> {
                 return;
             }
         }
-        // `DeclarationNameToString`: with its escapes as in the source text.
+        // `DeclarationNameToString`: keeps the escapes as written in the source text.
         let written = hir
             .text
             .get(at.1 as usize..at.2 as usize)
@@ -1911,9 +1903,9 @@ impl Checker<'_, '_> {
         self.add_diagnostic(diagnostic);
     }
 
-    /// The end of `onFailedToResolveSymbol`, which is all of it without an `errorLocation`: the
-    /// missing library, a spelling suggestion, or `name_not_found_message`. `location`: the file
-    /// and the scope of `errorLocation`. `at`: its error range.
+    /// The end of `onFailedToResolveSymbol`, which is all that runs without an `errorLocation`. Reports the missing
+    /// library, a spelling suggestion, or `name_not_found_message`. `location` is the file and the scope of
+    /// `errorLocation`, and `at` is its error range.
     pub(super) fn name_not_found_diagnostic(
         &mut self,
         location: Option<(FileId, ScopeId)>,
@@ -1935,8 +1927,7 @@ impl Checker<'_, '_> {
             return self.new_diagnostic(at, name_not_found_message, &[declaration_name]);
         };
         let (suggestion, declared) = match suggestion {
-            // `suggestion.ValueDeclaration`, which a symbol that only refers to an export symbol
-            // does not have.
+            // `suggestion.ValueDeclaration`, which a symbol that only refers to an export symbol doesn't have.
             SpellingSuggestion::Symbol(sym) if leads_to_export => (Arg::Sym(sym), None),
             SpellingSuggestion::Symbol(sym) => (Arg::Sym(sym), self.span_of_value_declaration(sym)),
             SpellingSuggestion::Word(word) => (Arg::Text(word), None),
@@ -2016,7 +2007,7 @@ impl Checker<'_, '_> {
         is_entity_name_expression(hir, node).then_some(node)
     }
 
-    /// `getSymbolFlags`. Empty for an alias that does not resolve.
+    /// `getSymbolFlags`. Empty for an alias that doesn't resolve.
     fn resolved_flags(&self, sym: Sym) -> SymFlags {
         let flags = self.files().symbol_flags(sym);
         if flags == SymFlags::all() {
@@ -2027,7 +2018,8 @@ impl Checker<'_, '_> {
     }
 }
 
-/// Codes that are not reported in a file with parse diagnostics (`hasParseDiagnostics`). Only for diagnostics that are not the parser's own.
+/// Codes that aren't reported in a file with parse diagnostics (`hasParseDiagnostics`). Only for diagnostics that
+/// aren't the parser's own.
 fn is_grammar_error(code: u32) -> bool {
     errors_js::GRAMMAR_ERRORS.binary_search(&code).is_ok()
         || matches!(
@@ -2045,7 +2037,7 @@ fn is_grammar_error(code: u32) -> bool {
         )
 }
 
-/// Whether an `export as namespace` statement that has modifiers starts at `start`.
+/// True if an `export as namespace` statement that has modifiers starts at `start`.
 fn is_before_namespace_export(hir: &hir::File, start: u32) -> bool {
     hir.modifiers_of_stmts.iter().any(|of| {
         matches!(hir[of.0].kind, StmtKind::ExportAsNamespace(_)) && hir[of.0].start == start
@@ -2053,8 +2045,8 @@ fn is_before_namespace_export(hir: &hir::File, start: u32) -> bool {
 }
 
 bun_core::comptime_string_map! {
-    /// `getFeatureMap`: the names introduced by a version of the standard library, and the library
-    /// of the first entry of each.
+    /// `getFeatureMap`: the names that each standard library version introduced, mapped to the library of the name's
+    /// first entry.
     static SUGGESTED_LIBS: &'static [u8] = {
         b"Array" => b"es2015",
         b"Iterator" => b"es2015",
@@ -2114,7 +2106,7 @@ bun_core::comptime_string_map! {
 }
 
 bun_core::comptime_string_map! {
-    /// `getCannotFindNameDiagnosticForName`: with `UsesWildcardTypes`, and without.
+    /// `getCannotFindNameDiagnosticForName`: the code with `UsesWildcardTypes`, and the code without.
     static CANNOT_FIND_NAME_DIAGNOSTICS: (u32, u32) = {
         b"document" => (2584, 2584),
         b"console" => (2584, 2584),
@@ -2150,10 +2142,10 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// Whether `GetSpellingSuggestion` would suggest `candidate` for `name` if it were the only
-/// candidate.
+/// True if `GetSpellingSuggestion` would suggest `candidate` for `name` if it were the only candidate.
 pub(crate) fn is_close(name: &[u8], candidate: &[u8]) -> bool {
-    // FOR SPEED, its first test, which most candidates fail: every name in scope is asked for every name that is not found.
+    // FOR SPEED: this is its first test, and most candidates fail it. Every name in scope is tested for every name that
+    // isn't found.
     if name.is_ascii() {
         let maximum_length_difference = 2.max((name.len() as f64 * 0.34) as usize);
         if candidate.len().abs_diff(name.len()) > maximum_length_difference {
@@ -2164,7 +2156,7 @@ pub(crate) fn is_close(name: &[u8], candidate: &[u8]) -> bool {
     get_spelling_suggestion(name, only, get_candidate_name, |a, b| a.cmp(b)).is_some()
 }
 
-/// `getCandidateName`: neither the name of a module nor `InternalSymbolNamePrefix`.
+/// `getCandidateName`: empty for a module's name and for a name that starts with `InternalSymbolNamePrefix`.
 fn get_candidate_name(name: &[u8]) -> &[u8] {
     match name {
         [b'"' | 0xFE, ..] => &[],
@@ -2187,8 +2179,8 @@ pub(crate) enum SpellingSuggestion {
     Word(&'static str),
 }
 
-/// `compareSymbols`, `compareNodes`: the sort key of the first declaration of `sym`, as
-/// `place_in_program_order` makes it.
+/// `compareSymbols`, `compareNodes`: the sort key of `sym`'s first declaration, in the form that
+/// `place_in_program_order` returns.
 fn place_of_first_declaration(files: &Files, sym: Sym) -> Option<(bool, u32, u32)> {
     let (file, decl) = files.decls_of(sym).first().copied()?;
     let pos = files.start_of_declaration(file, decl);
@@ -2216,9 +2208,9 @@ fn get_spelling_suggestion_for_name<'a>(
     get_spelling_suggestion(name, candidates, |c| get_candidate_name(c.0), compare).map(|c| c.1)
 }
 
-/// The same, and whether it was found among the locals of the module or namespace block that
-/// exports it. `declareModuleMember`: the local there is a symbol that only refers to the export
-/// symbol.
+/// `getSuggestedSymbolForNonexistentSymbol`, plus a flag that's true if the suggestion was found among the locals of
+/// the module or namespace block that exports it. `declareModuleMember`: the local there is a symbol that only refers
+/// to the export symbol.
 fn similar_in_scope_and_where(
     c: &mut Checker<'_, '_>,
     location: Option<(FileId, ScopeId)>,
@@ -2228,7 +2220,7 @@ fn similar_in_scope_and_where(
     let files = c.files();
     let name = (name, c.atoms().bytes(name));
     let among_globals = std::mem::take(&mut c.suggestions_among_globals);
-    // `try_resolve_alias` finds nothing for an alias in progress.
+    // `try_resolve_alias` returns `None` for an alias in progress.
     let is_function_of_candidate = c.alias_targets_in_progress.is_empty();
     let suggested = files.suggested_symbol_for_nonexistent_symbol(
         location,
@@ -2238,16 +2230,16 @@ fn similar_in_scope_and_where(
         is_function_of_candidate.then_some(&among_globals),
     );
     c.suggestions_among_globals = among_globals;
-    // `Resolve` returns nil where the name may not be used.
+    // `Resolve` returns nil where the name can't be used.
     suggested.ok().flatten()
 }
 
-/// What `getSuggestionForSymbolNameLookup` asks about the symbols of a table.
+/// The queries `getSuggestionForSymbolNameLookup` makes about a table's symbols.
 pub(crate) trait SuggestionLookup {
-    /// `getSymbol`, given the entry of the table.
+    /// `getSymbol`, given the table's entry.
     fn get_symbol(&mut self, held: Option<Sym>, meaning: SymFlags) -> Option<Sym>;
 
-    /// `tryResolveAlias(candidate).Flags`. `None`: nil.
+    /// `tryResolveAlias(candidate).Flags`, or `None` for nil.
     fn try_resolve_alias(&mut self, candidate: Sym) -> Option<SymFlags>;
 }
 
@@ -2262,7 +2254,7 @@ impl SuggestionLookup for Checker<'_, '_> {
         if self.alias_targets_in_progress.contains(&candidate) {
             return None;
         }
-        // As for `get_symbol_flags`: the symbol tables have the target, unless types are needed.
+        // Same as in `get_symbol_flags`: the symbol tables have the target, unless types are needed.
         if let Some(target) = files.resolve_alias(candidate)
             && !files.has_symbol_to_combine(candidate)
         {
@@ -2285,25 +2277,25 @@ impl SuggestionLookup for Checker<'_, '_> {
     }
 }
 
-/// What `getSuggestionForSymbolNameLookup` finds. A program without the types of its test framework asks for the same
-/// few names thousands of times, from everywhere in a file.
+/// Caches the results of `getSuggestionForSymbolNameLookup`. A program that lacks its test framework's types looks up
+/// the same few names thousands of times, from everywhere in a file.
 #[derive(Default)]
 pub(crate) struct KnownSuggestions {
-    /// In `globals`, by `meaning` and by the text of the name.
+    /// In `globals`, by `meaning` and by the name's text.
     among_globals: FxHashMap<u32, FxHashMap<Vec<u8>, Option<SpellingSuggestion>>>,
-    /// In the locals of a scope, by the scope, `meaning` and the name.
+    /// In a scope's locals, by the scope, `meaning` and the name.
     among_locals: FxHashMap<(FileId, ScopeId, u32, Atom), Option<SpellingSuggestion>>,
 }
 
 pub(crate) type SuggestionsAmongGlobals = std::cell::RefCell<KnownSuggestions>;
 
 impl Files<'_> {
-    /// `getSuggestedSymbolForNonexistentSymbol`, and whether the result is among the locals of a
-    /// block that exports it.
-    /// `location`: the file and the scope of the node. `None`: nil, so only `globals` is searched.
-    /// `text`: the text of `name`, which may be a task-local atom.
-    /// `among_globals`: only with a `try_resolve_alias` that is a function of its argument.
-    /// `Err`: see `resolve_with`.
+    /// `getSuggestedSymbolForNonexistentSymbol`, plus a flag that's true if the result is among the locals of a block
+    /// that exports it.
+    /// - `location`: the node's file and scope. `None` is nil, so only `globals` is searched.
+    /// - `text`: the text of `name`, which may be a task-local atom.
+    /// - `among_globals`: pass it only if `try_resolve_alias` is a pure function of its argument.
+    /// - `Err`: see `resolve_with`.
     pub(crate) fn suggested_symbol_for_nonexistent_symbol(
         &self,
         location: Option<(FileId, ScopeId)>,
@@ -2320,8 +2312,7 @@ impl Files<'_> {
             if let Some(found) = symbols.get_symbol(held, meaning) {
                 return Some(found);
             }
-            // `GetSpellingSuggestion` first gets the name of each candidate, then computes its edit
-            // distance.
+            // `GetSpellingSuggestion` first gets each candidate's name, then computes its edit distance.
             let fits = |&(candidate, sym): &(Atom, Sym)| {
                 files.is_spelling_candidate(sym, meaning, &mut *symbols)
                     && is_close(text, files.atoms.bytes(candidate))
@@ -2335,8 +2326,8 @@ impl Files<'_> {
             let suggestion = match table {
                 SymbolTable::Locals(file, scope) => {
                     let (hir, bound) = (files.hir(file), files.bound(file));
-                    // tsgo does not put the name of a function or class expression in any symbol
-                    // table: `Resolve` compares it directly.
+                    // tsgo doesn't put the name of a function or class expression in any symbol table. `Resolve`
+                    // compares it directly.
                     let is_in_table = |&&(_, id): &&(Atom, crate::bind::SymbolId)| match bound
                         .symbol(id)
                         .decls
@@ -2349,11 +2340,11 @@ impl Files<'_> {
                         _ => true,
                     };
                     let s = &bound.scopes[scope.idx()];
-                    // `IsGlobalSourceFile`: the declarations of a script are globals.
+                    // `IsGlobalSourceFile`: a script's declarations are globals.
                     if s.kind == ScopeKind::File && s.symbol.is_none() {
                         return None;
                     }
-                    // `KindInferType`: no table either, `Resolve` compares the name directly.
+                    // `KindInferType`: it has no table either. `Resolve` compares the name directly.
                     if s.kind == ScopeKind::InferConstraint {
                         return None;
                     }
@@ -2468,7 +2459,7 @@ impl Files<'_> {
     }
 }
 
-/// `node.End()` of the `ExpressionWithTypeArguments` that `class` extends. 0: unknown.
+/// `node.End()` of the `ExpressionWithTypeArguments` that `class` extends, or 0 if unknown.
 pub(super) fn end_of_extends(c: &Checker<'_, '_>, file: FileId, class: &Class) -> u32 {
     if class.extends_args.is_empty() {
         return c.end_of_expr(file, class.extends);
@@ -2542,7 +2533,7 @@ pub(super) fn both_are_bigint_like(c: &mut Checker<'_, '_>, left: TypeId, right:
     c.is_assignable(left, TypeId::BIGINT) && c.is_assignable(right, TypeId::BIGINT)
 }
 
-/// `closeEnoughKind`: whether `+` plausibly accepts the two operand types.
+/// `closeEnoughKind`: true if `+` plausibly accepts the two operand types.
 pub(super) fn may_be_added(c: &mut Checker<'_, '_>, left: TypeId, right: TypeId) -> bool {
     [left, right].into_iter().all(|t| {
         c.is_any(t)
@@ -2553,7 +2544,7 @@ pub(super) fn may_be_added(c: &mut Checker<'_, '_>, left: TypeId, right: TypeId)
     })
 }
 
-/// Whether `<`, `<=`, `>` and `>=` accept the two operand types.
+/// True if `<`, `<=`, `>` and `>=` accept the two operand types.
 pub(super) fn can_be_ordered(c: &mut Checker<'_, '_>, left: TypeId, right: TypeId) -> bool {
     if c.is_any(left) || c.is_any(right) {
         return true;
@@ -2586,8 +2577,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The types of the two operands of an operator whose result type does not depend on them,
-    /// checked left to right.
+    /// The types of the two operands of an operator whose result type doesn't depend on them, checked left to right.
     pub(super) fn check_operands(
         &mut self,
         file: FileId,
@@ -2612,9 +2602,8 @@ impl Checker<'_, '_> {
     ) {
         let hir = self.hir(file);
         match hir[left].kind {
-            // `#x in v`: the left operand is a name, resolved in the enclosing classes, not a
-            // value. A name that none of them declares is reported as missing on the type of the
-            // right operand as it is.
+            // `#x in v`: the left operand is a name, resolved in the enclosing classes, not a value. A name that none
+            // of them declares is reported as missing on the right operand's type, unmodified.
             ExprKind::PrivateIdentifier(name) if !is_parenthesized(hir, left) => {
                 if !self.bound(file).private_class.contains_key(&left)
                     && !self.enclosing_classes(file, left).is_empty()
@@ -2696,9 +2685,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `reportOperatorError` for `e`, which is `a op b` or `a op= b`: 2365, 2367. `left` and
-    /// `right`: the types of the operands.
-    /// `is_related`: the relation they fail.
+    /// `reportOperatorError` for `e`, which is `a op b` or `a op= b`: 2365, 2367. `left` and `right` are the operand
+    /// types, and `is_related` is the relation they fail.
     pub(super) fn report_operator_error(
         &mut self,
         file: FileId,
@@ -2777,9 +2765,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// 2447 for `&`, `|` or `^` between two booleans: `getSuggestedBooleanOperator`. It is reported
-    /// on the operator, which is the token before the right operand: the HIR does not store its
-    /// position.
+    /// `getSuggestedBooleanOperator`: 2447 for `&`, `|` or `^` between two booleans. It's reported on the operator. The
+    /// HIR doesn't store the operator's position, so it's found as the token before the right operand.
     pub(super) fn report_boolean_operands(
         &mut self,
         file: FileId,
@@ -2802,7 +2789,7 @@ impl Checker<'_, '_> {
         self.error_at(at, 2447, &[Arg::Bytes(&operator), Arg::Text(suggested)]);
     }
 
-    /// 6807: `errorOrSuggestion`, an error in the initializer of a member of an enum and a suggestion anywhere else.
+    /// 6807 through `errorOrSuggestion`: an error in an enum member's initializer, a suggestion anywhere else.
     pub(super) fn check_shift_count(
         &mut self,
         file: FileId,
@@ -2811,7 +2798,7 @@ impl Checker<'_, '_> {
         left: ExprId,
         right: ExprId,
     ) {
-        // `evaluateEnumMember` reports errors of its own.
+        // `evaluateEnumMember` reports its own errors.
         let rhs_eval = self.constant_value(file, right);
         let is_error = matches!(self.bound(file).parent_of_expr(e), Parent::EnumInit(_));
         if (is_error || self.captures_suggestions())
@@ -2836,7 +2823,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkForDisallowedESSymbolOperand`: 2469. `e`: `left op right` or `left op= right`.
+    /// `checkForDisallowedESSymbolOperand`: 2469. `e` is `left op right` or `left op= right`.
     pub(super) fn check_for_disallowed_es_symbol_operand(
         &mut self,
         file: FileId,
@@ -2863,7 +2850,7 @@ impl Checker<'_, '_> {
         false
     }
 
-    /// `checkArithmeticOperandType`: whether the operand type is valid.
+    /// `checkArithmeticOperandType`. Returns true if the operand type is valid.
     pub(super) fn check_arithmetic_operand_type(
         &mut self,
         file: FileId,
@@ -2915,9 +2902,9 @@ impl Checker<'_, '_> {
         false
     }
 
-    /// `headMessage` of `checkAssignmentOperator`. The property is looked up in the type of the
-    /// object itself: one that is possibly `undefined` or `null` has no such property. It is looked
-    /// up by `left.Name().Text()`, which is not the name a private member is stored under.
+    /// `headMessage` of `checkAssignmentOperator`. The property is looked up in the type of the object itself, so an
+    /// object that's possibly `undefined` or `null` has no such property. It's looked up by `left.Name().Text()`, which
+    /// isn't the name a private member is stored under.
     pub(super) fn exact_optional_head_message(
         &mut self,
         file: FileId,
@@ -2940,10 +2927,9 @@ impl Checker<'_, '_> {
             .then_some(2412)
     }
 
-    /// `checkAssignmentOperator` for `left op= right`: 2364 2779, or 2322 2412 if `right_type` is
-    /// not assignable to the target.
-    /// `left_type`: `checkExpression(left)`, for an arithmetic operator with `null` and `undefined`
-    /// removed. `right_type`: the assigned type, which for such an operator is its result type.
+    /// `checkAssignmentOperator` for `left op= right`: 2364 2779, or 2322 2412 if `right_type` isn't assignable to the
+    /// target. `left_type` is `checkExpression(left)`, with `null` and `undefined` removed for an arithmetic operator.
+    /// `right_type` is the assigned type, which for such an operator is its result type.
     pub(super) fn check_assignment_operator(
         &mut self,
         file: FileId,
@@ -2954,8 +2940,8 @@ impl Checker<'_, '_> {
         right_type: TypeId,
     ) {
         let hir = self.hir(file);
-        // A setter may accept a wider type than the getter returns: `checkPropertyAccessExpression`
-        // with `writeOnly`, which `(a.b) += c` does not reach, and `AccessFlagsWriting`.
+        // A setter may accept a wider type than the getter returns: `checkPropertyAccessExpression` with `writeOnly`,
+        // which `(a.b) += c` doesn't reach, and `AccessFlagsWriting`.
         let property = match hir[left].kind {
             ExprKind::Dot { obj, name, .. } if !is_parenthesized(hir, left) => Some((obj, name)),
             ExprKind::Index { obj, index, .. } => match hir[index].kind {
@@ -2993,9 +2979,8 @@ impl Checker<'_, '_> {
             return;
         }
         let head_message = self.exact_optional_head_message(file, left, right_type);
-        // `AssignmentKindDefinite` uses the declared type of the target. For a target that is read
-        // first, a literal type is replaced by its base type: `checkIdentifier`,
-        // `getFlowTypeOfAccessExpression`.
+        // `AssignmentKindDefinite` uses the target's declared type. For a target that's read first, a literal type is
+        // replaced by its base type: `checkIdentifier`, `getFlowTypeOfAccessExpression`.
         if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) {
             expected = self.base_of_literal(expected);
         }
@@ -3011,8 +2996,8 @@ impl Checker<'_, '_> {
         );
     }
 
-    /// `getBaseTypeOfLiteralTypeForComparison`: `1` and `2` are compared as numbers, and an enum
-    /// member as the string or the number it is, regardless of the other members of the enum.
+    /// `getBaseTypeOfLiteralTypeForComparison`: `1` and `2` are compared as numbers, and an enum member as the string
+    /// or number it is, regardless of the enum's other members.
     pub(super) fn base_for_comparison(&mut self, ty: TypeId) -> TypeId {
         self.map_type(ty, |c, m| match c.data(m) {
             TypeData::StringLit { .. }
@@ -3034,8 +3019,7 @@ impl Checker<'_, '_> {
         })
     }
 
-    /// `checkNonNullType`: the type of `node` with `null` and `undefined` removed, which are not
-    /// allowed here.
+    /// `checkNonNullType`: the type of `node` with `null` and `undefined` removed, which aren't allowed here.
     pub(super) fn check_non_null_type(&mut self, file: FileId, node: ExprId, ty: TypeId) -> TypeId {
         self.check_non_null_type_with_reporter(ty, |c, error| {
             let (at, code, name) = c.object_possibly_null_error(file, node, error);
@@ -3044,9 +3028,8 @@ impl Checker<'_, '_> {
         })
     }
 
-    /// `reportObjectPossiblyNullOrUndefinedError`, and the error `checkNonNullTypeWithReporter`
-    /// reports for `unknown`: the span, the code (18050, 18046 to 18049, 2531 to 2533 or 2571), and
-    /// the name argument.
+    /// `reportObjectPossiblyNullOrUndefinedError`, and the error `checkNonNullTypeWithReporter` reports for `unknown`.
+    /// Returns the span, the code (18050, 18046 to 18049, 2531 to 2533 or 2571), and the name argument.
     fn object_possibly_null_error(
         &self,
         file: FileId,
@@ -3086,9 +3069,9 @@ impl Checker<'_, '_> {
         (at, code, name)
     }
 
-    /// A name short enough to be quoted in the message: `IsEntityNameExpression(node)`,
-    /// `len(entityNameToString(node)) < 100`. In a type query `a.b` is a qualified name, which is
-    /// not one, and `this` is an Identifier.
+    /// True for a name short enough to be quoted in the message: `IsEntityNameExpression(node)`,
+    /// `len(entityNameToString(node)) < 100`. In a type query `a.b` is a qualified name, which doesn't count, and
+    /// `this` is an Identifier.
     fn is_entity_name(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let is_name = if self.bound(file).is_in_type_query(e) {
@@ -3104,7 +3087,7 @@ impl Checker<'_, '_> {
         start_of(self.hir(file), e)
     }
 
-    /// Start of `e`, excluding parentheses that enclose the whole of it.
+    /// Start of `e`, excluding parentheses that enclose all of it.
     pub(super) fn start_inside_parentheses(&self, file: FileId, e: ExprId) -> u32 {
         start_inside_parentheses(self.hir(file), e)
     }
@@ -3116,8 +3099,7 @@ impl Checker<'_, '_> {
         decl: Decl,
     ) -> Option<(u32, u32)> {
         let hir = self.hir(file);
-        // The source text of the default library and of JSON is not stored, so an end cannot be
-        // computed.
+        // The source text of the default library and of JSON isn't stored, so an end can't be computed.
         if hir.text.is_empty() {
             let start = self.declaration_name_start(file, decl)?;
             return Some((start, start));
@@ -3128,7 +3110,7 @@ impl Checker<'_, '_> {
 }
 
 impl Files<'_> {
-    /// `declaration.Loc`. `None`: the HIR does not store it.
+    /// `declaration.Loc`, or `None` if the HIR doesn't store it.
     pub(crate) fn loc_of_declaration(&self, file: FileId, decl: Decl) -> Option<hir::TextRange> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match decl {
@@ -3155,8 +3137,7 @@ impl Files<'_> {
         }
     }
 
-    /// `GetTokenPosOfNode` for a declaration: the position of its first token, including decorators
-    /// and modifiers.
+    /// `GetTokenPosOfNode` for a declaration: the position of its first token, including decorators and modifiers.
     pub(crate) fn start_of_declaration(&self, file: FileId, decl: Decl) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match decl {
@@ -3204,8 +3185,8 @@ impl Files<'_> {
 // ───────────────────────────── assignment targets ─────────────────────────────
 
 impl Checker<'_, '_> {
-    /// `isAssignmentToReadonlyEntity(expr, symbol, getAssignmentTargetKind(expr))`. `expr`: the
-    /// access `obj.name` or `obj[name]`.
+    /// `isAssignmentToReadonlyEntity(expr, symbol, getAssignmentTargetKind(expr))`. `expr` is the access `obj.name` or
+    /// `obj[name]`.
     pub(super) fn is_assignment_to_readonly_entity(
         &mut self,
         file: FileId,
@@ -3250,9 +3231,9 @@ impl Checker<'_, '_> {
                     Decl::ParameterProperty(parameter) => {
                         declared_in == file && bound.param_fn[parameter.idx()] == ctor
                     }
-                    // `isLocalThisPropertyAssignment`. No symbol has a constructor as the
-                    // declaration of its parent (`getThisClassAndSymbolTable`), which
-                    // `isLocalThisPropertyAssignmentConstructorFunction` asks for.
+                    // `isLocalThisPropertyAssignment`. `isLocalThisPropertyAssignmentConstructorFunction` looks for a
+                    // symbol whose parent's declaration is a constructor, and there's no such symbol
+                    // (`getThisClassAndSymbolTable`).
                     Decl::ThisProperty(_) => {
                         let parent = files.symbol_parent(property);
                         let parent = parent.and_then(|parent| files.value_declaration(parent));

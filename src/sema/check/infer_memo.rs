@@ -168,7 +168,7 @@ const DISTURBANCES: [&str; 9] = [
     "times_forgotten",
 ];
 
-/// The index in `DISTURBANCES` of what other tasks do.
+/// The index in `DISTURBANCES` of the counter for other tasks' commits.
 pub(in super::super) const COMMITS: usize = 7;
 
 const _: () = assert!(matches!(DISTURBANCES[COMMITS].as_bytes(), b"commits"));
@@ -549,7 +549,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// short, or a result stops being valid for every caller. A walk that changes one of them has left a trace.
     ///
     /// The last counter changes when `getUniqueTypeParameters` adds type parameters to `unresolved_renamed_params`.
-    /// Asking for the constraint of one removes it from the set, which is a trace. So a stored walk doesn't ask for the
+    /// Requesting the constraint of one removes it from the set, which is a trace. So a stored walk doesn't request the
     /// constraint of any type parameter in the set, and that stays true until more are added.
     pub(in super::super) fn inference_disturbances(&self) -> [u64; DISTURBANCES.len()] {
         let from_loops = self.incomplete_flow_taints;

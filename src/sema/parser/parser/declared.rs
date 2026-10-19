@@ -1,19 +1,20 @@
-//! Spots, while a file is parsed, a name that may be declared twice in one scope.
+//! Detects, while parsing, names that may be declared twice in one scope.
 //!
-//! oxc reports a redeclaration (`let a; let a;`) as an error. Finding one takes the scopes of the file, which costs far more
-//! than the answer is worth: nearly no file has one. So the parser keeps just enough to say "this file has none": for each
-//! name, the innermost open scope that declares it, and as what. [`rare::MAY_REDECLARE`] is the answer. It errs towards
-//! "maybe": it knows nothing of strict mode or of scripts and modules. The linter works out the rest.
+//! oxc reports a redeclaration (`let a; let a;`) as an error. Finding one requires building the file's scopes, which
+//! isn't worth the cost because almost no file has one. So the parser tracks just enough to say "this file has none":
+//! for each name, the innermost open scope that declares it and the kind of declaration. The result is
+//! [`rare::MAY_REDECLARE`]. It errs toward "maybe", since it doesn't know about strict mode or about scripts vs.
+//! modules. The linter works out the rest.
 
 use super::Parser;
 use bun_sema::atom::{Atom, KNOWN_TEXTS, known};
 use bun_sema::hir::*;
 
-/// oxc's `SymbolFlags`, as far as its `..Excludes` tell them apart.
+/// oxc's `SymbolFlags`, as far as its `..Excludes` constants distinguish them.
 mod flag {
     /// `var`, a parameter, the `e` of `catch (e)`
     pub(super) const VAR: u16 = 1 << 0;
-    /// `let`, `const`, `using`, a name in the pattern of a `catch`
+    /// `let`, `const`, `using`, a name in a `catch` pattern
     pub(super) const LEXICAL: u16 = 1 << 1;
     pub(super) const CLASS: u16 = 1 << 2;
     pub(super) const FUNCTION: u16 = 1 << 3;
@@ -24,9 +25,10 @@ mod flag {
     pub(super) const CONST_ENUM: u16 = 1 << 8;
     pub(super) const ENUM_MEMBER: u16 = 1 << 9;
     pub(super) const TYPE_PARAMETER: u16 = 1 << 10;
-    /// Every namespace counts as one that has values.
+    /// Every namespace is treated as one that has values.
     pub(super) const NAMESPACE: u16 = 1 << 11;
-    /// In JavaScript, a function that a block in the scope declares. Outside strict code it is a `var` of the function around.
+    /// In JavaScript, a function declared by a block inside the scope. Outside strict mode it's a `var` of the
+    /// enclosing function.
     pub(super) const FUNCTION_IN_BLOCK: u16 = 1 << 12;
 
     pub(super) const VALUE: u16 = VAR
@@ -42,11 +44,12 @@ mod flag {
         CLASS | INTERFACE | ENUM | CONST_ENUM | ENUM_MEMBER | TYPE_PARAMETER | ALIAS;
 }
 
-/// What a declaration declares its name as.
+/// The kind of a declaration.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Declares {
     Var,
-    /// Also the `e` of `catch (e)`. Two parameters with one name are `File::may_bind_a_parameter_twice`.
+    /// Also the `e` of `catch (e)`. Two parameters with the same name are covered by
+    /// `File::may_bind_a_parameter_twice`.
     Parameter,
     Lexical,
     Function,
@@ -61,8 +64,8 @@ pub(crate) enum Declares {
     Namespace,
 }
 
-/// The flag of a declaration, and the flags that it can't share a scope with: in TypeScript, where oxc follows tsc, and in
-/// JavaScript, where it has further checks that depend on where the declarations are.
+/// Indexed by `Declares`: a declaration's flag, then the flags it can't share a scope with in TypeScript, where oxc
+/// follows tsc, and in JavaScript, where oxc has extra checks that depend on where the declarations are.
 const RULES: [(u16, u16, u16); 13] = {
     use flag::*;
     [
@@ -94,8 +97,8 @@ const RULES: [(u16, u16, u16); 13] = {
     ]
 };
 
-/// What is known about a name: the id of a scope that declares it in the upper half, the depth of that scope in the next 16
-/// bits, and as what it is declared there in the low 16, which are bits of `flag`. No scope has the id 0.
+/// What's known about a name. The upper half is the id of a scope that declares it, the next 16 bits are that scope's
+/// depth, and the low 16 bits are the `flag` bits of its declarations there. No scope has the id 0.
 type Entry = u64;
 
 #[inline(always)]
@@ -113,24 +116,25 @@ fn stamp_of(scope: u32, depth: usize) -> Entry {
     Entry::from(scope) << 32 | (depth as Entry) << 16
 }
 
-/// How deep scopes are told apart. In a scope that is deeper the answer is "maybe".
+/// The number of scope depths that are tracked. In a deeper scope the answer is "maybe".
 const DEPTHS: usize = 256;
 
-/// In `Declared::log`, with the place: the name goes up to the function. What is beside it are its flags.
+/// Set on the slot index of a `Declared::log` entry to mark a name that's hoisted to the function. The entry's other
+/// field is the name's flags.
 const HOISTED: u32 = 1 << 31;
 
-/// A scope that is open, by its depth.
+/// An open scope. Levels are indexed by depth.
 #[derive(Copy, Clone, Default)]
 struct Level {
-    /// 0: none is open at this depth.
+    /// 0 if no scope is open at this depth.
     id: u32,
-    /// How long `Declared::log` was when it was opened.
+    /// The length of `Declared::log` when the scope was opened.
     log: u32,
-    /// `Declared::holds_vars` around it.
+    /// `Declared::holds_vars` outside this scope.
     holds_vars: u32,
 }
 
-/// Where a speculative parse began.
+/// The state when a speculative parse began.
 #[derive(Copy, Clone)]
 pub(crate) struct Mark {
     stamp: Entry,
@@ -141,35 +145,37 @@ pub(crate) struct Mark {
 
 #[derive(Default)]
 pub(crate) struct Declared {
-    /// Off unless `Dialect::oxc_names`, and once the answer is "maybe".
+    /// False unless `Dialect::oxc_names` is set, and false again once the answer is "maybe".
     is_on: bool,
     is_javascript: bool,
-    /// How many of the innermost scopes have no level yet. Most blocks declare nothing, so a block gets its level with its first
-    /// declaration. While it is off every scope is counted here.
+    /// How many of the innermost scopes have no level yet. Most blocks don't declare anything, so a block only gets a
+    /// level at its first declaration. While `is_on` is false, every scope is counted here.
     unopened: u32,
     mask: u32,
-    /// An entry without flags for the innermost scope that has a level.
+    /// An entry with no flags for the innermost scope that has a level.
     stamp: Entry,
-    /// The innermost open scope that a `var` declares in: a function, a static block, a namespace, the file.
+    /// The innermost open scope that `var` declarations belong to: a function, a static block, a namespace or the file.
     holds_vars: u32,
-    /// The id that was given out last. None is given out twice, from file to file.
+    /// The last id handed out. Ids are never reused, not even across files.
     last: u32,
-    /// By the low bits of the number of a name. Two names that share a place count as one, which can only turn a "no" into a
-    /// "maybe". It is never cleared: an entry of another file has the id of a scope that is not open.
+    /// Indexed by the low bits of a name's atom number. Two names that share a slot are treated as one, which can only
+    /// turn a "no" into a "maybe". It isn't cleared between files, because an entry from another file has the id of a
+    /// scope that isn't open.
     table: Vec<Entry>,
     levels: Vec<Level>,
-    /// What is to be done when a scope closes. An entry of an open scope that a scope in it has replaced, with its place in
-    /// `table`, is put back. A name that a block has declared with `var` ([`HOISTED`]) is declared in the scope around: oxc notes
-    /// it in every scope up to the function. In JavaScript a function in a block is such a name too.
+    /// Work to do when a scope closes. An open scope's entry that an inner scope replaced is stored with its slot in
+    /// `table`, and gets restored. A name that a block declared with `var` ([`HOISTED`]) gets declared in the enclosing
+    /// scope, because oxc records it in every scope up to the function. In JavaScript, a function in a block is hoisted
+    /// the same way.
     log: Vec<(u32, Entry)>,
-    /// For `close_level_with_log`.
+    /// Scratch space for `close_level_with_log`.
     carried: Vec<(u32, u16)>,
     /// The parameters of the function whose block comes next.
     parameters: (Span<TypeParamId>, Span<ParamId>),
 }
 
 impl Declared {
-    /// `has_table`: `note_odd_exports` will be called.
+    /// `has_table` is true if `note_odd_exports` will be called.
     pub(crate) fn begin(
         &mut self,
         text_len: usize,
@@ -181,7 +187,7 @@ impl Declared {
         if !is_on && !has_table {
             return;
         }
-        // A file that has its own atoms numbers them from 0. Beyond a million names some share a place.
+        // A file with its own atoms numbers them from 0. Beyond a million names, some share a slot.
         let places = (KNOWN_TEXTS.len() + text_len / 4)
             .next_power_of_two()
             .min(1 << 20);
@@ -193,7 +199,7 @@ impl Declared {
             self.table.fill(0);
             self.last = 0;
         }
-        // The last file has closed its scopes, unless it was given up.
+        // The previous file closed all its scopes, unless the parser gave up on it.
         if self.levels.len() != DEPTHS || depth_of(self.stamp) != 0 {
             self.levels.clear();
             self.levels.resize(DEPTHS, Level::default());
@@ -222,7 +228,7 @@ impl Declared {
         }
     }
 
-    /// Returns whether the name may be declared already by what the declaration can't stand beside.
+    /// Returns true if the name may already have a declaration that conflicts with this one.
     #[inline(always)]
     fn declare(&mut self, name: Atom, kind: Declares) -> bool {
         if self.unopened != 0 && !self.open_levels() {
@@ -252,7 +258,7 @@ impl Declared {
         }
     }
 
-    /// [`Declared::declare`] of a name that an open scope declares, or that goes up to the function.
+    /// [`Declared::declare`] for a name that an open scope already declares, or that's hoisted to the function.
     #[inline(never)]
     fn declare_beside(
         &mut self,
@@ -279,11 +285,11 @@ impl Declared {
         }
         self.log.push((place, old));
         self.put(place, flags);
-        // oxc asks each scope up to the function, and stops at the first that has the name.
+        // oxc checks each scope up to the function and stops at the first one that has the name.
         is_hoisted && scope_of(old) >= self.holds_vars && clashes
     }
 
-    /// Returns `false` where it is too deep.
+    /// Returns false if the scope is too deep.
     #[inline(always)]
     fn open_level(&mut self, holds_vars: bool) -> bool {
         let depth = depth_of(self.stamp) + 1;
@@ -303,7 +309,7 @@ impl Declared {
         true
     }
 
-    /// Gives the scopes that have none a level. They are blocks.
+    /// Gives a level to each scope that doesn't have one yet. They're all blocks.
     #[inline(never)]
     fn open_levels(&mut self) -> bool {
         while self.unopened != 0 {
@@ -338,7 +344,7 @@ impl Declared {
         self.holds_vars = level.holds_vars;
     }
 
-    /// Puts back what was replaced since the log was `from` long. What goes up to the function is left in `carried`.
+    /// Restores the entries replaced since the log had length `from`. Hoisted names are left in `carried`.
     fn unwind(&mut self, from: u32) {
         self.carried.clear();
         while self.log.len() > from as usize
@@ -408,8 +414,8 @@ impl Declared {
         self.holds_vars = to.holds_vars;
     }
 
-    /// Puts `name` in the set `names`, which is an id that no scope has. Only at the end of the file. A name that would share
-    /// its place with another is left out.
+    /// Adds `name` to the set `names`, which is identified by an id that no scope has. Only valid at the end of the
+    /// file. A name that would share its slot with another is skipped.
     fn add_to(&mut self, names: u32, name: Atom) {
         if name.0 <= self.mask
             && let Some(entry) = self.table.get_mut(name.0 as usize)
@@ -418,13 +424,13 @@ impl Declared {
         }
     }
 
-    /// Whether `add_to` has put `name` in the set `names`.
+    /// True if `add_to` added `name` to the set `names`.
     fn is_in(&self, names: u32, name: Atom) -> bool {
         name.0 <= self.mask && self.table.get(name.0 as usize) == Some(&stamp_of(names, 0))
     }
 
-    /// Whether it was asked about `name` before, or about one that shares its place. Only at the end of the file: `names` is an
-    /// id that no scope has.
+    /// True if this was already called for `name`, or for a name that shares its slot. Only valid at the end of the
+    /// file. `names` is an id that no scope has.
     fn exports_twice(&mut self, name: Atom, names: u32) -> bool {
         let Some(entry) = self.table.get_mut((name.0 & self.mask) as usize) else {
             return true;
@@ -432,15 +438,15 @@ impl Declared {
         std::mem::replace(entry, stamp_of(names, 0)) == stamp_of(names, 0)
     }
 
-    /// Whether a JavaScript module, which has been parsed, may export a name twice or one that it doesn't declare.
+    /// True if a fully parsed JavaScript module may export a name twice, or export a name it doesn't declare.
     #[inline(never)]
     fn has_odd_exports(&mut self, f: &FileBuilder) -> bool {
         let kind_of = |id: StmtId| f.stmts.get(id.idx()).map(|it| it.kind);
         let is_local = |it: &&Export| !it.has_module_specifier && !it.items.is_empty();
         let mut is_undeclared = false;
         if f.exports.iter().any(|it| is_local(&it)) {
-            // The names that a statement of the file declares in plain sight. Any other may be undeclared: one in a pattern, a
-            // `var` in a block.
+            // Collect the names that top-level statements plainly declare. Any other name counts as possibly
+            // undeclared, such as one bound in a pattern or a `var` in a block.
             self.last += 1;
             let at_top = self.last;
             for id in f.ids(f.body) {
@@ -510,7 +516,7 @@ impl Declared {
                     .into_iter()
                     .any(|it| match f.pats.get(it.pat.idx()).map(|it| it.kind) {
                         Some(PatKind::Ident(name)) => export(name),
-                        // What a pattern binds is not looked at here.
+                        // Names bound by a pattern aren't checked here.
                         _ => true,
                     })
             }
@@ -528,7 +534,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.declared.is_on = false;
     }
 
-    /// The scope that is open declares `name`.
+    /// Declares `name` in the current scope.
     #[inline(always)]
     pub(crate) fn declare(&mut self, name: Atom, kind: Declares) {
         if self.declared.is_on {
@@ -563,8 +569,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// The parts of a pattern are right before it in the list. So are the parameters of a function in one of its defaults,
-    /// which can only turn a "no" into a "maybe".
+    /// A pattern's parts are right before it in the list. So are the parameters of a function inside one of its default
+    /// values, which can only turn a "no" into a "maybe".
     #[inline(never)]
     fn declare_names_in(&mut self, pat: PatId, kind: Declares) {
         let Some(start) = self.f.pats.get(pat.idx()).map(|it| it.pos) else {
@@ -582,13 +588,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// A block, the head and body of a `for`, the cases of a `switch`, a `catch` clause, the members of an enum.
+    /// Opens the scope of a block, a `for` (head and body), a `switch`'s cases, a `catch` clause or an enum's members.
     #[inline(always)]
     pub(crate) fn open_scope(&mut self) {
         self.declared.unopened += 1;
     }
 
-    /// The body of a namespace.
+    /// Opens the scope of a namespace body.
     #[inline(always)]
     pub(crate) fn open_scope_for_vars(&mut self) {
         match self.declared.is_on {
@@ -600,13 +606,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn open_level_for_vars(&mut self) {
         if !(self.declared.open_levels() && self.declared.open_level(true)) {
-            // The scope is closed like the others that have no level.
+            // The scope will be closed like any other scope without a level.
             self.declared.unopened += 1;
             self.may_redeclare();
         }
     }
 
-    /// The function whose block comes next has these.
+    /// Records the parameters of the function whose block comes next.
     #[inline(always)]
     pub(crate) fn note_parameters(&mut self, types: Span<TypeParamId>, values: Span<ParamId>) {
         if self.declared.is_on {
@@ -614,7 +620,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// The block of a function or a static block. A function without one has nothing that its parameters could clash with.
+    /// Opens the scope of a function's block or a static block. In a function without a block, there's nothing its
+    /// parameters could clash with.
     #[inline(always)]
     pub(crate) fn open_function(&mut self) {
         match self.declared.is_on {
@@ -649,12 +656,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// At the end of a JavaScript file: `rare::ODD_EXPORT`.
+    /// Call at the end of a JavaScript file. Sets `rare::ODD_EXPORT`.
     pub(crate) fn note_odd_exports(&mut self) {
         if !self.options.dialect.oxc || !self.options.is_javascript || !self.f.has_module_syntax {
             return;
         }
-        // oxlint prints nothing but the parser's errors about a file that doesn't parse, and the tree has holes then.
+        // For a file that doesn't parse, oxlint only prints the parser's errors, and the tree has holes.
         if self.has_failed() || self.f.has_parse_diagnostics {
             return;
         }

@@ -1,13 +1,13 @@
-//! What a linter without a checker is told of a file: what each node is part of, the kind of each
-//! expression, and for each function what encloses it and where it returns and yields.
+//! Computes what a linter without a checker needs to know about a file: each node's parent, each
+//! expression's kind, and for each function its enclosing function and where it returns and yields.
 //!
-//! All of it is read off the lists of the file, in which a node comes after its parts and the parts
-//! are in source order. Nothing here calls itself, and nothing is declared or resolved.
+//! All of it comes from the file's node lists, where a node comes after its children and the
+//! children are in source order. Nothing here recurses, and nothing is declared or resolved.
 
 use super::*;
 use crate::util::SharedSort;
 
-/// Makes `b` what [`bind_for_lint_in`] says. `false`: the file takes the binder.
+/// Fills in `b` as [`bind_for_lint_in`] describes. Returns false if the file needs the binder.
 pub(super) fn fill_in<S: Storage>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
     if !parents::fill_in::<S, true>(f, b) || !functions(f, b) {
         return false;
@@ -21,7 +21,7 @@ pub(super) fn fill_in<S: Storage>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
     true
 }
 
-/// Where the function that `owner` owns ends.
+/// The end of the function that `owner` owns.
 #[inline]
 fn end_of<S: Storage>(f: &FileIn<S>, owner: FnOwner) -> u32 {
     match owner {
@@ -33,8 +33,8 @@ fn end_of<S: Storage>(f: &FileIn<S>, owner: FnOwner) -> u32 {
     }
 }
 
-/// From where on what is written is in the function: after its decorators and its name, which can be
-/// computed.
+/// The position from which the source text is inside the function. That's after its decorators and
+/// its name, which can be computed.
 #[inline]
 fn start_of<S: Storage>(f: &FileIn<S>, func: &Func) -> u32 {
     match (
@@ -47,19 +47,20 @@ fn start_of<S: Storage>(f: &FileIn<S>, func: &Func) -> u32 {
     }
 }
 
-/// `FnInfo::enclosing` and `FnInfo::returns`. `b.ids` has the `return` statements of the file.
+/// Fills in `FnInfo::enclosing` and `FnInfo::returns`. On entry, `b.ids` has the file's `return`
+/// statements.
 ///
-/// A function comes after the functions in it, so what is in its range and in no function so far is
-/// directly in it. `false`: the lists are not in that order.
+/// A function comes after the functions nested in it, so anything in its range that no earlier
+/// function has claimed is directly in it. Returns false if the lists aren't in that order.
 fn functions<S: Storage>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
     let (fns, ids) = (&mut b.fns[..], &mut b.ids);
-    // The functions that are in no function so far: the last, and each has the one before as its
-    // `enclosing`.
+    // A linked list of the functions that no function has claimed yet. This is the last one, and
+    // each one's `enclosing` temporarily points to the one before it.
     let mut open = FnId::NONE;
-    // The same for the `return` statements: `ids[..pending]`. Those at `ids[read..found]` end later
-    // than the functions so far.
+    // The unclaimed `return` statements are `ids[..pending]`. Those at `ids[read..found]` end after
+    // every function seen so far.
     let (mut pending, mut read, found) = (0, 0, ids.len());
-    // Where the last of them ends.
+    // The end of the last `return` statement read.
     let mut last_return = 0;
     for (i, func) in f.fns.iter().enumerate() {
         let (start, end) = (start_of(f, func), end_of(f, fns[i].owner));
@@ -113,7 +114,7 @@ fn functions<S: Storage>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
     true
 }
 
-/// A node on the way up from a `yield`.
+/// A node on the path up from a `yield`.
 #[derive(Copy, Clone)]
 enum Place {
     Expr(ExprId),
@@ -123,15 +124,15 @@ enum Place {
 
 enum Next {
     At(Place),
-    /// The function that has what is yielded below. `NONE`: none has.
+    /// The function that the `yield` belongs to, or `NONE` if there isn't one.
     Is(FnId),
 }
 
-/// `FnInfo::yields`: what `forEachYieldExpression` finds.
+/// Fills in `FnInfo::yields` with what `forEachYieldExpression` finds.
 struct Yields<'l, S: Storage> {
     f: &'l FileIn<S>,
     b: &'l mut BoundBuilder,
-    /// For each node that a way up has passed, where it has led.
+    /// For each node that a walk has passed through, the function where that walk ended.
     of_expr: Vec<Option<FnId>>,
     of_stmt: Vec<Option<FnId>>,
     of_pat: Vec<Option<FnId>>,
@@ -169,7 +170,8 @@ impl<'l, S: Storage> Yields<'l, S> {
         }
     }
 
-    /// Every node is passed once: whoever gets to it again takes what was found.
+    /// Walks up from `e` to its function. Each node is only walked through once, because a later
+    /// walk that reaches it reuses the cached result.
     fn function_of(&mut self, e: ExprId, passed: &mut Vec<Place>) -> FnId {
         let mut at = Place::Expr(e);
         let function = loop {
@@ -181,7 +183,7 @@ impl<'l, S: Storage> Yields<'l, S> {
             match known {
                 None => break FnId::NONE,
                 Some(&mut Some(function)) => break function,
-                // Until the way has ended.
+                // A placeholder until the walk ends.
                 Some(unknown) => *unknown = Some(FnId::NONE),
             }
             passed.push(at);
@@ -210,7 +212,7 @@ impl<'l, S: Storage> Yields<'l, S> {
             Some(&ClassOwner::Stmt(s)) => Next::At(Place::Stmt(s)),
             None => NOWHERE,
         };
-        // It descends into no type.
+        // `forEachYieldExpression` doesn't descend into types.
         let class_of = |m: MemberId| match b.member_owner.get(m.idx()) {
             Some(&MemberOwner::Class(c)) => class(c),
             _ => NOWHERE,
@@ -241,7 +243,7 @@ impl<'l, S: Storage> Yields<'l, S> {
                     Some(member) if member.func.is_none() => class_of(m),
                     _ => NOWHERE,
                 },
-                // Any other is a decorator of a parameter.
+                // Anything but the expression body is a parameter's decorator.
                 Parent::FnBody(func) => match f.fns.get(func.idx()).map(|it| it.body) {
                     Some(FnBody::Expr(body)) if body == e => Next::Is(func),
                     _ => NOWHERE,

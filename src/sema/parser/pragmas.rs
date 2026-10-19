@@ -7,8 +7,8 @@ use bun_sema::hir::{
 };
 
 /// `getCommentPragmas` and `processPragmasIntoFields`. `leading`: the comments before the first
-/// token. False: TypeScript reports an error about one of them. With `recovers` the error is among
-/// the diagnostics of the file instead.
+/// token. Returns false if TypeScript reports an error about one of them. With `recovers`, the
+/// error is added to the file's diagnostics instead.
 pub(crate) fn process_pragmas_into_fields(
     text: &[u8],
     leading: &[(u32, u32)],
@@ -73,8 +73,7 @@ fn single_line_pragma(
         b"resolution-mode",
         b"no-default-lib",
     ];
-    // `PragmaArgument.TextRange`, relative to the comment. The last of two arguments with the same
-    // name wins.
+    // `PragmaArgument.TextRange`, relative to the comment. If a name is repeated, the last argument wins.
     let mut args: [Option<(usize, usize)>; 5] = [None; 5];
     loop {
         pos = skip_blanks(text, pos);
@@ -133,7 +132,7 @@ fn single_line_pragma(
     true
 }
 
-/// `extractPragmas` for the `/* */` comment `text`. The last of two identical pragmas wins
+/// `extractPragmas` for the `/* */` comment `text`. If a pragma is repeated, the last one wins
 /// (`GetPragmaFromSourceFile`).
 fn multi_line_pragmas(
     text: &[u8],

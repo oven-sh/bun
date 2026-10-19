@@ -99,7 +99,7 @@ fn count_identifiers(hir: &hir::File) -> u32 {
     tags.filter(|&tag| tag == ExprTag::Ident).count() as u32
 }
 
-/// A copy of `list` in `arena`. An empty list takes no memory.
+/// Copies `list` into `arena`. An empty list allocates nothing.
 fn slice_in<'s, T: Copy>(list: &[T], arena: &'s Arena) -> &'s [T] {
     if list.is_empty() {
         return &[];
@@ -119,7 +119,7 @@ fn each_module<'s>(
     host.parallel(modules.len(), &|at| work(at, &mut modules[at].lock()));
 }
 
-/// `list` at its final size, in `arena`.
+/// Moves `list` into `arena` at its final size.
 fn few<T>(list: Vec<T>, arena: &Arena) -> ArenaFew<'_, T> {
     ArenaFew::from_iter_in(list.into_iter(), arena)
 }
@@ -129,8 +129,8 @@ pub struct Module<'s> {
     pub path: Path<'s>,
     pub hir: hir::File<'s>,
     pub bound: Bound<'s>,
-    /// Nonzero: `hir` and `bound` are shared with the other programs of the `Run`, and this number identifies them there.
-    /// 0: they belong to this program alone.
+    /// Nonzero: `hir` and `bound` are shared with the other programs of the `Run`, and this number
+    /// identifies them there. 0: they belong only to this program.
     pub shared_id: u32,
     /// Lives as long as `bound`. Whether an alias resolves to the symbol synthesized for it can
     /// only be decided from types.
@@ -155,11 +155,11 @@ pub struct Module<'s> {
     /// `getModeForUsageLocation` for a plain `import` in it: the mode it is resolved in. The syntax
     /// that is emitted for it is `Files::emit_syntax_of_import`.
     pub default_mode: ResolutionMode,
-    /// The `package.json` in `PackageJsonDirectory`, if it has no `PackageJsonType`. `NONE`
-    /// otherwise, and unless `module` is `node16` or `node18`: nothing else reads it.
+    /// The `package.json` in `PackageJsonDirectory`, if it has no `PackageJsonType`. `NONE` otherwise. Also `NONE`
+    /// unless `module` is `node16` or `node18`, because nothing else reads it.
     pub package_json_without_type: Atom,
     /// `GetNearestAncestorDirectoryWithPackageJson`: the directory of the `package.json` nearest to
-    /// the file. None: there is none.
+    /// the file. `NONE` if there isn't one.
     pub package_json_directory: Atom,
     /// The specifiers that resolve to JavaScript without type declarations, with the resolution
     /// mode in which they do.
@@ -174,15 +174,15 @@ pub struct Module<'s> {
     /// is found if the `exports` of the package are ignored.
     pub untyped_import_alternates: ArenaFew<'s, (Atom, ResolutionMode, Atom)>,
     /// `GetResolutionDiagnostic`, `needJsx`: the specifiers that resolve to a `.tsx` or `.jsx` file
-    /// while `jsx` is not set, with the mode they are resolved in and `ResolvedFileName`. The file
-    /// is not added to the program because of them (6142).
+    /// while `jsx` isn't set, with the mode they are resolved in and `ResolvedFileName`. The file
+    /// isn't added to the program because of them (6142).
     pub jsx_imports: ArenaFew<'s, (Atom, ResolutionMode, Atom)>,
     /// `GetResolutionDiagnostic`, `needResolveJsonModule`: the specifiers that resolve to a JSON
     /// file without `resolveJsonModule`, with the mode they are resolved in and
     /// `ResolvedFileName`. They resolve to no file (7042).
     pub json_imports: ArenaFew<'s, (Atom, ResolutionMode, Atom)>,
-    /// `ResolvedUsingTsExtension`: the specifiers that resolve through a TypeScript extension written in the specifier itself, with the
-    /// mode they are resolved in.
+    /// `ResolvedUsingTsExtension`: the specifiers that resolve through a TypeScript extension
+    /// written in the specifier itself, with the mode they are resolved in.
     pub ts_extension_imports: ArenaFew<'s, (Atom, ResolutionMode)>,
     /// `GetResolutionDiagnostic`: the specifiers that resolve to a `.d.css.ts` file or the like
     /// without `allowArbitraryExtensions`, with the mode they are resolved in. They resolve to no
@@ -193,14 +193,15 @@ pub struct Module<'s> {
     /// The relative specifiers without an extension, under Node-style module resolution, which
     /// requires one for `import`; and `getSuggestedImportExtension`, if a candidate file exists.
     pub extensionless_imports: ArenaFew<'s, (Atom, Option<&'static [u8]>)>,
-    /// `ResolvedFileName` for those of `imports` for which another file is in the program: for a
-    /// duplicate of a package file the copy that is kept, for a source of a referenced project its
-    /// declaration file. And for those for which it is not normalized.
+    /// `ResolvedFileName` for the `imports` that resolve to a different file than the one in the
+    /// program: a duplicate of a package file (the program has the copy that's kept) or a source of
+    /// a referenced project (the program has its declaration file). Also for the `imports` whose
+    /// `ResolvedFileName` isn't normalized.
     pub redirected_imports: ArenaFew<'s, (Atom, ResolutionMode, Atom)>,
-    /// Those of `imports` that resolve to a declaration file of a referenced project, for which its source is loaded.
+    /// The `imports` that resolve to a referenced project's declaration file, for which the source is loaded instead.
     pub project_reference_imports: ArenaFew<'s, (Atom, ResolutionMode)>,
     /// The specifiers that resolve to a source of a referenced project whose declaration file
-    /// is not in the program, with `OutputDts` and `ResolvedFileName`. They resolve to no file
+    /// isn't in the program, with `OutputDts` and `ResolvedFileName`. They resolve to no file
     /// (6305).
     pub unbuilt_imports: ArenaFew<'s, (Atom, ResolutionMode, Atom, Atom)>,
     /// `outputFileToProjectReferenceSource`: a name of the source of a referenced project whose
@@ -211,8 +212,8 @@ pub struct Module<'s> {
     pub redirect_for_resolution: Option<&'s Options>,
     /// The files it refers to, in order of reference: `/// <reference>`s, then imports.
     pub edges: &'s [FileId],
-    /// `IsSourceFileFromExternalLibrary`: `lowestDepth > 0`, every task for it ran below a step
-    /// into a `node_modules`.
+    /// `IsSourceFileFromExternalLibrary`: `lowestDepth > 0`, meaning every task for it was reached
+    /// through a step into a `node_modules`.
     pub is_from_external_library: bool,
     /// No file refers to it, and it adds no globally visible declarations. So only the task that
     /// checks it reads its HIR, which is freed at the end of that task (`Files::free_tree`), and
@@ -224,7 +225,7 @@ pub struct Module<'s> {
     /// imports it, directly or through other files, is a script or declares a global, an ambient module, a module
     /// augmentation or a UMD global.
     pub(crate) is_closed: bool,
-    /// Whether it contains a conditional or a mapped type node.
+    /// True if it contains a conditional or a mapped type node.
     has_conditional_or_mapped_type: bool,
     /// Result of `count_identifiers`, copied into `Files::sizes`.
     identifiers: u32,
@@ -253,15 +254,15 @@ impl<'s> std::ops::DerefMut for ModuleCell<'s> {
     }
 }
 
-/// Held while tasks on the threads that only read and tasks on the threads of the host wait for
-/// each other. Both pools are bounded and belong to the process. With two loads under way, the
-/// readers of one can occupy one pool and the processors of the other the other pool, and then each
-/// waits for tasks that never start. Whatever else runs on the pools ends without waiting.
+/// Held while tasks on the I/O threads and tasks on the host's threads wait for each other. Both
+/// pools are bounded and process-wide. With two loads in flight, one load's readers could fill one
+/// pool and the other load's processors the other pool, and then each would wait for tasks that
+/// never start. Everything else that runs on the pools finishes without waiting.
 static WAITS_ACROSS_POOLS: Guarded<()> = Guarded::new(());
 
-/// Reads the files at `paths` and passes the contents of each to `work`, on all the threads of the
-/// host. Where the host has threads that only read (`Host::io_pool`), they read, one file after
-/// the other, and the threads of the host never wait for the file system.
+/// Reads the files at `paths` and passes the contents of each to `work`, on all the host's threads.
+/// If the host has I/O threads (`Host::io_pool`), they do the reading, so the host's threads never
+/// wait for the file system.
 fn read_and_work(
     host: &dyn Host,
     paths: &[&[u8]],
@@ -338,7 +339,7 @@ fn read_and_work(
     });
 }
 
-/// What remains of a file whose HIR is freed. The text is retained for the report.
+/// Returns the stub that replaces a file's HIR when it's freed. The text is retained for the report.
 fn stub_of<'s>(hir: &mut hir::File<'s>) -> hir::File<'s> {
     hir::File {
         text: std::mem::take(&mut hir.text),
@@ -355,7 +356,7 @@ fn stub_of<'s>(hir: &mut hir::File<'s>) -> hir::File<'s> {
 }
 
 impl<'s> Module<'s> {
-    /// `FileName()`: the name of the file, as it is spelled where `collectFiles` first comes to it.
+    /// `FileName()`: the file's name, as spelled where `collectFiles` first reaches it.
     #[inline]
     pub fn file_name(&self) -> &'s [u8] {
         self.path.pretty
@@ -363,13 +364,13 @@ impl<'s> Module<'s> {
 }
 
 impl Module<'_> {
-    /// Whether its top-level declarations are local to it.
+    /// True if its top-level declarations are local to it.
     pub fn is_module(&self) -> bool {
         self.hir.has_module_syntax || self.is_commonjs()
     }
 
-    /// JavaScript that contains `require(..)`, `module.exports = ..` or `exports.a = ..`, and has
-    /// neither imports nor exports.
+    /// True for JavaScript that contains `require(..)`, `module.exports = ..` or `exports.a = ..`,
+    /// and has neither imports nor exports.
     pub fn is_commonjs(&self) -> bool {
         self.bound.commonjs_indicator.is_some()
     }
@@ -383,7 +384,7 @@ pub struct SymbolMap<'s> {
 }
 
 impl<'s> SymbolMap<'s> {
-    /// It grows only on the thread that `arena` belongs to.
+    /// Only the thread that owns `arena` may add to it.
     pub fn new_in(arena: &'s Arena) -> SymbolMap<'s> {
         SymbolMap {
             entries: ArenaVec::new_in(arena),
@@ -391,7 +392,7 @@ impl<'s> SymbolMap<'s> {
         }
     }
 
-    /// Allocated once, with room for as many entries as `symbols` announces.
+    /// Allocates once, using the size hint of `symbols`.
     pub fn from_iter_in(
         symbols: impl IntoIterator<Item = (Atom, Sym)>,
         arena: &'s Arena,
@@ -451,8 +452,8 @@ pub struct GlobalName {
     pub is_value: bool,
     /// A type or a namespace.
     pub is_type: bool,
-    /// A `var` or a `let` declares it in a file of the project itself. The libraries and the packages write `declare var` for
-    /// nearly everything, so there it says nothing.
+    /// A `var` or a `let` declares it in one of the project's own files. Libraries and packages
+    /// write `declare var` for nearly everything, so there it means nothing.
     pub is_writable: bool,
 }
 
@@ -466,8 +467,8 @@ pub enum SymbolTable {
     Globals,
 }
 
-/// What `resolveEntityName` asks about the symbols it comes to. The symbol tables answer as far as
-/// they can. The checker answers where types decide.
+/// The lookups `resolveEntityName` needs for the symbols it visits. The symbol tables implement
+/// them as far as they can, and the checker implements them where the answer depends on types.
 pub trait EntityNameLookup {
     /// `getSymbol`, as `lookup` of `Files::resolve_with`.
     fn get_symbol(
@@ -489,7 +490,7 @@ pub struct ByPath<'s> {
 }
 
 impl ByPath<'_> {
-    /// The file with this name, in every spelling that the file system takes for the same.
+    /// The file with this name, in any spelling that the file system treats as the same.
     pub fn get(&self, file_name: &[u8]) -> Option<FileId> {
         if self.is_case_sensitive {
             return self.files.get(file_name).copied();
@@ -504,13 +505,13 @@ impl ByPath<'_> {
     }
 }
 
-/// In place of a file of the program: the configuration file, for a related location in it.
+/// Used instead of a file of the program for a related location in the configuration file.
 pub const IN_CONFIGURATION: FileId = FileId(u32::MAX - 1);
 
 pub struct Files<'s> {
     session: &'s Session,
-    /// The arena of the thread that runs `load`. The tables below are in it, and only that thread
-    /// adds to them: every method that does takes `&mut self`.
+    /// The arena of the thread that runs `load`. The tables below live in it, and only that thread
+    /// adds to them, since every method that does takes `&mut self`.
     arena: &'s Arena,
     pub atoms: Interner<'s>,
     pub options: &'s Options,
@@ -524,9 +525,9 @@ pub struct Files<'s> {
     /// `undefinedSymbol`: a property symbol that no file declares. It is in `globals` unless a file
     /// declares the name there.
     pub undefined_symbol: Sym,
-    /// `unknownSymbol`: the target of an alias that cannot be resolved. It is in no table.
+    /// `unknownSymbol`: the target of an alias that can't be resolved. It isn't in any table.
     pub unknown_symbol: Sym,
-    /// `CommonSourceDirectory` without the `/` at its end, if an output path depends on it.
+    /// `CommonSourceDirectory` without its trailing `/`, if an output path depends on it.
     pub common_source_directory: Option<&'s [u8]>,
     /// `UseCaseSensitiveFileNames`
     pub is_case_sensitive: bool,
@@ -549,9 +550,10 @@ pub struct Files<'s> {
     /// `symbol.Declarations` of a transient symbol: the binder symbols that hold them, in merge
     /// order.
     merged_parts: ArenaHashMap<'s, Sym, ArenaVec<'s, Sym>>,
-    /// During the symbol merge: `redirect_name_to`.
+    /// Only used during the symbol merge: see `redirect_name_to`.
     stand_ins: ArenaVec<'s, (Sym, SymbolId)>,
-    /// The exports of a module or a namespace that could not merge with the export of the same name in another declaration.
+    /// The exports of a module or a namespace that couldn't merge with the export of the same name
+    /// in another declaration.
     refused_exports: ArenaHashSet<'s, Sym>,
     /// `symbol.Exports` of a transient symbol.
     merged_exports: ArenaHashMap<'s, Sym, SymbolMap<'s>>,
@@ -563,16 +565,16 @@ pub struct Files<'s> {
     pub augmentations_of_non_modules: ArenaVec<'s, Sym>,
     /// The files that declare one of `refused_merges`. Filled by `link`.
     files_of_refused_merges: ArenaHashSet<'s, FileId>,
-    /// The aliases `resolveAlias` found to be circular (2303) while `mergeSymbol` resolved the target of a merge. Their `aliasTarget`
-    /// stays `unknownSymbol`, even if the merge breaks the cycle.
+    /// The aliases `resolveAlias` found to be circular (2303) while `mergeSymbol` resolved the target of a merge. Their
+    /// `aliasTarget` stays `unknownSymbol`, even if the merge breaks the cycle.
     pub circular_at_merge: ArenaVec<'s, Sym>,
     /// The aliases that `mergeSymbol` resolved so that it could merge into their target, with the
     /// links they got then. `aliasTarget` has since become a part of a merged symbol
-    /// (`cloneSymbol`), and `resolveAlias` does not call `getMergedSymbol`.
+    /// (`cloneSymbol`), and `resolveAlias` doesn't call `getMergedSymbol`.
     resolved_at_merge: ArenaVec<'s, (Sym, AliasSymbolLinks)>,
     /// `moduleSymbolLinks` of the modules whose exports `getExportsOfModule` resolved during the
     /// symbol merge, for an alias that `mergeSymbol` resolved. `resolvedExports` is a copy of the
-    /// tables at that point: a name that a later augmentation adds to the module is not in it, and
+    /// tables at that point: a name that a later augmentation adds to the module isn't in it, and
     /// is 2305 for an import. At the end of the merge they move to `Memo::module_links`.
     module_links_at_merge: Guarded<ArenaVec<'s, (Sym, ModuleSymbolLinks<'s>)>>,
     /// The modules of `module_links_at_merge`.
@@ -582,8 +584,7 @@ pub struct Files<'s> {
     /// The modules with one of `ModuleSymbolLinks::export_collisions` in another file. Filled by
     /// `link`.
     pub modules_with_nested_export_collisions: &'s [Sym],
-    /// By file and identifier, the runs for one identifier in the order in which they began. Filled
-    /// by `link`.
+    /// Sorted by file and identifier. The runs for one identifier are in the order they began. Filled by `link`.
     failed_lookups: &'s [FailedLookup<'s>],
     /// `symbol.Parent` of a transient symbol, where `mergeSymbolTable` has set it to a symbol of
     /// another file.
@@ -596,7 +597,7 @@ pub struct Files<'s> {
     alias_symbol_links: ByNodeIndirect<Sym, AliasSymbolLinks, Frozen, &'s Session>,
     /// `link` has run: every table is filled, and nothing is mutated from here on.
     is_linked: bool,
-    /// For `module_links` of a symbol that is not a module.
+    /// For `module_links` of a symbol that isn't a module.
     no_module_links: ModuleSymbolLinks<'s>,
     /// The symbol merge is done: symbols no longer change.
     is_merged: bool,
@@ -608,7 +609,7 @@ pub struct Files<'s> {
     pub order: &'s [FileId],
     /// The index of each file in `order`, indexed by `FileId`.
     ranks: &'s [u32],
-    /// Of the import graph: `edges` and `imports` of every file in `order`.
+    /// The components of the import graph, which is the `edges` and `imports` of every file in `order`.
     pub components: Components<'s>,
     /// `global_type` of every name below `known::sym_iterator`, indexed by atom number.
     global_types: &'s [GlobalType],
@@ -618,7 +619,7 @@ pub struct Files<'s> {
     /// Errors in what the options refer to, not attributable to any file.
     program_errors: &'s [Problem],
     /// `GetIncludeProcessorDiagnostics`: errors about the inclusion of a file in the program,
-    /// reported at the reference in another file: that file and the span.
+    /// reported at the reference in another file. Each has that file and the span.
     include_errors: &'s [(FileId, u32, u32, Problem)],
     /// The `package.json` of each `node_modules` package that contains a file of the program, and
     /// the one in `Module::package_json_directory` of each file, keyed by its directory.
@@ -634,17 +635,17 @@ pub struct Files<'s> {
     /// (identifier expressions, type nodes) of each file, indexed by `FileId`. Used to estimate how much a file costs
     /// to check.
     pub sizes: &'s [(u32, u32)],
-    /// What `traceResolution` logs, in order.
+    /// The `traceResolution` log, in order.
     pub resolution_trace: &'s [DiagAndArgs],
-    /// What `Included` has of `load`, for `explain_files`.
+    /// The fields of `Included` that come from `load`, saved for `explain_files`.
     starts: &'s [FileId],
     libs_end: usize,
     roots_end: usize,
     root_of_start: &'s [u32],
-    /// `redirectFilesByPath`, in the order in which `collectFiles` comes to them: the name of a copy
-    /// of a package file, and the copy that is in the program.
+    /// `redirectFilesByPath`, in the order `collectFiles` reaches them: the name of a copy of a
+    /// package file, and the copy that's in the program.
     package_copies: &'s [(&'s [u8], FileId)],
-    /// `Included::explained_in_diagnostics` of the errors that `load` has made.
+    /// `Included::explained_in_diagnostics` for the errors that `load` produced.
     explained_in_diagnostics: &'s [Vec<u8>],
 }
 
@@ -653,14 +654,14 @@ pub struct Files<'s> {
 struct GlobalType {
     /// `getGlobalTypeSymbol`
     symbol: Option<Sym>,
-    /// The number of its type parameters. `u8::MAX`: it is not a class or interface.
+    /// The number of its type parameters. `u8::MAX`: it isn't a class or interface.
     arity: u8,
 }
 
 /// Results derived from the symbol merge. `whole` is filled at the end of the merge, the others by
 /// `link`. Until the merge has ended the tables have zero capacity, so nothing is stored.
 struct Memo<'s> {
-    /// From each symbol that is `MERGED` to the symbol it is a part of, which may be itself.
+    /// Maps each `MERGED` symbol to the symbol it's a part of, which may be itself.
     whole: ByNode<Sym, Option<Sym>, Frozen, &'s Session>,
     /// `symbol_flags` of an alias, with `FLAGS_KNOWN` set.
     symbol_flags: ByNode<Sym, RawWord, Frozen, &'s Session>,
@@ -678,27 +679,27 @@ pub struct ExportCollision {
     /// The `export *` that exported it first. `specifierText` is its specifier.
     pub first: (FileId, StmtId),
     pub name: Atom,
-    /// `targetSymbol` and `sourceSymbol`, where only types tell whether `resolveSymbol` of both is
-    /// one symbol (`Resolve::may_need_types_to_resolve`). If it is, there is no error.
+    /// `targetSymbol` and `sourceSymbol`, set when only types can tell whether both `resolveSymbol`
+    /// to the same symbol (`Resolve::may_need_types_to_resolve`). If they do, there's no error.
     pub symbols: Option<(Sym, Sym)>,
 }
 
-/// `ModuleSymbolLinks`. In the arena of the thread that computes them.
+/// `ModuleSymbolLinks`. Allocated in the arena of the thread that computes them.
 pub struct ModuleSymbolLinks<'s> {
-    /// `getMergedSymbol` of each entry of `resolvedExports`. During the symbol merge, the entries.
+    /// `getMergedSymbol` of each entry of `resolvedExports`. During the symbol merge, the entries themselves.
     pub resolved_exports: SymbolMap<'s>,
-    /// The entries of `resolvedExports` that are not their own merged symbol.
+    /// The entries of `resolvedExports` that aren't their own merged symbol.
     unmerged_exports: &'s [(Atom, Sym)],
     /// `typeOnlyExportStarMap`: the `export type *`.
     pub type_only_export_star_map: ArenaHashMap<'s, Atom, (FileId, StmtId)>,
-    /// The errors `getExportsOfModuleWorker` reports, for the `export *` declarations of the module
-    /// and of every module that `visit` comes to from there. A module that has been visited exports
-    /// nothing the second time, so these are not the errors of that module by itself.
+    /// The errors `getExportsOfModuleWorker` reports, for the `export *` declarations of the module and of every module
+    /// that `visit` reaches from there. A module that was already visited exports nothing the second time, so these
+    /// aren't the errors that module would get on its own.
     pub export_collisions: &'s [ExportCollision],
 }
 
 impl<'s> ModuleSymbolLinks<'s> {
-    /// Of a symbol that exports nothing. It allocates nothing.
+    /// The links of a symbol that exports nothing. Doesn't allocate.
     fn empty_in(arena: &'s Arena) -> ModuleSymbolLinks<'s> {
         ModuleSymbolLinks {
             resolved_exports: SymbolMap::new_in(arena),
@@ -724,7 +725,7 @@ struct ExportsVisit<'s> {
     arena: &'s Arena,
     visited_symbols: Vec<Sym>,
     non_type_only_names: FxHashSet<Atom>,
-    /// It becomes `ModuleSymbolLinks::type_only_export_star_map`.
+    /// Becomes `ModuleSymbolLinks::type_only_export_star_map`.
     type_only_export_star_map: ArenaHashMap<'s, Atom, (FileId, StmtId)>,
     export_collisions: Vec<ExportCollision>,
 }
@@ -750,7 +751,7 @@ struct Exports<'a, 's> {
     /// As produced by the binder.
     own: std::slice::Iter<'a, (Atom, SymbolId)>,
     merged: std::slice::Iter<'a, (Atom, Sym)>,
-    /// Otherwise `getMergedSymbol` of each.
+    /// Yields the symbols as they are in the table. Otherwise yields `getMergedSymbol` of each.
     is_as_in_table: bool,
 }
 
@@ -781,13 +782,12 @@ impl Iterator for Exports<'_, '_> {
 
 impl ExactSizeIterator for Exports<'_, '_> {}
 
-/// What becomes of an entry of `resolutionsInFile` that is resolved.
+/// A resolved entry of `resolutionsInFile`, and what the loader does with it.
 #[derive(Copy, Clone)]
 struct Resolution<'r> {
     spec: Atom,
     mode: ResolutionMode,
-    /// What `parseTask.load` reads for `ResolvedFileName`: `getParseFileRedirect` of it, or else
-    /// the file itself.
+    /// The file `parseTask.load` reads for `ResolvedFileName`: `getParseFileRedirect` of it, or else the file itself.
     path: &'r [u8],
     /// `path`'s number from `load_ahead`, or `NOT_NUMBERED`.
     number: u32,
@@ -797,17 +797,16 @@ struct Resolution<'r> {
     increases_depth: bool,
     /// `packageId` of the task for `path`. `redirectedParseTask` has none.
     package_id: Option<PackageId<'r>>,
-    /// `resolveExternalModule` asks `GetSourceFileForResolvedModule` for it. Otherwise it resolves
+    /// `resolveExternalModule` calls `GetSourceFileForResolvedModule` for it. Otherwise it resolves
     /// to no file, even if the file is in the program.
     is_importable: bool,
-    /// The error of `parseTask.load` for an extension that the program does not support. The file
-    /// is not read.
+    /// The error of `parseTask.load` for an extension that the program doesn't support. The file isn't read.
     unsupported_extension: Option<UnsupportedExtension>,
 }
 
-/// `Resolution::number` of a path that `load_ahead` didn't number. It numbers each distinct path it sees, so equal
-/// numbers mean identical bytes. The loader threads compare paths anyway to find new files. The single thread that
-/// assigns file ids then only has to compare numbers.
+/// `Resolution::number` of a path that `load_ahead` didn't number. It numbers each distinct path it
+/// encounters, so equal numbers mean identical bytes. The loader threads compare paths anyway to
+/// find new files. The single thread that assigns file ids then only has to compare numbers.
 const NOT_NUMBERED: u32 = u32::MAX;
 
 /// Data that `Files::load` records about a module while finishing it. A list of these is small enough to walk on one
@@ -850,16 +849,15 @@ struct UnsupportedExtension {
     span: Option<(u32, u32)>,
 }
 
-/// What `parse_and_bind` makes of a file of a package. It is the same for every copy of the file
-/// that has the same text.
+/// `parse_and_bind`'s result for a package file. It's the same for every copy of the file that has the same text.
 struct Parse<'s> {
     hir: hir::File<'s>,
     bound: Bound<'s>,
-    /// `Module::shared_id`. If it is not 0, `rename_private_names` has already run.
+    /// `Module::shared_id`. If it isn't 0, `rename_private_names` has already run.
     shared_id: u32,
 }
 
-/// All that `parse_and_bind` is given for a file besides its path and its text.
+/// Everything `parse_and_bind` takes for a file besides its path and its text.
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct ParseKey {
     options: ParseOptions,
@@ -870,22 +868,22 @@ struct ParseKey {
     origin: usize,
 }
 
-/// What the programs of one request have in common: the names, and each file parsed and bound once. A file is the same
-/// for two programs if its path and its `ParseKey` are. It is read once: a file does not change during a request.
-/// The programs may run at the same time.
+/// State shared by the programs of one request: the names, and each file parsed and bound once. Two
+/// programs share a file if its path and its `ParseKey` are equal. It's read once, since a file
+/// doesn't change during a request. The programs may run concurrently.
 pub struct Run<'u> {
     session: &'u Session,
     /// `Interner::in_common`
     atoms: Interner<'u>,
-    /// By path. Last, whether it could not be read: see `Host::read_source`.
+    /// By path. The last element is true if the file couldn't be read: see `Host::read_source`.
     parsed: ShardedMap<Vec<u8>, Guarded<Vec<(ParseKey, &'u Parse<'u>, bool)>>>,
-    /// The paths (`tspath.Path`) whose text is not what is on the disk. They are parsed for each program.
+    /// The paths (`tspath.Path`) whose text differs from what's on disk. They're parsed separately for each program.
     provided: FxHashSet<Vec<u8>>,
-    /// Every other file is parsed for each program, and freed with it.
+    /// Only declaration files are shared. Every other file is parsed for each program and freed with it.
     only_declaration_files: bool,
     parses: AtomicUsize,
     bytes: AtomicUsize,
-    /// The first of `Host::origin` that no host has.
+    /// The first `Host::origin` number that isn't taken.
     origins: AtomicUsize,
 }
 
@@ -903,7 +901,7 @@ impl<'u> Run<'u> {
         }
     }
 
-    /// Of the files, its programs have only the declaration files in common.
+    /// Makes the programs share only declaration files.
     pub fn of_declaration_files(self) -> Run<'u> {
         Run {
             only_declaration_files: true,
@@ -911,12 +909,12 @@ impl<'u> Run<'u> {
         }
     }
 
-    /// The first of `count` numbers for `Host::origin` that no other host of the request has.
+    /// Reserves `count` numbers for `Host::origin` that no other host of the request uses, and returns the first.
     pub fn origins(&self, count: usize) -> usize {
         self.origins.fetch_add(count, Ordering::Relaxed)
     }
 
-    /// The bytes that what is parsed takes.
+    /// Bytes allocated for the parsed files.
     pub fn bytes(&self) -> usize {
         self.bytes.load(Ordering::Relaxed)
     }
@@ -926,7 +924,7 @@ impl<'u> Run<'u> {
         self.parses.load(Ordering::Relaxed)
     }
 
-    /// Whether the file at `path` is the same for all programs.
+    /// True if the file at `path` is shared by all programs.
     fn has_file(&self, host: &dyn Host, path: &[u8]) -> bool {
         let is_shared = !self.only_declaration_files
             || crate::resolve::is_declaration_file_name(path) && host.script_kind(path).is_none();
@@ -935,7 +933,7 @@ impl<'u> Run<'u> {
                 || !(self.provided).contains(&*to_path(path, host.is_case_sensitive())))
     }
 
-    /// Whether `parse` may answer for `path` without its text.
+    /// True if `parse` may be able to answer for `path` without its text.
     fn has(&self, path: &[u8]) -> bool {
         self.parsed.get_ref(path).is_some()
     }
@@ -953,10 +951,10 @@ impl<'u> Run<'u> {
                 .parsed
                 .insert_ref(path.to_vec(), Guarded::new(Vec::new())),
         };
-        // Until the file is parsed: a program that comes to it at the same time waits for that.
+        // Held until the file is parsed, so a program that reaches it at the same time waits.
         let mut of_path = of_path.lock();
         if let Some(found) = of_path.iter().find(|it| it.0 == key) {
-            // Each program says so.
+            // Each program has to report the unreadable file, so this host's read has to fail too.
             if found.2 && text.is_none() && self.only_declaration_files {
                 host.read_source(path);
             }
@@ -979,7 +977,7 @@ impl<'u> Run<'u> {
             text,
         );
         rename_private_names(&mut hir, &bound, &self.atoms, path);
-        // Nothing drops it.
+        // Nothing ever drops the `Parse`.
         keep_list(self.session, &mut hir.text);
         keep_list(self.session, &mut hir.diagnostics);
         keep_list(self.session, &mut hir.jsdoc_member_comments);
@@ -1008,7 +1006,7 @@ fn keep_list<'s, T: Clone + Send + Sync + 'static>(session: &'s Session, list: &
 
 /// `'r`: the paths belong to the `Resolver`.
 struct Loaded<'s, 'r> {
-    /// Without `hir` and `bound` if `parse` has them. It is large, and goes from list to list.
+    /// Without `hir` and `bound` if `parse` has them. Boxed because it's large and moves from list to list.
     module: ArenaBox<'s, Module<'s>>,
     /// Argument for `Ahead::take_parse`: the `Parse` it shares with the other copies of the file.
     parse: Option<u32>,
@@ -1017,9 +1015,8 @@ struct Loaded<'s, 'r> {
     references: Vec<(&'r [u8], bool, bool, Option<PackageId<'r>>)>,
     /// `Resolution::number` for each of `references`. Empty if they aren't numbered.
     reference_numbers: Vec<u32>,
-    /// The `/// <reference lib>` to a library that is replaced by a file with an extension that
-    /// the program does not support: its span, the file, and the error of `parseTask.load`. The
-    /// file is not read.
+    /// The `/// <reference lib>` to a library that's replaced by a file with an extension that the program doesn't
+    /// support: its span, the file, and the error of `parseTask.load`. The file isn't read.
     unsupported_libs: Vec<(u32, u32, &'r [u8], u32)>,
     /// `typeResolutionsTrace`
     type_resolutions_trace: Vec<DiagAndArgs>,
@@ -1083,8 +1080,8 @@ impl AheadState<'_, '_> {
     }
 }
 
-/// The files that `Files::load_ahead` loads. One thread consumes them in the order in which they refer to each other.
-/// It can start before the last file is loaded.
+/// The files that `Files::load_ahead` loads. One thread consumes them in the order in which they refer
+/// to each other. It can start before the last file is loaded.
 ///
 /// That thread gets the same answers no matter when it asks. A loaded file stays until it's taken, and a file is only
 /// reported as not loaded once all files are loaded.
@@ -1143,8 +1140,8 @@ impl<'s, 'r> Ahead<'s, 'r> {
         }
     }
 
-    /// Blocks until the file at `path` is loaded, then removes and returns it. Returns `None` if `load_ahead` doesn't
-    /// load that file, or loaded it with a different `is_lib`.
+    /// Blocks until the file at `path` is loaded, then removes and returns it. Returns `None` if
+    /// `load_ahead` doesn't load that file, or loaded it with a different `is_lib`.
     fn take(&self, path: &[u8], is_lib: bool) -> Option<Box<Loaded<'s, 'r>>> {
         let mut state = self.state.lock();
         loop {
@@ -1197,16 +1194,15 @@ struct FoundFile<'s> {
     is_lib: bool,
     /// `parseTaskData.packageId`, of `first`, as an index into `Found::kept`.
     package: Option<u32>,
-    /// `taskDataByPath`: the first task for the file, by whichever spelling of its name.
+    /// `taskDataByPath`: the first task for the file, under any spelling of its name.
     first: FileId,
-    /// The task that loads it reads it. Otherwise it is read if `collectFiles` wants it.
+    /// The task that loads it reads it. Otherwise it's only read if `collectFiles` needs it.
     is_read: bool,
     /// `Loaded::parse`, until `collectFiles` has given the module its `hir` and `bound`.
     parse: Option<u32>,
-    /// `parseTask.loaded`, of `first`: a task for the file has run that was not elided.
+    /// `parseTask.loaded`, of `first`: a task for the file has run that wasn't elided.
     is_loaded: bool,
-    /// `seen` of `collectFiles`, of `first`: the task that it came to first, whose spelling is the
-    /// name of the file.
+    /// `seen` of `collectFiles`, of `first`: the task it reached first, whose spelling becomes the file's name.
     named: Option<FileId>,
 }
 
@@ -1222,20 +1218,20 @@ struct SubTask {
     package: Option<u32>,
 }
 
-/// What `Files::load` knows about the files it has found, besides the files themselves.
+/// The bookkeeping of `Files::load` about the files it has found, besides the files themselves.
 #[derive(Default)]
 struct Found<'s> {
     /// By `FileId`.
     files: Vec<FoundFile<'s>>,
     /// The index in `kept` for a `PackageId`.
     by_package_id: FxHashMap<Vec<u8>, u32>,
-    /// `packageIdToSourceFile`: the copy of a package file that `collectFiles` came to first.
+    /// `packageIdToSourceFile`: the copy of a package file that `collectFiles` reached first.
     kept: Vec<Option<FileId>>,
 }
 
 impl Found<'_> {
-    /// `package_id` of a task for `file`, as an index into `kept`. `None` as well if the file has
-    /// an id, which it keeps.
+    /// `package_id` of a task for `file`, as an index into `kept`. Also `None` if the file already
+    /// has an id, which it keeps.
     fn package_of_task(&mut self, file: FileId, package_id: Option<PackageId>) -> Option<u32> {
         let data = self.files[file.idx()].first;
         let id = package_id.filter(|_| self.files[data.idx()].package.is_none())?;
@@ -1250,14 +1246,14 @@ impl Found<'_> {
     }
 }
 
-/// `packageJsonInfoCache`, as far as `traceResolution` shows it: a lookup of a `package.json` that
-/// is not the first is logged as such. The cache fills in the order in which the tasks run, which
-/// is not the order in which `collectFiles` logs.
+/// `packageJsonInfoCache`, as far as `traceResolution` exposes it: a repeated lookup of a
+/// `package.json` is logged as a cache hit. The cache fills in the order the tasks run, which isn't
+/// the order `collectFiles` logs in.
 #[derive(Default)]
 struct PackageJsonInfoCache {
     /// By `tspath.Path`.
     cached: FxHashSet<Vec<u8>>,
-    /// The directories that `GetPackageScopeForPath` has started from or passed.
+    /// The directories that `GetPackageScopeForPath` has started from or walked through.
     with_scope: FxHashSet<Vec<u8>>,
 }
 
@@ -1278,7 +1274,7 @@ impl PackageJsonInfoCache {
         }
     }
 
-    /// `getPackageJsonInfo`, for each lookup in `traces`, which log all of them as repeated.
+    /// `getPackageJsonInfo` for each lookup in `traces`, where all of them are logged as cache hits.
     fn get_package_json_infos(&mut self, host: &dyn Host, traces: &mut [DiagAndArgs]) {
         for trace in traces {
             let first = match trace.code {
@@ -1286,7 +1282,7 @@ impl PackageJsonInfoCache {
                 6240 => 6096,
                 _ => continue,
             };
-            // A candidate in a type root is not normalized.
+            // A candidate in a type root isn't normalized.
             let normalized = join(b"/", &trace.args[0]);
             let path = to_path(&normalized, host.is_case_sensitive());
             if self.cached.insert(path.into_owned()) {
@@ -1299,7 +1295,7 @@ impl PackageJsonInfoCache {
 /// `typeOnlyDeclaration`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TypeOnlyDeclaration {
-    /// This declaration, in this file, of this alias.
+    /// The alias, the file, and the alias's declaration in that file.
     Alias(Sym, FileId, Decl),
     /// The `export type *` through which a name is exported.
     ExportStar(FileId, StmtId),
@@ -1330,8 +1326,8 @@ impl TypeOnlyDeclaration {
     }
 }
 
-/// `mergeSymbol(target, source)` for two symbols that exclude each other, with what it reads of
-/// them. It reports at once. Merges that follow add flags and declarations to either symbol.
+/// A `mergeSymbol(target, source)` call for two symbols that exclude each other, with a snapshot of what it reads from
+/// them. It reports immediately, and later merges add flags and declarations to either symbol.
 #[derive(Copy, Clone, Debug)]
 pub struct RefusedMerge<'s> {
     pub target: Sym,
@@ -1351,16 +1347,16 @@ pub struct AliasSymbolLinks {
     /// symbol of the table, and `resolveAnonymousTypeMembers` reads the merged symbol of that.
     /// Not merged in links from the symbol merge (`Files::resolved_at_merge`).
     pub immediate_target: Option<Sym>,
-    /// `aliasTarget`. `None`: `unknownSymbol`. For `import { a }` and `export { a } from` it is the
-    /// symbol as the table of the module has it (`Resolve::module_export_in_table`), of which
-    /// `resolveQualifiedName` reads the exports and `getDeclaredTypeOfSymbol` the declarations.
-    /// After another alias it is a merged symbol (`resolveIndirectionAlias`).
+    /// `aliasTarget`. `None`: `unknownSymbol`. For `import { a }` and `export { a } from` it's the
+    /// symbol as stored in the module's table (`Resolve::module_export_in_table`).
+    /// `resolveQualifiedName` reads that symbol's exports and `getDeclaredTypeOfSymbol` its
+    /// declarations. After another alias it's a merged symbol (`resolveIndirectionAlias`).
     pub alias_target: Option<Sym>,
     pub type_only_declaration: Option<TypeOnlyDeclaration>,
     /// `resolveAlias` reports 2303 at the declaration of the alias.
     pub is_circular: bool,
-    /// The stack ended while the alias was in progress, where Go's grows. It `is_circular`, as it
-    /// may be, and its file is reported as not fully checked in place of 2303.
+    /// The stack ran out while the alias was in progress, where Go's would grow. It's marked `is_circular`, which it
+    /// may be, and its file is reported as not fully checked instead of 2303.
     pub ran_out_of_stack: bool,
 }
 
@@ -1377,9 +1373,9 @@ pub struct FailedLookup<'s> {
 /// The functions that resolve names, exports and aliases. Each of them can call `alias_links`, and
 /// `alias_links` can call each of them.
 ///
-/// They are written once, as provided methods, and have two implementations. `AliasResolver`
-/// computes: it is for the merge and the link step. `Linked` reads: after the link step every alias
-/// and every module has its links, and `Files` is immutable.
+/// They're written once, as provided methods, and the trait has two implementations.
+/// `AliasResolver` computes the links, for the merge and the link step. `Linked` only reads them:
+/// after the link step every alias and every module has its links, and `Files` is immutable.
 trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     /// `resolveAlias`, with everything it stores in `aliasSymbolLinks`.
     fn alias_links(&self, sym: Sym) -> AliasSymbolLinks;
@@ -1390,14 +1386,14 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     /// The arena of the calling thread, for the links that are computed.
     fn arena(&self) -> &'s Arena;
 
-    /// `moduleSymbolLinks.Get(module)`, filled in by `getExportsOfModule`. `read` resolves nothing.
+    /// `moduleSymbolLinks.Get(module)`, filled in by `getExportsOfModule`. `read` must not resolve anything.
     fn with_module_links<R>(
         &self,
         module: Sym,
         read: impl FnOnce(&ModuleSymbolLinks<'s>) -> R,
     ) -> R;
 
-    /// Sets `ObjectFlagsMembersResolved` of the type of `symbol`. Returns whether it was not set.
+    /// Sets `ObjectFlagsMembersResolved` of the type of `symbol`. Returns true if it wasn't set before.
     fn set_members_resolved(&self, symbol: Sym) -> bool;
 
     /// `findResolutionCycleStartIndex(sym, TypeSystemPropertyNameAliasTarget) >= 0`
@@ -1409,10 +1405,10 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     /// Sets `resolvedSymbol` of the identifier `e` of `file`.
     fn set_resolved_symbol(&self, file: FileId, e: ExprId);
 
-    /// A `FailedLookup` for the identifier `e` of `file` begins.
+    /// Records that a `FailedLookup` for the identifier `e` of `file` begins.
     fn note_failed_lookup(&self, file: FileId, e: ExprId);
 
-    /// `getSymbol`: whether `sym`, found under a name, matches the requested `meaning`. An alias
+    /// `getSymbol`: true if `sym`, found under a name, matches the requested `meaning`. An alias
     /// has the combined meanings of itself and of every symbol on the chain to its target.
     fn means(&self, sym: Sym, meaning: SymFlags) -> bool {
         if let Some(known) = self.has_meaning_by_own_flags(sym, meaning) {
@@ -1423,7 +1419,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     }
 
     /// `getSymbolFlags`: the combined flags of `sym` and of every symbol on the chain to its
-    /// target. All flags if it cannot be resolved.
+    /// target. All flags if it can't be resolved.
     #[inline]
     fn symbol_flags(&self, sym: Sym) -> SymFlags {
         match self.stored_symbol_flags(sym) {
@@ -1470,8 +1466,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     }
 
     /// `getExternalModuleMember`: a name imported from `export = value` may be a property of the
-    /// value, which only the type of the value determines. Whether `sym`, or an alias on the chain
-    /// to its target, is such an import.
+    /// value, which only the type of the value determines. Returns true if `sym`, or an alias on
+    /// the chain to its target, is such an import.
     fn may_be_property_of_export_equals(&self, mut sym: Sym) -> bool {
         for _ in 0..32 {
             if !self.flags(sym).contains(SymFlags::ALIAS) {
@@ -1488,9 +1484,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         false
     }
 
-    /// Whether `getTargetOfAliasDeclaration` of `sym` goes through `getExternalModuleMember` for a
-    /// module that has `export =`, and `symbolFromVariable` may be a symbol that is not in the
-    /// tables.
+    /// True if `getTargetOfAliasDeclaration` of `sym` goes through `getExternalModuleMember` for a module that has
+    /// `export =`, and `symbolFromVariable` may be a symbol that isn't in the tables.
     fn is_named_import_from_export_equals(&self, sym: Sym) -> bool {
         self.export_equals_module_of_named_import(sym)
             .is_some_and(|m| {
@@ -1567,7 +1562,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     /// `getTargetOfModuleDefault`: the target of `default` of `module` for an import or export
     /// declaration in `file`. A synthetic default takes precedence over a declared one.
     fn default_of_module(&self, file: FileId, module: Sym) -> Option<Sym> {
-        // `resolveExportByName`: only the exports the module declares itself. With `export =` it is a property of the value instead.
+        // `resolveExportByName`: only the exports the module declares itself. With `export =` it's
+        // a property of the value instead.
         if self.is_commonjs_import_of_esm_file(file, module)
             && self.export(module, known::export_equals).is_none()
             && let Some(name) = self.module_exports_name()
@@ -1603,10 +1599,9 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         })
     }
 
-    /// `getExportsOfModule(module)[name]`. The entry is not its own merged symbol if a module
-    /// augmentation has reached the declaration through a module that re-exports it:
-    /// `mergeSymbol` clones the target of the alias, and the clone is in the table of the
-    /// augmented module alone.
+    /// `getExportsOfModule(module)[name]`. The entry isn't its own merged symbol if a module
+    /// augmentation has reached the declaration through a module that re-exports it: `mergeSymbol`
+    /// clones the target of the alias, and only the augmented module's table has the clone.
     fn module_export_in_table(&self, module: Sym, name: Atom) -> Option<Sym> {
         let is_resolved_at_merge =
             self.keeps_module_links || self.modules_resolved_at_merge.contains(&module);
@@ -1623,7 +1618,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         self.with_exports_of_module(module, |links| links.export_in_table(name))
     }
 
-    /// `getExportsOfModule(module)`, also while symbols are merged. `read` resolves nothing.
+    /// `getExportsOfModule(module)`, also while symbols are merged. `read` must not resolve anything.
     fn with_exports_of_module<R>(
         &self,
         module: Sym,
@@ -1642,7 +1637,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                 return read(&links.1);
             }
         }
-        // Not under the lock: it resolves aliases, which leads back here.
+        // Not under the lock, because it resolves aliases, which can lead back here.
         let links = self.exports_of_module_worker(module);
         let result = read(&links);
         let mut stored = self.module_links_at_merge.lock();
@@ -1796,10 +1791,10 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         }
     }
 
-    /// Whether `resolveSymbol(sym)` may be a symbol that the tables do not have, which
-    /// `Checker::resolve_alias` finds from types: for `sym` or an alias on the chain to its target,
-    /// `resolveESModuleSymbol` or `combineValueAndTypeSymbols` may create one, or the target may be
-    /// a property.
+    /// True if `resolveSymbol(sym)` may be a symbol that isn't in the tables, which
+    /// `Checker::resolve_alias` finds from types. That's the case if, for `sym` or an alias on the
+    /// chain to its target, `resolveESModuleSymbol` or `combineValueAndTypeSymbols` may create one,
+    /// or the target may be a property.
     fn may_need_types_to_resolve(&self, mut sym: Sym) -> bool {
         for _ in 0..32 {
             if !self.is_non_local_alias(sym) {
@@ -1952,8 +1947,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     }
 
     /// `getResolvedSymbol` of the identifier `e` in `scope` of `file`, limited to its side effects
-    /// on aliases. While the name is looked up it has no `resolvedSymbol`: an alias that the lookup
-    /// resolves can come here again.
+    /// on aliases. It has no `resolvedSymbol` while the name is being looked up, so an alias that
+    /// the lookup resolves can get here again.
     fn get_resolved_symbol(&self, file: FileId, e: ExprId, scope: ScopeId, name: Atom) {
         if self.has_resolved_symbol(file, e) {
             return;
@@ -1967,8 +1962,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     }
 
     /// `onFailedToResolveSymbol`, limited to its side effects on aliases: `getSymbol` resolves an
-    /// alias of that name that has not the meaning itself, and `getSpellingSuggestionForName`
-    /// every alias it inspects.
+    /// alias of that name that doesn't have the meaning itself, and `getSpellingSuggestionForName`
+    /// resolves every alias it inspects.
     fn on_failed_to_resolve_symbol(
         &self,
         file: FileId,
@@ -1981,8 +1976,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         if meaning == SymFlags::NAMESPACE && self.resolve_name(file, scope, name, types).is_some() {
             return;
         }
-        // `getSymbolFlags` of what the name resolves to with another meaning. `None` too for an
-        // alias that does not resolve.
+        // `getSymbolFlags` of what the name resolves to with another meaning. Also `None` for an
+        // alias that doesn't resolve.
         let flags_as = |meaning: SymFlags| {
             let found = self.resolve_name(file, scope, name, meaning)?;
             Some(self.symbol_flags(found)).filter(|&flags| flags != SymFlags::all())
@@ -2020,8 +2015,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             return;
         }
         let name = (name, self.atoms.bytes(name));
-        // For the aliases that the search resolves. The suggestion is for the error, which the
-        // checker reports.
+        // Only called for the aliases that the search resolves. The suggestion itself is for the
+        // error, which the checker reports.
         let _ = self.suggested_symbol_for_nonexistent_symbol(
             Some((file, scope)),
             name,
@@ -2053,8 +2048,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     ) -> Sym {
         let mut symbol = self.external_module_symbol(module);
         if self.is_non_local_alias(symbol) {
-            // Where the tables cannot resolve further, types may: a caller that continues from here
-            // does so one step at a time.
+            // Where the tables can't resolve further, types may be able to, so a caller that
+            // continues from here does it one step at a time.
             symbol = (self.resolve_indirection_alias(symbol, type_only)).unwrap_or(symbol);
         }
         let Some(file) = namespace_import_in else {
@@ -2072,9 +2067,9 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         }
         let has_signatures = SymFlags::FUNCTION | SymFlags::METHOD | SymFlags::CLASS;
         let has_signatures = self.flags(symbol).intersects(has_signatures);
-        // Whether `cloneTypeAsModuleType` is called with the type itself. With a synthetic default
+        // True if `cloneTypeAsModuleType` is called with the type itself. With a synthetic default
         // the members of `moduleType` are the properties of the type, which are resolved, or none
-        // while it is being resolved.
+        // while it's being resolved.
         let is_cloned = if self.is_commonjs_import_of_esm_file(file, module)
             && self.module_exports_export(symbol).is_some()
         {
@@ -2085,7 +2080,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                 || self.is_commonjs_to_node(file, module))
                 && self.synthetic_default(file, module).is_none()
         };
-        // `newAnonymousType` has no `ObjectFlagsMembersResolved` to ask.
+        // `newAnonymousType` has no `ObjectFlagsMembersResolved` to check.
         if is_cloned {
             self.get_named_members(symbol);
         }
@@ -2104,7 +2099,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     }
 
     /// `getNamedMembers(getExportsOfSymbol(symbol), ..)`, limited to what it does to aliases: it
-    /// asks `symbolIsValue` of each, which resolves it if it is an alias.
+    /// calls `symbolIsValue` on each, which resolves it if it's an alias.
     fn get_named_members(&self, symbol: Sym) {
         let flags = self.flags(symbol);
         let is_alias_only = |export: Sym| {
@@ -2126,8 +2121,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         }
     }
 
-    /// `getTypeOfFuncClassEnumModule`: whether the members of `getTypeOfSymbol(symbol)` are the
-    /// exports of `symbol`.
+    /// `getTypeOfFuncClassEnumModule`: true if the members of `getTypeOfSymbol(symbol)` are the exports of `symbol`.
     fn has_exports_for_members(&self, symbol: Sym) -> bool {
         let flags = self.flags(symbol);
         let has_exports = SymFlags::FUNCTION
@@ -2140,7 +2134,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
 
     /// `resolveExportByName`, limited to what it does to aliases, which is nothing unless `module`
     /// has `export =`: `getPropertyOfTypeEx(getTypeOfSymbol(exportValue), name, ..)` resolves the
-    /// members of the type, and asks `symbolIsValueEx` of the member `name`.
+    /// members of the type, and calls `symbolIsValueEx` on the member `name`.
     fn resolve_export_by_name(&self, module: Sym, name: Atom) {
         if self.export(module, known::export_equals).is_none() {
             return;
@@ -2177,8 +2171,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
 
     /// `errorNoModuleMemberSymbol` for `name`, which `decl` of `file` imports from `module`,
     /// limited to its side effects on aliases: `reportNonExportedMember` resolves the local symbol
-    /// of that name, and the exports it is compared with (`getSymbolIfSameReference`). Not with an
-    /// `export =`, where types tell whether there is a member.
+    /// of that name, and the exports it's compared with (`getSymbolIfSameReference`). Skipped with
+    /// an `export =`, where only types tell whether there's a member.
     fn error_no_module_member_symbol(&self, file: FileId, decl: Decl, module: Sym, name: Atom) {
         if self.options.no_check
             || self.export(module, known::export_equals).is_some()
@@ -2214,7 +2208,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             let resolved = self.resolve_symbol(self.canonical(symbol));
             resolved.map(|resolved| self.canonical(resolved))
         };
-        // `findInMap`. The entry for the `export *` declarations is no alias.
+        // `findInMap`. The entry for the `export *` declarations isn't an alias.
         let exports = self.exports(module);
         let is_exported = (exports.iter()).any(|&(_, it)| resolved(it) == resolved(local));
         if !is_exported && !self.export_stars_of(module).is_empty() {
@@ -2284,7 +2278,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                     self.mode_of_import(file, hir[import].mode),
                 )
                 .map(|module| {
-                    // The `JSImportDeclaration` of an `@import` tag is no `ImportDeclaration`.
+                    // The `JSImportDeclaration` of an `@import` tag isn't an `ImportDeclaration`.
                     let is_import_declaration = !hir.is_in_jsdoc(hir[import].namespace_pos);
                     let import_in = is_import_declaration.then_some(file);
                     let symbol = self.resolve_es_module_symbol(module, import_in, type_only);
@@ -2309,7 +2303,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                         all
                     };
                     let scope = bound.import_equals_scope[import.idx()];
-                    // `resolveEntityName` marks `getAliasDeclarationFromName(name)` where a name is found to be an alias.
+                    // `resolveEntityName` marks `getAliasDeclarationFromName(name)` where a name is
+                    // found to be an alias.
                     if self.is_type_only_import_or_export_declaration(file, decl)
                         && (1..=names.len()).any(|n| {
                             let meaning = if n == names.len() {
@@ -2337,7 +2332,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                     return target;
                 }
             },
-            // `getTargetOfExportSpecifier` without `from`: `export { "a" as b }` names nothing.
+            // `getTargetOfExportSpecifier` without `from`: `export { "a" as b }` refers to nothing.
             Decl::ExportSpec(spec)
                 if matches!(
                     hir.text.get(hir[spec].local_pos as usize),
@@ -2384,7 +2379,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         target
     }
 
-    /// `getTargetOfImportEqualsDeclaration`: the target of `import x = require(..)` and of `const x = require(..)` of `module`.
+    /// `getTargetOfImportEqualsDeclaration`: the target of `import x = require(..)` and of `const x
+    /// = require(..)` of `module`.
     fn required_module_symbol(&self, module: Sym) -> Sym {
         let resolved = self.external_module_symbol(module);
         self.module_exports_export(resolved).unwrap_or(resolved)
@@ -2452,8 +2448,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             bind::Parent::Module(m) => !matches!(self.hir(file)[m].name, ModuleName::Ident(_)),
             _ => false,
         };
-        // `resolveEntityName`, then `checkExpressionCached` of what is not found: here no alias is
-        // in progress for it.
+        // `resolveEntityName`, then `checkExpressionCached` of what isn't found. No alias is in progress for it here.
         if is_checked {
             self.target_of_alias_like_expression(file, Decl::ExportExpr(stmt));
         }
@@ -2522,7 +2517,7 @@ impl<'s> Resolve<'s> for Linked<'_, 's> {
         read(self.0.module_links(module))
     }
 
-    /// Every alias has its links.
+    /// Every alias already has its links.
     fn set_members_resolved(&self, _: Sym) -> bool {
         false
     }
@@ -2540,19 +2535,18 @@ impl<'s> Resolve<'s> for Linked<'_, 's> {
     fn note_failed_lookup(&self, _: FileId, _: ExprId) {}
 }
 
-/// `Resolve` while the tables are filled. tsgo pushes `TypeSystemPropertyNameAliasTarget` on
-/// `typeResolutions`. Here the aliases in progress belong to the resolver, which is on the stack of
-/// one thread.
+/// `Resolve` while the tables are being filled. tsgo pushes `TypeSystemPropertyNameAliasTarget` on `typeResolutions`.
+/// Here the aliases in progress belong to the resolver, which lives on one thread's stack.
 ///
-/// It reads the tables, then its own buffer. A result that was computed with a read of an alias in
-/// progress depends on where the cycle was entered, and it is stored like any other, as in tsgo. So
-/// the order in which a resolver is queried is part of the result.
+/// It reads the tables first, then its own buffer. A result computed while reading an alias in
+/// progress depends on where the cycle was entered, and it's stored like any other, as in tsgo. So
+/// the result depends on the order in which a resolver is queried.
 struct AliasResolver<'a, 's> {
     files: &'a Files<'s>,
     /// `typeResolutions` and `resolutionResults`: each alias in progress, and whether no cycle
     /// through it has been found.
     in_flight: std::cell::RefCell<Vec<(Sym, bool)>>,
-    /// How many of `in_flight`, from the first, were in progress when the stack ended.
+    /// How many of `in_flight`, from the first, were in progress when the stack ran out.
     out_of_stack: std::cell::Cell<usize>,
     /// The number of times an alias was read while in progress, or was rejected because the stack
     /// has no room for it.
@@ -2560,12 +2554,11 @@ struct AliasResolver<'a, 's> {
     /// `None`: results are written to the tables immediately. For the merge, which is
     /// single-threaded.
     buffer: Option<std::cell::RefCell<Resolved<'s>>>,
-    /// `Resolve::arena`, once it has been asked for.
+    /// `Resolve::arena`, once it's been requested.
     arena: std::cell::OnceCell<&'s Arena>,
     /// The symbols whose type has `ObjectFlagsMembersResolved`.
     members_resolved: std::cell::RefCell<FxHashSet<Sym>>,
-    /// The identifiers that have a `resolvedSymbol`, of those that `get_resolved_symbol` is asked
-    /// for.
+    /// The identifiers passed to `get_resolved_symbol` that have a `resolvedSymbol`.
     resolved_symbols: std::cell::RefCell<FxHashSet<(FileId, ExprId)>>,
     /// The plan and the component this resolver links, if other components are linked and published concurrently.
     /// `None` if no other thread writes to the tables while this resolver is in use.
@@ -2624,8 +2617,8 @@ impl LinkPlan<'_> {
             return true;
         }
         pause_before_sleeping();
-        // Recheck under the lock, which `set_published` acquires after its store. Either this thread sees the store, or
-        // `set_published` sees `asleep > 0` and notifies.
+        // Recheck under the lock, which `set_published` acquires after its store. Either this
+        // thread observes the store, or `set_published` observes `asleep > 0` and notifies.
         let mut asleep = self.asleep.lock();
         *asleep += 1;
         while !is_published() {
@@ -2663,8 +2656,8 @@ fn pause_before_sleeping() {
     }
 }
 
-/// The write buffer of a task of the link step. It is dropped at the barrier after the step. What
-/// is published from it is in the arena of the thread that ran the task.
+/// A link-step task's write buffer. It's dropped at the barrier after the step. What's published
+/// from it lives in the arena of the thread that ran the task.
 #[derive(Default)]
 struct Resolved<'s> {
     alias_links: FxHashMap<Sym, AliasSymbolLinks>,
@@ -2748,7 +2741,7 @@ fn lib_file_in(directory: &[u8], lib: &[u8]) -> Vec<u8> {
     [directory, b"/lib.", lib, b".d.ts"].concat()
 }
 
-/// Whether `directory` has every file of `Options::libs`. What these refer to is beside them.
+/// True if `directory` has every file of `Options::libs`. The files they refer to are next to them.
 pub fn has_libraries(host: &dyn Host, options: &Options, directory: &[u8]) -> bool {
     let mut files = (options.libs.iter()).map(|lib| lib_file_in(directory, lib_file_stem(lib)));
     files.all(|file| host.is_file(&file))
@@ -2760,21 +2753,21 @@ fn lib_file_stem(lib: &[u8]) -> &[u8] {
     crate::resolve::LIB_FALLBACKS.get(lib).map_or(lib, |it| *it)
 }
 
-/// `GetLibFileName` of the name `written` in a `/// <reference lib>`. The library directory of
-/// another version of TypeScript may lack the file: the name is then unknown as well.
+/// `GetLibFileName` of the name `written` in a `/// <reference lib>`. Another TypeScript version's
+/// library directory may lack the file, in which case the name counts as unknown too.
 fn referenced_lib(host: &dyn Host, options: &Options, written: &[u8]) -> Option<Vec<u8>> {
     get_lib_file_name(written).filter(|lib| host.is_file(&lib_file(options, lib)))
 }
 
 /// `ForEachDynamicImportOrRequireCall`: it looks at each `import` and `require` in the text, and
-/// takes the node around it (`GetNodeAtPosition`, which does not descend into tokens). So a call
-/// is found once more for each in its specifier or in a comment in it or before it.
+/// takes the node around it (`GetNodeAtPosition`, which doesn't descend into tokens). So a call is
+/// found one more time for each such word in its specifier, or in a comment inside or before it.
 fn dynamic_imports<'a>(hir: &'a hir::File) -> Vec<&'a SpecifierUse> {
     let text = &hir.text[..];
     let uses = hir.specifier_uses.iter().filter(|u| u.kind.is_dynamic());
     let mut uses: Vec<&SpecifierUse> = uses.collect();
     uses.shared_sort_by_key(|u| u.pos);
-    // `findImportOrRequire`: where each is, and where it ends.
+    // `findImportOrRequire`: the start and end of each word.
     let mut words: Vec<(usize, usize)> = Vec::new();
     let mut index = 0;
     while let Some(at) = strings::index_of_any(&text[index..], b"ir").map(|at| index + at) {
@@ -2790,7 +2783,7 @@ fn dynamic_imports<'a>(hir: &'a hir::File) -> Vec<&'a SpecifierUse> {
             at + 1
         };
     }
-    // From `node.Pos()` to the first child that is not a token. A call has none before the token
+    // From `node.Pos()` to the first child that isn't a token. A call has none before the token
     // after its specifier. In an import type the specifier is in a `LiteralType`.
     let mut ranges: Vec<(usize, usize, &SpecifierUse)> = Vec::new();
     for &(at, end) in &words {
@@ -2837,10 +2830,9 @@ fn ambient_module(hir: &hir::File, s: StmtId, is_in_ambient_module: bool) -> Opt
     (is_ambient && !matches!(hir[m].name, ModuleName::Ident(_))).then_some(m)
 }
 
-/// `collectModuleReferences`: the import and export statements that it visits, in order. Of each
-/// where it starts and ends, and `inAmbientModule`. They are the statements of the file, and in a
-/// script those of the ambient modules that it declares. It visits neither a module augmentation
-/// nor a namespace.
+/// `collectModuleReferences`: the import and export statements that it visits, in order, each with its start, its end
+/// and `inAmbientModule`. It visits the file's statements and, in a script, those of the ambient modules the file
+/// declares. It doesn't visit module augmentations or namespaces.
 fn module_references(hir: &hir::File) -> Vec<(u32, u32, bool)> {
     let mut references = Vec::new();
     let mut visit = |s: StmtId, is_in_ambient_module: bool| {
@@ -2872,7 +2864,7 @@ fn module_references(hir: &hir::File) -> Vec<(u32, u32, bool)> {
     references
 }
 
-/// Whether `u` is one of `file.Imports()`. `visited`: the `module_references` of the file.
+/// True if `u` is one of `file.Imports()`. `visited`: the `module_references` of the file.
 fn is_among_imports(visited: &[(u32, u32, bool)], atoms: &Interner, u: &SpecifierUse) -> bool {
     // `ForEachDynamicImportOrRequireCall` looks at the whole text.
     if u.kind.is_dynamic() {
@@ -2886,8 +2878,7 @@ fn is_among_imports(visited: &[(u32, u32, bool)], atoms: &Interner, u: &Specifie
     })
 }
 
-/// `file.ModuleAugmentations` (`collectModuleReferences`): the declarations that they are the names
-/// of.
+/// `file.ModuleAugmentations` (`collectModuleReferences`), as the declarations whose names they are.
 fn module_augmentations(hir: &hir::File, atoms: &Interner) -> Vec<ModuleId> {
     let mut augmentations = Vec::new();
     for s in hir.ids(hir.body) {
@@ -2907,8 +2898,8 @@ fn module_augmentations(hir: &hir::File, atoms: &Interner) -> Vec<ModuleId> {
     augmentations
 }
 
-/// Whether `mergeModuleAugmentation` merges `symbol`, which a `declare global` or a `declare module
-/// "m"` declares. It does so for `symbol.Declarations[0]` alone, so that has to be one of
+/// True if `mergeModuleAugmentation` merges `symbol`, which a `declare global` or a `declare module
+/// "m"` declares. It only does so for `symbol.Declarations[0]`, so that has to be one of
 /// `collected`, the `module_augmentations` of the file.
 fn merges_module_augmentation(bound: &Bound, collected: &[ModuleId], symbol: SymbolId) -> bool {
     matches!(
@@ -2917,7 +2908,7 @@ fn merges_module_augmentation(bound: &Bound, collected: &[ModuleId], symbol: Sym
     )
 }
 
-/// What `resolveLibrary` is called with.
+/// `resolveLibrary`'s arguments.
 struct LibraryName {
     /// `getLibraryNameFromLibFileName`
     name: Vec<u8>,
@@ -2961,9 +2952,9 @@ fn lib_path(resolver: &Resolver, options: &Options, lib: &[u8]) -> Vec<u8> {
     lib_file(options, lib)
 }
 
-/// `pathForLibFile`, as far as `traceResolution` shows it. The first time it is asked for `lib`, the
-/// lookups of the resolution go through `cache`, and `libResolution.trace` is put into
-/// `resolutions` (`pathForLibFileResolutions`), which is in the order of its keys.
+/// `pathForLibFile`, as far as `traceResolution` exposes it. The first time it's called for `lib`,
+/// the resolution's lookups go through `cache`, and `libResolution.trace` is added to `resolutions`
+/// (`pathForLibFileResolutions`), which is sorted by key.
 fn trace_path_for_lib_file(
     host: &dyn Host,
     resolver: &Resolver,
@@ -2989,8 +2980,8 @@ fn trace_path_for_lib_file(
 }
 
 /// The tasks of `processAllProgramFiles` for the libraries: for each of `Options::libs` its reason,
-/// `pathForLibFile`, and the error of `parseTask.load` for the extension of a file that replaces it.
-/// Such a file is not read.
+/// `pathForLibFile`, and the error of `parseTask.load` for the extension of a file that replaces
+/// it. Such a file isn't read.
 fn lib_tasks(
     host: &dyn Host,
     resolver: &Resolver,
@@ -3023,9 +3014,9 @@ fn has_extension(path: &[u8]) -> bool {
     )
 }
 
-/// The first test of `getSourceFileFromReference` and of `parseTask.load`: the error code for a file name whose extension is not
-/// supported (`isSupportedExtension` of `GetCanonicalFileName`). JavaScript needs `allowJs`, JSON needs `resolveJsonModule`. `None`
-/// for a name without an extension.
+/// The first test of `getSourceFileFromReference` and of `parseTask.load`: the error code for a file name whose
+/// extension isn't supported (`isSupportedExtension` of `GetCanonicalFileName`). JavaScript needs `allowJs`, JSON needs
+/// `resolveJsonModule`. `None` for a name without an extension.
 fn unsupported_extension_error(
     options: &Options,
     path: &[u8],
@@ -3076,7 +3067,7 @@ fn referenced_file(
 ) -> Result<Vec<u8>, u32> {
     let allow_non_ts_extensions = host.script_kind(name).is_some();
     let is_case_sensitive = host.is_case_sensitive();
-    // With an extension, it is that file or none.
+    // With an extension, it's that exact file or nothing.
     if has_extension(name) {
         if !allow_non_ts_extensions
             && let Some(code) = unsupported_extension_error(options, name, is_case_sensitive)
@@ -3153,8 +3144,8 @@ fn automatic_type_directives(
             }
             // `CombinePaths(root, normalized)`: a name can be a root (`c:`) or have a `\`.
             let dir = join(&root, &name);
-            // `Typings.Null`: `"typings": null` is how a package declares that it is not needed.
-            // It holds whatever value follows for the same name.
+            // `Typings.Null`: `"typings": null` is how a package declares that it isn't needed.
+            // `Null` stays set whatever value follows for the same name.
             let is_not_needed_package = resolver.package_json(&dir).is_some_and(|fields| {
                 let mut fields = fields.as_object().unwrap_or_default().iter();
                 fields.any(|field| field.0 == b"typings" && field.1 == Json::Null)
@@ -3182,7 +3173,8 @@ fn automatic_type_directives(
     all
 }
 
-/// `GetPathComponents` of an absolute path: the root, then the names. The root is empty, or a drive: `/c:/a` is `c:/a` to TypeScript.
+/// `GetPathComponents` of an absolute path: the root, then the names. The root is empty, or a
+/// drive: `/c:/a` is `c:/a` to TypeScript.
 fn components_of_path(path: &[u8]) -> Vec<&[u8]> {
     let mut parts: Vec<&[u8]> = strings::split(path, b"/")
         .filter(|part| !part.is_empty())
@@ -3235,15 +3227,15 @@ enum IncludeReason {
     LibFile(Option<Vec<u8>>),
     /// `fileIncludeKindAutomaticTypeDirectiveFile`: `typeReference` and `packageId.String()`.
     AutomaticTypeDirectiveFile(Vec<u8>, Option<Vec<u8>>),
-    /// The kinds for which `isReferencedFile`.
+    /// The kinds for which `isReferencedFile` is true.
     Reference(Reference),
 }
 
 /// `referenceFileLocation`
 struct Reference {
     target: FileId,
-    /// Of the message, without a package id. `fileIncludeKindImport`: 1393, 1395 for the helpers,
-    /// 1397 for the JSX runtime. `fileIncludeKindReferenceFile`: 1400.
+    /// The code of the message, in its variant without a package id. `fileIncludeKindImport`: 1393,
+    /// 1395 for the helpers, 1397 for the JSX runtime. `fileIncludeKindReferenceFile`: 1400.
     /// `fileIncludeKindTypeReferenceDirective`: 1402. `fileIncludeKindLibReferenceDirective`: 1405.
     code: u32,
     from: FileId,
@@ -3262,7 +3254,7 @@ impl Reference {
     }
 }
 
-/// One time that `collectFiles` comes to a file.
+/// One visit of `collectFiles` to a file.
 struct Visit {
     reason: IncludeReason,
     /// `task.normalizedFilePath`
@@ -3277,7 +3269,7 @@ impl Visit {
         matches!(self.reason, IncludeReason::Reference(_))
     }
 
-    /// Where it can be reported.
+    /// The location to report it at, if it has one.
     fn location(&self) -> Option<(FileId, u32, u32)> {
         match &self.reason {
             IncludeReason::Reference(it) if !it.is_synthetic() => Some((it.from, it.start, it.end)),
@@ -3288,8 +3280,8 @@ impl Visit {
 
 /// How many times `ForEachDynamicImportOrRequireCall` adds the specifier `u` of a call to
 /// `file.Imports()`: once for each `import` and `require` in the text at which `GetNodeAtPosition`
-/// finds the call. A token is not a node to it (`KindFirstNode`), so that is in the tokens of the
-/// call, the specifier among them, and in the comments before and between them.
+/// finds the call. A token isn't a node to it (`KindFirstNode`), so that covers the call's own
+/// tokens, including the specifier, and the comments before and between them.
 fn times_among_imports(hir: &File, calls: &ExprsByKind, text: &[u8], u: &SpecifierUse) -> usize {
     let is_it = |args: IdList<ExprId>| hir.ids(args).next().is_some_and(|it| hir[it].pos == u.pos);
     let of_kind = match u.kind {
@@ -3366,7 +3358,7 @@ fn count_after_jsdoc(trivia: &[u8]) -> usize {
             }
         };
         at += end.max(1);
-        // `/**/` is not one.
+        // `/**/` isn't a JSDoc comment.
         if rest.starts_with(b"/**") && end > 4 {
             end_of_jsdoc = at;
         }
@@ -3374,7 +3366,7 @@ fn count_after_jsdoc(trivia: &[u8]) -> usize {
     count_import_or_require(&trivia[end_of_jsdoc..])
 }
 
-/// `findImportOrRequire`, until there is no more.
+/// Counts the matches of `findImportOrRequire` in `text`.
 fn count_import_or_require(text: &[u8]) -> usize {
     let (mut at, mut count) = (0, 0);
     while let Some(next) = strings::index_of_any(&text[at..], b"ir") {
@@ -3418,7 +3410,8 @@ pub(crate) fn mode_for_usage_location(
     match u.kind {
         _ if u.mode != ResolutionMode::None => u.mode,
         _ if !options.import_syntax_affects_module_resolution() => ResolutionMode::None,
-        // `getEmitSyntaxForUsageLocationWorker`: the argument of `require()` is resolved as CommonJS, whatever the file is emitted as.
+        // `getEmitSyntaxForUsageLocationWorker`: the argument of `require()` is resolved as
+        // CommonJS, whatever the file is emitted as.
         SpecifierKind::Require | SpecifierKind::RequireCall => ResolutionMode::Require,
         SpecifierKind::ImportCall => options.import_call_mode(default_mode),
         _ => default_mode,
@@ -3462,7 +3455,7 @@ fn implied_node_format_for_emit(
     package_json_type
 }
 
-/// `ResolvedModule.Extension`, as far as `GetResolutionDiagnostic` tells extensions apart.
+/// `ResolvedModule.Extension`, as far as `GetResolutionDiagnostic` distinguishes extensions.
 #[derive(Copy, Clone)]
 enum Extension {
     /// `.ts`, `.mts`, `.cts`, and the declaration files of these.
@@ -3496,7 +3489,7 @@ impl Extension {
     }
 }
 
-/// `GetResolutionDiagnostic`: the code of the message. `file`: the one that has the import.
+/// `GetResolutionDiagnostic`: the code of the message. `file`: the importing file.
 fn get_resolution_diagnostic(options: &Options, extension: Extension, file: &File) -> Option<u32> {
     let need_jsx = || (options.jsx == JsxEmit::None).then_some(6142);
     let need_allow_js = || {
@@ -3529,8 +3522,8 @@ fn imports_helpers(options: &Options, hir: &File) -> bool {
                 && (options.isolated_modules || is_external_module))
 }
 
-/// `addRootFileTask`: the file that is read for the root file `root`, or else the error.
-/// `Ok(None)`: a declaration file that has not been built.
+/// `addRootFileTask`: the file that's read for the root file `root`, or else the error. `Ok(None)`:
+/// a declaration file that hasn't been built.
 fn root_file_name(host: &dyn Host, options: &Options, root: &[u8]) -> Result<Option<Vec<u8>>, u32> {
     let found = referenced_file(host, options, root, b"")?;
     Ok(match options.parse_file_redirect(&found) {
@@ -3547,7 +3540,7 @@ fn without_root(path: &[u8]) -> &[u8] {
     }
 }
 
-/// What the `includeProcessor` reads of a program.
+/// The parts of a program that the `includeProcessor` reads.
 struct Included<'a, 's> {
     host: &'a dyn Host,
     options: &'a Options,
@@ -3556,30 +3549,31 @@ struct Included<'a, 's> {
     by_path: &'a ByPath<'s>,
     /// The names of the root files.
     roots: &'a [Vec<u8>],
-    /// What `rootTasks` are for: the libraries up to `libs_end`, the root files up to `roots_end`,
+    /// The files of `rootTasks`: the libraries up to `libs_end`, the root files up to `roots_end`,
     /// then what the automatic type directives resolve to.
     starts: &'a [FileId],
     libs_end: usize,
     roots_end: usize,
-    /// Of each of those root files, its index in `roots`.
+    /// For each of those root files, its index in `roots`.
     root_of_start: &'a [u32],
     /// The keys of `redirectAndFileFormat` that `createDiagnosticExplainingFile` has stored: a file
     /// name for each path.
     explained_in_diagnostics: std::cell::RefCell<Vec<Vec<u8>>>,
-    /// Where each entry of `files` and of `include` is in the configuration file, which is parsed
-    /// once for all of them. `None`: it cannot be.
+    /// The span of each entry of `files` and of `include` in the configuration file, which is
+    /// parsed once for all of them. `None`: it can't be parsed.
     top_elements_in_configuration: std::cell::OnceCell<Option<[TopElements; 2]>>,
-    /// `getMatchedFileSpec` for every path at once: the first of `Options::file_specs` with it.
+    /// `getMatchedFileSpec` for every path at once: maps a path to the first of
+    /// `Options::file_specs` that has it.
     file_spec_by_path: std::cell::OnceCell<FxHashMap<Cow<'a, [u8]>, &'a [u8]>>,
 }
 
 type TopElements = FxHashMap<Vec<u8>, (u32, u32)>;
 
-/// Where a problem with the inclusion of a file is reported, if that is in a file.
+/// A problem with the inclusion of a file, and where it's reported if that's in a file.
 type Explanation = (Option<(FileId, u32, u32)>, Problem);
 
-/// Where `Included::visits` is in a file: the file, how many of its edges have been followed, and
-/// its references that have not been passed, if it refers to a file that is asked about.
+/// The position of `Included::visits` in a file: the file, how many of its edges have been
+/// followed, and its remaining references, if it refers to a file in `is_asked`.
 type Frame = (
     FileId,
     usize,
@@ -3588,8 +3582,8 @@ type Frame = (
 
 impl Included<'_, '_> {
     /// `referenceFileLocation` of each reference in `file` to a file of the program, with
-    /// `task.normalizedFilePath`, in the order of `parseTask.subTasks`. Only a file that
-    /// `is_asked` about has its package id.
+    /// `task.normalizedFilePath`, in the order of `parseTask.subTasks`. Only a reference to a file
+    /// in `is_asked` gets its package id.
     fn references_in(
         &self,
         program_resolver: &Resolver,
@@ -3705,7 +3699,7 @@ impl Included<'_, '_> {
             let Some(&target) = module.imports.get(&(spec, mode)) else {
                 continue;
             };
-            // The name is that of the file, unless somebody asks.
+            // Use the file's own name unless the target is in `is_asked`.
             let asked = is_asked[target.idx()].then(|| {
                 resolver.resolve_module_name_with_package_id(atoms.bytes(spec), from, mode)
             });
@@ -3726,9 +3720,10 @@ impl Included<'_, '_> {
         references
     }
 
-    /// `fileIncludeReasons` of the files that `is_asked` about, by file: `collectFiles` adds the
-    /// reason of a task whenever it comes to the task, also if it has been to the file before.
-    /// After the files, in both lists: the root files that are not found, which have a task too.
+    /// `fileIncludeReasons` of the files in `is_asked`, indexed by file. `collectFiles` adds a task's
+    /// reason every time it reaches the task, even if it has already visited the file. Both lists
+    /// have one more entry after the files, for the root files that aren't found, which have a task
+    /// too.
     fn visits(&self, resolver: &Resolver, is_asked: &[bool]) -> Vec<Vec<Visit>> {
         let &Included {
             host,
@@ -3892,8 +3887,8 @@ impl Included<'_, '_> {
         }
     }
 
-    /// `getMatchedFileSpec`: the first of `files` that names the file at `path`, as its source text.
-    /// `""` is no match to its callers.
+    /// `getMatchedFileSpec`: the first entry of `files` that refers to the file at `path`, as
+    /// written. Its callers treat `""` as no match.
     fn matched_file_spec(&self, path: &[u8]) -> Option<&[u8]> {
         let is_case_sensitive = self.host.is_case_sensitive();
         let by_path = self.file_spec_by_path.get_or_init(|| {
@@ -3973,8 +3968,8 @@ impl Included<'_, '_> {
         }
     }
 
-    /// `fileIncludeReasons[path]` for each path that `visits`, which are those to one file, come by.
-    /// A copy of a package file has a path of its own.
+    /// Groups `visits`, which are all to one file, by the path they used:
+    /// `fileIncludeReasons[path]` for each path. A copy of a package file has its own path.
     fn by_path<'v>(&self, visits: &'v [Visit]) -> Vec<Vec<&'v Visit>> {
         let is_case_sensitive = self.host.is_case_sensitive();
         let mut by_path: Vec<Vec<&Visit>> = Vec::new();
@@ -3989,15 +3984,15 @@ impl Included<'_, '_> {
         by_path
     }
 
-    /// Those of `visits` that come by the path of the file with this name.
+    /// The `visits` that used the path of the file called `name`.
     fn by_path_of<'v>(&self, visits: &'v [Visit], name: &[u8]) -> Vec<&'v Visit> {
         let is_case_sensitive = self.host.is_case_sensitive();
         let is_it = |visit: &&Visit| is_same_path(&visit.name, name, is_case_sensitive);
         visits.iter().filter(is_it).collect()
     }
 
-    /// `createDiagnosticExplainingFile`: `visits` are those by one path, which stands for `file`.
-    /// `because`: `diagnosticReason`.
+    /// `createDiagnosticExplainingFile`: `visits` are the visits by one path, which represents
+    /// `file`. `because`: `diagnosticReason`.
     fn explain(
         &self,
         resolver: &Resolver,
@@ -4043,9 +4038,9 @@ impl Included<'_, '_> {
 
     /// `explainRedirectAndImpliedFormat` for the path of `name`, the name of `module` or of a
     /// `redirectsFile` whose target is `module`: the code and the arguments of each message.
-    /// `to_relative_file_name`: `toFileName` of `ExplainFiles`, or else the caller is
-    /// `createDiagnosticExplainingFile`, which leaves a name as it is. The result for a path is
-    /// stored, so it has the names of whoever asks first. `ExplainFiles` asks last, and once.
+    /// `to_relative_file_name`: `toFileName` of `ExplainFiles`. `None` means the caller is
+    /// `createDiagnosticExplainingFile`, which keeps names as they are. The result for a path is
+    /// cached, so it has the names of the first caller. `ExplainFiles` calls last, and only once.
     fn explain_redirect_and_implied_format(
         &self,
         resolver: &Resolver,
@@ -4083,8 +4078,8 @@ impl Included<'_, '_> {
         result
     }
 
-    /// `createDiagnosticExplainingFile` for the `processingDiagnostics` of the tasks that read no
-    /// file: of each `diagnosticReason`, and the message.
+    /// `createDiagnosticExplainingFile` for the `processingDiagnostics` of the tasks that don't
+    /// read a file. `tasks`: the `diagnosticReason` and the message of each.
     fn explain_tasks_without_file(&self, tasks: &[(Visit, Problem)]) -> Vec<Explanation> {
         if tasks.is_empty() {
             return Vec::new();
@@ -4100,8 +4095,8 @@ impl Included<'_, '_> {
             .collect()
     }
 
-    /// `code`, with the file and the path `arg` as arguments, for each source file that would be
-    /// emitted and for which `is_wrong` returns true. `is_wrong` receives whether it is a root file.
+    /// Reports `code`, with the file and the path `arg` as arguments, for each source file that would be emitted and
+    /// for which `is_wrong` returns true. `is_wrong`'s second argument is true for a root file.
     fn explain_source_files(
         &self,
         code: u32,
@@ -4146,8 +4141,7 @@ impl Included<'_, '_> {
             .collect()
     }
 
-    /// `normalizedFilePath` of the task that `parseTask.redirect` has redirected to the task that
-    /// `visit` comes to.
+    /// `normalizedFilePath` of the task that `parseTask.redirect` has redirected to the task that `visit` reaches.
     fn redirected_from<'v>(&'v self, visit: &'v Visit) -> Option<&'v [u8]> {
         match &visit.reason {
             IncludeReason::Reference(it) => it.redirected_from.as_deref(),
@@ -4160,8 +4154,8 @@ impl Included<'_, '_> {
     }
 
     /// `addProcessingDiagnosticsForFileCasing`, wherever `collectFiles` calls it. `respelled`: the
-    /// files that it has come to by more than one spelling of a name. `alike`: the names that
-    /// differ only in case, where that makes them the names of different files.
+    /// files it reached under more than one spelling of their name. `alike`: the names that differ
+    /// only in case, where that makes them the names of different files.
     fn file_casing_errors(
         &self,
         respelled: &[FileId],
@@ -4196,7 +4190,7 @@ impl Included<'_, '_> {
         for &file in respelled.iter().filter(|_| is_forced) {
             for to_file in self.by_path(&visits[file.idx()]) {
                 for (i, &visit) in to_file.iter().enumerate().skip(1) {
-                    // A different drive letter is no error.
+                    // A different drive letter isn't an error.
                     if without_root(&visit.name) != without_root(&to_file[0].name) {
                         let is_referred_to = to_file[..=i].iter().any(is_reference);
                         problems.push(differs(file, &to_file, visit, is_referred_to));
@@ -4245,8 +4239,7 @@ impl Included<'_, '_> {
     }
 }
 
-/// `toFileName` of `computeDiagnostic` and `explainRedirectAndImpliedFormat`: what a message has for
-/// the file with a name.
+/// `toFileName` of `computeDiagnostic` and `explainRedirectAndImpliedFormat`: how a message shows a file name.
 type ToFileName<'a> = &'a dyn Fn(&[u8]) -> Vec<u8>;
 
 /// `toFileName` of `toDiagnostic` without `relativeFileName`.
@@ -4297,7 +4290,7 @@ fn implied_format_reason(
     if !module.is_module() {
         return None;
     }
-    // `loadSourceFileMetaData`, which `parseTask.load` does not call for a library.
+    // `loadSourceFileMetaData`, which `parseTask.load` doesn't call for a library.
     let scope = ancestors(dirname::<Posix>(module.file_name()))
         .filter(|_| !module.is_lib)
         .find_map(|dir| Some((resolver.package_json(dir)?, dir)))
@@ -4351,9 +4344,6 @@ pub(crate) fn source_file_may_be_emitted(
                     && !is_same_path(&options.out_dir, common, is_case_sensitive))
 }
 
-/// The parts of `verifyCompilerOptions` that depend on which files are emitted and where. 6307 for
-/// a source file that a composite project does not list, 6059 (`checkSourceFilesBelongToPath`) for
-/// one that is not under `rootDir`, 5009 and 5011 for the common source directory, and
 /// `GetSourceFilePathInNewDir`: the path under `dir` that mirrors the path of `path` relative to
 /// the common source directory. A file outside that directory keeps its path.
 fn source_file_path_in_new_dir(
@@ -4427,13 +4417,16 @@ pub fn own_emit_output_file_path(
     [remove_file_extension(&moved), extension].concat()
 }
 
-/// `UseCaseSensitiveFileNames` of `Program.comparePathsOptions`. Nothing assigns that field, so it
-/// is Go's zero value on every file system.
+/// `UseCaseSensitiveFileNames` of `Program.comparePathsOptions`. Nothing assigns that field, so
+/// it's Go's zero value on every file system.
 pub const COMPARE_PATHS_CASE_SENSITIVE: bool = false;
 
-/// `verifyEmitFilePath`: 5055 for an output file that is an input file, 5056 for one that two input
-/// files are emitted to. Errors reported at a position in a file go to `include_errors`. With them,
-/// `CommonSourceDirectory`, if anything depends on it.
+/// The parts of `verifyCompilerOptions` that depend on which files are emitted and where: 6307 for
+/// a source file that a composite project doesn't list, 6059 (`checkSourceFilesBelongToPath`) for
+/// one that isn't under `rootDir`, 5009 and 5011 for the common source directory, and
+/// `verifyEmitFilePath`, which is 5055 for an output file that's an input file and 5056 for one
+/// that two input files are emitted to. Errors reported at a position in a file go to
+/// `include_errors`. Also returns `CommonSourceDirectory`, if anything depends on it.
 fn output_path_errors(
     included: &Included,
     notes: &[Noted],
@@ -4586,7 +4579,7 @@ fn output_path_errors(
         if !options.emit_declaration_only {
             let output =
                 own_emit_output_file_path(options, path, common.as_deref(), is_case_sensitive);
-            // A JSON file whose output path equals its input path is not emitted.
+            // A JSON file whose output path equals its input path isn't emitted.
             if !is_json || output != path {
                 let map = [&output[..], b".map"].concat();
                 verify(output);
@@ -4693,26 +4686,26 @@ impl<'s> Files<'s> {
     /// Loads `roots` and every file reachable from them. The HIR and the side tables of a file are
     /// in the arena of the thread that loads it.
     ///
-    /// `run`: of the request, if it has more programs than this one.
+    /// `run`: the request's `Run`, if the request has more programs than this one.
     pub fn load<'u: 's>(
         session: &'s Session,
         run: Option<&'s Run<'u>>,
         host: &dyn Host,
         options: Options,
         roots: &[Vec<u8>],
-        // Called when all files are read, and no thread allocates in `session` but this one, with the bytes of what is freed
-        // when the program is loaded.
+        // Called once all files are read and only this thread still allocates in `session`. The
+        // argument is the number of bytes that are freed when the program is loaded.
         files_are_found: &dyn Fn(usize),
     ) -> Files<'s> {
         let arena = session.arena();
-        // Nothing drops `Files`.
+        // Nothing ever drops `Files`.
         let options: &'s Options = session.keep(options);
         let atoms: Interner<'s> = match run {
             Some(run) => run.atoms,
             None => Interner::new_in(session),
         };
-        // Owns the paths that are only needed until every file is found. They are freed together
-        // below, before the first file is checked: in `session` they would stay until the end.
+        // Owns the paths that are only needed until every file is found. They're freed together below, before the first
+        // file is checked. In `session` they would stay allocated until the end.
         let resolving = Session::new();
         let resolver = Resolver::new(&resolving, host, options);
         let is_case_sensitive = host.is_case_sensitive();
@@ -4755,7 +4748,7 @@ impl<'s> Files<'s> {
                 is_lib,
                 package: None,
                 first,
-                // Another spelling of a name is only read if `collectFiles` comes to it first.
+                // Another spelling of a name is only read if `collectFiles` reaches it first.
                 is_read: first == id,
                 parse: None,
                 is_loaded: false,
@@ -4767,7 +4760,7 @@ impl<'s> Files<'s> {
         let mut starts: Vec<FileId> = Vec::new();
         // `processAllProgramFiles`: without root files there are no libraries and no automatic type directives.
         let has_root_files = !roots.is_empty();
-        // `processingDiagnostics` of the tasks that read no file, in the order of `rootTasks`:
+        // `processingDiagnostics` of the tasks that don't read a file, in the order of `rootTasks`:
         // `diagnosticReason`, and the message.
         let mut without_file: Vec<(Visit, Problem)> = Vec::new();
         let mut libs_without_file: Vec<(Visit, Problem)> = Vec::new();
@@ -4789,7 +4782,7 @@ impl<'s> Files<'s> {
         let libs_end = starts.len();
         let mut program_errors = Vec::new();
         let mut root_of_start: Vec<u32> = Vec::new();
-        // They have a task as well.
+        // Missing root files have a task too.
         let mut missing_roots: Vec<&[u8]> = Vec::new();
         for (index, root) in roots.iter().enumerate() {
             match root_file_name(host, options, root) {
@@ -4811,16 +4804,16 @@ impl<'s> Files<'s> {
             }
         }
         without_file.append(&mut libs_without_file);
-        // `collectFiles`, `seen[data]`: of the tasks for one path only the first is walked, and
-        // the `processingDiagnostics` of the others are dropped.
-        // By path: thousands of entries of `files` can be missing.
+        // `collectFiles`, `seen[data]`: of the tasks for one path only the first is walked, and the
+        // `processingDiagnostics` of the others are dropped. This uses a set of paths because
+        // thousands of entries of `files` can be missing.
         let mut walked: FxHashSet<Vec<u8>> = FxHashSet::default();
         without_file
             .retain(|(visit, _)| walked.insert(to_path(&visit.name, is_case_sensitive).into()));
         let roots_end = starts.len();
-        // `addAutomaticTypeDirectiveTasks`: the last of `rootTasks`, for this file name. There is
-        // one `parseTaskData` for a path, and `collectFiles` goes on from the first of its tasks: a
-        // root file or a library at this path takes the place of the directives.
+        // `addAutomaticTypeDirectiveTasks`: the last of `rootTasks`, for this file name. There's
+        // one `parseTaskData` per path, and `collectFiles` continues from the first of its tasks,
+        // so a root file or a library at this path replaces the directives.
         let containing_file = inside(&options.base_dir, INFERRED_TYPES_CONTAINING_FILE);
         let is_containing_file = |found: &FoundFile| {
             is_same_path(found.path.pretty, &containing_file, is_case_sensitive)
@@ -4831,8 +4824,8 @@ impl<'s> Files<'s> {
         } else {
             Vec::new()
         };
-        // Its place in `taskDataByPath`: a sub task for the same file name gets it as `loadedTask`,
-        // so the file is not read. There is no such sub task unless the file exists.
+        // Its entry in `taskDataByPath`. A sub task for the same file name gets it as `loadedTask`,
+        // so the file isn't read. There's no such sub task unless the file exists.
         let mut automatic_task = None;
         if has_automatic_task && host.is_file(&containing_file) {
             let task = add(
@@ -4882,11 +4875,11 @@ impl<'s> Files<'s> {
         // file is in the program for another reason.
         let mut only_found: Vec<(FileId, Atom, ResolutionMode, &[u8])> = Vec::new();
         // `processingDiagnostics` of the tasks for imported files with an extension that the
-        // program does not support, each at the import: the file and the span.
+        // program doesn't support, each at the import: the file and the span.
         let mut unsupported: Vec<(FileId, u32, u32, Problem)> = Vec::new();
         // `singleThreadedWorkGroup.fns`: the tasks that `filesParser.start` has queued, each with
-        // the `depth` it was called with. The task that is queued last runs first. With several
-        // threads the original runs them in any order.
+        // the `depth` it was called with. The task that's queued last runs first. With several
+        // threads tsgo runs them in any order.
         let mut queued: Vec<(SubTask, u32)> = (starts[libs_end..roots_end].iter())
             .chain(&starts[..libs_end])
             .map(|&file| SubTask {
@@ -4898,13 +4891,12 @@ impl<'s> Files<'s> {
             .chain(automatic)
             .map(|task| (task, 0))
             .collect();
-        // `subTasks` of the tasks that are loaded and have not started them.
+        // `subTasks` of the tasks that are loaded and haven't started them yet.
         let mut not_started: FxHashMap<FileId, Vec<SubTask>> = FxHashMap::default();
         // `subTasks` of one file. Reused for the next.
         let mut sub_tasks: Vec<SubTask> = Vec::new();
         let mut package_json_info_cache = PackageJsonInfoCache::default();
-        // `pathForLibFileResolutions`. The libraries of the options are resolved while `rootTasks`
-        // is made.
+        // `pathForLibFileResolutions`. The libraries of the options are resolved while `rootTasks` is built.
         let mut lib_resolutions: Vec<(Vec<u8>, Vec<DiagAndArgs>)> = Vec::new();
         if options.trace_resolution && has_root_files {
             for lib in &options.libs {
@@ -4955,9 +4947,9 @@ impl<'s> Files<'s> {
         let mut redirects: Vec<(FileId, FileId)> = Vec::new();
         // `redirectFilesByPath`: the name of a copy of a package file, and the copy that is kept.
         let mut package_copies: Vec<(&'s [u8], FileId)> = Vec::new();
-        // The files that `collectFiles` comes to by more than one spelling of their name.
+        // The files that `collectFiles` reaches under more than one spelling of their name.
         let mut respelled: Vec<FileId> = Vec::new();
-        // What `traceResolution` logs, in order.
+        // The `traceResolution` log, in order.
         let mut log: Vec<DiagAndArgs> = Vec::new();
         // Caches `add`'s result for each path, indexed by `Resolution::number`.
         let mut files_by_number: Vec<Option<FileId>> = Vec::new();
@@ -5028,8 +5020,8 @@ impl<'s> Files<'s> {
                         }
                         let mut loaded = ahead.take(path, is_lib);
                         if loaded.is_none() {
-                            // `load_ahead` couldn't predict this file. Load it now, along with the unpredicted files of
-                            // the queued tasks.
+                            // `load_ahead` couldn't predict this file. Load it now, along with the
+                            // unpredicted files of the queued tasks.
                             ahead.wait();
                             all_are_loaded();
                             let is_ahead =
@@ -5332,7 +5324,7 @@ impl<'s> Files<'s> {
             &mut put_in_order,
         );
         drop(by_name);
-        // It is no file.
+        // The task for the automatic type directives isn't a file.
         if let Some(task) = automatic_task {
             seen[task.idx()] = false;
         }
@@ -5341,7 +5333,7 @@ impl<'s> Files<'s> {
                 module.edges = &[];
             }
         }
-        // A spelling that `collectFiles` has not come to is one of the file all the same.
+        // A spelling that `collectFiles` never reached still names the same file.
         for (task, found) in all_found.files.iter().enumerate() {
             if let Some(named) = all_found.files[found.first.idx()].named
                 && named.idx() != task
@@ -5352,8 +5344,8 @@ impl<'s> Files<'s> {
         }
         respelled.shared_sort_unstable();
         respelled.dedup();
-        // Only the files that `collectFiles` came to are in the program, and of a package file only
-        // one copy. The paths of the other copies stand for that one.
+        // Only the files that `collectFiles` reached are in the program, and only one copy of a
+        // package file. The paths of the other copies map to that copy.
         if !redirects.is_empty() || !seen.iter().all(|&is_seen| is_seen) {
             let mut is_kept = seen;
             for &(copy, _) in &redirects {
@@ -5661,7 +5653,7 @@ impl<'s> Files<'s> {
         // `tasksSeenByNameIgnoreCase`: only where they are different files.
         let mut alike: Vec<Vec<(&[u8], FileId)>> = Vec::new();
         let no_file = FileId(count as u32);
-        // Two of them have one path and are spelled differently.
+        // Detects two missing roots that have the same path but are spelled differently.
         let mut spelled: FxHashMap<Cow<'_, [u8]>, &[u8]> = FxHashMap::default();
         let mut is_respelled = false;
         for &name in &missing_roots {
@@ -5729,7 +5721,7 @@ impl<'s> Files<'s> {
         let explained_in_diagnostics = included.explained_in_diagnostics.into_inner();
         let symbols = Bases::new_in(notes.iter().map(|noted| noted.symbols), &session);
         let memo = Memo::new_in(&Bases::new_in(notes.iter().map(|_| 0), &session), session);
-        // Every atom in the files is in it: no file gets into a program from here on.
+        // It already has every atom in the files, since no file is added to the program from here on.
         let atoms = match run {
             Some(_) => Interner::over(session, atoms),
             None => atoms,
@@ -5842,7 +5834,7 @@ impl<'s> Files<'s> {
             if let Some((_, resolver)) = &*leftovers {
                 *of_packages.lock() = Some(Self::of_packages(session, resolver, &atoms, &notes));
             }
-            // Also drops the files that were loaded ahead but aren't in the program.
+            // Also drops the files that `load_ahead` loaded but that aren't in the program.
             *leftovers = None;
         };
         let beside: [&(dyn Fn() + Sync); 2] = [&find_components, &end_resolution];
@@ -5899,9 +5891,9 @@ impl<'s> Files<'s> {
     /// calling thread releases `WAITS_ACROSS_POOLS`. That lets another load begin, and lets
     /// `meanwhile` call `read_and_work`.
     ///
-    /// `parseTask.load` parses every copy of a package file, and `collectFiles` drops all but one.
-    /// Here one copy is parsed, and a copy with the same text uses the result to find what it refers
-    /// to, from where it is. `Ahead::take_parse` returns the result for a `Loaded::parse`.
+    /// `parseTask.load` parses every copy of a package file, and `collectFiles` drops all but one. Here one copy is
+    /// parsed, and a copy with the same text reuses that result to find what it refers to from its own location.
+    /// `Ahead::take_parse` returns the result for a `Loaded::parse`.
     fn load_ahead<'r, 'u: 's>(
         session: &'s Session,
         run: Option<&'s Run<'u>>,
@@ -5916,7 +5908,7 @@ impl<'s> Files<'s> {
         const RUN: usize = 16;
         /// Contents that have been read occupy memory until they are processed.
         const AHEAD: usize = 256;
-        // Each copy is in the program, or the log shows what each copy refers to.
+        // Not shared if each copy is in the program, or if the log shows what each copy refers to.
         let shares_parses = !options.retains_duplicate_packages && !options.trace_resolution;
         let Ahead {
             state: shared,
@@ -6033,7 +6025,7 @@ impl<'s> Files<'s> {
                     let loaded = match (package, parsed) {
                         (Some(_), Some((parse, of_parsed, parsed_path)))
                             if of_parsed == specifies_esm
-                                // A file of a package has been read.
+                                // A package file's text is always `Some`, because it has been read.
                                 && *parse.hir.text == *text.as_deref().unwrap_or_default()
                                 && get_base_file_name(parsed_path) == get_base_file_name(path) =>
                         {
@@ -6210,8 +6202,8 @@ impl<'s> Files<'s> {
         }
     }
 
-    /// Everything that depends on the text of the file and the kind of file it is. The file that
-    /// gets the result calls `rename_private_names`.
+    /// Does everything that depends only on the file's text and on what kind of file it is. The
+    /// caller that assigns the result to a file also calls `rename_private_names`.
     fn parse_and_bind(
         arena: &'s Arena,
         host: &dyn Host,
@@ -6274,9 +6266,9 @@ impl<'s> Files<'s> {
         (hir, bound)
     }
 
-    /// Sets `hir` and `bound` of `module`, the copy of a package file that's in the program. If `parse` is `None`,
-    /// another file took `load_ahead`'s parse, so the file is read and parsed again. `arena` must belong to the calling
-    /// thread.
+    /// Sets `hir` and `bound` of `module`, the copy of a package file that's in the program. If `parse`
+    /// is `None`, another file took `load_ahead`'s parse, so the file is read and parsed again. `arena`
+    /// must belong to the calling thread.
     fn give_parse(
         arena: &'s Arena,
         host: &dyn Host,
@@ -6367,9 +6359,9 @@ impl<'s> Files<'s> {
     /// Frees the HIR of `file`, which `is_leaf`. Its text is retained for the report.
     ///
     /// # Safety
-    /// Only the task that checks `file` calls it, at the end of the task: an entry of its buffer
-    /// can hold a value that is bound to an earlier file of the task. No reference into `hir` or
-    /// `bound` of the file is alive.
+    /// Only the task that checks `file` may call this, and only at the end of the task, because an
+    /// entry of its buffer can hold a value that's bound to an earlier file of the task. No
+    /// reference into `hir` or `bound` of the file may be alive.
     pub unsafe fn free_tree(&self, file: FileId) {
         let cell = &self.modules[file.idx()];
         debug_assert!(cell.is_leaf);
@@ -6380,7 +6372,7 @@ impl<'s> Files<'s> {
         module.transient_symbols.clear();
     }
 
-    /// `arena`: that of the calling thread in `session`. `text`: `None`: it has not been read.
+    /// `arena`: the calling thread's arena in `session`. `text`: `None` if the file hasn't been read yet.
     fn load_one<'r, 'u: 's>(
         session: &'s Session,
         arena: &'s Arena,
@@ -6455,8 +6447,9 @@ impl<'s> Files<'s> {
             && resolver.is_ecmascript_module(path)
     }
 
-    /// Everything that depends on where the file is. `Err`: the module is without `hir` and `bound`.
-    /// `resolve_ahead`: called with the module names before they're resolved one by one. It may resolve them.
+    /// Does everything that depends on where the file is. With `Err`, the returned module has no
+    /// `hir` and `bound`. `resolve_ahead`: called with the module names before they're resolved one
+    /// by one. It may resolve them.
     fn load_parsed<'r>(
         arena: &'s Arena,
         host: &dyn Host,
@@ -6507,7 +6500,7 @@ impl<'s> Files<'s> {
         let runtime = runtime.map(|runtime| (atoms.intern(&runtime), runtime));
         // Only a file that can contain JSX tags, according to its file name, imports their runtime.
         let runtime = runtime.filter(|_| crate::resolve::is_jsx_file_name(path));
-        // Each entry of `moduleNames` is resolved, also one that repeats another.
+        // Each entry of `moduleNames` is resolved, even one that repeats another.
         let (types_tracer, tracer) = (Tracer::default(), Tracer::default());
         if of_program.trace_resolution {
             let trace = |name: &[u8], mode: ResolutionMode| {
@@ -6570,8 +6563,8 @@ impl<'s> Files<'s> {
             extensionless_imports.extend(extensionless_import(spec));
             module_names.push((spec, default_mode, true));
         }
-        // `file.Imports()`, then `file.ModuleAugmentations`: each with its place there. The
-        // specifiers of statements come before those of `import()`, the call and the type.
+        // `file.Imports()`, then `file.ModuleAugmentations`, each with its sort key in that order.
+        // The specifiers of statements come before those of `import()`, the call and the type.
         const AFTER_IMPORTS: (bool, u32) = (true, u32::MAX);
         let mut written: Vec<((bool, u32), (Atom, ResolutionMode, bool))> = Vec::new();
         // Groups the uses by specifier, each group in the order of `specifier_uses`. A barrel file has thousands of
@@ -6597,8 +6590,8 @@ impl<'s> Files<'s> {
             .chain(bound.module_augmentations.iter())
         {
             extensionless_imports.extend(extensionless_import(spec));
-            // It is resolved in each mode that one of `file.Imports()` requests. With each mode,
-            // where the first use in it is there.
+            // It's resolved in each mode that one of `file.Imports()` requests. Each mode is paired
+            // with the sort key of its first use.
             let mut modes = [(default_mode, AFTER_IMPORTS); 3];
             let mut count = 0;
             for u in uses_of(spec).filter(|u| is_import(u)) {
@@ -6614,7 +6607,7 @@ impl<'s> Files<'s> {
             }
             let imported = count;
             // A module augmentation resolves the module the way the file itself would, regardless
-            // of other uses of the specifier. It does not add the file to the program.
+            // of other uses of the specifier. It doesn't add the file to the program.
             let is_module_name = bound.ambient_modules.iter().any(|m| m.0 == spec);
             if (count == 0 || is_module_name && hir.has_module_syntax)
                 && !modes[..count].iter().any(|known| known.0 == default_mode)
@@ -6673,7 +6666,7 @@ impl<'s> Files<'s> {
                 let package = resolved.package_id.map(|id| atoms.intern(id.name));
                 untyped_import_files.push((atoms.intern(found), package));
             }
-            // `resolveExternalModule` asks with the options of the program.
+            // `resolveExternalModule` uses the program's options.
             let diagnostic = get_resolution_diagnostic(of_program, extension, hir);
             match diagnostic {
                 Some(6142) => jsx_imports.push((spec, mode, atoms.intern(found))),
@@ -6900,14 +6893,13 @@ impl<'s> Files<'s> {
 
     // ───────────────────────────── merging ─────────────────────────────
 
-    /// `fileIndexMap`: the index of `file` among the files of the program, which `compareNodes`
-    /// uses.
     #[inline]
-    /// `rank_of_file`, by file.
+    /// `rank_of_file`, indexed by file.
     pub(crate) fn ranks(&self) -> &'s [u32] {
         self.ranks
     }
 
+    /// `fileIndexMap`: the index of `file` among the files of the program, which `compareNodes` uses.
     pub fn rank_of_file(&self, file: FileId) -> u32 {
         self.ranks[file.idx()]
     }
@@ -6933,8 +6925,8 @@ impl<'s> Files<'s> {
         crate::resolve::LIBS.len() + 2
     }
 
-    /// `getProcessedFiles`: `collectFiles(rootTasks)`, from each task depth first, a file after everything it refers to. The
-    /// files with a `libFile` come first, sorted (`sortLibs`).
+    /// `getProcessedFiles`: `collectFiles(rootTasks)` walks depth first from each task and lists a file after
+    /// everything it refers to. The files with a `libFile` come first, sorted (`sortLibs`).
     fn declaration_order(&self, starts: &[FileId], notes: &[Noted]) -> Vec<FileId> {
         let mut seen = vec![false; self.modules.len()];
         let mut libs = Vec::new();
@@ -6974,7 +6966,7 @@ impl<'s> Files<'s> {
         libs
     }
 
-    /// Whether `mergeModuleAugmentation` merges `symbol` of `file`.
+    /// True if `mergeModuleAugmentation` merges `symbol` of `file`.
     pub fn merges_module_augmentation(&self, file: FileId, symbol: SymbolId) -> bool {
         let module = self.module(file);
         let collected = module_augmentations(&module.hir, &self.atoms);
@@ -7102,16 +7094,16 @@ impl<'s> Files<'s> {
                 // An augmentation of a module that is `export = ns` is merged into `ns`.
                 Some(main_module) => {
                     let main_module = self.external_module_symbol_to_augment(main_module);
-                    // `mergeModuleAugmentation`: a module whose `export =` target is not a
-                    // namespace cannot be augmented.
+                    // `mergeModuleAugmentation`: a module whose `export =` target isn't a
+                    // namespace can't be augmented.
                     if !self.flags(main_module).intersects(SymFlags::NAMESPACE) {
                         self.augmentations_of_non_modules.push(sym);
                         continue;
                     }
                     // `mergeModuleAugmentation`: an augmentation of `a.svg`, which only the pattern
-                    // `*.svg` declares, is not merged into the pattern. Instead the contents of the
+                    // `*.svg` declares, isn't merged into the pattern. Instead the contents of the
                     // pattern are merged into the augmentation, which is registered under its own
-                    // name. A pattern that several scripts declare is not the symbol of any of them
+                    // name. A pattern that several scripts declare isn't the symbol of any of them
                     // (`mainModule == module.Symbol`), and is augmented like any module.
                     if self.ambient_patterns.iter().any(|p| p.2 == main_module) {
                         let merged = self.merge_symbol(sym, main_module, true);
@@ -7133,14 +7125,14 @@ impl<'s> Files<'s> {
                             && let Some(&found) = resolved_exports.get(name)
                             && let Some(resolved) = self.resolve_alias_if_needed(found)
                         {
-                            // `mergeSymbol`: symbols that cannot merge stay separate, and the
+                            // `mergeSymbol`: symbols that can't merge stay separate, and the
                             // module has the augmentation's symbol under the name.
                             if self
                                 .flags(resolved)
                                 .intersects(get_excluded_symbol_flags(self.flags(addition)))
                             {
                                 // `reportMergeSymbolError(target, source)`, where `target` is the
-                                // entry: an alias is not resolved.
+                                // entry: an alias isn't resolved.
                                 let refused = match self.is_non_local_alias(found) {
                                     true => found,
                                     false => self.canonical(resolved),
@@ -7153,7 +7145,7 @@ impl<'s> Files<'s> {
                     }
                     self.merge_symbol(main_module, sym, false);
                 }
-                // `mergeModuleAugmentation`: an augmentation of a module that does not exist is
+                // `mergeModuleAugmentation`: an augmentation of a module that doesn't exist is
                 // ignored.
                 None => {}
             }
@@ -7188,8 +7180,7 @@ impl<'s> Files<'s> {
             self.globals.insert(known::undefined, self.undefined_symbol);
         }
         let counts = self.make_transient_symbols(host);
-        // The target an alias resolved to during the symbol merge may have become a part of a
-        // merged symbol by now.
+        // The target an alias resolved to during the symbol merge may since have become part of a merged symbol.
         let session = self.session;
         let symbols = Bases::new_in(counts.into_iter(), &session);
         self.alias_symbol_links = ByNodeIndirect::new_in(&symbols, session);
@@ -7219,8 +7210,8 @@ impl<'s> Files<'s> {
         self.is_merged = true;
     }
 
-    /// `links`, whose `resolved_exports` are the entries of the tables, as they are stored once
-    /// symbols are merged.
+    /// Converts `links`, whose `resolved_exports` are the tables' entries, to the form that's
+    /// stored once symbols are merged.
     fn with_merged_exports(&self, mut links: ModuleSymbolLinks<'s>) -> ModuleSymbolLinks<'s> {
         let mut unmerged = Vec::new();
         for at in 0..links.resolved_exports.len() {
@@ -7278,8 +7269,8 @@ impl<'s> Files<'s> {
             .insert(known::globalThis, self.global_this_symbol);
     }
 
-    /// `symbol.Exports` of a transient symbol. `c.globalThisSymbol.Exports = c.globals`: they are one
-    /// table, also while the symbol merge fills it.
+    /// `symbol.Exports` of a transient symbol. `c.globalThisSymbol.Exports = c.globals`: they're
+    /// the same table, even while the symbol merge fills it.
     fn merged_exports_of(&self, symbol: Sym) -> Option<&SymbolMap<'s>> {
         if symbol == self.global_this_symbol {
             Some(&self.globals)
@@ -7359,10 +7350,9 @@ impl<'s> Files<'s> {
         clone
     }
 
-    /// `resolveExternalModuleSymbol(mainModule)` of `mergeModuleAugmentation`. If the `export =` of
-    /// `module` resolves through an `import * as ns`, `resolveESModuleSymbol` creates the clone
-    /// now, from the current contents. Whether it does is decided from the symbol tables: there are
-    /// no types yet.
+    /// `resolveExternalModuleSymbol(mainModule)` of `mergeModuleAugmentation`. If the `export =` of `module` resolves
+    /// through an `import * as ns`, `resolveESModuleSymbol` creates the clone now, from the current contents. Whether
+    /// it does is decided from the symbol tables, because there are no types yet.
     fn external_module_symbol_to_augment(&mut self, module: Sym) -> Sym {
         let value = self.module_value(module);
         let Some(mut at) = self.export(module, known::export_equals) else {
@@ -7401,8 +7391,8 @@ impl<'s> Files<'s> {
     }
 
     /// `symbolFromModule` of `getExternalModuleMember` for `alias`, in the case where
-    /// `combineValueAndTypeSymbols` creates a symbol from it if `symbolFromVariable` is a property:
-    /// it is not a value.
+    /// `combineValueAndTypeSymbols` creates a symbol from it if `symbolFromVariable` is a property.
+    /// That's the case when it isn't a value.
     fn type_symbol_to_combine(&self, alias: Sym) -> Option<Sym> {
         if !self.is_named_import_from_export_equals(alias) {
             return None;
@@ -7538,7 +7528,7 @@ impl<'s> Files<'s> {
         created
     }
 
-    /// Nothing can be added to the shared state once the merge has ended.
+    /// Creates the transient symbols now, because nothing can be added to the shared state once the merge has ended.
     ///
     /// An alias's target can depend on which aliases were resolved and which symbols were added before it, so that part
     /// runs file by file, in order. Few aliases need it.
@@ -7670,8 +7660,7 @@ impl<'s> Files<'s> {
         self.refused_merges.push(refused);
     }
 
-    /// Whether `file` declares one of `refused_merges`. There may be thousands of those, and every
-    /// file queries this.
+    /// True if `file` declares one of `refused_merges`. There may be thousands of those, and every file queries this.
     pub fn has_refused_merges(&self, file: FileId) -> bool {
         self.files_of_refused_merges.contains(&file)
     }
@@ -7708,7 +7697,7 @@ impl<'s> Files<'s> {
         // `reportMergeSymbolError`
         if is_excluded(target_flags) {
             self.refuse_merge(target, source);
-            // A symbol that cannot merge with the existing symbol of the name contributes nothing
+            // A symbol that can't merge with the existing symbol of the name contributes nothing
             // to it: two classes, a class and a variable. It remains the symbol of its own
             // declarations, and the name continues to resolve to the first symbol wherever it is
             // used. Two aliases never merge, and nothing refers to a member by its name alone.
@@ -7731,7 +7720,7 @@ impl<'s> Files<'s> {
             if is_alias {
                 match self.resolve_alias(target) {
                     Some(found) if found == source => return source,
-                    // If the two cannot merge, the added symbol takes the name.
+                    // If the two can't merge, the added symbol takes the name.
                     Some(found) if is_excluded(self.flags(found)) => {
                         self.refuse_merge(target, source);
                         return source;
@@ -7744,7 +7733,7 @@ impl<'s> Files<'s> {
                     // It may be a property of a module's `export =` value, which only the type of
                     // that value determines. The alias continues to refer to it.
                     None if self.may_be_property_of_export_equals(target) => {}
-                    // If the alias cannot be resolved (`unknownSymbol`), the added symbol takes the
+                    // If the alias can't be resolved (`unknownSymbol`), the added symbol takes the
                     // name as well.
                     None => {
                         self.keep_circular_aliases(target);
@@ -7874,8 +7863,8 @@ impl<'s> Files<'s> {
 
     // ───────────────────────────── symbols ─────────────────────────────
 
-    /// The arena of the calling thread, for what a `&self` method stores. It is a search: a caller
-    /// that allocates more than once keeps the result.
+    /// The calling thread's arena, for what a `&self` method stores. Finding it takes a lookup, so
+    /// a caller that allocates more than once should keep the result.
     fn thread_arena(&self) -> &'s Arena {
         let session: &'s Session = self.session;
         session.arena()
@@ -7984,7 +7973,7 @@ impl<'s> Files<'s> {
         }
         match self.memo.decls.get_ref(&sym) {
             Some(&kept) => List::Kept(kept),
-            // `link` has not reached it yet.
+            // `link` hasn't reached it yet.
             None => {
                 let mut decls = Vec::new();
                 self.collect_decls(sym, &mut decls);
@@ -8025,7 +8014,7 @@ impl<'s> Files<'s> {
     pub fn export(&self, sym: Sym, name: Atom) -> Option<Sym> {
         let found = self.export_in_table(sym, name)?;
         // `getExportsOfModule` returns the symbols as stored in the table, and `mergeSymbol` clones
-        // one that is not transient.
+        // one that isn't transient.
         Some(if self.is_merged {
             self.canonical(found)
         } else {
@@ -8121,8 +8110,8 @@ impl<'s> Files<'s> {
         List::One(sym)
     }
 
-    /// What a name that no scope of a file declares can resolve to, sorted by name. `None`: an entry of `types` is not
-    /// installed, so what it declares is not known.
+    /// The global names: what a name can resolve to if no scope of its file declares it. Sorted by name. Returns `None`
+    /// if an entry of `types` isn't installed, since what it declares is unknown.
     pub fn global_names(&self) -> Option<Vec<GlobalName>> {
         if self.program_errors.iter().any(|it| it.code == 2688) {
             return None;
@@ -8136,7 +8125,8 @@ impl<'s> Files<'s> {
         let mut names = Vec::with_capacity(self.globals.len());
         for &(name, symbol) in self.globals.iter() {
             let text = self.atoms.bytes(name);
-            // An ambient module is there with its quotes, and what the binder names itself with a byte that no text has.
+            // An ambient module is listed with its quotes, and the binder's internal names start
+            // with a byte that no source text has.
             if matches!(text.first(), None | Some(b'"' | b'\'' | 0xFE)) {
                 continue;
             }
@@ -8184,8 +8174,8 @@ impl<'s> Files<'s> {
     }
 
     /// `getGlobalType`: the global class or interface `name` that has `arity` type parameters.
-    /// `Err`: what it reports with `reportErrors`, at `global_type_declaration` of the symbol that
-    /// has the name. 2318 is in no file.
+    /// `Err`: the error it reports with `reportErrors`, at `global_type_declaration` of the symbol
+    /// with that name. 2318 isn't reported in any file.
     #[inline]
     pub fn get_global_type(&self, name: Atom, arity: usize) -> Result<Sym, (u32, Option<Sym>)> {
         let global = match self.global_types.get(name.0 as usize) {
@@ -8218,7 +8208,7 @@ impl<'s> Files<'s> {
         })
     }
 
-    /// Whether `file` contains a conditional or a mapped type node.
+    /// True if `file` contains a conditional or a mapped type node.
     #[inline]
     pub fn has_conditional_or_mapped_type(&self, file: FileId) -> bool {
         self.module(file).has_conditional_or_mapped_type
@@ -8272,11 +8262,11 @@ impl<'s> Files<'s> {
             Some(list) => std::iter::once(list).collect(),
             None => self.type_param_lists(sym),
         };
-        // In a single list a type parameter without a name is a symbol of its own.
+        // In a single list a type parameter without a name is its own symbol.
         let is_single_list = lists.len() == 1;
-        // `appendTypeParameters`, `getMinTypeArgumentCount`, `hasTypeParameterDefault`: the type
-        // parameters of one name are one symbol, also within one list (`<T, T>`), and it has a
-        // default if any of its declarations has one.
+        // `appendTypeParameters`, `getMinTypeArgumentCount`, `hasTypeParameterDefault`: type
+        // parameters with the same name are one symbol, even within one list (`<T, T>`), and it has
+        // a default if any of its declarations has one.
         let mut all: SmallVec<[(Atom, bool); 4]> = SmallVec::new();
         for (file, params) in lists {
             let hir = self.hir(file);
@@ -8300,7 +8290,7 @@ impl<'s> Files<'s> {
     /// `getParentOfSymbol`
     pub fn parent_of_symbol(&self, sym: Sym) -> Option<Sym> {
         let symbol = self.symbol(sym);
-        // `mergeSymbolTable` sets the parent of a transient symbol only.
+        // `mergeSymbolTable` only sets the parent of a transient symbol.
         if symbol.flags.contains(SymFlags::TRANSIENT)
             && let Some(&parent) = self.parents_in_other_files.get(&sym)
         {
@@ -8310,9 +8300,9 @@ impl<'s> Files<'s> {
         parent.is_some().then(|| self.sym(sym.file, parent))
     }
 
-    /// The raw `symbol.Parent` field, unlike `getParentOfSymbol`, which returns the merged parent. `mergeSymbolTable` only
-    /// re-parents symbols that were actually merged. A symbol that exists only in the source table keeps its parent, for example
-    /// the `declare module "m"` block that contains it.
+    /// The raw `symbol.Parent` field, unlike `getParentOfSymbol`, which returns the merged parent. `mergeSymbolTable`
+    /// only re-parents symbols that were actually merged. A symbol that exists only in the source table keeps its
+    /// parent, for example the `declare module "m"` block that contains it.
     pub fn symbol_parent(&self, sym: Sym) -> Option<Sym> {
         if let Some(&parent) = self.parents_in_other_files.get(&sym) {
             return Some(parent);
@@ -8434,8 +8424,8 @@ impl<'s> Files<'s> {
                 let held = bound.lookup(s.locals, name).map(|id| self.sym(file, id));
                 let is_export_value_only =
                     held.is_some_and(|sym| self.refused_exports.contains(&sym));
-                // `meaning&ast.SymbolFlagsType`: a type parameter of a class or an interface is one symbol with the member of
-                // its name, which is not in scope.
+                // `meaning&ast.SymbolFlagsType`: a type parameter of a class or an interface shares
+                // a symbol with the member of the same name, which isn't in scope.
                 let is_type_parameter =
                     matches!(s.kind, ScopeKind::Class(_) | ScopeKind::Interface(_))
                         && held
@@ -8452,7 +8442,7 @@ impl<'s> Files<'s> {
                 }
             }
             // The exports of a module, a namespace or an enum are in scope inside it, wherever they
-            // were declared. `default` is not a name.
+            // were declared. `default` isn't a name.
             if s.symbol.is_some() && name != known::default {
                 // Enum members are in scope in the enum, but not in a namespace merged with it.
                 let visible = match s.kind {
@@ -8470,7 +8460,7 @@ impl<'s> Files<'s> {
                     return Ok(Some(default));
                 }
                 let held = self.export(container, name);
-                // There, an entry that only an export specifier created is not in scope. That is
+                // There, an entry that only an export specifier created isn't in scope. That is
                 // decided before the alias is resolved, because its target may be the very name
                 // being resolved.
                 let is_purely_an_export_specifier = held
@@ -8601,14 +8591,14 @@ impl<'s> Files<'s> {
         spec: Atom,
         mode: ResolutionMode,
     ) -> Option<Sym> {
-        // The specifier is not a string literal (1141). No ambient pattern may match it.
+        // The specifier isn't a string literal (1141). No ambient pattern may match it.
         if spec.is_none() {
             return None;
         }
         if let Some(ambient) = self.try_find_ambient_module(spec) {
             return Some(ambient);
         }
-        // A file that is not a module ends the search anyway.
+        // A file that isn't a module still ends the search.
         if let Some(&target) = self.module(file).imports.get(&(spec, mode)) {
             return self
                 .module(target)
@@ -8675,8 +8665,8 @@ impl<'s> Files<'s> {
     }
 
     /// `resolve_export_by_name`: `resolveExportByName(module, name)`. `None` if there is none, or
-    /// else `has_syntactic_default`. For a module that is `export =` it is a property of the type
-    /// of the value, which the symbol tables cannot answer.
+    /// else `has_syntactic_default`. For a module that is `export =` it's a property of the type of
+    /// the value, which the symbol tables can't answer.
     pub fn synthetic_default_with(
         &self,
         usage: impl Usage,
@@ -8707,7 +8697,7 @@ impl<'s> Files<'s> {
                 }
                 // Between ECMAScript modules there is no synthetic default.
                 ResolutionMode::Import => return None,
-                // `GetEmitModuleFormatOfFile`: a referenced project says what its declaration
+                // `GetEmitModuleFormatOfFile`: a referenced project determines what its declaration
                 // files are emitted as.
                 ResolutionMode::None
                     if file.hir.kind == FileKind::Declaration
@@ -8732,7 +8722,7 @@ impl<'s> Files<'s> {
                     .lookup(b"__esModule")
                     .is_none_or(|name| resolve_export_by_name(name).is_none())
         } else if self.hir(module.file).is_js {
-            // A JavaScript file has one if it has no ECMAScript module syntax and does not declare
+            // A JavaScript file has one if it has no ECMAScript module syntax and doesn't declare
             // that it is an ECMAScript module.
             let of = self.hir(module.file);
             (!of.has_module_syntax || of.is_module_by_decree)
@@ -8806,8 +8796,9 @@ impl<'s> Files<'s> {
             && self.module(module.file).implied_format == ResolutionMode::Require
     }
 
-    /// The import is emitted as `require` (`getEmitSyntaxForModuleSpecifierExpression`, see `synthetic_default` for `usage`), and
-    /// `module` is a file that is emitted as an ECMAScript module (`GetImpliedNodeFormatForEmit`).
+    /// True if the import is emitted as `require` (`getEmitSyntaxForModuleSpecifierExpression`, see
+    /// `synthetic_default` for `usage`), and `module` is a file that's emitted as an ECMAScript
+    /// module (`GetImpliedNodeFormatForEmit`).
     pub fn is_commonjs_import_of_esm_file(&self, usage: impl Usage, module: Sym) -> bool {
         self.symbol(module)
             .decls
@@ -8817,8 +8808,8 @@ impl<'s> Files<'s> {
             && self.module(module.file).implied_format == ResolutionMode::Import
     }
 
-    /// `InternalSymbolNameModuleExports`. From Node 20 on, `require` of an ECMAScript module returns its export named `"module.exports"`,
-    /// if it has one. `None` unless `module` is `node20` .. `nodenext`.
+    /// `InternalSymbolNameModuleExports`. From Node 20 on, `require` of an ECMAScript module returns its export named
+    /// `"module.exports"`, if it has one. `None` unless `module` is `node20` .. `nodenext`.
     pub fn module_exports_name(&self) -> Option<Atom> {
         if !(ModuleKind::Node20..=ModuleKind::NodeNext).contains(&self.options.module) {
             return None;
@@ -8829,7 +8820,7 @@ impl<'s> Files<'s> {
     /// The link step: resolves the aliases and the exports of every module. `Files` is immutable
     /// afterwards.
     fn link(&mut self, host: &dyn Host) {
-        // A file that is unreachable from every starting point is in `modules` and not in `order`.
+        // A file that's unreachable from every starting point is in `modules` but not in `order`.
         let unordered: Vec<FileId> = (0..self.modules.len() as u32)
             .map(FileId)
             .filter(|file| self.ranks[file.idx()] == u32::MAX)
@@ -8870,8 +8861,8 @@ impl<'s> Files<'s> {
     /// - A task starts with an empty buffer and processes its files in order.
     /// - A task publishes its results for the symbols of its own files, and keeps the failed lookups in those files. It
     ///   discards its results for aliases and modules of other files, because the tasks for those files compute them.
-    /// - Its results for other symbols of other files are held back until all tasks have ended. Then the first entry
-    ///   for a key wins, with the components ordered by level.
+    /// - Its results for other symbols of other files are deferred until all tasks have ended. Then the first entry for a
+    ///   key wins, with the components ordered by level.
     ///
     /// The order only saves work. An alias can depend on a file that its own file doesn't import: through an ambient
     /// module, a UMD global, an `import a = b.c` in a script, or a module augmentation. A task resolves for itself
@@ -8957,7 +8948,7 @@ impl<'s> Files<'s> {
         let has_tasks = bun_threading::Condvar::new();
         // `Files::decls_of` reads these without asking the plan, so they're only published after all tasks have ended.
         let decls: Guarded<Vec<Vec<(Sym, &'s [(FileId, Decl)])>>> = Guarded::new(Vec::new());
-        // (`place` of the component, its results that are held back)
+        // (`place` of the component, its deferred results)
         let left_over: Guarded<Vec<(u64, Resolved<'s>)>> = Guarded::new(Vec::new());
         let workers = host.threads().min(widest_from[0]);
         host.parallel(workers, &|_| {
@@ -8992,12 +8983,12 @@ impl<'s> Files<'s> {
                     continue;
                 };
                 has_paused = false;
-                // A package of ten thousand one-line modules is ten thousand components that are ready at the same time.
-                // A thread takes its share of half of them, so that the threads don't queue up for the lock. The share
-                // counts the threads that have yet to start: the files without imports are all ready when the first
-                // thread gets here. The components are all of one level. A component only waits for lower levels
-                // (`LinkPlan::sees`), so none of them waits for what another one of them makes ready, which this thread
-                // only queues when it's through with all of them.
+                // A package of ten thousand one-line modules is ten thousand components that are ready at the same
+                // time. A thread takes its share of half of them, so that the threads don't queue up for the lock. The
+                // share counts the threads that have yet to start, because the files without imports are all ready when
+                // the first thread gets here. The components it takes are all on one level. A component only waits for
+                // lower levels (`LinkPlan::sees`), so none of them waits for what another one of them makes ready,
+                // which this thread only queues when it's through with all of them.
                 taken.clear();
                 taken.push(next);
                 let more = queue.ready.len() / (2 * workers);
@@ -9077,9 +9068,9 @@ impl<'s> Files<'s> {
         publish(self.resolve_files(unordered, None));
     }
 
-    /// A task of the link step. First the links of every alias of `files`, in that order, by
-    /// symbol: the order determines where a cycle is entered. Then, with nothing in progress,
-    /// everything else.
+    /// Runs one task of the link step. First it computes the links of every alias of `files`, file
+    /// by file in symbol order, because the order determines where a cycle is entered. Then, with
+    /// nothing in progress, it computes everything else.
     fn resolve_files(&self, files: &[FileId], scope: Option<(&LinkPlan<'s>, u32)>) -> Resolved<'s> {
         let mut resolver = AliasResolver::new(self, Some(Resolved::default()));
         resolver.scope = scope;
@@ -9102,7 +9093,7 @@ impl<'s> Files<'s> {
             if !symbol.flags.contains(SymFlags::ALIAS) {
                 continue;
             }
-            // Where the walk comes to an `ExportAssignment`, which declares one of these names.
+            // This is where the walk reaches an `ExportAssignment`, which declares one of these names.
             if symbol.name == known::default || symbol.name == known::export_equals {
                 for &decl in symbol.decls {
                     if let Decl::ExportExpr(stmt) = decl {
@@ -9189,7 +9180,7 @@ impl<'s> Files<'s> {
         (!is_empty).then_some(rest)
     }
 
-    /// At a barrier, on one thread.
+    /// Publishes everything in `resolved`. Only called at a barrier, on one thread.
     fn publish(&self, resolved: Resolved<'s>) {
         for (sym, links) in resolved.alias_links_in_order {
             self.alias_symbol_links.insert_ref(sym, links);
@@ -9321,7 +9312,7 @@ impl<'s> Files<'s> {
     pub fn module_links(&self, module: Sym) -> &ModuleSymbolLinks<'s> {
         debug_assert!(self.is_linked);
         let links = self.memo.module_links.get_ref(&module);
-        // `link` has them for every symbol with a flag of `SymFlags::MODULE`.
+        // `link` stores them for every symbol that has a flag of `SymFlags::MODULE`.
         debug_assert!(links.is_some() || !self.flags(module).intersects(SymFlags::MODULE));
         links.unwrap_or(&self.no_module_links)
     }
@@ -9331,8 +9322,8 @@ impl<'s> Files<'s> {
         &self.module_links(module).resolved_exports
     }
 
-    /// The entries of `getExportsOfModule(module)` that are not their own merged symbol, which is
-    /// what `exports_of_module` has in their place.
+    /// The entries of `getExportsOfModule(module)` that aren't their own merged symbol.
+    /// `exports_of_module` has the merged symbol instead.
     pub fn unmerged_exports_of_module(&self, module: Sym) -> &[(Atom, Sym)] {
         self.module_links(module).unmerged_exports
     }
@@ -9355,12 +9346,12 @@ impl<'s> Files<'s> {
         self.type_only_export_star(module, name).is_some()
     }
 
-    /// The end of the alias chain from `sym`: a symbol that is not an alias at all, merged. tsgo
-    /// has no such function: its callers want a meaning, which `resolve_alias_as` handles.
+    /// The end of the alias chain from `sym`: a symbol that isn't an alias at all, merged. tsgo has no such function,
+    /// because its callers want a specific meaning, which `resolve_alias_as` handles.
     #[inline]
     pub fn resolve_alias_if_needed(&self, sym: Sym) -> Option<Sym> {
         let target = self.resolve_alias_as(sym, SymFlags::empty())?;
-        // `mergeSymbol` wants `resolveSymbol(target)`.
+        // `mergeSymbol` needs `resolveSymbol(target)`.
         Some(if self.is_merged {
             self.canonical(target)
         } else {
@@ -9407,7 +9398,7 @@ impl<'s> Files<'s> {
         })
     }
 
-    /// The result of `resolveESModuleSymbol` for the alias of an `import * as ns`, if it is not the
+    /// The result of `resolveESModuleSymbol` for the alias of an `import * as ns`, if it isn't the
     /// module symbol itself.
     pub fn module_clone(&self, originating_import: Sym) -> Option<Sym> {
         self.transient_symbol_of_alias(originating_import, false)
@@ -9419,8 +9410,8 @@ impl<'s> Files<'s> {
         self.transient_symbol_of_alias(alias, true)
     }
 
-    /// Whether `alias`, or an alias on the chain to its target, has a `combined_symbol`: only the
-    /// types tell what `resolveAlias` and `getSymbolFlags` give for it.
+    /// True if `alias`, or an alias on the chain to its target, has a `combined_symbol`. In that
+    /// case only types tell what `resolveAlias` and `getSymbolFlags` return for it.
     pub fn has_symbol_to_combine(&self, mut alias: Sym) -> bool {
         let mut links_followed = 0;
         while self.has_symbols_to_combine
@@ -9456,7 +9447,7 @@ impl<'s> Files<'s> {
         Some((alias, created.is_combined))
     }
 
-    /// The symbol whose table serves as `Exports` of `sym`. `maps.Clone(symbol.Exports)`: a clone
+    /// The symbol whose table is used as `Exports` of `sym`. `maps.Clone(symbol.Exports)`: a clone
     /// that nothing was merged into has the same entries as its original.
     fn holder_of_exports(&self, sym: Sym) -> Sym {
         if self.flags(sym).contains(SymFlags::TRANSIENT)
@@ -9546,9 +9537,10 @@ impl<'s> Files<'s> {
         expression_is_alias(hir, e)
     }
 
-    /// `getDeclarationOfAliasSymbol`: the last alias declaration of `sym`, in whichever file it is. `Symbol::decls` also lists the
-    /// declarations `declareSymbolEx` refused, which are not declarations of the symbol: an import excludes every other alias
-    /// (`AliasExcludes`), so an import that follows an alias declaration was refused.
+    /// `getDeclarationOfAliasSymbol`: the last alias declaration of `sym`, in whichever file it is.
+    /// `Symbol::decls` also lists the declarations `declareSymbolEx` rejected, which aren't
+    /// declarations of the symbol. An import excludes every other alias (`AliasExcludes`), so an
+    /// import that follows an alias declaration was rejected.
     pub fn declaration_of_alias_symbol(&self, sym: Sym) -> Option<(FileId, Decl)> {
         let decls = self.decls_of(sym);
         (0..decls.len()).rev().find_map(|i| {
@@ -9572,8 +9564,8 @@ impl<'s> Files<'s> {
         })
     }
 
-    /// `isShorthandAmbientModuleSymbol`: `ValueDeclaration`, which of several module declarations is the first, is
-    /// `declare module "m";`.
+    /// `isShorthandAmbientModuleSymbol`: true if `ValueDeclaration`, which is the first of several
+    /// module declarations, is `declare module "m";`.
     pub fn is_shorthand_ambient_module_symbol(&self, module: Sym) -> bool {
         matches!(
             self.decls_of(module).first(),
@@ -9714,7 +9706,7 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
         }
         let cycles = self.cycles.get();
         let flags = self.symbol_flags_ex(sym, false, false);
-        // The flags of an alias in progress are not its final flags.
+        // The flags of an alias in progress aren't its final flags.
         if self.cycles.get() == cycles {
             match &self.buffer {
                 Some(buffer) => {
@@ -9776,7 +9768,7 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
         self.resolved_symbols.borrow_mut().insert((file, e));
     }
 
-    /// Only the link step keeps them.
+    /// Only the link step records them.
     fn note_failed_lookup(&self, file: FileId, e: ExprId) {
         if let Some(buffer) = &self.buffer {
             let in_flight = self.in_flight.borrow();
@@ -9790,7 +9782,7 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
     }
 }
 
-/// The public methods of `Files` that resolve aliases: the methods of `Resolve` of the same names.
+/// Defines the methods of `Files` that resolve aliases. Each forwards to the `Resolve` method of the same name.
 macro_rules! resolutions {
     ($($visibility:vis fn $name:ident($($argument:ident: $type:ty),*) -> $result:ty;)*) => {
         impl Files<'_> {

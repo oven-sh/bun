@@ -1,10 +1,10 @@
-//! The scanner. It works on bytes, with one dispatch on the first byte of a token. A highway kernel
-//! goes over the text once, up front, and finds where names, indentation and the plain parts of
-//! strings end ([`ScannerStops`]). Everything that is not ASCII takes a slow path.
+//! The scanner. It works on bytes and dispatches once on a token's first byte. A highway kernel makes one pass over the
+//! text up front and finds where names, indentation and the plain parts of strings end ([`ScannerStops`]). Anything
+//! that isn't ASCII takes a slow path.
 //!
-//! What it cannot scan it refuses ([`Lexer::refuse`]): from then on every token is the end of the
-//! file, so the parser unwinds without testing anything. With `Options::recovers` it reports an error
-//! and goes on as TypeScript's scanner does ([`Lexer::error`]), where that is written.
+//! It rejects text it can't scan ([`Lexer::refuse`]). From then on every token is the end of the file, so the parser
+//! unwinds without having to check for failure. With `Options::recovers` it reports an error and continues like
+//! TypeScript's scanner ([`Lexer::error`]), where that's implemented.
 
 use crate::Refusal;
 use crate::names::{Names, Text};
@@ -21,12 +21,12 @@ use bun_sema::hir::{
 
 pub(crate) struct Lexer<'a> {
     pub(crate) src: &'a [u8],
-    /// Of the whole text, also while `src` is cut short.
+    /// Computed for the whole text, even while `src` is cut short.
     stops: ScannerStops<'a>,
     pub(crate) token: T,
     /// A line break precedes the token.
     pub(crate) newline_before: bool,
-    /// The name or keyword has a Unicode escape, or the piece of a template an invalid escape.
+    /// The name or keyword has a Unicode escape, or the template piece has an invalid escape.
     pub(crate) has_escape: bool,
     /// The start of the token.
     pub(crate) start: u32,
@@ -34,16 +34,15 @@ pub(crate) struct Lexer<'a> {
     pub(crate) end: u32,
     /// The end of the previous token: `node.Pos()` of a node that starts with the token.
     pub(crate) full_start: u32,
-    /// The text of a name, a keyword or a bigint, the value of a string or of a piece of a
-    /// template.
+    /// The text of a name, keyword or bigint, or the value of a string or template piece.
     pub(crate) atom: Atom,
     pub(crate) number: f64,
-    /// Where the last string starts that has nothing between its quotes but printable ASCII, and no backslash.
+    /// The start of the last string whose contents are only printable ASCII, with no backslash.
     plain_string: u32,
     pub(crate) refusal: Option<Refusal>,
-    /// Where the text was refused, and by which line of this crate.
+    /// Where the text was rejected, and by which line of this crate.
     pub(crate) refused_at: (u32, &'static core::panic::Location<'static>),
-    /// `full_start`, then.
+    /// `full_start` at that point.
     pub(crate) refused_after: u32,
     /// `</` is one token.
     pub(crate) is_jsx: bool,
@@ -61,8 +60,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) notes_html_opens: bool,
     /// Only filled in if `notes_html_opens` is set.
     pub(crate) html_opens: HtmlOpens,
-    /// Each private name that was scanned and that no class which has ended since declares, for
-    /// `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE`: one after `super.`.
+    /// Every scanned private name that wasn't declared by a class that has ended since, for
+    /// `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE` marks one after `super.`.
     pub(crate) private_names: Vec<Atom>,
     pub(crate) atoms: &'a dyn Intern,
     pub(crate) names: &'a mut Names,
@@ -72,41 +71,42 @@ pub(crate) struct Lexer<'a> {
     pub(crate) leading_comments: Vec<(u32, u32)>,
     /// `hir::File::comments`
     pub(crate) comments: Vec<Comment>,
-    /// While scanning the comments between two tokens: whether a line break was seen since the last comment, or since the
-    /// previous token if there was no comment yet.
+    /// While scanning the comments between two tokens: true if a line break was seen since the last comment, or since
+    /// the previous token if there was no comment yet.
     newline_since_comment: bool,
     /// `Options::attach_comments`
     pub(crate) attach_comments: bool,
-    /// See `Parser::finish_node`: a node that starts after this offset cannot affect any pending comment.
+    /// See `Parser::finish_node`. A node that starts after this offset can't affect any pending comment.
     pub(crate) max_relevant_node_start: u32,
-    /// What TypeScript's scanner reports and ECMAScript allows outside strict code: the code of the
-    /// message, and from where to where. Only with `is_ecmascript`: otherwise the text is refused.
+    /// Errors that TypeScript's scanner reports about syntax ECMAScript allows outside strict mode: the message code,
+    /// start and end. Only filled in with `is_ecmascript`. Otherwise the text is rejected.
     pub(crate) flagged: Vec<(u32, u32, u32)>,
     /// `Options::recovers`
     pub(crate) recovers: bool,
-    /// What [`Lexer::error`] has reported and the parser has not taken yet
-    /// (`Parser::take_errors_of_scanner`), in the order of events.
+    /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_errors_of_scanner`), in
+    /// the order they were reported.
     pub(crate) errors: Vec<Diagnostic>,
-    /// `skipJSDocLeadingAsterisks`: the lexer is in a type of a JSDoc comment.
+    /// `skipJSDocLeadingAsterisks`: the lexer is inside a type in a JSDoc comment.
     pub(crate) skips_jsdoc_asterisks: bool,
-    /// `hir::File::jsdoc_asterisks`, in the order of events: not sorted, and one more than once.
+    /// `hir::File::jsdoc_asterisks`, in scan order: unsorted, and possibly with duplicates.
     pub(crate) jsdoc_asterisks: Vec<u32>,
     /// For each of `errors`, where the scan that reported it began. See [`Lexer::error`].
     origins: Vec<u32>,
-    /// Where values with escapes are decoded.
+    /// Scratch space for decoding values that have escapes.
     buffer: Vec<u8>,
     pub(crate) stack_check: bun_core::StackCheck,
 }
 
-/// Where the first `<!--` is that was read as a `<`, outside a script, and the first that nothing but blanks and comments
-/// precedes on its line. For oxc the one starts a comment in all but what is a module by its name, the other is an error there.
+/// Outside a script: the position of the first `<!--` that was scanned as `<`, and of the first one preceded only by
+/// whitespace and comments on its line. For oxc, the former starts a comment unless the file's name makes it a module,
+/// and the latter is an error in such a module.
 #[derive(Copy, Clone, Default)]
 pub(crate) struct HtmlOpens {
     pub(crate) first: Option<u32>,
     pub(crate) first_on_its_line: Option<u32>,
 }
 
-/// What a lookahead restores.
+/// The state a lookahead restores.
 #[derive(Copy, Clone)]
 pub(crate) struct Mark {
     token: T,
@@ -128,7 +128,7 @@ enum CommentForm {
     BlockOfSeveralLines,
 }
 
-/// What a token starts with, or what is between two.
+/// The class of a token's first byte, or of a byte between tokens.
 #[derive(Copy, Clone)]
 enum First {
     Blank,
@@ -169,7 +169,7 @@ enum First {
     Invalid,
 }
 
-/// By byte.
+/// Indexed by byte.
 static FIRST: [First; 256] = {
     let mut table = [First::Invalid; 256];
     let mut byte = 0u8;
@@ -224,7 +224,7 @@ const fn is_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
 }
 
-/// The code point at the start of `text`, and its length in bytes. `None`: it is not UTF-8.
+/// Returns the code point at the start of `text` and its length in bytes, or `None` if it isn't valid UTF-8.
 pub(crate) fn decode(text: &[u8]) -> Option<(u32, usize)> {
     let first = *text.first()?;
     let len = match first {
@@ -238,7 +238,7 @@ pub(crate) fn decode(text: &[u8]) -> Option<(u32, usize)> {
     Some((u32::from(valid.chars().next()?), len))
 }
 
-/// `DecodeLastRuneInString`: the code point at the end of `text`, and its length in bytes.
+/// `DecodeLastRuneInString`: returns the code point at the end of `text` and its length in bytes.
 fn decode_last(text: &[u8]) -> Option<(u32, usize)> {
     (1..=4).find_map(|len| {
         let last = text.get(text.len().checked_sub(len)?..)?;
@@ -246,7 +246,7 @@ fn decode_last(text: &[u8]) -> Option<(u32, usize)> {
     })
 }
 
-/// For a text that can be long.
+/// Validates a text that can be long.
 fn is_utf8(text: &[u8]) -> bool {
     let is_valid = bun_core::strings::is_valid_utf8(text);
     debug_assert_eq!(is_valid, core::str::from_utf8(text).is_ok());
@@ -299,7 +299,8 @@ impl<'a> Lexer<'a> {
             jsdoc_asterisks: Vec::new(),
             origins: Vec::new(),
             buffer: Vec::new(),
-            // As much as a thread of Bun's pool has. On a larger stack the rest is for what walks the tree.
+            // Use at most the stack size of a thread in Bun's pool. On a larger stack, the rest is left for the code
+            // that walks the tree.
             stack_check: bun_core::StackCheck::init()
                 .with_at_most(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize),
         }
@@ -344,7 +345,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Forgets the errors of the scans that began at `pos` or later: they are made again.
+    /// Drops the errors from scans that began at `pos` or later, because those scans will run again.
     #[cold]
     #[inline(never)]
     fn forget_errors_from(&mut self, pos: u32) {
@@ -353,9 +354,9 @@ impl<'a> Lexer<'a> {
         self.origins.truncate(kept);
     }
 
-    /// `s.errorAt(message, pos, length)`: the message `code` with `args`, from `start` to `end`.
-    /// Returns whether the scanner goes on. Without recovery it does not: the text is refused for
-    /// `why`, and the caller returns.
+    /// `s.errorAt(message, pos, length)`: reports message `code` with `args`, from `start` to `end`. Returns true if
+    /// the scanner continues. Without recovery it rejects the text for `why` and returns false, and the caller has to
+    /// return.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -374,12 +375,12 @@ impl<'a> Lexer<'a> {
             true => (start as u32, Diagnostic::NO_LENGTH),
             false => (start as u32, end as u32),
         };
-        // A scan begins where the token before ends, a second scan of the token behind its start.
+        // A scan begins at the end of the previous token. A rescan of the current token begins just after its start.
         let origin = match self.full_start == self.end {
             true => self.full_start,
             false => self.start.saturating_add(1),
         };
-        // The parser has taken the others.
+        // The parser has already taken the other errors.
         self.origins.truncate(self.errors.len());
         self.origins.push(origin);
         self.errors
@@ -387,8 +388,8 @@ impl<'a> Lexer<'a> {
         true
     }
 
-    /// What has been reported. "Keywords cannot contain escape characters." about the token itself
-    /// stays: `nextToken` reports it when it leaves the token.
+    /// Takes the reported errors. "Keywords cannot contain escape characters." about the current token stays behind,
+    /// because `nextToken` only reports it when it moves past the token.
     #[cold]
     #[inline(never)]
     pub(crate) fn take_errors(&mut self) -> Vec<Diagnostic> {
@@ -407,8 +408,8 @@ impl<'a> Lexer<'a> {
         taken
     }
 
-    /// `nextTokenWithoutCheck`: the token is taken as a name. Returns whether that error about it
-    /// was still here.
+    /// `nextTokenWithoutCheck`: the token is used as a name, so that error about it is dropped. Returns true if the
+    /// error was still here.
     #[cold]
     #[inline(never)]
     pub(crate) fn forget_escaped_keyword(&mut self) -> bool {
@@ -420,7 +421,7 @@ impl<'a> Lexer<'a> {
         is_waiting
     }
 
-    /// [`Lexer::error`], where only recovery gets.
+    /// [`Lexer::error`], for code that only runs with recovery.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -435,7 +436,7 @@ impl<'a> Lexer<'a> {
         self.flagged.truncate(kept);
     }
 
-    /// Notes what is in `flagged`, or refuses the text.
+    /// Adds an entry to `flagged`. Returns false if the caller has to reject the text instead.
     #[cold]
     fn flag(&mut self, code: u32, start: usize, end: usize) -> bool {
         if self.is_ecmascript {
@@ -444,7 +445,7 @@ impl<'a> Lexer<'a> {
         self.is_ecmascript
     }
 
-    /// What follows `pos` is scanned again, maybe as something else.
+    /// Drops the comments from `pos` on. That text is scanned again, possibly as something else.
     #[cold]
     #[inline(never)]
     fn forget_comments_from(&mut self, pos: u32) {
@@ -452,7 +453,7 @@ impl<'a> Lexer<'a> {
         self.comments.truncate(kept);
     }
 
-    /// The text of `atom`, which is one of a token of the file. Nothing for no atom.
+    /// Returns the text of `atom`, which came from a token of this file. Empty for `Atom::NONE`.
     pub(crate) fn text_of(&self, atom: Atom) -> &[u8] {
         match self.names.is_own() {
             true => self.names.bytes(atom, self.src),
@@ -461,7 +462,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Gives up on the file, or on the speculative parse that is going on.
+    /// Gives up on the file, or on the speculative parse in progress.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -476,17 +477,17 @@ impl<'a> Lexer<'a> {
         self.end = self.start;
     }
 
-    /// Nothing more of the text is read.
+    /// Stops reading the text.
     pub(crate) fn stop(&mut self) {
         self.token = T::Eof;
     }
 
-    /// The first token is looked for from `pos` on.
+    /// Makes the scan for the first token start at `pos`.
     pub(crate) fn start_at(&mut self, pos: u32) {
         self.end = pos;
     }
 
-    /// From here on the text ends where `src` ends: before the `*/` of a comment, or with the file.
+    /// From now on the text ends where `src` ends: before a comment's `*/`, or at the end of the file.
     pub(crate) fn set_src(&mut self, src: &'a [u8]) {
         self.src = src;
     }
@@ -499,8 +500,8 @@ impl<'a> Lexer<'a> {
             .unwrap_or_default()
     }
 
-    /// The first byte of the next token, if it is written right after the token or after one space.
-    /// 0: there is more between the two, or the byte does not say what the token is.
+    /// Returns the first byte of the next token if it follows the current token directly or after one space. Returns 0
+    /// if more than that separates them, or if the byte doesn't determine the token.
     #[inline]
     pub(crate) fn first_byte_of_next(&self) -> u8 {
         let rest = self.src.get(self.end as usize..).unwrap_or_default();
@@ -513,7 +514,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// At a `const`: the text says without a scan that no `enum` follows. `false`: it may.
+    /// At a `const`: true if the next bytes rule out a following `enum` without a scan. False means one may follow.
     #[inline]
     pub(crate) fn is_const_before_binding(&self) -> bool {
         let Some([b' ', first, ..]) = self.src.get(self.end as usize..) else {
@@ -531,7 +532,7 @@ impl<'a> Lexer<'a> {
 
     #[inline(always)]
     fn at(&self, pos: usize) -> u8 {
-        // No token contains a zero byte outside a string or a comment, so it stands for the end.
+        // No token contains a zero byte outside a string or a comment, so 0 can represent the end.
         self.src.get(pos).copied().unwrap_or(0)
     }
 
@@ -543,8 +544,8 @@ impl<'a> Lexer<'a> {
         self.scan(self.end as usize);
     }
 
-    /// Scans the token at `pos`, or after the blanks and comments there. Every call in it is the
-    /// last thing it does, so it saves no register.
+    /// Scans the token at `pos`, or after the whitespace and comments there. Every call it makes is a tail call, so it
+    /// doesn't have to save any registers.
     fn scan(&mut self, mut pos: usize) {
         let src = self.src;
         let at = |pos: usize| src.get(pos).copied().unwrap_or(0);
@@ -623,7 +624,7 @@ impl<'a> Lexer<'a> {
                     }
                     _ => self.set(T::LessThan, pos, next),
                 },
-                // The parser asks for `>=`, `>>` and so on where they can be.
+                // The parser rescans for `>=`, `>>` and so on where they're allowed.
                 First::GreaterThan => {
                     if at(next) == b'>' && src.get(pos..pos + 4) == Some(b">>>>") {
                         return self.same_four_times(pos);
@@ -636,7 +637,7 @@ impl<'a> Lexer<'a> {
                     _ => self.set(T::Plus, pos, next),
                 },
                 First::Minus => match (at(next), at(next + 1)) {
-                    // Only blanks and comments are before it on its line.
+                    // Only whitespace and comments precede it on its line.
                     (b'-', b'>')
                         if self.is_script && (self.newline_before || self.full_start == 0) =>
                     {
@@ -686,15 +687,15 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Scans the token after the line feed before `pos`, and after the indentation and the empty lines there. How far a
-    /// line is indented is hard to guess, so it is not asked byte by byte.
+    /// Scans the token after the line feed that precedes `pos`, skipping indentation and empty lines. How far a line is
+    /// indented is hard to predict, so the indentation isn't skipped byte by byte.
     #[inline(never)]
     fn scan_after_line_feed(&mut self, mut pos: usize) {
         self.newline_before = true;
         loop {
             pos = self.stops.after_blanks.next(pos);
             match FIRST[usize::from(self.at(pos))] {
-                // What most lines start with.
+                // Most lines start with one of these.
                 First::Name => return self.name(pos),
                 First::CloseBrace => return self.set(T::CloseBrace, pos, pos + 1),
                 First::LineFeed | First::CarriageReturn | First::Blank => pos += 1,
@@ -713,7 +714,7 @@ impl<'a> Lexer<'a> {
         true
     }
 
-    /// The `default:` of `Scan`, at what starts no token. Go reads invalid UTF-8 as U+FFFD.
+    /// The `default:` case of `Scan`, at a character that can't start a token. Go decodes invalid UTF-8 as U+FFFD.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -735,8 +736,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// At a comment, or at a character that is not ASCII: scans the token after it and after the
-    /// blanks and comments that follow it.
+    /// At a comment or a non-ASCII character: scans the token after it and after any whitespace and comments that
+    /// follow.
     #[inline(never)]
     fn scan_after_comments(&mut self, pos: usize) {
         let first = self.comments.len();
@@ -753,8 +754,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// They are passed over in a loop: not every build turns the last call of a function into a
-    /// jump, and a file can start with thousands of comments.
+    /// Skips the comments in a loop instead of recursing, because not every build turns a tail call into a jump and a
+    /// file can start with thousands of comments.
     fn pass_over_comments_and_scan(&mut self, mut pos: usize) {
         if self.is_too_deep() {
             return;
@@ -790,7 +791,7 @@ impl<'a> Lexer<'a> {
                 0x80.. => self.not_ascii(pos),
                 _ => return self.scan(pos),
             };
-            // Otherwise the token is set.
+            // `None` means the token is already set.
             match end {
                 Some(end) => pos = end,
                 None => return,
@@ -799,7 +800,7 @@ impl<'a> Lexer<'a> {
     }
 
     /// Scans at a `<!--`, in a script or with `notes_html_opens` set. In a script it starts a comment. Otherwise its
-    /// position is recorded and it is scanned as `<`.
+    /// position is recorded and it's scanned as `<`.
     #[cold]
     #[inline(never)]
     fn scan_at_html_open(&mut self, pos: usize) {
@@ -813,8 +814,8 @@ impl<'a> Lexer<'a> {
         self.set(T::LessThan, pos, pos + 1);
     }
 
-    /// `Scan`, at a `*` behind a line break, with `skipJSDocLeadingAsterisks`: the first one in the
-    /// trivia of a token is trivia too (`TokenFlagsPrecedingJSDocLeadingAsterisks`).
+    /// `Scan`, at a `*` after a line break, with `skipJSDocLeadingAsterisks`: the first one in a token's trivia is
+    /// trivia too (`TokenFlagsPrecedingJSDocLeadingAsterisks`).
     #[cold]
     #[inline(never)]
     fn scan_at_jsdoc_asterisk(&mut self, pos: usize) {
@@ -822,7 +823,7 @@ impl<'a> Lexer<'a> {
             return;
         }
         let (at, full_start) = (pos as u32, self.full_start);
-        // A trivia can be scanned again: then the last one is this one, or one behind it.
+        // Trivia can be scanned twice. The second time, the last recorded asterisk is this one or a later one.
         let is_in_trivia = |&last: &u32| full_start <= last && last < at;
         if self.jsdoc_asterisks.last().is_some_and(is_in_trivia) {
             return self.set(T::Asterisk, pos, pos + 1);
@@ -831,8 +832,8 @@ impl<'a> Lexer<'a> {
         self.scan(pos + 1)
     }
 
-    /// At a character that is not ASCII: its end, if it is a blank or a line break. Otherwise it
-    /// starts a name, which is scanned, or the text is refused.
+    /// At a non-ASCII character: returns its end if it's whitespace or a line break. Otherwise scans the name it
+    /// starts, or rejects the text, and returns `None`.
     #[cold]
     #[inline(never)]
     fn not_ascii(&mut self, pos: usize) -> Option<usize> {
@@ -850,15 +851,14 @@ impl<'a> Lexer<'a> {
         Some(pos + len)
     }
 
-    /// The end of the line of `pos`, if a `<!--`, a `-->` or a `#!` there makes the rest of it a
-    /// comment.
+    /// Returns the end of the line at `pos` if a `<!--`, `-->` or `#!` there makes the rest of the line a comment.
     #[cold]
     #[inline(never)]
     fn end_of_unusual_comment(&self, pos: usize) -> Option<usize> {
         let rest = &self.src[pos..];
         let is_comment = match self.is_script {
             true if rest.starts_with(b"<!--") => true,
-            // Only blanks and comments are before it on its line.
+            // Only whitespace and comments precede it on its line.
             true if rest.starts_with(b"-->") => self.newline_before || self.full_start == 0,
             _ => {
                 rest.starts_with(b"#!")
@@ -880,21 +880,21 @@ impl<'a> Lexer<'a> {
             && (is_first_in_line || self.recovers && self.is_third_in_line(pos))
     }
 
-    /// `isConflictMarkerTrivia` takes that for the start of a line too.
+    /// `isConflictMarkerTrivia` also treats the third byte of a line as its start.
     fn is_third_in_line(&self, pos: usize) -> bool {
         let before = pos.checked_sub(2).and_then(|end| self.src.get(..end));
         decode_last(before.unwrap_or_default())
             .is_some_and(|(c, _)| matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029))
     }
 
-    /// `scanConflictMarkerTrivia`, at `pos`. Returns the end of what is passed over.
+    /// `scanConflictMarkerTrivia`, at `pos`. Returns the end of the skipped text.
     fn conflict_marker(&mut self, pos: usize) -> usize {
         self.report(1185, (pos, pos + 7), &[]);
         let marker = self.at(pos);
         if matches!(marker, b'<' | b'>') {
             return self.end_of_line(pos);
         }
-        // To the next `=======` or `>>>>>>>`.
+        // Skip to the next `=======` or `>>>>>>>`.
         let mut end = pos;
         while let Some(&c) = self.src.get(end) {
             if matches!(c, b'=' | b'>') && c != marker && self.is_conflict_marker(end) {
@@ -926,8 +926,8 @@ impl<'a> Lexer<'a> {
 
     // ───────────────────────────── names ─────────────────────────────
 
-    /// A name or a keyword that starts at `start` with an ASCII letter, `_` or `$`. It is a part of
-    /// `scan` and of `scan_after_line_feed`, and like them saves no register.
+    /// Scans a name or keyword that starts at `start` with an ASCII letter, `_` or `$`. It's inlined into `scan` and
+    /// `scan_after_line_feed`, and like them doesn't save any registers.
     #[inline(always)]
     fn name(&mut self, start: usize) {
         self.has_escape = false;
@@ -956,7 +956,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// The same if it is not at its first place in the table. It has `len` bytes.
+    /// The slow path of `name`, for a name of `len` bytes that isn't in its first slot of the table.
     #[cold]
     #[inline(never)]
     fn new_short_name(&mut self, start: usize, len: u32) {
@@ -970,7 +970,7 @@ impl<'a> Lexer<'a> {
         self.set(kind, start, start + len as usize);
     }
 
-    /// The same for a name of 16 bytes or more.
+    /// `name` for a name of 16 bytes or more.
     #[inline(never)]
     fn long_name(&mut self, start: usize) {
         let src = self.src;
@@ -991,7 +991,7 @@ impl<'a> Lexer<'a> {
         self.set(T::Identifier, start, start + len);
     }
 
-    /// The same for a name of 32 bytes or more, or near the end of the text.
+    /// `name` for a name of 32 bytes or more, or one near the end of the text.
     #[cold]
     #[inline(never)]
     fn name_of_any_length(&mut self, start: usize) {
@@ -1005,8 +1005,7 @@ impl<'a> Lexer<'a> {
         self.set(crate::token::keyword(text), start, end);
     }
 
-    /// A name that starts at `start` and has a character that is not ASCII, or an escape, at
-    /// `from` or later.
+    /// Scans a name that starts at `start` and has a non-ASCII character or an escape at `from` or later.
     #[cold]
     #[inline(never)]
     fn name_slowly(&mut self, start: usize, from: usize) {
@@ -1016,10 +1015,11 @@ impl<'a> Lexer<'a> {
         text.extend_from_slice(&src[start..from]);
         let mut pos = from;
         self.has_escape = false;
-        // The text of a private name has the `#`.
+        // A private name's text includes the `#`.
         let is_private = src.get(start) == Some(&b'#');
         loop {
-            // `scanIdentifierParts`: with `recovers` the name ends before what is no part of it.
+            // `scanIdentifierParts`: with `recovers`, the name ends before the first character that can't be part of
+            // it.
             let (c, len) = match src.get(pos) {
                 Some(b'\\') => match self.unicode_escape(pos + 1) {
                     Some((c, end)) => (c, end - pos),
@@ -1091,8 +1091,8 @@ impl<'a> Lexer<'a> {
             if matches!(kind, T::Await | T::Yield | T::Async) {
                 return self.refuse(Refusal::EscapedKeyword);
             }
-            // It is an error where it is read as the keyword. TypeScript reads a word that is only
-            // reserved in some places as the keyword where it can.
+            // It's an error wherever it's parsed as the keyword. TypeScript parses a contextual keyword as the keyword
+            // wherever it can.
             kind = match kind.is_reserved_word() {
                 true => T::EscapedReservedWord,
                 false if self.is_ecmascript => T::Identifier,
@@ -1102,7 +1102,7 @@ impl<'a> Lexer<'a> {
         self.set(kind, start, pos);
     }
 
-    /// `u1234` or `u{1234}` at `pos`: the code point, and the end.
+    /// Parses `u1234` or `u{1234}` at `pos`. Returns the code point and the end.
     fn unicode_escape(&self, pos: usize) -> Option<(u32, usize)> {
         let src = self.src;
         if src.get(pos) != Some(&b'u') {
@@ -1144,7 +1144,7 @@ impl<'a> Lexer<'a> {
         self.private_name(pos)
     }
 
-    /// `#name` at `start`. Its text has the `#`.
+    /// Scans `#name` at `start`. Its text includes the `#`.
     #[inline(never)]
     fn private_name(&mut self, start: usize) {
         let src = self.src;
@@ -1164,7 +1164,7 @@ impl<'a> Lexer<'a> {
         self.set(T::PrivateIdentifier, start, end);
     }
 
-    /// `self.atom` is the private name at `start`.
+    /// Records the private name at `start`, whose atom is `self.atom`.
     fn note_private_name(&mut self, start: usize) {
         self.private_names.push(self.atom);
         let before = self.src.get(..start).unwrap_or_default().trim_ascii_end();
@@ -1175,7 +1175,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// The `#` of `Scan`, at `start`, that no name follows.
+    /// The `#` case of `Scan`, for a `#` at `start` that isn't followed by a name.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -1197,7 +1197,7 @@ impl<'a> Lexer<'a> {
 
     // ───────────────────────────── comments ─────────────────────────────
 
-    /// The position of the line break that ends the line of `pos`, or the end of the text.
+    /// Returns the position of the line break that ends the line at `pos`, or the end of the text.
     #[inline]
     fn end_of_line(&self, mut pos: usize) -> usize {
         let src = self.src;
@@ -1212,7 +1212,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// The same. Every byte of such a text is one of `ScannerStops::in_string`.
+    /// `end_of_line` for a line with non-ASCII text, where every byte is a stop in `ScannerStops::in_string`.
     #[cold]
     #[inline(never)]
     fn end_of_line_that_is_not_ascii(&self, mut pos: usize) -> usize {
@@ -1228,7 +1228,8 @@ impl<'a> Lexer<'a> {
         src.len()
     }
 
-    /// `Lexer::scan_after_comments` fills in `next_token_start`, and `has_newline_after` of the last comment before a token.
+    /// Records a comment. `Lexer::scan_after_comments` fills in `next_token_start`, and `has_newline_after` for the
+    /// last comment before a token.
     #[inline(always)]
     fn note_comment(&mut self, start: usize, end: usize, form: CommentForm) {
         let has_newline_before = std::mem::take(&mut self.newline_since_comment);
@@ -1257,7 +1258,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Notes the `//` comment at `start`. Returns its end.
+    /// Records the `//` comment at `start`. Returns its end.
     #[inline(never)]
     fn line_comment(&mut self, start: usize) -> usize {
         let end = self.end_of_line(start + 2);
@@ -1275,8 +1276,7 @@ impl<'a> Lexer<'a> {
         end
     }
 
-    /// Notes the `/*` comment at `start`. Returns its end. `None`: it has none, and the text is
-    /// refused.
+    /// Records the `/*` comment at `start`. Returns its end, or `None` if it's unterminated and the text is rejected.
     #[inline(never)]
     fn block_comment(&mut self, start: usize) -> Option<usize> {
         let src = self.src;
@@ -1327,7 +1327,7 @@ impl<'a> Lexer<'a> {
         Some(end)
     }
 
-    /// `processCommentDirective`, from the blanks before the `@` on.
+    /// `processCommentDirective`, starting at the whitespace before the `@`.
     #[inline]
     fn comment_directive(&mut self, start: usize, mut pos: usize, end: usize) {
         let src = self.src;
@@ -1349,7 +1349,7 @@ impl<'a> Lexer<'a> {
         } else {
             return;
         };
-        // A lookahead scans a comment again.
+        // After a lookahead, the same comment is scanned again.
         let is_new = (self.comment_directives.last()).is_none_or(|last| last.end < end as u32);
         if is_new {
             self.comment_directives.push(CommentDirective {
@@ -1362,7 +1362,7 @@ impl<'a> Lexer<'a> {
 
     // ───────────────────────────── strings ─────────────────────────────
 
-    /// The string at `start`, in the quotes `quote`.
+    /// Scans the string at `start`, quoted with `quote`.
     #[inline(never)]
     fn string(&mut self, start: usize, quote: u8) {
         let src = self.src;
@@ -1372,7 +1372,7 @@ impl<'a> Lexer<'a> {
             match src.get(end) {
                 Some(&c) if c == quote => break,
                 Some(b'"' | b'\'' | b'`' | b'$') => end += 1,
-                // A backslash, a control character, or anything that is not ASCII.
+                // A backslash, a control character, or anything non-ASCII.
                 _ => return self.string_slowly(start, quote),
             }
         }
@@ -1381,7 +1381,8 @@ impl<'a> Lexer<'a> {
         self.set(T::String, start, end + 1);
     }
 
-    /// Where the first of `ends` is from `pos` on, or the end of the text. Each of `ends` is one of `ScannerStops::in_string`.
+    /// Returns the position of the first byte from `pos` on that's in `ends`, or the end of the text. Every byte in
+    /// `ends` must be a stop in `ScannerStops::in_string`.
     #[inline]
     fn end_of_run_before(&self, mut pos: usize, ends: [u8; 4]) -> usize {
         let src = self.src;
@@ -1390,7 +1391,7 @@ impl<'a> Lexer<'a> {
             match src.get(pos) {
                 None => return src.len(),
                 Some(c) if ends.contains(c) => return pos,
-                // Every byte of such a text is a stop.
+                // Every byte of non-ASCII text is a stop.
                 Some(0x80..) => break,
                 Some(_) => pos += 1,
             }
@@ -1399,7 +1400,7 @@ impl<'a> Lexer<'a> {
         pos + strings::index_of_any(rest, &ends).unwrap_or(rest.len())
     }
 
-    /// The atom of the text from `start` to `end`, which has no zero byte.
+    /// Returns the atom of the text from `start` to `end`, which contains no zero byte.
     #[inline]
     fn atom_of_source(&mut self, start: usize, end: usize) -> Atom {
         let text = Text::of_source(self.src, start, end);
@@ -1427,9 +1428,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Decodes the escape whose backslash is at `pos` and appends what it stands for to `text`.
-    /// Returns its end. `None`: TypeScript reports an error for it.
-    /// `\1` to `\377`, `\8` or `\9` at `pos` in a string. Returns its end.
+    /// Decodes `\1` to `\377`, `\8` or `\9` at `pos` in a string. Returns its end.
     fn legacy_escape(&mut self, pos: usize, text: &mut Vec<u8>) -> Option<usize> {
         let end = self.end_of_invalid_escape(pos);
         let digits = self.src.get(pos + 1..end)?;
@@ -1448,7 +1447,7 @@ impl<'a> Lexer<'a> {
         Some(end)
     }
 
-    /// `scanEscapeSequence`: how far the invalid escape at `pos` goes.
+    /// `scanEscapeSequence`: returns the end of the invalid escape at `pos`.
     fn end_of_invalid_escape(&self, pos: usize) -> usize {
         let is_octal = |at: usize| matches!(self.at(at), b'0'..=b'7');
         let is_hex = |at: usize| self.src.get(at).is_some_and(u8::is_ascii_hexdigit);
@@ -1481,6 +1480,8 @@ impl<'a> Lexer<'a> {
         end.min(self.src.len())
     }
 
+    /// Decodes the escape whose backslash is at `pos` and appends its value to `text`. Returns its end, or `None` if
+    /// TypeScript reports an error for it.
     fn escape(&self, pos: usize, text: &mut Vec<u8>) -> Option<usize> {
         let src = self.src;
         let c = *src.get(pos + 1)?;
@@ -1525,7 +1526,7 @@ impl<'a> Lexer<'a> {
         Some(pos + 2)
     }
 
-    /// `scanEscapeSequence`, at a backslash before a byte that is not UTF-8: Go reads U+FFFD.
+    /// `scanEscapeSequence`, at a backslash before a byte that isn't valid UTF-8. Go decodes it as U+FFFD.
     #[cold]
     #[inline(never)]
     fn escaped_byte(&self, pos: usize, text: &mut Vec<u8>) -> Option<usize> {
@@ -1555,7 +1556,7 @@ impl<'a> Lexer<'a> {
                     break false;
                 }
                 Some(&c) if c == quote => break true,
-                // The commonest of those that stand for what follows the backslash.
+                // The most common escapes whose value is the character after the backslash.
                 Some(b'\\') if let Some(&c @ (b'"' | b'\'' | b'\\')) = src.get(pos + 1) => {
                     text.push(c);
                     pos += 2;
@@ -1580,7 +1581,7 @@ impl<'a> Lexer<'a> {
                 }
             }
         };
-        // TypeScript's scanner takes the bytes as they are.
+        // TypeScript's scanner accepts the bytes as they are.
         if !is_ascii && !self.recovers && !is_utf8(&src[start + 1..pos]) {
             self.buffer = text;
             return self.refuse(Refusal::NotUtf8);
@@ -1590,7 +1591,7 @@ impl<'a> Lexer<'a> {
         self.set(T::String, start, pos + usize::from(has_end));
     }
 
-    /// `scanEscapeSequence`, for what `escape` does not decode. `reports`: `ReportErrors`.
+    /// `scanEscapeSequence`, for escapes that `escape` doesn't decode. `reports` is `ReportErrors`.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -1599,7 +1600,7 @@ impl<'a> Lexer<'a> {
         let end = self.end_of_invalid_escape(pos);
         let written = src.get(pos..end).unwrap_or_default();
         let Some(&c) = src.get(pos + 1) else {
-            // "Unexpected end of text." It stands for nothing.
+            // "Unexpected end of text." The escape has no value.
             self.error(Refusal::Unterminated, 1126, (end, end), &[]);
             return end;
         };
@@ -1634,7 +1635,7 @@ impl<'a> Lexer<'a> {
         end
     }
 
-    /// `scanUnicodeEscape(true)`, for the `\u` from `pos` to `end` that is not valid.
+    /// `scanUnicodeEscape(true)`, for the invalid `\u` escape from `pos` to `end`.
     fn report_invalid_unicode_escape(&mut self, pos: usize, end: usize) {
         let src = self.src;
         if src.get(pos + 2) != Some(&b'{') {
@@ -1664,13 +1665,13 @@ impl<'a> Lexer<'a> {
 
     // ───────────────────────────── templates ─────────────────────────────
 
-    /// A piece of a template, from the `` ` `` (`is_head`) or the `}` at `start`.
+    /// Scans a template piece that starts at `start` with a `` ` `` (`is_head`) or a `}`.
     #[inline(never)]
     fn template(&mut self, start: usize, is_head: bool) {
         self.piece_of_template(start, is_head, false);
     }
 
-    /// `scanTemplateAndSetTokenValue`. `reports`: `shouldEmitInvalidEscapeError`.
+    /// `scanTemplateAndSetTokenValue`. `reports` is `shouldEmitInvalidEscapeError`.
     #[inline(always)]
     #[track_caller]
     fn piece_of_template(&mut self, start: usize, is_head: bool, reports: bool) {
@@ -1703,14 +1704,14 @@ impl<'a> Lexer<'a> {
                 }
                 Some(b'\\') => match self.escape(pos, &mut text) {
                     Some(end) => pos = end,
-                    // That is an error unless the template has a tag.
+                    // An invalid escape is an error unless the template is tagged.
                     None => {
                         self.has_escape |= pos + 1 < src.len();
                         is_ascii = false;
                         pos = self.invalid_escape(pos, &mut text, reports);
                     }
                 },
-                // A line break is a line feed, however it is written.
+                // Every line break is normalized to a line feed.
                 Some(b'\r') => {
                     text.push(b'\n');
                     pos += if src.get(pos + 1) == Some(&b'\n') {
@@ -1743,14 +1744,14 @@ impl<'a> Lexer<'a> {
         self.template(self.start as usize, false);
     }
 
-    /// `ReScanTemplateToken(false)`, at a piece of a template that has an invalid escape.
+    /// `ReScanTemplateToken(false)`, at a template piece that has an invalid escape.
     #[cold]
     #[inline(never)]
     pub(crate) fn rescan_template_without_tag(&mut self) {
         if !self.recovers {
             return self.refuse(Refusal::Reported);
         }
-        // TypeScript scans what follows a `}` once.
+        // TypeScript only scans the text after a `}` once.
         self.forget_errors_from(self.start.saturating_add(1));
         let start = self.start as usize;
         self.piece_of_template(start, self.at(start) == b'`', true);
@@ -1758,14 +1759,14 @@ impl<'a> Lexer<'a> {
 
     // ───────────────────────────── numbers ─────────────────────────────
 
-    /// The digits of base `radix` from `pos` on, with separators between them. Returns their end.
+    /// Scans base-`radix` digits from `pos` on, with optional separators between them. Returns their end.
     fn digits(&self, mut pos: usize, radix: u32) -> Option<usize> {
         let src = self.src;
         let first = pos;
         loop {
             match src.get(pos) {
                 Some(&c) if char::from(c).is_digit(radix) => pos += 1,
-                // Only between two digits.
+                // A separator is only valid between two digits.
                 Some(b'_')
                     if pos > first
                         && src[pos - 1] != b'_'
@@ -1803,7 +1804,7 @@ impl<'a> Lexer<'a> {
         self.number_in_general(start)
     }
 
-    /// The same for all but a few digits.
+    /// The slow path of `number`, for anything but a few plain digits.
     #[inline(never)]
     fn number_in_general(&mut self, start: usize) {
         match self.unusual_number(start) {
@@ -1812,7 +1813,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Whether what cannot follow a number directly is at `pos`.
+    /// True if the character at `pos` can't directly follow a number.
     fn is_at_start_of_name(&self, pos: usize) -> bool {
         match self.src.get(pos) {
             Some(&c @ ..0x80) => is_name_byte(c) || c == b'\\',
@@ -1821,7 +1822,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// `010`, which is 8, or `08` and `08.5`, which are decimal.
+    /// Scans `010`, which is 8, or `08` and `08.5`, which are decimal.
     fn number_with_leading_zero(&mut self, start: usize) -> Option<(T, usize)> {
         let src = self.src;
         let mut end = start;
@@ -1830,7 +1831,7 @@ impl<'a> Lexer<'a> {
         }
         let is_octal = src[start..end].iter().all(|c| matches!(c, b'0'..=b'7'));
         if is_octal {
-            // The message is about `-010` as a whole.
+            // The error covers all of `-010`.
             let from = start - usize::from(self.token == T::Minus && self.end as usize == start);
             if !self.flag(1121, from, end) {
                 return None;
@@ -1960,7 +1961,7 @@ impl<'a> Lexer<'a> {
         pos
     }
 
-    /// `scanIdentifierParts`: the end of what goes on a name at `pos`.
+    /// `scanIdentifierParts`: returns the end of the identifier characters that start at `pos`.
     fn end_of_identifier_parts(&self, mut pos: usize) -> usize {
         loop {
             let part = match self.src.get(pos) {
@@ -1974,7 +1975,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// `scanNumber`, and the `0x`, `0b` and `0o` of `Scan`, for what `unusual_number` refuses.
+    /// `scanNumber`, and the `0x`, `0b` and `0o` cases of `Scan`, for numbers that `unusual_number` rejects.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -1989,7 +1990,7 @@ impl<'a> Lexer<'a> {
         self.set(token, start, end);
     }
 
-    /// The token and its end. `digits`: empty, to work in.
+    /// Returns the token and its end. `digits` is an empty scratch buffer.
     fn number_with_errors(&mut self, start: usize, digits: &mut Vec<u8>) -> (T, usize) {
         let src = self.src;
         let radix = match (self.at(start), self.at(start + 1)) {
@@ -2036,7 +2037,7 @@ impl<'a> Lexer<'a> {
                     value.saturating_mul(8).saturating_add(i64::from(c - b'0'))
                 });
                 self.number = value as f64;
-                // After a `-`, whatever is between them, the error starts one byte earlier.
+                // After a `-`, the error starts one byte earlier, no matter what's between the two.
                 let (sign, from) = match self.token == T::Minus {
                     true => ("-", start.saturating_sub(1)),
                     false => ("", start),
@@ -2077,7 +2078,7 @@ impl<'a> Lexer<'a> {
             .and_then(|text| text.parse().ok())
             .unwrap_or(f64::NAN);
         if has_leading_zero {
-            // Neither an `n` nor what follows is looked at.
+            // Neither an `n` suffix nor whatever follows is checked.
             self.report(1489, (start, end), &[]);
             return (T::Number, end);
         }
@@ -2113,7 +2114,7 @@ impl<'a> Lexer<'a> {
         (token, end)
     }
 
-    // ───────────────────────────── what the parser asks for ─────────────────────────────
+    // ───────────────────────────── rescans for the parser ─────────────────────────────
 
     /// `ReScanGreaterThanToken`: the token is a `>`.
     #[inline]
@@ -2148,12 +2149,13 @@ impl<'a> Lexer<'a> {
                     if matches!(src.get(pos + 1), None | Some(b'\n' | b'\r')) {
                         return self.unterminated_regex(pos + 1);
                     }
-                    // What follows is looked at as if it stood alone, unless it is one byte.
+                    // Skip the escaped character only if it's one byte. A longer one is handled like an unescaped
+                    // character.
                     if src.get(pos + 1).is_some_and(u8::is_ascii) {
                         pos += 1;
                     }
                 }
-                // The scanner of TypeScript 7 reads bytes here: only "\n" and "\r" end a line.
+                // TypeScript 7's scanner reads bytes here, so only "\n" and "\r" end a line.
                 Some(0xE2)
                     if self.is_typescript_5
                         && matches!(src.get(pos..pos + 3), Some([_, 0x80, 0xA8 | 0xA9])) =>
@@ -2165,7 +2167,7 @@ impl<'a> Lexer<'a> {
             pos += 1;
         }
         pos += 1;
-        // The flags: whatever can be part of a name.
+        // The flags: any characters that can be part of a name.
         loop {
             match src.get(pos) {
                 Some(&c) if is_name_byte(c) => pos += 1,
@@ -2232,7 +2234,7 @@ impl<'a> Lexer<'a> {
 // ───────────────────────────── JSX ─────────────────────────────
 
 impl Lexer<'_> {
-    /// `ScanJsxIdentifier`: the token is a name or a keyword, which goes on through `-`.
+    /// `ScanJsxIdentifier`: the token is a name or keyword, which is extended across any `-`.
     pub(crate) fn scan_jsx_identifier(&mut self) {
         if !self.token.is_identifier_or_keyword() || self.token == T::PrivateIdentifier {
             return;
@@ -2253,18 +2255,18 @@ impl Lexer<'_> {
         self.token = T::Identifier;
     }
 
-    /// `ScanJsxAttributeValue`: scans the token after the `=` of an attribute. A string has no
-    /// escapes, and its value is the text between the quotes.
+    /// `ScanJsxAttributeValue`: scans the token after an attribute's `=`. A string has no escapes, and its value is the
+    /// text between the quotes.
     pub(crate) fn scan_jsx_attribute_value(&mut self) {
         let before = self.end as usize;
-        // A string with a line break in it is refused as a string of JavaScript.
+        // `next` scans a JavaScript string, so it rejects one that contains a line break.
         let had_refused = self.refusal;
         let first_comment = self.comments.len();
         self.next();
         let src = self.src;
         let start = match self.refusal == had_refused {
             true if self.token != T::String => return,
-            // It is the same string here as in JavaScript.
+            // The string reads the same in JSX as in JavaScript.
             true if self.plain_string == self.start
                 && self.flagged.is_empty()
                 && self.errors.is_empty() =>
@@ -2273,7 +2275,7 @@ impl Lexer<'_> {
             }
             true => self.start as usize,
             false if self.recovers => return,
-            // It is scanned again from the quote.
+            // Rescan it from the quote.
             false => {
                 self.refusal = had_refused;
                 let mut pos = before;
@@ -2296,18 +2298,18 @@ impl Lexer<'_> {
                 if !matches!(src.get(pos), Some(b'"' | b'\'')) {
                     return self.refuse(Refusal::Unsupported);
                 }
-                // There it is a string of JavaScript, and refused as one.
+                // TypeScript 5 scans a JavaScript string there, and rejects it as one.
                 if pos > before && self.scans_jsx_strings_as_typescript_5() {
                     return self.refuse(Refusal::Unterminated);
                 }
-                // The refused string was not a token. The next token is the string at `pos`.
+                // The rejected string wasn't a token. The next token is the string at `pos`.
                 for comment in self.comments.iter_mut().skip(first_comment) {
                     comment.next_token_start = pos as u32;
                 }
                 pos
             }
         };
-        // What looked like an escape is none.
+        // What looked like an escape isn't one in JSX.
         self.forget_flagged_from(start as u32);
         if !self.errors.is_empty() && self.is_string_of_javascript(before, start) {
             return;
@@ -2331,7 +2333,7 @@ impl Lexer<'_> {
         self.set(T::String, start, start + len + 2);
     }
 
-    /// Whether the string at `start`, which has a backslash, stays as `next` has scanned it.
+    /// True if the string at `start`, which has a backslash, stays the way `next` scanned it.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -2343,8 +2345,8 @@ impl Lexer<'_> {
         self.is_string_of_javascript(before, start)
     }
 
-    /// For `scanJsxAttributeValue` of TypeScript 5 and 6, on which typescript-estree runs, blanks before the quote are
-    /// enough to leave the string to `scan`. Babel, acorn-jsx and oxc read it as TypeScript 7 does.
+    /// In TypeScript 5 and 6, which typescript-estree runs on, whitespace before the quote is enough for
+    /// `scanJsxAttributeValue` to leave the string to `scan`. Babel, acorn-jsx and oxc scan it like TypeScript 7.
     fn scans_jsx_strings_as_typescript_5(&self) -> bool {
         self.is_typescript_5 && !self.is_ecmascript && !self.is_babel && !self.is_oxc
     }
@@ -2355,7 +2357,7 @@ impl Lexer<'_> {
         self.is_ecmascript || self.is_oxc
     }
 
-    /// `ScanJsxAttributeValue`: whether `Scan` scans the string at `start`, after a comment.
+    /// `ScanJsxAttributeValue`: true if the string at `start` is left to `Scan`, which happens after a comment.
     #[cold]
     #[inline(never)]
     fn is_string_of_javascript(&mut self, before: usize, start: usize) -> bool {
@@ -2374,7 +2376,7 @@ impl Lexer<'_> {
         false
     }
 
-    /// `scanString(true)`, for the string at `start` that goes to the end of the text.
+    /// `scanString(true)`, for a string at `start` that runs to the end of the text.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -2384,7 +2386,7 @@ impl Lexer<'_> {
         if !self.error(Refusal::Unterminated, 1002, (end, end), &[]) {
             return;
         }
-        // It is of the scan that began at `before`, and a mark at the string is after that.
+        // The error belongs to the scan that began at `before`, so resetting to a mark at the string must keep it.
         if let Some(origin) = self.origins.last_mut() {
             *origin = before as u32;
         }
@@ -2393,8 +2395,8 @@ impl Lexer<'_> {
         self.set(T::String, start, end);
     }
 
-    /// `ScanJsxToken`: scans a child of an element, from the end of the token. Text that is nothing
-    /// but blanks and has a line break is no child.
+    /// `ScanJsxToken`: scans an element's child, starting at the end of the current token. Whitespace-only text that
+    /// contains a line break isn't a child.
     pub(crate) fn next_jsx_child(&mut self) {
         let src = self.src;
         self.full_start = self.end;
@@ -2422,7 +2424,7 @@ impl Lexer<'_> {
                 }
                 Some(_) => {}
             }
-            // Between two elements there is mostly a line break and the indentation.
+            // Usually only a line break and indentation separate two elements.
             let (mut end, mut has_line_break) = (start, false);
             while let Some(c @ (b' ' | b'\t' | b'\n' | b'\r')) = src.get(end) {
                 has_line_break |= matches!(c, b'\n' | b'\r');
@@ -2430,7 +2432,7 @@ impl Lexer<'_> {
             }
             let is_all = match src.get(end) {
                 None | Some(b'{') => true,
-                // Not what may be a conflict marker.
+                // `<<` may start a conflict marker.
                 Some(b'<') => src.get(end + 1) != Some(&b'<'),
                 Some(_) => false,
             };
@@ -2446,7 +2448,7 @@ impl Lexer<'_> {
             let rest = &src[start..];
             let len = bun_core::strings::index_of_any(rest, b"{<").unwrap_or(rest.len());
             let text = &rest[..len];
-            // Each is an error, and stays text.
+            // Each `>` or `}` is an error but stays part of the text.
             if bun_core::strings::index_of_any(text, b">}").is_some()
                 && !self.closers_in_jsx_text(start, text)
             {
@@ -2478,7 +2480,7 @@ impl Lexer<'_> {
         }
     }
 
-    /// `ScanJsxTokenEx`: reports each `>` and `}` of `text`. Returns whether the scanner goes on.
+    /// `ScanJsxTokenEx`: reports each `>` and `}` in `text`. Returns true if the scanner continues.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -2498,7 +2500,8 @@ impl Lexer<'_> {
         true
     }
 
-    /// `ScanJsxTokenEx`: whether a conflict marker ends JSX text at `pos`. They are one token.
+    /// `ScanJsxTokenEx`: true if a conflict marker ends the JSX text at `pos`. The text and the marker become one
+    /// token.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -2511,12 +2514,12 @@ impl Lexer<'_> {
             return true;
         }
         let end = self.conflict_marker(pos);
-        // `newline_before` stays that of the token before, as `tokenFlags` does.
+        // `newline_before` keeps the previous token's value, like `tokenFlags`.
         self.set(T::ConflictMarker, self.full_start as usize, end);
         true
     }
 
-    /// The JSX text `text` at `start`, which is not UTF-8.
+    /// Scans the JSX text `text` at `start`, which isn't valid UTF-8.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -2531,7 +2534,7 @@ impl Lexer<'_> {
     }
 }
 
-/// `text` as Go reads it: each byte that is not UTF-8 is U+FFFD.
+/// Decodes `text` the way Go does. Each byte that isn't valid UTF-8 becomes U+FFFD.
 fn with_replacement_characters(mut text: &[u8]) -> String {
     let mut read = String::new();
     while !text.is_empty() {
@@ -2542,12 +2545,12 @@ fn with_replacement_characters(mut text: &[u8]) -> String {
     read
 }
 
-/// The value of the JSX text `text`: lines are trimmed and joined by a blank, lines of blanks are
+/// Returns the value of the JSX text `text`: lines are trimmed and joined with a space, whitespace-only lines are
 /// dropped, and entities are decoded.
 fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
     let mut decoded = Vec::new();
     let mut after_last_non_whitespace = None;
-    // The blanks at the start of the first line stay.
+    // Leading whitespace on the first line is kept.
     let mut first_non_whitespace = Some(0);
     for (at, c) in text.char_indices() {
         let (is_line_break, is_blank) = match c {
@@ -2571,7 +2574,7 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
             first_non_whitespace.get_or_insert(at);
         }
     }
-    // So do those at the end of the last line.
+    // So is trailing whitespace on the last line.
     if let Some(start) = first_non_whitespace {
         if !decoded.is_empty() {
             decoded.push(b' ');
@@ -2611,13 +2614,13 @@ fn decode_jsx_entities(mut text: &str, decoded: &mut Vec<u8>) {
     decoded.extend_from_slice(text.as_bytes());
 }
 
-/// The code point that the digits of `&#..;` stand for.
+/// Returns the code point for the digits of `&#..;`.
 fn parse_entity_number(digits: &str, radix: u8) -> Option<u32> {
     let number = bun_core::parse_int::<i32>(digits.as_bytes(), radix).ok()?;
     u32::try_from(number).ok().filter(|&c| c <= 0x10_FFFF)
 }
 
-/// `ParsePseudoBigInt`: the digits `digits` of base `radix` in base 10.
+/// `ParsePseudoBigInt`: converts the base-`radix` digits `digits` to base 10.
 fn decimal_digits(digits: &[u8], radix: u32) -> Vec<u8> {
     // Base 1e9, least significant first.
     let mut limbs: Vec<u32> = vec![0];
@@ -2640,7 +2643,7 @@ fn decimal_digits(digits: &[u8], radix: u32) -> Vec<u8> {
     decimal.into_bytes()
 }
 
-/// The value of the digits `digits` of base `radix`, a power of two, rounded once.
+/// Returns the value of the base-`radix` digits `digits`, rounded once. `radix` is a power of two.
 fn number_from_digits(digits: &[u8], radix: u32) -> f64 {
     let mut integer = bun_core::fmt::RadixInteger::default();
     for digit in digits.iter().filter_map(|&c| char::from(c).to_digit(radix)) {

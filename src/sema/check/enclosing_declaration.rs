@@ -1,5 +1,5 @@
-//! `enclosingDeclaration` for the nodes `typeWriterWalker` visits: the innermost scope enclosing
-//! `node.Parent`, including that of `node.Parent` itself if it has locals.
+//! `enclosingDeclaration` for the nodes `typeWriterWalker` visits: the innermost scope enclosing `node.Parent`,
+//! including `node.Parent`'s own scope if it has locals.
 
 use super::*;
 use crate::bind::{Decl, Parent, PatParent, ScopeId, ScopeKind};
@@ -8,14 +8,14 @@ use crate::bind::{Decl, Parent, PatParent, ScopeId, ScopeKind};
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(super) struct Enclosing {
     pub(super) file: FileId,
-    /// The scope name resolution starts from: its locals, or those of the innermost enclosing node
-    /// that has locals.
+    /// The scope where name resolution starts: the declaration's locals, or those of the innermost enclosing node that
+    /// has locals.
     pub(super) scope: ScopeId,
-    /// The enclosing declaration is this variable declaration.
+    /// Set if the enclosing declaration is this variable declaration.
     pub(super) variable: VarDeclId,
-    /// The enclosing declaration is a synthetic block that `enterNewScope` created for the
-    /// parameters or the type parameters of a signature, and the other fields describe what
-    /// encloses it. The blocks are numbered from 1. 0: none.
+    /// Nonzero if the enclosing declaration is a synthetic block that `enterNewScope` created for a signature's
+    /// parameters or type parameters. The other fields then describe what encloses the block. Blocks are numbered from
+    /// 1.
     pub(super) fake_scope: u32,
 }
 
@@ -42,13 +42,12 @@ impl Enclosing {
     }
 }
 
-/// The file scope is the fallback for a scope the binder did not record.
+/// Falls back to the file scope for a scope the binder didn't record.
 pub(super) fn or_file_scope(scope: ScopeId) -> ScopeId {
     if scope.is_some() { scope } else { ScopeId(0) }
 }
 
-/// The scope of the enum that contains `m`. `NONE`: the binder did not reach it, so it has no
-/// owner.
+/// The scope of the enum that contains `m`, or `NONE` if the binder didn't reach `m`, so it has no owner.
 fn scope_of_enum_member(bound: &Bound, m: EnumMemberId) -> ScopeId {
     let scope = bound.enum_scope.get(bound.enum_member_owner[m.idx()].idx());
     scope.copied().unwrap_or(ScopeId::NONE)
@@ -80,7 +79,7 @@ impl Checker<'_, '_> {
         or_file_scope(self.bound(file).fns[f.idx()].scope)
     }
 
-    /// For a child of the statement `s` that is not itself a statement.
+    /// For a child of the statement `s` that isn't itself a statement.
     fn enclosing_scope_of_statement(&self, file: FileId, s: StmtId) -> ScopeId {
         // The loop header is in the scope the loop creates, like its body.
         let inside = match self.hir(file)[s].kind {
@@ -127,8 +126,8 @@ impl Checker<'_, '_> {
 
     /// For the expression `e`, and for the name of a property access `e`.
     pub(super) fn enclosing_scope_of_expr(&self, file: FileId, e: ExprId) -> ScopeId {
-        // Few expressions are further from what decides, and for these nothing is kept. From each operand of `a + a + ..`
-        // it is as far as what is left of the chain.
+        // Most expressions reach the node that determines their scope within this many steps, so nothing is cached for
+        // them. In a chain like `a + a + ..`, each operand's distance is the length of the rest of the chain.
         const PLAIN_STEPS: usize = 32;
         let (mut at, mut steps) = (e, 0);
         let mut passed = Vec::new();
@@ -152,8 +151,8 @@ impl Checker<'_, '_> {
         scope
     }
 
-    /// The scope, if what `at` is in decides it, or else the expression around `at`. `is_around`: not `at` is asked about
-    /// but something in it.
+    /// Returns the scope if `at`'s parent determines it, otherwise the expression enclosing `at`. `is_around` is true
+    /// if the query is about an expression inside `at`, not `at` itself.
     fn enclosing_scope_or_outer_expr(
         &self,
         file: FileId,
@@ -201,7 +200,8 @@ impl Checker<'_, '_> {
                 }
                 or_file_scope(bound.scope_of_stmt(s))
             }
-            // `node.Parent` of the expression itself is the `ExpressionWithTypeArguments`, which is not in the expression.
+            // The expression's own `node.Parent` is the `ExpressionWithTypeArguments`, which isn't inside the
+            // expression.
             Parent::ClassExtends(c) => or_file_scope(match bound.expr_scope.get(&at) {
                 Some(&base_expression) if is_around => base_expression,
                 _ => bound.class_scope[c.idx()],
@@ -234,8 +234,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// For the name and the initializer of the member `m` of a class, an interface or a type
-    /// literal.
+    /// For the name and the initializer of the member `m` of a class, an interface or a type literal.
     pub(super) fn enclosing_scope_of_member(&self, file: FileId, m: MemberId) -> ScopeId {
         let func = self.hir(file)[m].func;
         if func.is_some() {

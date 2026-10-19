@@ -1,11 +1,10 @@
-//! Property names, names in namespaces, and module exports:
-//! 2464, 2694 2713 2724 2749, 1117 1118 1119 2300, 2528 2661, 1361 1362.
+//! Property names, names in namespaces, and module exports: 2464, 2694 2713 2724 2749, 1117 1118 1119 2300, 2528 2661,
+//! 1361 1362.
 //!
-//! Follows `checkComputedPropertyName`, `resolveQualifiedName`,
-//! `checkGrammarObjectLiteralExpression`, `checkExportSpecifier`, `getTypeOnlyAliasDeclarationEx`
-//! and the end of `onSuccessfullyResolvedSymbol` of TypeScript 7.0.2's checker.go and
-//! grammarchecks.go, `IsValidTypeOnlyAliasUseSite` of its ast/utilities.go, and the errors
-//! `declareSymbolEx` of its binder.go reports for default exports.
+//! Mirrors `checkComputedPropertyName`, `resolveQualifiedName`, `checkGrammarObjectLiteralExpression`,
+//! `checkExportSpecifier`, `getTypeOnlyAliasDeclarationEx` and the end of `onSuccessfullyResolvedSymbol` in TypeScript
+//! 7.0.2's checker.go and grammarchecks.go, `IsValidTypeOnlyAliasUseSite` in its ast/utilities.go, and the errors that
+//! `declareSymbolEx` in its binder.go reports for default exports.
 
 use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;
@@ -57,8 +56,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `resolveQualifiedName`: each name after the first must be an export of the symbol the
-    /// preceding names resolve to.
+    /// `resolveQualifiedName`: each name after the first must be an export of the symbol the preceding names resolve
+    /// to.
     pub(super) fn check_qualified_name(
         &mut self,
         file: FileId,
@@ -78,7 +77,8 @@ impl Checker<'_, '_> {
             if name == known::empty {
                 return;
             }
-            // The loop at the end of `resolveEntityName`: an alias that is merged with a namespace is not resolved further.
+            // The loop at the end of `resolveEntityName`: an alias that's merged with a namespace isn't resolved
+            // further.
             let Some(resolved) = files.resolve_alias_as_with(namespace, SymFlags::NAMESPACE, self)
             else {
                 return;
@@ -94,9 +94,10 @@ impl Checker<'_, '_> {
             };
             let text = self.atoms().bytes(name);
             let exported = files.namespace_member(resolved, name);
-            // `getSymbol`: an alias is matched by the meaning of its target.
+            // `getSymbol`: an alias is matched by its target's meaning.
             let found = self.get_symbol(exported, expected).or_else(|| {
-                // The exports of the alias target come second. `resolveAlias` stops at the first symbol with a meaning of its own.
+                // The alias target's exports come second. `resolveAlias` stops at the first symbol that has its own
+                // meaning.
                 if !files.flags(resolved).contains(SymFlags::ALIAS) {
                     return None;
                 }
@@ -113,8 +114,8 @@ impl Checker<'_, '_> {
                 namespace = member;
                 continue;
             }
-            // `getSuggestedSymbolForNonexistentModule`: an enum member, `export default 1` and
-            // `export =` are never suggested.
+            // `getSuggestedSymbolForNonexistentModule`: an enum member, `export default 1` and `export =` are never
+            // suggested.
             let exports = if files.flags(resolved).intersects(SymFlags::MODULE) {
                 files.exports_of_module(resolved).to_vec()
             } else {
@@ -140,8 +141,8 @@ impl Checker<'_, '_> {
                 }
                 return;
             }
-            // After `implements`, and after the `extends` of an interface, the names form a
-            // property access, not a `QualifiedName`.
+            // After `implements`, and after an interface's `extends`, the names form a property access, not a
+            // `QualifiedName`.
             if hir.kind(hir.node(names)) == Kind::QualifiedName {
                 if expected.intersects(SymFlags::TYPE) {
                     let texts: smallvec::SmallVec<[Atom; 8]> = hir.texts(names).collect();
@@ -158,8 +159,7 @@ impl Checker<'_, '_> {
                         None => return,
                     }
                 }
-                // A type where a namespace is expected: the name after it is the one that cannot be
-                // accessed.
+                // A type where a namespace is expected: the name after it is the one that can't be accessed.
                 if !is_last
                     && let Some(exported) = exported.filter(|&m| files.means(m, SymFlags::TYPE))
                 {
@@ -187,15 +187,14 @@ impl Checker<'_, '_> {
         let (start, end) = (hir.start(name), self.end_of_node(file, name));
         let start = super::spans::start_of_error_range(hir, start, end);
         let written = self.source_text(file, start, end);
-        // The text of the default library is not retained.
+        // The default library's text isn't stored.
         match hir.text(name) {
             text if written.is_empty() && text.is_some() => self.atoms().bytes(text).to_vec(),
             _ => written,
         }
     }
 
-    /// `tryGetQualifiedNameAsValue`: whether the whole of `a.b.c`, read as an expression, resolves.
-    /// `None`: undetermined.
+    /// `tryGetQualifiedNameAsValue`: true if all of `a.b.c`, read as an expression, resolves. `None` if undetermined.
     fn is_qualified_name_a_value(
         &mut self,
         file: FileId,
@@ -232,17 +231,17 @@ impl Checker<'_, '_> {
             })
     }
 
-    /// The position where `declareSymbolEx` reports a conflict for the statement `s`, an `export
-    /// default e` or `export = e`: the start of `GetNameOfDeclaration(node)`, or of the node if it
-    /// has no name.
+    /// The position where `declareSymbolEx` reports a conflict for the statement `s`, an `export default e` or `export
+    /// = e`: the start of `GetNameOfDeclaration(node)`, or of the node if it has no name.
     pub(super) fn export_assignment_name_start(&self, file: FileId, s: StmtId) -> u32 {
         let hir = self.hir(file);
-        // `GetNonAssignedNameOfDeclaration`: an Identifier is the name of the declaration. Any other expression leaves it without one.
+        // `GetNonAssignedNameOfDeclaration`: an Identifier is the declaration's name. Any other expression leaves it
+        // without one.
         match hir[s].kind {
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) if !is_parenthesized(hir, e) => {
                 match hir[e].kind {
                     ExprKind::Ident(_) => hir[e].pos,
-                    // `createMissingIdentifier`. `GetErrorRangeForNode` skips no trivia before a missing node.
+                    // `createMissingIdentifier`. `GetErrorRangeForNode` doesn't skip trivia before a missing node.
                     ExprKind::Missing => self.end_of_expr(file, e),
                     _ => hir[s].start,
                 }
@@ -251,8 +250,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `addTypeOnlyDeclarationRelatedInfo` for `getTypeOnlyAliasDeclarationEx(sym,
-    /// SymbolFlagsValue)`. `name`: the name of the alias at the error location.
+    /// `addTypeOnlyDeclarationRelatedInfo` for `getTypeOnlyAliasDeclarationEx(sym, SymbolFlagsValue)`. `name` is the
+    /// alias's name at the error location.
     pub(super) fn type_only_declaration_related(&self, sym: Sym, name: Vec<u8>) -> Vec<Reported> {
         let type_only = self
             .files()
@@ -268,8 +267,8 @@ impl Checker<'_, '_> {
         if hir.kind == FileKind::Declaration {
             return;
         }
-        // Indexed by symbol, allocated lazily when the first name is checked: each symbol is
-        // examined once, however often it is used. 0: not computed yet. 1: nothing is reported.
+        // Indexed by symbol, allocated lazily when the first name is checked. Each symbol is examined once, however
+        // often it's used. 0 means not computed yet, 1 means nothing is reported.
         let mut inspected: Vec<u8> = Vec::new();
         for &(e, _) in &bound.alias_idents {
             let local = bound.symbol_of_expr(e);
@@ -284,8 +283,8 @@ impl Checker<'_, '_> {
                 continue;
             }
             let sym = files.sym(file, local);
-            // `getSymbol`: it resolves as a value. An unresolved alias matches the value meaning
-            // like any other meaning.
+            // `getSymbol`: it resolves as a value. An unresolved alias matches the value meaning like any other
+            // meaning.
             let type_only = files
                 .type_only_alias_declaration_ex(sym, SymFlags::VALUE)
                 .filter(|_| self.get_symbol_flags(sym).intersects(SymFlags::VALUE));
@@ -399,8 +398,8 @@ pub(super) fn fully_qualified_name_of(c: &mut Checker<'_, '_>, symbol: AliasTarg
     }
 }
 
-/// `getFullyQualifiedName` of the property `name` of `object`, and whether it has a `Parent`. A synthesized property (of a union, an
-/// intersection, a mapped type, a tuple) has none.
+/// `getFullyQualifiedName` of the property `name` of `object`, and whether it has a `Parent`. A synthesized property
+/// (of a union, an intersection, a mapped type, a tuple) has none.
 fn fully_qualified_name_of_property(
     c: &mut Checker<'_, '_>,
     object: TypeId,
@@ -431,12 +430,12 @@ fn fully_qualified_name_of_property(
     (qualified, has_parent)
 }
 
-/// `GetRootDeclaration`: the variable or the parameter whose binding pattern contains `pat`.
+/// `GetRootDeclaration`: the variable or parameter whose binding pattern contains `pat`.
 pub(super) fn root_declaration(bound: &Bound, pat: PatId) -> PatParent {
     bound.pat_parent[root_pattern(bound, pat).idx()]
 }
 
-/// Its name: the outermost binding pattern that contains `pat`.
+/// The name of `root_declaration`: the outermost binding pattern that contains `pat`.
 pub(super) fn root_pattern(bound: &Bound, mut pat: PatId) -> PatId {
     while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) = bound.pat_parent[pat.idx()] {
         pat = outer;

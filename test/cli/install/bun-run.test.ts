@@ -1,8 +1,19 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, linkSync, readFileSync, renameSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  linkSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv as bunEnv_, bunExe, forEachLine, isWindows, substDrive, tempDir, tempDirWithFiles } from "harness";
-import { basename, join } from "path";
+import { basename, delimiter, join } from "path";
 
 const bunEnv: typeof bunEnv_ = {
   ...bunEnv_,
@@ -1586,14 +1597,19 @@ describe.concurrent("bun run", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/44761
-  // On Windows a bin link is two files: `<name>.exe`, the launcher, and `<name>.bunx`, which names the
-  // target. The launcher stays when the target goes, and then prints "bin executable does not exist on
-  // disk". On POSIX such a link is a dangling symlink, and a search of PATH passes over it.
-  describe.if(isWindows)("a bin link of a runtime whose target is gone", () => {
-    const printExecPath = (word: string) => `${word} -e "console.log(process.execPath)"`;
+  // A bin link whose target is gone is a dangling symlink on POSIX, and a search of PATH passes over it.
+  // On Windows the link is two files: `<name>.exe`, the launcher, and `<name>.bunx`, which names the target.
+  // The launcher stays when the target goes, prints "bin executable does not exist on disk" and exits 255.
+  describe("a bin link of a runtime whose target is gone", () => {
+    const exe = isWindows ? ".exe" : "";
+    // Prints the path of the program that ran: see `program`.
+    const printPath = (word: string) => `${word} -e "console.log(process.execPath)"`;
+    const echoed = (word: string) => `$ ${printPath(word)}\n`;
+    type Bins = Record<string, string>;
+    const bins = (...names: string[]): Bins => Object.fromEntries(names.map(name => [name, `bin/${name}${exe}`]));
 
-    // `outer` has a package whose bins are `names`, each a copy of bun, and `outer/project` has `scripts`.
-    const files = (names: string[], scripts: Record<string, string>) => ({
+    // `outer` depends on a package with the bins `bin`, and `outer/project` has `scripts`.
+    const files = (bin: Bins, scripts: Record<string, string>) => ({
       "tools/.keep": "",
       outer: {
         "package.json": JSON.stringify({
@@ -1602,152 +1618,306 @@ describe.concurrent("bun run", () => {
           dependencies: { "runtime-pkg": "file:./runtime-pkg" },
         }),
         "runtime-pkg": {
-          "package.json": JSON.stringify({
-            name: "runtime-pkg",
-            version: "0.0.0",
-            bin: Object.fromEntries(names.map(name => [name, `bin/${name}.exe`])),
-          }),
+          "package.json": JSON.stringify({ name: "runtime-pkg", version: "0.0.0", bin }),
           "bin/.keep": "",
         },
         "project/package.json": JSON.stringify({ name: "project", scripts }),
       },
     });
 
-    function prepare(root: string, names: string[]) {
-      const linkBun = (to: string) => {
-        try {
-          linkSync(bunExe(), to);
-        } catch {
-          copyFileSync(bunExe(), to);
-        }
-      };
+    // A program that prints where it is. A launcher needs a native target, so on Windows it is bun.
+    function program(to: string) {
+      if (!isWindows) {
+        writeFileSync(to, '#!/bin/sh\necho "$0"\n');
+        return chmodSync(to, 0o755);
+      }
+      try {
+        linkSync(bunExe(), to);
+      } catch {
+        copyFileSync(bunExe(), to);
+      }
+    }
+    // What the program at `file` prints, as `run` reads it.
+    const ran = (file: string) => realpathSync.native(file).toLowerCase();
+
+    function prepare(root: string, bin: Bins, shell = "bun") {
       const tools = join(root, "tools");
       const outer = join(root, "outer");
-      // `tools` is the runtime that PATH has. Without a node in PATH, `bun run` puts a `bun.exe` of its
-      // own in front of every `node_modules\.bin`.
-      for (const name of ["bun", "bunx", "node"]) linkBun(join(tools, `${name}.exe`));
-      for (const name of names) linkBun(join(outer, "runtime-pkg", "bin", `${name}.exe`));
+      // `tools` is the runtime that PATH has. Without a node in PATH, `bun run` puts a `bun` of its own
+      // in front of every `node_modules/.bin`.
+      for (const name of ["bun", "bunx", "node"]) program(join(tools, name + exe));
+      for (const target of Object.values(bin)) program(join(outer, "runtime-pkg", target));
       // Windows env keys are case-insensitive, and an outer `bun run` exports NODE.
       const env = Object.fromEntries(
         Object.entries(bunEnv).filter(([k]) => !["PATH", "NODE", "NPM_NODE_EXECPATH"].includes(k.toUpperCase())),
       );
-      env.PATH = `${tools};${process.env.PATH ?? ""}`;
+      env.PATH = tools + delimiter + (process.env.PATH ?? "");
       const run = async (cwd: string, ...cmd: string[]) => {
         await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stdout: stdout.trim().toLowerCase(), stderr, exitCode };
+        const text = stdout.trim();
+        return { stdout: existsSync(text) ? ran(text) : text.toLowerCase(), stderr, exitCode };
       };
-      const install = async (cwd: string) => {
-        expect(await run(cwd, bunExe(), "install", "--linker=hoisted")).toMatchObject({ exitCode: 0 });
-        for (const name of names) {
-          expect(existsSync(join(cwd, "node_modules", ".bin", `${name}.bunx`))).toBe(true);
+      const script = (cwd: string, name: string) => run(cwd, bunExe(), "run", `--shell=${shell}`, name);
+      const binDir = (dir: string) => join(dir, "node_modules", ".bin");
+      const install = async (cwd: string, linker = "hoisted") => {
+        expect(await run(cwd, bunExe(), "install", `--linker=${linker}`)).toMatchObject({ exitCode: 0 });
+        for (const name of Object.keys(bin)) {
+          if (isWindows) expect(existsSync(join(binDir(cwd), `${name}.bunx`))).toBe(true);
+          else expect(lstatSync(join(binDir(cwd), name)).isSymbolicLink()).toBe(true);
         }
       };
-      const target = (dir: string, name: string) => join(dir, "node_modules", "runtime-pkg", "bin", `${name}.exe`);
-      // The package folder stays, as after an install script that moved the file.
-      const removeTarget = (dir: string, name: string) => renameSync(target(dir, name), target(dir, name) + ".moved");
-      const restoreTarget = (dir: string, name: string) => renameSync(target(dir, name) + ".moved", target(dir, name));
-      return { tools, outer, run, install, target, removeTarget, restoreTarget };
+      // The file that the link `name` of `dir` leads to.
+      const targetOf = (dir: string, name: string) => {
+        if (!isWindows) return realpathSync(join(binDir(dir), name));
+        const link = readFileSync(join(binDir(dir), `${name}.bunx`)).toString("utf16le");
+        return join(dir, "node_modules", link.slice(0, link.indexOf('"')));
+      };
+      // The package folder stays, as after an install script that moved the file. Returns the way back.
+      const removeTarget = (dir: string, name: string) => {
+        const target = targetOf(dir, name);
+        renameSync(target, target + ".moved");
+        return () => renameSync(target + ".moved", target);
+      };
+      return { tools, outer, run, script, install, binDir, targetOf, removeTarget };
     }
 
-    it("a script that starts with bun runs the next bun in PATH", async () => {
-      using dir = tempDir(
-        "bun-run-dead-bin-link",
-        files(["bun"], { execpath: printExecPath("bun"), viaNpm: "npm run execpath" }),
-      );
-      const { tools, outer, run, install, target, removeTarget, restoreTarget } = prepare(String(dir), ["bun"]);
-      const project = join(outer, "project");
-      await install(outer);
+    // On POSIX this is the reference, also for a system shell. The other cases are for the launcher.
+    const cases = [["bun", "hoisted"], isWindows ? ["bun", "isolated"] : ["system", "hoisted"]];
+    it.each(cases)(
+      "a script that starts with bun runs the next bun in PATH (--shell=%s, %s)",
+      async (shell, linker) => {
+        using dir = tempDir("bun-run-dead-bin-link", files(bins("bun"), { path: printPath("bun") }));
+        const { tools, outer, script, install, targetOf, removeTarget } = prepare(String(dir), bins("bun"), shell);
+        const project = join(outer, "project");
+        await install(outer, linker);
+        const linked = ran(targetOf(outer, "bun"));
 
-      removeTarget(outer, "bun");
-      expect(await run(project, bunExe(), "run", "execpath")).toEqual({
-        stdout: join(tools, "bun.exe").toLowerCase(),
-        stderr: `$ ${printExecPath("bun")}\n`,
-        exitCode: 0,
+        const restore = removeTarget(outer, "bun");
+        expect(await script(project, "path")).toEqual({
+          stdout: ran(join(tools, "bun" + exe)),
+          stderr: echoed("bun"),
+          exitCode: 0,
+        });
+        // The target is there again: the link is taken again, with no install in between.
+        restore();
+        expect(await script(project, "path")).toEqual({ stdout: linked, stderr: echoed("bun"), exitCode: 0 });
+      },
+    );
+
+    describe.if(isWindows)("the launcher and its .bunx file", () => {
+      it("the next bun in PATH runs when the folder of the package is gone", async () => {
+        using dir = tempDir("bun-run-dead-bin-link-folder", files(bins("bun"), { path: printPath("bun") }));
+        const { tools, outer, script, install } = prepare(String(dir), bins("bun"));
+        await install(outer);
+
+        // What `bun remove` left behind up to Bun 1.4.
+        rmSync(join(outer, "node_modules", "runtime-pkg"), { recursive: true, force: true });
+        expect(await script(join(outer, "project"), "path")).toEqual({
+          stdout: ran(join(tools, "bun" + exe)),
+          stderr: echoed("bun"),
+          exitCode: 0,
+        });
       });
-      // `npm run` in a script is run as `bun run`.
-      expect(await run(project, bunExe(), "run", "viaNpm")).toEqual({
-        stdout: join(tools, "bun.exe").toLowerCase(),
-        stderr: expect.stringContaining(` run execpath\n$ ${printExecPath("bun")}\n`),
-        exitCode: 0,
+
+      it("the search goes on to a bin link farther up whose target is there", async () => {
+        using dir = tempDir("bun-run-dead-bin-link-nearer", {
+          ...files(bins("bun"), {}),
+          "outer/mid/package.json": JSON.stringify({
+            name: "mid",
+            version: "0.0.0",
+            dependencies: { "runtime-pkg": "file:../runtime-pkg" },
+          }),
+          "outer/mid/project/package.json": JSON.stringify({ name: "project", scripts: { path: printPath("bun") } }),
+        });
+        const { outer, script, install, targetOf, removeTarget } = prepare(String(dir), bins("bun"));
+        const mid = join(outer, "mid");
+        await install(outer);
+        await install(mid);
+
+        removeTarget(mid, "bun");
+        expect(await script(join(mid, "project"), "path")).toEqual({
+          stdout: ran(targetOf(outer, "bun")),
+          stderr: echoed("bun"),
+          exitCode: 0,
+        });
       });
 
-      // The target is there again: the link is taken again, with no install in between.
-      restoreTarget(outer, "bun");
-      expect(await run(project, bunExe(), "run", "execpath")).toEqual({
-        stdout: target(outer, "bun").toLowerCase(),
-        stderr: `$ ${printExecPath("bun")}\n`,
-        exitCode: 0,
+      it("a script that starts with node or bunx runs the next one in PATH", async () => {
+        const scripts = {
+          node: printPath("node"),
+          spelled: printPath("Node.EXE"),
+          // `bunx` has no option that prints its path.
+          bunx: "bunx --version",
+          postinstall: `node -e "require('fs').writeFileSync('postinstall.txt', process.execPath)"`,
+        };
+        using dir = tempDir("bun-run-dead-bin-link-node", files(bins("node", "bunx"), scripts));
+        const { tools, outer, run, script, install, removeTarget } = prepare(String(dir), bins("node", "bunx"));
+        const project = join(outer, "project");
+        await install(outer);
+
+        removeTarget(outer, "node");
+        removeTarget(outer, "bunx");
+        const inTools = ran(join(tools, "node.exe"));
+        expect(await script(project, "node")).toEqual({ stdout: inTools, stderr: echoed("node"), exitCode: 0 });
+        expect(await script(project, "spelled")).toEqual({ stdout: inTools, stderr: echoed("Node.EXE"), exitCode: 0 });
+        expect(await script(project, "bunx")).toEqual({
+          stdout: expect.stringMatching(/^\d+\.\d+\.\d+/),
+          stderr: "$ bunx --version\n",
+          exitCode: 0,
+        });
+        // A lifecycle script is run by the same shell.
+        expect(await run(project, bunExe(), "install")).toMatchObject({ exitCode: 0 });
+        expect(ran(readFileSync(join(project, "postinstall.txt"), "utf8"))).toBe(inTools);
       });
-    });
 
-    it("the search goes on to a bin link farther up whose target is there", async () => {
-      using dir = tempDir("bun-run-dead-bin-link-nearer", {
-        ...files(["bun"], {}),
-        "outer/mid/package.json": JSON.stringify({
-          name: "mid",
-          version: "0.0.0",
-          dependencies: { "runtime-pkg": "file:../runtime-pkg" },
-        }),
-        "outer/mid/project/package.json": JSON.stringify({
-          name: "project",
-          scripts: { execpath: printExecPath("bun") },
-        }),
+      it("every spelling of bun, `which bun` and `npm run` lead to the same bun", async () => {
+        const scripts: Record<string, string> = {
+          path: printPath("bun"),
+          spelled: printPath("bun.exe"),
+          upper: printPath("BUN"),
+          which: "which bun",
+          npm: "npm run path",
+        };
+        using dir = tempDir("bun-run-dead-bin-link-words", files(bins("bun"), scripts));
+        const { tools, outer, script, install, binDir, removeTarget } = prepare(String(dir), bins("bun"));
+        const project = join(outer, "project");
+        await install(outer);
+
+        removeTarget(outer, "bun");
+        // What npm writes for the same link, and a stale `.bunx` beside a real program.
+        writeFileSync(join(binDir(outer), "bun.cmd"), "@echo off\r\necho bun.cmd\r\n");
+        copyFileSync(join(binDir(outer), "bun.bunx"), join(tools, "bun.bunx"));
+
+        const inTools = ran(join(tools, "bun.exe"));
+        for (const name of ["path", "spelled", "upper", "which"]) {
+          expect({ name, ...(await script(project, name)) }).toEqual({
+            name,
+            stdout: inTools,
+            stderr: `$ ${scripts[name]}\n`,
+            exitCode: 0,
+          });
+        }
+        // `npm run` in a script is run as `bun run`.
+        expect(await script(project, "npm")).toEqual({
+          stdout: inTools,
+          stderr: expect.stringContaining(` run path\n$ ${scripts.path}\n`),
+          exitCode: 0,
+        });
       });
-      const { outer, run, install, target, removeTarget } = prepare(String(dir), ["bun"]);
-      const mid = join(outer, "mid");
-      await install(outer);
-      await install(mid);
 
-      removeTarget(mid, "bun");
-      expect(await run(join(mid, "project"), bunExe(), "run", "execpath")).toEqual({
-        stdout: target(outer, "bun").toLowerCase(),
-        stderr: `$ ${printExecPath("bun")}\n`,
-        exitCode: 0,
+      it("a word that is not a runtime keeps the error of its launcher", async () => {
+        using dir = tempDir("bun-run-dead-bin-link-other-word", files(bins("mytool"), { path: printPath("mytool") }));
+        const { outer, script, install, removeTarget } = prepare(String(dir), bins("mytool"));
+        const project = join(outer, "project");
+        await install(outer);
+        const dead = {
+          stdout: "",
+          stderr: expect.stringContaining("error: bin executable does not exist on disk"),
+          exitCode: 255,
+        };
+
+        removeTarget(outer, "mytool");
+        expect(await script(project, "path")).toEqual(dead);
+        rmSync(join(outer, "node_modules", "runtime-pkg"), { recursive: true, force: true });
+        expect(await script(project, "path")).toEqual(dead);
       });
-    });
 
-    it("a script that starts with node or bunx runs the next one in PATH", async () => {
-      using dir = tempDir(
-        "bun-run-dead-bin-link-node",
-        files(["node", "bunx"], { execpath: printExecPath("node"), version: "bunx --version" }),
-      );
-      const { tools, outer, run, install, removeTarget } = prepare(String(dir), ["node", "bunx"]);
-      const project = join(outer, "project");
-      await install(outer);
+      it("a bin link whose target is there is taken", async () => {
+        using dir = tempDir("bun-run-live-bin-link", files(bins("bun"), { path: printPath("bun") }));
+        const { outer, script, install, binDir, targetOf } = prepare(String(dir), bins("bun"));
+        const project = join(outer, "project");
+        await install(outer);
+        const linked = { stdout: ran(targetOf(outer, "bun")), stderr: echoed("bun"), exitCode: 0 };
+        expect(await script(project, "path")).toEqual(linked);
 
-      removeTarget(outer, "node");
-      removeTarget(outer, "bunx");
-      expect(await run(project, bunExe(), "run", "execpath")).toEqual({
-        stdout: join(tools, "node.exe").toLowerCase(),
-        stderr: `$ ${printExecPath("node")}\n`,
-        exitCode: 0,
+        // A target outside the `node_modules` of the link is written with `..`, which Windows resolves.
+        const bunx = join(binDir(outer), "bun.bunx");
+        const link = readFileSync(bunx).toString("utf16le");
+        expect(link).toStartWith('runtime-pkg\\bin\\bun.exe"');
+        writeFileSync(bunx, Buffer.from(link.replace("\\bin\\", "\\bin\\..\\bin\\"), "utf16le"));
+        expect(await script(project, "path")).toEqual(linked);
       });
-      expect(await run(project, bunExe(), "run", "version")).toEqual({
-        stdout: expect.stringMatching(/^\d+\.\d+\.\d+/),
-        stderr: "$ bunx --version\n",
-        exitCode: 0,
+
+      it("only a link that the launcher cannot start is passed over", async () => {
+        using dir = tempDir("bun-run-bin-link-metadata", files(bins("bun"), { path: printPath("bun") }));
+        const { tools, outer, script, install, binDir, targetOf } = prepare(String(dir), bins("bun"));
+        const project = join(outer, "project");
+        await install(outer);
+        const bunx = join(binDir(outer), "bun.bunx");
+        const written = readFileSync(bunx);
+        const flags = written.readUInt16LE(written.length - 2);
+        const relative = written.toString("utf16le").split('"')[0];
+        const target = targetOf(outer, "bun");
+        const linked = ran(target);
+        // The form of a link with no shebang: the path, `"`, a NUL, and the flags.
+        const write = (binPath: string, flags: number) => {
+          const tail = Buffer.alloc(2);
+          tail.writeUInt16LE(flags);
+          writeFileSync(bunx, Buffer.concat([Buffer.from(`${binPath}"\0`, "utf16le"), tail]));
+        };
+        const results: Record<string, unknown> = {};
+
+        // Bit 3: the path is absolute, as for a package on another drive.
+        write(target, flags | 0b1000);
+        results.absolute = await script(project, "path");
+        renameSync(target, target + ".moved");
+        results.absoluteGone = await script(project, "path");
+        write(relative, flags);
+        results.relativeGone = await script(project, "path");
+        // Bit 2: a shebang. The launcher starts an interpreter and never opens the target.
+        write(relative, flags | 0b100);
+        results.shebang = await script(project, "path");
+        // Above bit 3: the version of the format.
+        write(relative, flags ^ 0b10000);
+        results.otherVersion = await script(project, "path");
+
+        const passedOver = { stdout: ran(join(tools, "bun.exe")), stderr: echoed("bun"), exitCode: 0 };
+        const started = {
+          stdout: "",
+          stderr: expect.stringContaining("error: bin metadata is corrupt"),
+          exitCode: 255,
+        };
+        expect(results).toEqual({
+          absolute: { stdout: linked, stderr: echoed("bun"), exitCode: 0 },
+          absoluteGone: passedOver,
+          relativeGone: passedOver,
+          shebang: started,
+          otherVersion: started,
+        });
       });
-    });
 
-    it("a bin link whose target is there is taken", async () => {
-      using dir = tempDir("bun-run-live-bin-link", files(["bun"], { execpath: printExecPath("bun") }));
-      const { outer, run, install, target } = prepare(String(dir), ["bun"]);
-      const project = join(outer, "project");
-      const linked = {
-        stdout: target(outer, "bun").toLowerCase(),
-        stderr: `$ ${printExecPath("bun")}\n`,
-        exitCode: 0,
-      };
-      await install(outer);
-      expect(await run(project, bunExe(), "run", "execpath")).toEqual(linked);
+      // The npm package `node` has the bin `bin/node`, a text file on Windows, beside `bin/node.exe`.
+      it("a target with no extension is there when the same name with .exe is", async () => {
+        using dir = tempDir("bun-run-bin-link-no-extension", files({ node: "bin/node" }, { path: printPath("node") }));
+        const { tools, outer, script, install, binDir } = prepare(String(dir), {});
+        const project = join(outer, "project");
+        writeFileSync(join(outer, "runtime-pkg", "bin", "node"), "This file intentionally left blank\n");
+        program(join(outer, "runtime-pkg", "bin", "node.exe"));
+        await install(outer);
+        expect(readFileSync(join(binDir(outer), "node.bunx")).toString("utf16le")).toStartWith(
+          'runtime-pkg\\bin\\node"',
+        );
+        const bin = join(outer, "node_modules", "runtime-pkg", "bin");
+        const nodeExe = ran(join(bin, "node.exe"));
+        const results: Record<string, unknown> = {};
 
-      // A target outside the `node_modules` of the link is written with `..`, which Windows resolves.
-      const bunx = join(outer, "node_modules", ".bin", "bun.bunx");
-      const link = readFileSync(bunx).toString("utf16le");
-      expect(link).toStartWith('runtime-pkg\\bin\\bun.exe"');
-      writeFileSync(bunx, Buffer.from(link.replace("\\bin\\", "\\bin\\..\\bin\\"), "utf16le"));
-      expect(await run(project, bunExe(), "run", "execpath")).toEqual(linked);
+        results.both = await script(project, "path");
+        renameSync(join(bin, "node"), join(bin, "node.moved"));
+        results.onlyExe = await script(project, "path");
+        renameSync(join(bin, "node.exe"), join(bin, "node.exe.moved"));
+        results.neither = await script(project, "path");
+
+        expect(results).toEqual({
+          // The launcher is given the text file.
+          both: { stdout: "", stderr: expect.stringContaining("error: could not create process"), exitCode: 255 },
+          onlyExe: { stdout: nodeExe, stderr: echoed("node"), exitCode: 0 },
+          neither: { stdout: ran(join(tools, "node.exe")), stderr: echoed("node"), exitCode: 0 },
+        });
+      });
+
+      // The launcher of a package bin looks for `node` itself, and first in its own folder.
+      it.todo("a package bin with a node shebang beside a node link whose target is gone");
     });
   });
 });

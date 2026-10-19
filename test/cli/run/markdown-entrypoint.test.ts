@@ -401,4 +401,172 @@ describe("bun <file.md>", () => {
       expect(secondExit).toBe(0);
     },
   );
+
+  // A terminal that speaks the Kitty graphics protocol draws the image that an APC sequence
+  // names. For an `http(s)` image, bun downloads it before it prints, stages it in TMPDIR and
+  // names that file. An image in a heading or in a table cell is never drawn: it shows as its
+  // alt text.
+  describe("images on a Kitty terminal", () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    );
+
+    /**
+     * Renders a document with `bun ./doc.md`. `img(name, file)` is an image with the alt text
+     * `(name)` that a loopback host serves as `/<file>.png`. `ref` is the same image as a
+     * reference to a definition at the end of the document.
+     */
+    async function render(blocks: (image: Record<"img" | "ref", (name: string, file?: string) => string>) => string[]) {
+      const requested: string[] = [];
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          requested.push(new URL(req.url).pathname);
+          return new Response(png, { headers: { "content-type": "image/png" } });
+        },
+      });
+      const url = (file: string) => `http://127.0.0.1:${server.port}/${file}.png`;
+      const names: string[] = [];
+      const definitions: string[] = [];
+      const body = blocks({
+        img(name, file = name) {
+          names.push(name);
+          return `![(${name})](${url(file)})`;
+        },
+        ref(name, file = name) {
+          names.push(name);
+          definitions.push(`[${name}]: ${url(file)}`);
+          return `![(${name})][${name}]`;
+        },
+      });
+      using dir = tempDir("md-remote-img-drawn-", {
+        "doc.md": [...body, ...definitions, ""].join("\n\n"),
+        "tmp/keep": "",
+      });
+      const tmp = join(String(dir), "tmp");
+
+      const decoder = new TextDecoder();
+      let output = "";
+      // The terminal reports EOF after the last byte that the child wrote.
+      const eof = Promise.withResolvers<void>();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "./doc.md"],
+        env: { ...bunEnv, FORCE_COLOR: "1", TERM: "xterm-kitty", KITTY_WINDOW_ID: "1", BUN_TMPDIR: tmp, TMPDIR: tmp },
+        cwd: String(dir),
+        terminal: {
+          cols: 80,
+          rows: 24,
+          data(_terminal, chunk) {
+            output += decoder.decode(chunk, { stream: true });
+          },
+          exit() {
+            eof.resolve();
+          },
+        },
+      });
+      const [exitCode] = await Promise.all([proc.exited, eof.promise]);
+      proc.terminal?.close();
+
+      return {
+        requested: requested.sort(),
+        staged: readdirSync(tmp)
+          .filter(name => name.startsWith("bun-md-"))
+          .map(name => join(tmp, name))
+          .sort(),
+        // The files that the terminal is told to draw: the payload of the APC sequence is the path.
+        drawn: Array.from(output.matchAll(/\x1b_Ga=T,t=f[^;]*;([^\x1b]*)\x1b\\/g), match =>
+          Buffer.from(match[1], "base64").toString(),
+        ).sort(),
+        // An image that the terminal is not told to draw shows as its alt text.
+        altTexts: names.filter(name => output.includes(`(${name})`)),
+        exitCode,
+      };
+    }
+
+    test("fetches and stages only the images that the terminal is told to draw", async () => {
+      const { requested, staged, drawn, altTexts, exitCode } = await render(({ img, ref }) => [
+        // A heading and a table cell show an image as its alt text.
+        `# ATX ${img("atx-heading")}`,
+        `Setext ${img("setext-heading")}\n===`,
+        `| ${img("th")} |\n| --- |\n| ${img("td")} |`,
+        `> ## ${img("quoted-heading")}`,
+        `- ## ${img("list-item-heading")}`,
+        `> | ${img("quoted-th")} |\n> | --- |\n> | ${img("quoted-td")} |`,
+        `### [${img("linked-heading")}](https://bun.com)`,
+        `| ${ref("reference-th")} |\n| --- |`,
+        // Everywhere else the terminal draws it.
+        img("paragraph"),
+        `> ${img("quote")}`,
+        `- ${img("list-item")}`,
+        `[${img("link")}](https://bun.com)`,
+        ref("reference"),
+        // An image in the alt text of an image is only text.
+        img(`outer ${img("nested")}`, "nesting"),
+        // One file, named where it is not drawn and where it is, in both orders.
+        `#### ${img("heading-first", "heading-then-paragraph")}`,
+        img("paragraph-second", "heading-then-paragraph"),
+        img("paragraph-first", "paragraph-then-cell"),
+        `| ${img("cell-second", "paragraph-then-cell")} |\n| --- |`,
+      ]);
+      expect({ requested, staged: staged.length, altTexts, exitCode }).toEqual({
+        requested: [
+          "/heading-then-paragraph.png",
+          "/link.png",
+          "/list-item.png",
+          "/nesting.png",
+          "/paragraph-then-cell.png",
+          "/paragraph.png",
+          "/quote.png",
+          "/reference.png",
+        ],
+        staged: 8,
+        altTexts: [
+          "atx-heading",
+          "setext-heading",
+          "th",
+          "td",
+          "quoted-heading",
+          "list-item-heading",
+          "quoted-th",
+          "quoted-td",
+          "linked-heading",
+          "reference-th",
+          "heading-first",
+          "cell-second",
+        ],
+        exitCode: 0,
+      });
+      // ConPTY does not hand the APC sequences on, so only a POSIX pty shows what is drawn.
+      if (isPosix) expect(drawn).toEqual(staged);
+    });
+
+    test("fetches nothing when the terminal is told to draw no image of the document", async () => {
+      const result = await render(({ img }) => [`# ${img("heading")}`, `| ${img("th")} |\n| --- |\n| ${img("td")} |`]);
+      expect(result).toEqual({
+        requested: [],
+        staged: [],
+        drawn: [],
+        altTexts: ["heading", "th", "td"],
+        exitCode: 0,
+      });
+    });
+
+    // The renderer asks the same rule. A remote image cannot show that: with no staged file it
+    // is alt text anyway. A PNG in a data: URL needs no file.
+    const inline = `![(alt)](data:image/png;base64,${png.toString("base64")})`;
+    test.each([
+      { where: "a paragraph", source: `${inline}\n`, drawn: 1, altTexts: 0 },
+      { where: "a heading", source: `# ${inline}\n`, drawn: 0, altTexts: 1 },
+      { where: "a header cell", source: `| ${inline} |\n| --- |\n`, drawn: 0, altTexts: 1 },
+      { where: "a body cell", source: `| a |\n| --- |\n| ${inline} |\n`, drawn: 0, altTexts: 1 },
+    ])("a data: image in $where is drawn $drawn time(s)", ({ source, drawn, altTexts }) => {
+      const out = Bun.markdown.ansi(source, { kittyGraphics: true });
+      expect({
+        drawn: out.split("\x1b_Ga=T,t=d").length - 1,
+        altTexts: out.split("(alt)").length - 1,
+      }).toEqual({ drawn, altTexts });
+    });
+  });
 });

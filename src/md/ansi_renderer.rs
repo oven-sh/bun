@@ -47,11 +47,45 @@ pub struct Theme<'a> {
     pub image_base_dir: Option<&'a [u8]>,
 }
 
+/// The heading or table cell whose inline content `AnsiRenderer` buffers until the block ends.
+#[derive(Default)]
+struct BufferedLeaf {
+    /// Level of the heading (0 = none).
+    heading_level: u8,
+    /// True inside a table cell (th/td).
+    in_cell: bool,
+}
+
+impl BufferedLeaf {
+    fn enter(&mut self, block_type: BlockType, data: u32) {
+        match block_type {
+            BlockType::H => self.heading_level = u8::try_from(data).expect("int cast"),
+            BlockType::Th | BlockType::Td => self.in_cell = true,
+            _ => {}
+        }
+    }
+
+    fn leave(&mut self, block_type: BlockType) {
+        match block_type {
+            BlockType::H => self.heading_level = 0,
+            BlockType::Th | BlockType::Td => self.in_cell = false,
+            _ => {}
+        }
+    }
+
+    /// `emit_kitty_image_*` ends the line and writes the indent to `out`. A buffer takes neither.
+    fn allows_kitty_image(&self) -> bool {
+        !self.in_cell && self.heading_level == 0
+    }
+}
+
 /// Renderer that only collects image URLs — no output. Used by the CLI
 /// pre-scan pass to decide which remote images to download.
+/// Skips an image in a heading or table cell, which `AnsiRenderer` shows as alt text.
 #[derive(Default)]
 pub struct ImageUrlCollector {
     pub urls: Vec<Box<[u8]>>,
+    leaf: BufferedLeaf,
 }
 
 impl ImageUrlCollector {
@@ -65,10 +99,12 @@ impl ImageUrlCollector {
 }
 
 impl RendererImpl for ImageUrlCollector {
-    fn enter_block(&mut self, _: BlockType, _: u32, _: u32) -> JsResult<()> {
+    fn enter_block(&mut self, block_type: BlockType, data: u32, _: u32) -> JsResult<()> {
+        self.leaf.enter(block_type, data);
         Ok(())
     }
-    fn leave_block(&mut self, _: BlockType, _: u32) -> JsResult<()> {
+    fn leave_block(&mut self, block_type: BlockType, _: u32) -> JsResult<()> {
+        self.leaf.leave(block_type);
         Ok(())
     }
     fn leave_span(&mut self, _: SpanType) -> JsResult<()> {
@@ -78,7 +114,7 @@ impl RendererImpl for ImageUrlCollector {
         Ok(())
     }
     fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
-        if span_type != SpanType::Img {
+        if span_type != SpanType::Img || !self.leaf.allows_kitty_image() {
             return Ok(());
         }
         if detail.href.is_empty() {
@@ -135,8 +171,8 @@ struct AnsiRenderer<'a> {
     code_fenced: bool,
     /// Buffer of the current code block body, flushed on leaveBlock(.code).
     code_buf: Vec<u8>,
-    /// Heading level currently being rendered (0 = none).
-    heading_level: u8,
+    /// The heading or table cell currently being buffered.
+    leaf: BufferedLeaf,
     /// Buffer of the current heading text, flushed on leaveBlock(.h).
     heading_buf: Vec<u8>,
     /// Table state: cells of the current row with their alignment + width.
@@ -147,8 +183,6 @@ struct AnsiRenderer<'a> {
     table_cell_buf: Vec<u8>,
     /// True when inside a table header row.
     in_thead: bool,
-    /// True when inside a table cell (th/td) to capture output.
-    in_cell: bool,
     /// Current cell alignment being captured.
     cell_align: Align,
     /// Track whether we just emitted a newline, to collapse extra blanks.
@@ -287,13 +321,12 @@ impl<'a> AnsiRenderer<'a> {
             code_lang: b"",
             code_fenced: false,
             code_buf: Vec::new(),
-            heading_level: 0,
+            leaf: BufferedLeaf::default(),
             heading_buf: Vec::new(),
             table_cells: Vec::new(),
             table_rows: Vec::new(),
             table_cell_buf: Vec::new(),
             in_thead: false,
-            in_cell: false,
             cell_align: Align::Default,
             last_was_newline: true,
             blank_emitted: false,
@@ -431,7 +464,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::H => {
                 self.ensure_blank_line();
-                self.heading_level = u8::try_from(data).expect("int cast");
+                self.leaf.enter(block_type, data);
                 self.heading_buf.clear();
                 // heading content is buffered; on leaveBlock we print with
                 // full styling + underline.
@@ -483,7 +516,7 @@ impl<'a> AnsiRenderer<'a> {
                 self.table_cells.clear();
             }
             BlockType::Th | BlockType::Td => {
-                self.in_cell = true;
+                self.leaf.enter(block_type, data);
                 self.cell_align = types::alignment_from_data(data);
                 self.table_cell_buf.clear();
             }
@@ -500,7 +533,7 @@ impl<'a> AnsiRenderer<'a> {
             BlockType::Hr => {}
             BlockType::H => {
                 self.flush_heading();
-                self.heading_level = 0;
+                self.leaf.leave(block_type);
             }
             BlockType::Code => {
                 self.flush_code_block();
@@ -536,7 +569,7 @@ impl<'a> AnsiRenderer<'a> {
                 self.table_cells.clear();
             }
             BlockType::Th | BlockType::Td => {
-                self.in_cell = false;
+                self.leaf.leave(block_type);
                 let owned = Box::<[u8]>::from(self.table_cell_buf.as_slice());
                 try_push(
                     &mut self.out.oom,
@@ -619,7 +652,7 @@ impl<'a> AnsiRenderer<'a> {
                 self.write_styled(s.off, b"");
                 // An off-code can turn off a heading's own bold/italic —
                 // reapply if we're inside a heading buffer.
-                if self.heading_level > 0 {
+                if self.leaf.heading_level > 0 {
                     self.reapply_styles();
                 }
             }
@@ -735,11 +768,11 @@ impl<'a> AnsiRenderer<'a> {
             try_extend(&mut self.out.oom, &mut self.code_buf, data);
             return;
         }
-        if self.heading_level > 0 {
+        if self.leaf.heading_level > 0 {
             try_extend(&mut self.out.oom, &mut self.heading_buf, data);
             return;
         }
-        if self.in_cell {
+        if self.leaf.in_cell {
             try_extend(&mut self.out.oom, &mut self.table_cell_buf, data);
             return;
         }
@@ -932,11 +965,11 @@ impl<'a> AnsiRenderer<'a> {
             }
             return;
         }
-        if self.in_cell {
+        if self.leaf.in_cell {
             try_extend(&mut self.out.oom, &mut self.table_cell_buf, bytes);
             return;
         }
-        if self.heading_level > 0 {
+        if self.leaf.heading_level > 0 {
             try_extend(&mut self.out.oom, &mut self.heading_buf, bytes);
             return;
         }
@@ -947,8 +980,8 @@ impl<'a> AnsiRenderer<'a> {
     /// both the escape prefix and the text through the active buffer so
     /// spans inside cells/headings flush correctly.
     fn write_styled(&mut self, prefix: &[u8], text_: &[u8]) {
-        let in_main_flow = !self.in_cell
-            && self.heading_level == 0
+        let in_main_flow = !self.leaf.in_cell
+            && self.leaf.heading_level == 0
             && !self.in_code_block
             && self.image_depth == 0;
 
@@ -1116,7 +1149,10 @@ impl<'a> AnsiRenderer<'a> {
             return;
         }
         self.emit_inline(text_);
-        if !self.in_cell && self.heading_level == 0 && !self.in_code_block && self.image_depth == 0
+        if !self.leaf.in_cell
+            && self.leaf.heading_level == 0
+            && !self.in_code_block
+            && self.image_depth == 0
         {
             self.col += u32::try_from(visible_width(text_)).expect("int cast");
             self.last_was_newline = false;
@@ -1135,11 +1171,11 @@ impl<'a> AnsiRenderer<'a> {
         if self.image_depth > 0 {
             return;
         }
-        if self.in_cell {
+        if self.leaf.in_cell {
             try_extend(&mut self.out.oom, &mut self.table_cell_buf, data);
             return;
         }
-        if self.heading_level > 0 {
+        if self.leaf.heading_level > 0 {
             try_extend(&mut self.out.oom, &mut self.heading_buf, data);
             return;
         }
@@ -1156,9 +1192,9 @@ impl<'a> AnsiRenderer<'a> {
         }
         // If we're inside a heading's buffered content, the outer bold +
         // color wrapper must also be reapplied.
-        if self.heading_level > 0 {
+        if self.leaf.heading_level > 0 {
             self.emit_inline(ansi_b::BOLD);
-            self.emit_inline(heading_color(self.heading_level));
+            self.emit_inline(heading_color(self.leaf.heading_level));
         }
         if self.span_flags & SPAN_STRONG != 0 {
             self.emit_inline(ansi_b::BOLD);
@@ -1363,12 +1399,12 @@ impl<'a> AnsiRenderer<'a> {
     // ========================================
 
     fn flush_heading(&mut self) {
-        let level = self.heading_level;
+        let level = self.leaf.heading_level;
         // Temporarily zero heading_level so writeIndent()'s reapplyStyles()
         // routes emitInline() to self.out instead of heading_buf. Otherwise
         // inside a blockquote the bold+color writes reach heading_buf and
         // may realloc its backing array, dangling the `content` slice below.
-        self.heading_level = 0;
+        self.leaf.heading_level = 0;
         // Take ownership of heading_buf so write_indent(&mut self)
         // doesn't alias `content`.
         let content = core::mem::take(&mut self.heading_buf);
@@ -1424,7 +1460,7 @@ impl<'a> AnsiRenderer<'a> {
         }
         // Restore heading_buf (cleared) and heading_level (caller resets).
         self.heading_buf = content;
-        self.heading_level = level;
+        self.leaf.heading_level = level;
     }
 
     // ========================================
@@ -1912,12 +1948,11 @@ impl<'a> AnsiRenderer<'a> {
         //   3. the file exists on disk
         // If the image is actually displayed, we're done — the image
         // itself is the content, no caption/alt text needed.
-        // Skip Kitty inside table cells / headings: the APC payload
-        // would be counted as visible width by flushTable/flushHeading,
-        // blowing up the column / underline size. Images in cells
-        // always fall back to alt-text rendering.
-        let kitty_allowed = !self.in_cell && self.heading_level == 0;
-        if kitty_allowed && self.theme.colors && self.theme.kitty_graphics && has_src {
+        if self.leaf.allows_kitty_image()
+            && self.theme.colors
+            && self.theme.kitty_graphics
+            && has_src
+        {
             let s = src.as_deref().unwrap();
             // data:image/png;base64,... → transmit payload directly via
             // t=d so no temp file needs to live on disk. Other data:

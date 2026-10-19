@@ -361,7 +361,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         }
         match hir[e].kind {
             // Not bound.
-            _ if matches!(bound.expr_parent[e.idx()], Parent::None) => None,
+            _ if matches!(bound.parent_of_expr(e), Parent::None) => None,
             ExprKind::Ident(name) => self.get_symbol_of_identifier(e, name),
             // `isRightSideOfQualifiedNameOrPropertyAccess`: the name has the symbol of the whole access.
             ExprKind::Dot {
@@ -429,7 +429,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 // narrowing does not affect. The `this` of `typeof this.x` is under a qualified
                 // name, which is an expression node.
                 if is_queried
-                    && !matches!(bound.expr_parent[e.idx()], Parent::Expr(_))
+                    && !matches!(bound.parent_of_expr(e), Parent::Expr(_))
                     && let Some(function) = function
                 {
                     return match bound.fns[function.idx()].owner {
@@ -468,7 +468,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         }
         let mut whole = e;
         loop {
-            match bound.expr_parent[whole.idx()] {
+            match bound.parent_of_expr(whole) {
                 Parent::ClassExtends(_) => break,
                 Parent::Expr(access)
                     if access.is_some()
@@ -538,7 +538,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
     fn get_symbol_of_literal(&mut self, e: ExprId) -> Option<Found<'p>> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
-        let Parent::Expr(parent) = bound.expr_parent[e.idx()] else {
+        let Parent::Expr(parent) = bound.parent_of_expr(e) else {
             return None;
         };
         if parent.is_none() {
@@ -570,7 +570,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             }
             // `IsVariableDeclarationInitializedToRequire`
             ExprKind::Call(_)
-                if matches!(bound.expr_parent[parent.idx()], Parent::VarInit(d)
+                if matches!(bound.parent_of_expr(parent), Parent::VarInit(d)
                     if bound.required_by(hir, hir[d].pat).is_some()
                         && !hir[d].flags.contains(Flags::EXPORT))
                     && crate::bind::require_argument(hir, parent) == Some(e) =>
@@ -665,7 +665,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             if matches!(s.kind, ScopeKind::File | ScopeKind::Module(_))
                 && let Some(local) = bound.lookup(s.locals, name)
             {
-                let leads_there = bound.symbols[local.idx()].export_symbol.is_some()
+                let leads_there = bound.symbol(local).export_symbol.is_some()
                     && files.export_symbol_of_value_symbol_if_exported(files.sym(file, local))
                         == exported;
                 return if leads_there {
@@ -685,7 +685,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
 
         // `export default a`, `export = a`: all meanings are accepted.
-        if let Parent::Stmt(statement) = bound.expr_parent[e.idx()]
+        if let Parent::Stmt(statement) = bound.parent_of_expr(e)
             && statement.is_some()
             && matches!(
                 hir[statement].kind,
@@ -720,7 +720,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 // `RequireSymbol`
                 known::require
                     if hir.is_js
-                        && matches!(bound.expr_parent[e.idx()], Parent::Expr(call) if call.is_some() && crate::bind::require_argument(hir, call).is_some()) =>
+                        && matches!(bound.parent_of_expr(e), Parent::Expr(call) if call.is_some() && crate::bind::require_argument(hir, call).is_some()) =>
                 {
                     Some(Found::Undeclared(Undeclared::Name(name)))
                 }
@@ -1168,7 +1168,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             // `getCombinedLocalAndExportSymbolFlags`
             let own = files.symbol(symbol);
             let exported = match own.export_symbol.is_some() {
-                true => bound.symbols[own.export_symbol.idx()].flags,
+                true => bound.symbol(own.export_symbol).flags,
                 false => SymFlags::empty(),
             };
             let text = files.atoms.bytes(name);

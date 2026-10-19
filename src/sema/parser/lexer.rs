@@ -57,7 +57,9 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_babel: bool,
     /// `Dialect::oxc`
     pub(crate) is_oxc: bool,
-    /// [`HtmlOpens`], with `is_oxc`.
+    /// Records `<!--` positions in `html_opens`. The caller may reparse a text that has one as a script.
+    pub(crate) notes_html_opens: bool,
+    /// Only filled in if `notes_html_opens` is set.
     pub(crate) html_opens: HtmlOpens,
     /// Each private name that was scanned and that no class which has ended since declares, for
     /// `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE`: one after `super.`.
@@ -279,6 +281,7 @@ impl<'a> Lexer<'a> {
             is_typescript_5: false,
             is_babel: false,
             is_oxc: false,
+            notes_html_opens: false,
             html_opens: HtmlOpens::default(),
             private_names: Vec::new(),
             atoms,
@@ -613,7 +616,9 @@ impl<'a> Lexer<'a> {
                     (b'/', after) if self.is_jsx && !self.is_ecmascript && after != b'*' => {
                         self.set(T::LessThanSlash, pos, pos + 2);
                     }
-                    (b'!', b'-') if (self.is_script || self.is_oxc) && at(pos + 3) == b'-' => {
+                    (b'!', b'-')
+                        if (self.is_script || self.notes_html_opens) && at(pos + 3) == b'-' =>
+                    {
                         return self.scan_at_html_open(pos);
                     }
                     _ => self.set(T::LessThan, pos, next),
@@ -793,7 +798,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// At a `<!--`, in a script or with `is_oxc`.
+    /// Scans at a `<!--`, in a script or with `notes_html_opens` set. In a script it starts a comment. Otherwise its
+    /// position is recorded and it is scanned as `<`.
     #[cold]
     #[inline(never)]
     fn scan_at_html_open(&mut self, pos: usize) {

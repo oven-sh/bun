@@ -463,6 +463,166 @@ it("reload() works with new dirs/files", () => {
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
 });
 
+// One process per fixture: the resolver's directory cache lives as long as the process.
+// The links exist before it starts, as they do for a server that is started under a release link.
+async function reloadFixture(files: Record<string, string>, links: Record<string, string>, body: string) {
+  using dir = tempDir("fsr-reload", {
+    ...files,
+    "fixture.ts": /* ts */ `
+      import fs from "fs";
+      import path from "path";
+      const root = import.meta.dir;
+      const at = (...parts) => path.join(root, ...parts);
+      const link = (name, target) => fs.symlinkSync(at(target), at(name), "junction");
+      const router = dir => new Bun.FileSystemRouter({ dir, style: "nextjs", fileExtensions: [".tsx"] });
+      const names = r => Object.keys(r.routes).sort().join(" ");
+      const slashes = s => String(s).replaceAll("\\\\", "/");
+      ${body}
+    `,
+  });
+  for (const [name, target] of Object.entries(links)) {
+    fs.symlinkSync(path.join(String(dir), target), path.join(String(dir), name), "junction");
+  }
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
+}
+const releases = { "v1/pages/old.tsx": "export default 1;\n", "v2/pages/new.tsx": "export default 2;\n" };
+const pages = {
+  "index.tsx": "export default 1;\n",
+  "b.tsx": "export default 2;\n",
+  "sub/c.tsx": "export default 3;\n",
+};
+const under = (dir: string) =>
+  Object.fromEntries(Object.entries(pages).map(([file, text]) => [`${dir}/${file}`, text]));
+
+it.concurrent("reload() lists the new target after a symlink above dir is repointed", async () => {
+  const result = await reloadFixture(
+    releases,
+    { current: "v1" },
+    `
+      const r = router(at("current", "pages"));
+      const before = names(r);
+      fs.unlinkSync(at("current"));
+      link("current", "v2");
+      r.reload();
+      const file = slashes(path.relative(fs.realpathSync(root), r.match("/new")?.filePath ?? ""));
+      console.log(before, "|", names(r), "|", file, r.match("/old"));
+    `,
+  );
+  expect(result).toEqual({ stdout: "/old | /new | v2/pages/new.tsx null", stderr: "", exitCode: 0, signalCode: null });
+});
+
+it.concurrent("reload() lists the new target after the old symlink target is deleted", async () => {
+  const result = await reloadFixture(
+    releases,
+    { current: "v1" },
+    `
+      const r = router(at("current", "pages"));
+      const before = names(r);
+      fs.unlinkSync(at("current"));
+      link("current", "v2");
+      fs.rmSync(at("v1"), { recursive: true });
+      r.reload();
+      console.log(before, "|", names(r));
+    `,
+  );
+  expect(result).toEqual({ stdout: "/old | /new", stderr: "", exitCode: 0, signalCode: null });
+});
+
+it.concurrent("reload() throws for dir as written when the symlink above it is removed", async () => {
+  const result = await reloadFixture(
+    releases,
+    { current: "v1" },
+    `
+      const r = router(at("current", "pages"));
+      fs.unlinkSync(at("current"));
+      let message;
+      try {
+        r.reload();
+      } catch (e) {
+        message = slashes(e.message.replace(root, "<root>"));
+      }
+      console.log(message, "|", names(r));
+    `,
+  );
+  expect(result).toEqual({
+    stdout: "Unable to find directory: <root>/current/pages/ | /old",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+it.concurrent("reload() keeps the routes when dir passes through a symlink", async () => {
+  const result = await reloadFixture(
+    under("real/pages"),
+    { link: "real" },
+    `
+      const r = router(at("link", "pages"));
+      const before = names(r);
+      r.reload();
+      console.log(before, "|", names(r), "|", r.match("/")?.name);
+    `,
+  );
+  expect(result).toEqual({ stdout: "/ /b /sub/c | / /b /sub/c | /", stderr: "", exitCode: 0, signalCode: null });
+});
+
+it.concurrent("reload() keeps the routes when dir is a symlink", async () => {
+  const result = await reloadFixture(
+    under("real/pages"),
+    { pages: "real/pages" },
+    `
+      const r = router(at("pages"));
+      const before = names(r);
+      r.reload();
+      console.log(before, "|", names(r), "|", r.match("/")?.name);
+    `,
+  );
+  expect(result).toEqual({ stdout: "/ /b /sub/c | / /b /sub/c | /", stderr: "", exitCode: 0, signalCode: null });
+});
+
+it.concurrent(
+  "reload() keeps the routes after a failed resolve from dir and a router over a subdirectory",
+  async () => {
+    const result = await reloadFixture(
+      under("pages"),
+      {},
+      `
+      try {
+        Bun.resolveSync("./does-not-exist.ts", at("pages"));
+      } catch {}
+      router(at("pages", "sub"));
+      const r = router(at("pages"));
+      const before = names(r);
+      r.reload();
+      console.log(before, "|", names(r), "|", r.match("/")?.name);
+    `,
+    );
+    expect(result).toEqual({ stdout: "/ /b /sub/c | / /b /sub/c | /", stderr: "", exitCode: 0, signalCode: null });
+  },
+);
+
+it.concurrent("a router made after reload() lists a file added under a symlinked dir", async () => {
+  const result = await reloadFixture(
+    { "real/pages/a.tsx": "export default 1;\n" },
+    { link: "real" },
+    `
+      const first = router(at("link", "pages"));
+      fs.writeFileSync(at("real", "pages", "b.tsx"), "export default 2;\\n");
+      first.reload();
+      console.log(names(first), "|", names(router(at("link", "pages"))));
+    `,
+  );
+  expect(result).toEqual({ stdout: "/a /b | /a /b", stderr: "", exitCode: 0, signalCode: null });
+});
+
 it(".query works with dynamic routes, including params", () => {
   // set up the test
   const { dir } = make(["posts/[id].tsx"]);

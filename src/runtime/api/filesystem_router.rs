@@ -327,14 +327,6 @@ impl FileSystemRouter {
             arena: JsCell::new(arena),
         });
 
-        // RouteConfig::dir is an owned `Box<[u8]>`, so copy the bytes; the
-        // `claim` above already took our +1.
-        // `base_dir` was just set to Some above.
-        let base_dir = fs_router.base_dir.unwrap();
-        fs_router
-            .router
-            .with_mut(|r| r.config.dir = Box::from(base_dir.leak()));
-
         Ok(fs_router)
     }
 

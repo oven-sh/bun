@@ -356,7 +356,7 @@ function mergeWorkerParts(fileName: string) {
 }
 
 function emitMetadata(target: object[] = events) {
-  // Node stamps these when its agent starts, and a changed title when it changes.
+  // Node stamps these at agent start and a new title at the change. Here: at activation, and a new title at this flush.
   const startedAt = activatedAt ?? now();
   const pid = process.pid;
   function meta(name: string, args: unknown, metaTid: number = tid, ts: number = startedAt) {

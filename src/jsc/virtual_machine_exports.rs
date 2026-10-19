@@ -37,13 +37,13 @@ unsafe extern "C" {
     safe fn uv_hrtime() -> u64;
 }
 
-// process.hrtime() is node's uv_hrtime(), with no per-process origin: https://github.com/oven-sh/bun/issues/44869
 // HOST_EXPORT(Bun__readHRTime, c)
 pub fn read_hrtime(vm: &VirtualMachine) -> u64 {
     // bun:test fake timers
     if let Some(overridden) = vm.overridden_performance_now {
         return overridden;
     }
+    // No per-process origin, as process.hrtime() in node: https://github.com/oven-sh/bun/issues/44869
     uv_hrtime()
 }
 

@@ -34,23 +34,25 @@ async function microtaskTicks() {
   for (let i = 0; i < 10; i++) await undefined;
 }
 
-// The microtask tick on which a reaction of the promise runs. A Promise.resolve().then() chain counts
-// the ticks. It starts before `trigger` runs, so a promise that is already settled gives tick 1.
-function tickOf(trigger: () => Promise<unknown>) {
-  return new Promise<number>(resolve => {
+// How the promise settles and on which microtask tick a reaction of it runs: "rejected on tick 6".
+// A Promise.resolve().then() chain counts the ticks. It starts before `trigger` runs, so a promise
+// that is already settled gives tick 1.
+function settlement(trigger: () => Promise<unknown>) {
+  return new Promise<string>((resolve, reject) => {
     let tick = 0;
     let settled = false;
     const step = () => {
       tick++;
-      // The limit ends the chain if nothing settles.
-      if (!settled && tick < 100) Promise.resolve().then(step);
+      if (settled) return;
+      if (tick < 100) Promise.resolve().then(step);
+      else reject(new Error("the promise did not settle in 100 ticks"));
     };
     Promise.resolve().then(step);
-    const mark = () => {
+    const mark = (state: string) => () => {
       settled = true;
-      resolve(tick);
+      resolve(`${state} on tick ${tick}`);
     };
-    trigger().then(mark, mark);
+    trigger().then(mark("fulfilled"), mark("rejected"));
   });
 }
 
@@ -58,7 +60,7 @@ describe("an aborted timers/promises promise rejects on the same tick as in Node
   for (const [name, start, tick] of timers) {
     test(`${name}: tick ${tick}`, async () => {
       const sameTurnController = new AbortController();
-      const sameTurn = await tickOf(() => {
+      const sameTurn = await settlement(() => {
         const promise = start(sameTurnController.signal);
         sameTurnController.abort();
         return promise;
@@ -67,16 +69,39 @@ describe("an aborted timers/promises promise rejects on the same tick as in Node
       const laterController = new AbortController();
       const pending = start(laterController.signal);
       await microtaskTicks();
-      const later = await tickOf(() => {
+      const later = await settlement(() => {
         laterController.abort();
         return pending;
       });
 
-      const alreadyAborted = await tickOf(() => start(AbortSignal.abort()));
+      const alreadyAborted = await settlement(() => start(AbortSignal.abort()));
 
-      assert.deepStrictEqual({ sameTurn, later, alreadyAborted }, { sameTurn: tick, later: tick, alreadyAborted: 1 });
+      assert.deepStrictEqual(
+        { sameTurn, later, alreadyAborted },
+        {
+          sameTurn: `rejected on tick ${tick}`,
+          later: `rejected on tick ${tick}`,
+          alreadyAborted: "rejected on tick 1",
+        },
+      );
     });
   }
+
+  test("setInterval().next() that is called after the abort: tick 1", async () => {
+    const beforeFirstNext = new AbortController();
+    const fresh = interval(60_000, undefined, { signal: beforeFirstNext.signal })[Symbol.asyncIterator]();
+    beforeFirstNext.abort();
+
+    const afterOneValue = new AbortController();
+    const started = interval(1, "value", { signal: afterOneValue.signal })[Symbol.asyncIterator]();
+    assert.deepStrictEqual(await started.next(), { done: false, value: "value" });
+    afterOneValue.abort();
+
+    assert.deepStrictEqual(
+      { beforeFirstNext: await settlement(() => fresh.next()), afterOneValue: await settlement(() => started.next()) },
+      { beforeFirstNext: "rejected on tick 1", afterOneValue: "rejected on tick 1" },
+    );
+  });
 });
 
 describe('events.once(signal, "abort") settles before a timer on the same signal rejects', () => {

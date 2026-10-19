@@ -217,24 +217,22 @@ function setInterval(after = 1, value?, options: TimerOptions = {}) {
 
     return asyncIterator({
       next: function () {
-        return new Promise<void>((resolve, reject) => {
-          if (!signal?.aborted) {
-            if (notYielded === 0) {
-              callback = resolve;
-            } else {
-              resolve();
-            }
-          } else if (notYielded === 0) {
-            reject($makeAbortError(undefined, { cause: signal.reason }));
+        if (notYielded === 0 && signal?.aborted) {
+          // The signal aborted while no next() waited: tick 1, as in Node.
+          return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
+        }
+        return new Promise<void>(resolve => {
+          if (notYielded === 0) {
+            callback = resolve;
           } else {
             resolve();
           }
-        }).then(() => {
+        }).$then(() => {
           if (notYielded > 0) {
             notYielded = notYielded - 1;
             return { done: false, value: value };
           } else if (signal?.aborted) {
-            // A rejected promise, not a throw: the rejection reaches the caller 4 ticks after the abort, as in Node.
+            // The abort woke this next(). A rejected promise, not a throw: 4 ticks after the abort, as in Node.
             // https://github.com/nodejs/node/blob/v26.3.0/lib/timers/promises.js#L168-L175
             return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
           }

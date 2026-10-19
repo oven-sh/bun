@@ -36,9 +36,10 @@ static bool isUserFunction(JSC::JSCell* callee)
     return !JSC::isGeneratorOrAsyncFunctionBodyParseMode(function->jsExecutable()->parseMode());
 }
 
-void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
+void CallSite::finishCreation(VM& vm, const DetachedStackFrame& frame, bool useSourceMap, JSC::JSCell* callee, bool encounteredStrictFrame)
 {
     Base::finishCreation(vm);
+    using Flag = DetachedStackFrame::Flag;
 
     /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
      * "To maintain restrictions imposed on strict mode functions, frames that have a
@@ -46,15 +47,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
      * their receiver and function objects. For those frames, getFunction() and getThis()
      * will return undefined.".
      * Thus, if we've already encountered a strict frame, we'll treat our frame as strict too. */
-
-    bool isStrictFrame = encounteredStrictFrame;
-    JSC::JSCell* callee = stackFrame.callee();
-    JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
-    if (!isStrictFrame) {
-        if (codeBlock) {
-            isStrictFrame = codeBlock->ownerExecutable()->isInStrictContext();
-        }
-    }
+    bool isStrictFrame = encounteredStrictFrame || frame.flags.contains(Flag::StrictCode);
 
     // JSC::StackFrame has no receiver, so getThis() is always undefined.
     m_thisValue.set(vm, this, JSC::jsUndefined());
@@ -68,35 +61,33 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         m_function.set(vm, this, callee);
     }
     // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
-    if (!isStrictFrame) {
-        auto* function = calleeFunction(callee);
-        if (function && !function->isHostFunction()) {
-            m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
-        }
+    if (!isStrictFrame && frame.flags.contains(Flag::CalleeIsFunction)) {
+        m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
     }
 
-    m_functionName.set(vm, this, stackFrame.functionName());
-    m_sourceURL.set(vm, this, stackFrame.sourceURL());
-    m_sourceID = stackFrame.sourceID();
+    bool isMapped = useSourceMap && frame.flags.contains(Flag::Mapped);
+    m_functionName.set(vm, this, jsString(vm, frame.functionName));
+    m_sourceURL.set(vm, this, jsString(vm, isMapped && !frame.mappedSourceURL.isNull() ? frame.mappedSourceURL : frame.sourceURL));
+    m_sourceID = frame.sourceID;
 
-    const auto* sourcePositions = stackFrame.getSourcePositions();
-    if (sourcePositions) {
-        m_lineNumber = sourcePositions->line;
-        m_columnNumber = sourcePositions->column;
+    if (frame.flags.contains(Flag::HasPosition)) {
+        JSC::LineColumn position = isMapped ? frame.mappedPosition : frame.position;
+        m_lineNumber = OrdinalNumber::fromOneBasedInt(position.line);
+        m_columnNumber = OrdinalNumber::fromOneBasedInt(position.column);
     }
 
-    if (stackFrame.isEval()) {
+    if (frame.flags.contains(Flag::CallSiteEval)) {
         m_flags |= static_cast<unsigned int>(Flags::IsEval);
-    } else if (stackFrame.isFunctionOrEval()) {
+    } else if (frame.flags.containsAny({ Flag::EvalCode, Flag::FunctionCode })) {
         m_flags |= static_cast<unsigned int>(Flags::IsFunction);
     }
-    if (stackFrame.isConstructor()) {
+    if (frame.flags.contains(Flag::Constructor) && !frame.flags.contains(Flag::CallSiteNative)) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
-    if (!stackFrame.codeBlock()) {
+    if (frame.flags.contains(Flag::CallSiteNative)) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
-    if (stackFrame.isAsync()) {
+    if (frame.flags.contains(Flag::Async)) {
         m_flags |= static_cast<unsigned int>(Flags::IsAsync);
     }
 }

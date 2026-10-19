@@ -17,8 +17,6 @@ using namespace WebCore;
 
 namespace Zig {
 
-class JSCStackFrame;
-
 class CallSite final : public JSC::JSNonFinalObject {
 public:
     enum class Flags {
@@ -45,11 +43,13 @@ private:
 public:
     using Base = JSC::JSNonFinalObject;
 
-    static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
+    // `frame` as a CallSite shows it (JSCStackFrame::detach()). `useSourceMap`: the frame is of the realm that reads the
+    // stack, so its position is where the source map puts it. `callee` is null once the frame's cells are gone.
+    static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const DetachedStackFrame& frame, bool useSourceMap, JSC::JSCell* callee, bool encounteredStrictFrame)
     {
         auto& vm = JSC::getVM(globalObject);
         CallSite* callSite = new (NotNull, JSC::allocateCell<CallSite>(vm)) CallSite(vm, structure);
-        callSite->finishCreation(vm, stackFrame, encounteredStrictFrame);
+        callSite->finishCreation(vm, frame, useSourceMap, callee, encounteredStrictFrame);
         return callSite;
     }
 
@@ -82,10 +82,6 @@ public:
     bool isAsync() const { return m_flags & static_cast<unsigned int>(Flags::IsAsync); }
     bool isSloppyFunctionCall() const { return m_flags & static_cast<unsigned int>(Flags::IsSloppyFunctionCall); }
 
-    void setLineNumber(OrdinalNumber lineNumber) { m_lineNumber = lineNumber; }
-    void setColumnNumber(OrdinalNumber columnNumber) { m_columnNumber = columnNumber; }
-    void setSourceURL(JSC::VM& vm, JSC::JSString* sourceURL) { m_sourceURL.set(vm, this, sourceURL); }
-
     void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
 
 private:
@@ -98,7 +94,7 @@ private:
     {
     }
 
-    void finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame);
+    void finishCreation(VM& vm, const DetachedStackFrame& frame, bool useSourceMap, JSC::JSCell* callee, bool encounteredStrictFrame);
 
     DECLARE_VISIT_CHILDREN;
 };

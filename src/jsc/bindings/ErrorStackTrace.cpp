@@ -23,8 +23,11 @@
 #include <wtf/IterationStatus.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
+#include <wtf/TZoneMallocInlines.h>
 
+#include "BunClientData.h"
 #include "ErrorStackFrame.h"
+#include "headers-handwritten.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -94,25 +97,6 @@ bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
     return implementationVisibility != ImplementationVisibility::Public;
 }
 
-JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames)
-{
-    WTF::Vector<JSCStackFrame> newFrames;
-
-    size_t frameCount = existingFrames.size();
-    if (0 == frameCount) {
-        return JSCStackTrace();
-    }
-
-    newFrames.reserveInitialCapacity(frameCount);
-    for (size_t i = 0; i < frameCount; i++) {
-        if (!isImplementationVisibilityPrivate(existingFrames.at(i))) {
-            newFrames.constructAndAppend(vm, existingFrames.at(i));
-        }
-    }
-
-    return JSCStackTrace(newFrames);
-}
-
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
     UNUSED_PARAM(callFrame);
@@ -169,7 +153,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             break;
         }
         if (!callerName.isEmpty()) {
-            WTF::String frameName = Zig::functionName(vm, frame, nullptr);
+            WTF::String frameName = Zig::functionName(vm, frame);
             if (frameName == callerName) {
                 removeCount = i + 1;
                 break;
@@ -199,10 +183,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     , m_stackFrame(&frame)
     , m_codeBlock(nullptr)
     , m_bytecodeIndex(JSC::BytecodeIndex())
-    , m_sourceURL()
-    , m_functionName()
     , m_isWasmFrame(false)
-    , m_isAsync(frame.isAsyncFrame())
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
     m_callee = frame.callee();
@@ -217,21 +198,12 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
             m_codeBlock = codeBlock;
             m_bytecodeIndex = frame.bytecodeIndex();
         }
-
-        auto codeType = codeBlock->codeType();
-        if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
-            m_isFunctionOrEval = true;
-        }
     }
 
     if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
         auto lineColumn = frame.computeLineAndColumn();
         m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
         m_sourcePositionsState = SourcePositionsState::Calculated;
-        auto codeType = frame.codeBlock()->codeType();
-        if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
-            m_isFunctionOrEval = true;
-        }
     }
 }
 
@@ -240,22 +212,76 @@ intptr_t JSCStackFrame::sourceID() const
     return m_codeBlock ? m_codeBlock->ownerExecutable()->sourceID() : JSC::noSourceID;
 }
 
-JSC::JSString* JSCStackFrame::sourceURL()
+// What error.stack and a CallSite both read of a frame, apart from its name, its position and its source URL.
+static DetachedStackFrame detachWithoutNameAndPosition(const JSC::StackFrame& frame)
 {
-    if (!m_sourceURL) {
-        m_sourceURL = retrieveSourceURL();
-    }
+    using Flag = DetachedStackFrame::Flag;
+    DetachedStackFrame detached;
+    if (frame.isAsyncFrame())
+        detached.flags.add(Flag::Async);
 
-    return jsString(this->m_vm, m_sourceURL);
+    auto* codeBlock = frame.codeBlock();
+    if (!codeBlock)
+        return detached;
+
+    auto codeType = codeBlock->codeType();
+    if (codeType == JSC::EvalCode)
+        detached.flags.add(Flag::EvalCode);
+    else if (codeType == JSC::FunctionCode)
+        detached.flags.add(Flag::FunctionCode);
+    if (codeBlock->isConstructor())
+        detached.flags.add(Flag::Constructor);
+
+    if (auto* callee = frame.callee() ? frame.callee()->getObject() : nullptr) {
+        detached.realm = callee->globalObject();
+        if ((codeType == JSC::EvalCode || codeType == JSC::FunctionCode) && codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
+            detached.flags.add(Flag::BuiltinFunction);
+    }
+    return detached;
 }
 
-JSC::JSString* JSCStackFrame::functionName()
+DetachedStackFrame detachStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
 {
-    if (!m_functionName) {
-        m_functionName = retrieveFunctionName();
+    DetachedStackFrame detached = detachWithoutNameAndPosition(frame);
+    detached.functionName = Zig::functionName(vm, frame);
+    if (frame.hasLineAndColumnInfo()) {
+        detached.sourceURL = Zig::sourceURL(vm, frame);
+        detached.position = frame.computeLineAndColumn();
+        detached.flags.add(DetachedStackFrame::Flag::HasPosition);
+    }
+    return detached;
+}
+
+DetachedStackFrame JSCStackFrame::detach()
+{
+    using Flag = DetachedStackFrame::Flag;
+    const JSC::StackFrame& frame = *m_stackFrame;
+
+    DetachedStackFrame detached = detachWithoutNameAndPosition(frame);
+    detached.functionName = retrieveFunctionName();
+    detached.sourceID = sourceID();
+    detached.sourceURL = Zig::sourceURL(m_vm, frame);
+    if (detached.sourceURL.isEmpty()) {
+        detached.sourceURL = retrieveSourceURL();
+        detached.flags.add(Flag::NoSourceURL);
+    }
+    if (auto* positions = getSourcePositions()) {
+        detached.position = { static_cast<unsigned>(positions->line.oneBasedInt()), static_cast<unsigned>(positions->column.oneBasedInt()) };
+        detached.flags.add(Flag::HasPosition);
     }
 
-    return jsString(this->m_vm, m_functionName);
+    if (isImplementationVisibilityPrivate(frame))
+        detached.flags.add(Flag::Private);
+    // m_codeBlock leaves out the code blocks of JSC's own builtins.
+    if (m_codeBlock && m_codeBlock->ownerExecutable()->isInStrictContext())
+        detached.flags.add(Flag::StrictCode);
+    if (auto* function = m_callee ? dynamicDowncast<JSC::JSFunction>(m_callee) : nullptr; function && !function->isHostFunction())
+        detached.flags.add(Flag::CalleeIsFunction);
+    if (isEval())
+        detached.flags.add(Flag::CallSiteEval);
+    if (!m_codeBlock)
+        detached.flags.add(Flag::CallSiteNative);
+    return detached;
 }
 
 JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
@@ -506,42 +532,16 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
     return functionName;
 }
 
-String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
+String functionName(JSC::VM& vm, const JSC::StackFrame& frame)
 {
-    bool isConstructor = false;
     WTF::String functionName;
     JSC::JSObject* callee = frame.callee() ? frame.callee()->getObject() : nullptr;
 
     if (frame.hasLineAndColumnInfo()) {
         auto* codeblock = frame.codeBlock();
-        if (codeblock->isConstructor()) {
-            isConstructor = true;
-        }
-
         auto codeType = codeblock->codeType();
-        switch (codeType) {
-        case JSC::CodeType::FunctionCode:
-        case JSC::CodeType::EvalCode: {
-            if (flags) {
-                if (codeType == JSC::CodeType::EvalCode) {
-                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Eval);
-                } else {
-                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
-                }
-            }
-            if (callee) {
-                functionName = Zig::functionName(vm, callee);
-
-                if (flags && codeblock->unlinkedCodeBlock()->isBuiltinFunction()) {
-                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
-                }
-            }
-            break;
-        }
-        default: {
-            break;
-        }
-        }
+        if (callee && (codeType == JSC::CodeType::FunctionCode || codeType == JSC::CodeType::EvalCode))
+            functionName = Zig::functionName(vm, callee);
 
         if (functionName.isEmpty()) {
             functionName = Zig::functionName(vm, codeblock);
@@ -550,10 +550,95 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
         functionName = Zig::functionName(vm, callee);
     }
 
-    if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {
-        return makeString("new "_s, functionName);
-    }
-
     return functionName;
 }
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DetachedFrames);
+
+bool hasPositionInSource(const DetachedStackFrame& frame)
+{
+    return frame.flags.contains(DetachedStackFrame::Flag::HasPosition) && !frame.flags.contains(DetachedStackFrame::Flag::NoSourceURL) && !frame.sourceURL.isEmpty();
+}
+
+void mapDetachedStackFrames(JSC::VM& vm, std::span<DetachedStackFrame* const> frames)
+{
+    if (frames.empty())
+        return;
+
+    Bun::OwnedZigStackFrames positions(frames.size());
+    for (size_t i = 0; i < frames.size(); i++) {
+        ASSERT(hasPositionInSource(*frames[i]));
+        ZigStackFrame& position = positions[i];
+        position.position.line_zero_based = OrdinalNumber::fromOneBasedInt(frames[i]->position.line).zeroBasedInt();
+        position.position.column_zero_based = OrdinalNumber::fromOneBasedInt(frames[i]->position.column).zeroBasedInt();
+        position.position.byte_position = -1;
+        position.source_url = Bun::toStringRef(frames[i]->sourceURL);
+    }
+
+    positions.remap(WebCore::clientData(vm)->bunVM);
+
+    for (size_t i = 0; i < frames.size(); i++) {
+        ZigStackFrame& position = positions[i];
+        if (!position.remapped)
+            continue;
+        DetachedStackFrame& frame = *frames[i];
+        frame.flags.add(DetachedStackFrame::Flag::Mapped);
+        frame.mappedPosition = { static_cast<unsigned>(position.position.line().oneBasedInt()), static_cast<unsigned>(position.position.column().oneBasedInt()) };
+        WTF::String mappedSourceURL = position.source_url.toWTFString();
+        if (mappedSourceURL.impl() != frame.sourceURL.impl())
+            frame.mappedSourceURL = WTF::move(mappedSourceURL);
+    }
+}
+
+DetachedFrames::DetachedFrames(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& stackTrace)
+    : m_frames(stackTrace.size())
+{
+    using Flag = DetachedStackFrame::Flag;
+    static constexpr OptionSet<Flag> onlyInCallSiteFrame { Flag::Private, Flag::StrictCode, Flag::CalleeIsFunction, Flag::CallSiteEval, Flag::CallSiteNative, Flag::NoSourceURL };
+
+    ASSERT(!stackTrace.isEmpty());
+    m_topFrameSourceURL = stackTrace.first().sourceURL(vm);
+
+    for (unsigned i = 0; i < stackTrace.size(); i++) {
+        DetachedStackFrame& frame = m_frames[i];
+        frame = detachStackFrame(vm, stackTrace[i]);
+        DetachedStackFrame callSiteFrame = JSCStackFrame(vm, stackTrace[i]).detach();
+
+        // error.stack reads sourceURL only of a frame that has a position and a source URL, so the CallSite's does for both.
+        frame.sourceURL = callSiteFrame.sourceURL;
+        frame.sourceID = callSiteFrame.sourceID;
+        frame.flags.add(callSiteFrame.flags & onlyInCallSiteFrame);
+
+        bool samePosition = callSiteFrame.position == frame.position && callSiteFrame.flags.contains(Flag::HasPosition) == frame.flags.contains(Flag::HasPosition);
+        if (!samePosition || callSiteFrame.functionName != frame.functionName)
+            m_callSiteFrames.append({ i, WTF::move(callSiteFrame) });
+    }
+    m_callSiteFrames.shrinkToFit();
+
+    WTF::Vector<DetachedStackFrame*, 16> inSource;
+    for (auto& frame : m_frames) {
+        if (hasPositionInSource(frame))
+            inSource.append(&frame);
+    }
+    for (auto& [index, frame] : m_callSiteFrames) {
+        if (hasPositionInSource(frame))
+            inSource.append(&frame);
+    }
+    mapDetachedStackFrames(vm, inSource.span());
+}
+
+const DetachedStackFrame& DetachedFrames::callSiteFrame(size_t index) const
+{
+    for (auto& [frameIndex, frame] : m_callSiteFrames) {
+        if (frameIndex == index)
+            return frame;
+    }
+    return m_frames[index];
+}
+
+size_t DetachedFrames::sizeInBytes() const
+{
+    return sizeof(*this) + m_frames.byteSize() + m_callSiteFrames.capacity() * sizeof(std::pair<unsigned, DetachedStackFrame>);
+}
+
 }

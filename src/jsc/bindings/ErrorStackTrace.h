@@ -7,7 +7,12 @@
 
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/DebuggerPrimitives.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/WasmIndexOrName.h>
+#include <wtf/FixedVector.h>
+#include <wtf/OptionSet.h>
+#include <wtf/TZoneMalloc.h>
 
 #include "ZigGlobalObject.h"
 
@@ -15,6 +20,73 @@ using namespace JSC;
 using namespace WebCore;
 
 namespace Zig {
+
+// One frame of a stack trace without the cells it was captured with, so it stays good after they are collected.
+// error.stack and a CallSite are made from it, for a frame that is still alive too. The two do not show the same
+// functionName, position and sourceURL for every frame: a wasm function has a name only in a CallSite, a CallSite
+// is at the `new` of `new X()`, and it names a source for native code.
+struct DetachedStackFrame {
+    enum class Flag : uint16_t {
+        HasPosition = 1 << 0,
+        // mappedPosition, and mappedSourceURL unless it is null, are where the source map puts position in sourceURL.
+        Mapped = 1 << 1,
+        Async = 1 << 2,
+        EvalCode = 1 << 3,
+        FunctionCode = 1 << 4,
+        BuiltinFunction = 1 << 5,
+        Constructor = 1 << 6,
+        // The frame is left out of the CallSites (isImplementationVisibilityPrivate).
+        Private = 1 << 7,
+        StrictCode = 1 << 8,
+        CalleeIsFunction = 1 << 9,
+        CallSiteEval = 1 << 10,
+        CallSiteNative = 1 << 11,
+        // The code has no source URL: sourceURL is what a CallSite shows in its place.
+        NoSourceURL = 1 << 12,
+    };
+
+    WTF::String functionName;
+    WTF::String sourceURL;
+    WTF::String mappedSourceURL;
+    JSC::LineColumn position;
+    JSC::LineColumn mappedPosition;
+    // The realm of the frame's function. It is only compared, never read: the source map is for a reader of that realm.
+    const JSC::JSGlobalObject* realm { nullptr };
+    JSC::SourceID sourceID { JSC::noSourceID };
+    OptionSet<Flag> flags;
+};
+
+// The frame as error.stack shows it. Allocates nothing in the JS heap.
+DetachedStackFrame detachStackFrame(JSC::VM&, const JSC::StackFrame&);
+
+// Whether there is something to ask the source map.
+bool hasPositionInSource(const DetachedStackFrame&);
+// Asks the source map, once for all of them, where each of these frames is in its source.
+void mapDetachedStackFrames(JSC::VM&, std::span<DetachedStackFrame* const>);
+
+// What a collection keeps of an unread stack trace when it frees one of the trace's functions or code blocks
+// (JSC::ErrorInstance::reconcileWeakReferencesAtGCEnd). The stack is formatted from it when it is first needed.
+class DetachedFrames final : public JSC::DetachedStackTrace {
+    WTF_MAKE_TZONE_ALLOCATED(DetachedFrames);
+
+public:
+    // Runs at the end of a collection: it allocates nothing in the JS heap and runs no script.
+    DetachedFrames(JSC::VM&, const WTF::Vector<JSC::StackFrame>&);
+
+    // As error.stack reads them.
+    std::span<const DetachedStackFrame> frames() const LIFETIME_BOUND { return m_frames.span(); }
+    const DetachedStackFrame& callSiteFrame(size_t index) const LIFETIME_BOUND;
+    // JSC::StackFrame::sourceURL() of the first frame.
+    const WTF::String& topFrameSourceURL() const LIFETIME_BOUND { return m_topFrameSourceURL; }
+
+    size_t sizeInBytes() const final;
+
+private:
+    WTF::FixedVector<DetachedStackFrame> m_frames;
+    // By index in m_frames, the frames that a CallSite reads differently.
+    WTF::Vector<std::pair<unsigned, DetachedStackFrame>> m_callSiteFrames;
+    WTF::String m_topFrameSourceURL;
+};
 
 /* JSCStackFrame is a view over a JSC::StackFrame, which provides the following advantages\changes:
  * - More detailed and v8 compatible "source offsets" calculations: JSC::StackFrame only provides the
@@ -30,8 +102,7 @@ namespace Zig {
  *   Also, to avoid zero\one base confusions, we'll store all offsets as WTF::OrdinalNumber.
  * - Function name "calculation" also checks the function's "name" property. See retrieveFunctionName's
  *   documentation bellow for more information.
- * - String properties are exposed (and cached) as JSStrings, instead of WTF::String.
- * - Helper functions like isEval and isConstructor.
+ * - Helper functions like isEval.
  *
  * Note that this is not a heap allocated, garbage collected, JSCell. It must be stack allocated, as it doesn't
  * use any write barriers and rely on the GC to see the stored JSC object pointers on the stack.
@@ -45,7 +116,6 @@ public:
 
 private:
     JSC::VM& m_vm;
-    // Points into the vector this frame was built from (JSCStackTrace::fromExisting).
     const JSC::StackFrame* m_stackFrame;
     JSC::JSCell* m_callee { nullptr };
 
@@ -53,16 +123,9 @@ private:
     JSC::CodeBlock* m_codeBlock { nullptr };
     JSC::BytecodeIndex m_bytecodeIndex;
 
-    // Lazy-initialized
-    WTF::String m_sourceURL;
-    WTF::String m_functionName;
-
     // m_wasmFunctionIndexOrName has meaning only when m_isWasmFrame is set
     JSC::Wasm::IndexOrName m_wasmFunctionIndexOrName;
     bool m_isWasmFrame = false;
-
-    bool m_isFunctionOrEval = false;
-    bool m_isAsync = false;
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -76,16 +139,10 @@ private:
 public:
     JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame);
 
-    const JSC::StackFrame& stackFrame() const { return *m_stackFrame; }
-    JSC::JSCell* callee() const { return m_callee; }
-    JSC::CodeBlock* codeBlock() const { return m_codeBlock; }
-
     intptr_t sourceID() const;
-    JSC::JSString* sourceURL();
-    JSC::JSString* functionName();
 
-    bool isFunctionOrEval() const { return m_isFunctionOrEval; }
-    bool isAsync() const { return m_isAsync; }
+    // The frame as a CallSite shows it. Allocates nothing in the JS heap.
+    DetachedStackFrame detach();
 
     bool hasBytecodeIndex() const { return (m_bytecodeIndex.offset() != UINT_MAX) && !m_isWasmFrame; }
     JSC::BytecodeIndex bytecodeIndex() const
@@ -127,10 +184,6 @@ public:
 
         return false;
     }
-    bool isConstructor() const
-    {
-        return m_codeBlock && (JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind());
-    }
 
 private:
     ALWAYS_INLINE String retrieveSourceURL();
@@ -153,35 +206,8 @@ private:
 };
 
 class JSCStackTrace {
-private:
-    WTF::Vector<JSCStackFrame> m_frames;
-
 public:
-    JSCStackTrace()
-    {
-    }
-
-    JSCStackTrace(WTF::Vector<JSCStackFrame>&& frames)
-        : m_frames(WTF::move(frames))
-    {
-    }
-
-    size_t size() const { return m_frames.size(); }
-    bool isEmpty() const { return m_frames.isEmpty(); }
-    JSCStackFrame& at(size_t i) { return m_frames.at(i); }
-
-    WTF::Vector<JSCStackFrame>&& frames() { return WTF::move(m_frames); }
-
-    // Drops private-visibility frames (present when Options::showPrivateScriptsInStackTraces() is on), so the result does not index like existingFrames.
-    static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
-
     static void getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit);
-
-private:
-    JSCStackTrace(WTF::Vector<JSCStackFrame>& frames)
-        : m_frames(WTF::move(frames))
-    {
-    }
 };
 
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
@@ -196,18 +222,8 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
 
-class FunctionNameFlags {
-public:
-    static constexpr unsigned None = 0;
-    static constexpr unsigned Eval = 1 << 0;
-    static constexpr unsigned Constructor = 1 << 1;
-    static constexpr unsigned Builtin = 1 << 2;
-    static constexpr unsigned Function = 1 << 3;
-    static constexpr unsigned AddNewKeyword = 1 << 4;
-};
-
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
 String functionName(JSC::VM& vm, JSC::JSObject* callee);
-String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags);
+String functionName(JSC::VM& vm, const JSC::StackFrame& frame);
 
 }

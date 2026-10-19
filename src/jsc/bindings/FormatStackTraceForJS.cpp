@@ -34,7 +34,7 @@ using namespace WebCore;
 
 namespace Bun {
 
-// What `.stack` is when the frames do not fit in one string. It cannot throw: `formatStackTrace` also runs in a GC finalizer.
+// What `.stack` is when the frames do not fit in one string.
 static WTF::String stackTraceHeaderOnly(const WTF::String& name, const WTF::String& message)
 {
     if (name.isEmpty())
@@ -210,7 +210,36 @@ static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zi
     return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
 }
 
-WTF::String formatStackTrace(
+// Whether the frame is of the realm that reads the stack: `globalObject`, which is the realm of the error if that is one
+// of Bun's and the default one otherwise. With node:vm the realm can be different on a per-frame basis. The frames of
+// Bun's global object are source-mapped, and the frames of another one are not.
+static bool isOfReaderRealm(const DetachedStackFrame& frame, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    // https://github.com/oven-sh/bun/issues/17698
+    const JSC::JSGlobalObject* realm = frame.realm ? frame.realm : lexicalGlobalObject;
+    return realm == globalObject;
+}
+
+// For frames that are still alive. A collection asks about every frame: it does not know who will read the stack.
+static void mapFramesOfReaderRealm(JSC::VM& vm, std::span<DetachedStackFrame> frames, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    WTF::Vector<DetachedStackFrame*, DEFAULT_ERROR_STACK_TRACE_LIMIT> inSource;
+    for (auto& frame : frames) {
+        // https://github.com/oven-sh/bun/issues/3595
+        if (isOfReaderRealm(frame, globalObject, lexicalGlobalObject) && Zig::hasPositionInSource(frame))
+            inSource.append(&frame);
+    }
+    Zig::mapDetachedStackFrames(vm, inSource.span());
+}
+
+static bool isSyntaxError(JSC::JSObject* errorInstance)
+{
+    auto* error = errorInstance ? dynamicDowncast<JSC::ErrorInstance>(errorInstance) : nullptr;
+    return error && error->errorType() == ErrorType::SyntaxError;
+}
+
+// `topFrameSourceURL` is JSC::StackFrame::sourceURL() of the first frame. It is read for a SyntaxError only.
+static WTF::String formatStackFrames(
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
@@ -219,9 +248,11 @@ WTF::String formatStackTrace(
     OrdinalNumber& line,
     OrdinalNumber& column,
     WTF::String& sourceURL,
-    Vector<JSC::StackFrame>& stackTrace,
+    std::span<const DetachedStackFrame> frames,
+    const WTF::String& topFrameSourceURL,
     JSC::JSObject* errorInstance)
 {
+    using Flag = DetachedStackFrame::Flag;
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The message and each frame's source URL come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
     WTF::StringBuilder sb { WTF::OverflowPolicy::RecordOverflow };
@@ -236,76 +267,63 @@ WTF::String formatStackTrace(
         sb.append(message);
     }
 
-    // FIXME: why can size == 6 and capacity == 0?
-    // https://discord.com/channels/876711213126520882/1174901590457585765/1174907969419350036
-    size_t framesCount = stackTrace.size();
-
     bool hasSet = false;
-    void* bunVM = nullptr;
-    const auto getBunVM = [&]() -> void* {
-        if (!bunVM) {
-            bunVM = clientData(vm)->bunVM;
-        }
-        return bunVM;
-    };
 
-    if (errorInstance) {
-        if (JSC::ErrorInstance* err = dynamicDowncast<JSC::ErrorInstance>(errorInstance)) {
-            if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
-                // There appears to be an off-by-one error.
-                // The following reproduces the issue:
-                // /* empty comment */
-                // "".test(/[a-0]/);
-                auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
+    if (isSyntaxError(errorInstance)) {
+        auto* err = uncheckedDowncast<JSC::ErrorInstance>(errorInstance);
+        if (frames.empty() || topFrameSourceURL != err->sourceURL()) {
+            // There appears to be an off-by-one error.
+            // The following reproduces the issue:
+            // /* empty comment */
+            // "".test(/[a-0]/);
+            auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
 
-                OwnedZigStackFrames remappedFrames(1);
-                ZigStackFrame& remappedFrame = remappedFrames[0];
+            OwnedZigStackFrames remappedFrames(1);
+            ZigStackFrame& remappedFrame = remappedFrames[0];
 
-                remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
-                remappedFrame.position.column_zero_based = 0;
+            remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
+            remappedFrame.position.column_zero_based = 0;
 
-                String sourceURLForFrame = err->sourceURL();
+            String sourceURLForFrame = err->sourceURL();
 
-                // If it's not a Zig::GlobalObject, don't bother source-mapping it.
-                if (globalObject && !sourceURLForFrame.isEmpty()) {
-                    // https://github.com/oven-sh/bun/issues/3595
-                    if (!sourceURLForFrame.isEmpty()) {
-                        remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        remappedFrames.remap(getBunVM());
+            // If it's not a Zig::GlobalObject, don't bother source-mapping it.
+            if (globalObject && !sourceURLForFrame.isEmpty()) {
+                // https://github.com/oven-sh/bun/issues/3595
+                if (!sourceURLForFrame.isEmpty()) {
+                    remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
+                    remappedFrames.remap(clientData(vm)->bunVM);
 
-                        sourceURLForFrame = remappedFrame.source_url.toWTFString();
-                    }
+                    sourceURLForFrame = remappedFrame.source_url.toWTFString();
                 }
-
-                // there is always a newline before each stack frame line, ensuring that the name + message
-                // exist on the first line, even if both are empty
-                sb.append("\n"_s);
-
-                sb.append("    at <parse> ("_s);
-
-                sb.append(remappedFrame.source_url.toWTFString());
-
-                if (remappedFrame.remapped) {
-                    errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
-                    hasSet = true;
-                    line = remappedFrame.position.line();
-                }
-
-                if (remappedFrame.remapped) {
-                    sb.append(':');
-                    sb.append(remappedFrame.position.line().oneBasedInt());
-                } else {
-                    sb.append(':');
-                    sb.append(originalLine.oneBasedInt());
-                }
-
-                sb.append(')');
             }
+
+            // there is always a newline before each stack frame line, ensuring that the name + message
+            // exist on the first line, even if both are empty
+            sb.append("\n"_s);
+
+            sb.append("    at <parse> ("_s);
+
+            sb.append(remappedFrame.source_url.toWTFString());
+
+            if (remappedFrame.remapped) {
+                errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
+                hasSet = true;
+                line = remappedFrame.position.line();
+            }
+
+            if (remappedFrame.remapped) {
+                sb.append(':');
+                sb.append(remappedFrame.position.line().oneBasedInt());
+            } else {
+                sb.append(':');
+                sb.append(originalLine.oneBasedInt());
+            }
+
+            sb.append(')');
         }
     }
 
-    if (framesCount == 0) {
-        ASSERT(stackTrace.isEmpty());
+    if (frames.empty()) {
         if (sb.hasOverflowed()) [[unlikely]]
             return stackTraceHeaderOnly(name, message);
         return sb.toString();
@@ -313,82 +331,28 @@ WTF::String formatStackTrace(
 
     sb.append("\n"_s);
 
-    // Pass 1: collect (line, col, source_url) for frames that should be
-    // source-mapped, then batch the remap so the Rust side can resolve each
-    // file's map once instead of per frame.
-    OwnedZigStackFrames remappedFrames(framesCount);
-    WTF::Vector<WTF::String, 8> sourceURLs;
-    WTF::Vector<LineColumn, 8> originalLineColumns;
-    sourceURLs.grow(framesCount);
-    originalLineColumns.grow(framesCount);
-    bool anyRemap = false;
+    for (size_t i = 0; i < frames.size(); i++) {
+        const DetachedStackFrame& frame = frames[i];
 
-    for (size_t i = 0; i < framesCount; i++) {
-        StackFrame& frame = stackTrace.at(i);
-        ZigStackFrame& remappedFrame = remappedFrames[i];
-        // Match `ZigStackFramePosition::INVALID` exactly so the Rust batch loop's
-        // `position.isInvalid()` skips frames we never populate (vm-context
-        // frames, frames without line/col info). A zero-initialized frame has
-        // `line_start_byte = 0` which fails that byte-compare.
-        remappedFrame.position.line_zero_based = -1;
-        remappedFrame.position.column_zero_based = -1;
-        remappedFrame.position.byte_position = -1;
-        originalLineColumns[i] = {};
-
-        if (!frame.hasLineAndColumnInfo()) continue;
-
-        originalLineColumns[i] = frame.computeLineAndColumn();
-
-        JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
-        if (auto* callee = frame.callee()) {
-            if (auto* object = callee->getObject()) {
-                globalObjectForFrame = object->globalObject();
-            }
-        }
-
-        sourceURLs[i] = Zig::sourceURL(vm, frame);
-
-        bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
-        bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
-        if (isDefinitelyNotRunninginNodeVMGlobalObject || isDefaultGlobalObjectInAFinalizer) {
-            // https://github.com/oven-sh/bun/issues/3595
-            if (!sourceURLs[i].isEmpty()) {
-                remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line).zeroBasedInt();
-                remappedFrame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column).zeroBasedInt();
-                remappedFrame.source_url = Bun::toStringRef(sourceURLs[i]);
-                anyRemap = true;
-            }
-        }
-    }
-
-    if (anyRemap) {
-        remappedFrames.remap(getBunVM());
-    }
-
-    // Pass 2: format. Everything except (display line/col, source_url) is
-    // re-derived from `frame`; only the remap output is read from pass 1.
-    for (size_t i = 0; i < framesCount; i++) {
-        StackFrame& frame = stackTrace.at(i);
-        ZigStackFrame& remappedFrame = remappedFrames[i];
-        unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword);
-
-        WTF::String functionName = Zig::functionName(vm, frame, &flags);
-        OrdinalNumber originalLine = {};
-        OrdinalNumber originalColumn = {};
+        WTF::String functionName = frame.functionName;
         OrdinalNumber displayLine = {};
         OrdinalNumber displayColumn = {};
-        WTF::String sourceURLForFrame = sourceURLs[i];
+        WTF::String sourceURLForFrame;
 
-        if (frame.hasLineAndColumnInfo()) {
-            originalLine = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line);
-            originalColumn = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column);
+        if (frame.flags.contains(Flag::HasPosition)) {
+            OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(frame.position.line);
+            OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(frame.position.column);
             displayLine = originalLine;
             displayColumn = originalColumn;
+            if (!frame.flags.contains(Flag::NoSourceURL))
+                sourceURLForFrame = frame.sourceURL;
 
-            if (remappedFrame.remapped) {
-                displayLine = remappedFrame.position.line();
-                displayColumn = remappedFrame.position.column();
-                sourceURLForFrame = remappedFrame.source_url.toWTFString();
+            bool isMapped = frame.flags.contains(Flag::Mapped) && isOfReaderRealm(frame, globalObject, lexicalGlobalObject);
+            if (isMapped) {
+                displayLine = OrdinalNumber::fromOneBasedInt(frame.mappedPosition.line);
+                displayColumn = OrdinalNumber::fromOneBasedInt(frame.mappedPosition.column);
+                if (!frame.mappedSourceURL.isNull())
+                    sourceURLForFrame = frame.mappedSourceURL;
             }
 
             if (!hasSet) {
@@ -397,7 +361,7 @@ WTF::String formatStackTrace(
                 column = displayColumn;
                 sourceURL = sourceURLForFrame;
 
-                if (remappedFrame.remapped) {
+                if (isMapped) {
                     if (errorInstance) {
                         errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                         errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
@@ -407,13 +371,13 @@ WTF::String formatStackTrace(
         }
 
         if (functionName.isEmpty()) {
-            if (flags & (static_cast<unsigned int>(FunctionNameFlags::Eval) | static_cast<unsigned int>(FunctionNameFlags::Function))) {
+            if (frame.flags.containsAny({ Flag::EvalCode, Flag::FunctionCode })) {
                 functionName = "<anonymous>"_s;
             }
         }
 
         if (sourceURLForFrame.isEmpty()) {
-            if (flags & static_cast<unsigned int>(FunctionNameFlags::Builtin)) {
+            if (frame.flags.contains(Flag::BuiltinFunction)) {
                 sourceURLForFrame = "native"_s;
             } else {
                 sourceURLForFrame = "unknown"_s;
@@ -425,8 +389,11 @@ WTF::String formatStackTrace(
         sb.append("    at "_s);
 
         if (!functionName.isEmpty()) {
-            if (frame.isAsyncFrame()) {
+            if (frame.flags.contains(Flag::Async)) {
                 sb.append("async "_s);
+            }
+            if (frame.flags.contains(Flag::Constructor) && !frame.functionName.isEmpty()) {
+                sb.append("new "_s);
             }
             sb.append(functionName);
             sb.append(" ("_s);
@@ -449,7 +416,7 @@ WTF::String formatStackTrace(
             sb.append(')');
         }
 
-        if (i != framesCount - 1) {
+        if (i != frames.size() - 1) {
             sb.append("\n"_s);
         }
     }
@@ -460,12 +427,43 @@ WTF::String formatStackTrace(
     return sb.toString();
 }
 
+WTF::String formatStackTrace(
+    JSC::VM& vm,
+    Zig::GlobalObject* globalObject,
+    JSC::JSGlobalObject* lexicalGlobalObject,
+    const WTF::String& name,
+    const WTF::String& message,
+    OrdinalNumber& line,
+    OrdinalNumber& column,
+    WTF::String& sourceURL,
+    Vector<JSC::StackFrame>& stackTrace,
+    JSC::JSObject* errorInstance)
+{
+    WTF::Vector<DetachedStackFrame, DEFAULT_ERROR_STACK_TRACE_LIMIT> frames;
+    frames.reserveInitialCapacity(stackTrace.size());
+    for (auto& frame : stackTrace)
+        frames.append(Zig::detachStackFrame(vm, frame));
+    mapFramesOfReaderRealm(vm, frames.mutableSpan(), globalObject, lexicalGlobalObject);
+
+    WTF::String topFrameSourceURL;
+    if (!stackTrace.isEmpty() && isSyntaxError(errorInstance))
+        topFrameSourceURL = stackTrace.at(0).sourceURL(vm);
+
+    return formatStackFrames(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, frames.span(), topFrameSourceURL, errorInstance);
+}
+
+// The frames an error's stack is made from: the ones it captured, or what a collection kept of them.
+struct ErrorFrames {
+    Vector<StackFrame>* captured { nullptr };
+    const Zig::DetachedFrames* detached { nullptr };
+};
+
 // error.stack calls this function
 static String computeErrorInfoWithoutPrepareStackTrace(
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
-    Vector<StackFrame>& stackTrace,
+    ErrorFrames frames,
     OrdinalNumber& line,
     OrdinalNumber& column,
     String& sourceURL,
@@ -482,88 +480,69 @@ static String computeErrorInfoWithoutPrepareStackTrace(
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance));
+    if (frames.captured)
+        RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, *frames.captured, errorInstance));
+    RELEASE_AND_RETURN(scope, formatStackFrames(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, frames.detached->frames(), frames.detached->topFrameSourceURL(), errorInstance));
 }
 
-static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
+static void appendCallSite(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, const DetachedStackFrame& frame, JSC::JSCell* callee, bool& encounteredStrictFrame, MarkedArgumentBuffer& callSites)
+{
+    if (frame.flags.contains(DetachedStackFrame::Flag::Private))
+        return;
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CallSite* callSite = CallSite::create(lexicalGlobalObject, globalObject->callSiteStructure(), frame, isOfReaderRealm(frame, globalObject, lexicalGlobalObject), callee, encounteredStrictFrame);
+    RETURN_IF_EXCEPTION(scope, );
+
+    /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
+     * "To maintain restrictions imposed on strict mode functions, frames that have a
+     * strict mode function and all frames below (its caller etc.) are not allow to access
+     * their receiver and function objects. For those frames, getFunction() and getThis()
+     * will return undefined."." */
+    if (!encounteredStrictFrame)
+        encounteredStrictFrame = callSite->isStrict();
+    callSites.append(callSite);
+}
+
+static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, ErrorFrames frames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSCStackTrace stackTrace = JSCStackTrace::fromExisting(vm, stackFrames);
-
     // Note: we cannot use tryCreateUninitializedRestricted here because we cannot allocate memory inside initializeIndex()
     MarkedArgumentBuffer callSites;
+    bool encounteredStrictFrame = false;
 
-    // Create the call sites (one per frame)
-    Zig::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (frames.captured) {
+        WTF::Vector<DetachedStackFrame, DEFAULT_ERROR_STACK_TRACE_LIMIT> callSiteFrames;
+        callSiteFrames.reserveInitialCapacity(frames.captured->size());
+        for (auto& frame : *frames.captured)
+            callSiteFrames.append(Zig::JSCStackFrame(vm, frame).detach());
+        mapFramesOfReaderRealm(vm, callSiteFrames.mutableSpan(), globalObject, lexicalGlobalObject);
 
-    // We need to sourcemap it if it's a GlobalObject.
-
-    const int n = stackTrace.size();
-    OwnedZigStackFrames remappedFrames(n);
-    WTF::Vector<WTF::String, 8> sourceURLs;
-    WTF::Vector<bool, 8> didRemap;
-    sourceURLs.grow(n);
-    didRemap.grow(n);
-    bool anyRemap = false;
-
-    for (int i = 0; i < n; i++) {
-        ZigStackFrame& frame = remappedFrames[i];
-        JSCStackFrame& visibleFrame = stackTrace.at(i);
-        const JSC::StackFrame& stackFrame = visibleFrame.stackFrame();
-        sourceURLs[i] = Zig::sourceURL(vm, stackFrame);
-        didRemap[i] = false;
-        frame.position.line_zero_based = -1;
-        frame.position.column_zero_based = -1;
-        frame.position.byte_position = -1;
-
-        // When you use node:vm, the global object can be different on a
-        // per-frame basis. We should sourcemap the frames which are in Bun's
-        // global object, and not sourcemap the frames which are in a different
-        // global object.
-        JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
-
-        if (stackFrame.hasLineAndColumnInfo()) {
-            auto* callee = stackFrame.callee();
-            // https://github.com/oven-sh/bun/issues/17698
-            if (callee) {
-                if (auto* object = callee->getObject()) {
-                    globalObjectForFrame = object->globalObject();
-                }
-            }
+        for (size_t i = 0; i < callSiteFrames.size(); i++) {
+            appendCallSite(globalObject, lexicalGlobalObject, callSiteFrames[i], frames.captured->at(i).callee(), encounteredStrictFrame, callSites);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    } else {
+        auto detachedFrames = frames.detached->frames();
+        for (size_t i = 0; i < detachedFrames.size(); i++) {
+            // The frame's function may be gone, so getFunction() is undefined, as it is for a strict function.
+            appendCallSite(globalObject, lexicalGlobalObject, frames.detached->callSiteFrame(i), nullptr, encounteredStrictFrame, callSites);
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
-        if (globalObjectForFrame == globalObject) {
-            if (JSCStackFrame::SourcePositions* sourcePositions = visibleFrame.getSourcePositions()) {
-                frame.position.line_zero_based = sourcePositions->line.zeroBasedInt();
-                frame.position.column_zero_based = sourcePositions->column.zeroBasedInt();
-            }
-
-            if (!sourceURLs[i].isEmpty()) {
-                frame.source_url = Bun::toStringRef(sourceURLs[i]);
-                didRemap[i] = true;
-                anyRemap = true;
-            }
-        }
-    }
-
-    if (anyRemap) {
-        remappedFrames.remap(globalObject->bunVM());
-    }
-
-    for (int i = 0; i < n; i++) {
-        ZigStackFrame& frame = remappedFrames[i];
-        WTF::String sourceURLForFrame = didRemap[i] ? frame.source_url.toWTFString() : sourceURLs[i];
-
-        auto* callsite = uncheckedDowncast<CallSite>(callSites.at(i));
-
-        if (!sourceURLForFrame.isEmpty())
-            callsite->setSourceURL(vm, jsString(vm, sourceURLForFrame));
-
-        if (frame.remapped) {
-            callsite->setLineNumber(frame.position.line());
-            callsite->setColumnNumber(frame.position.column());
+        // The error's line, column and sourceURL are those of the first frame that has a position, as without a formatter.
+        for (auto& frame : detachedFrames) {
+            if (!frame.flags.contains(DetachedStackFrame::Flag::HasPosition))
+                continue;
+            bool isMapped = frame.flags.contains(DetachedStackFrame::Flag::Mapped) && isOfReaderRealm(frame, globalObject, lexicalGlobalObject);
+            JSC::LineColumn position = isMapped ? frame.mappedPosition : frame.position;
+            line = OrdinalNumber::fromOneBasedInt(position.line);
+            column = OrdinalNumber::fromOneBasedInt(position.column);
+            if (!frame.flags.contains(DetachedStackFrame::Flag::NoSourceURL))
+                sourceURL = isMapped && !frame.mappedSourceURL.isNull() ? frame.mappedSourceURL : frame.sourceURL;
+            break;
         }
     }
 
@@ -573,7 +552,8 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
-static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
+// `consultFormatter` is false for a stack that is about to be overwritten: Error.prepareStackTrace is not called for it.
+static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, ErrorFrames frames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, bool consultFormatter)
 {
 
     Zig::GlobalObject* globalObject = nullptr;
@@ -586,25 +566,25 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     if (!globalObject) {
         // node:vm will use a different JSGlobalObject
         globalObject = defaultGlobalObject(vm);
-        if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
+        if (consultFormatter && !globalObject->isInsideErrorPrepareStackTraceCallback) {
             auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
             auto prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
             RETURN_IF_EXCEPTION(scope, {});
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
                     globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
+                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, frames, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
                     globalObject->isInsideErrorPrepareStackTraceCallback = false;
                     RELEASE_AND_RETURN(scope, result);
                 }
             }
         }
-    } else if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
+    } else if (consultFormatter && !globalObject->isInsideErrorPrepareStackTraceCallback) {
         if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCallable()) {
                     globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
+                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, frames, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
                     globalObject->isInsideErrorPrepareStackTraceCallback = false;
                     RELEASE_AND_RETURN(scope, result);
                 }
@@ -612,20 +592,19 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         }
     }
 
-    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance);
+    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, frames, line, column, sourceURL, errorInstance);
     RETURN_IF_EXCEPTION(scope, {});
     return jsString(vm, result);
 }
 
 static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
 {
-    return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance);
+    return computeErrorInfoToJSValueWithoutSkipping(vm, { .captured = &stackTrace }, line, column, sourceURL, errorInstance, true);
 }
 
-WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL)
+std::unique_ptr<JSC::DetachedStackTrace> detachStackTrace(JSC::VM& vm, Vector<StackFrame>& stackTrace)
 {
-
-    // ErrorInstance::finalizeUnconditionally calls this from Heap::runEndPhase, which nulls
+    // ErrorInstance::reconcileWeakReferencesAtGCEnd calls this from Heap::pruneDeadReferences, which nulls
     // the current thread's atom string table and runs on whichever thread conducts the GC.
     // Releasing the last ref of an atom string there crashes in AtomStringImpl::remove(),
     // so install the VM's table for the duration; the mutator is suspended for the whole
@@ -641,27 +620,16 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
             thread.setCurrentAtomStringTable(previousAtomStringTable);
     });
 
-    OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
-    OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
-
     // A termination thrown in here would survive the clear below and be lost to the restore.
     JSC::DeferTerminationForAWhile deferTermination(vm);
     // Runs from the GC end phase while the mutator may have its own pending exception.
     JSC::SuspendExceptionScope suspendExceptionScope(vm);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // The frames only: JavaScriptCore prepends the error's name and message when the stack is read.
-    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(vm), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
-    if (scope.exception()) {
-        // The onComputeErrorInfo hook cannot propagate a throw.
-        (void)scope.tryClearException();
-        result = WTF::emptyString();
-    }
-
-    line_in = line.oneBasedInt();
-    column_in = column.oneBasedInt();
-
-    return result;
+    auto detached = makeUnique<Zig::DetachedFrames>(vm, stackTrace);
+    // The onDetachStackTrace hook cannot propagate a throw.
+    (void)scope.tryClearException();
+    return detached;
 }
 
 void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL)
@@ -701,21 +669,12 @@ static void protectFrameCells(JSC::MarkedArgumentBuffer& cells, const Vector<Sta
     }
 }
 
-JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance)
+static JSC::JSValue computeErrorInfoForHook(JSC::VM& vm, ErrorFrames frames, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance, bool consultFormatter)
 {
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
-    // stackTrace stays installed on errorInstance: a GC that finds one of its frames dead frees it mid-format.
-    JSC::MarkedArgumentBuffer protectedFrameCells;
-    protectFrameCells(protectedFrameCells, stackTrace);
-    if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        throwOutOfMemoryError(errorInstance->globalObject(), scope);
-        return jsUndefined();
-    }
-
-    JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorInstance);
+    JSValue result = computeErrorInfoToJSValueWithoutSkipping(vm, frames, line, column, sourceURL, errorInstance, consultFormatter);
 
     line_in = line.oneBasedInt();
     column_in = column.oneBasedInt();
@@ -725,6 +684,36 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     if (!result) [[unlikely]]
         return jsUndefined();
     return result;
+}
+
+JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance)
+{
+    // stackTrace stays installed on errorInstance: a GC that finds one of its frames dead frees it mid-format.
+    JSC::MarkedArgumentBuffer protectedFrameCells;
+    protectFrameCells(protectedFrameCells, stackTrace);
+    if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwOutOfMemoryError(errorInstance->globalObject(), scope);
+        return jsUndefined();
+    }
+
+    return computeErrorInfoForHook(vm, { .captured = &stackTrace }, line_in, column_in, sourceURL, errorInstance, true);
+}
+
+JSC::JSValue computeDetachedErrorInfoWrapperToJSValue(JSC::VM& vm, JSC::DetachedStackTrace& detachedStackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance, JSC::DetachedStackTraceUse use)
+{
+    auto& detached = static_cast<Zig::DetachedFrames&>(detachedStackTrace);
+    return computeErrorInfoForHook(vm, { .detached = &detached }, line_in, column_in, sourceURL, errorInstance, use == JSC::DetachedStackTraceUse::Read);
+}
+
+WTF::String formatDetachedStackFrames(JSC::VM& vm, JSC::ErrorInstance* error, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL)
+{
+    auto& detached = static_cast<Zig::DetachedFrames&>(*error->detachedStackTrace());
+    JSC::JSGlobalObject* lexicalGlobalObject = error->globalObject();
+    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    if (!globalObject)
+        globalObject = defaultGlobalObject(vm);
+    return formatStackFrames(vm, globalObject, lexicalGlobalObject, emptyString(), emptyString(), line, column, sourceURL, detached.frames(), detached.topFrameSourceURL(), nullptr);
 }
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -896,34 +885,3 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 }
 
 } // namespace Bun
-
-namespace Zig {
-
-void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites)
-{
-    /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
-     * "To maintain restrictions imposed on strict mode functions, frames that have a
-     * strict mode function and all frames below (its caller etc.) are not allow to access
-     * their receiver and function objects. For those frames, getFunction() and getThis()
-     * will return undefined."." */
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    bool encounteredStrictFrame = false;
-
-    // TODO: is it safe to use CallSite structure from a different JSGlobalObject? This case would happen within a node:vm
-    JSC::Structure* callSiteStructure = globalObject->callSiteStructure();
-    size_t framesCount = stackTrace.size();
-
-    for (size_t i = 0; i < framesCount; i++) {
-        CallSite* callSite = CallSite::create(lexicalGlobalObject, callSiteStructure, stackTrace.at(i), encounteredStrictFrame);
-        RETURN_IF_EXCEPTION(scope, );
-
-        if (!encounteredStrictFrame) {
-            encounteredStrictFrame = callSite->isStrict();
-        }
-
-        callSites.append(callSite);
-    }
-}
-
-} // namespace Zig

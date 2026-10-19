@@ -164,6 +164,9 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
         return;
     if (auto* existing = instance->stackTrace(); existing && !existing->isEmpty())
         return;
+    // A collection detached that stack: it is still the error's.
+    if (instance->detachedStackTrace())
+        return;
 
     size_t limit = globalObject->stackTraceLimit().value_or(10);
     if (!limit)

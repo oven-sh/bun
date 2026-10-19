@@ -43,6 +43,7 @@
 
 #include "ErrorStackFrame.h"
 #include "ErrorStackTrace.h"
+#include "FormatStackTraceForJS.h"
 #include "ObjectBindings.h"
 
 #include <JavaScriptCore/VMInlines.h>
@@ -68,7 +69,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
     if (stackFrame.isWasmFrame()) {
         frame.code_type = ZigStackFrameCodeWasm;
 
-        auto name = Zig::functionName(vm, stackFrame, nullptr);
+        auto name = Zig::functionName(vm, stackFrame);
         if (!name.isEmpty()) {
             frame.function_name = Bun::toStringRef(name);
         }
@@ -108,7 +109,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
         }
     }
 
-    WTF::String functionName = Zig::functionName(vm, stackFrame, nullptr);
+    WTF::String functionName = Zig::functionName(vm, stackFrame);
     if (!functionName.isEmpty())
         frame.function_name = Bun::toStringRef(functionName);
 
@@ -573,13 +574,22 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
         }
     }
 
+    // A collection detached the stack trace of this unread error. As for frames that are still alive, printing the
+    // error does not read its stack, so Error.prepareStackTrace is not called.
+    bool isDetached = getFromSourceURL && err->detachedStackTrace();
+    OrdinalNumber detachedLine = OrdinalNumber::beforeFirst();
+    OrdinalNumber detachedColumn = OrdinalNumber::beforeFirst();
+    WTF::String detachedSourceURL;
+
     if (getFromSourceURL) {
 
         // we don't want to serialize JSC::StackFrame longer than we need to
         // so in this case, we parse the stack trace as a string
 
         // This one intentionally calls getters.
-        JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
+        JSC::JSValue stackValue = isDetached
+            ? JSC::JSValue(jsString(vm, Bun::formatDetachedStackFrames(vm, err, detachedLine, detachedColumn, detachedSourceURL)))
+            : obj->getIfPropertyExists(global, vm.propertyNames->stack);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         if (stackValue) {
@@ -634,7 +644,19 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
         }
     }
 
-    if (except.stack.frames_len == 0 && getFromSourceURL) {
+    if (except.stack.frames_len == 0 && getFromSourceURL && isDetached) {
+        // What the error's sourceURL, line and column are once its stack is read. Reading them here would read it.
+        if (!detachedSourceURL.isEmpty()) {
+            auto& frame = except.stack.frames_ptr[0];
+            frame.source_url.deref();
+            frame.source_url = Bun::toStringRef(detachedSourceURL);
+            frame.position.line_zero_based = detachedLine.zeroBasedInt();
+            frame.position.column_zero_based = detachedColumn.zeroBasedInt();
+            // The collection asked the source map already.
+            frame.remapped = true;
+            except.stack.frames_len = 1;
+        }
+    } else if (except.stack.frames_len == 0 && getFromSourceURL) {
         JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;

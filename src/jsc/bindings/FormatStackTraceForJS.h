@@ -36,6 +36,8 @@ class JSGlobalObject;
 class StackFrame;
 class ErrorInstance;
 class CallFrame;
+class DetachedStackTrace;
+enum class DetachedStackTraceUse : bool;
 enum class PropertyAttribute : unsigned;
 } // namespace JSC
 
@@ -46,7 +48,6 @@ class OrdinalNumber;
 
 namespace Zig {
 class GlobalObject;
-class JSCStackTrace;
 } // namespace Zig
 
 using JSC::EncodedJSValue;
@@ -80,18 +81,11 @@ JSC_DECLARE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter);
 JSC_DECLARE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter);
 
 // Internal wrapper functions for JSC error info callbacks
-WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL);
+std::unique_ptr<JSC::DetachedStackTrace> detachStackTrace(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace);
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance);
+JSC::JSValue computeDetachedErrorInfoWrapperToJSValue(JSC::VM& vm, JSC::DetachedStackTrace& detachedStackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance, JSC::DetachedStackTraceUse use);
+// For the error printer: the frames of `error`, whose stack trace a collection detached, as the lines of its stack
+// without Error.prepareStackTrace, and the line, column and source URL the error gets from them. Leaves the error as it is.
+WTF::String formatDetachedStackFrames(JSC::VM& vm, JSC::ErrorInstance* error, WTF::OrdinalNumber& line, WTF::OrdinalNumber& column, WTF::String& sourceURL);
 void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL);
 } // namespace Bun
-
-namespace Zig {
-
-// GlobalObject member function for creating CallSite objects
-void createCallSitesFromFrames(
-    Zig::GlobalObject* globalObject,
-    JSC::JSGlobalObject* lexicalGlobalObject,
-    Zig::JSCStackTrace& stackTrace,
-    JSC::MarkedArgumentBuffer& callSites);
-
-} // namespace Zig

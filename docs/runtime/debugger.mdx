@@ -280,7 +280,7 @@ The `CallSite` object has the following methods:
 | `getPromiseIndex`          | Not implemented yet.                                  |
 | `toString`                 | returns a string representation of the call site      |
 
-If the `Function` object has already been garbage collected, some of these methods return `undefined`.
+When `error.stack` is first read after the garbage collector has freed a function on the stack, `getFunction()` returns `undefined` for every frame.
 
 ##### `Error.captureStackTrace(error, startFn)`
 

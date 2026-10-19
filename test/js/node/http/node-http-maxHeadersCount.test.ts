@@ -778,7 +778,10 @@ describe("a connection keeps the parser options that its server had when it open
       }
       try {
         const response = await exchange(await listen(server), requestHead(2), true);
-        assert.deepStrictEqual([statusLine(response), response.slice(response.indexOf("\r\n\r\n") + 4)], [ok, "127.0.0.1"]);
+        assert.deepStrictEqual(
+          [statusLine(response), response.slice(response.indexOf("\r\n\r\n") + 4)],
+          [ok, "127.0.0.1"],
+        );
       } finally {
         server.close();
       }

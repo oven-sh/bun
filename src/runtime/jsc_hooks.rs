@@ -4140,7 +4140,7 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
 /// # Safety
 /// `jsc_vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__isESModuleByPathOrPackage(
+pub(crate) unsafe extern "C" fn Bun__isESModuleByPathOrPackage(
     jsc_vm: *mut VirtualMachine,
     specifier: &bun_core::String,
 ) -> bool {

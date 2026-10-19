@@ -2573,10 +2573,11 @@ impl<'a> Parser<'a> {
 
         while cursor < end {
             match contents[cursor] {
-                b'\n' => break,
+                // JSC gets this text as Latin-1, where only `\r` and `\n` end the comment.
+                b'\n' | b'\r' => break,
                 b'@' => {
                     // A match leaves the cursor on the keyword's last byte. The step below
-                    // then lands on the byte after the keyword: the `\n` when it ends the line.
+                    // then lands on the byte after the keyword, which can be the line break.
                     let slice = &contents[cursor + 1..];
                     if slice.starts_with(b"bun-cjs") {
                         state.seen_cjs = true;

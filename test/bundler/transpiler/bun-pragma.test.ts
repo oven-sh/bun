@@ -19,8 +19,8 @@ const runFixture = async (path: string): Promise<number> => {
   return child.exitCode!;
 };
 
-const run = async (cwd: string, entry: string, env: NodeJS.Dict<string> = bunEnv) => {
-  await using proc = Bun.spawn({ cmd: [bunExe(), entry], env, cwd, stdout: "pipe", stderr: "pipe" });
+const run = async (cwd: string, args: string[], env: NodeJS.Dict<string> = bunEnv) => {
+  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 };
@@ -50,13 +50,14 @@ describe("@bun pragma", () => {
     });
   });
 
-  // The pragma line alone says what the file is: an ES module or CommonJS, with or without bytecode.
+  // The pragma line alone says what the source is: an ES module or CommonJS, with or without bytecode.
   describe("keywords are read from the pragma line only", () => {
     // An ES module. Read as CommonJS, it throws "Expected CommonJS module to have a function wrapper".
     const esm = `console.log("@bun-cjs is on the second line");\n`;
     describe.each([
       ["a keyword ends the pragma line", `// @bun @bytecode\n${esm}`],
       ["a lone @ ends the pragma line", `// @bun @\n${esm}`],
+      ["a bare CR ends the pragma line", `// @bun\r${esm}`],
       ["the pragma line is below a hashbang line", `#!/usr/bin/env bun\n// @bun @bytecode\n${esm}`],
     ])("%s", (_, source) => {
       it.concurrent.each([
@@ -69,7 +70,7 @@ describe("@bun pragma", () => {
           "require.cjs": `require("./mod.js");`,
           "import.mjs": `await import("./mod.js");`,
         });
-        expect(await run(String(dir), entry)).toEqual({
+        expect(await run(String(dir), [entry])).toEqual({
           stdout: "@bun-cjs is on the second line\n",
           stderr: "",
           exitCode: 0,
@@ -77,10 +78,22 @@ describe("@bun pragma", () => {
       });
     });
 
+    // `bun -e` gives its text to the same reader. Read as CommonJS, the text runs as a script, and a script
+    // cannot hold an `import` statement.
+    it.concurrent("bun -e", async () => {
+      using dir = tempDir("bun-pragma-line", {});
+      const source = `// @bun @bytecode\nimport { sep } from "node:path"; console.log("@bun-cjs is on the second line", sep.length);\n`;
+      expect(await run(String(dir), ["-e", source])).toEqual({
+        stdout: "@bun-cjs is on the second line 1\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     // `// @bun @bun-cjs` does not ask for bytecode, so the loader must not read `<file>.jsc`. The `.jsc` here is
     // one that JSC accepts for this exact text, so a cache hit in the log shows that the loader read it.
     const wrapper = (pragma: string) =>
-      `${pragma}\n(function(exports, require, module, __filename, __dirname) {// built by @bytecode-labs\nconsole.log("ran");})\n`;
+      `${pragma}\n(function(exports, require, module, __filename, __dirname) {// built with @bytecode\nconsole.log("ran");})\n`;
     it.concurrent.each([
       ["// @bun @bun-cjs", false],
       ["// @bun @bytecode @bun-cjs", true],
@@ -89,7 +102,7 @@ describe("@bun pragma", () => {
       using dir = tempDir("bun-pragma-sidecar", { "mod.cjs": source });
       const file = path.join(String(dir), "mod.cjs");
       writeFileSync(file + ".jsc", new vm.Script(source, { filename: file, produceCachedData: true }).cachedData!);
-      const { stdout, stderr, exitCode } = await run(String(dir), "mod.cjs", {
+      const { stdout, stderr, exitCode } = await run(String(dir), ["mod.cjs"], {
         ...bunEnv,
         BUN_JSC_verboseDiskCache: "1",
       });
@@ -100,12 +113,12 @@ describe("@bun pragma", () => {
       });
     });
 
-    // Every `@` of the pragma line can start a keyword, also the one directly after another `@`.
+    // A keyword starts at any `@` of the pragma line, also at one directly after another `@`.
     it.concurrent("`// @bun @@bun-cjs` is CommonJS", async () => {
       using dir = tempDir("bun-pragma-line", {
         "mod.js": `// @bun @@bun-cjs\n(function(exports, require, module, __filename, __dirname) {console.log("ran");})\n`,
       });
-      expect(await run(String(dir), "mod.js")).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+      expect(await run(String(dir), ["mod.js"])).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
     });
   });
 });

@@ -66,7 +66,7 @@ Console output is unchanged; Bun writes the JUnit XML report to the specified pa
 
 Every test file that ran has a `<testsuite>`, even if it has no tests. Its `timestamp` is the time the file started, in the format of `Date.prototype.toISOString()`.
 
-If an error is thrown while a test is running but not by the test itself, for example by a timer or an unhandled rejection, the test fails and its `<failure>`, `<flakyFailure>` or `<rerunFailure>` has `uncaught="true"`.
+An uncaught exception or unhandled rejection while a test is running fails that test, and its `<failure>`, `<flakyFailure>` or `<rerunFailure>` has `uncaught="true"`. Examples are an error thrown by a timer and a rejected promise that the test didn't await. The attribute is absent when the test function itself throws, returns a promise that rejects, or calls `done(error)`.
 
 An error outside of any test is reported as a failed `<testcase>` named `(unhandled error)` in that file's `<testsuite>`. Examples are a test file or a preload script that throws while it loads, has a syntax error, or imports a module that doesn't exist.
 

@@ -161,7 +161,7 @@ pub(crate) struct TestFailure {
     pub name: Vec<u8>,
     pub(crate) message: Vec<u8>,
     pub(crate) body: Vec<u8>,
-    /// The test's own call didn't throw this. It came from a timer, an event handler or an unhandled rejection while the test was running.
+    /// An uncaught exception or unhandled rejection while the test was running, not an error from the test function's own call.
     pub(crate) uncaught: bool,
 }
 

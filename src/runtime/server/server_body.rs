@@ -620,7 +620,12 @@ impl AnyRoute {
         if bundle_dir.is_some() && !paths::is_absolute(path_slice) {
             path = Node::PathOrFileDescriptor::Path(Node::PathLike::owned(abs_path.to_vec()));
         }
-        let mut relative_path = FileSystem::instance().relative(route_root, abs_path);
+        // A route has `/` on every platform; on Windows `relative` gives `..\a.js`.
+        let mut relative = FileSystem::instance()
+            .relative(route_root, abs_path)
+            .to_vec();
+        paths::resolve_path::platform_to_posix_in_place(&mut relative[..]);
+        let mut relative_path: &[u8] = &relative;
 
         if relative_path.starts_with(b"./") {
             relative_path = &relative_path[2..];

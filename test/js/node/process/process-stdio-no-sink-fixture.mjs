@@ -36,17 +36,23 @@ if (scenario === "failed-writes") {
   });
   write("x");
   process.on("exit", () => report({ callbacks, errors, writableLength: stream.writableLength }));
-} else if (scenario === "failed-write-then-end") {
+} else if (scenario === "failed-writes-then-end") {
   // The parent closes its end of the stream, then sends one byte on stdin.
   fs.readSync(0, Buffer.alloc(1));
   const results = { end: "not called", finished: "not called" };
-  // end() from the 'error' listener of the failed write: it must finish, and the stream must stay ended.
-  stream.once("error", () => {
-    finished(stream, e => (results.finished = code(e)));
-    stream.end(e => (results.end = code(e)));
+  const write = chunk => stream.write(chunk, e => callbacks.push(code(e)));
+  // First failure: five more writes. One is tried and fails, and Writable fails the four buffered behind it.
+  // Second failure: end() from the 'error' listener. It must finish, and the stream must stay ended.
+  stream.on("error", () => {
+    if (errors.length === 1) {
+      for (let i = 0; i < 5; i++) write("y");
+    } else if (errors.length === 2) {
+      finished(stream, e => (results.finished = code(e)));
+      stream.end(e => (results.end = code(e)));
+    }
   });
-  stream.on("finish", () => stream.write("late", e => callbacks.push(code(e))));
-  stream.write("x", e => callbacks.push(code(e)));
+  stream.on("finish", () => write("late"));
+  write("x");
   process.on("exit", () => report({ callbacks, errors, ...results, writableEnded: stream.writableEnded }));
 } else if (scenario === "failed-batch-then-end") {
   // The parent closes its end of the stream, then sends one byte on stdin.

@@ -49,13 +49,13 @@ describe.skipIf(isWindows)("process.stdout/stderr with no FileSink", () => {
   );
 
   // Node never runs these end() callbacks: its reset leaves errorEmitted set, and end() waits on it.
-  test("process.stdout: end() after a failed write finishes and stays final", async () => {
-    expect(await withReaderGone("stdout", "failed-write-then-end")).toEqual({
+  test("process.stdout: end() after failed writes finishes and stays final", async () => {
+    expect(await withReaderGone("stdout", "failed-writes-then-end")).toEqual({
       report: {
         type: "fs",
         sink: false,
-        callbacks: ["EPIPE", "ERR_STREAM_WRITE_AFTER_END"],
-        errors: ["EPIPE", "ERR_STREAM_WRITE_AFTER_END"],
+        callbacks: [...EPIPE6, "ERR_STREAM_WRITE_AFTER_END"],
+        errors: ["EPIPE", "EPIPE", "ERR_STREAM_WRITE_AFTER_END"],
         end: null,
         finished: null,
         writableEnded: true,

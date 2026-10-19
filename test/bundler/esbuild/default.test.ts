@@ -3609,15 +3609,17 @@ describe.concurrent("bundler", () => {
     `,
     "b.js": `export const b = await 0;`,
   };
-  // A debug build is slow to start, and a local `bun bd test` gives a test 5 seconds:
-  // only one round of four fits on a slow machine.
+  // A debug build is slow to start, and a local `bun bd test` gives a test 5 seconds, so it
+  // runs 4 builds. One at a time with 8 pool threads is the shape in which the race depends
+  // least on the number of cores.
   const forbiddenRequireBuilds = isDebug ? 4 : 40;
+  const forbiddenRequireAtOnce = isDebug ? 1 : 4;
   test("default/TopLevelAwaitForbiddenRequireSourceMapCLI", async () => {
     using dir = tempDir("tla-forbidden-require-sourcemap", forbiddenRequireWithNamedImport);
     const build = async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "--sourcemap=inline", "a.js"],
-        env: bunEnv,
+        env: isDebug ? { ...bunEnv, GOMAXPROCS: "8" } : bunEnv,
         cwd: String(dir),
         stdout: "ignore",
         stderr: "pipe",
@@ -3628,8 +3630,8 @@ describe.concurrent("bundler", () => {
     // The link error races the source map tasks: one build alone does not always show it,
     // and many builds at once show it less often.
     const builds: Awaited<ReturnType<typeof build>>[] = [];
-    for (let round = 0; round < forbiddenRequireBuilds / 4; round++) {
-      builds.push(...(await Promise.all([build(), build(), build(), build()])));
+    for (let round = 0; round < forbiddenRequireBuilds / forbiddenRequireAtOnce; round++) {
+      builds.push(...(await Promise.all(Array.from({ length: forbiddenRequireAtOnce }, build))));
     }
     expect(builds).toEqual(
       Array(forbiddenRequireBuilds).fill({

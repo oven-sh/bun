@@ -398,45 +398,50 @@ JSC::GCClient::IsoSubspace* JSStringDecoder::subspaceForImpl(JSC::VM& vm)
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStringDecoderPrototype, JSStringDecoderPrototype::Base);
 
+// Node's end(buf) is write(buf) followed by the flush, so both accept the same `buf`: a string is
+// passed through (the callers handle that first) and anything else must be an ArrayBufferView.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/string_decoder.js#L76-L101
+static JSC::JSArrayBufferView* bufArgument(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue buffer)
+{
+    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
+    if (!view || view->isDetached()) [[unlikely]] {
+        Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "buf"_s, "Buffer, TypedArray, or DataView"_s, buffer);
+        return nullptr;
+    }
+    return view;
+}
+
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSStringDecoder* castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (callFrame->argumentCount() < 1) {
-        throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return {};
-    }
+    JSValue buffer = callFrame->argument(0);
+    if (buffer.isString())
+        return JSC::JSValue::encode(buffer);
 
-    auto buffer = callFrame->uncheckedArgument(0);
-    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
-    if (!view || view->isDetached()) [[unlikely]] {
-        // What node does:
-        // StringDecoder.prototype.write = function write(buf) {
-        // if (typeof buf === 'string')
-        //     return buf;
-        if (buffer.isString()) {
-            return JSC::JSValue::encode(buffer);
-        }
-
-        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "buf"_s, "Buffer, TypedArray, or DataView"_s, buffer);
-    }
+    JSC::JSArrayBufferView* view = bufArgument(throwScope, lexicalGlobalObject, buffer);
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
 }
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSStringDecoder* castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (callFrame->argumentCount() < 1) {
+    JSValue buffer = callFrame->argument(0);
+    if (buffer.isUndefined())
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, nullptr, 0)));
+
+    if (!buffer.isString()) {
+        JSC::JSArrayBufferView* view = bufArgument(throwScope, lexicalGlobalObject, buffer);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
     }
 
-    auto buffer = callFrame->uncheckedArgument(0);
-    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
-    if (!view || view->isDetached()) [[unlikely]] {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return {};
-    }
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
+    JSC::JSString* flushed = castedThis->end(vm, lexicalGlobalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (flushed->length() == 0)
+        return JSC::JSValue::encode(buffer);
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsString(lexicalGlobalObject, asString(buffer), flushed)));
 }
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSStringDecoder* castedThis)
 {

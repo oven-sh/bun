@@ -1,5 +1,5 @@
 // Source data for the parser's pure-global-identifier lookup.
-// Generated into `${BUN_CODEGEN_DIR}/defines_table_generated.rs` by
+// Generated into the checked-in `defines_table.generated.rs` beside this file by
 // `src/codegen/generate-string-map.ts`; `defines_table.rs` `include!`s it.
 //
 // Editing this file is the ONLY way to change the table — do not hand-edit

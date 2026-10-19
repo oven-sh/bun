@@ -220,7 +220,12 @@ async function withTerminalRepl(
     resize: (cols: number) => void;
     allOutput: () => string;
   }) => Promise<void>,
-  options: { env?: Record<string, string | undefined>; cols?: number } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    cols?: number;
+    /** Where the REPL keeps .bun_repl_history. Defaults to an empty directory. */
+    home?: string;
+  } = {},
 ) {
   const received: string[] = [];
   const cols = options.cols ?? 120;
@@ -231,7 +236,8 @@ async function withTerminalRepl(
   const decoder = new TextDecoder();
 
   // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
-  using home = tempDir("repl-home", {});
+  using tempHome = tempDir("repl-home", {});
+  const home = options.home ?? String(tempHome);
   await using terminal = new Bun.Terminal({
     cols,
     rows,
@@ -252,8 +258,8 @@ async function withTerminalRepl(
       ...bunEnv,
       TERM: "xterm-256color",
       ...options.env,
-      HOME: String(home),
-      USERPROFILE: String(home),
+      HOME: home,
+      USERPROFILE: home,
     },
   });
 
@@ -506,6 +512,27 @@ describe.concurrent("Bun REPL", () => {
       const filePath = path.join(String(dir), "latin1.js");
       const { outputs, stderr, exitCode } = await runRepl([`.load ${filePath}`, ".exit"]);
       expect(outputs).toEqual([`Loading ${filePath}...\ncaf\ufffd\nundefined`]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // The REPL transform does not take these files, and they are not valid UTF-8.
+    test.each([
+      [
+        "a Latin-1 file that has a syntax error",
+        Buffer.from('console.log("ran");\nvar s = "caf\xe9";\nvar x = [1, 2;\n', "latin1"),
+        "SyntaxError: Unexpected token ';'. Expected either a closing ']' or a ',' following an array element.",
+      ],
+      [
+        "a UTF-16BE file",
+        Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from('console.log("ran");\n', "utf16le").swap16()]),
+        "SyntaxError: Invalid character '\\ufffd'",
+      ],
+    ])(".load shows the syntax error of %s", async (_, bytes, error) => {
+      using dir = tempDir("repl-load-syntax-error", { "file.js": bytes });
+      const filePath = path.join(String(dir), "file.js");
+      const { outputs, stderr, exitCode } = await runRepl([`.load ${filePath}`, "_error.name", "1 + 1", ".exit"]);
+      expect(outputs).toEqual([`Loading ${filePath}...\n${error}`, '"SyntaxError"', "2"]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -1073,20 +1100,34 @@ describe.concurrent("Bun REPL", () => {
     });
 
     // argv is bytes on POSIX only. `printf` writes the byte 0xE9, which is not valid UTF-8. It is read as U+FFFD.
+    async function runReplWithPrintf(flag: string, script: string) {
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'exec "$0" repl "$1" "$(printf "$2")"', bunExe(), flag, script],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, NO_COLOR: "1" },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
     test.skipIf(isWindows).each([
       // The REPL transform does not take a block.
       ['{ "caf\\351" }', '"caf\ufffd"\n'],
       // The REPL transform takes this script. It keeps a /*! */ comment as it is.
       ['console.log("ran"); /*! \\351 */ 1 + 1', "ran\n2\n"],
     ])("-p runs a script that has a byte that is not valid UTF-8: %s", async (script, output) => {
-      await using proc = Bun.spawn({
-        cmd: ["sh", "-c", 'exec "$0" repl -p "$(printf "$1")"', bunExe(), script],
-        stdout: "pipe",
-        stderr: "pipe",
-        env: { ...bunEnv, NO_COLOR: "1" },
+      expect(await runReplWithPrintf("-p", script)).toEqual({ stdout: output, stderr: "", exitCode: 0 });
+    });
+
+    test.skipIf(isWindows)("-e writes the syntax error of a script that is not valid UTF-8", async () => {
+      // The REPL transform does not take this script.
+      const script = 'console.log("ran"); var s = "caf\\351"; var x = [1, 2;';
+      expect(await runReplWithPrintf("-e", script)).toEqual({
+        stdout: "",
+        stderr: expect.stringMatching(/^SyntaxError: Unexpected token ';'/),
+        exitCode: 1,
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: output, stderr: "", exitCode: 0 });
     });
 
     test("-e with thrown error writes to stderr and exits with code 1", async () => {
@@ -1294,6 +1335,44 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       // Should evaluate the same expression again
       await waitFor("333");
     });
+  });
+
+  test("a recalled history line that is not valid UTF-8 shows its syntax error", async () => {
+    using home = tempDir("repl-history-latin1", {
+      // 0xE9 is "é" in Latin-1. The REPL transform does not take this line.
+      ".bun_repl_history": Buffer.from('var s = "caf\xe9"; var x = ];\n', "latin1"),
+    });
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        send("\x1b[A");
+        await waitFor("var x = ];");
+        send("\n");
+        const output = await waitFor("Unexpected token ']'");
+        expect(stripAnsi(output)).toContain("SyntaxError: Unexpected token ']'");
+      },
+      { home: String(home) },
+    );
+  });
+
+  test("tab does not complete a recalled word that is not valid UTF-8", async () => {
+    using home = tempDir("repl-history-latin1-tab", {
+      // 0xE9 is "é" in Latin-1.
+      ".bun_repl_history": Buffer.from("__tcOne.caf\xe9\n", "latin1"),
+    });
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        // One property and no prototype: a prefix that matches every name completes to it.
+        send("globalThis.__tcOne = Object.assign(Object.create(null), { only: 'tcONE' + 'MARK' }); 0\n");
+        await waitFor(/\b0\b/);
+        // The line just typed is the newest entry.
+        send("\x1b[A\x1b[A");
+        await waitFor("__tcOne.caf");
+        send("\t\n");
+        const output = await waitFor(/tcONEMARK|SyntaxError/);
+        expect(stripAnsi(output)).toContain("SyntaxError: Invalid character '\\ufffd'");
+      },
+      { home: String(home) },
+    );
   });
 
   test("down arrow restores temp line after history", async () => {

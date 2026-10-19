@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "path";
-import { bunEnv, bunExe, fakeNodeRun, tempDir, tls as tlsCert } from "../../harness";
+import { bunEnv, bunExe, fakeNodeRun, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -174,7 +174,7 @@ describe("the flags of Node.js that node:net reads take their value as the next 
       expect(await bun(dir, ["-p", code, flag, "./value.mjs"])).toEqual(printed(["-p", code, flag, "./value.mjs"]));
     });
 
-    test("bun exec <flag> <value> <script>", async () => {
+    test("bun exec <flag> <value> <script>: the value is not the script", async () => {
       using dir = project();
       expect(await bun(dir, ["exec", flag, "./value.mjs", "echo hi"])).toEqual({
         stdout: "hi",
@@ -251,21 +251,40 @@ describe("the flags of Node.js that node:net reads take their value as the next 
       using dir = project(files);
       expect(await bun(dir, args)).toEqual(printed({ execArgv: [attemptTimeout, "321"], timeout: 321 }));
     });
+
+    // process.execArgv has the flags before the word `test`. A flag after it is parsed and does nothing.
+    test("is the value of <flag>=700 before `bun test`", async () => {
+      using dir = tempDir("node-net-flags-test", {
+        "timeout.test.ts": `
+          import { expect, test } from "bun:test";
+          import net from "node:net";
+          test("timeout", () => expect(net.getDefaultAutoSelectFamilyAttemptTimeout()).toBe(700));
+        `,
+      });
+      const { stderr, exitCode } = await bun(dir, [`${attemptTimeout}=700`, "test", "timeout.test.ts"]);
+      expect(stderr).toContain(" 1 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
-  test("--tls-keylog <file> logs the keys of a TLS connection to the file", async () => {
-    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: tlsCert, socket: { data() {} } });
+  test("--tls-keylog <file> adds the keys of a TLS connection to the file", async () => {
+    const keys = join(import.meta.dir, "../../js/node/test/fixtures/keys");
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: Bun.file(join(keys, "agent1-key.pem")), cert: Bun.file(join(keys, "agent1-cert.pem")) },
+      socket: { data() {} },
+    });
     using dir = project({
-      "cert.pem": tlsCert.cert,
+      "keys.log": "# an earlier run\n",
       "connect.mjs": `
         import { once } from "node:events";
-        import { readFileSync } from "node:fs";
         import tls from "node:tls";
 
         const client = tls.connect({
           port: Number(process.argv[2]),
           host: "127.0.0.1",
-          ca: readFileSync("cert.pem"),
+          rejectUnauthorized: false,
           // TLS 1.2 logs one line for a connection. TLS 1.3 logs five.
           maxVersion: "TLSv1.2",
         });
@@ -278,7 +297,9 @@ describe("the flags of Node.js that node:net reads take their value as the next 
       "Using --tls-keylog makes TLS connections insecure by writing secret key material to file keys.log",
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
-    expect(await Bun.file(join(dir, "keys.log")).text()).toMatch(/^CLIENT_RANDOM [0-9a-f]{64} [0-9a-f]{96}\n$/);
+    expect(await Bun.file(join(dir, "keys.log")).text()).toMatch(
+      /^# an earlier run\nCLIENT_RANDOM [0-9a-f]{64} [0-9a-f]{96}\n$/,
+    );
   });
 
   test("--tls-keylog <file> creates no file when there is no TLS connection", async () => {

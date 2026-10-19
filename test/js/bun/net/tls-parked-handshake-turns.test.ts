@@ -4,7 +4,7 @@
 // file run close to the 5 s default timeout.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, tempDir, tls } from "harness";
 import { join } from "node:path";
 
 // A parked socket has no readable poll, and the queue gives 5 sockets back at the start of each
@@ -18,13 +18,12 @@ import { join } from "node:path";
 // empty and the loop has to wait again: `turnsWhileQuiet` is the fixture's own 250 ms timer and
 // what is left of that handshake, not a loop that spins.
 //
-// The timeout is for a debug+ASAN build, where the fixture's 64 handshakes take seconds. On
-// macOS the fixture gets a directory for unix sockets (see tls-fixture-transport.ts).
+// On macOS the fixture gets a directory for unix sockets (see tls-fixture-transport.ts).
 test("TLS low-prio queue: the loop gives parked sockets back without an event from outside", async () => {
   using unixDir = isMacOS ? tempDir("tlsq", {}) : undefined;
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "tls-parked-handshake-turns-fixture.ts")],
-    env: { ...bunEnv, TLS_FIXTURE_UNIX_DIR: unixDir && String(unixDir) },
+    env: { ...bunEnv, TLS_CERT: tls.cert, TLS_KEY: tls.key, TLS_FIXTURE_UNIX_DIR: unixDir && String(unixDir) },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -55,4 +54,4 @@ test("TLS low-prio queue: the loop gives parked sockets back without an event fr
   expect(summary.turnsToPicked).toBeGreaterThanOrEqual(12);
   expect(summary.turnsToPicked).toBeLessThanOrEqual(24);
   expect(summary.turnsWhileQuiet).toBeLessThanOrEqual(8);
-}, 60_000);
+});

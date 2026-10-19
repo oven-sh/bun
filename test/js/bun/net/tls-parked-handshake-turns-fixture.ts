@@ -20,13 +20,12 @@
 //   5. With the queue empty the loop must wait again. A short timer counts its turns meanwhile.
 import type { Socket } from "bun";
 import { getEventLoopStats } from "bun:internal-for-testing";
-import { tls as certs } from "harness";
 import { connect, listen } from "./tls-fixture-transport";
 
 const N = 64;
 // MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION in packages/bun-usockets/src/loop.c.
 const BUDGET = 5;
-// Well inside the test's own timeout, so a stalled step still prints the summary.
+// Well inside the timeout that CI gives a test, so a stalled step still prints the summary.
 const STEP_DEADLINE_MS = 20_000;
 // A loop that waits for its 4 s socket sweep to reach the socket needs 12 of them.
 const PARKED_DEADLINE_MS = 3_000;
@@ -70,7 +69,7 @@ let clientOpens = 0;
 let clientHandshakes = 0;
 
 const { server, address } = listen("s", {
-  tls: { key: certs.key, cert: certs.cert },
+  tls: { key: process.env.TLS_KEY!, cert: process.env.TLS_CERT! },
   socket: {
     open(s) {
       summary.opened++;

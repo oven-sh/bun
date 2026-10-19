@@ -26,7 +26,7 @@ impl Property {
             Property::Unparsed(_) => PropertyIdTag::Unparsed,
             Property::Custom(_) => PropertyIdTag::Custom,
             // Every other `Property` variant maps 1:1 onto its `PropertyId`
-            // variant, so `property_id().tag()` is the discriminant.
+            // variant (`WebKitBorderRadiusPair` shares `BorderRadius`), so `property_id().tag()` is the discriminant.
             _ => self.property_id().tag(),
         }
     }

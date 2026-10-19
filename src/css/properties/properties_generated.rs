@@ -1574,7 +1574,7 @@ impl PropertyId {
 }
 
 /// A parsed CSS declaration value, tagged by [`PropertyIdTag`]. Prefixed
-/// properties carry `(value, VendorPrefix)`.
+/// properties carry `(value, VendorPrefix)`, except `WebKitBorderRadiusPair`.
 // No `#[derive(Clone)]` — several `css_values::*` payloads
 // (Image, Size2D, Rect, SmallList) intentionally lack `Clone` and use
 // `deep_clone(&Arena)` instead. `Property::deep_clone` is the public API.
@@ -1681,6 +1681,10 @@ pub enum Property {
     BorderEndStartRadius(css::css_values::size::Size2D<css::css_values::length::LengthPercentage>),
     BorderEndEndRadius(css::css_values::size::Size2D<css::css_values::length::LengthPercentage>),
     BorderRadius((border_radius::BorderRadius, VendorPrefix)),
+    /// `-webkit-border-radius: a b`, a != b: `a / b` in Chrome and Safari, `a b` in Firefox (whatwg/compat#133).
+    WebKitBorderRadiusPair(
+        css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+    ),
     BorderImageSource(css::css_values::image::Image),
     BorderImageOutset(css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>),
     BorderImageRepeat(border_image::BorderImageRepeat),
@@ -1976,6 +1980,7 @@ impl Property {
             Property::BorderEndStartRadius(..) => PropertyId::BorderEndStartRadius,
             Property::BorderEndEndRadius(..) => PropertyId::BorderEndEndRadius,
             Property::BorderRadius(v) => PropertyId::BorderRadius(v.1),
+            Property::WebKitBorderRadiusPair(..) => PropertyId::BorderRadius(VendorPrefix::WEBKIT),
             Property::BorderImageSource(..) => PropertyId::BorderImageSource,
             Property::BorderImageOutset(..) => PropertyId::BorderImageOutset,
             Property::BorderImageRepeat(..) => PropertyId::BorderImageRepeat,
@@ -2247,7 +2252,8 @@ impl Property {
             Property::BorderStartEndRadius(v) => css::generic::to_css(v, dest),
             Property::BorderEndStartRadius(v) => css::generic::to_css(v, dest),
             Property::BorderEndEndRadius(v) => css::generic::to_css(v, dest),
-            Property::BorderRadius(v) => css::generic::to_css(&v.0, dest),
+            Property::BorderRadius(v) => v.0.to_css_for(dest, v.1),
+            Property::WebKitBorderRadiusPair(v) => css::generic::to_css(v, dest),
             Property::BorderImageSource(v) => css::generic::to_css(v, dest),
             Property::BorderImageOutset(v) => css::generic::to_css(v, dest),
             Property::BorderImageRepeat(v) => css::generic::to_css(v, dest),
@@ -2897,7 +2903,12 @@ impl Property {
                 }
             }
             PropertyId::BorderRadius(pre) => {
-                if let Some(c) = parse_value::<border_radius::BorderRadius>(input, options) {
+                if pre == VendorPrefix::WEBKIT {
+                    let start = input.state();
+                    if let Some(c) = parse_value::<border_radius::BorderRadius>(input, options) {
+                        return Ok(c.into_webkit_property(input, &start));
+                    }
+                } else if let Some(c) = parse_value::<border_radius::BorderRadius>(input, options) {
                     return Ok(Property::BorderRadius((c, pre)));
                 }
             }
@@ -4081,6 +4092,9 @@ impl Property {
             Property::BorderRadius(v) => {
                 Property::BorderRadius((css::generic::deep_clone(&v.0, arena), v.1))
             }
+            Property::WebKitBorderRadiusPair(v) => {
+                Property::WebKitBorderRadiusPair(css::generic::deep_clone(v, arena))
+            }
             Property::BorderImageSource(v) => {
                 Property::BorderImageSource(css::generic::deep_clone(v, arena))
             }
@@ -4641,6 +4655,9 @@ impl Property {
             }
             (Property::BorderRadius(a), Property::BorderRadius(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::WebKitBorderRadiusPair(a), Property::WebKitBorderRadiusPair(b)) => {
+                css::generic::eql(a, b)
             }
             (Property::BorderImageSource(a), Property::BorderImageSource(b)) => {
                 css::generic::eql(a, b)

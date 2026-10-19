@@ -2100,11 +2100,27 @@ function onEndStreamSettled(stream: Http2Stream) {
   }
 }
 
+// The Writable's _final callback emits 'prefinish'. prefinish() (internal/streams/writable) calls
+// _final inside a try and gives a caught error back to that callback, which emits it as 'error'.
+// A callback that runs after _final returned is outside that try: these two do the same for it.
+function guardFinal(callback: (err?: unknown) => void) {
+  return () => {
+    try {
+      callback();
+    } catch (err) {
+      callback(err);
+    }
+  };
+}
 function markWritableDone(stream: Http2Stream) {
   const _final = stream[bunHTTP2StreamFinal];
   if (typeof _final === "function") {
     stream[bunHTTP2StreamFinal] = null;
-    _final();
+    try {
+      _final();
+    } catch (err) {
+      _final(err);
+    }
     stream[bunHTTP2StreamStatus] |= StreamState.WritableClosed | StreamState.FinalCalled;
     return;
   }
@@ -2304,6 +2320,7 @@ interface Http2StreamReadableState {
 interface Http2StreamWritableState {
   ending: boolean;
   destroyed: boolean;
+  errored: Error | null;
 }
 type DuplexStream = import("node:stream").Duplex;
 interface DuplexStateAccessors {
@@ -2586,18 +2603,25 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       }
       this.rstCode = code;
       markStreamClosed(this);
+      // The writable failed in _final (a 'prefinish' listener that threw): 'finish' cannot fire and
+      // nothing is left to send. A write() after end() fails it too, but before _final, while its
+      // body is still on the way. A stream inside destroy(err) is errored, and _destroy resets it.
+      const writableFailed =
+        (this[bunHTTP2StreamStatus] & StreamState.FinalCalled) !== 0 &&
+        this._writableState.errored !== null &&
+        !this._readableState.destroyed;
       if (this.pending) {
         // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
-      } else if (this.writableFinished || code) {
+      } else if (this.writableFinished || writableFailed || code) {
         setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {
         this.once("finish", rstNextTick.bind(session, this.#id, code));
       }
       // node destroys the stream once both halves have finished; without this a stream closed
       // while idle never emits 'close'.
-      if (this.writableFinished) {
+      if (this.writableFinished || writableFailed) {
         scheduleDestroyIfNotDestroyed(this);
       } else {
         this.once("finish", scheduleDestroyIfNotDestroyed.bind(null, this));
@@ -2782,7 +2806,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
           callback();
           return;
         }
-        const settled = native.writeStream(this.#id, "", "ascii", true, callback);
+        const settled = native.writeStream(this.#id, "", "ascii", true, guardFinal(callback));
         // Same as above: don't leave the END_STREAM frame in the cork on what may be the
         // program's last live turn.
         native.flush();
@@ -4123,6 +4147,7 @@ class ServerHttp2Session extends Http2Session {
         } else if (
           (stream.writableEnded || stream[kEndingWithChunk]) &&
           !stream.writableFinished &&
+          stream._writableState.errored === null &&
           !stream.destroyed
         ) {
           // Writable side is mid-finish (an in-flight _final/_write carrying END_STREAM settled
@@ -5123,6 +5148,7 @@ class ClientHttp2Session extends Http2Session {
         } else if (
           (stream.writableEnded || stream[kEndingWithChunk]) &&
           !stream.writableFinished &&
+          stream._writableState.errored === null &&
           !stream.destroyed
         ) {
           // Writable side is mid-finish (an in-flight _final/_write carrying END_STREAM settled

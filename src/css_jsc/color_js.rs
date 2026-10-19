@@ -387,7 +387,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         | OutputColorFormat::RgbaArray
                         | OutputColorFormat::RgbArray) => {
                             let srgba: SRGB = match &result {
-                                CssColor::Float(float) => match &**float {
+                                CssColor::Float(float) => match float {
                                     css::FloatColor::Rgb(rgb) => *rgb,
                                     other => other.into_srgb(),
                                 },
@@ -553,7 +553,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
                         OutputColorFormat::Hsl => {
                             let hsl: HSL = match &result {
-                                CssColor::Float(float) => match &**float {
+                                CssColor::Float(float) => match float {
                                     css::FloatColor::Hsl(hsl) => *hsl,
                                     other => other.into_hsl(),
                                 },

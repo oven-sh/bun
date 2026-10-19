@@ -159,6 +159,8 @@ pub enum FloatColor {
     Hwb(HWB),
 }
 
+const _: () = assert!(size_of::<FloatColor>() == 20);
+
 // ──────────────────────────────────────────────────────────────────────────
 // Variant dispatch — single source of truth for (Variant ↔ Payload type ↔
 // css-name ↔ hash-ordinal). Every match-over-all-variants in this file is
@@ -367,6 +369,8 @@ impl SystemColor {
 
 /// A CSS `<color>` value.
 #[derive(Debug, Clone, PartialEq)]
+// Keeps the tag in a byte of its own. By default it moves into the tag of `FloatColor`.
+#[repr(u8)]
 pub enum CssColor {
     /// The `currentColor` keyword.
     CurrentColor,
@@ -377,7 +381,7 @@ pub enum CssColor {
     /// A predefined-space color (`color(display-p3 …)`).
     Predefined(Box<PredefinedColor>),
     /// Float RGB/HSL/HWB carrying `none` components.
-    Float(Box<FloatColor>),
+    Float(FloatColor),
     /// `light-dark()`.
     LightDark {
         light: Box<CssColor>,
@@ -386,6 +390,8 @@ pub enum CssColor {
     /// A system-color keyword.
     System(SystemColor),
 }
+
+const _: () = assert!(size_of::<CssColor>() == 24);
 
 /// `Result(CssColor)`.
 pub type ParseResult = css::CssResult<CssColor>;
@@ -1145,7 +1151,7 @@ pub(crate) fn parse_color_function(
             if !h.is_nan() && !s.is_nan() && !l.is_nan() && !a.is_nan() {
                 CssColor::Rgba(RGBA::from(hsl))
             } else {
-                CssColor::Float(Box::new(FloatColor::Hsl(hsl)))
+                CssColor::Float(FloatColor::Hsl(hsl))
             }
         }),
         b"hwb" => parse_hsl_hwb::<HWB>(input, &mut parser, false, |h, w, b, a| {
@@ -1153,7 +1159,7 @@ pub(crate) fn parse_color_function(
             if !h.is_nan() && !w.is_nan() && !b.is_nan() && !a.is_nan() {
                 CssColor::Rgba(RGBA::from(hwb))
             } else {
-                CssColor::Float(Box::new(FloatColor::Hwb(hwb)))
+                CssColor::Float(FloatColor::Hwb(hwb))
             }
         }),
         b"rgb" | b"rgba" => parse_rgb(input, &mut parser),
@@ -1452,12 +1458,7 @@ fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult
 
                 Ok(CssColor::Rgba(RGBA::from_floats(r, g, b, alpha)))
             } else {
-                Ok(CssColor::Float(Box::new(FloatColor::Rgb(SRGB {
-                    r,
-                    g,
-                    b,
-                    alpha,
-                }))))
+                Ok(CssColor::Float(FloatColor::Rgb(SRGB { r, g, b, alpha })))
             }
         })
     })

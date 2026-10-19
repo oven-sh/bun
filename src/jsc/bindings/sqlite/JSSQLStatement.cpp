@@ -421,8 +421,7 @@ public:
         }
     }
 
-    // Under strict, a statement that has parameters starts a run only when each of them has a value.
-    // Decided once for `stmt`, which starts without values.
+    // Under strict, a statement that has parameters starts a run only when each of them has a value. `stmt` starts without values.
     void attach(sqlite3_stmt* stmt)
     {
         requiresValues = strict && sqlite3_bind_parameter_count(stmt) > 0;
@@ -435,8 +434,7 @@ public:
     // The bare key is tried first, and a parameter without a value throws.
     bool strict;
     bool requiresValues = false;
-    // Only with `requiresValues`: a parameter has no value, so no run of the statement starts. Set where a bind clears
-    // the values, cleared where a bind has given every parameter one. SQLiteBinder is the only writer after attach().
+    // Only with `requiresValues`: a parameter has no value. Set where a bind clears the values, cleared where it has given each parameter one.
     bool isMissingValues = false;
     // Only with `requiresValues`: how many binds have cleared the values. A bind that script interrupted compares it.
     uint32_t clears = 0;
@@ -1022,8 +1020,7 @@ struct SQLiteBinder {
     }
 
 private:
-    // Script that ran during a property read can have finalized `stmt` (statement.finalize(), db.close()),
-    // or have bound the statement again, which cleared the values that this bind had given it.
+    // Script that ran during a property read can have finalized `stmt` (statement.finalize(), db.close()), or bound it again.
     bool checkStillAlive()
     {
         if (statement ? statement->stmt != stmt : versionDB->handle() != db) [[unlikely]] {

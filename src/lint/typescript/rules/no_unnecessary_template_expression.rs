@@ -299,6 +299,25 @@ fn is_type_of_expression(template: TypeNode) -> bool {
     }
 }
 
+/// Returns the lowest precedence a type can have to replace `ty` without parentheses, or 0 if any type works there. A
+/// conditional or function type has precedence 0, a union 1, an intersection 2, `keyof T` 3.
+pub(crate) fn binding_needed_in_place_of(ty: TypeNode) -> u8 {
+    let is_ty = |it: TypeNode| it.span() == ty.span();
+    match ty.parent() {
+        Node::TupleElem(element) if element.is_optional() && element.name().is_none() => 4,
+        Node::Type(parent) => match parent.kind() {
+            TypeKind::Array(_) => 4,
+            TypeKind::IndexedAccess { obj, .. } if is_ty(obj) => 4,
+            TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::Unique(_) => 3,
+            TypeKind::Intersection(_) => 2,
+            TypeKind::Union(_) => 1,
+            TypeKind::Cond { check, extends, .. } if is_ty(check) || is_ty(extends) => 1,
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
 /// Whether the type around `template` would take `moved` apart: `A | B` in `T[]`, `T[K]`, `keyof T`, `T & C` or
 /// `[T?]`, a conditional type in a union or before the `?` of another. tsgolint writes no parentheses there.
 fn moved_type_needs_parentheses(template: TypeNode, moved: TypeNode) -> bool {
@@ -309,21 +328,21 @@ fn moved_type_needs_parentheses(template: TypeNode, moved: TypeNode) -> bool {
         TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::Unique(_) | TypeKind::Infer(_) => 3,
         _ => return false,
     };
-    let is_template = |it: TypeNode| it.span() == template.span();
-    let needed = match template.parent() {
-        Node::TupleElem(element) if element.is_optional() && element.name().is_none() => 4,
-        Node::Type(parent) => match parent.kind() {
-            TypeKind::Array(_) => 4,
-            TypeKind::IndexedAccess { obj, .. } if is_template(obj) => 4,
-            TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::Unique(_) => 3,
-            TypeKind::Intersection(_) => 2,
-            TypeKind::Union(_) => 1,
-            TypeKind::Cond { check, extends, .. } if is_template(check) || is_template(extends) => 1,
-            _ => 0,
-        },
-        _ => 0,
+    binding < binding_needed_in_place_of(template)
+}
+
+/// True if `` `${interpolation}` `` is probably there to convert whatever a caller passes to a string. The declared
+/// type is what the author promises, not what arrives at run time. This covers parameters and `` a = `${a}` ``.
+fn is_coercion<'a>(template: Node<'a>, interpolation: Node<'a>) -> bool {
+    let (Node::Expr(template), Node::Expr(interpolation)) = (template, interpolation) else {
+        return false;
     };
-    binding < needed
+    let Some(symbol) = interpolation.symbol() else {
+        return false;
+    };
+    let is_assigned_back = matches!(template.parent(), Node::Expr(parent)
+        if parent.tag() == ExprTag::Assign && parent.left().and_then(Expr::symbol) == Some(symbol));
+    is_assigned_back || matches!(symbol.declarations().next(), Some(Declaration::Param(_)))
 }
 
 /// `head` is the text before the interpolation, `outer` the interpolation with its parentheses.
@@ -337,13 +356,16 @@ fn report_single_interpolation<'a>(
     if !cx.language().is_oxlint {
         let span = interpolation.span();
         cx.report(Span::new(span.start.saturating_sub(2), span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
-            .fix(|fixer| fixer.replace(node, get_moved_node_code(node, interpolation)));
+            .fix_where_safe(
+                || !is_coercion(node, interpolation),
+                |fixer| fixer.replace(node, get_moved_node_code(node, interpolation)),
+            );
         return;
     }
     // tsgolint reports from the `${`, whatever space follows, to the character after the interpolation and its
     // parentheses, which are a part of what is in them.
     cx.report(Span::new(head.end - 2, outer.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
-        .fix(|fixer| {
+        .fix_where_safe(|| !is_coercion(node, interpolation), |fixer| {
             let is_wrapped = match (node, interpolation) {
                 (Node::Expr(template), Node::Expr(moved)) => is_wrapped_by_tsgolint(template, moved),
                 (Node::Type(template), Node::Type(moved)) => {

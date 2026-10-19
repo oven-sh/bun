@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::{FixOrSuggest, get_fix_or_suggest};
+use bun_lint::utils::visible::{is_declared_again, is_only_declaration};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
@@ -172,7 +173,10 @@ fn check_members<'a>(
     };
     // oxlint points at the index signature.
     let place = if cx.language().is_oxlint { member.span() } else { at };
-    get_fix_or_suggest(cx.report(place, PREFER_RECORD), fix_or_suggest, PREFER_RECORD_SUGGESTION, |fixer| {
+    let fix = |fixer: Fixer<'a>| {
+        if interface.is_some_and(is_declared_again) {
+            return None;
+        }
         let mut text = Vec::new();
         if let Some(interface) = interface {
             text.extend_from_slice(b"type ");
@@ -197,8 +201,13 @@ fn check_members<'a>(
         if interface.is_some() {
             text.push(b';');
         }
-        fixer.replace(at, text)
-    });
+        Some(fixer.replace(at, text))
+    };
+    let report = cx.report(place, PREFER_RECORD);
+    match fix_or_suggest {
+        FixOrSuggest::Fix => report.fix_where_safe(|| interface.is_none_or(is_only_declaration), fix),
+        _ => get_fix_or_suggest(report, fix_or_suggest, PREFER_RECORD_SUGGESTION, fix),
+    };
 }
 
 impl ConsistentIndexedObjectStyle {

@@ -644,7 +644,7 @@ describe.concurrent.each(
     locked: tgz.integrity,
   });
 
-  it("keeps the tarballs of two projects apart that depend on the same path or URL", async () => {
+  it("keeps the tarballs of two projects that depend on the same path or URL separate", async () => {
     const one = await tarball("one");
     const two = await tarball("two");
     using box = sandbox("tarball-two-projects", { one: {}, two: {} });
@@ -776,7 +776,7 @@ describe.concurrent.each(
       expect(await box.installed("app")).toBe('module.exports = "v1";\n');
       expect(box.requests.length).toBe(kind === "URL" ? 1 : 0);
 
-      // From here on neither the path nor the URL has it.
+      // From here on, neither the path nor the URL serves it.
       box.served.clear();
       await rm(join(box.root, "app", "pkg.tgz"), { force: true });
 
@@ -817,7 +817,7 @@ describe.concurrent.each(
     expect(await box.lockfile("app")).toBe(lockfile);
   });
 
-  it("a bun.lock that pins another build replaces what is installed", async () => {
+  it("a bun.lock that pins a different build replaces the installed one", async () => {
     const v1 = await tarball("v1");
     const v2 = await tarball("v2");
     using box = sandbox("tarball-pulled-lockfile", { app: {}, teammate: {} });
@@ -832,10 +832,10 @@ describe.concurrent.each(
     expect(await box.state("app")).toEqual(stateOf("v2", v2));
   });
 
-  it("does not look at what an older version cached under a hash of the path or URL", async () => {
+  it("ignores what an older version cached under a hash of the path or URL", async () => {
     const v1 = await tarball("v1");
     using box = sandbox("tarball-old-cache", { app: {} });
-    // What Bun 1.4 called the entry of `pkg.tgz`.
+    // The name that Bun 1.4 gave the cache entry of `pkg.tgz`.
     const oldEntry = "@T@85f77fa09e18a07f@@@1";
     const oldFiles = {
       "package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
@@ -882,17 +882,17 @@ describe.concurrent.each(
       expect(JSON.parse(await file(join(box.root, "app", "package.json")).text()).dependencies).toEqual({
         pkg: box.spec,
       });
-      // Nothing was replaced: a project that still pins v1 keeps its entry.
+      // Nothing was replaced, so a project that still pins v1 keeps its entry.
       expect(await box.cacheEntries()).toEqual([v1.cacheEntry, v2.cacheEntry].sort());
 
-      // bun.lock describes what the path or URL holds, so a machine with nothing cached can install it.
+      // bun.lock describes what's at the path or URL, so a machine with an empty cache can install it.
       await rm(join(box.root, "cache"), { recursive: true });
       await box.reinstall("app", "--frozen-lockfile");
       expect(await box.state("app")).toEqual(stateOf("v2", v2));
     });
 
     it.each(["install", "install --force --frozen-lockfile", "install --force --no-save", "install --force --offline"])(
-      "bun %s keeps what bun.lock records",
+      "bun %s keeps what's recorded in bun.lock",
       async command => {
         const { box, v1, lockfile, requests } = await changed(`tarball-keep-${command.replaceAll(/\W+/g, "-")}`);
         using _ = box;
@@ -905,7 +905,7 @@ describe.concurrent.each(
       },
     );
 
-    it("another dependency on the same path or URL gets what bun.lock records, without reading it again", async () => {
+    it("another dependency on the same path or URL gets what's recorded in bun.lock, without reading it again", async () => {
       const { box, v1, requests } = await changed("tarball-second-dependent");
       using _ = box;
 
@@ -920,7 +920,7 @@ describe.concurrent.each(
       expect(await box.cacheEntries()).toEqual([v1.cacheEntry]);
     });
 
-    it("fails a clean install, and names no other bytes in bun.lock", async () => {
+    it("fails a clean install, and doesn't record other bytes in bun.lock", async () => {
       const { box, lockfile } = await changed("tarball-changed-clean-install");
       using _ = box;
 
@@ -933,7 +933,7 @@ describe.concurrent.each(
     });
   });
 
-  it("bun update installs what the new build of the tarball depends on", async () => {
+  it("bun update installs the dependencies of the tarball's new build", async () => {
     const dep = await tarball("dep", {}, "dep");
     using box = sandbox("tarball-refresh-dependencies", { app: {} });
     box.served.set("/dep.tgz", dep.file);
@@ -1474,12 +1474,12 @@ describe.concurrent("tarball integrity metadata forms", () => {
       "warn: Unsupported or malformed integrity hash in registry metadata for pkg@1.0.0, tarball will not be verified",
     );
     expect(stdout).toContain("1 package installed");
-    // Nothing usable was advertised, so the lockfile carries no pin for it.
+    // No usable hash was advertised, so the lockfile has no pin for it.
     expect(await file(join(String(dir), "bun.lock")).text()).not.toMatch(/sha\d+-/);
     expect(exitCode).toBe(0);
   });
 
-  it("stays quiet when the manifest advertises no hash at all", async () => {
+  it("prints nothing when the manifest advertises no hash at all", async () => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
 
     await using server = serveManifest({}, real.tgz);
@@ -1499,9 +1499,9 @@ describe.concurrent("tarball integrity metadata forms", () => {
   });
 });
 
-// bun writes a hash that it can check, or none. Reading anything else as "none" would let an edit of
-// bun.lock turn the check off, and for a tarball have whatever is there now installed and recorded.
-describe.concurrent("an integrity in bun.lock that is not one", () => {
+// Bun writes a hash that it can check, or none. Reading anything else as "none" would let an edit of bun.lock turn the
+// check off. For a tarball, it would also install and record whatever is there now.
+describe.concurrent("an invalid integrity in bun.lock", () => {
   const tgz = tarball({ "package.json": Buffer.from(JSON.stringify({ name: "pkg", version: "1.0.0" })) });
   const integrity = "sha512-" + createHash("sha512").update(tgz).digest("base64");
   const rows = {
@@ -1559,7 +1559,7 @@ describe.concurrent("an integrity in bun.lock that is not one", () => {
     });
   });
 
-  it("is reported, and bun.lock written anew, by an install that may do so", async () => {
+  it("is reported, and bun.lock is rewritten, by an install that's allowed to", async () => {
     const result = await install("file: tarball", 2, "md5-AAAAAAAAAAAAAAAAAAAAAA==");
     expect(result.stderr).toContain("error: Unsupported or malformed integrity hash\n");
     expect(result.stderr).toContain("Ignoring lockfile");

@@ -2161,7 +2161,7 @@ ${yarnEntry("peer-deps-too", "1.0.0", `  peerDependencies:\n    no-deps "*"\n`)}
 
     expect(exporting.stderr).not.toContain("error:");
     expect(nodeModulesPackages(packageDir)).toBe(installed);
-    // As yarn: an entry is keyed by the name that package.json gives the dependency.
+    // Like Yarn, an entry is keyed by the name that package.json gives the dependency.
     const yarnLock = fs.readFileSync(join(packageDir, "yarn.lock"), "utf8");
     expect(yarnLock.split("\n").filter(line => /^[^#\s].*:$/.test(line))).toEqual([
       `"aliased@npm:a-dep@^1.0.1":`,
@@ -2579,10 +2579,10 @@ describe.concurrent("yarn.lock migration of workspace dependencies", () => {
         name: "mono",
         private: true,
         workspaces: ["packages/*"],
-        // Not in yarn.lock (added to package.json after the last `yarn install`).
+        // It isn't in yarn.lock, because it was added to package.json after the last `yarn install`.
         dependencies: { "is-odd": "^3.0.1" },
         devDependencies: { lodash: "^4.17.21" },
-        // yarn applied this when it wrote yarn.lock; the workspaces' lodash peers bind all the same.
+        // Yarn applied this when it wrote yarn.lock. The workspaces' lodash peers are still bound.
         resolutions: { lodash: "^4.17.21" },
       }),
       "packages/a/package.json": JSON.stringify({
@@ -2611,7 +2611,7 @@ describe.concurrent("yarn.lock migration of workspace dependencies", () => {
       "packages/c/package.json": JSON.stringify({
         name: "@mono/c",
         version: "0.0.1",
-        // Neither peer is satisfied by the first `is-number` / `lodash` yarn.lock has.
+        // The first `is-number` and `lodash` in yarn.lock don't satisfy either peer.
         peerDependencies: { "is-number": "6.0.0", lodash: "^3.0.0" },
       }),
       "yarn.lock": yarnLock(
@@ -2699,7 +2699,7 @@ describe("bun install migrating a yarn.lock with workspaces", () => {
           name: "mono",
           private: true,
           workspaces: ["packages/*"],
-          // Not in yarn.lock: resolved from the registry, without disturbing the locked versions.
+          // It isn't in yarn.lock, so it's resolved from the registry, without changing the locked versions.
           dependencies: { "a-dep": "1.0.1" },
         }),
         "packages/a/package.json": JSON.stringify({
@@ -2750,7 +2750,7 @@ describe("bun install migrating a yarn.lock with workspaces", () => {
     expect(nodeModulesPackages(packageDir)).toBe(installed);
   });
 
-  test("a frozen install goes without the project's own peers, which yarn.lock never lists", async () => {
+  test("a frozen install skips the project's own peers, which yarn.lock never lists", async () => {
     const { packageDir } = await verdaccio.createTestDir({
       files: {
         "package.json": JSON.stringify({
@@ -3621,7 +3621,7 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
       .packages;
 
   test.each(["url", "file", "owner/repo"] as const)(
-    "%s: a dependency with the name and version of a registry package stays apart from it",
+    "%s: a dependency with the name and version of a registry package is kept separate from it",
     async kind => {
       const upstream = { name: "b", version: "1.0.0", from: "registry" };
       const user = { name: "p", version: "1.0.0", dependencies: { b: "^1.0.0" } };
@@ -3655,7 +3655,7 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
   );
 
   test("an owner/repo dependency is the archive that yarn.lock names", async () => {
-    // Somebody else's package of that name.
+    // A different package with that name, published by someone else.
     const other = { name: "g", version: "1.0.0", os: ["sunos"], bin: { tsc: "cli.js" } };
     const mine = await tarball({ name: "g", version: "1.0.0", bin: { g: "cli.js" } }, `r-${commit}`);
     using server = await serve([other], { [`/o/r/tar.gz/${commit}`]: mine });
@@ -3682,7 +3682,7 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
     const entry = (name: string, resolved: string) =>
       `${name}@^1.0.0:\n  version "1.0.0"\n  resolved "${resolved}"\n\n`;
     const urls = {
-      // Not the path that a registry gives this name and version.
+      // This isn't the path that a registry uses for this name and version.
       archive: `${mirror.url}o/archive/tar.gz/${commit}`,
       "other-bytes": `${mirror.url}other-bytes/-/other-bytes-1.0.0.tgz`,
       sha1: `${mirror.url}sha1/-/sha1-1.0.0.tgz`,

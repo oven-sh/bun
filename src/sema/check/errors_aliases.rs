@@ -235,26 +235,6 @@ impl Checker<'_, '_> {
             && !module.is_from_external_library
     }
 
-    /// `markJsxAliasReferenced`, as `MarkLinkedReferencesRecursively` calls it for every tag of the
-    /// file, a node before its children: `getJsxNamespaceContainerForImplicitImport` reports a
-    /// module that is missing at the first one.
-    pub(super) fn mark_jsx_aliases_referenced(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `importElisionEnabled`
-        if hir.jsx.is_empty()
-            || !self.emits_js_file(file)
-            || self.p.files.options.verbatim_module_syntax
-        {
-            return;
-        }
-        let index = self.exprs_by_kind(file);
-        let tags = index.of(ExprTag::Jsx).iter().copied();
-        let first = tags
-            .filter(|e| !bound.is_unchecked(e.idx()))
-            .min_by_key(|&e| hir[e].pos);
-        self.first_jsx = (file, first, None);
-    }
-
     /// `markPropertyAliasReferenced`, as `MarkLinkedReferencesRecursively` calls it for every `a.b`
     /// of the file: `checkExpressionCached(a)`, before `ConstEnumInliningTransformer` checks any
     /// access.
@@ -302,11 +282,11 @@ impl Checker<'_, '_> {
     /// (`isParameterOfContextSensitiveSignature`).
     fn unassigned_parameter_read_by(&mut self, file: FileId, e: ExprId) -> Option<(FnId, PatId)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let symbol = bound.expr_symbol[e.idx()];
+        let symbol = bound.symbol_of_expr(e);
         if symbol.is_none() {
             return None;
         }
-        let Some(&Decl::Param(pat)) = bound.symbols[symbol.idx()].decls.first() else {
+        let Some(&Decl::Param(pat)) = bound.symbol(symbol).decls.first() else {
             return None;
         };
         let PatParent::Param(p) = bound.pat_parent[pat.idx()] else {
@@ -371,7 +351,7 @@ impl Checker<'_, '_> {
         accesses.shared_sort_by_key(|&e| (self.start_of(file, e), std::cmp::Reverse(e)));
         for e in accesses {
             let is_computed_name = matches!(
-                bound.expr_parent[e.idx()],
+                bound.parent_of_expr(e),
                 Parent::PropKey(..)
                     | Parent::PatKey(_)
                     | Parent::MemberKey(_)
@@ -453,8 +433,7 @@ impl Checker<'_, '_> {
     /// `getExternalModuleMember`, or by `resolveESModuleSymbol` for `import * as ns`.
     fn has_alias_from_exports_of_module(&self, file: FileId, module: Sym) -> bool {
         let (files, hir) = (self.files(), self.hir(file));
-        let aliases = self.bound(file).symbols.iter();
-        let aliases = aliases.filter(|symbol| symbol.flags.contains(SymFlags::ALIAS));
+        let aliases = self.bound(file).symbols.with_flags(SymFlags::ALIAS);
         aliases.flat_map(|symbol| symbol.decls.iter()).any(|&decl| {
             let specifier = match decl {
                 Decl::ImportNamespace(import) => {
@@ -817,7 +796,7 @@ impl Checker<'_, '_> {
                 continue;
             };
             // `checkExportAssignment`: a name that is not a value is not checked as an expression.
-            let is_checked = match bound.expr_parent[e.idx()] {
+            let is_checked = match bound.parent_of_expr(e) {
                 Parent::None => false,
                 Parent::Stmt(s) if s.is_some() => {
                     is_parenthesized(hir, e)
@@ -861,7 +840,7 @@ impl Checker<'_, '_> {
         let Some(id) = bound.lookup(bound.scopes[0].locals, name) else {
             return;
         };
-        let import = bound.symbols[id.idx()].decls.iter().copied().find(|d| {
+        let import = bound.symbol(id).decls.iter().copied().find(|d| {
             matches!(
                 d,
                 Decl::ImportDefault(_)
@@ -1480,7 +1459,7 @@ impl Checker<'_, '_> {
     // ───────────────────────────── comment directives ─────────────────────────────
 
     /// TS2578 for each `@ts-expect-error` of `file`, fully built. `finish_file` reports those whose
-    /// directive suppressed nothing, which is known only after the last barrier. Built at the end
+    /// directive suppressed nothing, which is known only after the last task has ended. Built at the end
     /// of `check_file`: the report step runs no query and reads no HIR.
     pub(super) fn expected_errors(&mut self, file: FileId) -> Vec<Reported> {
         let hir = self.hir(file);

@@ -7,7 +7,7 @@
 use core::ffi::c_void;
 #[cfg(unix)]
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, Ordering};
 use std::io::Write as _;
 
 use bun_core::strings;
@@ -1047,19 +1047,14 @@ pub(crate) mod abort_handler {
     pub(crate) static ABORT_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
     /// The loop `Coordinator::drive` ticks. Set by `install`, cleared by `uninstall`.
-    static LOOP: AtomicPtr<bun_uws::Loop> = AtomicPtr::new(core::ptr::null_mut());
+    static LOOP: bun_uws::LoopWaker = bun_uws::LoopWaker::unset();
 
     /// Signal context on POSIX; the console control thread on Windows. The
     /// poll retries on EINTR, so without the wakeup `drive` reads the flag
     /// only when something else ends the poll.
     fn request_abort(signal: i32) {
         ABORT_SIGNAL.store(signal, Ordering::Release);
-        let loop_ = LOOP.load(Ordering::Acquire);
-        if !loop_.is_null() {
-            // SAFETY: the loop is process-lifetime, and the raw extern is the
-            // thread-safe entry point (no `&mut Loop` formed off the main thread).
-            unsafe { bun_uws::us_wakeup_loop(loop_) };
-        }
+        LOOP.wake();
     }
 
     // PORTING.md §Global mutable state: written once in `install()` (single
@@ -1102,9 +1097,10 @@ pub(crate) mod abort_handler {
         }
     }
 
-    /// `loop_` is the loop `Coordinator::drive` ticks.
+    /// `loop_` is the loop `Coordinator::drive` ticks: the main thread's.
     pub(crate) fn install(loop_: *mut bun_uws::Loop) -> Guard {
-        LOOP.store(loop_, Ordering::Release);
+        // SAFETY: the main thread's loop lives for the rest of the process.
+        unsafe { LOOP.set(loop_) };
         #[cfg(unix)]
         {
             // SAFETY: signal handler installation; PREV_* are written before
@@ -1164,6 +1160,6 @@ pub(crate) mod abort_handler {
                 bun_sys::windows::FALSE,
             );
         }
-        LOOP.store(core::ptr::null_mut(), Ordering::Release);
+        LOOP.clear();
     }
 }

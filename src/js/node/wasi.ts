@@ -709,7 +709,7 @@ class WASI {
     };
     const CHECK_FD = (fd: number, rights: bigint) => {
       const stats = stat(this, fd);
-      if (rights !== BigInt(0) && (stats.rights.base & rights) === BigInt(0)) {
+      if ((stats.rights.base & rights) !== rights) {
         // uvwasi refuses with ENOTCAPABLE, the one value that wasi-libc maps to the errno of the call: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/fd_table.c#L370-L374
         throw new WASIError(WASI_ENOTCAPABLE);
       }
@@ -978,7 +978,8 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_pwrite: wrap((fd, iovs, iovsLen, offset, nwritten) => {
-        const stats = CHECK_FD(fd, WASI_RIGHT_FD_WRITE | WASI_RIGHT_FD_SEEK);
+        // uvwasi also names FD_SEEK, which stdin, stdout and stderr do not have here. The host call decides if the descriptor can seek: Zig's std writes with fd_pwrite first and retries with fd_write on ESPIPE, ENXIO or EOVERFLOW, not on ENOTCAPABLE: https://github.com/ziglang/zig/blob/0.15.2/lib/std/posix.zig#L1533-L1536
+        const stats = CHECK_FD(fd, WASI_RIGHT_FD_WRITE);
         let written = 0;
         getiovs(iovs, iovsLen).forEach(iov => {
           let w = 0;
@@ -1023,7 +1024,8 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_pread: wrap((fd, iovs, iovsLen, offset, nread) => {
-        const stats = CHECK_FD(fd, WASI_RIGHT_FD_READ | WASI_RIGHT_FD_SEEK);
+        // FD_SEEK is left to the host, as in fd_pwrite.
+        const stats = CHECK_FD(fd, WASI_RIGHT_FD_READ);
         let read = 0;
         outer: for (const iov of getiovs(iovs, iovsLen)) {
           let r = 0;

@@ -2453,7 +2453,7 @@ describe("`bun audit fix`", () => {
       range: ">1.0 <1.2.0",
       installed: "1.1.0-rc.1",
       fixed: "1.2.0",
-      copyVersions: { "1.1.0-rc.1": "1.0.0-rc.1", "1.2.0": "1.1.0" },
+      copyVersions: { "1.1.0-rc.1": "1.0.0-rc.1", "1.2.0": "1.1.0" } as Record<string, string>,
     },
   ])(
     "an advisory $range for an installed prerelease is matched and the pin is rewritten",

@@ -1598,7 +1598,15 @@ async function installStreamPkg(
     "tmp/.keep": "",
   });
   tmp = join(String(dir), "tmp");
-  const results = [];
+  const results: {
+    error: string | undefined;
+    streamed: boolean;
+    installed: boolean;
+    cached: number;
+    tmp: string[];
+    exitCode: number;
+    files?: Record<string, string>;
+  }[] = [];
   for (let i = 0; i < installs; i++) {
     const { stderr, exitCode } = await runInstall(String(dir), {
       BUN_TMPDIR: tmp,

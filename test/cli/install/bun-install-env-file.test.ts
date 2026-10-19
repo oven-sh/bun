@@ -53,7 +53,7 @@ async function run(opts: RunOptions): Promise<{ auth: string[]; stderr: string }
     },
   });
 
-  using dir = tempDir("install-env-file", opts.files(server.port));
+  using dir = tempDir("install-env-file", opts.files(server.port!));
   const root = String(dir);
 
   await using proc = Bun.spawn({
@@ -64,7 +64,7 @@ async function run(opts: RunOptions): Promise<{ auth: string[]; stderr: string }
       NODE_ENV: undefined,
       BUN_ENV: undefined,
       NPM_TOKEN: undefined,
-      ...opts.env?.(root, server.port),
+      ...opts.env?.(root, server.port!),
     },
     stdout: "pipe",
     stderr: "pipe",

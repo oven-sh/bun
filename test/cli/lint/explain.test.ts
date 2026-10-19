@@ -153,7 +153,9 @@ describe.concurrent("--rules -f json", () => {
     // Only an ESLint config can set a file's language, so a rule for a language doesn't have the "native" mode.
     const isNative = (it: Listed) => it.modes.includes("native");
     expect(rules.filter(it => isNative(it) !== (it.languages.length === 0)).map(it => it.id)).toEqual([]);
-    expect([...new Set(rules.map(it => it.kind))].sort()).toEqual(["layout", "problem", "suggestion", null].sort());
+    expect([...new Set(rules.map(it => it.kind))].sort()).toEqual<(string | null)[]>(
+      ["layout", "problem", "suggestion", null].sort(),
+    );
   });
 
   test("docs_url points to the rule's page in its plugin's directory", async () => {

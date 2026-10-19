@@ -254,7 +254,7 @@ describe("BackPressure buffer", () => {
 // end() doesn't send it, uws only closes when the end() timer fires, 16 s at
 // the default idleTimeout, so don't lower idleTimeout in these tests.
 describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
-  type ServerWebSocket = import("bun").ServerWebSocket<unknown>;
+  type ServerWebSocket = import("bun").ServerWebSocket<undefined>;
   const secure = scheme === "wss";
   const FRAME = 1024 * 1024;
   const LIMIT = 2 * FRAME;
@@ -307,7 +307,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
       sock.once("end", resolve);
       sock.once("close", resolve);
     });
-    sock.on("data", chunk => chunks.push(chunk));
+    sock.on("data", (chunk: Buffer) => chunks.push(chunk));
     const start = performance.now();
     sock.resume();
     await finished;

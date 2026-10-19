@@ -729,7 +729,7 @@ describe.each(["hoisted", "isolated"] as const)("a member asks for a workspace t
           loads: await file(
             existsSync(nested) ? nested : join(packageDir, "node_modules", "no-deps", "package.json"),
           ).json(),
-          locked: (await file(join(packageDir, "bun.lock")).text()).match(/"no-deps@[^"]+"/g),
+          locked: (await file(join(packageDir, "bun.lock")).text()).match(/"no-deps@[^"]+"/g) as string[] | null,
         };
       }
       const expected = {
@@ -4369,7 +4369,9 @@ describe("a workspace outside the project", () => {
       }).toEqual({ inApp: "1.0.0", inProject: "2.0.0", ranScript: true, keptExtra: true });
       expect(realpathSync(join(project, "node_modules", "app"))).toBe(realpathSync(join(packageDir, "app")));
       expect(exitCode).toBe(0);
-      expect(Bun.JSON5.parse(await file(join(project, "bun.lock")).text()).workspaces[path]).toMatchObject({
+      expect(
+        (Bun.JSON5.parse(await file(join(project, "bun.lock")).text()) as Bun.BunLockFile).workspaces[path],
+      ).toMatchObject({
         name: "app",
         dependencies: app.dependencies,
       });
@@ -4434,7 +4436,7 @@ describe("a workspace outside the project", () => {
       expect(await file(join(packageDir, "no-deps", "node_modules", "a-dep", "package.json")).json()).toMatchObject({
         version: "1.0.1",
       });
-      const { packages } = Bun.JSON5.parse(await file(join(project, "bun.lock")).text());
+      const { packages } = Bun.JSON5.parse(await file(join(project, "bun.lock")).text()) as Bun.BunLockFile;
       expect(packages["./no-deps/a-dep"][0]).toBe("a-dep@1.0.1");
     });
   });
@@ -4526,7 +4528,7 @@ describe.skipIf(isWindows)("in a workspace that's a link to a folder somewhere e
 
     const dependencies = { "no-deps": "^2.0.0" };
     expect(await file(join(packageDir, real, "package.json")).json()).toEqual({ ...shared, dependencies });
-    const lockfile = Bun.JSON5.parse(await file(join(repo, "bun.lock")).text());
+    const lockfile = Bun.JSON5.parse(await file(join(repo, "bun.lock")).text()) as Bun.BunLockFile;
     expect(lockfile.workspaces["packages/shared"]).toEqual({ ...shared, dependencies });
     expect(Object.keys(lockfile.packages).sort()).toEqual(["no-deps", "shared"]);
     expect(existsSync(join(packageDir, real, "bun.lock"))).toBe(false);
@@ -4582,7 +4584,7 @@ describe.skipIf(isWindows)("in a workspace that's a link to a folder somewhere e
 
       const dependencies = { lib: "workspace:*", "no-deps": "1.0.0" };
       expect((await file(join(w, "package.json")).json()).dependencies).toEqual(dependencies);
-      const lockfile = Bun.JSON5.parse(await file(join(repo, "bun.lock")).text());
+      const lockfile = Bun.JSON5.parse(await file(join(repo, "bun.lock")).text()) as Bun.BunLockFile;
       expect(lockfile.workspaces["packages/w"].dependencies).toEqual(dependencies);
       expect(existsSync(join(w, "bun.lock"))).toBe(false);
     });

@@ -71,7 +71,7 @@ describe.concurrent.each([
     const lines = stdout.trimEnd().split("\n");
     expect(lines[0]).toBe(`Usage: bun ${command} [flags] [...files, directories or patterns]`);
     expect(stdout.match(/^\S.*:$/gm)).toEqual(["Flags:", "Examples:"]);
-    expect(Object.keys(listed(stdout))).toEqual(common);
+    expect(Object.keys(listed(stdout))).toEqual<readonly string[]>(common);
     expect(lines.filter(line => line.startsWith(`  bun ${command}`))).toHaveLength(3);
     expect(lines.slice(-2)).toEqual([
       `Full documentation is available at https://bun.com/docs/${command === "fmt" ? "format" : command}`,
@@ -84,7 +84,7 @@ describe.concurrent.each([
 
   test("--help --all lists every flag the command accepts", async () => {
     const { stdout, stderr, exitCode } = await run(command, "--help", "--all");
-    expect(stdout.match(/^\S.*:$/gm)).toEqual([...headings.map(heading => `${heading}:`), "Examples:"]);
+    expect(stdout.match(/^\S.*:$/gm)).toEqual<string[]>([...headings.map(heading => `${heading}:`), "Examples:"]);
     const params = readFileSync(join(root, source), "utf8").matchAll(/clap::param!\(\s*"(?:-\w, )?(--[^\s"]+)/g);
     const taken = [...params].flatMap(it => it[1].split("/"));
     expect(taken.length).toBeGreaterThan(70);
@@ -101,10 +101,13 @@ describe.concurrent.each([
     expect(listed(all.stdout)).toMatchObject(listed(short.stdout));
   });
 
-  test.each([["--help-all"], ["--all", "--help"], ["-h", "--all"]])("%s %s is --help --all", async (...args) => {
-    const [one, other] = await Promise.all([run(command, ...args), run(command, "--help", "--all")]);
-    expect(one).toEqual(other);
-  });
+  test.each([["--help-all"], ["--all", "--help"], ["-h", "--all"]] as string[][])(
+    "%s %s is --help --all",
+    async (...args) => {
+      const [one, other] = await Promise.all([run(command, ...args), run(command, "--help", "--all")]);
+      expect(one).toEqual(other);
+    },
+  );
 
   // ESLint, oxlint, Prettier and other tools behind such scripts have these flags too.
   test.each([
@@ -382,7 +385,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
           outside(["--cwd", "project", command, ...rest], { BUN_OPTIONS: "--no-script" }),
         ]);
         expect(without).toBe(plain);
-        expect(withFlag).toEqual(Array(5).fill("the command"));
+        expect(withFlag).toEqual<string[]>(Array(5).fill("the command"));
       });
     });
 
@@ -399,7 +402,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
       },
     );
 
-    test.skipIf(command !== "check").each([
+    test.skipIf(command !== "check").each<string[]>([
       ["-r", "./pre.js"],
       ["-F", "*"],
     ])("bun %s %s check --no-script fails and doesn't run the script", async (...front) => {
@@ -563,7 +566,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
       });
     });
 
-    test.each([
+    test.each<string[]>([
       [command, "--help"],
       [command, "-h"],
       ["--help", command],

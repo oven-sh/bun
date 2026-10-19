@@ -60,7 +60,7 @@ export const FULL_MANIFEST_ACCEPT = "application/json, */*";
  */
 function manifestVersionInfo(request: Request, info: any) {
   const accept = request.headers.get("accept");
-  expect([ABBREVIATED_MANIFEST_ACCEPT, FULL_MANIFEST_ACCEPT]).toContain(accept);
+  expect([ABBREVIATED_MANIFEST_ACCEPT, FULL_MANIFEST_ACCEPT]).toContain<string | null>(accept);
   if (accept === ABBREVIATED_MANIFEST_ACCEPT && "libc" in info) {
     const { libc, ...abbreviated } = info;
     return abbreviated;

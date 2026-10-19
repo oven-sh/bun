@@ -13,7 +13,7 @@ afterAll(endChildren);
 
 type Case = { name: string; filename: string; options: Record<string, unknown>; input: string; output: string };
 
-const tools = {
+const tools: Record<string, (options: object) => [string, object]> = {
   trivago: (options: object) => [
     ".prettierrc.json",
     { plugins: ["@trivago/prettier-plugin-sort-imports"], ...options },

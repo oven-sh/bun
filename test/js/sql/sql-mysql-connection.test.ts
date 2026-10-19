@@ -137,7 +137,7 @@ for (const image of ["mysql_plain", "mariadb_plain"] as const) {
         const { port, server } = await listeningServer(client => {
           const upstream = net.connect(container.port, container.host);
           let buffered: Buffer = Buffer.alloc(0);
-          client.on("data", chunk => {
+          client.on("data", (chunk: Buffer) => {
             buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (_, payload) => {
               wire.push(commands[payload[0]] ?? "other");
             });
@@ -532,7 +532,7 @@ for (const image of ["mysql_plain", "mariadb_plain"] as const) {
         const clientLeft = Promise.withResolvers<void>();
         const { port, server } = await listeningServer(client => {
           const upstream = net.connect(container.port, container.host);
-          client.on("data", chunk => void (sent.push(chunk), upstream.write(chunk)));
+          client.on("data", (chunk: Buffer) => void (sent.push(chunk), upstream.write(chunk)));
           upstream.on("data", chunk => void client.write(chunk));
           client.on("end", () => upstream.end());
           upstream.on("end", () => client.end());
@@ -666,7 +666,7 @@ for (const image of ["mysql_plain", "mariadb_plain"] as const) {
           ({ affectedRows }) => ({ affectedRows }),
           ({ errno }) => ({ errno }),
         );
-        expect({ settled, cancelled: query.cancelled, ids: await ids() }).toEqual({
+        expect({ settled, cancelled: query.cancelled, ids: await ids() }).toEqual<object>({
           settled: said,
           cancelled: true,
           ids: stored,
@@ -881,7 +881,7 @@ describe("scripted server", () => {
       script.onSocket?.(socket);
       socket.on("error", () => {});
       socket.write(mysqlHandshakeV10());
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
           if (state === "auth") {
             state = "setup";

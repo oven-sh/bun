@@ -6497,7 +6497,7 @@ describe.skipIf(isWindows).concurrent("a symbolic link that leads nowhere, to it
     "bunfig.toml": { "bunfig.toml": `[lint.rules]\n"no-var" = "error"\n` },
     "no file": {},
   };
-  const others = { "a.js": code, "sub/b.js": code };
+  const others: Record<string, string> = { "a.js": code, "sub/b.js": code };
   /** The files with problems, what is printed, and the exit code. `links`: where each is, and what it has. */
   const linted = async (flavor: string, links: Record<string, string>, args = ["."], files = others) => {
     const inProject = Object.entries({ ...flavors[flavor], ...files }).map(([name, text]) => [`project/${name}`, text]);
@@ -6670,7 +6670,7 @@ describe.concurrent("a search that leaves the project of an eslint.config.js", (
   };
   const ofMine = ["mine/nested/x.js", "mine/sub/x.js", "mine/x.js"];
 
-  test.each([[".."], ["<w>/**/x.js"], ["../**/x.js"], ["<w>"], [".", ".."]])(
+  test.each([[".."], ["<w>/**/x.js"], ["../**/x.js"], ["<w>"], [".", ".."]] as string[][])(
     "only what is in the working directory is entered: %s",
     async (...args) => {
       expect(await run("mine", args)).toMatchObject({ ran: ["mine", "mine/nested"], files: ofMine, exitCode: 1 });

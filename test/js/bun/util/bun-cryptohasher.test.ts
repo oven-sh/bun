@@ -21,7 +21,7 @@ test.each([
   expect(() => Bun.CryptoHasher.hash("sha1", file)).toThrow(fileBlob);
   expect(() => new Bun.SHA1().update(file)).toThrow(fileBlob);
   expect(() => new Bun.CryptoHasher("sha1").update(file)).toThrow(fileBlob);
-  expect(() => Bun.sha(file)).toThrow(fileBlob);
+  expect(() => Bun.sha(file as any)).toThrow(fileBlob);
 });
 test("CryptoHasher update should throw when no parameter/null/undefined is passed", () => {
   const expected = expect.objectContaining({

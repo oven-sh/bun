@@ -280,12 +280,12 @@ const outcome = (promise: PromiseLike<unknown>): Promise<any> =>
   promise.then(
     value => (value === undefined || Array.isArray(value) ? "resolved" : value),
     err => err?.code ?? err?.message ?? err,
-  );
+  ) as Promise<any>;
 const errorOf = (promise: PromiseLike<unknown>): Promise<any> =>
   promise.then(
     () => null,
     err => err,
-  );
+  ) as Promise<any>;
 
 /** Not expect(fn).toThrow(): that one waits for what `fn` returns, and nothing starts a lazy query. */
 function thrownBy(fn: () => unknown) {
@@ -1763,7 +1763,7 @@ describe.concurrent("every handle", () => {
     );
     expect(() => Reflect.construct(SQL, ["sqlite://:memory:"], Object)).toThrow("Bun.SQL cannot be subclassed");
     await using proxied = new new Proxy(SQL, {})("sqlite://:memory:");
-    await using bound = new (SQL.bind(null, "sqlite://:memory:"))();
+    await using bound = new (SQL.bind(null, "sqlite://:memory:" as any))();
     expect([proxied instanceof SQL, bound instanceof SQL]).toEqual([true, true]);
   });
 

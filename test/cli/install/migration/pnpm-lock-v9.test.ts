@@ -3419,7 +3419,7 @@ snapshots:
   });
 
   // [`repo` as pnpm writes it, the version of the importer, the URL in bun.lock]; LOCAL is the repository's file: URL.
-  test.concurrent.each([
+  test.concurrent.each<string[]>([
     ["LOCAL", "git+LOCAL", "git+LOCAL"],
     [
       "https://git.example.com/org/c.git",

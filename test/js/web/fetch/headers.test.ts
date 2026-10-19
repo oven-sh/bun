@@ -546,7 +546,7 @@ describe("Headers", () => {
     ];
     const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-    function expectEveryWalk(headers: Headers, expected: string[][]) {
+    function expectEveryWalk(headers: Headers, expected: [string, string][]) {
       const forEach: string[][] = [];
       headers.forEach((value, key, parent) => {
         expect(parent).toBe(headers);
@@ -576,7 +576,7 @@ describe("Headers", () => {
       for (const name of names) headers.set(name, `value of ${name}`);
 
       const expected = names
-        .map(name => [name.toLowerCase(), `value of ${name}`])
+        .map((name): [string, string] => [name.toLowerCase(), `value of ${name}`])
         .sort((a, b) => byCodeUnit(a[0], b[0]));
       expectEveryWalk(headers, expected);
     });
@@ -589,7 +589,7 @@ describe("Headers", () => {
         ["Set-Cookie", "b=2"],
         ["Accept", "*/*"],
       ]);
-      const expected = [
+      const expected: [string, string][] = [
         ["accept", "*/*"],
         ["x-last", "1"],
         ["set-cookie", "a=1"],
@@ -898,7 +898,7 @@ describe("Headers", () => {
         return iterator;
       })();
       Bun.gc(true);
-      expect([...iterator]).toEqual(
+      expect([...iterator]).toEqual<string[][]>(
         Array.from({ length: 32 }, (_, i) => [`x-custom-${i}`, valueOf(i)]).sort((a, b) => byCodeUnit(a[0], b[0])),
       );
     });

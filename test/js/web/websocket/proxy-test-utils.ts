@@ -333,7 +333,7 @@ export async function startOriginWithCorruptRecord(route: "direct" | "http" | "h
       ? net.createServer(client => {
           const target = net.connect(origin.port, "127.0.0.1");
           client.on("data", chunk => target.write(chunk));
-          target.on("data", chunk => onTargetData(chunk, bytes => client.write(bytes)));
+          target.on("data", (chunk: Buffer) => onTargetData(chunk, bytes => client.write(bytes)));
           client.on("error", () => {}).on("close", () => target.destroy());
           target.on("error", () => {}).on("close", () => client.destroy());
         })

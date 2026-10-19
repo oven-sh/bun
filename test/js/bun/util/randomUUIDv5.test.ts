@@ -368,7 +368,7 @@ describe("randomUUIDv5", () => {
   });
 
   test("a buffer is read once every argument is converted", () => {
-    const detaching = (buffer: Uint8Array, text: string) =>
+    const detaching = (buffer: Uint8Array<ArrayBuffer>, text: string) =>
       Object.assign(new String(), {
         toString() {
           buffer.buffer.transfer();
@@ -392,7 +392,7 @@ describe("randomUUIDv5", () => {
       },
     };
     for (const encoding of [undefined, null, 5, {}, unconverted]) {
-      expect(Bun.randomUUIDv5("test", "dns", encoding as any)).toBe(uuid.v5("test", uuid.v5.DNS));
+      expect(Bun.randomUUIDv5("test", "dns", encoding as any)).toBe<string>(uuid.v5("test", uuid.v5.DNS));
     }
   });
 

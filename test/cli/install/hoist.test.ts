@@ -662,7 +662,7 @@ describe.concurrent("a self-contained workspace", () => {
 // If a peer's own resolution conflicts with the copy that the root package.json put at the top of node_modules, the
 // peer uses the root's copy regardless of its range (Tree.hoist_dependency). The install that does that has to report
 // it, even if an in-range copy is somewhere else in the tree.
-const peerWarnings = (stderr: string) => stderr.match(/^warn: incorrect peer dependency [^\r\n]*/gm) ?? [];
+const peerWarnings = (stderr: string): string[] => stderr.match(/^warn: incorrect peer dependency [^\r\n]*/gm) ?? [];
 const installedVersion = async (packageDir: string, ...path: string[]) =>
   (await file(join(packageDir, "node_modules", ...path, "package.json")).json()).version;
 const hasOwnNodeModules = (packageDir: string, name: string) =>

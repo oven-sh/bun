@@ -95,7 +95,7 @@ describe.concurrent("WebKit 23b0720b40 upgrade", () => {
   });
 
   test("optimized code does not take `x + y + 0.5` for an integer sum (13714a5887)", () => {
-    const f = new Function("x", "y", "return (x + y + 0.5) | 0;");
+    const f = new Function("x", "y", "return (x + y + 0.5) | 0;") as (x: number, y: number) => number;
     let result = f(2147483647, 2147483647);
     // Until the DFG's code is what runs. The bound is for a run with the JIT off.
     for (let i = 0; i < 200_000 && result === -2 && numberOfDFGCompiles(f) === 0; i++)
@@ -125,7 +125,7 @@ describe.concurrent("WebKit 23b0720b40 upgrade", () => {
       }
       expect(header(caught!)).toEqual(expected);
       // Here native code is what catches: the Promise constructor calls its executor.
-      expect(header(await new Promise(run).catch(error => error))).toEqual(expected);
+      expect(header(await new Promise<never>(run).catch((error: Error) => error))).toEqual(expected);
     }
   });
 

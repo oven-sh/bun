@@ -527,11 +527,14 @@ export function hideFromStackTrace(block: CallableFunction) {
 
 export type DirectoryTree = {
   [name: string]:
-    string | Buffer | DirectoryTree | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
+    | string
+    | Uint8Array
+    | DirectoryTree
+    | ((opts: { root: string }) => Bun.MaybePromise<string | Uint8Array | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {
-  const isDirectoryTree = (value: string | DirectoryTree | Buffer): value is DirectoryTree =>
+  const isDirectoryTree = (value: string | DirectoryTree | Uint8Array): value is DirectoryTree =>
     typeof value === "object" && value && typeof value?.byteLength === "undefined";
 
   for (const [name, raw_contents] of Object.entries(tree)) {

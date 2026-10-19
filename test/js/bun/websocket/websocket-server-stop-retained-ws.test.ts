@@ -195,7 +195,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: server.stop(true)", scheme
       },
     });
     try {
-      const clients = [];
+      const clients: Awaited<ReturnType<typeof connect>>[] = [];
       for (let i = 0; i < 4; i++) clients.push(await connect(server.port!));
       await server.stop(true);
       await Promise.all(clients.map(client => client.closed));

@@ -512,7 +512,7 @@ describe.concurrent("--frozen-lockfile still passes after an edit of", () => {
 
 describe.concurrent("--frozen-lockfile still passes on", () => {
   // A pin outside its range is legitimate in these cases.
-  test.each([
+  test.each<[string, PackageJson, string, PackageJson?]>([
     ["an override", { dependencies: { "no-deps": "^1.0.0" }, overrides: { "no-deps": "2.0.0" } }, "no-deps@2.0.0"],
     ["a prerelease that latest points at", { dependencies: { "prereleases-1": "*" } }, "prereleases-1@1.0.0-future."],
     ["a peer", { peerDependencies: { "no-deps": "^1.0.0" }, dependencies: { "no-deps": "2.0.0" } }, "no-deps@2.0.0"],

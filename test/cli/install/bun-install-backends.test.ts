@@ -668,7 +668,7 @@ describe("file: folder dependencies with the hoisted linker", () => {
           },
           { names: ["a.js", "b.js"], a: "module.exports = 'replaced';" },
         ],
-      ] as const) {
+      ] as [string, (source: string) => void, { names: string[]; a: string }][]) {
         test.concurrent(`${spec}: ${change} is picked up by the next install`, async () => {
           const { dir, source, installed, bunInstall } = project("folder-dep-changed", spec);
           using _ = dir;

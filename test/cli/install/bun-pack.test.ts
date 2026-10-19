@@ -30,6 +30,7 @@ import {
   tempDir,
   unprivilegedSpawnOptions,
   writeBinCommand,
+  type DirectoryTree,
 } from "harness";
 import { mkfifo } from "mkfifo";
 import { constants } from "os";
@@ -1078,7 +1079,7 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
     return { err, exitCode };
   }
 
-  test.concurrent.each([
+  test.concurrent.each<{ args: string[]; left: string[] }>([
     { args: [], left: ["index.js", "package.json"] },
     { args: ["--destination=out"], left: ["index.js", "out", "package.json"] },
     { args: ["--filename=custom.tgz"], left: ["index.js", "package.json"] },
@@ -2339,7 +2340,7 @@ describe.concurrent("lifecycle scripts run the commands in node_modules/.bin", (
 
     const { stdout, err, exitCode } = await runPack(String(dir));
     expect(err).toBe("$ tool\n$ tool\n$ tool");
-    expect(stdout.match(/^tool of .*$/gm)).toEqual(Array(3).fill("tool of the package"));
+    expect(stdout.match(/^tool of .*$/gm)).toEqual<string[]>(Array(3).fill("tool of the package"));
     expect(exitCode).toBe(0);
   });
 
@@ -2356,7 +2357,7 @@ describe.concurrent("lifecycle scripts run the commands in node_modules/.bin", (
 
     const { stdout, err, exitCode } = await runPack(dirs.member, ["--dry-run"]);
     expect(err).toBe("$ tool\n$ tool\n$ tool");
-    expect(stdout.match(/^tool of .*$/gm)).toEqual(Array(3).fill(`tool of the ${runs}`));
+    expect(stdout.match(/^tool of .*$/gm)).toEqual<string[]>(Array(3).fill(`tool of the ${runs}`));
     expect(exitCode).toBe(0);
   });
 });
@@ -2891,7 +2892,7 @@ describe.concurrent("bundledDependencies", () => {
   );
 
   // The tarball's package.json keeps the field, so whoever installs the tarball doesn't install the package.
-  test.each([{ args: [] }, { args: ["--dry-run"] }])(
+  test.each<{ args: string[] }>([{ args: [] }, { args: ["--dry-run"] }])(
     "a bundled dependency that is not installed is an error (args: $args)",
     async ({ args }) => {
       using dir = tempDir("pack-bundled-missing", {
@@ -4898,7 +4899,7 @@ describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened"
   const manifest = (name: string, fields: object = {}) => JSON.stringify({ name, version: "1.0.0", ...fields });
   const bundlesDep1 = manifest("pack-locked", { bundledDependencies: ["dep1"] });
 
-  test.each([
+  test.each<{ what: string; locked: string; failsOn: string; tree: DirectoryTree }>([
     {
       // Before, the hoisted copy, another version, was bundled in its place.
       what: "the nested copy of a dependency of a bundled dependency",
@@ -5060,7 +5061,7 @@ test.concurrent("unicode", async () => {
 // Names are returned latin1-decoded (one char per stored byte) and collected
 // from every place the archive spells a name: the ustar header `name` field
 // and, when libarchive emits one, the `path` record of the pax header.
-function rawTarballMembers(tgz: Uint8Array) {
+function rawTarballMembers(tgz: Uint8Array<ArrayBuffer>) {
   const tar = Buffer.from(Bun.gunzipSync(tgz));
   const members: { names: Set<string>; contents: string }[] = [];
   let paxPath: string | undefined;
@@ -5353,7 +5354,15 @@ long syscall(long nr, ...) {
 
   const index = "module.exports = 1;";
 
-  test.concurrent.each([
+  test.concurrent.each<{
+    walk: string;
+    packageJson: object;
+    files: Record<string, string>;
+    dir: string;
+    reader?: number;
+    read?: "end";
+    args?: string[];
+  }>([
     // One row for each loop that reads a directory. `dir` is the directory whose first read fails.
     { walk: "the default walk, a subdirectory", packageJson: {}, files: { "lib/index.js": index }, dir: "lib" },
     // The resolver reads the package root before pack does: pack is the second reader.

@@ -346,10 +346,10 @@ describe("$.braces arguments", () => {
 
   test("options are an object, null or undefined", () => {
     for (const options of [undefined, null, {}, [], () => {}]) {
-      expect($.braces("a{b,c}", options as any)).toEqual(["ab", "ac"]);
+      expect(($.braces as any)("a{b,c}", options)).toEqual(["ab", "ac"]);
     }
     for (const options of [5, "s", true, Symbol("s")]) {
-      expect(() => $.braces("a{b,c}", options as any)).toThrow(
+      expect(() => ($.braces as any)("a{b,c}", options)).toThrow(
         expect.objectContaining({
           name: "TypeError",
           code: "ERR_INVALID_ARG_TYPE",

@@ -211,7 +211,7 @@ skipWaitng();
   });
 
   test("a repository inside a folder named test isn't all tests, with or without a package.json", async () => {
-    for (const extra of [{}, { "test/app/package.json": "{}" }]) {
+    for (const extra of [{}, { "test/app/package.json": "{}" }] as Record<string, string>[]) {
       const files = {
         "test/app/.git/HEAD": "ref: refs/heads/main\n",
         "test/app/src/a.js": 'describe("a", () => {});\n',
@@ -1975,7 +1975,7 @@ module.exports = (function () {
 `;
     const unnecessary = "'use strict' is unnecessary inside of modules.";
 
-    test.each([{}, { "package.json": `{ "type": "commonjs" }` }])(
+    test.each<Record<string, string>>([{}, { "package.json": `{ "type": "commonjs" }` }])(
       `--fix keeps "use strict" in a CommonJS file: %j`,
       async files => {
         const { problems, texts } = await lint({ ...bunfig, ...files, "strict.js": strict }, ["--fix"]);

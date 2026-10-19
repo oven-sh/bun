@@ -15079,4 +15079,4 @@ const hand: Project[] = [
 
 // The programs of an audit of the rules that need types against tsgolint, each a place where the two asked the type checker
 // something else. A group is a program of its own with the options in its name. Recorded from oxlint 1.86.0 with tsgolint 7.0.2003.
-export const projects: Project[] = [...hand, ...(audit as Project[]).map(it => ({ ...it, typed: true }))];
+export const projects: Project[] = [...hand, ...(audit as unknown as Project[]).map(it => ({ ...it, typed: true }))];

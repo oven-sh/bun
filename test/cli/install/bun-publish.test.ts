@@ -127,7 +127,7 @@ function mockRegistry(
       return respond ? respond(req, recorded, mock) : new Response("OK", { status: 200 });
     },
   });
-  const mock: MockRegistry = { port: server.port, requests, [Symbol.dispose]: () => server.stop(true) };
+  const mock: MockRegistry = { port: server.port!, requests, [Symbol.dispose]: () => server.stop(true) };
   return mock;
 }
 
@@ -1049,7 +1049,7 @@ test.concurrent.each([
     "bin4.js": await linked("bin4.js"),
     "moredir/bin4.js": await exists(join(dir, "node_modules", ".bin", isWindows ? "moredir" : "moredir/bin4.js")),
     [name]: await linked(name),
-  }).toEqual(links);
+  }).toEqual<object>(links);
 });
 
 describe.concurrent("bin longer than the path buffer", () => {
@@ -3716,7 +3716,7 @@ describe.concurrent("--recursive and --filter", () => {
 
     const { out, err, exitCode } = await publish(env, String(dir), "--filter", "rec-a", "--filter", "rec-b");
     expect(lines(err).filter(line => !line.includes("only-a"))).toEqual(Array(11).fill("$ tool"));
-    expect(out.match(/^tool of .*$/gm)).toEqual([
+    expect(out.match(/^tool of .*$/gm)).toEqual<string[]>([
       ...Array(4).fill("tool of rec-a"),
       "tool of rec-b",
       "tool of rec-b",
@@ -3850,7 +3850,7 @@ describe.concurrent("--recursive and --filter", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.each([["-r"], ["--filter", "rec-a"]])("%s with a tarball path is an error", async (...flags) => {
+  test.each<string[]>([["-r"], ["--filter", "rec-a"]])("%s with a tarball path is an error", async (...flags) => {
     using registry = workspaceRegistry();
     using dir = workspace(registry.mock);
 

@@ -2118,7 +2118,7 @@ test.concurrent.each([
   const { resolutions, locked } = expectedGitPackages(sharedRepoUrl, sharedCommits, ["b"]);
 
   const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
-  expect(diagnostics(stderr)).toEqual(warnings);
+  expect(diagnostics(stderr)).toEqual<readonly unknown[]>(warnings);
   expectInstalled(stdout, resolutions);
   expect(await installedVersions(project, [nameOf("b"), "nope"])).toEqual({ ...markers(["b"]), nope: null });
   expect(await lockedPackages(project)).toEqual(locked);
@@ -2708,7 +2708,7 @@ test.concurrent.skipIf(isWindows).each([
     "git@-oProxyCommand=x@localhost/org/repo.git",
   ],
   ["git+ssh://-oProxyCommand=x:org/repo.git", "-oProxyCommand=x/org/repo.git", "git@-oProxyCommand=x/org/repo.git"],
-])("clones %s from the right URLs", async (dependency, https, ssh = https) => {
+] as [string, string, string?][])("clones %s from the right URLs", async (dependency, https, ssh = https) => {
   const { calls, stderr, exitCode } = await failingGitCalls(dependency);
   // After `--`, git doesn't treat anything as an option.
   const clone = [
@@ -2872,7 +2872,7 @@ test.concurrent.each([
   const cache = join(root, "cache");
   const { exitCode } = await runInstall(project, cache, {}, "--frozen-lockfile");
   const files = [project, cache].flatMap(folder =>
-    existsSync(folder) ? readdirSync(folder, { recursive: true }) : [],
+    existsSync(folder) ? (readdirSync(folder, { recursive: true }) as string[]) : [],
   );
   expect(files.filter(file => String(file).includes("written-by-git"))).toEqual([]);
   expect(exitCode).toBe(1);

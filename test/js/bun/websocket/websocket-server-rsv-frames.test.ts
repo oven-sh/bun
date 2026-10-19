@@ -21,7 +21,7 @@ function pmdDeflate(payload: Buffer): Buffer {
 // server. Exposes what the server's message/ping/close handlers got, and
 // `client` has every frame the server sent.
 async function connectRaw(options: {
-  perMessageDeflate: WebSocketHandler["perMessageDeflate"];
+  perMessageDeflate: WebSocketHandler<undefined>["perMessageDeflate"];
   maxPayloadLength?: number;
   onMessage?: (ws: ServerWebSocket<undefined>, message: string | Buffer) => void;
 }) {

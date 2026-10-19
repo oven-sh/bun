@@ -58,7 +58,7 @@ async function addFromTests(root: string, files: Map<string, Uint8Array>) {
         if (filename !== undefined) filenames.add(`${name}\t${filename}\n`);
         if (output === undefined) return;
         // The output is the same for all of them. The first of each language stands for the others.
-        const families = new Map(parsers.filter(it => parsersIn(directory).includes(it)).map(it => [/^babel$|^typescript$/.test(it) ? "js" : it, it]).reverse());
+        const families = new Map(parsers.filter(it => parsersIn(directory).includes(it)).map(it => [/^babel$|^typescript$/.test(it) ? "js" : it, it] as const).reverse());
         for (const parser of [...families.values()].reverse()) {
           const title = `snippet: ${name}${Object.keys(options).length ? ` - ${JSON.stringify(options)}` : ""} format`;
           counts.set(title, (counts.get(title) ?? 0) + 1);

@@ -33,7 +33,7 @@ function inflateWithoutContext(payload: Buffer): Buffer {
 // Inflates one payload and reports whether the deflate stream ended. Only a BFINAL=1 block ends it.
 function inflateAndCheckEnd(payload: Buffer): { text: string; ended: boolean } {
   const input = Buffer.concat([payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]);
-  const { buffer, engine } = inflateRawSync(input, { finishFlush: constants.Z_SYNC_FLUSH, info: true });
+  const { buffer, engine } = inflateRawSync(input, { finishFlush: constants.Z_SYNC_FLUSH, info: true }) as any;
   // zlib stops reading at the end of the stream, so it leaves the trailing bytes unread.
   return { text: buffer.toString(), ended: engine.bytesWritten < input.length };
 }
@@ -78,7 +78,7 @@ function startServer(perMessageDeflate: boolean | { compress: Compress; decompre
 }
 
 async function connect(server: ReturnType<typeof startServer>, offer: string): Promise<Peer> {
-  const client = await RawClient.upgrade(server.port, { headers: { "Sec-WebSocket-Extensions": offer } });
+  const client = await RawClient.upgrade(server.port!, { headers: { "Sec-WebSocket-Extensions": offer } });
   async function readFrame() {
     const frame = await client.nextFrame();
     if (!frame) throw new Error("the server closed the socket");

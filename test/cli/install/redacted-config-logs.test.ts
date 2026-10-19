@@ -630,7 +630,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     });
   }
 
-  type Host = { hostname: string; port: number };
+  type Host = { hostname: string | undefined; port: number | undefined };
   const spec = ({ hostname, port }: Host, query = `?token=${token}`) =>
     `http://carol:${password}@${hostname}:${port}/cdn/direct-1.0.0.tgz${query}`;
   const masked = ({ hostname, port }: Host, query = "?token=***") =>

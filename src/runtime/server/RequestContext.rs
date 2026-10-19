@@ -1567,6 +1567,10 @@ where
             abort.deref();
         }
 
+        // Before `req.signal` fires: an abort listener must not write to the response that is gone.
+        if let Some(wrapper) = this.sink_mut() {
+            wrapper.sink.revoke_response();
+        }
         this.detach_response();
         let any_js_calls = core::cell::Cell::new(false);
         let global_this = server.global_this();

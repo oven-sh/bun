@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
-async function runFixture(name: string) {
+async function runFixture(name: string, ...args: string[]) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, name)],
+    cmd: [bunExe(), join(import.meta.dir, name), ...args],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -68,6 +68,50 @@ test.concurrent(
 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ ok: true, aborted: 3 });
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  },
+  60_000,
+);
+
+// A `req.signal` abort listener runs after the server has given the response
+// up. A write to the direct stream's controller from there still reached that
+// response: the socket was freed with the write corked on it (ASAN:
+// heap-use-after-free in us_socket_group via AsyncSocket::uncork).
+test.concurrent(
+  "a req.signal abort listener that writes to a direct stream does not reach the closed response",
+  async () => {
+    const { stdout, stderr, exitCode, signalCode } = await runFixture("serve-abort-listener-write-fixture.ts", "write");
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      heard: ["write:0", "flush:0", "cancel:AbortError: The connection was closed."],
+      pendingRequests: 0,
+    });
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  },
+  60_000,
+);
+
+// The listener's flush(true) finds an earlier flush(true) that still waits and
+// a later write that is still buffered. It gets the promise of the earlier
+// flush and sends nothing. Windows takes a write of any size at once, so no
+// flush waits there.
+test.concurrent.skipIf(isWindows)(
+  "a req.signal abort listener that flushes a direct stream does not send what is buffered",
+  async () => {
+    const { stdout, stderr, exitCode, signalCode } = await runFixture("serve-abort-listener-write-fixture.ts", "flush");
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      heard: [
+        "flush(true):pending",
+        "flush(true) again:pending",
+        "write:0",
+        "flush:0",
+        "cancel:AbortError: The connection was closed.",
+      ],
+      pendingRequests: 0,
+    });
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   },
   60_000,

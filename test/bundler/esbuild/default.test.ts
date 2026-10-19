@@ -1,6 +1,6 @@
 import assert from "assert";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, osSlashes, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, osSlashes, tempDir } from "harness";
 import path from "path";
 import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
 
@@ -3609,6 +3609,8 @@ describe.concurrent("bundler", () => {
     `,
     "b.js": `export const b = await 0;`,
   };
+  // A debug build needs up to a second per build, and a local `bun bd test` gives a test 5 seconds.
+  const forbiddenRequireBuilds = isDebug ? 8 : 40;
   test("default/TopLevelAwaitForbiddenRequireSourceMapCLI", async () => {
     using dir = tempDir("tla-forbidden-require-sourcemap", forbiddenRequireWithNamedImport);
     const build = async () => {
@@ -3625,11 +3627,11 @@ describe.concurrent("bundler", () => {
     // The link error races the source map tasks: one build alone does not always show it,
     // and many builds at once show it less often.
     const builds: Awaited<ReturnType<typeof build>>[] = [];
-    for (let round = 0; round < 10; round++) {
+    for (let round = 0; round < forbiddenRequireBuilds / 4; round++) {
       builds.push(...(await Promise.all([build(), build(), build(), build()])));
     }
     expect(builds).toEqual(
-      Array(40).fill({
+      Array(forbiddenRequireBuilds).fill({
         error:
           'error: This require call is not allowed because the transitive dependency "b.js" contains a top-level await',
         exitCode: 1,
@@ -3641,7 +3643,7 @@ describe.concurrent("bundler", () => {
       ...forbiddenRequireWithNamedImport,
       "build.js": `
         const messages = [];
-        for (let i = 0; i < 40; i++) {
+        for (let i = 0; i < ${forbiddenRequireBuilds}; i++) {
           const { logs } = await Bun.build({ entrypoints: ["./a.js"], sourcemap: "inline", throw: false });
           messages.push(logs[0].message);
         }
@@ -3659,7 +3661,7 @@ describe.concurrent("bundler", () => {
     expect({ stdout, stderr }).toEqual({
       stdout:
         JSON.stringify(
-          Array(40).fill(
+          Array(forbiddenRequireBuilds).fill(
             'This require call is not allowed because the transitive dependency "b.js" contains a top-level await',
           ),
         ) + "\n",

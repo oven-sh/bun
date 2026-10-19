@@ -76,11 +76,11 @@ impl Rule for ForbidComponentProps {
         }
         let mut map: Vec<usize> = Vec::new();
         {
-            let mut places: FxHashMap<&[u8], usize> = FxHashMap::default();
+            let mut slot_by_key: FxHashMap<&[u8], usize> = FxHashMap::default();
             for (at, it) in forbid.iter().enumerate() {
                 let next = map.len();
-                let place = *places.entry(&it.key.written).or_insert(next);
-                match map.get_mut(place) {
+                let slot = *slot_by_key.entry(&it.key.written).or_insert(next);
+                match map.get_mut(slot) {
                     Some(last) => *last = at,
                     None => map.push(at),
                 }

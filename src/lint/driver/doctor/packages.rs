@@ -21,7 +21,7 @@ macro_rules! pretty {
 const NOT_CHECKED: [&str; 3] = ["other tools' configs", "CI files", "Git hooks"];
 
 /// True if `name` is `family-..`, `@scope/family` or `@scope/family-..`.
-fn is_of_family(name: &[u8], family: &[u8]) -> bool {
+fn is_in_family(name: &[u8], family: &[u8]) -> bool {
     let (is_scoped, own) = match (name.first(), strings::index_of_char_usize(name, b'/')) {
         (Some(b'@'), Some(slash)) => (true, &name[slash + 1..]),
         _ => (false, name),
@@ -46,7 +46,7 @@ pub(crate) fn is_for_linting(name: &[u8]) -> bool {
         b"eslint" | b"oxlint" | b"oxlint-tsgolint" | b"typescript-eslint"
     ) || name.starts_with(b"@eslint/")
         || name.starts_with(b"@typescript-eslint/")
-        || families.iter().any(|it| is_of_family(name, it))
+        || families.iter().any(|it| is_in_family(name, it))
 }
 
 /// Same for Prettier and oxfmt.
@@ -54,7 +54,7 @@ pub(crate) fn is_for_formatting(name: &[u8]) -> bool {
     let families: [&[u8]; 2] = [b"prettier-plugin", b"prettier-config"];
     matches!(name, b"prettier" | b"oxfmt")
         || name.starts_with(b"@prettier/plugin-")
-        || families.iter().any(|it| is_of_family(name, it))
+        || families.iter().any(|it| is_in_family(name, it))
 }
 
 /// Why a package has to stay installed.
@@ -175,12 +175,12 @@ pub(crate) struct Packages {
 }
 
 impl Packages {
-    /// Reads the `package.json` closest to `cwd`. `is_of_a_tool` says whether a package only exists to serve the
+    /// Reads the `package.json` closest to `cwd`. `is_tool_package` says whether a package only exists to serve the
     /// replaced tool. `need` says why a run still needs a package, if it does.
     #[optimize(size)]
     pub(crate) fn new(
         cwd: &[u8],
-        is_of_a_tool: &dyn Fn(&[u8]) -> bool,
+        is_tool_package: &dyn Fn(&[u8]) -> bool,
         need: &dyn Fn(&[u8]) -> Option<Need>,
     ) -> Packages {
         let mut packages = Packages::default();
@@ -193,11 +193,11 @@ impl Packages {
         };
         let mut staying = Vec::new();
         for name in names_in(&manifest, &[b"dependencies", b"devDependencies"]) {
-            let is_of_a_tool = is_of_a_tool(&name);
-            let used = || run_by(&manifest, &name).filter(|_| is_of_a_tool);
+            let is_tool_package = is_tool_package(&name);
+            let used = || run_by(&manifest, &name).filter(|_| is_tool_package);
             match need(&name).or_else(used) {
                 Some(need) => packages.needed.push((name.clone(), need)),
-                None if is_of_a_tool => {
+                None if is_tool_package => {
                     packages.removable.push(name);
                     continue;
                 }

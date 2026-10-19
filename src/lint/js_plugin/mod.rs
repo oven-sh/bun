@@ -39,7 +39,7 @@ pub use eslint::{Configuration, Linted, Refusal, Text};
 pub use host::{Failure, Host, Loading, ParseAgain, Report, Suggested, ThrownAt};
 pub use prettier::Unformatted;
 pub use processor::{Block, Processor, Route, read_messages, write_messages};
-pub(crate) use rules::has_what_json_lacks;
+pub(crate) use rules::has_non_json_value;
 pub use rules::{Configured, FileSettings, Plugin, Rule, Schema};
 #[doc(hidden)]
 pub use schema::{eslint_patch, program};

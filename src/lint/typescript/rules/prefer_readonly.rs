@@ -613,7 +613,7 @@ impl Rule for PreferReadonly {
             true => &[Some(false), Some(true)],
             false => &[None],
         };
-        for class_scope in utils::sort::in_order_of(&cx.state.scopes, |it| it.class.span().start) {
+        for class_scope in utils::sort::collect_sorted_by_key(&cx.state.scopes, |it| it.class.span().start) {
             for &statics in passes {
                 for violating in class_scope.private_modifiables.iter().filter(|it| {
                     !it.is_modified && statics.is_none_or(|statics| it.is_static == statics)

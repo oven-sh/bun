@@ -23,7 +23,7 @@ fn is_in_jsx(e: Expr) -> bool {
 }
 
 /// Returns the span to report for a multiline string. oxlint points at the character before the first line break.
-fn place(string: Span, file: &File) -> Span {
+fn report_span(string: Span, file: &File) -> Span {
     let text = file.slice(string);
     let is_linebreak = |at: &usize| matches!(text.get(*at..), Some([b'\n' | b'\r', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..]));
     match (1..text.len()).find(is_linebreak).filter(|_| file.language().is_oxlint) {
@@ -63,7 +63,7 @@ impl Rule for NoMultiStr {
         }
         cx.state.push(e.span().start);
         if !is_in_jsx(e) {
-            cx.report(place(e.span(), cx.file()), MULTILINE_STRING);
+            cx.report(report_span(e.span(), cx.file()), MULTILINE_STRING);
         }
     }
 
@@ -75,7 +75,7 @@ impl Rule for NoMultiStr {
                 && strings::contains_js_line_break(token.text())
                 && cx.state.binary_search(&token.start()).is_err()
             {
-                cx.report(place(Span::new(token.start(), token.end()), cx.file()), MULTILINE_STRING);
+                cx.report(report_span(Span::new(token.start(), token.end()), cx.file()), MULTILINE_STRING);
             }
         }
     }

@@ -110,7 +110,7 @@ pub(super) fn first_error<'a>(file: &'a File<'a>, is_of_prettier: bool) -> Optio
     checks.functions();
     checks.properties();
     checks.expressions();
-    checks.the_rest();
+    checks.rare_nodes();
     checks.diagnostics();
     let first = match checks.errors.len() {
         0 | 1 => 0,
@@ -197,12 +197,12 @@ impl<'a> Checks<'a> {
         modifiers: &[hir::Modifier],
         decorated: impl FnOnce(&Self) -> Decorated,
     ) {
-        self.check_modifiers_and(owner, modifiers, decorated, None);
+        self.check_modifiers_with(owner, modifiers, decorated, None);
     }
 
     /// Like [`Checks::check_modifiers`]. `other` is a set of modifiers and the error to report if the node has one of
     /// them.
-    fn check_modifiers_and(
+    fn check_modifiers_with(
         &mut self,
         (kind, place, node): (Kind, Place, Span),
         modifiers: &[hir::Modifier],
@@ -375,7 +375,7 @@ impl<'a> Checks<'a> {
                     _ => None,
                 };
                 let owner = (kind, self.place_of_statement(i), node);
-                self.check_modifiers_and(
+                self.check_modifiers_with(
                     owner,
                     modifiers,
                     |_| Decorated::Invalidly,
@@ -913,7 +913,7 @@ impl<'a> Checks<'a> {
             };
             let of_property = ACCESSIBILITY | Flags::READONLY | Flags::OVERRIDE;
             let owner = (Kind::Parameter, Place::Other, node);
-            self.check_modifiers_and(
+            self.check_modifiers_with(
                 owner,
                 modifiers,
                 decorated,
@@ -1226,7 +1226,7 @@ impl<'a> Checks<'a> {
 
     // ───────────────────────────── rare nodes ─────────────────────────────
 
-    fn the_rest(&mut self) {
+    fn rare_nodes(&mut self) {
         let hir = &self.file.hir;
         for raw in hir.enum_members {
             let node = Span::new(raw.pos, raw.loc.end);

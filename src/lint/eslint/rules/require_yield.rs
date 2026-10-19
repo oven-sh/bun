@@ -21,14 +21,14 @@ impl Rule for RequireYield {
             && func.yields().next().is_none()
         {
             // oxlint points at the function's name, if the function itself has one.
-            let place = match func.name() {
+            let location = match func.name() {
                 // Before ESLint 10 it's the whole function.
                 _ if cx.language().eslint_major < 10 => func.estree_span(),
                 _ if !cx.language().is_oxlint => ast_utils::get_function_head_loc(func),
                 Some(name) => name.span(),
                 None => func.estree_span(),
             };
-            cx.report(place, MISSING_YIELD);
+            cx.report(location, MISSING_YIELD);
         }
     }
 }

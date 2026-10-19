@@ -218,7 +218,7 @@ pub(crate) struct Lazy {
     pub(crate) tokens: OnceCell<crate::tokens::TokenStore>,
     pub(crate) parents: OnceCell<node::Parents>,
     pub(crate) jsdoc: OnceCell<bun_sema::check::jsdoc::Outline>,
-    has_types_that_are_errors: OnceCell<bool>,
+    has_error_types: OnceCell<bool>,
     /// [`crate::utils::oxlint::source_type`]
     pub(crate) oxc_source_type: OnceCell<crate::language::SourceType>,
     /// [`File::backslashes`]
@@ -467,7 +467,7 @@ impl<'a> File<'a> {
 
     /// The offset of the first TypeScript-only syntax in a JavaScript file, which still parses: `a: T`, `a as T`,
     /// `class A<T> {}`, `enum A {}`.
-    pub fn first_of_typescript_in_javascript(&self) -> Option<u32> {
+    pub fn first_typescript_syntax_in_javascript(&self) -> Option<u32> {
         (self.hir.diagnostics.iter())
             .filter(|it| it.kind == hir::DiagnosticKind::Js)
             .map(|it| it.start)
@@ -537,12 +537,12 @@ impl<'a> File<'a> {
     pub(crate) fn end_of_identifier(&self, pos: u32, end: u32) -> u32 {
         match self.has_no_unicode_escape_in(pos, end) {
             true => end,
-            false => self.end_of_identifier_that_may_have_escapes(pos, end),
+            false => self.end_of_identifier_slow(pos, end),
         }
     }
 
     #[inline(never)]
-    fn end_of_identifier_that_may_have_escapes(&self, pos: u32, end: u32) -> u32 {
+    fn end_of_identifier_slow(&self, pos: u32, end: u32) -> u32 {
         let text = self.hir.text;
         let escapes = self.lazy.unicode_escapes.get_or_init(|| {
             let is_before_u = |at: &u32| text.get(*at as usize + 1) == Some(&b'u');
@@ -646,20 +646,20 @@ impl<'a> File<'a> {
     /// another's, and this undoes that.
     #[inline]
     pub(crate) fn private_name(&'a self, atom: Atom) -> Name<'a> {
-        match self.spells_private_names_apart() && atom.is_some() {
-            true => self.written_private_name(atom),
+        match self.mangles_private_names() && atom.is_some() {
+            true => self.unmangled_private_name(atom),
             false => self.name(atom),
         }
     }
 
     /// See [`File::private_name`].
     #[inline]
-    pub(crate) fn spells_private_names_apart(&self) -> bool {
+    pub(crate) fn mangles_private_names(&self) -> bool {
         self.types.is_some()
     }
 
     #[inline(never)]
-    fn written_private_name(&'a self, atom: Atom) -> Name<'a> {
+    fn unmangled_private_name(&'a self, atom: Atom) -> Name<'a> {
         let spelled = self.atoms.bytes(atom);
         match bun_sema::atom::written_name(spelled) {
             written if written.len() == spelled.len() => self.name(atom),
@@ -759,7 +759,7 @@ impl<'a> File<'a> {
     /// instead, because its tree has no parentheses and TypeScript 6 attaches the cast to the parentheses.
     #[inline]
     pub(crate) fn types_follow_jsdoc_casts(&self) -> bool {
-        self.hides_casts && (self.language.is_oxlint || self.language.stands_alone)
+        self.hides_casts && (self.language.is_oxlint || self.language.has_no_foreign_config)
     }
 
     /// `id`, or its operand if it's a cast synthesized from a JSDoc comment.

@@ -19,16 +19,20 @@ impl Rule for ClassMethodsUseThis {
         let options = options.object(0);
         let key = "ignoreClassesThatImplementAnInterface";
         // oxlint runs this rule as `class-methods-use-this`, so it uses ESLint's name for the option.
-        let of_eslint = options.str("ignoreClassesWithImplements");
+        let eslint_option = options.str("ignoreClassesWithImplements");
         let ignore_classes_with_implements =
-            match (options.bool(key), options.str(key).or(of_eslint)) {
+            match (options.bool(key), options.str(key).or(eslint_option)) {
                 (Some(true), _) | (_, Some("all")) => IgnoreClassesWithImplements::All,
                 (_, Some("public-fields")) => IgnoreClassesWithImplements::PublicFields,
                 _ => IgnoreClassesWithImplements::None,
             };
         ClassMethodsUseThis {
             // With ESLint's option a private name doesn't count as public, as in ESLint.
-            checker: Checker::new(options, ignore_classes_with_implements, of_eslint.is_none()),
+            checker: Checker::new(
+                options,
+                ignore_classes_with_implements,
+                eslint_option.is_none(),
+            ),
         }
     }
 

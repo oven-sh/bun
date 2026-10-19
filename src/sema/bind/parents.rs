@@ -3,7 +3,7 @@
 use super::*;
 use crate::util::SharedSort;
 
-fn refilled<T: Copy>(list: &mut Vec<T>, len: usize, value: T) {
+fn refill<T: Copy>(list: &mut Vec<T>, len: usize, value: T) {
     list.clear();
     list.resize(len, value);
 }
@@ -52,7 +52,7 @@ const REACHED: ScopeId = ScopeId(0);
 
 /// True if the file needs the full binder, because nodes that come from JSDoc comments are bound
 /// where the comment is.
-fn is_for_the_binder<S: Storage>(f: &FileIn<S>) -> bool {
+fn needs_full_binder<S: Storage>(f: &FileIn<S>) -> bool {
     f.is_js && !f.jsdoc_comments.is_empty()
 }
 
@@ -70,9 +70,9 @@ pub fn bind_for_format_in<'r>(
     atoms: &dyn crate::atom::Intern,
     recycled: &'r mut Recycled,
 ) -> &'r BoundBuilder {
-    match fill_in::<_, false>(f, &mut recycled.room().b) {
-        true => &recycled.room().b,
-        false => leave_to_binder(f, options, atoms, recycled),
+    match fill_in::<_, false>(f, &mut recycled.buffers().b) {
+        true => &recycled.buffers().b,
+        false => fall_back_to_binder(f, options, atoms, recycled),
     }
 }
 
@@ -85,7 +85,7 @@ pub fn try_bind_for_format_in<'r>(
     f: &FileBuilder,
     recycled: &'r mut Recycled,
 ) -> Option<&'r BoundBuilder> {
-    let b = &mut recycled.room().b;
+    let b = &mut recycled.buffers().b;
     fill_in::<Growable, false>(f, b).then_some(&*b)
 }
 
@@ -93,33 +93,33 @@ pub fn try_bind_for_format_in<'r>(
 /// `expr_kind_counts` and `kind_counts`, and puts the `return` statements in `ids`, in the order of
 /// the file's statement list. Returns false if the file needs the binder.
 pub(super) fn fill_in<S: Storage, const LINT: bool>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
-    if is_for_the_binder(f) || !f.has_room_for_handles() {
+    if needs_full_binder(f) || !f.has_room_for_handles() {
         return false;
     }
     b.clear();
     if LINT {
-        refilled(&mut b.expr_kinds, f.exprs.len(), NOT_REACHED);
-        refilled(&mut b.expr_kind_counts, 2 * ExprTag::COUNT, 0);
-        refilled(&mut b.kind_counts, kind_counts::LEN, 0);
+        refill(&mut b.expr_kinds, f.exprs.len(), NOT_REACHED);
+        refill(&mut b.expr_kind_counts, 2 * ExprTag::COUNT, 0);
+        refill(&mut b.kind_counts, kind_counts::LEN, 0);
     }
-    refilled(&mut b.expr_parent, f.exprs.len(), PackedParent::default());
-    refilled(&mut b.stmt_parent, f.stmts.len(), PackedParent::default());
-    refilled(&mut b.pat_parent, f.pats.len(), PatParent::None);
-    refilled(&mut b.prop_owner, f.props.len(), ExprId::NONE);
-    refilled(&mut b.member_owner, f.members.len(), MemberOwner::None);
-    refilled(&mut b.param_fn, f.params.len(), FnId::NONE);
-    refilled(&mut b.var_stmt, f.var_decls.len(), StmtId::NONE);
-    refilled(&mut b.case_stmt, f.cases.len(), StmtId::NONE);
-    refilled(
+    refill(&mut b.expr_parent, f.exprs.len(), PackedParent::default());
+    refill(&mut b.stmt_parent, f.stmts.len(), PackedParent::default());
+    refill(&mut b.pat_parent, f.pats.len(), PatParent::None);
+    refill(&mut b.prop_owner, f.props.len(), ExprId::NONE);
+    refill(&mut b.member_owner, f.members.len(), MemberOwner::None);
+    refill(&mut b.param_fn, f.params.len(), FnId::NONE);
+    refill(&mut b.var_stmt, f.var_decls.len(), StmtId::NONE);
+    refill(&mut b.case_stmt, f.cases.len(), StmtId::NONE);
+    refill(
         &mut b.class_owner,
         f.classes.len(),
         ClassOwner::Stmt(StmtId::NONE),
     );
-    refilled(&mut b.enum_member_owner, f.enum_members.len(), EnumId::NONE);
-    refilled(&mut b.fns, f.fns.len(), NO_FUNCTION);
-    refilled(&mut b.class_scope, f.classes.len(), ScopeId::NONE);
-    refilled(&mut b.type_scope, f.types.len(), ScopeId::NONE);
-    refilled(&mut b.type_param_scope, f.type_params.len(), ScopeId::NONE);
+    refill(&mut b.enum_member_owner, f.enum_members.len(), EnumId::NONE);
+    refill(&mut b.fns, f.fns.len(), NO_FUNCTION);
+    refill(&mut b.class_scope, f.classes.len(), ScopeId::NONE);
+    refill(&mut b.type_scope, f.types.len(), ScopeId::NONE);
+    refill(&mut b.type_param_scope, f.type_params.len(), ScopeId::NONE);
     fill::<S, LINT>(f, lists_of(b)) && is_done(b)
 }
 
@@ -148,8 +148,8 @@ fn lists_of(b: &mut BoundBuilder) -> Lists<'_> {
 }
 
 fn is_done(b: &mut BoundBuilder) -> bool {
-    in_order(&mut b.type_query_operands);
-    is_all_part_of_something(
+    sort_and_dedup(&mut b.type_query_operands);
+    every_node_has_parent(
         &b.expr_parent,
         &b.stmt_parent,
         &b.fns,
@@ -159,12 +159,12 @@ fn is_done(b: &mut BoundBuilder) -> bool {
     )
 }
 
-fn in_order(type_query_operands: &mut Vec<ExprId>) {
+fn sort_and_dedup(type_query_operands: &mut Vec<ExprId>) {
     type_query_operands.shared_sort_unstable();
     type_query_operands.dedup();
 }
 
-/// Returns false if the file needs the binder. It also does if [`is_all_part_of_something`] is
+/// Returns false if the file needs the binder. It also does if [`every_node_has_parent`] is
 /// false.
 fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     let Lists {
@@ -525,7 +525,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
                         ..
                     }) = f.stmts.get($head.idx())
                 {
-                    others[kind_counts::HEADS_THAT_ARE_EXPRESSIONS] += 1;
+                    others[kind_counts::EXPRESSION_LOOP_HEADS] += 1;
                 }
             };
         }
@@ -665,7 +665,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
         }
     }
-    fill_of_var_decls(&f.var_decls, expr_parent, pat_parent, type_scope);
+    fill_var_decls(&f.var_decls, expr_parent, pat_parent, type_scope);
     for (i, pat) in f.pats.iter().enumerate() {
         let id = PatId(i as u32);
         if LINT {
@@ -731,7 +731,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
 }
 
 /// The part of [`fill`] that handles variable declarations.
-fn fill_of_var_decls(
+fn fill_var_decls(
     declarations: &[VarDecl],
     expr_parent: &mut [PackedParent],
     pat_parent: &mut [PatParent],
@@ -755,7 +755,7 @@ fn fill_of_var_decls(
 /// it now have entries that `bind` wouldn't give them. That's rare enough to fall back to the
 /// binder.
 #[inline(never)]
-fn is_all_part_of_something(
+fn every_node_has_parent(
     expr_parent: &[PackedParent],
     stmt_parent: &[PackedParent],
     fns: &[FnInfo],

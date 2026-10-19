@@ -19,7 +19,7 @@ pub use bun_collections::index_sort::{
 
 /// Returns a hash table's items sorted by `key`, which must be unique. The table's own order depends on the machine, so
 /// printed output must never follow it.
-pub fn in_order_of<T, K: Ord>(
+pub fn collect_sorted_by_key<T, K: Ord>(
     table: impl IntoIterator<Item = T>,
     key: impl FnMut(&T) -> K,
 ) -> Vec<T> {

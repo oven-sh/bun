@@ -45,11 +45,14 @@ fn is_unsafe_assignment_worker<'a>(
     }
     // Only a pair of type references is compared further, so no other pair needs to be remembered. tsgolint skips a
     // deferred one, which is what an alias of a tuple, an array or an instantiation is: `type A = Set<string>`.
-    let is_looked_into = |it: Type<'a>| match it.file().language().is_oxlint {
+    let compares_type_arguments = |it: Type<'a>| match it.file().language().is_oxlint {
         true => it.is_non_deferred_type_reference(),
         false => is_type_reference(it),
     };
-    if !has_room_on_the_stack() || !is_looked_into(ty) || !is_looked_into(receiver) {
+    if !has_room_on_the_stack()
+        || !compares_type_arguments(ty)
+        || !compares_type_arguments(receiver)
+    {
         return None;
     }
     if visited.contains(&(ty, receiver)) {

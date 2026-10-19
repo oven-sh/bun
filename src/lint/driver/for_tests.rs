@@ -72,7 +72,7 @@ impl Host for Tester<'_> {
             checks_types: false,
             keeps_text: true,
             reads_fixes: true,
-            reads_texts_of_fixes: true,
+            reads_fix_texts: true,
             reads_help: true,
             help_on_demand: false,
             reads_suppressions: true,

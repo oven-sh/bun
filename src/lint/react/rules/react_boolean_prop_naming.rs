@@ -79,7 +79,7 @@ impl Rule for BooleanPropNaming {
             invalid_props: FxHashMap::default(),
             object_type_annotations: OnceCell::new(),
         };
-        for node in listened(file) {
+        for node in listener_nodes(file) {
             walk.components.advance(At::enter(node));
             match node {
                 Node::Member(member) => walk.property_definition(member),
@@ -127,7 +127,7 @@ impl BooleanPropNaming {
 
 /// Returns the nodes where one of upstream's listeners does something before `Program:exit`, in ESLint's traversal
 /// order.
-fn listened<'a>(file: &'a File<'a>) -> Vec<Node<'a>> {
+fn listener_nodes<'a>(file: &'a File<'a>) -> Vec<Node<'a>> {
     // A typed `props` field only clears what a `propTypes` has added.
     if !file.mentions_any(&["propTypes", "#propTypes"]) {
         return Vec::new();
@@ -174,7 +174,7 @@ fn get_prop_key(node: Prop<'_>) -> Option<&[u8]> {
 }
 
 /// Returns `node` as a call, if it calls a prop wrapper function.
-fn as_call_of_prop_wrapper(node: Expr<'_>) -> Option<Call<'_>> {
+fn as_prop_wrapper_call(node: Expr<'_>) -> Option<Call<'_>> {
     let call = node.as_call().filter(|_| !node.is_chain_root())?;
     is_prop_wrapper_function(node.file(), call.callee().text()).then_some(call)
 }
@@ -289,20 +289,20 @@ struct Walk<'r, 'a> {
 
 impl<'a> Walk<'_, 'a> {
     /// `rule.test(getPropName(prop)) === false`
-    fn is_named_otherwise(&self, prop: Property<'a>) -> bool {
+    fn violates_rule(&self, prop: Property<'a>) -> bool {
         !self.rule.test(prop.name().unwrap_or(UNDEFINED))
     }
 
     fn regular_check(&self, prop: Prop<'a>) -> bool {
         get_prop_key(prop).is_some_and(|prop_key| self.config.prop_type_names.iter().any(|it| prop_key == &**it))
-            && self.is_named_otherwise(Property::Prop(prop))
+            && self.violates_rule(Property::Prop(prop))
     }
 
     /// `tsCheck`, for a member of an interface or a type literal.
     fn ts_check(&self, prop: Member<'a>) -> bool {
         prop.kind() == MemberKind::Property
             && prop.ty().is_some_and(|it| it.is_keyword(Keyword::Boolean))
-            && self.is_named_otherwise(Property::Member(prop))
+            && self.violates_rule(Property::Member(prop))
     }
 
     fn run_check(&self, proptypes: PropTypes<'a>, invalid_props: &mut Vec<Property<'a>>) {
@@ -351,7 +351,7 @@ impl<'a> Walk<'_, 'a> {
     fn property_definition(&mut self, member: Member<'a>) {
         let node = Node::Member(member);
         if let Some(value) = member.init() {
-            if let Some(call) = as_call_of_prop_wrapper(value) {
+            if let Some(call) = as_prop_wrapper_call(value) {
                 self.check_prop_wrapper_arguments(node, call.args());
             }
             if let properties @ PropTypes::Properties(_) = PropTypes::properties_of(value) {
@@ -372,7 +372,7 @@ impl<'a> Walk<'_, 'a> {
             return;
         };
         let component = self.components.component(component).node;
-        match as_call_of_prop_wrapper(right) {
+        match as_prop_wrapper_call(right) {
             Some(call) => self.check_prop_wrapper_arguments(component, call.args()),
             None => self.validate_prop_naming(component, PropTypes::properties_of(right)),
         }

@@ -66,14 +66,14 @@ pub(super) fn build(text: &[u8], tokens: &[Token]) -> Result<Vec<Element>, Forma
         if kind == TokenKind::Key {
             let entry = builder.start(Kind::Entry);
             builder.key_and_value()?;
-            builder.comment_on_the_line();
+            builder.same_line_comment();
             builder.finish(entry);
         } else {
             let header = builder.start(Kind::Header);
             builder.token(Kind::Text);
             builder.key();
             builder.token(Kind::Text);
-            builder.comment_on_the_line();
+            builder.same_line_comment();
             builder.finish(header);
         }
     }
@@ -117,7 +117,7 @@ impl Builder<'_> {
         next.map_or(self.text.len(), |it| it.start as usize)
     }
 
-    fn skip_blanks(&mut self) {
+    fn skip_spaces_and_tabs(&mut self) {
         let rest = self.text.get(self.at..).unwrap_or_default();
         self.at += rest
             .iter()
@@ -126,8 +126,8 @@ impl Builder<'_> {
     }
 
     /// taplo's `step`: a comment after a token on the same line belongs to the token's node.
-    fn comment_on_the_line(&mut self) {
-        self.skip_blanks();
+    fn same_line_comment(&mut self) {
+        self.skip_spaces_and_tabs();
         if self.at < self.gap_end() && self.text[self.at] == b'#' {
             let rest = &self.text[self.at..];
             let len = bun_core::strings::index_of_any(rest, b"\r\n").unwrap_or(rest.len());
@@ -140,7 +140,7 @@ impl Builder<'_> {
     fn trivia(&mut self) {
         let end = self.gap_end();
         loop {
-            self.comment_on_the_line();
+            self.same_line_comment();
             if self.at >= end {
                 return;
             }
@@ -186,7 +186,7 @@ impl Builder<'_> {
             Some(TokenKind::InlineOpen) => self.container(Kind::InlineTable)?,
             _ => {
                 self.token(Kind::Text);
-                self.comment_on_the_line();
+                self.same_line_comment();
             }
         }
         self.finish(value);

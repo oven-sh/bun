@@ -309,7 +309,7 @@ fn spread(hash: u64) -> u64 {
 /// The parameters that differ between tables shared by threads and a single task's tables.
 pub(crate) trait Placement {
     /// Slot count of the first table.
-    const LEAST: usize;
+    const MIN_SLOTS: usize;
     /// Returns the slot where the search for a tag starts, modulo the slot count.
     fn start(tag: u32) -> usize;
 }
@@ -317,12 +317,12 @@ pub(crate) trait Placement {
 /// Returns the slot value for entry `index` with hash `spread` in an open-addressed table: the
 /// hash's tag in the upper 32 bits and `index + 1` in the lower 32. A free slot is 0.
 #[inline]
-pub(crate) fn place_of(spread: u64, index: u32) -> u64 {
+pub(crate) fn slot_value(spread: u64, index: u32) -> u64 {
     u64::from(spread as u32) << 32 | u64::from(index + 1)
 }
 
 /// Searches a table of `len` slots, read through `slot`. `len` must be a power of two. Returns `Ok`
-/// with the index of the entry that `is_it` accepts among those with hash `spread`. If there isn't
+/// with the index of the entry that `is_match` accepts among those with hash `spread`. If there isn't
 /// one, returns `Err` with the free slot that ended the search, which is where that entry would be
 /// inserted.
 #[inline]
@@ -330,18 +330,18 @@ pub(crate) fn search<P: Placement>(
     len: usize,
     spread: u64,
     slot: impl Fn(usize) -> u64,
-    mut is_it: impl FnMut(u32) -> bool,
+    mut is_match: impl FnMut(u32) -> bool,
 ) -> Result<u32, usize> {
     // The mask is computed from `len` here so the compiler can prove that `at` is in bounds.
     let (tag, mask) = (spread as u32, len - 1);
     let mut at = P::start(tag) & mask;
     loop {
-        let place = slot(at);
-        if place == 0 {
+        let packed = slot(at);
+        if packed == 0 {
             return Err(at);
         }
-        if (place >> 32) as u32 == tag && is_it(place as u32 - 1) {
-            return Ok(place as u32 - 1);
+        if (packed >> 32) as u32 == tag && is_match(packed as u32 - 1) {
+            return Ok(packed as u32 - 1);
         }
         at = (at + 1) & mask;
     }
@@ -369,49 +369,49 @@ pub(crate) fn is_too_full(len: usize, slots: usize) -> bool {
 /// Returns the new slot count when a table of `old` slots grows to store `len` entries.
 pub(crate) fn slots_for<P: Placement>(len: usize, old: usize) -> usize {
     let needed = (len * 4).div_ceil(3).next_power_of_two();
-    needed.max(old * 2).max(P::LEAST)
+    needed.max(old * 2).max(P::MIN_SLOTS)
 }
 
-/// The slots of a grow-only open-addressed table that threads share. See `place_of` for the slot format. The table is
+/// The slots of a grow-only open-addressed table that threads share. See `slot_value` for the slot format. The table is
 /// split into shards. Reads are lock-free. When a shard's slots fill up, a bigger array replaces them, and the old
 /// array stays allocated for threads that are still reading it. Shards grow independently, so a resize moves only one
 /// shard, and that's the most an insert may have to wait for.
-pub(crate) struct Places<P, A: Allocator + Clone, S: Series<AtomicU64, A>> {
+pub(crate) struct Slots<P, A: Allocator + Clone, S: Series<AtomicU64, A>> {
     /// Each shard's slot count is a power of two.
     slots: Newest<AtomicU64, A, S>,
     placement: PhantomData<P>,
 }
 
-impl<P: Placement, A: Allocator + Clone, S: Series<AtomicU64, A>> Places<P, A, S> {
+impl<P: Placement, A: Allocator + Clone, S: Series<AtomicU64, A>> Slots<P, A, S> {
     pub(crate) fn new_in(alloc: A) -> Self {
-        Places {
+        Slots {
             slots: Newest::new_in(alloc),
             placement: PhantomData,
         }
     }
 
-    /// Returns the index of the entry that `is_it` accepts among those in `shard` with hash `spread`. `order` must be
-    /// `Acquire` if another thread may be inserting.
+    /// Returns the index of the entry that `is_match` accepts among those in `shard` with hash `spread`. `order` must
+    /// be `Acquire` if another thread may be inserting.
     #[inline]
     pub(crate) fn find(
         &self,
         shard: usize,
         spread: u64,
         order: Ordering,
-        is_it: impl FnMut(u32) -> bool,
+        is_match: impl FnMut(u32) -> bool,
     ) -> Option<u32> {
         let slots = self.slots.get(shard, order);
         if slots.is_empty() {
             return None;
         }
-        search::<P>(slots.len(), spread, |at| slots[at].load(order), is_it).ok()
+        search::<P>(slots.len(), spread, |at| slots[at].load(order), is_match).ok()
     }
 
     #[inline]
-    fn put(slots: &[AtomicU64], place: u64) {
+    fn put(slots: &[AtomicU64], packed: u64) {
         let slot = |at: usize| slots[at].load(Ordering::Relaxed);
-        let at = free_slot::<P>(slots.len(), (place >> 32) as u32, slot);
-        slots[at].store(place, Ordering::Release);
+        let at = free_slot::<P>(slots.len(), (packed >> 32) as u32, slot);
+        slots[at].store(packed, Ordering::Release);
     }
 
     /// Returns the slots of `shard`, grown if needed so that `more` entries can be added. `len` is the shard's current
@@ -429,10 +429,10 @@ impl<P: Placement, A: Allocator + Clone, S: Series<AtomicU64, A>> Places<P, A, S
     #[inline(never)]
     fn grow(&self, shard: usize, old: &[AtomicU64], len: usize) -> &[AtomicU64] {
         (self.slots).replace(shard, slots_for::<P>(len, old.len()), |bigger| {
-            for place in old {
-                let place = place.load(Ordering::Relaxed);
-                if place != 0 {
-                    Self::put(bigger, place);
+            for packed in old {
+                let packed = packed.load(Ordering::Relaxed);
+                if packed != 0 {
+                    Self::put(bigger, packed);
                 }
             }
         })
@@ -441,14 +441,14 @@ impl<P: Placement, A: Allocator + Clone, S: Series<AtomicU64, A>> Places<P, A, S
     /// Adds an entry to `shard`, which must not be present already. `len` is the shard's entry count before the call.
     #[inline]
     fn add(&self, shard: usize, len: usize, spread: u64, index: u32) {
-        Self::put(self.reserve(shard, len, 1), place_of(spread, index));
+        Self::put(self.reserve(shard, len, 1), slot_value(spread, index));
     }
 }
 
 pub(crate) struct Shared;
 
 impl Placement for Shared {
-    const LEAST: usize = 16;
+    const MIN_SLOTS: usize = 16;
     #[inline]
     fn start(tag: u32) -> usize {
         tag as usize
@@ -459,59 +459,63 @@ impl Placement for Shared {
 ///
 /// A lookup loads one word with the address and length of its shard's slots, then the slot itself. The words of all
 /// shards are adjacent and separate from the locks, so having many shards doesn't slow a lookup down.
-pub(crate) struct GrowingPlaces<A: Allocator + Clone = Global, const N: usize = 1> {
-    places: Places<Shared, A, Fixed<AtomicU64, N>>,
+pub(crate) struct GrowingSlots<A: Allocator + Clone = Global, const N: usize = 1> {
+    slot_table: Slots<Shared, A, Fixed<AtomicU64, N>>,
     /// Entry count of each shard. Inserting into a shard requires its lock.
     lens: [Guarded<usize>; N],
 }
 
-impl<A: Allocator + Clone + Default, const N: usize> Default for GrowingPlaces<A, N> {
+impl<A: Allocator + Clone + Default, const N: usize> Default for GrowingSlots<A, N> {
     fn default() -> Self {
         Self::new_in(A::default())
     }
 }
 
-impl<A: Allocator + Clone, const N: usize> GrowingPlaces<A, N> {
+impl<A: Allocator + Clone, const N: usize> GrowingSlots<A, N> {
     pub(crate) fn new_in(alloc: A) -> Self {
-        GrowingPlaces {
-            places: Places::new_in(alloc),
+        GrowingSlots {
+            slot_table: Slots::new_in(alloc),
             lens: std::array::from_fn(|_| Guarded::new(0)),
         }
     }
 
     #[inline]
-    pub(crate) fn find(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
-        (self.places).find(shard_among(spread, N), spread, Ordering::Acquire, is_it)
+    pub(crate) fn find(&self, spread: u64, is_match: impl FnMut(u32) -> bool) -> Option<u32> {
+        (self.slot_table).find(shard_among(spread, N), spread, Ordering::Acquire, is_match)
     }
 
     /// Calls `read` with every shard locked, so no thread can insert while it runs. This can't deadlock, because the
     /// locks are acquired in shard order, and no other code waits for a second shard lock while holding one.
-    pub(crate) fn while_none_grows<R>(&self, read: impl FnOnce() -> R) -> R {
+    pub(crate) fn with_all_locked<R>(&self, read: impl FnOnce() -> R) -> R {
         let _held: Vec<_> = self.lens.iter().map(Guarded::lock).collect();
         read()
     }
 
-    /// Returns the entry that `is_it` accepts. If there isn't one, adds the entry that `make` creates and returns it.
+    /// Returns the entry that `is_match` accepts. If there isn't one, adds the entry that `make` creates and returns
+    /// it.
     pub(crate) fn find_or_add(
         &self,
         spread: u64,
-        is_it: impl FnMut(u32) -> bool,
+        is_match: impl FnMut(u32) -> bool,
         make: impl FnOnce() -> u32,
     ) -> u32 {
         let shard = shard_among(spread, N);
         let mut len = self.lens[shard].lock();
         // Another thread may have inserted it first.
-        if let Some(found) = self.places.find(shard, spread, Ordering::Relaxed, is_it) {
+        if let Some(found) = self
+            .slot_table
+            .find(shard, spread, Ordering::Relaxed, is_match)
+        {
             return found;
         }
         let index = make();
-        self.places.add(shard, *len, spread, index);
+        self.slot_table.add(shard, *len, spread, index);
         *len += 1;
         index
     }
 }
 
-/// Selects one of the tables of a `WindowedPlaces`.
+/// Selects one of the tables of a `WindowedSlots`.
 ///
 /// Ids are assigned in order, and most lookups of a key happen soon after the youngest id in the key was assigned. So
 /// a key belongs to the window of that id, and `1 << IDS` consecutive ids share a window. The tables of the latest
@@ -553,7 +557,7 @@ impl Window {
     /// Returns the window of a key that has no id in it but belongs to declaration `index` of `file`. Most
     /// declarations of a file are visited in order.
     #[inline]
-    pub fn of_place(file: u32, index: u32) -> Window {
+    pub fn of_file_index(file: u32, index: u32) -> Window {
         Window::new(3, Self::HASHED + ((file << 2) | ((index >> 9) & 3)))
     }
 
@@ -564,12 +568,12 @@ impl Window {
     }
 }
 
-/// A key for a table backed by a `WindowedPlaces`.
+/// A key for a table backed by a `WindowedSlots`.
 pub trait Windowed: std::hash::Hash {
     fn window(&self) -> Window;
 }
 
-/// Returns the hash that a `WindowedPlaces` finds `value` by: the window in the upper half, the tag in the lower half.
+/// Returns the hash that a `WindowedSlots` finds `value` by: the window in the upper half, the tag in the lower half.
 #[inline]
 pub(crate) fn spread_in_window<T: Windowed + ?Sized>(value: &T) -> u64 {
     spread_of(value.window(), fx_hash(value))
@@ -586,73 +590,78 @@ pub(crate) struct InWindow;
 impl Placement for InWindow {
     /// When a table grows, the old one stays allocated next to the bigger one, so starting smaller uses more memory,
     /// not less.
-    const LEAST: usize = 32;
+    const MIN_SLOTS: usize = 32;
     #[inline]
     fn start(tag: u32) -> usize {
         tag as usize
     }
 }
 
-/// Number of locks in a `WindowedPlaces`.
+/// Number of locks in a `WindowedSlots`.
 const WINDOW_LOCKS: usize = 64;
 
-/// A `GrowingPlaces` with a shard for each `Window`.
-pub(crate) struct WindowedPlaces<A: Allocator + Clone = Global> {
+/// A `GrowingSlots` with a shard for each `Window`.
+pub(crate) struct WindowedSlots<A: Allocator + Clone = Global> {
     /// A series' counter is the window's entry count. Inserting into a window requires its lock.
-    places: Places<InWindow, A, Windows<A>>,
+    slot_table: Slots<InWindow, A, Windows<A>>,
     /// Neighboring windows have different locks.
     locks: [Guarded<()>; WINDOW_LOCKS],
 }
 
-impl<A: Allocator + Clone> WindowedPlaces<A> {
+impl<A: Allocator + Clone> WindowedSlots<A> {
     pub(crate) fn new_in(alloc: A) -> Self {
-        WindowedPlaces {
-            places: Places::new_in(alloc),
+        WindowedSlots {
+            slot_table: Slots::new_in(alloc),
             locks: std::array::from_fn(|_| Guarded::new(())),
         }
     }
 
     #[inline]
-    pub(crate) fn find(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
-        (self.places).find((spread >> 32) as usize, spread, Ordering::Acquire, is_it)
+    pub(crate) fn find(&self, spread: u64, is_match: impl FnMut(u32) -> bool) -> Option<u32> {
+        (self.slot_table).find((spread >> 32) as usize, spread, Ordering::Acquire, is_match)
     }
 
     /// `find` for when no thread is inserting. It uses relaxed loads, so something must have ordered
     /// the earlier inserts before this call.
     #[inline]
-    pub(crate) fn find_frozen(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
-        (self.places).find((spread >> 32) as usize, spread, Ordering::Relaxed, is_it)
+    pub(crate) fn find_frozen(
+        &self,
+        spread: u64,
+        is_match: impl FnMut(u32) -> bool,
+    ) -> Option<u32> {
+        (self.slot_table).find((spread >> 32) as usize, spread, Ordering::Relaxed, is_match)
     }
 
-    /// Returns the entry that `is_it` accepts. If there isn't one, adds the entry that `make` creates and returns it.
+    /// Returns the entry that `is_match` accepts. If there isn't one, adds the entry that `make` creates and returns
+    /// it.
     pub(crate) fn find_or_add(
         &self,
         spread: u64,
-        is_it: impl FnMut(u32) -> bool,
+        is_match: impl FnMut(u32) -> bool,
         make: impl FnOnce() -> u32,
     ) -> u32 {
         let window = (spread >> 32) as usize;
         let _held = self.locks[window % WINDOW_LOCKS].lock();
-        let slots = self.places.slots.get(window, Ordering::Relaxed);
+        let slots = self.slot_table.slots.get(window, Ordering::Relaxed);
         // Another thread may have inserted it first.
         let free = match slots.is_empty() {
             true => None,
             false => {
                 let slot = |at: usize| slots[at].load(Ordering::Relaxed);
-                match search::<InWindow>(slots.len(), spread, slot, is_it) {
+                match search::<InWindow>(slots.len(), spread, slot, is_match) {
                     Ok(found) => return found,
                     Err(free) => Some(free),
                 }
             }
         };
         let index = make();
-        let len = self.places.slots.series().count(window);
+        let len = self.slot_table.slots.series().count(window);
         let before = len.load(Ordering::Relaxed);
         match free {
             Some(free) if !is_too_full(before as usize + 1, slots.len()) => {
-                slots[free].store(place_of(spread, index), Ordering::Release);
+                slots[free].store(slot_value(spread, index), Ordering::Release);
             }
-            _ => self.places.add(window, before as usize, spread, index),
+            _ => self.slot_table.add(window, before as usize, spread, index),
         }
         // Only the lock holder writes it.
         len.store(before + 1, Ordering::Relaxed);
@@ -683,7 +692,7 @@ const LISTS: usize = 8;
 /// A lookup is lock-free and doesn't write to shared memory. An insert locks one of the `N` shards.
 pub struct ShardedMap<K, V, A: Allocator + Clone = Global, const N: usize = MAP_SHARDS> {
     /// Maps a hash to an entry's index in its list.
-    places: Box<GrowingPlaces<A, N>, A>,
+    slot_table: Box<GrowingSlots<A, N>, A>,
     entries: Box<[AppendVec<(K, V), A>; LISTS], A>,
 }
 
@@ -697,7 +706,7 @@ impl<K, V, A: Allocator + Clone, const N: usize> ShardedMap<K, V, A, N> {
     pub fn new_in(alloc: A) -> Self {
         let list = |_| AppendVec::new_in(alloc.clone());
         ShardedMap {
-            places: Box::new_in(GrowingPlaces::new_in(alloc.clone()), alloc.clone()),
+            slot_table: Box::new_in(GrowingSlots::new_in(alloc.clone()), alloc.clone()),
             entries: Box::new_in(std::array::from_fn(list), alloc.clone()),
         }
     }
@@ -723,7 +732,7 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
     {
         let spread = spread_hash(key);
         let list = self.list(spread);
-        (self.places)
+        (self.slot_table)
             .find(spread, |i| list.get(i).0.borrow() == key)
             .map(|i| &list.get(i).1)
     }
@@ -733,7 +742,7 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
         let spread = spread_hash(&key);
         let list = self.list(spread);
         let entry = std::cell::RefCell::new(Some((key, value)));
-        let index = self.places.find_or_add(
+        let index = self.slot_table.find_or_add(
             spread,
             |i| {
                 entry
@@ -747,10 +756,10 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
     }
 }
 
-/// A `ShardedMap` backed by a `WindowedPlaces`. Every `spread` argument is `spread_in_window(key)`.
+/// A `ShardedMap` backed by a `WindowedSlots`. Every `spread` argument is `spread_in_window(key)`.
 pub(crate) struct WindowedMap<K, V, A: Allocator + Clone = Global> {
     /// Maps a hash to an entry's index in its list.
-    places: Box<WindowedPlaces<A>, A>,
+    slot_table: Box<WindowedSlots<A>, A>,
     entries: Box<[AppendVec<(K, V), A>; LISTS], A>,
 }
 
@@ -758,7 +767,7 @@ impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
     pub(crate) fn new_in(alloc: A) -> Self {
         let list = |_| AppendVec::new_in(alloc.clone());
         WindowedMap {
-            places: Box::new_in(WindowedPlaces::new_in(alloc.clone()), alloc.clone()),
+            slot_table: Box::new_in(WindowedSlots::new_in(alloc.clone()), alloc.clone()),
             entries: Box::new_in(std::array::from_fn(list), alloc.clone()),
         }
     }
@@ -773,20 +782,20 @@ impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
         self.entries.iter().map(|list| list.len() as usize).sum()
     }
 
-    /// `get_by_now` for when no thread is inserting. See `WindowedPlaces::find_frozen`.
+    /// `get_acquire` for when no thread is inserting. See `WindowedSlots::find_frozen`.
     #[inline]
     pub(crate) fn get_frozen(&self, spread: u64, key: &K) -> Option<&V> {
         let list = self.list(spread);
-        (self.places)
+        (self.slot_table)
             .find_frozen(spread, |i| list.get(i).0 == *key)
             .map(|i| &list.get(i).1)
     }
 
     /// Returns the value of `key`. Stored values never move.
     #[inline]
-    pub(crate) fn get_by_now(&self, spread: u64, key: &K) -> Option<&V> {
+    pub(crate) fn get_acquire(&self, spread: u64, key: &K) -> Option<&V> {
         let list = self.list(spread);
-        (self.places)
+        (self.slot_table)
             .find(spread, |i| list.get(i).0 == *key)
             .map(|i| &list.get(i).1)
     }
@@ -798,7 +807,7 @@ impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
     {
         let list = self.list(spread);
         let mut value = Some(value);
-        self.places.find_or_add(
+        self.slot_table.find_or_add(
             spread,
             |i| list.get(i).0 == *key,
             || list.push((key.clone(), value.take().unwrap())),

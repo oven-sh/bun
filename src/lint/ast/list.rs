@@ -74,7 +74,7 @@ impl<'a, T: Handle<'a>> List<'a, T> {
             list: self,
             front: 0,
             back: self.len,
-            hides: self.file.has_synthetic_nodes(),
+            skips_synthetic: self.file.has_synthetic_nodes(),
         }
     }
 
@@ -147,7 +147,7 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
     #[inline(never)]
     fn near_in_long_list(self, offset: u32) -> Iter<'a, T> {
         let mut all = self.iter();
-        if !all.hides {
+        if !all.skips_synthetic {
             all.back = self.count_until(offset);
             all.front = all.back.saturating_sub(1);
         }
@@ -182,7 +182,7 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
         }
         let mut before = self.iter();
         before.back = at;
-        Some(if before.hides {
+        Some(if before.skips_synthetic {
             before.count()
         } else {
             at as usize
@@ -225,7 +225,7 @@ pub struct Iter<'a, T> {
     front: u32,
     back: u32,
     /// True if some elements may be synthesized from JSDoc comments. Those are skipped.
-    hides: bool,
+    skips_synthetic: bool,
 }
 
 impl<'a, T: Handle<'a>> Iterator for Iter<'a, T> {
@@ -233,8 +233,8 @@ impl<'a, T: Handle<'a>> Iterator for Iter<'a, T> {
 
     #[inline]
     fn next(&mut self) -> Option<T> {
-        if self.hides {
-            return self.next_written();
+        if self.skips_synthetic {
+            return self.next_non_synthetic();
         }
         (self.front < self.back).then(|| {
             self.front += 1;
@@ -245,15 +245,15 @@ impl<'a, T: Handle<'a>> Iterator for Iter<'a, T> {
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let rest = (self.back - self.front) as usize;
-        (if self.hides { 0 } else { rest }, Some(rest))
+        (if self.skips_synthetic { 0 } else { rest }, Some(rest))
     }
 }
 
 impl<'a, T: Handle<'a>> DoubleEndedIterator for Iter<'a, T> {
     #[inline]
     fn next_back(&mut self) -> Option<T> {
-        if self.hides {
-            return self.next_back_written();
+        if self.skips_synthetic {
+            return self.next_back_non_synthetic();
         }
         (self.front < self.back).then(|| {
             self.back -= 1;
@@ -265,7 +265,7 @@ impl<'a, T: Handle<'a>> DoubleEndedIterator for Iter<'a, T> {
 /// The slow path for a file with nodes synthesized from JSDoc comments.
 impl<'a, T: Handle<'a>> Iter<'a, T> {
     #[inline(never)]
-    fn next_written(&mut self) -> Option<T> {
+    fn next_non_synthetic(&mut self) -> Option<T> {
         while self.front < self.back {
             let it = self.list.at(self.front);
             self.front += 1;
@@ -277,7 +277,7 @@ impl<'a, T: Handle<'a>> Iter<'a, T> {
     }
 
     #[inline(never)]
-    fn next_back_written(&mut self) -> Option<T> {
+    fn next_back_non_synthetic(&mut self) -> Option<T> {
         while self.front < self.back {
             self.back -= 1;
             let it = self.list.at(self.back);

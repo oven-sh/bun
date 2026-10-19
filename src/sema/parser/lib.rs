@@ -56,7 +56,7 @@ pub enum Refusal {
 
 impl Refusal {
     /// True if the scanner hit something that isn't a token.
-    pub(crate) fn is_of_scanner(self) -> bool {
+    pub(crate) fn is_scanner_error(self) -> bool {
         matches!(
             self,
             Refusal::NotUtf8
@@ -217,7 +217,7 @@ impl Scratch {
 
     /// Returns the atoms of the file that [`parse_with_own_atoms`] parsed last. `text` is that file's text.
     pub fn atoms<'a>(&'a self, text: &'a [u8]) -> FileAtoms<'a> {
-        self.names.of_file(text)
+        self.names.file_atoms(text)
     }
 }
 

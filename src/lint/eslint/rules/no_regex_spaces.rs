@@ -149,18 +149,18 @@ fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoRegexSpaces>) {
     let Ok(ast) = regex::parse_pattern(pattern.text(), pattern.mode, regex::Options::default()) else {
         return;
     };
-    let is_passed_over = |it: regex::Node| matches!(it.ty(), NodeType::Quantifier | NodeType::CharacterClass);
+    let is_skipped = |it: regex::Node| matches!(it.ty(), NodeType::Quantifier | NodeType::CharacterClass);
     let mut found: Option<Span> = None;
     for node in ast.root().descendants() {
-        if node.character() != Some(u32::from(b' ')) || node.ancestors().any(is_passed_over) {
+        if node.character() != Some(u32::from(b' ')) || node.ancestors().any(is_skipped) {
             continue;
         }
-        let place = pattern.span(node.start(), node.end());
+        let space_span = pattern.span(node.start(), node.end());
         match &mut found {
-            Some(spaces) if spaces.end == place.start => spaces.end = place.end,
-            Some(spaces) if spaces.end - spaces.start == 1 => *spaces = place,
+            Some(spaces) if spaces.end == space_span.start => spaces.end = space_span.end,
+            Some(spaces) if spaces.end - spaces.start == 1 => *spaces = space_span,
             Some(_) => {}
-            None => found = Some(place),
+            None => found = Some(space_span),
         }
     }
     let Some((spaces, length)) = found.map(|it| (it, it.end - it.start)).filter(|it| it.1 > 1) else {

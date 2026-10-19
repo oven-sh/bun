@@ -279,7 +279,7 @@ fn styled_until_reset(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]
 }
 
 /// One row of oxlint's output.
-struct Placed<'r> {
+struct OxlintRow<'r> {
     line: usize,
     /// `line:column`
     position: Vec<u8>,
@@ -293,7 +293,7 @@ fn write_file_as_oxlint(
     out: &mut Vec<u8>,
     (color, meta): (bool, &Meta),
     filename: &[u8],
-    rows: &mut [Placed],
+    rows: &mut [OxlintRow],
 ) {
     let cwd = meta.cwd;
     if rows.is_empty() {
@@ -329,7 +329,7 @@ pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &
     let has_no_color = bun_core::getenv_z(&bun_core::ZBox::from_bytes(b"NO_COLOR")).is_some();
     let color = meta.color_option.unwrap_or(!has_no_color);
     let (mut total, mut errors) = (0, 0);
-    let mut without_place = Vec::new();
+    let mut without_location = Vec::new();
     for result in results.iter().filter(|it| !it.messages.is_empty()) {
         let source = Source::new(result, meta);
         let mut rows = Vec::new();
@@ -338,11 +338,11 @@ pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &
             errors += usize::from(is_error(message));
             let info = source.info(message);
             let group = if info.filename.is_empty() {
-                &mut without_place
+                &mut without_location
             } else {
                 &mut rows
             };
-            group.push(Placed {
+            group.push(OxlintRow {
                 line: info.start.line,
                 position: format!("{}:{}", info.start.line, info.start.column).into_bytes(),
                 message,
@@ -351,7 +351,7 @@ pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &
         }
         write_file_as_oxlint(out, (color, meta), &source.name, &mut rows);
     }
-    write_file_as_oxlint(out, (color, meta), b"", &mut without_place);
+    write_file_as_oxlint(out, (color, meta), b"", &mut without_location);
     if total == 0 {
         return;
     }

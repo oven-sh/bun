@@ -9,7 +9,7 @@ use rustc_hash::FxHashSet;
 /// Two settings apply to the same rule if they have the same key. A JavaScript plugin's rule can have the same name as
 /// a built-in one: see `merge_rules`.
 fn key(it: &RuleSetting) -> (&[u8], bool) {
-    (&it.id[..], it.written_for.is_some())
+    (&it.id[..], it.builtin_plugin.is_some())
 }
 
 impl Config {
@@ -19,7 +19,7 @@ impl Config {
     /// enables don't count. With `with_types`, rules that need types count too.
     ///
     /// A rule that only a category turns on and that Bun doesn't have isn't counted.
-    pub fn number_of_rules_of_oxlint(&self, registry: &Registry, with_types: bool) -> usize {
+    pub fn oxlint_number_of_rules(&self, registry: &Registry, with_types: bool) -> usize {
         let settings = |are_of_overrides: bool| {
             let objects = self.objects.iter();
             objects

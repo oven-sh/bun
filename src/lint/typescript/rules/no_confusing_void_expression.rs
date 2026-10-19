@@ -101,7 +101,7 @@ fn new_return_stmt_text(return_value: Expr, after: &str) -> Vec<u8> {
 /// a `(` or a `[`, and followed by `after`.
 fn tsgolint_return_stmt_text(statement: Stmt, return_value: Expr, after: &str) -> Vec<u8> {
     let rest = statement.file().slice(Span::after(keyword_of(statement), statement.span().end));
-    [prefix_of_tsgolint(return_value).as_bytes(), rest, after.as_bytes()].concat()
+    [tsgolint_prefix(return_value).as_bytes(), rest, after.as_bytes()].concat()
 }
 
 /// The span of the `return` keyword.
@@ -110,7 +110,7 @@ fn keyword_of(statement: Stmt) -> Span {
     Span::new(start, start + "return".len() as u32)
 }
 
-fn prefix_of_tsgolint(return_value: Expr) -> &'static str {
+fn tsgolint_prefix(return_value: Expr) -> &'static str {
     let first = return_value.file().text().get(return_value.outer_span().start as usize);
     if matches!(first, Some(b'(' | b'[')) { ";" } else { "" }
 }
@@ -267,7 +267,7 @@ impl NoConfusingVoidExpression {
                 can_fix(return_value, get_parent_function_node(statement)).then(|| {
                     match fixer.file().language().is_oxlint {
                         // tsgolint only touches the keyword, so another rule's fix to the rest still applies.
-                        true => fixer.replace(keyword_of(statement), prefix_of_tsgolint(return_value)),
+                        true => fixer.replace(keyword_of(statement), tsgolint_prefix(return_value)),
                         false => fixer.replace(statement, new_return_stmt_text(return_value, ";")),
                     }
                 })

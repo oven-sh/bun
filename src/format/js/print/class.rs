@@ -7,8 +7,8 @@ use super::semicolon::OptionalSemicolon;
 use super::type_parameters::{FormatTSTypeParametersOptions, type_arguments, type_parameters};
 use crate::js::attach::Marker;
 use crate::js::format::{
-    FormatTypeAnnotation, format_name, format_node, identifier, name_without_comments,
-    terminator_of_what_is_ignored_follows_semi,
+    FormatTypeAnnotation, format_name, format_node, identifier,
+    ignored_node_terminator_follows_semi, name_without_comments,
 };
 use crate::js::parentheses::expression::needs_parentheses;
 use crate::js::utils::assignment_like::AssignmentLike;
@@ -108,7 +108,7 @@ pub(crate) fn write_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
 
 /// True if the last modifier printed before `member`'s name must be on the same line as the name. With a line break
 /// after it, it would be parsed as a member name. A line break is fine after `static`, `get`, `set` and `*`.
-fn last_modifier_allows_no_line_break(member: Member<'_>) -> bool {
+fn last_modifier_must_stay_on_name_line(member: Member<'_>) -> bool {
     let function = member.func();
     if matches!(member.kind(), MemberKind::Getter | MemberKind::Setter)
         || function.is_some_and(Func::is_generator)
@@ -143,7 +143,7 @@ pub(crate) fn write_comments_between_modifiers<'a>(member: Member<'a>, f: &mut F
     };
     let comments = f.comments().of_name(key.inner_span(f.file()).start).leading;
     if (comments.iter()).any(|comment| comment.has_newline_after() || comment.is_multiline_block())
-        && last_modifier_allows_no_line_break(member)
+        && last_modifier_must_stay_on_name_line(member)
     {
         write!(f, FormatLeadingComments::Comments(comments));
     }
@@ -759,7 +759,7 @@ impl FormatClassElementWithSemicolon<'_> {
 }
 
 impl<'a> FormatClassElementWithSemicolon<'a> {
-    /// See [`terminator_of_what_is_ignored_follows_semi`].
+    /// See [`ignored_node_terminator_follows_semi`].
     fn write_ignored_without_terminator(&self, f: &mut Formatter<'a>) {
         let span = self.element.span();
         let has_terminator = match self.element.kind() {
@@ -794,7 +794,7 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let node = self.element.as_ast_nodes();
         let is_ignored = !f.is_quiet() && f.comments().is_ignored(node);
-        if is_ignored && terminator_of_what_is_ignored_follows_semi(f) {
+        if is_ignored && ignored_node_terminator_follows_semi(f) {
             return self.write_ignored_without_terminator(f);
         }
         let needs_semi = self.element.kind() == MemberKind::Property

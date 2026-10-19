@@ -457,12 +457,12 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
 
             for case in parse_snapshots(bundle.read(snapshot_file).unwrap_or_default()) {
                 let id = [relative, b"/", &case.name].concat();
-                if !flags.wants(&id) {
+                if !flags.matches_filter(&id) {
                     continue;
                 }
                 // For these parsers (JSON, style sheets, markup) the test's parser is used instead of one inferred from
                 // the file name.
-                let is_named = |it: &&[u8]| {
+                let is_explicit_parser = |it: &&[u8]| {
                     it.starts_with(b"json")
                         || matches!(
                             *it,
@@ -488,14 +488,14 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     Expected::Error(parsers) => parsers
                         .iter()
                         .map(Vec::as_slice)
-                        .find(is_named)
+                        .find(is_explicit_parser)
                         .or_else(|| parser_of_directory(language)),
                     Expected::Output(_) => None,
                 };
-                let named_parser = first_parser.filter(is_named).or(rejecting_parser);
-                let ours = named_parser.unwrap_or_else(|| parser_of(&case.name, language));
+                let explicit_parser = first_parser.filter(is_explicit_parser).or(rejecting_parser);
+                let ours = explicit_parser.unwrap_or_else(|| parser_of(&case.name, language));
                 if !case.parsers.is_empty()
-                    && named_parser.is_none()
+                    && explicit_parser.is_none()
                     && !case.parsers.iter().any(|it| is_javascript_parser(it))
                 {
                     *excluded.entry(PLUGIN).or_default() += 1;
@@ -503,13 +503,13 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 }
                 // With `embeddedLanguageFormatting: off`, a plugin for embedded code never runs, so the case isn't
                 // skipped.
-                let is_embedded_left = case
+                let is_embedded_formatting_off = case
                     .options
                     .iter()
                     .any(|it| it.0 == b"embeddedLanguageFormatting" && it.1 == b"off");
                 if let Some(&(_, reason)) = EXCLUDED
                     .iter()
-                    .filter(|it| it.1 != PLUGIN || !is_embedded_left)
+                    .filter(|it| it.1 != PLUGIN || !is_embedded_formatting_off)
                     .find(|it| strings::contains(&id, it.0.as_bytes()))
                 {
                     *excluded.entry(reason).or_default() += 1;
@@ -526,7 +526,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     embedded_html: true,
                     ..FormatOptions::default()
                 };
-                if let Some(parser) = named_parser {
+                if let Some(parser) = explicit_parser {
                     let _ = options.set(b"parser", parser);
                 } else if !case.parsers.is_empty()
                     && (case.rejected_by.iter().any(|it| it == ours)
@@ -569,13 +569,16 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                         // The file name that the test passes with the text, recorded by `sync.ts`, or the one in
                         // `snippet: test.cjs`. The test's parser, if it has one, still decides how it's parsed.
                         let title = case.name.strip_prefix(b"snippet: ");
-                        let noted = strings::split(filenames, b"\n")
+                        let recorded_name = strings::split(filenames, b"\n")
                             .filter_map(|line| strings::split_once(line, b"\t"));
-                        let noted = noted.filter(|it| Some(it.0) == title).map(|it| it.1).next();
-                        let name =
-                            noted.or_else(|| title.filter(|it| strings::contains_char(it, b'.')));
+                        let recorded_name = recorded_name
+                            .filter(|it| Some(it.0) == title)
+                            .map(|it| it.1)
+                            .next();
+                        let name = recorded_name
+                            .or_else(|| title.filter(|it| strings::contains_char(it, b'.')));
                         let _ = options.set(b"filepath", name.unwrap_or_default());
-                        let extension: &[u8] = match (named_parser, language) {
+                        let extension: &[u8] = match (explicit_parser, language) {
                             (Some(parser), _) if parser.starts_with(b"json") => b"json",
                             (Some(b"glimmer"), _) => b"hbs",
                             // Prettier gets no file name here, and only a file named `.html` has its doctype
@@ -656,12 +659,12 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 if !has_placeholders {
                     continue;
                 }
-                let is_left_alone = options.require_pragma
+                let is_returned_unchanged = options.require_pragma
                     || options.check_ignore_pragma
                     || matches!((options.range_start, options.range_end), (Some(start), Some(end)) if start >= end);
                 let skips_end_of_line = input.trim_ascii().is_empty()
                     || strings::contains_char(&input, b'\r')
-                    || is_left_alone;
+                    || is_returned_unchanged;
                 let ends_of_line = [
                     (&b"\r\n"[..], &mut tally.crlf, "CRLF"),
                     (b"\r", &mut tally.cr, "CR"),

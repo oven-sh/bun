@@ -19,7 +19,7 @@ use crate::js::utils::number::format_trimmed_number;
 use crate::options::FormatOptions;
 use bun_lint::ast::{Expr as ExprHandle, File, Handle};
 use bun_lint::tokens::skip_trivia;
-use bun_sema::atom::{Atom, Intern, NOT_IN_THE_FILE};
+use bun_sema::atom::{Atom, FIRST_ATOM_NOT_IN_FILE, Intern};
 use bun_sema::hir::*;
 
 macro_rules! lists {
@@ -224,7 +224,7 @@ impl<'a> Program<'a> {
     /// Appends the operands of `e`, a chain of `op`, to `out` in order. For `(a && b) && (c && d)` they're
     /// `a`, `b`, `c` and `d`.
     #[optimize(size)]
-    fn operands_of_chain(&self, e: ExprId, op: BinOp, out: &mut Vec<ExprId>) {
+    fn chain_operands(&self, e: ExprId, op: BinOp, out: &mut Vec<ExprId>) {
         // The expressions still to split, in reverse order.
         let mut rest = vec![e];
         while let Some(next) = rest.pop() {
@@ -460,14 +460,14 @@ impl Walk<'_, '_> {
     #[optimize(size)]
     fn at(&mut self, result: Same, before: u32, after: u32) -> Same {
         if result.is_err() {
-            self.set_place(before, after);
+            self.set_position(before, after);
         }
         result
     }
 
     #[cold]
     #[optimize(size)]
-    fn set_place(&mut self, before: u32, after: u32) {
+    fn set_position(&mut self, before: u32, after: u32) {
         if let Some(difference) = &mut self.difference {
             if difference.1 == u32::MAX {
                 difference.1 = before;
@@ -515,7 +515,7 @@ impl Walk<'_, '_> {
         let (at, known) = (a.0 as usize, &mut self.scratch.atoms);
         // A file's own names are numbered consecutively. Any other atom has a number far from theirs, so it
         // isn't cached and its text is compared every time.
-        if is_same && a.0 < NOT_IN_THE_FILE {
+        if is_same && a.0 < FIRST_ATOM_NOT_IN_FILE {
             if known.len() <= at {
                 known.resize(at + 1, UNKNOWN);
             }
@@ -740,13 +740,13 @@ impl Walk<'_, '_> {
             return Ok(());
         }
         // A specifier that the parser reads twice is listed twice, and out of order.
-        let places = |program: &Program<'_>| {
-            let mut places: Vec<u32> = program.specifier_uses.iter().map(|it| it.pos).collect();
-            crate::sort::sort(&mut places[..]);
-            places.dedup();
-            places
+        let positions = |program: &Program<'_>| {
+            let mut positions: Vec<u32> = program.specifier_uses.iter().map(|it| it.pos).collect();
+            crate::sort::sort(&mut positions[..]);
+            positions.dedup();
+            positions
         };
-        for (x, y) in places(self.a).into_iter().zip(places(self.b)) {
+        for (x, y) in positions(self.a).into_iter().zip(positions(self.b)) {
             if let (Some(p), Some(q)) = (
                 string_at_start(self.a.from(x)),
                 string_at_start(self.b.from(y)),
@@ -1794,10 +1794,8 @@ impl Walk<'_, '_> {
     fn logical_chain(&mut self, a: ExprId, b: ExprId, op: BinOp) -> Same {
         self.has_stack_left()?;
         let (first, first2) = (self.scratch.operands.0.len(), self.scratch.operands.1.len());
-        self.a
-            .operands_of_chain(a, op, &mut self.scratch.operands.0);
-        self.b
-            .operands_of_chain(b, op, &mut self.scratch.operands.1);
+        self.a.chain_operands(a, op, &mut self.scratch.operands.0);
+        self.b.chain_operands(b, op, &mut self.scratch.operands.1);
         let count = self.scratch.operands.0.len() - first;
         let mut result = self.check(
             count == self.scratch.operands.1.len() - first2,
@@ -1900,7 +1898,7 @@ impl Walk<'_, '_> {
         }
         // Allowed: different line breaks. In a template, they all evaluate to `\n`.
         #[optimize(size)]
-        fn with_one_kind_of_line_break(text: &[u8]) -> impl Iterator<Item = u8> {
+        fn with_normalized_line_breaks(text: &[u8]) -> impl Iterator<Item = u8> {
             (text.iter().zip(text.iter().skip(1).map(Some).chain([None]))).filter_map(
                 |(&byte, next)| match (byte, next) {
                     (b'\r', Some(b'\n')) => None,
@@ -1911,7 +1909,7 @@ impl Walk<'_, '_> {
         }
         if texts()
             .zip(texts2())
-            .all(|(x, y)| with_one_kind_of_line_break(x).eq(with_one_kind_of_line_break(y)))
+            .all(|(x, y)| with_normalized_line_breaks(x).eq(with_normalized_line_breaks(y)))
         {
             return Ok(());
         }
@@ -2463,11 +2461,11 @@ fn number_at_start(text: &[u8]) -> Option<&[u8]> {
 #[inline]
 #[optimize(size)]
 fn is_same_string(a: &[u8], b: &[u8]) -> bool {
-    a == b || is_same_string_but_for_quotes(a, b)
+    a == b || is_same_string_ignoring_quotes(a, b)
 }
 
 #[optimize(size)]
-fn is_same_string_but_for_quotes(a: &[u8], b: &[u8]) -> bool {
+fn is_same_string_ignoring_quotes(a: &[u8], b: &[u8]) -> bool {
     #[optimize(size)]
     fn content(text: &[u8]) -> Option<&[u8]> {
         match text {

@@ -111,7 +111,7 @@ pub(crate) enum Chomping {
 pub(crate) struct Id(std::num::NonZeroU32);
 
 impl Id {
-    fn of_index(index: usize) -> Id {
+    fn from_index(index: usize) -> Id {
         Id(std::num::NonZeroU32::MIN.saturating_add(index as u32))
     }
 
@@ -241,7 +241,7 @@ struct Context<'c, 'a> {
     last_line: std::cell::Cell<(u32, u32, u32)>,
     /// An offset in that line, and the number of UTF-16 code units before it in the line. The next lookup is usually
     /// nearby, and a line can be as long as the whole text.
-    last_place: std::cell::Cell<(u32, u32)>,
+    last_offset: std::cell::Cell<(u32, u32)>,
     nodes: Vec<Node<'a>>,
     comments: Vec<Id>,
     /// Nodes whose parents haven't been created yet.
@@ -249,7 +249,7 @@ struct Context<'c, 'a> {
     /// True if there's a tag or an anchor.
     has_properties: bool,
     /// Message and position of an `Unexpected` error, if it has them.
-    refusal: Option<SyntaxError>,
+    recorded_error: Option<SyntaxError>,
     stack: &'c Stack,
 }
 
@@ -286,7 +286,7 @@ impl<'a> Context<'_, 'a> {
             .max(1);
             (start, next) = (start_of(line), start_of(line + 1));
             self.last_line.set((line, start, next));
-            self.last_place.set((start, 0));
+            self.last_offset.set((start, 0));
         }
         // Columns count UTF-16 code units.
         let column = match self.is_ascii {
@@ -308,12 +308,12 @@ impl<'a> Context<'_, 'a> {
                 if offset.saturating_sub(start) <= 64 {
                     units(start, offset)
                 } else {
-                    let (place, before_place) = self.last_place.get();
+                    let (place, before_place) = self.last_offset.get();
                     let column = match offset >= place {
                         true => before_place + units(place, offset),
                         false => before_place.saturating_sub(units(offset, place)),
                     };
-                    self.last_place.set((offset, column));
+                    self.last_offset.set((offset, column));
                     column
                 }
             }
@@ -343,7 +343,7 @@ impl<'a> Context<'_, 'a> {
     }
 
     fn new_node(&mut self, kind: Kind, position: Position) -> Id {
-        let id = Id::of_index(self.nodes.len());
+        let id = Id::from_index(self.nodes.len());
         self.nodes.push(Node {
             kind,
             position,
@@ -429,7 +429,7 @@ impl<'a> Context<'_, 'a> {
     /// Moves the properties of `node`, which comes after `indicator` in a block collection, into `props`. If the node
     /// has no content of its own, its properties must be on the indicator's line or indented further than `entry`,
     /// the start of the item that the indicator belongs to. Anything else belongs to the next item.
-    fn take_props_behind(
+    fn take_props_after(
         &mut self,
         indicator: SourceToken,
         entry: u32,
@@ -637,7 +637,7 @@ impl<'a> Context<'_, 'a> {
             .count();
         if !matches!(after_header.get(blanks), None | Some(b'\n' | b'#')) {
             let at = token.start + (header.len() + blanks) as u32;
-            self.refusal = Some(SyntaxError(Message::UnexpectedCharacter, at));
+            self.recorded_error = Some(SyntaxError(Message::UnexpectedCharacter, at));
             return Err(Unexpected);
         }
         let indicator_comment = self
@@ -790,7 +790,7 @@ impl<'a> Context<'_, 'a> {
         let mut key_props: Props = props.drain(own..).collect();
         let children = self.pending.len();
         for property in mapping.properties.iter() {
-            if self.pending.len() > children && self.is_at_key_that_yaml_refuses() {
+            if self.pending.len() > children && self.is_at_key_yaml_rejects() {
                 return Err(Unexpected);
             }
             let key_props = std::mem::take(&mut key_props);
@@ -802,7 +802,7 @@ impl<'a> Context<'_, 'a> {
 
     /// `yaml` 2.9 can't read a key in brackets or braces without a `?` if anything, even spaces, comes between it and
     /// the line where the previous value ends. That value is in the last entry of `self.pending`.
-    fn is_at_key_that_yaml_refuses(&self) -> bool {
+    fn is_at_key_yaml_rejects(&self) -> bool {
         let rest = self.tokens.get(self.at..).unwrap_or_default();
         let mut rest = rest.iter().filter(|it| it.kind != TokenKind::Comment);
         let Some(first) = rest.next() else {
@@ -836,7 +836,7 @@ impl<'a> Context<'_, 'a> {
             self.take_comments();
             let indicator = self.expect(TokenKind::SequenceEntry)?;
             let mut item_props = Props::new();
-            self.take_props_behind(indicator, indicator.start, item, &mut item_props);
+            self.take_props_after(indicator, indicator.start, item, &mut item_props);
             // `transformItemValue`
             let content = match is_empty_node(item, &item_props) {
                 true => {
@@ -875,7 +875,7 @@ impl<'a> Context<'_, 'a> {
         let mut explicit_key_ind = None;
         loop {
             match explicit_key_ind.filter(|_| !is_flow) {
-                Some(it) => self.take_props_behind(it, it.start, key, &mut key_props),
+                Some(it) => self.take_props_after(it, it.start, key, &mut key_props),
                 None => self.take_props(&mut key_props),
             }
             match self.peek().map(|token| token.kind) {
@@ -921,7 +921,7 @@ impl<'a> Context<'_, 'a> {
             self.at += 1;
             match is_flow {
                 true => self.take_props(&mut value_props),
-                false => self.take_props_behind(colon, entry, value, &mut value_props),
+                false => self.take_props_after(colon, entry, value, &mut value_props),
             }
         }
         let value_content = match is_empty_node(value, &value_props) {
@@ -1033,7 +1033,7 @@ impl<'a> Context<'_, 'a> {
         };
         let last_line = self.point(end.saturating_sub(1)).line;
         // A comment that isn't indented more than the items doesn't belong to any of them.
-        let column_of_items = (content.children.first())
+        let items_column = (content.children.first())
             .map_or(1, |item| self.nodes[item.index()].position.start.column);
         while let Some(token) = self.peek().filter(|it| it.kind == TokenKind::Comment) {
             let place = self.point(token.start);
@@ -1045,7 +1045,7 @@ impl<'a> Context<'_, 'a> {
             let comment = self.transform_comment(token);
             if place.line > last_line
                 && !is_open
-                && (!is_block || place.column <= column_of_items || !end_comments.is_empty())
+                && (!is_block || place.column <= items_column || !end_comments.is_empty())
             {
                 end_comments.push(comment);
             }
@@ -1061,9 +1061,9 @@ impl<'a> Context<'_, 'a> {
         let mut directives: Vec<Id> = Vec::new();
         let mut end_comment_candidates: Vec<Id> = Vec::new();
         // Bun's parser treats this comment as part of a directive that it doesn't know.
-        let mut comment_of_directive = None;
+        let mut directive_comment = None;
         loop {
-            let unlisted = comment_of_directive.take();
+            let unlisted = directive_comment.take();
             if let Some(token) = unlisted.or_else(|| self.take(TokenKind::Comment)) {
                 let comment = self.transform_comment(token);
                 let position = self.position_of(comment);
@@ -1082,7 +1082,7 @@ impl<'a> Context<'_, 'a> {
             } else if let Some(token) = self.take(TokenKind::Directive) {
                 let (directive, comment) = self.transform_directive(token);
                 directives.push(directive);
-                comment_of_directive = comment.filter(|_| self.peek() != comment);
+                directive_comment = comment.filter(|_| self.peek() != comment);
                 end_comment_candidates.clear();
             } else {
                 break;
@@ -1537,21 +1537,21 @@ pub(crate) fn build<'a>(
         is_ascii: text.is_ascii(),
         // An empty range before the first line, so the first lookup misses.
         last_line: std::cell::Cell::new((0, 0, 0)),
-        last_place: std::cell::Cell::new((0, 0)),
+        last_offset: std::cell::Cell::new((0, 0)),
         line_starts,
         // A key, its `:` and its value are three tokens and five nodes.
         nodes: Vec::with_capacity(tokens.len() * 2 + 16),
         comments: Vec::new(),
         pending: Vec::new(),
         has_properties: false,
-        refusal: None,
+        recorded_error: None,
         stack,
     };
     // The last node created is next to the one that failed, so report its position.
     let children = context
         .transform_documents(documents)
         .map_err(|Unexpected| {
-            context.refusal.unwrap_or_else(|| {
+            context.recorded_error.unwrap_or_else(|| {
                 let last = context.nodes.last();
                 SyntaxError(
                     Message::CannotBeFormatted,

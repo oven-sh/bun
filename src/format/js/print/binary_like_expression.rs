@@ -65,7 +65,7 @@ impl<'a> BinaryLikeExpression<'a> {
     /// Returns the right side if it's a logical expression with the same operator: `a && (b && c)`. Prettier rebalances
     /// the tree after parsing, so it sees `(a && b) && c`.
     fn right_with_same_operator(&self, f: &Formatter<'a>) -> Option<BinaryLikeExpression<'a>> {
-        match self.is_logical() && !is_tree_as_it_is_parsed(f) {
+        match self.is_logical() && !skips_logical_rebalancing(f) {
             true => BinaryLikeExpression::new(self.right)
                 .filter(|right| right.operator == self.operator && !is_cast_target(right.expr, f)),
             false => None,
@@ -166,7 +166,7 @@ impl<'a> Format<'a> for BinaryLikeExpression<'a> {
 }
 
 /// `const a = /** @type {T} */ (⏎b ||⏎c⏎)`: oxfmt looks at the cast's parent, and doesn't indent `c`.
-fn parentheses_of_cast_are_a_node(f: &Formatter<'_>) -> bool {
+fn cast_parentheses_are_a_node(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
@@ -174,15 +174,15 @@ impl<'a> BinaryLikeExpression<'a> {
     fn write(&self, f: &mut Formatter<'a>) {
         let parent = self.parent();
         // In that case its parent is a `ParenthesizedExpression` for Prettier, which matches none of the checks below.
-        let is_in_type_cast = parentheses_of_cast_are_a_node(f) && is_cast_target(self.expr, f);
+        let is_in_type_cast = cast_parentheses_are_a_node(f) && is_cast_target(self.expr, f);
 
         // A condition has its own indentation and group.
         if !is_in_type_cast && self.is_inside_condition(parent) {
-            let place = ChainPlace {
+            let position = ChainPosition {
                 inside_condition: true,
                 is_nested: false,
             };
-            return format_flattened_logical_expression(*self, place, f);
+            return format_flattened_logical_expression(*self, position, f);
         }
 
         // Positions where it gets parentheses: `(a + b)()`, `!(a + b)`, `(a + b).c`.
@@ -196,7 +196,7 @@ impl<'a> BinaryLikeExpression<'a> {
             return write!(
                 f,
                 group(&soft_block_indent(&format_with(|f| {
-                    format_flattened_logical_expression(*self, ChainPlace::default(), f)
+                    format_flattened_logical_expression(*self, ChainPosition::default(), f)
                 })))
             );
         }
@@ -206,7 +206,7 @@ impl<'a> BinaryLikeExpression<'a> {
                 f,
                 group(&format_with(|f| format_flattened_logical_expression(
                     *self,
-                    ChainPlace::default(),
+                    ChainPosition::default(),
                     f
                 )))
             );
@@ -215,7 +215,7 @@ impl<'a> BinaryLikeExpression<'a> {
         let inline_logical_expression = self.should_inline_logical_expression(f);
         let should_indent_if_inlines =
             !is_in_type_cast && should_indent_if_parent_inlines(parent, f);
-        let parts = split_into_left_and_right_sides(*self, ChainPlace::default(), f);
+        let parts = split_into_left_and_right_sides(*self, ChainPosition::default(), f);
         let flattened = parts.len() > 2 || self.right_with_same_operator(f).is_some();
 
         if (inline_logical_expression && !flattened)
@@ -315,7 +315,7 @@ enum Operands {
 
 /// A chain's position. By default it isn't in a condition and is a separate node.
 #[derive(Debug, Copy, Clone, Default)]
-struct ChainPlace {
+struct ChainPosition {
     /// See [`BinaryLeftOrRightSide::Right::inside_condition`].
     inside_condition: bool,
     /// See [`BinaryLeftOrRightSide::Right::is_nested`], for the whole chain.
@@ -325,14 +325,14 @@ struct ChainPlace {
 /// Writes all operands of a chain one after the other.
 fn format_flattened_logical_expression<'a>(
     binary: BinaryLikeExpression<'a>,
-    place: ChainPlace,
+    position: ChainPosition,
     f: &mut Formatter<'a>,
 ) {
     // `a && ((b && ((c && ..) && d)) && e)`: this bypasses `Expr`'s `Format` impl, which does the stack check.
     if !f.context_mut().has_stack_left() {
         return;
     }
-    let parts = split_into_left_and_right_sides(binary, place, f);
+    let parts = split_into_left_and_right_sides(binary, position, f);
     f.join().entries(parts.iter());
 }
 
@@ -406,11 +406,11 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
                     .filter(|left| left.operator == operator && !is_cast_target(left.expr, f))
                 {
                     Some(left_logical_child) => {
-                        let place = ChainPlace {
+                        let position = ChainPosition {
                             inside_condition: inside_parenthesis,
                             is_nested: true,
                         };
-                        format_flattened_logical_expression(left_logical_child, place, f);
+                        format_flattened_logical_expression(left_logical_child, position, f);
                     }
                     None => right_logical.left.fmt(f),
                 }
@@ -493,7 +493,7 @@ fn is_before_vue_filter(operator: BinOp, f: &Formatter<'_>) -> bool {
 }
 
 /// Prettier rebalances the trees from its JavaScript parsers, but not the tree from its Angular parser.
-fn is_tree_as_it_is_parsed(f: &Formatter<'_>) -> bool {
+fn skips_logical_rebalancing(f: &Formatter<'_>) -> bool {
     f.options().in_html.root.is_angular()
 }
 
@@ -567,7 +567,7 @@ fn leading_comments_of_operand<'a>(
         let starts_with = BinaryLikeExpression::new(operand).filter(|it| {
             it.is_logical()
                 && it.operator == operator
-                && !is_tree_as_it_is_parsed(f)
+                && !skips_logical_rebalancing(f)
                 && !is_cast_target(it.expr, f)
         });
         match starts_with {
@@ -754,13 +754,13 @@ impl<'a> BinaryLeftOrRightSide<'a> {
 /// right side of each expression on the way up.
 fn split_into_left_and_right_sides<'a>(
     binary: BinaryLikeExpression<'a>,
-    place: ChainPlace,
+    position: ChainPosition,
     f: &Formatter<'a>,
 ) -> SmallVec<[BinaryLeftOrRightSide<'a>; 4]> {
-    let ChainPlace {
+    let ChainPosition {
         inside_condition,
         is_nested,
-    } = place;
+    } = position;
     let mut items = SmallVec::new();
     let mut current = binary;
     loop {

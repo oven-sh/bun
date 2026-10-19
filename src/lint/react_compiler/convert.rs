@@ -293,7 +293,7 @@ impl<'a> Converter<'a, '_> {
         }
         let declaration = symbol.declarations().next();
         let is_outside = !self.root.contains(symbol.scope().span())
-            || matches!(declaration, Some(Declaration::Fn(func)) if self.has_its_name_from_outside(func));
+            || matches!(declaration, Some(Declaration::Fn(func)) if self.treats_own_name_as_outer(func));
         let name = StoreStr::new(symbol.name().bytes());
         let import = match declaration {
             Some(Declaration::ImportDefault(import)) => Some(VariableBinding::ImportDefault {
@@ -409,15 +409,15 @@ impl<'a> Converter<'a, '_> {
         // oxc's lowering destructures a parameter like a declaration, which supports variables that
         // a nested function assigns. Upstream's only does that for an object's `...rest`, and Bun's
         // never does.
-        let is_taken_apart_in_body = match (self.flavor, param.pat().kind()) {
+        let is_destructured_in_body = match (self.flavor, param.pat().kind()) {
             (Flavor::Oxlint, PatKind::Object(_) | PatKind::Array(_)) => is_assigned(param.pat()),
             (Flavor::Eslint, PatKind::Object(props)) => props
                 .iter()
                 .all(|it| it.is_rest() || !is_assigned(it.value())),
             _ => false,
         };
-        if is_taken_apart_in_body && !param.is_rest() && is_assigned(param.pat()) {
-            binding = self.declared_in_body(binding, SymbolKind::Hoisted, first);
+        if is_destructured_in_body && !param.is_rest() && is_assigned(param.pat()) {
+            binding = self.destructure_in_body(binding, SymbolKind::Hoisted, first);
         }
         Ok(G::Arg {
             binding,
@@ -428,7 +428,7 @@ impl<'a> Converter<'a, '_> {
 
     /// Rewrites `({ a }) => ..` as `(t) => { let { a } = t; .. }`. Returns the `t` and adds the
     /// declaration to `first`.
-    fn declared_in_body(
+    fn destructure_in_body(
         &mut self,
         binding: Binding,
         kind: SymbolKind,
@@ -476,21 +476,21 @@ impl<'a> Converter<'a, '_> {
 
     /// Upstream's compiler fails on a function expression that refers to itself by name. oxc's
     /// doesn't: it treats the name like one from outside.
-    fn has_its_name_from_outside(&self, func: Func<'a>) -> bool {
+    fn treats_own_name_as_outer(&self, func: Func<'a>) -> bool {
         self.flavor == Flavor::Oxlint && func.kind() == FnKind::Expr
     }
 
     /// The function being compiled keeps its name, because the name determines what kind of
     /// function it is.
-    fn is_without_its_name(&self, func: Func<'a>) -> bool {
-        self.has_its_name_from_outside(func) && func.estree_span() != self.root
+    fn drops_own_name(&self, func: Func<'a>) -> bool {
+        self.treats_own_name_as_outer(func) && func.estree_span() != self.root
     }
 
     fn function(&mut self, func: Func<'a>) -> Converts<G::Fn> {
         self.nested(|this| {
             let loc = this.loc(func.estree_span());
             let name = match func.name() {
-                Some(_) if this.is_without_its_name(func) => None,
+                Some(_) if this.drops_own_name(func) => None,
                 Some(name) => Some(LocRef {
                     loc: this.loc(name.span()),
                     ref_: this.declared(func.symbol(), name.name()),
@@ -1494,7 +1494,8 @@ impl<'a> Converter<'a, '_> {
                             && param.is_some_and(|it| is_captured_pattern(it.pat(), stmt))
                         {
                             let kind = SymbolKind::CatchIdentifier;
-                            binding = binding.map(|it| self.declared_in_body(it, kind, &mut first));
+                            binding =
+                                binding.map(|it| self.destructure_in_body(it, kind, &mut first));
                         }
                         Some(Catch {
                             loc,

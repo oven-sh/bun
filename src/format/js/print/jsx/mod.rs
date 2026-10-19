@@ -301,7 +301,7 @@ pub(crate) fn write_jsx_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>
 
 /// Prettier prints `a=/* prettier-ignore */ 'b'` as `a=/* prettier-ignore */ "b"`: `printJsxAttribute` prints a string
 /// itself, ignored or not. oxfmt copies it.
-fn ignored_string_of_attribute_is_formatted(f: &Formatter<'_>) -> bool {
+fn formats_ignored_attribute_string(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
@@ -317,7 +317,7 @@ impl<'a> Format<'a> for FormatJsxAttributeValue<'a> {
         let node = value.as_ast_nodes();
         if !matches!(node, AstNodes::StringLiteral(_))
             || !f.comments().is_ignored(node)
-            || !ignored_string_of_attribute_is_formatted(f)
+            || !formats_ignored_attribute_string(f)
         {
             return FormatJsxChild(value).fmt(f);
         }

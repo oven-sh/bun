@@ -48,7 +48,7 @@ pub struct Oxlint<'a> {
     /// `OXLINT_GLOBAL_OBJECTS`
     objects: [Name<'a>; 5],
     /// A filter over `objects`: bit `atom % 64` is set for each name.
-    numbers: u64,
+    name_bits: u64,
     mentions_global_this: bool,
 }
 
@@ -58,7 +58,7 @@ impl<'a> Oxlint<'a> {
     fn may_be_object(&self, callee: Expr<'a>) -> bool {
         match callee.as_ident() {
             Some(name) => {
-                self.numbers >> (name.atom().0 % 64) & 1 != 0
+                self.name_bits >> (name.atom().0 % 64) & 1 != 0
                     || callee.symbol().is_some_and(|it| it.declaration_kinds().contains(DeclarationKinds::VARIABLE))
             }
             None => self.mentions_global_this,
@@ -160,8 +160,8 @@ impl Rule for NoObjCalls {
             return file.mentions_any(&OXLINT_GLOBAL_OBJECTS).then(|| {
                 Some(Oxlint {
                     objects: OXLINT_GLOBAL_OBJECTS.map(|it| file.name_of(it)),
-                    numbers: (OXLINT_GLOBAL_OBJECTS.iter())
-                        .fold(0, |numbers, it| numbers | 1 << (file.name_of(it).atom().0 % 64)),
+                    name_bits: (OXLINT_GLOBAL_OBJECTS.iter())
+                        .fold(0, |name_bits, it| name_bits | 1 << (file.name_of(it).atom().0 % 64)),
                     mentions_global_this: file.mentions("globalThis"),
                 })
             });

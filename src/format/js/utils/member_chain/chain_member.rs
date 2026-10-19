@@ -6,7 +6,7 @@ use crate::js::print::member_expression::{
 };
 use crate::js::print::type_parameters::type_arguments;
 use crate::js::utils::call_expression::{
-    FormatCallee, comments_stay_behind_callee, write_comments_behind_callee,
+    FormatCallee, keeps_comments_after_callee, write_comments_after_callee,
 };
 use crate::js::utils::typecast::{comments_of_outermost_node, has_comments};
 use crate::prelude::*;
@@ -96,7 +96,7 @@ fn write_call_without_callee<'a>(expression: Expr<'a>, f: &mut Formatter<'a>) {
 
 /// `(a?.b()) /* comment */?.c()`: oxfmt drops the parentheses and prints the comment before the `?.c`, not after
 /// `a?.b()`. `link` is the `a?.b()`.
-fn comments_behind_inner_chain_lead_next_link<'a>(link: Expr<'a>, f: &Formatter<'a>) -> bool {
+fn comments_after_inner_chain_lead_next_link<'a>(link: Expr<'a>, f: &Formatter<'a>) -> bool {
     f.options().flavor.is_oxfmt()
         && link.is_chain_root()
         && matches!(link.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Dot)
@@ -123,7 +123,7 @@ impl<'a> Format<'a> for ChainMember<'a> {
             // A `prettier-ignore` comment has no effect on a link.
             _ => {
                 if let Some(object) = (self.expr().object())
-                    .filter(|object| comments_behind_inner_chain_lead_next_link(*object, f))
+                    .filter(|object| comments_after_inner_chain_lead_next_link(*object, f))
                 {
                     let comments = f.comments().of_node(object.as_chain_element()).trailing;
                     FormatLeadingComments::Comments(comments).fmt(f);
@@ -131,9 +131,9 @@ impl<'a> Format<'a> for ChainMember<'a> {
                 FormatLeadingComments::Comments(self.leading_comments(f)).fmt(f);
                 self.write_link(f);
                 let trailing_comments = self.comments(f).trailing;
-                if comments_stay_behind_callee(self.expr(), true, f) {
-                    write_comments_behind_callee(trailing_comments, f);
-                } else if !comments_behind_inner_chain_lead_next_link(self.expr(), f) {
+                if keeps_comments_after_callee(self.expr(), true, f) {
+                    write_comments_after_callee(trailing_comments, f);
+                } else if !comments_after_inner_chain_lead_next_link(self.expr(), f) {
                     FormatTrailingComments::Comments(trailing_comments).fmt(f);
                 }
             }

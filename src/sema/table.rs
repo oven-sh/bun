@@ -417,7 +417,7 @@ pub struct Frozen;
 
 /// The default for a field of `Program`. A task stores into the table's task-local part
 /// (`crate::local::Half`), which no other task sees. The table holds the shared part. Commits write
-/// to it (`Publish::store_logged`), and so does `insert` where `Task::may_write_at_once` allows it.
+/// to it (`Publish::store_logged`), and so does `insert` where `Task::may_write_immediately` allows it.
 pub struct Buffered<W: Location = AtRunTime>(PhantomData<fn() -> W>);
 
 /// Where a task stores the task-local part of a `Buffered` table.
@@ -428,7 +428,7 @@ pub trait Location {
     /// leave the task. Used for results about expressions. Nearly all of those are computed by the task that checks the
     /// file, which is the only one that looks up all of them. Another task only reaches an expression on the way to a
     /// declaration's type. Its entries are shared, and the task that checks the file finds them.
-    const KEEPS_THE_VISITED_FILE: bool = false;
+    const KEEPS_VISITED_FILE_LOCAL: bool = false;
 }
 
 /// The slot is a field of the table.
@@ -445,12 +445,12 @@ impl<const SLOT: u32> Location for At<SLOT> {
     const SLOT: u32 = SLOT;
 }
 
-/// `At`, for a table with `Location::KEEPS_THE_VISITED_FILE`.
+/// `At`, for a table with `Location::KEEPS_VISITED_FILE_LOCAL`.
 pub(crate) struct OfExpressions<const SLOT: u32>;
 
 impl<const SLOT: u32> Location for OfExpressions<SLOT> {
     const SLOT: u32 = SLOT;
-    const KEEPS_THE_VISITED_FILE: bool = true;
+    const KEEPS_VISITED_FILE_LOCAL: bool = true;
 }
 
 /// The entries are task-local and are dropped when the task finishes the file it's visiting. No
@@ -582,21 +582,21 @@ impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
 
     /// Returns the cell index of the key at `at` in the concatenation of all keys, and the key's bit offset in it.
     #[inline]
-    fn place_of(at: usize) -> (usize, u32) {
+    fn cell_and_shift(at: usize) -> (usize, u32) {
         (at / Self::PER_CELL, (at % Self::PER_CELL) as u32 * V::BITS)
     }
 
     /// Returns the cell contents for the key at `at`, shifted down to the key's bits. Higher keys' bits aren't masked.
     #[inline]
     fn bits_at(&self, at: usize, load: impl FnOnce(&V::Cell) -> <V::Cell as Cell>::Raw) -> u64 {
-        let (cell, shift) = Self::place_of(at);
+        let (cell, shift) = Self::cell_and_shift(at);
         (self.cells.existing(cell)).map_or(0, |cell| V::Cell::widen(load(cell)) >> shift)
     }
 
     /// Returns the cell of the key at `at` for writing, and the key's bit offset in the cell.
     #[inline]
     fn field_at(&self, at: usize) -> (&V::Cell, u32) {
-        let (cell, shift) = Self::place_of(at);
+        let (cell, shift) = Self::cell_and_shift(at);
         (self.cells.cell(cell), shift)
     }
 
@@ -881,7 +881,7 @@ impl<I: Id, V: Packed, A: Alloc> ById<I, V, Frozen, A> {
 // - A value that's stored out of line goes to the shared `kept` when it's inserted, unless the entry is bound. A commit
 //   stores only the handle.
 // - `insert` and `rewrite` of a table keyed by a record store into the shared part immediately where
-//   `Task::may_write_at_once` allows it. `get` doesn't change. It reads the shared part, then the task-local part,
+//   `Task::may_write_immediately` allows it. `get` doesn't change. It reads the shared part, then the task-local part,
 //   which has the entries that are bound or waiting for a commit.
 // - What the task sees under the nodes of the file it's visiting doesn't change during the visit. It's copied into the
 //   task-local part, which then answers without the shared part (`ByNode::adopt`).
@@ -905,7 +905,7 @@ fn stays_in_task(task: &Task, key: &impl Follow) -> bool {
 /// the task-local part anyway, that's a `Task::hold_back`.
 #[inline]
 fn is_for_all_tasks(task: &Task, value: &impl Follow) -> bool {
-    task.writes_at_once() && !value.is_bound(&task.own)
+    task.writes_immediately() && !value.is_bound(&task.own)
 }
 
 impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V, Buffered<W>, A> {
@@ -949,7 +949,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
     /// Returns the `stamps` value of the key at `at`. The caller has already loaded the key's entry.
     #[inline]
     fn stamp_at(&self, at: usize) -> u32 {
-        let stamp = self.stamps.existing_by_now(at as u32);
+        let stamp = self.stamps.existing_acquire(at as u32);
         stamp.map_or(0, |stamp| stamp.load(Ordering::Relaxed))
     }
 
@@ -1073,7 +1073,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
                 (published, true)
             }
         };
-        if W::KEEPS_THE_VISITED_FILE && file == buffer.file() {
+        if W::KEEPS_VISITED_FILE_LOCAL && file == buffer.file() {
             return kept;
         }
         if is_stored {
@@ -1081,7 +1081,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         }
         // The entry waits in the task-local part for a commit, unless `Bases` doesn't count the node. Nothing is ever
         // published under such a node, so no other task could find the entry.
-        if task.writes_at_once() && self.bases.at(FileId(file), index).is_some() {
+        if task.writes_immediately() && self.bases.at(FileId(file), index).is_some() {
             task.hold_back();
         }
         kept
@@ -1122,7 +1122,7 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ById<I, V, Buffe
         if !task.commits() {
             return self.published(number);
         }
-        (self.cells.existing_by_now(number)).map_or(0, |cell| cell.load(Ordering::Acquire))
+        (self.cells.existing_acquire(number)).map_or(0, |cell| cell.load(Ordering::Acquire))
     }
 
     /// Returns `task`'s own entry under the published id `number`, or 0 if there is none.
@@ -1168,7 +1168,7 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ById<I, V, Buffe
     /// Stores `raw` in the shared cell of the published id `number`, unless the key already has an entry there or in
     /// the task-local part. Returns the key's entry afterwards.
     #[inline]
-    fn put_at_once(&self, task: &Task, number: u32, raw: u32) -> u32 {
+    fn put_immediately(&self, task: &Task, number: u32, raw: u32) -> u32 {
         let own = self.in_task(task, number);
         if own != 0 && self.seen(task, number) == 0 {
             return own;
@@ -1202,22 +1202,22 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
         stored: Stored,
     ) -> V {
         if key.local_number().is_none() && is_for_all_tasks(task, &value) {
-            if task.may_write_at_once(self.own_slot(), stored) {
+            if task.may_write_immediately(self.own_slot(), stored) {
                 if MAY_STAY_IN_TASK && stays_in_task(task, &key) {
                     return self.insert_for_this_task(task, key, value);
                 }
-                return self.put_value_at_once(task, key, value);
+                return self.put_value_immediately(task, key, value);
             }
             task.hold_back();
         }
         self.insert_in_task(task, key, value)
     }
 
-    /// `put_at_once` for a value that isn't packed yet.
+    /// `put_immediately` for a value that isn't packed yet.
     #[inline]
-    fn put_value_at_once(&self, task: &Task, key: I, value: V) -> V {
+    fn put_value_immediately(&self, task: &Task, key: I, value: V) -> V {
         let raw = value.pack();
-        V::unpack(self.put_at_once(task, key.number(), raw))
+        V::unpack(self.put_immediately(task, key.number(), raw))
     }
 
     /// An entry that was written immediately is published, so this doesn't change it. Code that stores an entry it will
@@ -1226,12 +1226,12 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
         let Some(number) = key.local_number() else {
             let number = key.number();
             if is_for_all_tasks(task, &value) {
-                if task.may_write_at_once(self.own_slot(), stored)
+                if task.may_write_immediately(self.own_slot(), stored)
                     && self.in_task(task, number) == 0
                 {
                     match stays_in_task(task, &key) {
                         true => self.insert_for_this_task(task, key, value),
-                        false => self.put_value_at_once(task, key, value),
+                        false => self.put_value_immediately(task, key, value),
                     };
                     return value;
                 }
@@ -1282,7 +1282,7 @@ fn store_in_task<'s, T: Send + 's>(
 /// Stores a new entry's value, in the shared `kept` or in the task, and returns its handle. `may_be_shared` means that
 /// only `value` can make the entry bound. A value in `kept` whose handle is never committed stays there, unreachable,
 /// until the program is freed.
-fn keep<'s, T: Follow + Send + 's, A: Alloc>(
+fn store_value<'s, T: Follow + Send + 's, A: Alloc>(
     (kept, slot): (&AppendVec<T, A>, &Slot<IndirectInTask<T>>),
     task: &Task<'s>,
     (key, may_be_shared): (u64, bool),
@@ -1314,7 +1314,7 @@ impl<'s, K: NodeKey, T: Follow + Send + 's, W: Location, A: Alloc>
         let handle = self.handles.get(task, &key).unwrap_or_else(|| {
             let word = node_word(key.file().0, key.index());
             let has_cell = self.handles.bases.at(key.file(), key.index()).is_some();
-            let kept = keep((&self.kept, slot), task, (word, has_cell), value);
+            let kept = store_value((&self.kept, slot), task, (word, has_cell), value);
             self.handles.insert(task, key, kept, stored)
         });
         indirect_at(&self.kept, slot, task, handle)
@@ -1369,8 +1369,8 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
         let is_for_all = key.local_number().is_none()
             && task.shares_what_it_stores()
             && !value.is_bound(&task.own);
-        let is_at_once = task.may_write_at_once(self.handles.slot, stored);
-        if is_for_all && is_at_once && stays_in_task(task, &key) {
+        let is_immediate = task.may_write_immediately(self.handles.slot, stored);
+        if is_for_all && is_immediate && stays_in_task(task, &key) {
             let kept = store_in_task(&self.in_task, task, u64::from(key.number()), value);
             return self.handles.insert_for_this_task(task, key, kept);
         }
@@ -1426,18 +1426,18 @@ where
     /// task got there first. Returns `Err` if the caller has to store the entry in the task-local part, with true if a
     /// commit should store it later. `spread` is `key`'s hash.
     #[inline]
-    fn put_at_once(
+    fn put_immediately(
         &self,
         task: &Task<'s>,
         (spread, key, value): (u64, &K, V),
         stored: Stored,
     ) -> Result<V, bool> {
-        if !task.writes_at_once() || key.is_bound(&task.own) || value.is_bound(&task.own) {
+        if !task.writes_immediately() || key.is_bound(&task.own) || value.is_bound(&task.own) {
             return Err(true);
         }
         // If the task already has a deferred entry under the key, it keeps using that one.
         let own = || task.buffer().typed(&self.slot)?.get(spread, key).copied();
-        if !task.may_write_at_once(self.slot.number(), stored) || own().is_some() {
+        if !task.may_write_immediately(self.slot.number(), stored) || own().is_some() {
             task.hold_back();
             return Err(true);
         }
@@ -1448,7 +1448,7 @@ where
         if is_first {
             return Ok(value);
         }
-        (self.published.get_by_now(spread, key).copied()).ok_or(true)
+        (self.published.get_acquire(spread, key).copied()).ok_or(true)
     }
 
     /// `spread` is `key`'s hash.
@@ -1458,7 +1458,7 @@ where
             return None;
         }
         match task.commits() {
-            true => self.published.get_by_now(spread, key).copied(),
+            true => self.published.get_acquire(spread, key).copied(),
             false => self.published.get_frozen(spread, key).copied(),
         }
     }
@@ -1473,7 +1473,7 @@ where
         stored: Stored,
         replaces: bool,
     ) -> V {
-        let is_committed = match self.put_at_once(task, (spread, &key, value), stored) {
+        let is_committed = match self.put_immediately(task, (spread, &key, value), stored) {
             Ok(held) => return held,
             Err(is_committed) => is_committed,
         };
@@ -1692,7 +1692,7 @@ fn store_logged_cell<D: Dense<Value: Follow>>(
     table.store_in_commit(shared_key, raw, number)
 }
 
-/// `Publish::store_logged` for an indirect table. A value whose handle has `LOCAL` is bound (see `keep`).
+/// `Publish::store_logged` for an indirect table. A value whose handle has `LOCAL` is bound (see `store_value`).
 fn store_logged_handle<D: Dense<Value = Handle>>(
     handles: &D,
     task: &Task,

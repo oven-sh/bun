@@ -1100,10 +1100,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `@type` tags for which TypeScript has no annotation (`jsdoc_types`), and the `T` of `T=` and
     /// `...T`. `getTypeFromTypeNode` only resolves them as far as something requests, so a pass
     /// over all of a file's nodes skips what they contain.
-    pub(super) fn unchecked_jsdoc_types(&self, file: FileId) -> Places {
+    pub(super) fn unchecked_jsdoc_types(&self, file: FileId) -> RangeSet {
         let hir = self.hir(file);
         if !hir.is_js {
-            return Places::new(std::iter::empty());
+            return RangeSet::new(std::iter::empty());
         }
         let assigned = hir.jsdoc_types.iter().map(|assigned| assigned.1);
         let operands = hir.types.iter().filter_map(|node| match node.kind {
@@ -1114,7 +1114,7 @@ impl<'p, 's> Checker<'p, 's> {
             } => Some(ty),
             _ => None,
         });
-        Places::new(assigned.chain(operands).map(|ty| TextRange {
+        RangeSet::new(assigned.chain(operands).map(|ty| TextRange {
             pos: hir[ty].pos,
             end: hir[ty].end,
         }))
@@ -2202,7 +2202,7 @@ impl<'p, 's> Checker<'p, 's> {
             match self.defaults_in_progress.last() {
                 Some(innermost) if innermost.0 != param => {
                     self.task.hold_back();
-                    self.close_ring(height);
+                    self.close_cycle(height);
                 }
                 _ => self.close_cycle_above(height),
             }
@@ -2356,7 +2356,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_declared_type(&mut self, sym: Sym) -> TypeId {
         loop {
             let ty = self.resolve_declared_type_once(sym);
-            if self.unwind_to != self.stack.len() || !self.resolve_what_was_too_deep() {
+            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
                 return ty;
             }
             if let Some((known, _)) = self.p.declared_types.get(&self.task, &sym) {
@@ -4430,7 +4430,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Caches `kept`, the stored result of `sig_type_params(sig)`, in `signature_links` and returns it.
     fn kept_sig_type_params(&mut self, sig: SigId, kept: &'p [TypeId]) -> List<'p, TypeId> {
-        self.signature_links.keep_type_parameters(sig, kept);
+        self.signature_links.cache_type_parameters(sig, kept);
 
         List::Kept(kept)
     }
@@ -4805,7 +4805,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `kept` is the stored result of `sig_params(sig)`.
     fn cached_sig_params(&mut self, sig: SigId, kept: &'p [SigParam]) -> List<'p, SigParam> {
         self.recent_sig_params[sig.0 as usize % RECENT_SIGS] = (sig, kept);
-        self.signature_links.keep_parameters(sig, kept);
+        self.signature_links.cache_parameters(sig, kept);
 
         List::Kept(kept)
     }
@@ -5156,7 +5156,7 @@ impl<'p, 's> Checker<'p, 's> {
                             ..*parameter
                         })
                         .collect();
-                    self.min_argument_count_asked(Some(target), &of_target)
+                    self.min_argument_count_for(Some(target), &of_target)
                 });
                 is_resolved = i + 1 >= asked;
             }
@@ -5177,9 +5177,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getReturnTypeOfSignature`
     #[inline]
     pub fn sig_return(&mut self, sig: SigId) -> TypeId {
-        match self.kept_return_type(sig) {
+        match self.cached_return_type(sig) {
             Some(kept) => kept,
-            None => self.derive_and_keep_return_type(sig),
+            None => self.derive_and_cache_return_type(sig),
         }
     }
 
@@ -5434,9 +5434,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypePredicateOfSignature`
     #[inline]
     pub fn sig_predicate(&mut self, sig: SigId) -> Option<Predicate> {
-        match self.kept_type_predicate(sig) {
+        match self.cached_type_predicate(sig) {
             Some(kept) => kept,
-            None => self.derive_and_keep_type_predicate(sig),
+            None => self.derive_and_cache_type_predicate(sig),
         }
     }
 

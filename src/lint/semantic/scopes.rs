@@ -147,7 +147,7 @@ pub(crate) fn is_javascript_mode(file: &File) -> bool {
     let language = file.language();
     file.is_javascript()
         && language.parser != Parser::TypeScript
-        && (!language.is_oxlint || file.has_scopes_of_oxc())
+        && (!language.is_oxlint || file.has_oxc_scopes())
 }
 
 /// ESLint's `scopeManager.isGlobalReturn()`.
@@ -490,7 +490,7 @@ impl ScopeTree {
     /// `scope_of_node` for a node that starts outside all `zones`, in a file without lifted parts.
     /// No zone encloses it then, and without zones the regions are exactly the scopes, in the same
     /// order, each with the enclosing one as its `parent`.
-    fn scope_of_node_in_no_zone(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
+    fn scope_of_node_outside_zones(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
         let after = self.scopes.partition_point(|it| it.start <= start);
         let mut at = after.saturating_sub(1);
         while let Some(scope) = self.scopes.get(at) {
@@ -512,7 +512,7 @@ impl ScopeTree {
             && !self.has_lifted_parts
             && !self.is_in_zone(start)
         {
-            let scope = self.scope_of_node_in_no_zone(start, end, block);
+            let scope = self.scope_of_node_outside_zones(start, end, block);
             debug_assert_eq!(scope, self.scope_of_node_by_regions(start, end, block));
             return scope;
         }
@@ -580,13 +580,13 @@ impl Cursor<'_> {
     #[inline(always)]
     pub(crate) fn seek_by_steps(&mut self, pos: u32, take: impl FnMut(Step)) -> u32 {
         if pos >= self.until {
-            self.go_on_to(pos, take);
+            self.advance_to(pos, take);
         }
         self.from
     }
 
     #[inline(never)]
-    fn go_on_to(&mut self, pos: u32, mut take: impl FnMut(Step)) {
+    fn advance_to(&mut self, pos: u32, mut take: impl FnMut(Step)) {
         while pos >= self.until {
             if let Some(change) = self.then {
                 self.from = change.from;
@@ -643,15 +643,15 @@ impl<'f, 'a> Collector<'f, 'a> {
         if file.language().scope_source_type() == SourceType::Module && all.has_block_scopes {
             all.scope(ScopeKind::Module, Block::File, 0, u32::MAX);
         }
-        all.what_the_tree_has();
-        all.leave_out_what_is_not_visited();
+        all.collect_from_tree();
+        all.remove_unvisited();
         all
     }
 
     /// `TypeVisitor.TSImportType` visits the type arguments and nothing else. `PatternVisitor.TSTypeAnnotation` visits nothing.
-    fn leave_out_what_is_not_visited(&mut self) {
+    fn remove_unvisited(&mut self) {
         let hir = &self.file.hir;
-        if self.is_javascript || self.file.has_scopes_of_oxc() {
+        if self.is_javascript || self.file.has_oxc_scopes() {
             self.unvisited.clear();
             return;
         }
@@ -687,7 +687,7 @@ impl<'f, 'a> Collector<'f, 'a> {
         });
     }
 
-    fn what_the_tree_has(&mut self) {
+    fn collect_from_tree(&mut self) {
         let hir = &self.file.hir;
         (0..hir.stmts.len()).for_each(|i| self.statement(i));
         (0..hir.fns.len()).for_each(|i| self.function(i));
@@ -1033,7 +1033,7 @@ impl<'f, 'a> Collector<'f, 'a> {
             return;
         };
         // `namespace A.B.C { }` is one declaration, which the HIR stores as three.
-        if self.file.has_scopes_of_oxc() {
+        if self.file.has_oxc_scopes() {
             self.declaration(ScopeKind::TsModule, it.stmt, it.name_pos);
         } else if !is_after_dot(self.file, it) {
             self.declaration(ScopeKind::TsModule, it.stmt, last_name_pos(self.file, it));

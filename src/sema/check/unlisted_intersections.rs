@@ -41,10 +41,10 @@ const MIN_PROPERTIES: usize = 32;
 /// A constituent of an intersection, with what `build_intersection_shape` computed for its properties.
 pub(super) struct Constituent<'p> {
     /// The type whose entry in `Program::members` is `members`.
-    asked: TypeId,
+    queried_type: TypeId,
     members: Members<'p>,
     /// The result of `instantiation_of_prop` for each property. Empty if `Members::mapper` is the identity, or if the
-    /// properties take the mapper as is (`take_any_mapper`).
+    /// properties take the mapper as is (`mapper_applies_unchanged`).
     instantiations: Box<[PropInstantiation]>,
     /// Positions of the properties whose name another constituent also has. See `Unlisted::combined`.
     shared: PositionSet,
@@ -71,7 +71,7 @@ impl<'p> Constituent<'p> {
 }
 
 /// True if `instantiation_of_prop(prop, mapper)` is `mapper` for each of `props` and computes nothing.
-fn take_any_mapper(props: &[Prop]) -> bool {
+fn mapper_applies_unchanged(props: &[Prop]) -> bool {
     props.iter().all(|prop| {
         prop.mapper == MapperId::IDENTITY
             && matches!(
@@ -181,7 +181,7 @@ impl<'p> Unlisted<'p> {
             return Some(prop);
         }
         for constituent in &self.constituents {
-            let Some(position) = constituent.members.resolved.position_past_filter(name) else {
+            let Some(position) = constituent.members.resolved.position_with_filter(name) else {
                 continue;
             };
             let copy: &'p Prop<'p> = arena.alloc(constituent.copy_of_property(position, arena));
@@ -202,14 +202,15 @@ pub(in super::super) struct UnlistedIntersections<'p> {
 
 impl<'p, 's> Checker<'p, 's> {
     /// Computes what `build_intersection_shape` needs for the properties in `members`, which are the members of
-    /// `asked`.
+    /// `queried_type`.
     pub(super) fn instantiate_constituent(
         &mut self,
-        asked: TypeId,
+        queried_type: TypeId,
         members: Members<'p>,
     ) -> Constituent<'p> {
         let props = &members.shape().props;
-        let computes_nothing = members.mapper == MapperId::IDENTITY || take_any_mapper(props);
+        let computes_nothing =
+            members.mapper == MapperId::IDENTITY || mapper_applies_unchanged(props);
         let instantiations: Box<[PropInstantiation]> = if computes_nothing {
             Box::default()
         } else {
@@ -218,7 +219,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .collect()
         };
         Constituent {
-            asked,
+            queried_type,
             members,
             instantiations,
             shared: PositionSet::default(),
@@ -244,7 +245,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.unlisted_intersections.shares_most_names != Some(whole)
             // Two same-named properties of one constituent are combined too.
             && (constituents.iter()).all(|it| it.members.resolved.has_distinct_names())
-            && (constituents.iter()).all(|it| self.has_stored_members(it.asked, it.members))
+            && (constituents.iter()).all(|it| self.has_stored_members(it.queried_type, it.members))
     }
 
     /// Leaves the properties of the intersection `ty` in `constituents`. `combined` and `constituents` are the results
@@ -287,8 +288,9 @@ impl<'p, 's> Checker<'p, 's> {
         constituents: &[Constituent<'p>],
         arena: &'s Arena,
     ) -> Shape<'s> {
-        let of_one = |it: &Constituent| it.props().len() - it.shared.iter().count();
-        let count = constituents.iter().map(of_one).sum::<usize>() + combined.shape.props.len();
+        let unshared_count = |it: &Constituent| it.props().len() - it.shared.iter().count();
+        let count =
+            constituents.iter().map(unshared_count).sum::<usize>() + combined.shape.props.len();
         let mut shape = Shape::new_in(arena);
         shape.props.reserve_exact(count);
         // A property's position is where the first constituent with that name has it.
@@ -342,7 +344,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `members_on_cache_miss`
         let scope = self.begin_scope();
         let built = self.properties_of_intersection(ty, parts, true);
-        let members = self.keep_members(ty, scope, Some((built, MapperId::IDENTITY)));
+        let members = self.cache_members(ty, scope, Some((built, MapperId::IDENTITY)));
         match self.unlisted_intersections.by_type.contains_key(&ty) {
             true => None,
             false => members,
@@ -363,10 +365,10 @@ impl<'p, 's> Checker<'p, 's> {
         let combined = unlisted.combined;
         unlisted.lookups += 1;
         // Misses count too, because a union looks up every member's names in all the other members.
-        let is_asked_often = unlisted.lookups * 4 >= unlisted.count;
-        self.tally(MemberCount::AskedOfUnlisted, 1);
-        if is_asked_often {
-            self.tally(MemberCount::ListedAfterBeingAsked, 1);
+        let is_looked_up_often = unlisted.lookups * 4 >= unlisted.count;
+        self.tally(MemberCount::UnlistedLookups, 1);
+        if is_looked_up_often {
+            self.tally(MemberCount::ListedAfterLookups, 1);
             let _ = self.members(ty);
         }
         if let Some(prop) = found {

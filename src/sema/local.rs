@@ -17,7 +17,7 @@
 //! `crate::check::task` the task. Their memory is on the regular heap, and the thread that runs the task frees it when
 //! the task ends.
 
-use crate::util::{LocalVec, Placement, free_slot, is_too_full, place_of, search, slots_for};
+use crate::util::{LocalVec, Placement, free_slot, is_too_full, search, slot_value, slots_for};
 use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -79,10 +79,10 @@ impl<A: MaybeLocal, B: MaybeLocal, C: MaybeLocal> MaybeLocal for (A, B, C) {
     }
 }
 
-pub(crate) struct OfTask;
+pub(crate) struct TaskPlacement;
 
-impl Placement for OfTask {
-    const LEAST: usize = 256;
+impl Placement for TaskPlacement {
+    const MIN_SLOTS: usize = 256;
     /// Hashes the tag again, because its low bits make a poor index on their own.
     #[inline]
     fn start(tag: u32) -> usize {
@@ -93,14 +93,14 @@ impl Placement for OfTask {
 /// A hash index: finds a value's index by the value's hash. The one thread that owns it adds entries through a shared
 /// reference.
 #[derive(Default)]
-pub struct Found {
-    /// Empty, or a power-of-two number of slots. See `place_of`. No other thread reads them, so the pointer and length
-    /// are stored right here, and a table is freed as soon as a bigger one replaces it.
+pub struct HashIndex {
+    /// Empty, or a power-of-two number of slots. See `slot_value`. No other thread reads them, so the pointer and
+    /// length are stored right here, and a table is freed as soon as a bigger one replaces it.
     slots: RefCell<Box<[u64]>>,
     count: Cell<usize>,
 }
 
-/// Where an unsuccessful search of a `Found` ended.
+/// Where an unsuccessful search of a `HashIndex` ended.
 #[derive(Copy, Clone)]
 pub struct Vacancy {
     /// The free slot.
@@ -114,11 +114,11 @@ impl Vacancy {
     const UNKNOWN: Vacancy = Vacancy { at: 0, of: 0 };
 }
 
-impl Found {
-    /// `is_it` must not add to this `Found`.
+impl HashIndex {
+    /// `is_match` must not add to this `HashIndex`.
     #[inline]
-    pub fn find(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
-        self.find_or_vacancy(spread, is_it).ok()
+    pub fn find(&self, spread: u64, is_match: impl FnMut(u32) -> bool) -> Option<u32> {
+        self.find_or_vacancy(spread, is_match).ok()
     }
 
     /// Like `find`, but a miss returns the `Vacancy` to pass to `fill`.
@@ -126,7 +126,7 @@ impl Found {
     pub fn find_or_vacancy(
         &self,
         spread: u64,
-        is_it: impl FnMut(u32) -> bool,
+        is_match: impl FnMut(u32) -> bool,
     ) -> Result<u32, Vacancy> {
         let held = self.slots.borrow();
         let slots: &[u64] = &held;
@@ -134,7 +134,8 @@ impl Found {
         if of == 0 {
             return Err(Vacancy::UNKNOWN);
         }
-        search::<OfTask>(of, spread, |at| slots[at], is_it).map_err(|at| Vacancy { at, of })
+        search::<TaskPlacement>(of, spread, |at| slots[at], is_match)
+            .map_err(|at| Vacancy { at, of })
     }
 
     #[inline]
@@ -156,22 +157,23 @@ impl Found {
         let slots: &mut [u64] = &mut held;
         let at = match slots.get(vacancy.at) {
             Some(0) if vacancy.of == slots.len() => vacancy.at,
-            _ => free_slot::<OfTask>(slots.len(), spread as u32, |at| slots[at]),
+            _ => free_slot::<TaskPlacement>(slots.len(), spread as u32, |at| slots[at]),
         };
-        slots[at] = place_of(spread, number);
+        slots[at] = slot_value(spread, number);
     }
 
     #[cold]
     #[inline(never)]
     fn grow(slots: &mut Box<[u64]>, count: usize) {
-        let mut bigger = vec![0; slots_for::<OfTask>(count, slots.len())].into_boxed_slice();
+        let mut bigger = vec![0; slots_for::<TaskPlacement>(count, slots.len())].into_boxed_slice();
         // If a zeroed page from the operating system is read before it's written, its first write takes a second page
         // fault, which interrupts every other thread. So write to each page first.
         for page in bigger.chunks_mut((4 << 10) / size_of::<u64>()) {
             *std::hint::black_box(&mut page[0]) = 0;
         }
         for &place in slots.iter().filter(|&&place| place != 0) {
-            let at = free_slot::<OfTask>(bigger.len(), (place >> 32) as u32, |at| bigger[at]);
+            let at =
+                free_slot::<TaskPlacement>(bigger.len(), (place >> 32) as u32, |at| bigger[at]);
             bigger[at] = place;
         }
         *slots = bigger;
@@ -182,7 +184,7 @@ impl Found {
     pub fn clear(&mut self) {
         let count = self.count.replace(0);
         let slots = self.slots.get_mut();
-        if count != 0 && slots.len() <= 4 * slots_for::<OfTask>(count, 0) {
+        if count != 0 && slots.len() <= 4 * slots_for::<TaskPlacement>(count, 0) {
             slots.fill(0);
         } else if count != 0 {
             *slots = Box::default();
@@ -201,14 +203,14 @@ impl Found {
 /// precomputed hash when the key has no `Default`.
 pub struct Hashed<K, V> {
     entries: Vec<(K, V)>,
-    found: Found,
+    found: HashIndex,
 }
 
 impl<K, V> Default for Hashed<K, V> {
     fn default() -> Self {
         Hashed {
             entries: Vec::new(),
-            found: Found::default(),
+            found: HashIndex::default(),
         }
     }
 }
@@ -276,8 +278,8 @@ impl<K: Eq, V> Hashed<K, V> {
     }
 }
 
-/// Hashes a one-word key. `Found` uses the low half, so that half has to depend on both halves of the word, and on more
-/// than their XOR: as many nodes (file, index) share one `file ^ index` as the task has files.
+/// Hashes a one-word key. `HashIndex` uses the low half, so that half has to depend on both halves of the word, and on
+/// more than their XOR: as many nodes (file, index) share one `file ^ index` as the task has files.
 #[inline]
 pub fn spread_word(word: u64) -> u64 {
     let product = word.wrapping_mul(0x9E37_79B9_7F4A_7C15);
@@ -451,7 +453,7 @@ pub(crate) struct Half<'s> {
     sparse: Hashed<u64, u32>,
     /// Type-erased storage: the `S::In` of the table's `Slot<S>`. For an indirect table it's a `LocalVec<(u64, T)>` of
     /// the values with their keys, indexed by handle without `LOCAL`. For a `ByKey` it's a `Hashed<K, V>`.
-    typed: Option<Box<dyn Reused + Send + 's>>,
+    typed: Option<Box<dyn Reusable + Send + 's>>,
 }
 
 /// Implemented for every type. Type-erased storage is dropped through this trait.
@@ -467,14 +469,14 @@ impl<T> Typed for T {
 }
 
 /// Storage that one task after another reuses.
-pub(crate) trait Reused: Typed {
+pub(crate) trait Reusable: Typed {
     /// Drops the contents but keeps some of the memory for the next task.
     fn clear(&mut self);
     #[cfg(test)]
     fn is_like_new(&self) -> bool;
 }
 
-impl<T> Reused for LocalVec<T> {
+impl<T> Reusable for LocalVec<T> {
     fn clear(&mut self) {
         LocalVec::clear(self);
     }
@@ -484,7 +486,7 @@ impl<T> Reused for LocalVec<T> {
     }
 }
 
-impl<K, V> Reused for Hashed<K, V> {
+impl<K, V> Reusable for Hashed<K, V> {
     fn clear(&mut self) {
         self.found.clear();
         clear_cells(&mut self.entries);
@@ -497,7 +499,7 @@ impl<K, V> Reused for Hashed<K, V> {
 
 /// Selects the type a table stores in `Half::typed`. The implementor is only a marker type.
 pub(crate) trait InTask {
-    type In<'s>: Reused + Send + 's
+    type In<'s>: Reusable + Send + 's
     where
         Self: 's;
 
@@ -650,7 +652,7 @@ impl<'s> Half<'s> {
             && *published_in_row == PublishedInRow::Unknown
             && directory.is_empty()
             && earlier.is_empty()
-            && Reused::is_like_new(sparse)
+            && Reusable::is_like_new(sparse)
             && typed.as_ref().is_none_or(|typed| typed.is_like_new())
     }
 
@@ -678,7 +680,7 @@ impl<'s> Half<'s> {
     }
 
     /// Makes `cells` the row of `file` in `earlier`. `ordinal` is the file's ordinal and isn't 0.
-    fn keep_row(&mut self, file: u32, ordinal: u32, cells: Vec<u32>) {
+    fn save_row(&mut self, file: u32, ordinal: u32, cells: Vec<u32>) {
         let at = ordinal as usize - 1;
         if at >= self.earlier.len() {
             self.earlier.resize_with(at + 1, || (NO_FILE, Vec::new()));
@@ -692,20 +694,20 @@ impl<'s> Half<'s> {
 #[derive(Default)]
 pub(crate) struct Log {
     /// A slot, and either the number of a published id or the index of an entry in a `Hashed`.
-    pub(crate) of_records: Vec<[u32; 2]>,
+    pub(crate) record_keys: Vec<[u32; 2]>,
     /// A slot, a file, and the number of a node in the file.
-    pub(crate) of_nodes: Vec<[u32; 3]>,
+    pub(crate) node_keys: Vec<[u32; 3]>,
 }
 
 impl Log {
     #[inline]
     pub(crate) fn len(&self) -> usize {
-        self.of_records.len() + self.of_nodes.len()
+        self.record_keys.len() + self.node_keys.len()
     }
 }
 
 /// A `Buffer` has room for this many tables.
-pub(crate) const MOST_TABLES: usize = 80;
+pub(crate) const MAX_TABLES: usize = 80;
 
 /// The task-local parts of all `Buffered` tables, indexed by slot. A field of the `Task`. They're stored inline in the
 /// task, not behind a pointer, so a table whose slot is a compile-time constant finds its part at a fixed offset from
@@ -724,7 +726,7 @@ pub(crate) struct Buffer<'s> {
     /// The number of files that have an ordinal.
     files: u32,
     pages: Pages,
-    halves: [Half<'s>; MOST_TABLES],
+    halves: [Half<'s>; MAX_TABLES],
 }
 
 impl<'s> Buffer<'s> {
@@ -753,18 +755,18 @@ impl<'s> Buffer<'s> {
     }
 
     /// The number of logged keys of each kind: records, then nodes.
-    pub(crate) fn lengths_of_log(&self) -> [usize; 2] {
-        (self.log.as_ref()).map_or([0; 2], |log| [log.of_records.len(), log.of_nodes.len()])
+    pub(crate) fn log_lengths(&self) -> [usize; 2] {
+        (self.log.as_ref()).map_or([0; 2], |log| [log.record_keys.len(), log.node_keys.len()])
     }
 
-    /// The keys logged since `lengths_of_log` returned `from`.
+    /// The keys logged since `log_lengths` returned `from`.
     pub(crate) fn logged_since(&self, from: [usize; 2]) -> (&[[u32; 2]], &[[u32; 3]]) {
         let Some(log) = &self.log else {
             return (&[], &[]);
         };
         (
-            log.of_records.get(from[0]..).unwrap_or(&log.of_records),
-            log.of_nodes.get(from[1]..).unwrap_or(&log.of_nodes),
+            log.record_keys.get(from[0]..).unwrap_or(&log.record_keys),
+            log.node_keys.get(from[1]..).unwrap_or(&log.node_keys),
         )
     }
 
@@ -774,12 +776,12 @@ impl<'s> Buffer<'s> {
     }
 
     /// Hands back the log that `take_log` returned, so its memory is reused.
-    pub(crate) fn give_back_log(&mut self, mut taken: Log) {
+    pub(crate) fn recycle_log(&mut self, mut taken: Log) {
         if let Some(log) = &mut self.log
             && log.len() == 0
         {
-            taken.of_records.clear();
-            taken.of_nodes.clear();
+            taken.record_keys.clear();
+            taken.node_keys.clear();
             *log = taken;
         }
     }
@@ -788,7 +790,7 @@ impl<'s> Buffer<'s> {
     #[inline]
     pub(crate) fn log_record(&mut self, slot: u32, key: u32) {
         if let Some(log) = &mut self.log {
-            log.of_records.push([slot, key]);
+            log.record_keys.push([slot, key]);
         }
     }
 
@@ -799,7 +801,7 @@ impl<'s> Buffer<'s> {
         if let Some(log) = &mut self.log
             && (file != self.file || self.is_imported)
         {
-            log.of_nodes.push([slot, file, index]);
+            log.node_keys.push([slot, file, index]);
         }
     }
 
@@ -872,7 +874,7 @@ impl<'s> Buffer<'s> {
     #[inline]
     pub(crate) fn half_mut(&mut self, slot: u32) -> &mut Half<'s> {
         assert!(
-            (slot as usize) < MOST_TABLES,
+            (slot as usize) < MAX_TABLES,
             "table has no slot: see `number_tables`"
         );
         &mut self.halves[slot as usize]
@@ -938,14 +940,14 @@ impl<'s> Buffer<'s> {
 
     /// The cell in `pages` for the published id `number`.
     #[inline]
-    fn cell_of_published_id(&mut self, slot: u32, number: u32) -> &mut u32 {
+    fn published_id_cell(&mut self, slot: u32, number: u32) -> &mut u32 {
         let directory = &mut self.halves[slot as usize].directory;
         self.pages.cell(directory, number as usize)
     }
 
     #[inline]
     pub(crate) fn put_published_id_if_empty(&mut self, slot: u32, number: u32, raw: u32) -> u32 {
-        let cell = self.cell_of_published_id(slot, number);
+        let cell = self.published_id_cell(slot, number);
         let kept = *cell;
         if kept != 0 {
             return kept;
@@ -958,7 +960,7 @@ impl<'s> Buffer<'s> {
     /// `put_published_id_if_empty` for an entry that no commit publishes.
     #[inline]
     pub(crate) fn put_unlogged_if_empty(&mut self, slot: u32, number: u32, raw: u32) -> u32 {
-        let cell = self.cell_of_published_id(slot, number);
+        let cell = self.published_id_cell(slot, number);
         if *cell == 0 {
             *cell = raw;
         }
@@ -967,7 +969,7 @@ impl<'s> Buffer<'s> {
 
     #[inline]
     pub(crate) fn store_published_id(&mut self, slot: u32, number: u32, raw: u32) {
-        *self.cell_of_published_id(slot, number) = raw;
+        *self.published_id_cell(slot, number) = raw;
         self.log_record(slot, number);
     }
 
@@ -1039,7 +1041,7 @@ impl<'s> Buffer<'s> {
         let row = std::mem::take(&mut half.dense);
         // An empty row isn't saved, so it costs nothing. Later entries under that file's nodes go into pages.
         if half.ordinal != 0 && !row.is_empty() {
-            half.keep_row(half.file, half.ordinal, row);
+            half.save_row(half.file, half.ordinal, row);
         }
         (half.file, half.ordinal, half.nodes) = (file, ordinal, count as u32);
         half.published_in_row = PublishedInRow::Unknown;
@@ -1114,7 +1116,7 @@ impl<'s> Buffer<'s> {
         }
         let Some(at) = at else {
             let ordinal = ordinal_or_new(&mut self.ordinals, &mut self.files, file);
-            half.keep_row(file, ordinal, Vec::new());
+            half.save_row(file, ordinal, Vec::new());
             return cell_mut(&mut half.earlier[ordinal as usize - 1].1, index);
         };
         self.pages.cell(&mut half.directory, at)
@@ -1194,7 +1196,7 @@ impl FileLocalTables {
         let FileLocalTables { file, tables } = self;
         let is_empty = |table: &FileLocalTable| {
             let FileLocalTable { cells, sparse } = table;
-            cells.is_empty() && Reused::is_like_new(sparse)
+            cells.is_empty() && Reusable::is_like_new(sparse)
         };
         *file == NO_FILE && tables.iter().all(is_empty)
     }

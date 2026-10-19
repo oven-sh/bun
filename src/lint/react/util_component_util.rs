@@ -42,7 +42,7 @@ impl<'a> Pragmas<'a> {
 /// this AST doesn't have are represented too. Nodes inside types aren't counted the way ESTree has
 /// them.
 #[derive(Copy, Clone)]
-enum Above<'a> {
+enum Ancestor<'a> {
     /// A node that exists in this AST, [`normalize`]d.
     Node(Node<'a>),
     /// The `ChainExpression` around this expression.
@@ -51,18 +51,18 @@ enum Above<'a> {
     Part(u32, Node<'a>),
 }
 
-impl<'a> Above<'a> {
+impl<'a> Ancestor<'a> {
     /// A child of `parent` that this AST doesn't have and that starts at `start`, or `parent`
     /// itself if `start` is `None`.
-    fn part(start: Option<u32>, parent: Node<'a>) -> Above<'a> {
+    fn part(start: Option<u32>, parent: Node<'a>) -> Ancestor<'a> {
         match start {
-            Some(start) => Above::Part(start, parent),
-            None => Above::Node(parent),
+            Some(start) => Ancestor::Part(start, parent),
+            None => Ancestor::Node(parent),
         }
     }
 
     /// The parent of `e`, or of the `ChainExpression` around `e` if there is one.
-    fn of_expr(e: Expr<'a>) -> Above<'a> {
+    fn of_expr(e: Expr<'a>) -> Ancestor<'a> {
         let parent = estree_parent(Node::Expr(e));
         let modifiers = match parent {
             Node::Class(class) => Some(class.modifiers()),
@@ -84,16 +84,16 @@ impl<'a> Above<'a> {
             _ if e.tag() == ExprTag::Spread => None,
             _ => e.jsx_container_span().map(|it| it.start),
         };
-        Above::part(start, parent)
+        Ancestor::part(start, parent)
     }
 
     /// The parent of `statement`, taken together with any `export` before it.
-    fn of_stmt(statement: Stmt<'a>) -> Above<'a> {
+    fn of_stmt(statement: Stmt<'a>) -> Ancestor<'a> {
         let parent = statement.parent();
         // A function's `BlockStatement`, or the `TSModuleBlock`.
         let block = match parent {
             Node::Func(func) if func.kind() == FnKind::StaticBlock => {
-                return Above::Node(func.owner());
+                return Ancestor::Node(func.owner());
             }
             Node::Func(func) => func.body_span(),
             Node::Stmt(above) => match above.kind() {
@@ -102,22 +102,22 @@ impl<'a> Above<'a> {
             },
             _ => None,
         };
-        Above::part(block.map(|it| it.start), parent)
+        Ancestor::part(block.map(|it| it.start), parent)
     }
 
     /// `node.parent`
-    fn parent(self) -> Above<'a> {
+    fn parent(self) -> Ancestor<'a> {
         let node = match self {
-            Above::Node(node) => node,
-            Above::Chain(e) => return Above::of_expr(e),
-            Above::Part(_, parent) => return Above::Node(parent),
+            Ancestor::Node(node) => node,
+            Ancestor::Chain(e) => return Ancestor::of_expr(e),
+            Ancestor::Part(_, parent) => return Ancestor::Node(parent),
         };
         // The expression, statement or member that a function or class appears as. A static block
         // is its `Member`.
         let written = match node {
             Node::Func(func) => match func.owner() {
                 owner @ Node::Member(_) if func.kind() != FnKind::StaticBlock => {
-                    return Above::Node(owner);
+                    return Ancestor::Node(owner);
                 }
                 owner => owner,
             },
@@ -125,27 +125,27 @@ impl<'a> Above<'a> {
             _ => node,
         };
         match written {
-            Node::Expr(e) if e.is_chain_root() => Above::Chain(e),
-            Node::Expr(e) => Above::of_expr(e),
+            Node::Expr(e) if e.is_chain_root() => Ancestor::Chain(e),
+            Node::Expr(e) => Ancestor::of_expr(e),
             Node::Stmt(statement) => match statement.export_span() {
-                Some(export) => Above::Part(export.start, statement.parent()),
-                None => Above::of_stmt(statement),
+                Some(export) => Ancestor::Part(export.start, statement.parent()),
+                None => Ancestor::of_stmt(statement),
             },
             // The `ClassBody`.
             Node::Member(member) => match member.parent() {
-                Node::Class(class) => Above::Part(class.body_span().start, Node::Class(class)),
-                parent => Above::Node(parent),
+                Node::Class(class) => Ancestor::Part(class.body_span().start, Node::Class(class)),
+                parent => Ancestor::Node(parent),
             },
             // The `TSEnumBody`.
             Node::EnumMember(member) => match member.parent().as_stmt().map(Stmt::kind) {
-                Some(StmtKind::Enum(it)) => Above::Part(it.body_span().start, member.parent()),
-                _ => Above::Node(member.parent()),
+                Some(StmtKind::Enum(it)) => Ancestor::Part(it.body_span().start, member.parent()),
+                _ => Ancestor::Node(member.parent()),
             },
             // The `JSXOpeningElement`.
             Node::Prop(prop) if prop.is_jsx_attribute() => {
-                Above::Part(prop.parent().span().start, prop.parent())
+                Ancestor::Part(prop.parent().span().start, prop.parent())
             }
-            _ => Above::Node(estree_parent(written)),
+            _ => Ancestor::Node(estree_parent(written)),
         }
     }
 
@@ -153,21 +153,21 @@ impl<'a> Above<'a> {
     fn start(self) -> u32 {
         match self {
             // espree's `Program` spans the whole text, typescript-estree's starts at the first token.
-            Above::Node(Node::File(file)) => match file.language().parser {
+            Ancestor::Node(Node::File(file)) => match file.language().parser {
                 Parser::Espree if file.is_javascript() => 0,
                 _ => file.program_span().start,
             },
-            Above::Node(node) => estree_span(node).start,
-            Above::Chain(e) => e.span().start,
-            Above::Part(start, _) => start,
+            Ancestor::Node(node) => estree_span(node).start,
+            Ancestor::Chain(e) => e.span().start,
+            Ancestor::Part(start, _) => start,
         }
     }
 
     fn as_expr(self) -> Option<Expr<'a>> {
         match self {
-            Above::Node(Node::Expr(e)) | Above::Chain(e) => Some(e),
-            Above::Node(Node::Func(func)) => func.owner().as_expr(),
-            Above::Node(Node::Class(class)) => class.owner().as_expr(),
+            Ancestor::Node(Node::Expr(e)) | Ancestor::Chain(e) => Some(e),
+            Ancestor::Node(Node::Func(func)) => func.owner().as_expr(),
+            Ancestor::Node(Node::Class(class)) => class.owner().as_expr(),
             _ => None,
         }
     }
@@ -175,10 +175,10 @@ impl<'a> Above<'a> {
     /// `isES5Component`
     fn is_es5_component(self, pragmas: &Pragmas<'_>) -> bool {
         // A type argument is in a `TSTypeParameterInstantiation`.
-        if matches!(self, Above::Node(Node::Type(_))) {
+        if matches!(self, Ancestor::Node(Node::Type(_))) {
             return false;
         }
-        let Above::Node(Node::Expr(parent)) = self.parent() else {
+        let Ancestor::Node(Node::Expr(parent)) = self.parent() else {
             return false;
         };
         let Some(callee) = parent.callee() else {
@@ -200,7 +200,7 @@ impl<'a> Above<'a> {
 
 /// `isES5Component`. True if `node` is the callee or an argument of a `createClass` call or `new`.
 pub(crate) fn is_es5_component(node: Node<'_>, pragmas: &Pragmas<'_>) -> bool {
-    Above::Node(normalize(node)).is_es5_component(pragmas)
+    Ancestor::Node(normalize(node)).is_es5_component(pragmas)
 }
 
 /// `findJSDocComment` of @eslint/compat, for a node that starts at `start`.
@@ -221,7 +221,7 @@ fn get_jsdoc_comment(class: Class<'_>) -> Option<Token<'_>> {
                 .unwrap_or_else(|| class.estree_span())
                 .start
         }
-        _ => Above::Node(Node::Class(class)).parent().parent().start(),
+        _ => Ancestor::Node(Node::Class(class)).parent().parent().start(),
     };
     find_jsdoc_comment(class.file(), start)
 }
@@ -309,7 +309,7 @@ pub(crate) fn get_parent_es5_component<'a>(
         ) {
             return None;
         }
-        let node = Above::Node(normalize(scope.node())).parent().parent();
+        let node = Ancestor::Node(normalize(scope.node())).parent().parent();
         node.as_expr().filter(|_| node.is_es5_component(pragmas))
     })
 }

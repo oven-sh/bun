@@ -234,9 +234,9 @@ pub(super) fn is_declared(statement: Stmt) -> bool {
 }
 
 pub(super) fn first_token<'a>(v: VNode<'a>) -> &'a [u8] {
-    let written = v.file().slice(v.span());
-    written
-        .get(..crate::tokens::token_len(written))
+    let source_text = v.file().slice(v.span());
+    source_text
+        .get(..crate::tokens::token_len(source_text))
         .unwrap_or_default()
 }
 
@@ -493,7 +493,7 @@ pub(super) fn quasi<'a>(v: VNode<'a>) -> Option<Quasi<'a>> {
                     let is_tagged =
                         matches!(e.parent(), Node::Expr(it) if it.tag() == ExprTag::TaggedTemplate);
                     template
-                        .text_of_scanner(i)
+                        .scanner_text(i)
                         .filter(|_| !is_tagged || has_valid_escapes(template.raw(i)))
                 }
                 false => template.cooked(i),
@@ -556,7 +556,7 @@ pub(super) fn jsx_whitespace_value<'a>(v: VNode<'a>) -> &'a [u8] {
 /// oxlint's `value` of a string that's a JSX attribute's value, without braces: the text between the quotes, with
 /// `&amp;` and the like left undecoded. Returns `None` if `v` isn't such a string, or the tree isn't for oxlint's
 /// rules.
-pub(super) fn attribute_as_written<'a>(v: VNode<'a>) -> Option<&'a [u8]> {
+pub(super) fn raw_jsx_attribute_string<'a>(v: VNode<'a>) -> Option<&'a [u8]> {
     if !v.file().language().is_oxlint || v.part != Part::Main {
         return None;
     }

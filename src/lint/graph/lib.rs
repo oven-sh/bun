@@ -56,7 +56,7 @@ pub struct Store {
     cwd: Vec<u8>,
     /// If no tsconfig.json is configured, use the one nearest to the file, like TypeScript, instead of the one in
     /// `cwd`, like eslint-import-resolver-typescript.
-    is_by_file: bool,
+    uses_nearest_tsconfig: bool,
     /// `--tsconfig`. oxlint uses it to resolve the imports of every file outside `node_modules`, and doesn't look for
     /// any other.
     tsconfig: Option<Vec<u8>>,
@@ -70,7 +70,7 @@ impl Store {
             disk: OnceLock::new(),
             already_read: OnceLock::new(),
             cwd: from_native(cwd),
-            is_by_file: false,
+            uses_nearest_tsconfig: false,
             tsconfig: None,
         }
     }
@@ -84,10 +84,10 @@ impl Store {
         }
     }
 
-    /// For a run without an ESLint or oxlint config. See `is_by_file`.
+    /// For a run without an ESLint or oxlint config. See `uses_nearest_tsconfig`.
     pub fn by_file(self) -> Store {
         Store {
-            is_by_file: true,
+            uses_nearest_tsconfig: true,
             ..self
         }
     }
@@ -141,7 +141,7 @@ struct ProjectResolver<'h> {
 
 /// Caches for lookups that are repeated often.
 #[derive(Default)]
-struct Known<'h> {
+struct Caches<'h> {
     /// Keyed by the `tsconfig.json` path. An empty key means there's none.
     resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
     /// Maps a directory to the `tsconfig.json` path for its files. With [`Store::tsconfig`], the key is a file.
@@ -149,11 +149,11 @@ struct Known<'h> {
     /// Caches [`Graph::scopes_in`] and [`Graph::scopes_of`].
     scopes: ShardedMap<Vec<u8>, Vec<Scope>>,
     /// Caches [`Graph::configs_of_typescript_resolver`], keyed by the directory and the projects, and
-    /// [`Graph::projects_listed`], keyed by the projects.
+    /// [`Graph::listed_projects`], keyed by the projects.
     typescript_configs: ShardedMap<Vec<u8>, Vec<Vec<u8>>>,
     /// The resolution of a non-relative specifier, keyed by the `tsconfig.json`, the directory, the kind of import and
     /// the specifier.
-    not_relative: ShardedMap<Vec<u8>, Option<(Vec<u8>, bool)>>,
+    non_relative: ShardedMap<Vec<u8>, Option<(Vec<u8>, bool)>>,
     /// Maps a path to its real path, with symbolic links followed.
     real_paths: ShardedMap<Vec<u8>, Vec<u8>>,
     /// The closest `package.json`, by directory.
@@ -168,7 +168,7 @@ struct Known<'h> {
 pub struct Graph<'h> {
     store: &'h Store,
     /// Created on first use, because most runs have no cross-file rule and the tables are large.
-    known: OnceLock<Box<Known<'h>>>,
+    known: OnceLock<Box<Caches<'h>>>,
     loading: Guarded<()>,
     recorded: Guarded<Vec<Recorded<'h>>>,
     record_maker: OnceLock<MakeRecord>,
@@ -211,7 +211,7 @@ fn with_file<R>(
         before_es2020: false,
         before_es2017: false,
     };
-    let mut recycled = Recycled::of_this_thread();
+    let mut recycled = Recycled::for_current_thread();
     let bound = bind_for_lint_in(&hir, bind_options, &atoms, &mut recycled);
     if hir.ran_out_of_stack || bound.ran_out_of_stack {
         return None;
@@ -352,12 +352,12 @@ impl<'h> Graph<'h> {
         let _ = self.lister.set(lister);
     }
 
-    fn known(&self) -> &Known<'h> {
+    fn known(&self) -> &Caches<'h> {
         self.known.get_or_init(Box::default)
     }
 
     /// Returns a module's path as stored here: in the checker's format, where a drive's root is `/C:`.
-    fn own_path(&self, module: ModuleId) -> &[u8] {
+    fn stored_path(&self, module: ModuleId) -> &[u8] {
         self.complete
             .get()
             .and_then(|it| it.paths.get(module.0 as usize))
@@ -375,7 +375,7 @@ impl<'h> Graph<'h> {
             true => vec![Json::String(b"module".to_vec())],
             false => Vec::new(),
         };
-        let over = || {
+        let overrides = || {
             vec![
                 flag(b"allowJs"),
                 flag(b"resolveJsonModule"),
@@ -389,14 +389,15 @@ impl<'h> Graph<'h> {
             ]
         };
         let (disk, session) = (self.store.disk(), &self.store.session);
-        let loaded = (!config.is_empty())
-            .then(|| load_overriding(&WithoutListings(disk), session, config, &|_| over()).ok());
+        let loaded = (!config.is_empty()).then(|| {
+            load_overriding(&WithoutListings(disk), session, config, &|_| overrides()).ok()
+        });
         loaded.flatten().unwrap_or_else(|| {
             // Pass a file, so that the directory isn't searched for files.
             without_config(
                 &WithoutListings(disk),
                 directory,
-                Json::Object(over()),
+                Json::Object(overrides()),
                 vec![b"index.ts".to_vec()],
             )
         })
@@ -451,7 +452,7 @@ impl<'h> Graph<'h> {
     }
 
     /// eslint-import-resolver-typescript 4's `normalizeOptions`: returns the configs that its `project` option lists.
-    fn projects_listed(&self, projects: &[&[u8]]) -> &[Vec<u8>] {
+    fn listed_projects(&self, projects: &[&[u8]]) -> &[Vec<u8>] {
         let key = [&b"\0"[..], &projects.join(&b"\0"[..])[..]].concat();
         if let Some(listed) = self.known().typescript_configs.get_ref(&key[..]) {
             return listed;
@@ -496,7 +497,7 @@ impl<'h> Graph<'h> {
         if let Some(configs) = self.known().typescript_configs.get_ref(&key[..]) {
             return configs;
         }
-        let mut listed = self.projects_listed(projects).to_vec();
+        let mut listed = self.listed_projects(projects).to_vec();
         // `computeAffinity`
         let distance = |config: &Vec<u8>| {
             let (mut a, mut b) = (
@@ -511,9 +512,10 @@ impl<'h> Graph<'h> {
         };
         bun_lint::utils::sort::sort_by_key(&mut listed, distance);
         listed.dedup();
-        let is_for_it = |it: &Vec<u8>| self.scopes_of(it).last().is_some_and(|own| own.has(from));
+        let applies_to_file =
+            |it: &Vec<u8>| self.scopes_of(it).last().is_some_and(|own| own.has(from));
         let chosen = match listed.len() {
-            0 if self.store.is_by_file => {
+            0 if self.store.uses_nearest_tsconfig => {
                 let mut above = bun_lint::paths::ancestors(directory);
                 above
                     .find_map(|it| self.config_in(it))
@@ -522,7 +524,7 @@ impl<'h> Graph<'h> {
             }
             0 => self.config_in(&self.store.cwd).into_iter().collect(),
             1 => listed,
-            _ => match listed.iter().position(is_for_it) {
+            _ => match listed.iter().position(applies_to_file) {
                 Some(at) => vec![listed.swap_remove(at)],
                 None => listed,
             },
@@ -534,14 +536,14 @@ impl<'h> Graph<'h> {
                 .scopes_of(&config)
                 .split_last()
                 .map_or(&[][..], |it| it.1);
-            let is_around = |it: &&Scope| {
+            let contains_directory = |it: &&Scope| {
                 let rest = directory.strip_prefix(&it.base[..]);
                 !it.config.is_empty() && rest.is_some_and(|it| matches!(it, [] | [b'/', ..]))
             };
             configs.extend(
                 referenced
                     .iter()
-                    .find(is_around)
+                    .find(contains_directory)
                     .map(|it| it.config.clone()),
             );
             configs.push(config);
@@ -577,8 +579,8 @@ impl<'h> Graph<'h> {
             return match known.configs.get_ref(from) {
                 Some(config) => config,
                 None => {
-                    let of_file = referenced.iter().find(|it| it.has(from)).unwrap_or(own);
-                    let config = of_file.config.clone();
+                    let file_scope = referenced.iter().find(|it| it.has(from)).unwrap_or(own);
+                    let config = file_scope.config.clone();
                     known.configs.insert_ref(from.to_vec(), config)
                 }
             };
@@ -641,7 +643,7 @@ impl<'h> Graph<'h> {
         // `resolve`'s `loadpkg` walks up from where the file would be until it finds a `package.json`. On a relative
         // path it never gets past `.` and overflows the stack there, so nothing is found in that entry or in any later
         // one.
-        let ends = |path: &[u8], as_written: &[u8]| {
+        let terminates = |path: &[u8], as_written: &[u8]| {
             let candidate = join(path, specifier);
             let directory = directory_of(&candidate);
             let is_end = |it: &[u8]| {
@@ -651,8 +653,10 @@ impl<'h> Graph<'h> {
             is_absolute(as_written) || !disk.is_dir(directory) || below.chain([cwd]).any(is_end)
         };
         let paths = written.iter().map(|it| (join(cwd, it), *it));
-        let paths: SmallVec<[Vec<u8>; 2]> =
-            (paths.take_while(|it| ends(&it.0, it.1)).map(|it| it.0)).collect();
+        let paths: SmallVec<[Vec<u8>; 2]> = (paths
+            .take_while(|it| terminates(&it.0, it.1))
+            .map(|it| it.0))
+        .collect();
         let paths: SmallVec<[&[u8]; 2]> = paths.iter().map(Vec::as_slice).collect();
         let how = AsRequire {
             extensions,
@@ -706,7 +710,7 @@ impl<'h> Graph<'h> {
 
     /// Returns the path that identifies the file linted as `path`. oxlint follows links. eslint-plugin-import
     /// identifies a linted file by its name, so a link to another file is a separate module.
-    fn known_as(&self, path: &[u8]) -> Vec<u8> {
+    fn identity_path(&self, path: &[u8]) -> Vec<u8> {
         let path = from_native(path);
         match self.flavor() {
             Flavor::Oxlint => self.store.disk().realpath(&path),
@@ -769,13 +773,13 @@ impl<'h> Graph<'h> {
             specifier,
         ]
         .concat();
-        let found = match self.known().not_relative.get_ref(&key[..]) {
+        let found = match self.known().non_relative.get_ref(&key[..]) {
             Some(found) => found,
             None => {
                 let found = self
                     .resolve_with_project(config, from, specifier, is_require)
                     .map(|it| (it.0.into_owned(), it.1));
-                self.known().not_relative.insert_ref(key, found)
+                self.known().non_relative.insert_ref(key, found)
             }
         };
         found.as_ref().map(|it| (Cow::Owned(it.0.clone()), it.1))
@@ -811,14 +815,14 @@ impl<'h> Graph<'h> {
                 };
                 if found.is_none() && disk.is_dir(&base) {
                     // A `package.json` with an entry point isn't handled here.
-                    let names_entry = |text: Cow<[u8]>| {
+                    let has_entry_point = |text: Cow<[u8]>| {
                         let manifest = bun_lint::json::parse(&text);
                         manifest.is_none_or(|it| {
                             it.get(b"module").or_else(|| it.get(b"main")).is_some()
                         })
                     };
                     let manifest = join(&base, b"package.json");
-                    if disk.is_file(&manifest) && disk.read(&manifest).is_none_or(names_entry) {
+                    if disk.is_file(&manifest) && disk.read(&manifest).is_none_or(has_entry_point) {
                         return None;
                     }
                     found = EXTENSIONS
@@ -934,17 +938,17 @@ impl<'h> Graph<'h> {
             parser: Parser::TypeScript,
             experimental_decorators: true,
             is_oxlint,
-            refuses_what_parser_refuses: !is_oxlint,
+            rejects_what_parser_rejects: !is_oxlint,
             ..LanguageOptions::default()
         };
         with_file(path, &text, &language, None, |file| {
             // Like eslint-plugin-import, treat a file that can't be parsed as having no imports.
-            let mut requests = if self.is_refused(file) {
+            let mut requests = if self.is_unparsable(file) {
                 Vec::new()
             } else {
                 requests_of(file, self.flavor())
             };
-            let record = self.keep_record(path.to_vec(), file);
+            let record = self.cache_record(path.to_vec(), file);
             // For a package, only its re-exports matter.
             if is_in_package(path) && !self.follows_packages.load(Ordering::Relaxed) {
                 let is_exported = |specifier: &[u8]| {
@@ -961,7 +965,7 @@ impl<'h> Graph<'h> {
     }
 
     /// True if `file` is treated as unparsable. oxlint also rejects a file that parses but has an early error.
-    fn is_refused<'a>(&self, file: &'a File<'a>) -> bool {
+    fn is_unparsable<'a>(&self, file: &'a File<'a>) -> bool {
         match self.flavor() {
             Flavor::Oxlint => bun_lint::linter::parse_error(file).is_some(),
             Flavor::EslintPluginImport => file.has_parse_errors(),
@@ -970,12 +974,12 @@ impl<'h> Graph<'h> {
 
     /// Creates and caches the [`Record`] of `file`, which is at `path`, if a rule needs records and it isn't cached
     /// yet.
-    fn keep_record<'a>(&self, path: Vec<u8>, file: &'a File<'a>) -> Option<&Record> {
+    fn cache_record<'a>(&self, path: Vec<u8>, file: &'a File<'a>) -> Option<&Record> {
         let make = self.record_maker.get()?;
         let known = match self.known().records.get_ref(&path[..]) {
             Some(known) => known,
             None => {
-                let record = (!self.is_refused(file)).then(|| make(file));
+                let record = (!self.is_unparsable(file)).then(|| make(file));
                 self.known().records.insert_ref(path, record)
             }
         };
@@ -983,7 +987,7 @@ impl<'h> Graph<'h> {
     }
 
     /// True if the file at `path`, which isn't linted, should be read.
-    fn is_read(&self, path: &[u8]) -> bool {
+    fn should_read(&self, path: &[u8]) -> bool {
         ScriptKind::from_file_name(path).is_some()
             && (self.record_maker.get().is_some()
                 || self.follows_packages.load(Ordering::Relaxed)
@@ -1051,7 +1055,7 @@ impl<'h> Graph<'h> {
                 is_always_checked[at] |= record.is_always_checked;
                 all.imports.resize_with(all.paths.len(), Vec::new);
                 // Several rules may have recorded the same file. One of them may count type imports.
-                let of_types = |imports: &[Import]| {
+                let type_import_count = |imports: &[Import]| {
                     let declarations = imports.iter().flat_map(|it| &it.declarations);
                     declarations.filter(|it| it.is_only_importing_types).count()
                 };
@@ -1061,7 +1065,7 @@ impl<'h> Graph<'h> {
                         .iter()
                         .zip(&imports)
                         .all(|(a, b)| a.module == b.module);
-                if !is_the_same || of_types(&imports) < of_types(known) {
+                if !is_the_same || type_import_count(&imports) < type_import_count(known) {
                     all.imports[at] = imports;
                 }
             }
@@ -1069,7 +1073,7 @@ impl<'h> Graph<'h> {
             unknown.dedup();
             unknown.retain(|it| {
                 !std::mem::replace(&mut is_known[it.0 as usize], true)
-                    && self.is_read(&all.paths[it.0 as usize])
+                    && self.should_read(&all.paths[it.0 as usize])
             });
             let mut read = Guarded::new(Vec::new());
             parallel(unknown.len(), &|at| {
@@ -1096,14 +1100,14 @@ impl<'h> Graph<'h> {
         let is_checked = |at: usize| {
             is_always_checked[at] || sizes[all.components[at] as usize] > 1 || imports_itself(at)
         };
-        let again = linted_as
+        let to_relint = linted_as
             .into_iter()
             .enumerate()
             .filter(|it| is_checked(it.0))
             .flat_map(|it| it.1)
             .collect();
         let _ = self.complete.set(all);
-        again
+        to_relint
     }
 }
 
@@ -1185,8 +1189,13 @@ impl Modules for Graph<'_> {
     fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool, flavor: Flavor) {
         self.follows_oxlint
             .store(flavor == Flavor::Oxlint, Ordering::Relaxed);
-        let known_as = self.known_as(path);
-        let record = self.make_record(known_as, requests, is_always_checked, Some(path.to_vec()));
+        let identity_path = self.identity_path(path);
+        let record = self.make_record(
+            identity_path,
+            requests,
+            is_always_checked,
+            Some(path.to_vec()),
+        );
         self.recorded.lock().push(record);
     }
 
@@ -1195,14 +1204,14 @@ impl Modules for Graph<'_> {
     }
 
     fn record_exports<'a>(&self, file: &'a File<'a>, make: MakeRecord) {
-        // Only oxlint's rules keep records. They call this before `record`, and `keep_record` reads the flavor.
+        // Only oxlint's rules keep records. They call this before `record`, and `cache_record` reads the flavor.
         self.follows_oxlint.store(true, Ordering::Relaxed);
         let _ = self.record_maker.set(make);
         let mut real = self.store.disk().realpath(&from_native(file.path()));
         if file.is_later_script() {
             real.push(0);
         }
-        self.keep_record(real, file);
+        self.cache_record(real, file);
     }
 
     fn follow_packages(&self) {
@@ -1210,15 +1219,20 @@ impl Modules for Graph<'_> {
     }
 
     fn record_of(&self, module: ModuleId) -> Option<&Record> {
-        let (path, records) = (self.own_path(module), &self.known().records);
+        let (path, records) = (self.stored_path(module), &self.known().records);
         // For a file with several scripts, oxlint uses the last one that can be parsed.
-        let of_later_script = || records.get_ref(&[path, b"\0"].concat()[..])?.as_ref();
+        let later_script_record = || records.get_ref(&[path, b"\0"].concat()[..])?.as_ref();
         let has_scripts = ScriptKind::from_file_name(path).is_none();
-        (has_scripts.then(of_later_script).flatten()).or_else(|| records.get_ref(path)?.as_ref())
+        (has_scripts.then(later_script_record).flatten())
+            .or_else(|| records.get_ref(path)?.as_ref())
     }
 
     fn find(&self, path: &[u8]) -> Option<ModuleId> {
-        self.complete.get()?.ids.get(&self.known_as(path)).copied()
+        self.complete
+            .get()?
+            .ids
+            .get(&self.identity_path(path))
+            .copied()
     }
 
     fn resolve(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<Resolved> {
@@ -1246,8 +1260,9 @@ impl Modules for Graph<'_> {
                 // `removeQuerystring`
                 let end = strings::last_index_of_char(specifier, b'?').unwrap_or(specifier.len());
                 let specifier = &specifier[..end];
-                let names_directory = specifier.starts_with(b".") && specifier.ends_with(b"/");
-                if names_directory
+                let is_directory_specifier =
+                    specifier.starts_with(b".") && specifier.ends_with(b"/");
+                if is_directory_specifier
                     && !self
                         .store
                         .disk()
@@ -1262,17 +1277,17 @@ impl Modules for Graph<'_> {
                 let name = &specifier
                     [strings::last_index_of_char(specifier, b'/').map_or(0, |it| it + 1)..];
                 let is_script = ScriptKind::from_file_name(name).is_some();
-                let is_it =
+                let is_exact_name =
                     |it: &Vec<u8>| it.strip_suffix(name).is_some_and(|it| it.ends_with(b"/"));
                 let found = configs.iter().find_map(|config| {
                     let other = |extensions: &[&[u8]]| {
                         self.resolve_other_file(config, (specifier, &from), extensions)
                     };
-                    let very = (!is_script && name.len() < specifier.len())
+                    let exact_file = (!is_script && name.len() < specifier.len())
                         .then(|| other(&[]))
                         .flatten();
-                    if let Some(very) = very.filter(is_it) {
-                        return Some((Cow::Owned(very), false));
+                    if let Some(exact_file) = exact_file.filter(is_exact_name) {
+                        return Some((Cow::Owned(exact_file), false));
                     }
                     let found = self.resolve_any_path(config, &real, specifier, is_require);
                     let added: &[&[u8]] = match is_script {
@@ -1366,11 +1381,11 @@ impl Modules for Graph<'_> {
     }
 
     fn is_path_of(&self, module: ModuleId, path: &[u8]) -> bool {
-        self.own_path(module) == self.store.disk().as_written(&from_native(path))
+        self.stored_path(module) == self.store.disk().as_written(&from_native(path))
     }
 
     fn path(&self, module: ModuleId) -> &[u8] {
-        typescript_path(self.own_path(module))
+        typescript_path(self.stored_path(module))
     }
 
     fn imports(&self, module: ModuleId) -> &[Import] {

@@ -188,22 +188,22 @@ fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span
         }
     }
     // `Object.keys` lists array-index names first, in numeric order.
-    let place = |it: &&[u8]| {
+    let key_order = |it: &&[u8]| {
         let is_canonical = |index: &u32| *index != u32::MAX && index.to_string().as_bytes() == *it;
         parse_decimal::<u32>(it).filter(is_canonical).map_or((true, 0), |index| (false, index))
     };
-    utils::sort::sort_by_cached_key(&mut import_names, place);
+    utils::sort::sort_by_cached_key(&mut import_names, key_order);
 
     let mut import_local_names: FxHashMap<&[u8], Vec<u8>> = FxHashMap::default();
     let mut named_import_specifiers = Vec::new();
     // Upstream only checks those two scopes, so it misses a module-level name when the member is two or more functions
     // deep. It also doesn't track the names that other fixes in this pass declare.
-    let mut handed_out = members_of_namespaces_before(declaration, declared_in);
+    let mut taken_names = members_of_namespaces_before(declaration, declared_in);
     for import_name in import_names {
         let conflicts = import_name_conflicts.get(import_name)?;
         let has = |name: &[u8]| {
             conflicts.iter().any(|it| has_variable(file, it.0, name) || has_variable(file, it.1, name))
-                || handed_out.iter().any(|it| **it == *name)
+                || taken_names.iter().any(|it| **it == *name)
                 || !utils::names::is_free(name, declared_in, conflicts.iter().map(|it| it.0))
         };
         let local_name = generate_local_name(import_name, &has, local.bytes());
@@ -211,7 +211,7 @@ fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span
             true => import_name.to_vec(),
             false => [import_name, b" as ", &local_name[..]].concat(),
         });
-        handed_out.push(Cow::Owned(local_name.clone()));
+        taken_names.push(Cow::Owned(local_name.clone()));
         import_local_names.insert(import_name, local_name);
     }
     if named_import_specifiers.is_empty() {

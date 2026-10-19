@@ -163,11 +163,11 @@ pub fn is_token_on_same_line(file: &File<'_>, left: impl Spanned, right: impl Sp
 /// which doesn't take time proportional to the length.
 #[inline]
 pub fn is_on_one_line(file: &File<'_>, span: Span) -> bool {
-    const LOOKED_AT: u32 = 512;
-    if span.len() <= LOOKED_AT {
+    const SCANNED_PREFIX_LEN: u32 = 512;
+    if span.len() <= SCANNED_PREFIX_LEN {
         return !strings::contains_js_line_break(file.slice(span));
     }
-    let middle = span.start + LOOKED_AT;
+    let middle = span.start + SCANNED_PREFIX_LEN;
     !strings::contains_js_line_break(file.slice(Span::new(span.start, middle)))
         && file.is_on_same_line(middle, span.end)
 }
@@ -189,20 +189,20 @@ fn has_slash_after_yield_or_await(text: &[u8]) -> bool {
 /// Returns `equal_tokens` for `left` and `right`, which follow the same tokens, no matter what both start in: code, a
 /// regular expression or a template. Up to the first difference they're in the same context. `None` if a comment may
 /// have started before that, or if the difference may be whitespace, a comment or an escape in a name.
-fn equal_tokens_of_text_in_anything(left: &[u8], right: &[u8]) -> Option<bool> {
+fn equal_tokens_in_any_context(left: &[u8], right: &[u8]) -> Option<bool> {
     let same = left.iter().zip(right).take_while(|(a, b)| a == b).count();
     let (common, a, b) = (left.get(..same)?, left.get(same), right.get(same));
     if a.is_none() && b.is_none() {
         return Some(true);
     }
-    let can_be_more_than_itself = |byte: Option<&u8>| {
+    let may_start_trivia_or_escape = |byte: Option<&u8>| {
         matches!(
             byte,
             Some(..=b' ' | b'/' | b'*' | b'\\' | b'<' | b'!' | b'-' | 0x80..)
         )
     };
-    if can_be_more_than_itself(a)
-        || can_be_more_than_itself(b)
+    if may_start_trivia_or_escape(a)
+        || may_start_trivia_or_escape(b)
         || [&b"//"[..], b"/*", b"--"]
             .into_iter()
             .any(|it| strings::contains(common, it))
@@ -221,11 +221,11 @@ fn equal_tokens_of_text_in_anything(left: &[u8], right: &[u8]) -> Option<bool> {
 /// Returns `equal_tokens` for the texts `left` and `right`, if it can tell without tokenizing them. It compares them
 /// byte by byte, and whitespace and comments against whitespace and comments. Starting at a `/` that isn't a comment, a
 /// template substitution, an escape in a name or a non-ASCII character outside a string, it defers to
-/// [`equal_tokens_of_text_in_anything`]. `None` if that isn't enough, for example where only one of the two has
+/// [`equal_tokens_in_any_context`]. `None` if that isn't enough, for example where only one of the two has
 /// whitespace, which may or may not separate two tokens.
 fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
     let can_start_trivia = |byte: Option<&u8>| matches!(byte, Some(b'\t'..=b'\r' | b' ' | b'/'));
-    let is_of_word = |byte: Option<&u8>| {
+    let is_word_byte = |byte: Option<&u8>| {
         byte.is_some_and(|it| it.is_ascii_alphanumeric() || matches!(it, b'_' | b'$'))
     };
     // `<!--` and `-->` can start a comment.
@@ -233,13 +233,11 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
         let (before, rest) = text.split_at(at);
         rest.starts_with(b"-->") || rest.starts_with(b"--") && before.ends_with(b"<!")
     };
-    let in_anything = |l: usize, r: usize| match equal_tokens_of_text_in_anything(
-        left.get(l..)?,
-        right.get(r..)?,
-    )? {
-        true => (!has_slash_after_yield_or_await(left)).then_some(true),
-        false => Some(false),
-    };
+    let in_any_context =
+        |l: usize, r: usize| match equal_tokens_in_any_context(left.get(l..)?, right.get(r..)?)? {
+            true => (!has_slash_after_yield_or_await(left)).then_some(true),
+            false => Some(false),
+        };
     let (mut l, mut r) = (0, 0);
     // The quote of the string, or of the template before its first substitution, that both are in. It's one token that
     // starts at the same position in both.
@@ -251,7 +249,9 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
                 return Some(false);
             }
             match a {
-                b'$' if open == b'`' && left.get(l + 1) == Some(&b'{') => return in_anything(l, r),
+                b'$' if open == b'`' && left.get(l + 1) == Some(&b'{') => {
+                    return in_any_context(l, r);
+                }
                 b'\\' => {
                     if *left.get(l + 1)? != *right.get(r + 1)? {
                         return Some(false);
@@ -271,8 +271,8 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
             );
             if (after.0 > l) != (after.1 > r) {
                 // A word that ends in one text continues in the other.
-                let goes_on = is_of_word(left.get(l)) || is_of_word(right.get(r));
-                return (goes_on && l > 0 && is_of_word(left.get(l - 1))).then_some(false);
+                let word_continues = is_word_byte(left.get(l)) || is_word_byte(right.get(r));
+                return (word_continues && l > 0 && is_word_byte(left.get(l - 1))).then_some(false);
             }
             (l, r) = after;
         }
@@ -287,7 +287,7 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
             return None;
         }
         if matches!(a, b'/' | b'\\' | 0x80..) || matches!(b, b'/' | b'\\' | 0x80..) {
-            return if a == b { in_anything(l, r) } else { None };
+            return if a == b { in_any_context(l, r) } else { None };
         }
         if a != b {
             return Some(false);
@@ -306,7 +306,7 @@ pub fn equal_tokens<'a>(file: &'a File<'a>, left: impl Spanned, right: impl Span
 }
 
 fn equal_tokens_in<'a>(file: &'a File<'a>, left: Span, right: Span) -> bool {
-    let of_all_tokens = || {
+    let compare_all_tokens = || {
         let (left, right) = (file.tokens_in(left), file.tokens_in(right));
         left.len() == right.len()
             && left
@@ -317,10 +317,10 @@ fn equal_tokens_in<'a>(file: &'a File<'a>, left: Span, right: Span) -> bool {
     if file.hir.jsx.is_empty()
         && let Some(answer) = equal_tokens_of_plain_text(file.slice(left), file.slice(right))
     {
-        debug_assert_eq!(answer, of_all_tokens());
+        debug_assert_eq!(answer, compare_all_tokens());
         return answer;
     }
-    of_all_tokens()
+    compare_all_tokens()
 }
 
 /// ESLint's `canContinueExpressionInClassBody`.

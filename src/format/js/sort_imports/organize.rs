@@ -530,7 +530,7 @@ impl<'a> Organizer<'a, '_> {
 
     /// True if a JSDoc comment mentions `name` where TypeScript treats it as a reference: in the type after a tag, as a
     /// `{@link}` target, or after `@see` and similar tags.
-    fn is_named_in_jsdoc(&self, name: &[u8]) -> bool {
+    fn is_referenced_in_jsdoc(&self, name: &[u8]) -> bool {
         let is_word = |byte: Option<&u8>| {
             byte.is_some_and(|byte| {
                 byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') || !byte.is_ascii()
@@ -613,7 +613,7 @@ impl<'a> Organizer<'a, '_> {
             || symbol
                 .references()
                 .any(|it| !it.is_jsx_pragma() && !is_in_namespaced_tag(it.node()))
-            || self.is_named_in_jsdoc(name.bytes())
+            || self.is_referenced_in_jsdoc(name.bytes())
     }
 
     /// `removeUnusedImports`
@@ -1022,7 +1022,7 @@ impl<'a> Organizer<'a, '_> {
     }
 
     fn import_code(&self, import: &NewImport<'a>) -> Vec<u8> {
-        if self.is_written_alike(import) {
+        if self.prints_same_as_source(import) {
             return self.as_written(&import.base);
         }
         let original = import.base.import();
@@ -1227,7 +1227,7 @@ impl<'a> Organizer<'a, '_> {
 
     /// True if the printer's output for `import` matches the source. The printer builds a new list from the braces'
     /// contents and drops some of the comments there.
-    fn is_written_alike(&self, import: &NewImport<'a>) -> bool {
+    fn prints_same_as_source(&self, import: &NewImport<'a>) -> bool {
         import.is_unchanged()
             && !(import.base.import())
                 .and_then(|it| self.braces_in(it.clause_span()))
@@ -1254,7 +1254,7 @@ impl<'a> Organizer<'a, '_> {
             && new
                 .iter()
                 .zip(old)
-                .all(|(new, old)| new.base.span() == old.span() && self.is_written_alike(new));
+                .all(|(new, old)| new.base.span() == old.span() && self.prints_same_as_source(new));
         if !is_same {
             let new: Vec<(Declaration<'a>, Vec<u8>)> = new
                 .iter()

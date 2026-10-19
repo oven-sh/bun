@@ -78,7 +78,7 @@ fn write_with_comments_in_place<'a>(
         false => 0,
     };
     let (glued_before_type, leading_type) = before_type.split_at(glued_before_type_count);
-    let is_on_lines_of_its_own = |comment: Comment<'_>| {
+    let is_on_its_own_lines = |comment: Comment<'_>| {
         comment.has_newline_after()
             && (comment.has_newline_before() || comment.is_multiline_block())
     };
@@ -87,7 +87,7 @@ fn write_with_comments_in_place<'a>(
         .chain(glued_before_type)
         .any(|comment| comment.is_line())
         || (!is_union
-            && (moved.iter().chain(leading).chain(leading_type)).any(is_on_lines_of_its_own))
+            && (moved.iter().chain(leading).chain(leading_type)).any(is_on_its_own_lines))
         // `a as // prettier-ignore⏎T`
         || (is_ignored && leading_type.iter().any(|comment| comment.has_newline_after()));
 

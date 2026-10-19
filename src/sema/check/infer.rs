@@ -80,7 +80,7 @@ pub(super) struct Inference {
     visited: SmallVec<[(TypeId, TypeId, i32); 8]>,
     /// The index of each pair in `visited`, once there are `VISITED_INDEX_FROM` of them.
     visited_index: FxHashMap<(TypeId, TypeId), u32>,
-    /// Each type with its push number. See `is_created_no_earlier`.
+    /// Each type with its push number. See `is_at_least_as_new`.
     source_stack: SmallVec<[(TypeId, u32); 8]>,
     target_stack: SmallVec<[(TypeId, u32); 8]>,
     expanding: u8,
@@ -160,7 +160,7 @@ impl Inference {
 
     /// Resets it to what `for_params(&[], None)` returns. Every field is listed, so adding a field
     /// without handling it here is a compile error.
-    pub(super) fn become_empty(&mut self) {
+    pub(super) fn reset_to_empty(&mut self) {
         let Inference {
             params,
             candidates,
@@ -3221,7 +3221,7 @@ impl<'p, 's> Checker<'p, 's> {
                             | PropSource::ReverseMapped(t, _) => left.push(t),
                             _ => {
                                 left.extend(values(p.mapper));
-                                left.extend(self.types().key_apart(p));
+                                left.extend(self.types().separate_key(p));
                             }
                         }
                     }

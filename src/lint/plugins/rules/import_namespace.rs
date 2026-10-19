@@ -103,7 +103,7 @@ impl Rule for Namespace {
                     ImportImportName::Default(_) => imports.nested(b"default", cx),
                 };
                 if let Nested::Namespace(source, module) = namespace {
-                    namespaces.insert(local, Place { source, namespaces: smallvec![local.bytes()], module });
+                    namespaces.insert(local, Lookup { source, namespaces: smallvec![local.bytes()], module });
                 }
             }
         }
@@ -112,25 +112,25 @@ impl Rule for Namespace {
         }
         let top_level_scope = file.top_level_scope();
         for reference in file.references() {
-            let Some(place) = namespaces.get(&reference.name()) else {
+            let Some(lookup) = namespaces.get(&reference.name()) else {
                 continue;
             };
             let Some(ident) = reference.expr() else {
                 if !is_oxlint && let Node::Type(heritage) = reference.node() {
-                    check_heritage(heritage, place.clone(), cx);
+                    check_heritage(heritage, lookup.clone(), cx);
                 }
                 continue;
             };
             // oxlint follows the references to the import, except parenthesized ones, and only into a module that has
             // an `import` or an `export`.
-            if let Remote::Oxlint(module) = place.module
+            if let Remote::Oxlint(module) = lookup.module
                 && (ident.is_parenthesized()
                     || !module.record.has_module_syntax
                     || reference.symbol().is_none_or(|it| it.scope() != top_level_scope))
             {
                 continue;
             }
-            self.check_reference(ident, place, cx);
+            self.check_reference(ident, lookup, cx);
         }
     }
 }
@@ -212,7 +212,7 @@ impl<'a> Remote<'a> {
 
 /// The namespace that a member is looked up in.
 #[derive(Clone)]
-struct Place<'a> {
+struct Lookup<'a> {
     /// oxlint only: the imported module's specifier.
     source: &'a [u8],
     /// The import's local name, then the properties that lead from it to `module`.
@@ -230,14 +230,14 @@ fn is_declared_in_module<'a>(name: Name<'a>, node: Node<'a>, cx: &mut Cx<'a, Nam
 }
 
 impl Namespace {
-    fn check_reference<'a>(&self, ident: Expr<'a>, place: &Place<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_reference<'a>(&self, ident: Expr<'a>, lookup: &Lookup<'a>, cx: &mut Cx<'a, Self>) {
         let (is_oxlint, Some(name)) = (cx.state.maps.is_none(), ident.as_ident()) else {
             return;
         };
         match ident.parent() {
             Node::Expr(member) if member.is_in_type_query() => {}
             // ESLint doesn't check where the name is declared.
-            Node::Expr(member) if member.is_jsx_tag_name() => check_jsx_member_expression(member, place, cx),
+            Node::Expr(member) if member.is_jsx_tag_name() => check_jsx_member_expression(member, lookup, cx),
             Node::Expr(member) if matches!(member.tag(), ExprTag::Dot | ExprTag::Index) => {
                 // oxlint doesn't check that it's the member's object.
                 if !is_oxlint && (member.object() != Some(ident) || !is_declared_in_module(name, member.into(), cx)) {
@@ -259,18 +259,18 @@ impl Namespace {
                     cx.report(member, OXLINT_COMPUTED_REFERENCE).data("namespace_name", debug(name.bytes()));
                     return;
                 }
-                self.check_deep_namespace_for_node(member, place.clone(), cx);
+                self.check_deep_namespace_for_node(member, lookup.clone(), cx);
             }
             Node::VarDecl(declarator) if declarator.init() == Some(ident) => {
                 if is_oxlint || is_declared_in_module(name, ident.into(), cx) {
-                    check_deep_namespace_for_object_pattern(declarator.pat(), place.clone(), cx);
+                    check_deep_namespace_for_object_pattern(declarator.pat(), lookup.clone(), cx);
                 }
             }
             _ => {}
         }
     }
 
-    fn check_deep_namespace_for_node<'a>(&self, node: Expr<'a>, mut place: Place<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_deep_namespace_for_node<'a>(&self, node: Expr<'a>, mut lookup: Lookup<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.state.maps.is_none();
         let mut node = node;
         loop {
@@ -289,10 +289,10 @@ impl Namespace {
             let Some((span, name)) = property else {
                 return;
             };
-            let module = match place.module.nested(name, cx) {
+            let module = match lookup.module.nested(name, cx) {
                 Nested::Namespace(_, module) => module,
                 Nested::Unknown => return,
-                Nested::No => return check_binding_exported(name, span, &place, cx),
+                Nested::No => return check_binding_exported(name, span, &lookup, cx),
             };
             let Node::Expr(parent) = node.parent() else {
                 return;
@@ -301,15 +301,15 @@ impl Namespace {
             if is_oxlint && node.is_parenthesized() || node.is_chain_root() {
                 return;
             }
-            place.module = module;
-            place.namespaces.push(name);
+            lookup.module = module;
+            lookup.namespaces.push(name);
             node = parent;
         }
     }
 }
 
 /// `a.b.c` after `implements`, or after an interface's `extends`, is a `MemberExpression` in ESTree.
-fn check_heritage<'a>(heritage: TypeNode<'a>, mut place: Place<'a>, cx: &mut Cx<'a, Namespace>) {
+fn check_heritage<'a>(heritage: TypeNode<'a>, mut lookup: Lookup<'a>, cx: &mut Cx<'a, Namespace>) {
     let is_heritage = match heritage.parent() {
         Node::Class(class) => class.implements().around(heritage.span().start) == Some(heritage),
         Node::Stmt(parent) => match parent.kind() {
@@ -328,17 +328,17 @@ fn check_heritage<'a>(heritage: TypeNode<'a>, mut place: Place<'a>, cx: &mut Cx<
         return;
     }
     for property in name.parts().skip(1) {
-        let Nested::Namespace(_, module) = place.module.nested(property.bytes(), cx) else {
-            return check_binding_exported(property.bytes(), property.span(), &place, cx);
+        let Nested::Namespace(_, module) = lookup.module.nested(property.bytes(), cx) else {
+            return check_binding_exported(property.bytes(), property.span(), &lookup, cx);
         };
-        place.module = module;
-        place.namespaces.push(property.bytes());
+        lookup.module = module;
+        lookup.namespaces.push(property.bytes());
     }
 }
 
 /// `member`: the `a.b` at the start of a tag name. Whether the `a` of a closing tag is a reference depends on the
 /// configured parser, so a closing tag is checked together with its opening tag.
-fn check_jsx_member_expression<'a>(member: Expr<'a>, place: &Place<'a>, cx: &mut Cx<'a, Namespace>) {
+fn check_jsx_member_expression<'a>(member: Expr<'a>, lookup: &Lookup<'a>, cx: &mut Cx<'a, Namespace>) {
     let mut tag = member;
     let jsx = loop {
         let Node::Expr(parent) = tag.parent() else {
@@ -357,14 +357,14 @@ fn check_jsx_member_expression<'a>(member: Expr<'a>, place: &Place<'a>, cx: &mut
         closing = Some(object);
     }
     for property in [Some(member), closing].into_iter().flatten().filter_map(Expr::member_name) {
-        check_binding_exported(property.bytes(), property.span(), place, cx);
+        check_binding_exported(property.bytes(), property.span(), lookup, cx);
     }
 }
 
-fn check_deep_namespace_for_object_pattern<'a>(pattern: Pat<'a>, place: Place<'a>, cx: &mut Cx<'a, Namespace>) {
+fn check_deep_namespace_for_object_pattern<'a>(pattern: Pat<'a>, lookup: Lookup<'a>, cx: &mut Cx<'a, Namespace>) {
     let is_oxlint = cx.state.maps.is_none();
-    let mut pending: SmallVec<[(Pat<'a>, Place<'a>); 2]> = smallvec![(pattern, place)];
-    while let Some((pattern, place)) = pending.pop() {
+    let mut pending: SmallVec<[(Pat<'a>, Lookup<'a>); 2]> = smallvec![(pattern, lookup)];
+    while let Some((pattern, lookup)) = pending.pop() {
         let PatKind::Object(properties) = pattern.kind() else {
             continue;
         };
@@ -387,24 +387,24 @@ fn check_deep_namespace_for_object_pattern<'a>(pattern: Pat<'a>, place: Place<'a
                 continue;
             };
             let has_pattern = property.value().tag() == PatTag::Object && property.default().is_none();
-            let found = if has_pattern { place.module.nested(name, cx) } else { Nested::No };
+            let found = if has_pattern { lookup.module.nested(name, cx) } else { Nested::No };
             match found {
                 Nested::Namespace(_, module) => {
-                    let mut next = Place { module, ..place.clone() };
+                    let mut next = Lookup { module, ..lookup.clone() };
                     next.namespaces.push(name);
                     pending.push((property.value(), next));
                 }
                 Nested::Unknown => {}
                 // oxlint reports the key.
-                Nested::No if is_oxlint => check_binding_exported(name, key.inner_span(cx.file()), &place, cx),
-                Nested::No => check_binding_exported(name, property.span(), &place, cx),
+                Nested::No if is_oxlint => check_binding_exported(name, key.inner_span(cx.file()), &lookup, cx),
+                Nested::No => check_binding_exported(name, property.span(), &lookup, cx),
             }
         }
     }
 }
 
-fn check_binding_exported<'a>(name: &'a [u8], span: Span, place: &Place<'a>, cx: &mut Cx<'a, Namespace>) {
-    let is_exported = match place.module {
+fn check_binding_exported<'a>(name: &'a [u8], span: Span, lookup: &Lookup<'a>, cx: &mut Cx<'a, Namespace>) {
+    let is_exported = match lookup.module {
         Remote::Oxlint(module) => {
             module.exports(name)
                 || name == b"default" && module.record.has_export_default
@@ -415,7 +415,7 @@ fn check_binding_exported<'a>(name: &'a [u8], span: Span, place: &Place<'a>, cx:
     if is_exported {
         return;
     }
-    let (is_deep, namepath) = (place.namespaces.len() > 1, place.namespaces.join(&b"."[..]));
+    let (is_deep, namepath) = (lookup.namespaces.len() > 1, lookup.namespaces.join(&b"."[..]));
     if cx.state.maps.is_some() {
         let deeply = if is_deep { "deeply " } else { "" };
         cx.report(span, NOT_FOUND).data("name", name).data("deeply", deeply).data("namepath", namepath);
@@ -423,7 +423,7 @@ fn check_binding_exported<'a>(name: &'a [u8], span: Span, place: &Place<'a>, cx:
     }
     let (message, namespace_name) = match is_deep {
         true => (OXLINT_NO_EXPORT_IN_DEEPLY_IMPORTED_NAMESPACE, debug(&namepath)),
-        false => (OXLINT_NO_EXPORT, debug(place.source)),
+        false => (OXLINT_NO_EXPORT, debug(lookup.source)),
     };
     cx.report(span, message).data("specifier_name", debug(name)).data("namespace_name", namespace_name);
 }

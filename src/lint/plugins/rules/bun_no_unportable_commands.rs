@@ -1,4 +1,4 @@
-use crate::bun::{LaunchOptions, Starter, is_listed, launches, list_option, written_start};
+use crate::bun::{LaunchOptions, Starter, is_listed, launches, list_option, static_prefix};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -71,7 +71,7 @@ impl NoUnportableCommands {
     fn check_launch<'a>(&self, call: Call<'a>, starter: Starter, cx: &Cx<'a, Self>) -> Option<Expr<'a>> {
         let options = LaunchOptions::of(call, starter);
         let command = command_of(call, starter, &options)?;
-        let (text, is_whole) = written_start(command)?;
+        let (text, is_whole) = static_prefix(command)?;
         let has_shell_option = options.get("shell").is_some_and(|it| it.tag() != ExprTag::False);
         let uses_shell = starter == Starter::Shell || has_shell_option;
         // A shell runs the first word as the program.

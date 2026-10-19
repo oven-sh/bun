@@ -87,16 +87,16 @@ impl NoHexEscape {
 }
 
 /// `escapes` is the span of the text that has the escapes.
-fn check<'a>(escapes: Span, place: Span, cx: &Cx<'a, NoHexEscape>) {
+fn check<'a>(escapes: Span, report_span: Span, cx: &Cx<'a, NoHexEscape>) {
     if let Some(fixed) = check_escape(cx.slice(escapes)) {
         // oxlint's fix replaces the quotes too.
         let (before, after) = (
-            Span::new(place.start, escapes.start),
-            Span::new(escapes.end, place.end),
+            Span::new(report_span.start, escapes.start),
+            Span::new(escapes.end, report_span.end),
         );
         let fixed = [cx.slice(before), &fixed, cx.slice(after)].concat();
-        cx.report(place, NO_HEX_ESCAPE)
-            .fix(|fixer| fixer.replace(place, fixed));
+        cx.report(report_span, NO_HEX_ESCAPE)
+            .fix(|fixer| fixer.replace(report_span, fixed));
     }
 }
 

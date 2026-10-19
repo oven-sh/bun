@@ -231,7 +231,7 @@ impl JsxNoLiterals {
         let config = ResolvedConfig {
             options: element_override.map_or(&self.options, |it| &it.options),
             element_override,
-            ignore_props_of_all: self.options.ignore_props,
+            top_level_ignore_props: self.options.ignore_props,
             is_oxlint: cx.language().is_oxlint,
         };
         // oxlint skips such an element entirely.
@@ -388,7 +388,7 @@ struct ResolvedConfig<'r> {
     /// The `elementOverrides` entry that `options` comes from.
     element_override: Option<&'r ElementOverrideOptions>,
     /// The top-level `ignoreProps`, which is what upstream checks for a string in an attribute.
-    ignore_props_of_all: bool,
+    top_level_ignore_props: bool,
     is_oxlint: bool,
 }
 
@@ -497,7 +497,7 @@ impl ResolvedConfig<'_> {
         let ignore_props = if is_oxlint {
             options.ignore_props
         } else {
-            self.ignore_props_of_all
+            self.top_level_ignore_props
         };
         let mut pending: SmallVec<[Expr<'a>; 8]> = smallvec![expr];
         while let Some(expr) = pending.pop() {
@@ -552,7 +552,7 @@ impl ResolvedConfig<'_> {
         } else {
             &[]
         };
-        let ignore_props = options.ignore_props && (is_oxlint || self.ignore_props_of_all);
+        let ignore_props = options.ignore_props && (is_oxlint || self.top_level_ignore_props);
         let looks_at_strings = !restricted_attributes.is_empty()
             || !ignore_props && (options.no_attribute_strings || options.no_strings);
         if !looks_at_strings {
@@ -607,7 +607,7 @@ impl ResolvedConfig<'_> {
         if options.no_strings && !options.ignore_props && !self.has_allowed_string(value) {
             self.report_literal_node(attr.span(), &INVALID_PROP_VALUE, cx);
         }
-        let is_looked_at = options.no_attribute_strings && !self.ignore_props_of_all;
+        let is_looked_at = options.no_attribute_strings && !self.top_level_ignore_props;
         if is_looked_at && self.is_viable_text(cx.file().slice(literal), value) {
             self.report_literal_node(literal, self.default_message_id(false), cx);
         }

@@ -468,17 +468,17 @@ impl<'t> Builder<'t, '_, '_> {
 
     /// `content` is the text between the `"""`.
     fn block_string(&mut self, content: &'t [u8]) {
-        fn leading_blanks(line: &[u8]) -> usize {
+        fn leading_space_or_tab_len(line: &[u8]) -> usize {
             line.iter()
                 .take_while(|byte| matches!(byte, b' ' | b'\t'))
                 .count()
         }
         // graphql-js's `dedentBlockStringLines`
-        let is_blank = |line: &[u8]| leading_blanks(line) == line.len();
+        let is_blank = |line: &[u8]| leading_space_or_tab_len(line) == line.len();
         let common_indent = bun_core::strings::split_crlf_lines(content)
             .skip(1)
             .filter(|line| !is_blank(line))
-            .map(leading_blanks)
+            .map(leading_space_or_tab_len)
             .min()
             .unwrap_or(usize::MAX);
         let first = bun_core::strings::split_crlf_lines(content)
@@ -505,13 +505,13 @@ impl<'t> Builder<'t, '_, '_> {
         self.token("\"\"\"");
         // `""" a """` is printed as is. The padding is part of the value, and Prettier drops it. On its own line, the
         // leading whitespace would turn into indentation and the trailing whitespace would be invisible.
-        let ends_with_blank = |line: &[u8]| matches!(line.last(), Some(b' ' | b'\t'));
-        let is_padded = leading_blanks(content) > 0 || ends_with_blank(content);
+        let ends_with_space_or_tab = |line: &[u8]| matches!(line.last(), Some(b' ' | b'\t'));
+        let is_padded = leading_space_or_tab_len(content) > 0 || ends_with_space_or_tab(content);
         if count == 1 && is_padded && bun_core::strings::index_of_any(content, b"\r\n").is_none() {
             self.text(content);
             return self.token("\"\"\"");
         }
-        let mut is_at_quotes = count == 1 && first == 0 && leading_blanks(content) > 0;
+        let mut is_at_quotes = count == 1 && first == 0 && leading_space_or_tab_len(content) > 0;
         let (mut empty_lines, mut is_line_ended) = (0, false);
         for line in dedented {
             if line.is_empty() {
@@ -525,7 +525,7 @@ impl<'t> Builder<'t, '_, '_> {
             self.text(line);
             // Trailing spaces and tabs are part of the value too. A `hardline` trims them, as in Prettier. A line break
             // printed as text doesn't, and the `hardline` after it then only indents.
-            is_line_ended = ends_with_blank(line);
+            is_line_ended = ends_with_space_or_tab(line);
             if is_line_ended {
                 self.f.write_text(b"\n", Some(TextWidth::multiline(0)));
             }

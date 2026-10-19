@@ -51,7 +51,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let start = self.pos();
         self.next();
-        let saved = self.enter_context(0, self.disallow_in_if_brackets_end_it());
+        let saved = self.enter_context(0, self.disallow_in_if_cleared_by_brackets());
         let base = self.s.pat_elems.len();
         let lists = self.enter_list(ListKind::ArrayBindingElements);
         while self.is_in_list(T::CloseBracket) && self.is_at_element(ListKind::ArrayBindingElements)
@@ -92,7 +92,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 }
             }
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::ArrayBindingElements, element)
+                && !self.continues_without_comma(ListKind::ArrayBindingElements, element)
             {
                 break;
             }
@@ -112,7 +112,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let start = self.pos();
         self.next();
-        let saved = self.enter_context(0, self.disallow_in_if_brackets_end_it());
+        let saved = self.enter_context(0, self.disallow_in_if_cleared_by_brackets());
         let base = self.s.pat_props.len();
         let lists = self.enter_list(ListKind::ObjectBindingElements);
         while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::ObjectBindingElements)
@@ -140,7 +140,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             };
             self.s.pat_props.push(property);
             if !self.eat(T::Comma) {
-                if self.goes_on_without_comma(ListKind::ObjectBindingElements, element) {
+                if self.continues_without_comma(ListKind::ObjectBindingElements, element) {
                     continue;
                 }
                 break;

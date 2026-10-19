@@ -73,7 +73,9 @@ fn run_once(ctx: &Ctx) {
             .exported_bindings
             .iter()
             .map(|it| (*it.0, *it.1));
-        let bindings = in_hash_order(utils::sort::in_order_of(bindings, |it| it.1.start));
+        let bindings = in_hash_order(utils::sort::collect_sorted_by_key(bindings, |it| {
+            it.1.start
+        }));
         for span in bindings
             .into_iter()
             .map(|it| it.1)

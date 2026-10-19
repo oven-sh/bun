@@ -24,8 +24,8 @@ pub(in crate::check) enum Declaration {
 
 /// A property found in a type, or synthesized for a property's declaration.
 pub(in crate::check) enum FoundProp<'p> {
-    Of(&'p Prop<'p>),
-    Made(Prop<'p>),
+    Existing(&'p Prop<'p>),
+    Synthesized(Prop<'p>),
 }
 
 impl<'p> std::ops::Deref for FoundProp<'p> {
@@ -33,8 +33,8 @@ impl<'p> std::ops::Deref for FoundProp<'p> {
     #[inline]
     fn deref(&self) -> &Prop<'p> {
         match self {
-            FoundProp::Of(prop) => prop,
-            FoundProp::Made(prop) => prop,
+            FoundProp::Existing(prop) => prop,
+            FoundProp::Synthesized(prop) => prop,
         }
     }
 }
@@ -83,8 +83,8 @@ pub(in crate::check) enum Found<'p> {
 }
 
 impl<'p> Found<'p> {
-    fn made(prop: Prop<'p>) -> Found<'p> {
-        Found::Property(FoundProp::Made(prop), MapperId::IDENTITY)
+    fn synthesized_property(prop: Prop<'p>) -> Found<'p> {
+        Found::Property(FoundProp::Synthesized(prop), MapperId::IDENTITY)
     }
 }
 
@@ -132,7 +132,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                     None => self
                         .c
                         .property_of_alias(symbol)
-                        .map(|prop| Found::Property(FoundProp::Of(prop), MapperId::IDENTITY)),
+                        .map(|prop| Found::Property(FoundProp::Existing(prop), MapperId::IDENTITY)),
                 }
             }
             // `IsLiteralComputedPropertyDeclarationName`: the literal in `["name"]`, `` [`name`] `` and `[0]` has the
@@ -151,7 +151,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 let name = hir[p].key.name().unwrap_or(Atom::NONE);
                 (!matches!(hir[p].key, PropKey::None) || is_literal_name_at(hir, hir[p].pos)).then(
                     || {
-                        Found::made(Prop {
+                        Found::synthesized_property(Prop {
                             name,
                             flags: PropFlags::empty(),
                             source: PropSource::Literal(file, p),
@@ -172,7 +172,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                     && hir[bound.param_fn[parameter.idx()]].kind == FnKind::Constructor
                 {
                     let property = bound.symbol_of_declaration(Decl::ParameterProperty(parameter));
-                    return Some(Found::made(Prop {
+                    return Some(Found::synthesized_property(Prop {
                         name,
                         flags: PropFlags::empty(),
                         source: PropSource::Symbol(files.sym(file, property)),
@@ -233,7 +233,9 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 let location = hir.node(element);
                 let elements = self.c.jsx_type(file, location, known::IntrinsicElements)?;
                 match self.c.prop_ref(elements, name) {
-                    Some((prop, mapper)) => Some(Found::Property(FoundProp::Of(prop), mapper)),
+                    Some((prop, mapper)) => {
+                        Some(Found::Property(FoundProp::Existing(prop), mapper))
+                    }
                     None => match self.get_applicable_index_symbol(elements, name) {
                         Some(found) => Some(found),
                         // An index signature without a declaration, like the one of
@@ -606,7 +608,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         let name = self
             .c
             .declared_member_name(file, self.c.hir(file)[member].key);
-        Found::made(Prop {
+        Found::synthesized_property(Prop {
             name: name.unwrap_or(Atom::NONE),
             flags: PropFlags::empty(),
             source: PropSource::Symbol(self.c.symbol_of_member(file, member)),
@@ -669,10 +671,10 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             if matches!(s.kind, ScopeKind::File | ScopeKind::Module(_))
                 && let Some(local) = bound.lookup(s.locals, name)
             {
-                let leads_there = bound.symbol(local).export_symbol.is_some()
+                let maps_to_exported = bound.symbol(local).export_symbol.is_some()
                     && files.export_symbol_of_value_symbol_if_exported(files.sym(file, local))
                         == exported;
-                return if leads_there {
+                return if maps_to_exported {
                     files.resolve_name(file, scope, name, SymFlags::VALUE)
                 } else {
                     Some(exported)
@@ -783,12 +785,12 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                     return Some(Found::SyntheticDefault(module));
                 }
             }
-            return Some(Found::Property(FoundProp::Of(prop), mapper));
+            return Some(Found::Property(FoundProp::Existing(prop), mapper));
         }
         let (prop, mapper) = self.c.get_property_of_type(ty, name)?;
         Some(match &prop.source {
             PropSource::Intersected(..) => Found::Properties(prop, mapper),
-            _ => Found::Property(FoundProp::Of(prop), mapper),
+            _ => Found::Property(FoundProp::Existing(prop), mapper),
         })
     }
 
@@ -915,14 +917,13 @@ fn is_literal_name_at(hir: &hir::File, pos: u32) -> bool {
 }
 
 impl<'c, 'p, 's> Services<'c, 'p, 's> {
-    fn symbol_found(&mut self, found: Found<'p>) -> SymbolRef {
+    fn symbol_of_found(&mut self, found: Found<'p>) -> SymbolRef {
         match found {
             Found::Symbol(symbol) => self.symbol(symbol),
-            Found::Property(FoundProp::Of(prop), mapper) | Found::Properties(prop, mapper) => {
-                self.symbol_of_prop(prop, mapper)
-            }
+            Found::Property(FoundProp::Existing(prop), mapper)
+            | Found::Properties(prop, mapper) => self.symbol_of_prop(prop, mapper),
             // A property synthesized for a declared member only identifies the symbol.
-            Found::Property(FoundProp::Made(prop), mapper) => match prop.source {
+            Found::Property(FoundProp::Synthesized(prop), mapper) => match prop.source {
                 PropSource::Symbol(symbol) => {
                     let symbol = self.c.files().canonical(symbol);
                     self.named_symbol(Key::Symbol(symbol), prop.name)
@@ -1091,7 +1092,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
         let kind = self.visited_kind(node)?;
         let found = SymbolFinder { c: self.c, file }.get_symbol_at_visited_node(kind)?;
-        Some(self.symbol_found(found))
+        Some(self.symbol_of_found(found))
     }
 
     pub fn shorthand_assignment_value_symbol(&mut self, node: NodeRef) -> Option<SymbolRef> {

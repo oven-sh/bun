@@ -42,7 +42,7 @@ fn descriptions() -> FxHashMap<&'static [u8], &'static [u8]> {
 }
 
 /// The rule's docs page in Markdown.
-fn page_of(meta: &Meta) -> Option<&'static [u8]> {
+fn docs_page(meta: &Meta) -> Option<&'static [u8]> {
     let pages = pages();
     let head = [b"\0", &meta.page()[..], b"\n"].concat();
     let page = &pages[strings::index_of(pages, &head)? + head.len()..];
@@ -227,7 +227,7 @@ pub(crate) fn write_rules_by_plugin(out: &mut Vec<u8>, registry: &Registry, colo
         let rows: Vec<_> = (of_plugin.iter())
             .map(|(_, meta)| (registry.names_of(meta).id, *meta))
             .collect();
-        let directory = of_plugin[0].1.plugin.directory_of_docs();
+        let directory = of_plugin[0].1.plugin.docs_directory();
         let noun = if rows.len() == 1 { "rule" } else { "rules" };
         pretty!(
             out,
@@ -342,7 +342,7 @@ fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
             .concat());
         }
     }
-    .ok_or_else(|| native::unknown_rule(registry, name, native::NamedBy::Explain))
+    .ok_or_else(|| native::unknown_rule(registry, name, native::NameSource::Explain))
 }
 
 /// `--explain <rule>`. Returns the rendered docs page for `name`, or the error message to print.
@@ -361,7 +361,7 @@ pub(crate) fn explain(
         .collect();
     let default = Defaults::new(registry).get(meta);
     let facts = facts(meta, &names.aliases, &namesakes, default);
-    let page = page_of(meta).unwrap_or(b"\n\nThis version of Bun has no page about this rule.");
+    let page = docs_page(meta).unwrap_or(b"\n\nThis version of Bun has no page about this rule.");
     let after_description = strings::index_of(page, b"\n\n").unwrap_or(page.len());
     let (description, rest) = page.split_at(after_description);
     let colors = colors.unwrap_or(environment.stdout.colors);

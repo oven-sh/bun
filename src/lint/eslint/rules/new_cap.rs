@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::oxlint::goes_by_the_name;
+use bun_lint::utils::oxlint::checks_name_only;
 use bun_lint_oxlint::ast_util::get_inner_expression;
 use std::borrow::Cow;
 
@@ -137,7 +137,7 @@ impl NewCap {
         }
         match callee.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                let is_date = || match goes_by_the_name(callee.file().language()) {
+                let is_date = || match checks_name_only(callee.file().language()) {
                     true => obj.is_ident("Date"),
                     false => is_global_built_in(obj, b"Date"),
                 };
@@ -171,7 +171,7 @@ impl NewCap {
             && get_cap(&name) == Cap::Upper
             && !self.is_cap_allowed(&self.cap_is_new_exceptions, callee, &name)
             && !(CAPS_ALLOWED.iter().any(|it| it.as_bytes() == &*name)
-                && (goes_by_the_name(cx.language()) || is_global_built_in(callee, &name)))
+                && (checks_name_only(cx.language()) || is_global_built_in(callee, &name)))
         {
             report(e, callee, UPPER, cx);
         }

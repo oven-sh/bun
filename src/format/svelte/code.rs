@@ -15,7 +15,7 @@ use crate::stack::Stack;
 use crate::syntax_error::{Message, SyntaxError};
 use crate::{FormatError, write};
 use bun_core::strings;
-use bun_lint::linter::{TypesInJavaScript, refusal_of_prettier};
+use bun_lint::linter::{TypesInJavaScript, prettier_refusal};
 use std::cell::{OnceCell, RefCell};
 use std::cmp::Reverse;
 
@@ -82,15 +82,15 @@ fn can_end_with_comment(text: &[u8], comments: CommentList<'_>) -> bool {
     let Some(end) = comments.iter().map(|it| it.span().end).max() else {
         return false;
     };
-    let mut behind = text.get(end as usize..).unwrap_or_default();
+    let mut after = text.get(end as usize..).unwrap_or_default();
     loop {
-        behind = strings::trim_js_whitespace_end(behind);
-        match behind {
-            [before @ .., b')' | b']' | b'}' | b'>' | b';'] => behind = before,
+        after = strings::trim_js_whitespace_end(after);
+        match after {
+            [before @ .., b')' | b']' | b'}' | b'>' | b';'] => after = before,
             _ => break,
         }
     }
-    behind.is_empty()
+    after.is_empty()
         || (comments.iter())
             .any(|it| it.is_line() || it.has_newline_before() || it.has_newline_after())
 }
@@ -161,7 +161,7 @@ fn write_js_expression(
             // The source text doesn't end with a comment, but the printed text could: `{#each a[0 // b\n]}`. The
             // source also has no `as` that Svelte would read as the block's own, but `{#each () => (a as B)}` has one
             // once its parentheses are gone.
-            if js.is_without_comment_behind
+            if js.forbids_trailing_comment
                 && (can_end_with_comment(&wrapped, comments) || can_end_with_assertion(e))
             {
                 return false;
@@ -176,7 +176,7 @@ fn write_js_expression(
                 if is_in_parentheses {
                     return write!(f, ["(", e, ")"]);
                 }
-                match js.is_without_parentheses {
+                match js.remove_parentheses {
                     // `removeParentheses` mistakes a leading block comment for an unterminated one and keeps the
                     // parentheses, which Svelte rejects around the two functions of a `bind:`.
                     true => {
@@ -224,7 +224,7 @@ fn write_js_function(
             // This kind of comment is printed after the name, where Svelte requires the `(`:
             // `{#snippet a /* b */(c)}`.
             let first = function.params_with_this().next();
-            let is_behind_name = |it: Comment<'_>| {
+            let is_after_name = |it: Comment<'_>| {
                 function
                     .open_paren()
                     .is_some_and(|open| it.span().start < open)
@@ -232,8 +232,8 @@ fn write_js_function(
                         // A comment on its own line is printed before the parameter.
                         && !it.has_newline_before()
                         && (it.has_newline_after() || {
-                            let behind = file.text().get(it.span().end as usize..);
-                            strings::trim_js_whitespace_start(behind.unwrap_or_default())
+                            let after = file.text().get(it.span().end as usize..);
+                            strings::trim_js_whitespace_start(after.unwrap_or_default())
                                 .starts_with(b"//")
                         })
                         && first.is_some_and(|first| it.span().start < first.span().start))
@@ -255,7 +255,7 @@ fn write_js_function(
                     spans
                 })
             };
-            let is_behind_hugged = |it: Comment<'_>| {
+            let is_after_hugged = |it: Comment<'_>| {
                 let is_in = |part: Span| part.start <= it.span().start && it.span().end <= part.end;
                 (it.is_line() || it.has_newline_before())
                     && hugged.is_some_and(|hugged| {
@@ -263,9 +263,9 @@ fn write_js_function(
                             && !hugged.default().is_some_and(|it| is_in(it.span()))
                             && !{
                                 let types = types_with_braces();
-                                let behind =
+                                let after =
                                     types.partition_point(|part| part.start <= it.span().start);
-                                behind.checked_sub(1).is_some_and(|at| is_in(types[at]))
+                                after.checked_sub(1).is_some_and(|at| is_in(types[at]))
                             }
                     })
             };
@@ -283,12 +283,12 @@ fn write_js_function(
                 })
             };
             let is_before_parenthesis = |it: Comment<'_>| {
-                let behind = file
+                let after = file
                     .text()
                     .get(it.span().end as usize..)
                     .unwrap_or_default();
-                let code = strings::trim_js_whitespace_start(behind);
-                let at = it.span().end + (behind.len() - code.len()) as u32;
+                let code = strings::trim_js_whitespace_start(after);
+                let at = it.span().end + (after.len() - code.len()) as u32;
                 it.is_line()
                     && !it.has_newline_before()
                     && code.starts_with(b"(")
@@ -296,7 +296,7 @@ fn write_js_function(
             };
             let comments = f.comments().all();
             if (comments.iter())
-                .any(|it| is_behind_name(it) || is_behind_hugged(it) || is_before_parenthesis(it))
+                .any(|it| is_after_name(it) || is_after_hugged(it) || is_before_parenthesis(it))
             {
                 return false;
             }
@@ -328,7 +328,7 @@ fn write_js_statement(
             };
             // The source text doesn't end with a comment, but the printed text could: `{const a = (b /* c */)}`.
             let comments = f.comments().all();
-            if js.is_without_comment_behind && can_end_with_comment(&js.text, comments) {
+            if js.forbids_trailing_comment && can_end_with_comment(&js.text, comments) {
                 return false;
             }
             write!(f, statement);
@@ -352,7 +352,7 @@ fn write_js(js: &Js<'_>, out: &mut Writer<'_, '_>, how: &How<'_>) {
             JsKind::Expression | JsKind::Function => HtmlRoot::SvelteExpression,
         },
         has_single_quotes: js.has_single_quotes,
-        has_tree_of_babel: true,
+        has_babel_tree: true,
         ..InHtml::default()
     };
     let ends_with_line_comment = out.foreign(|f| match js.kind {
@@ -423,15 +423,15 @@ fn write_printed_text(
 fn error_in_script(content: &[u8], parse: Parse<'_>) -> (Vec<u8>, u32) {
     let mut error = None;
     parse.call(b"dummy.ts", content, false, &mut |file| {
-        error = refusal_of_prettier(file, TypesInJavaScript::Refused);
+        error = prettier_refusal(file, TypesInJavaScript::Refused);
     });
     error.map_or_else(
-        || in_words(SyntaxError(Message::CannotBeFormatted, 0)),
+        || message_and_offset(SyntaxError(Message::CannotBeFormatted, 0)),
         |it| (it.message, it.at),
     )
 }
 
-fn in_words(SyntaxError(message, at): SyntaxError) -> (Vec<u8>, u32) {
+fn message_and_offset(SyntaxError(message, at): SyntaxError) -> (Vec<u8>, u32) {
     (message.text().as_bytes().to_vec(), at)
 }
 
@@ -450,7 +450,7 @@ fn write_body(
     let program = |syntax: Syntax, out: &mut Writer<'_, '_>| {
         let in_html = InHtml {
             root: HtmlRoot::Program,
-            has_tree_of_babel: syntax == Syntax::BabelTs,
+            has_babel_tree: syntax == Syntax::BabelTs,
             ..InHtml::default()
         };
         let (source_type, flavor) = (SourceType::Unknown, how.script_flavor);
@@ -463,7 +463,7 @@ fn write_body(
         write_printed_text(out, how.options, |options, printed| {
             crate::css::format(content, parser, options, &mut Default::default(), printed)
         })
-        .map_err(in_words)
+        .map_err(message_and_offset)
     };
     let written = match parser {
         Parser::TypeScript => program(Syntax::TypeScript, out),
@@ -472,7 +472,7 @@ fn write_body(
             let parser = crate::json::Parser::Json;
             crate::json::format(content, parser, options, &mut Default::default(), printed)
         })
-        .map_err(in_words),
+        .map_err(message_and_offset),
         Parser::Css => style_sheet(crate::css::Parser::Css, out),
         Parser::Scss => style_sheet(crate::css::Parser::Scss, out),
         Parser::Less => style_sheet(crate::css::Parser::Less, out),

@@ -250,7 +250,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_type_of_symbol(&mut self, sym: Sym) -> TypeId {
         loop {
             let ty = self.resolve_type_of_symbol_once(sym);
-            if self.unwind_to != self.stack.len() || !self.resolve_what_was_too_deep() {
+            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
                 return ty;
             }
             if let Some(known) = self.p.symbol_types.get(&self.task, &sym) {
@@ -375,7 +375,7 @@ impl<'p, 's> Checker<'p, 's> {
             let ty = self.type_of_circular_symbol(sym, flags, value_declaration, Some(ty));
             let is_unassigned = matches!(value_declaration,
                 Some((file, Decl::Var(pat) | Decl::Param(pat)))
-                    if self.is_left_to_assign_parameter_type(file, pat, ty));
+                    if self.is_deferred_to_assign_parameter_type(file, pat, ty));
             let kept = if is_unassigned {
                 ty
             } else {
@@ -410,7 +410,7 @@ impl<'p, 's> Checker<'p, 's> {
         match left {
             // As in `resolve_type_of_pat`.
             _ if matches!(value_declaration, Some((file, Decl::Var(pat) | Decl::Param(pat)))
-                if self.is_left_to_assign_parameter_type(file, pat, ty)) => {}
+                if self.is_deferred_to_assign_parameter_type(file, pat, ty)) => {}
             // `getTypeOfEnumMember` assigns `links.resolvedType` regardless of what a nested call
             // assigned.
             Ok(stored) if self.files().flags(sym).contains(SymFlags::ENUM_MEMBER) => {
@@ -1531,9 +1531,9 @@ impl<'p, 's> Checker<'p, 's> {
         })?;
         let module = files.module_of_specifier_as(file, spec, mode)?;
         files.export(module, known::export_equals)?;
-        let only_the_type_tells = SymFlags::VARIABLE | SymFlags::PROPERTY | SymFlags::ALIAS;
+        let needs_type_lookup = SymFlags::VARIABLE | SymFlags::PROPERTY | SymFlags::ALIAS;
         let value = files.module_value(module);
-        (files.flags(value).intersects(only_the_type_tells)).then_some(module)
+        (files.flags(value).intersects(needs_type_lookup)).then_some(module)
     }
 
     /// `getTargetOfModuleDefault`, without its errors, for `alias`, the last of the aliases in
@@ -2573,7 +2573,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isParameterOfContextSensitiveSignature` for the name `pat`, for which
     /// `getTypeOfVariableOrParameterOrProperty` has computed `ty`. Nothing is stored for the symbol
     /// until `assignParameterType` or `assignBindingElementTypes` has assigned that type.
-    fn is_left_to_assign_parameter_type(&self, file: FileId, pat: PatId, ty: TypeId) -> bool {
+    fn is_deferred_to_assign_parameter_type(&self, file: FileId, pat: PatId, ty: TypeId) -> bool {
         if self.is_in_pattern_assigned_unknown(file, pat) {
             return true;
         }
@@ -2649,9 +2649,9 @@ impl<'p, 's> Checker<'p, 's> {
                 hir[hir[d].init].kind,
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Await(_) | ExprKind::As { .. }
             ));
-        let is_loop_in_sight =
+        let is_flow_loop_in_view =
             (self.flow_loops.last()).is_some_and(|pushed| self.is_flow_loop_visible(pushed.5));
-        let ty = if is_checked_cached && is_loop_in_sight {
+        let ty = if is_checked_cached && is_flow_loop_in_view {
             // `checkDeclarationInitializer` finds no `links.resolvedType`, so
             // `checkExpressionCached` checks the initializer again, with an empty `flowLoopStack`
             // and `flowTypeCache`.
@@ -3110,7 +3110,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// that its declaration has type `ty`. Under strictNullChecks, a parameter of an ambient
     /// declaration is assumed to be present, and a declaration whose initializer can't be
     /// `undefined` isn't `undefined`.
-    pub(super) fn type_pattern_takes_apart(
+    pub(super) fn type_destructured_by_pattern(
         &mut self,
         file: FileId,
         pattern: PatId,
@@ -3166,7 +3166,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let parent_ty = match self.bound(file).pat_parent[pat.idx()] {
             PatParent::Prop(parent, _) | PatParent::Elem(parent, _) => {
-                self.type_pattern_takes_apart(file, parent, parent_ty)
+                self.type_destructured_by_pattern(file, parent, parent_ty)
             }
             _ => parent_ty,
         };
@@ -3541,7 +3541,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeOfExpression` instead of `checkExpressionCached`. The loops whose types are being
     /// computed stay visible, and the resolutions right below store results derived from their
     /// incomplete types.
-    pub(super) fn with_loops_in_sight<T>(&mut self, check: impl FnOnce(&mut Self) -> T) -> T {
+    pub(super) fn with_flow_loops_visible<T>(&mut self, check: impl FnOnce(&mut Self) -> T) -> T {
         let resolutions = self.resolutions_below(self.stack.len());
         self.quick_initializers.push(resolutions);
         let checked = check(self);
@@ -3572,7 +3572,7 @@ impl<'p, 's> Checker<'p, 's> {
             match hir[parent].kind {
                 StmtKind::ForIn { left, expr, .. } if left == stmt => {
                     // The keys of a generic type are its own keys, restricted to strings.
-                    let object = self.with_loops_in_sight(|c| c.type_of_expr(file, expr));
+                    let object = self.with_flow_loops_visible(|c| c.type_of_expr(file, expr));
                     let object = self.non_nullable_type_if_needed(object);
                     let keys = self.keyof(object);
                     if matches!(
@@ -3590,7 +3590,7 @@ impl<'p, 's> Checker<'p, 's> {
                     is_await,
                     ..
                 } if left == stmt => {
-                    let element = self.with_loops_in_sight(|c| {
+                    let element = self.with_flow_loops_visible(|c| {
                         c.check_right_hand_side_of_for_of(file, expr, is_await)
                     });
                     return if is_name {
@@ -3862,7 +3862,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub(super) fn non_circular_return_type_of_signature(&mut self, sig: SigId) -> TypeId {
         // A cached return type is already resolved, so its resolution is never re-entered.
-        if let Some(kept) = self.kept_return_type(sig) {
+        if let Some(kept) = self.cached_return_type(sig) {
             return kept;
         }
         match *self.types().sig(sig) {
@@ -4346,7 +4346,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_return_type_of_fn(&mut self, file: FileId, func: FnId) -> TypeId {
         loop {
             let ty = self.resolve_return_type_of_fn_once(file, func);
-            if self.unwind_to != self.stack.len() || !self.resolve_what_was_too_deep() {
+            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
                 return ty;
             }
             if let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func)) {
@@ -4579,7 +4579,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let mut ty = self.check_expression_cached_ex(file, value, check_mode);
                 if self.has_reference_without_flow_type(file, hir.node(value)) {
-                    ty = self.check_expression_afresh(file, value, check_mode);
+                    ty = self.check_expression_uncached(file, value, check_mode);
                 }
                 if is_resolving {
                     self.quick_initializers.pop();
@@ -4728,7 +4728,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ExprKind::Await(operand) if is_async => operand,
                 _ => expr,
             };
-            if self.is_call_of_the_function_itself(file, func, expr) {
+            if self.is_recursive_call(file, func, expr) {
                 has_return_of_type_never = true;
                 continue;
             }
@@ -4769,7 +4769,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// to inference". `checkExpressionCached(expr.Expression())` runs for any callee that is an
     /// identifier, outside `getResolvedSignature`, which resets the resolution stack, so a
     /// resolution in progress that the callee re-enters is a cycle.
-    fn is_call_of_the_function_itself(&mut self, file: FileId, func: FnId, e: ExprId) -> bool {
+    fn is_recursive_call(&mut self, file: FileId, func: FnId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let ExprKind::Call(call) = hir[e].kind else {
             return false;
@@ -4844,7 +4844,7 @@ impl<'p, 's> Checker<'p, 's> {
         // If `contextual` has no type variable, no constraint is needed and only the kind of each constituent matters.
         let kinds = self.types().member_flags(contextual);
         if kinds & tf::INSTANTIABLE_NON_PRIMITIVE != 0 {
-            return self.is_literal_context_of_each(candidate, contextual);
+            return self.is_literal_context_slow(candidate, contextual);
         }
         let candidates = self.types().member_flags(candidate);
         let takes_strings =
@@ -4857,7 +4857,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `is_literal_context`, computed by walking the constituents.
-    fn is_literal_context_of_each(&mut self, candidate: TypeId, contextual: TypeId) -> bool {
+    fn is_literal_context_slow(&mut self, candidate: TypeId, contextual: TypeId) -> bool {
         if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(contextual) {
             return parts.iter().any(|&p| self.is_literal_context(candidate, p));
         }
@@ -5422,14 +5422,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `reportTypeNotIterableError`. The diagnostic isn't added yet. `is_of_for_of` means
+    /// `reportTypeNotIterableError`. The diagnostic isn't added yet. `is_for_of_expression` means
     /// `error_node` is the iterated expression of a `for..of`.
     fn type_not_iterable_error(
         &mut self,
         error_node: Place,
         ty: TypeId,
         allows_async: bool,
-        is_of_for_of: bool,
+        is_for_of_expression: bool,
     ) -> Reported {
         // `getAwaitedTypeOfPromise`
         let mut suggests_await = self
@@ -5438,7 +5438,7 @@ impl<'p, 's> Checker<'p, 's> {
             .is_some();
         if !suggests_await
             && !allows_async
-            && is_of_for_of
+            && is_for_of_expression
             && self.global_type_of_arity(known::AsyncIterable, 3).is_some()
         {
             let any_async_iterable = self.global_ref(known::AsyncIterable, &[TypeId::ANY; 3]);
@@ -5849,7 +5849,7 @@ impl<'p, 's> Checker<'p, 's> {
             callback.deferred = Some(super::sink::TypeNotIterable {
                 ty,
                 allows_async,
-                is_of_for_of: for_of,
+                is_for_of_expression: for_of,
             });
             callback.related_information = diags;
             self.add_deferred_diagnostic(callback);
@@ -5885,7 +5885,7 @@ impl<'p, 's> Checker<'p, 's> {
             (callback.file, callback.start, callback.end),
             deferred.ty,
             deferred.allows_async,
-            deferred.is_of_for_of,
+            deferred.is_for_of_expression,
         );
         callback.args = diagnostic.args;
         let diags = std::mem::replace(
@@ -6036,7 +6036,7 @@ impl<'p, 's> Checker<'p, 's> {
         let all_signatures = self.signatures(method, false);
         for &sig in &all_signatures {
             let params = self.sig_params_with_first(sig, 0);
-            if self.min_argument_count_asked(Some(sig), &params) == 0 {
+            if self.min_argument_count_for(Some(sig), &params) == 0 {
                 iterators.push(self.sig_return(sig));
             }
         }

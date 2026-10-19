@@ -30,7 +30,7 @@ pub(super) enum SymbolAtLocation<'p> {
 
 impl SymbolAtLocation<'_> {
     /// The symbol, if the binder or the file merge created it.
-    pub(super) fn of_binder(&self) -> Option<Sym> {
+    pub(super) fn as_binder_symbol(&self) -> Option<Sym> {
         if let SymbolAtLocation::Symbol(symbol) = *self {
             Some(symbol)
         } else {

@@ -37,9 +37,9 @@ impl Rule for NoThisInExportedFunction {
         utils::sort::sort_unstable_by_key(&mut candidates, |it| it.start);
         let mut end = 0;
         candidates.retain(|it| {
-            let is_in_no_other = it.start >= end;
+            let is_outermost = it.start >= end;
             end = end.max(it.end);
-            is_in_no_other
+            is_outermost
         });
         (!candidates.is_empty()).then(|| State { candidates, ..State::default() })
     }

@@ -15,7 +15,7 @@ const ONLY_A_TIMER: Message = Message::new(
 );
 
 /// True if the call `e` is the whole body of the callback passed to the global `setTimeout()`.
-fn is_all_of_a_timer(e: Expr) -> bool {
+fn is_whole_timer_callback(e: Expr) -> bool {
     let func = match e.parent() {
         Node::Func(func) => func,
         Node::Stmt(statement) if statement.tag() == StmtTag::Expr => match statement.parent() {
@@ -51,7 +51,7 @@ fn use_of(identifier: Expr) -> Use {
         ExprKind::Dot { name, .. } if name.name().is("abort") => match member.parent().as_expr() {
             Some(call)
                 if call.as_call().is_some_and(|it| it.callee() == member && it.args().is_empty())
-                    && is_all_of_a_timer(call) =>
+                    && is_whole_timer_callback(call) =>
             {
                 Use::AbortedByTimer
             }

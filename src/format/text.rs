@@ -134,11 +134,11 @@ pub(crate) fn is_next_line_empty(text: &[u8], at: usize) -> bool {
         {
             false
         }
-        _ => is_line_after_the_rest_of_the_line_empty(text, at),
+        _ => is_next_line_empty_slow(text, at),
     }
 }
 
-fn is_line_after_the_rest_of_the_line_empty(text: &[u8], mut at: usize) -> bool {
+fn is_next_line_empty_slow(text: &[u8], mut at: usize) -> bool {
     loop {
         let line_end = skip(text, at, |byte| matches!(byte, b',' | b';' | b' ' | b'\t'));
         let next = skip_spaces(text, skip_inline_comment(text, line_end));
@@ -187,7 +187,7 @@ pub(crate) fn make_string(content: &[u8], quote: u8, out: &mut Vec<u8>) {
 
 /// `/^\s*#[^\S\n]*@(?:a|b)\s*?(?:\n|$)/`: YAML's and GraphQL's `hasPragma` and `hasIgnorePragma`.
 pub(crate) fn has_pragma_in_hash_comment(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
-    fn without_blanks(mut text: &[u8]) -> &[u8] {
+    fn trim_inline_whitespace_start(mut text: &[u8]) -> &[u8] {
         while !text.starts_with(b"\n")
             && let len @ 1.. = strings::js_whitespace_len(text)
         {
@@ -198,12 +198,12 @@ pub(crate) fn has_pragma_in_hash_comment(text: &[u8], pragmas: [&[u8]; 2]) -> bo
     let Some(comment) = strings::trim_js_whitespace_start(text).strip_prefix(b"#") else {
         return false;
     };
-    let Some(name) = without_blanks(comment).strip_prefix(b"@") else {
+    let Some(name) = trim_inline_whitespace_start(comment).strip_prefix(b"@") else {
         return false;
     };
     pragmas.iter().any(|pragma| {
         name.strip_prefix(*pragma)
-            .is_some_and(|rest| matches!(without_blanks(rest), [] | [b'\n', ..]))
+            .is_some_and(|rest| matches!(trim_inline_whitespace_start(rest), [] | [b'\n', ..]))
     })
 }
 

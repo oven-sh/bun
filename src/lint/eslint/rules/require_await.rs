@@ -72,7 +72,7 @@ pub fn node_with_async_keyword(func: Func<'_>) -> Node<'_> {
 
 /// Returns the span oxlint points at: the function's name, or the key of the property or method that has it as its
 /// value if that key is an identifier, or else the function.
-fn oxlint_place<'a>(func: Func<'a>, file: &File<'a>) -> Span {
+fn oxlint_report_span<'a>(func: Func<'a>, file: &File<'a>) -> Span {
     if func.is_arrow() {
         return func.estree_span();
     }
@@ -106,15 +106,15 @@ fn report<'a>(func: Func<'a>, cx: &Cx<'a, RequireAwait>) {
     if let Some(first) = name.first_mut() {
         first.make_ascii_uppercase();
     }
-    let place = match cx.language().is_oxlint {
-        true => oxlint_place(func, cx.file()),
+    let location = match cx.language().is_oxlint {
+        true => oxlint_report_span(func, cx.file()),
         false => ast_utils::get_function_head_loc(func),
     };
-    cx.report(place, MISSING_AWAIT)
+    cx.report(location, MISSING_AWAIT)
         .called_with(func)
         .unless_claimed(func)
         .data("name", name)
-        .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| {
+        .suggest_behavior_change(REMOVE_ASYNC, &[], |fixer| {
             let file = fixer.file();
             let node = node_with_async_keyword(func);
             let async_token = file.tokens_in(node).find(|token| token.is("async"))?;

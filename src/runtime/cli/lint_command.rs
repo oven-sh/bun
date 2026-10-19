@@ -71,20 +71,20 @@ pub(crate) fn read_bunfigs(
     command: &[u8],
     read: &mut dyn FnMut(&bun_ast::Expr, &[u8], bool) -> Result<Above, bunfig::Refusal>,
 ) {
-    let named = bunfig_before(command);
+    let config_path = bunfig_before(command);
     let mut read = |file: &bun_ast::Expr, path: &[u8]| {
-        read(file, path, named.is_some()).map_err(|refusal| (refusal.at, refusal.message))
+        read(file, path, config_path.is_some()).map_err(|refusal| (refusal.at, refusal.message))
     };
     let mut above = Above::Needed;
     let here = &mut |file: &bun_ast::Expr| {
-        above = read(file, named.unwrap_or(b"bunfig.toml"))?;
+        above = read(file, config_path.unwrap_or(b"bunfig.toml"))?;
         Ok(())
     };
-    if let Err(err) = bun_bunfig::load_config_for_tool(tag, named, ctx, Some(here)) {
+    if let Err(err) = bun_bunfig::load_config_for_tool(tag, config_path, ctx, Some(here)) {
         Output::err(err, "failed to load bunfig", ());
         Global::exit(2);
     }
-    if named.is_none() && above != Above::Unwanted {
+    if config_path.is_none() && above != Above::Unwanted {
         bun_bunfig::load_config_above_for_tool(tag, ctx, above, &mut read);
     }
 }
@@ -105,7 +105,7 @@ fn disallow_code_generation_before(command: &[u8]) {
 const PROGRAM_IS_ON_STDIN: &[u8] = b"\x1e--bun-lint-program--\x1e";
 
 /// In such a process, reads the program from stdin.
-pub(crate) fn read_program_of_script(ctx: &mut ContextData) {
+pub(crate) fn read_program_from_stdin(ctx: &mut ContextData) {
     let mut program = Vec::new();
     if *ctx.runtime_options.eval.script == *PROGRAM_IS_ON_STDIN
         && File::stdin().read_to_end_into(&mut program).is_ok()
@@ -292,13 +292,13 @@ pub(crate) fn run_and_exit(
         change_directory(cwd);
     }
     // Start one process at a time, because spawning uses state that threads share.
-    let turn = bun_threading::Guarded::new(());
+    let spawn_lock = bun_threading::Guarded::new(());
     let run_script = |script: &Script| {
-        let _turn = turn.lock();
+        let _spawn_guard = spawn_lock.lock();
         run_script(script)
     };
     let run_git = |command: &git::Command| {
-        let _turn = turn.lock();
+        let _spawn_guard = spawn_lock.lock();
         run_git(command)
     };
     let command_line: Vec<&[u8]> = bun_core::argv().iter().skip(1).collect();
@@ -374,7 +374,7 @@ impl LintCommand {
         let options = match Options::parse(&args) {
             Ok(options) => options,
             Err(UsageError(message)) => run_and_exit(b"lint", None, |environment| {
-                bun_lint_driver::refuse_command_line(&message, environment)
+                bun_lint_driver::reject_command_line(&message, environment)
             }),
         };
         if options.help {
@@ -384,7 +384,7 @@ impl LintCommand {
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
             // `[fmt]` is for the rule that compares a file with `bun fmt`'s output. It's the same `[fmt]` that
             // `bun fmt` would read.
-            let (mut defaults, mut of_bun_format) = (None, None);
+            let (mut defaults, mut bun_format_defaults) = (None, None);
             read_bunfigs(
                 ctx,
                 Tag::LintCommand,
@@ -392,29 +392,30 @@ impl LintCommand {
                 &mut |file, path, is_named| {
                     if defaults.is_none() {
                         defaults = bunfig::lint(file)?
-                            .map(|it| it.of_bunfig_at(path, is_named, &environment.cwd));
+                            .map(|it| it.from_bunfig_at(path, is_named, &environment.cwd));
                     }
-                    if of_bun_format.is_none() {
-                        of_bun_format =
-                            bunfig::format(file)?.map(|it| it.of_bunfig_at(path, is_named));
+                    if bun_format_defaults.is_none() {
+                        bun_format_defaults =
+                            bunfig::format(file)?.map(|it| it.from_bunfig_at(path, is_named));
                     }
-                    Ok(match (&defaults, &of_bun_format) {
+                    Ok(match (&defaults, &bun_format_defaults) {
                         (Some(_), Some(_)) => Above::Unwanted,
-                        (Some(it), None) if it.names_a_format_rule() => Above::Needed,
-                        (Some(_), None) if options.names_a_format_rule() => Above::Needed,
+                        (Some(it), None) if it.mentions_format_rule() => Above::Needed,
+                        (Some(_), None) if options.mentions_format_rule() => Above::Needed,
                         (Some(_), None) => Above::Optional,
                         (None, _) => Above::Needed,
                     })
                 },
             );
-            if let Some(of_bun_format) = of_bun_format {
-                defaults.get_or_insert_default().of_bun_format = Some(Box::new(of_bun_format));
+            if let Some(bun_format_defaults) = bun_format_defaults {
+                defaults.get_or_insert_default().bun_format_defaults =
+                    Some(Box::new(bun_format_defaults));
             }
-            match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
+            match defaults.map(|defaults| Options::parse_with_defaults(defaults, &args)) {
                 None => bun_lint_driver::run(&options, environment),
                 Some(Ok(options)) => bun_lint_driver::run(&options, environment),
                 Some(Err(UsageError(message))) => {
-                    bun_lint_driver::refuse_command_line(&message, environment)
+                    bun_lint_driver::reject_command_line(&message, environment)
                 }
             }
         })

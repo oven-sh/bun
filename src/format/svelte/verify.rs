@@ -38,12 +38,12 @@ use bun_lint::tokens::{Token, TokenKind};
 use std::borrow::Cow;
 
 /// The prefix and suffix that turn a piece of code into a program.
-type Around = (&'static [u8], &'static [u8]);
-const EXPRESSION: Around = (b"(", b"\n)");
-const STATEMENT: Around = (b"", b"\n");
-const DECLARATOR: Around = (b"const ", b"\n");
-const FUNCTION: Around = (b"function ", b" {}");
-const PARAMETER: Around = (BEFORE_PATTERN, b"\n) {}");
+type Wrapper = (&'static [u8], &'static [u8]);
+const EXPRESSION: Wrapper = (b"(", b"\n)");
+const STATEMENT: Wrapper = (b"", b"\n");
+const DECLARATOR: Wrapper = (b"const ", b"\n");
+const FUNCTION: Wrapper = (b"function ", b" {}");
+const PARAMETER: Wrapper = (BEFORE_PATTERN, b"\n) {}");
 
 struct Check<'t, 'a> {
     tree: &'t Tree<'a>,
@@ -112,14 +112,14 @@ impl Check<'_, '_> {
         }
     }
 
-    /// Reads the code at `span`, with its comments. `left_out` holds the spans of the keys in it
+    /// Reads the code at `span`, with its comments. `ignored_keys` holds the spans of the keys in it
     /// that don't count, in order.
     #[optimize(size)]
-    fn code(&mut self, (before, behind): Around, span: Span, left_out: &[(usize, usize)]) {
+    fn code(&mut self, (before, behind): Wrapper, span: Span, ignored_keys: &[(usize, usize)]) {
         let program = [before, span.of(self.text), behind].concat();
         let (reader, comments) = (&mut self.reader, &mut self.comments);
         let mut is_read = false;
-        let path = path_of(self.tree.says_typescript);
+        let path = path_of(self.tree.uses_typescript);
         self.parse.call(path, &program, false, &mut |file| {
             let is_jsx =
                 |it: Token<'_>| matches!(it.kind(), TokenKind::JsxText | TokenKind::JsxIdentifier);
@@ -128,7 +128,7 @@ impl Check<'_, '_> {
             }
             is_read = true;
             reader.mark(50);
-            read_tokens(file, before.len(), left_out, reader);
+            read_tokens(file, before.len(), ignored_keys, reader);
             for comment in file.comments() {
                 *comments += 1;
                 reader.count(comment.text());
@@ -152,7 +152,7 @@ impl Check<'_, '_> {
             // `{ a: a }` is the same as `{ a }`.
             let written = pattern.span.of(self.text);
             let mut keys = match strings::contains_char(written, b':') {
-                true => repeated_keys(self.parse, written, self.tree.says_typescript),
+                true => repeated_keys(self.parse, written, self.tree.uses_typescript),
                 false => Vec::new(),
             };
             crate::sort::sort_by_key(&mut keys, |it| it.0);
@@ -304,7 +304,7 @@ impl Check<'_, '_> {
             all.to_mut().extend_from_slice(it);
             all
         });
-        let merged = with_white_space_decoded(merged);
+        let merged = decode_whitespace_entities(merged);
         if is_preformatted {
             self.reader.exact(&merged);
             return true;
@@ -356,19 +356,19 @@ impl Check<'_, '_> {
             let len = children[at..].iter().take_while(|it| is_text(it)).count();
             let following = children.get(at + len).copied();
             let is_free_before = previous.map_or(is_free_at.0, |it| self.is_block_element(it));
-            let is_free_behind = following.map_or(is_free_at.1, |it| self.is_block_element(it));
+            let is_free_after = following.map_or(is_free_at.1, |it| self.is_block_element(it));
             let run = &children[at..at + len];
             let has_words = len > 0
                 && self.texts(
                     run,
-                    (is_free_before, is_free_behind),
+                    (is_free_before, is_free_after),
                     how == Text::Preformatted,
                 );
             // Now we know what comes after `previous`.
             if let Some(Next::Node(_, Text::Words(_, behind))) =
                 next.last_mut().filter(|_| previous.is_some())
             {
-                *behind = !has_words && is_free_behind;
+                *behind = !has_words && is_free_after;
             }
             next.extend(run.iter().map(|&id| Next::Node(id, how)));
             if let Some(following) = following {
@@ -413,7 +413,7 @@ impl Check<'_, '_> {
             Kind::Element(element) => {
                 self.reader.mark(10 + element.kind as u8);
                 self.reader.name(b"", element.name);
-                match (element.this_with_more, element.this) {
+                match (element.multipart_this_attribute, element.this) {
                     (Some(written), _) => self.span(written),
                     // `this={"a"}` is the same as `this="a"`, unless the text would mean something other than the
                     // string.
@@ -644,15 +644,15 @@ fn without_quotes(string: &[u8]) -> Vec<u8> {
 }
 
 /// Reads `file`'s tokens, except for the changes that the module docs allow. `before` is the length of the prefix
-/// before the code. For `left_out`, see [`Check::code`].
+/// before the code. For `ignored_keys`, see [`Check::code`].
 #[optimize(size)]
 fn read_tokens<'a>(
     file: &'a File<'a>,
     before: usize,
-    left_out: &[(usize, usize)],
+    ignored_keys: &[(usize, usize)],
     reader: &mut Reader,
 ) {
-    let mut left_out = left_out.iter().peekable();
+    let mut ignored_keys = ignored_keys.iter().peekable();
     // A token is classified from the tree and not from its neighbors, which may change. A string that isn't one of
     // these is a key, a type or a module name.
     let mut values = starts_of(file, &[ExprTag::String], |_| true);
@@ -675,22 +675,22 @@ fn read_tokens<'a>(
     });
     // For each open template, whether it's one of `free_templates`.
     let mut templates = Vec::new();
-    let (mut previous, mut is_behind_key) = (None, false);
+    let (mut previous, mut is_after_key) = (None, false);
     for token in file.tokens() {
         let (text, at) = (
             token.text(),
             (token.start() as usize).saturating_sub(before),
         );
-        let was_behind_key = std::mem::take(&mut is_behind_key);
-        while left_out.next_if(|it| it.1 <= at).is_some() {}
-        if left_out.peek().is_some_and(|it| it.0 <= at) {
-            is_behind_key = true;
+        let was_after_key = std::mem::take(&mut is_after_key);
+        while ignored_keys.next_if(|it| it.1 <= at).is_some() {}
+        if ignored_keys.peek().is_some_and(|it| it.0 <= at) {
+            is_after_key = true;
             continue;
         }
         match token.kind() {
             TokenKind::Punctuator => match text {
                 b"(" | b")" | b"," | b";" => {}
-                b":" if was_behind_key => {}
+                b":" if was_after_key => {}
                 b"|" | b"&" if !previous.is_some_and(ends_operand) => {}
                 _ => reader.exact(text),
             },
@@ -737,7 +737,7 @@ fn read_tokens<'a>(
 
 /// `text` with `&nbsp;`, `&#xA0;` and the like decoded, if the character is whitespace in JavaScript.
 #[optimize(size)]
-fn with_white_space_decoded(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
+fn decode_whitespace_entities(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
     if !strings::contains_char(&text, b'&') {
         return text;
     }

@@ -267,7 +267,7 @@ fn parse_reg_exp_text(pattern: &[u8], unicode: bool) -> Option<Vec<u8>> {
 
 /// True if tsgolint's `parseRegExpText` accepts `content`, a pattern without its `^` or `$`. It has no regular
 /// expression parser, so it gives up at every character that can be special, even where it isn't.
-fn tsgolint_can_read(content: &[u8]) -> bool {
+fn tsgolint_accepts_pattern(content: &[u8]) -> bool {
     let mut is_escaped = false;
     for &byte in content {
         let not_read: &[u8] = if is_escaped { b"dDwWsSbBcxukpP123456789" } else { b".*+?|^$[](){}" };
@@ -279,8 +279,8 @@ fn tsgolint_can_read(content: &[u8]) -> bool {
     !is_escaped
 }
 
-/// The string tsgolint's `parseRegExpText` returns for `content`, which `tsgolint_can_read` has accepted.
-fn tsgolint_text(content: &[u8]) -> Vec<u8> {
+/// The string tsgolint's `parseRegExpText` returns for `content`, which `tsgolint_accepts_pattern` has accepted.
+fn tsgolint_pattern_text(content: &[u8]) -> Vec<u8> {
     let mut text = Vec::with_capacity(content.len());
     let mut is_escaped = false;
     for &byte in content {
@@ -337,7 +337,7 @@ fn tsgolint_parse_reg_exp<'a>(mut node: Expr<'a>, for_fix: bool) -> Option<(Side
             (None, Some(content)) => (Side::End, content),
             _ => return None,
         };
-        return tsgolint_can_read(content).then(|| (side, tsgolint_text(content)));
+        return tsgolint_accepts_pattern(content).then(|| (side, tsgolint_pattern_text(content)));
     }
     None
 }

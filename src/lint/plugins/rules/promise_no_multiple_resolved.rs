@@ -158,7 +158,7 @@ struct TryBlock<'a> {
 struct Walk<'a> {
     code_path: Option<CodePath<'a>>,
     /// A segment, and another one that's active at the same time, which happens in a `finally` block.
-    side_by_side: Vec<(Segment<'a>, Segment<'a>)>,
+    concurrent_segments: Vec<(Segment<'a>, Segment<'a>)>,
     /// The first segment of each `catch`, and the segments in the block of its `try` statement.
     catch_starts: Vec<(Segment<'a>, Vec<Segment<'a>>)>,
     /// The segments that start in the block of a `try` statement that has a `catch`.
@@ -176,17 +176,17 @@ impl<'a> Walk<'a> {
         // The number of enclosing `try` blocks that have a `catch`.
         let mut try_block_depth = 0;
         // Keyed by `catch` block: the segments in the block of its `try` statement. Removed once the `catch` starts.
-        let mut leading_to_catch: IdMap<Stmt<'a>, Vec<Segment<'a>>> = IdMap::new();
+        let mut try_segments_by_catch: IdMap<Stmt<'a>, Vec<Segment<'a>>> = IdMap::new();
         for step in steps_of_code_path(root, [StmtTag::Expr, StmtTag::Try], StmtTag::Block) {
             match step {
                 Step::Event(Event::CodePathStart(path, node)) if node == root => walk.code_path = Some(path),
                 Step::Event(Event::SegmentStart(segment, node)) if Some(segment.code_path()) == walk.code_path => {
                     if let Some(&first) = current_segments.first() {
-                        walk.side_by_side.push((segment, first));
+                        walk.concurrent_segments.push((segment, first));
                     }
                     current_segments.push(segment);
                     let catch_start = match node {
-                        Node::Stmt(handler) => leading_to_catch.remove(handler),
+                        Node::Stmt(handler) => try_segments_by_catch.remove(handler),
                         _ => None,
                     };
                     if let Some(segments) = catch_start {
@@ -220,7 +220,7 @@ impl<'a> Walk<'a> {
                 Step::Exit(Node::Stmt(block)) if try_blocks.last().is_some_and(|it| it.block == block) => {
                     if let Some(TryBlock { handler: Some(handler), segments, .. }) = try_blocks.pop() {
                         try_block_depth -= 1;
-                        leading_to_catch.insert(handler, segments);
+                        try_segments_by_catch.insert(handler, segments);
                     }
                 }
                 _ => {}
@@ -289,7 +289,7 @@ impl Tree {
     }
 }
 
-type Numbers = SmallVec<[usize; 2]>;
+type BlockNumbers = SmallVec<[usize; 2]>;
 
 /// Union-find lookup: returns the representative of `segment`'s set. `sets` maps each segment to another one in the
 /// same set, or to itself.
@@ -306,18 +306,18 @@ fn find(sets: &mut [usize], segment: usize) -> usize {
 }
 
 const NOT_SEEN: usize = usize::MAX;
-const GONE_THROUGH: usize = usize::MAX - 1;
+const IN_PROGRESS: usize = usize::MAX - 1;
 
 /// A function's blocks, indexed by block number. They're numbered in reverse postorder, so a block comes after all its
 /// predecessors except those that reach it through a back edge.
 struct Blocks<'a> {
     /// Each block's predecessors, without back edges. A block after a loop also gets the sources of the back edges to
     /// the loop's start.
-    incoming: Vec<Numbers>,
+    incoming: Vec<BlockNumbers>,
     /// Each block's successors, without back edges.
-    outgoing: Vec<Numbers>,
+    outgoing: Vec<BlockNumbers>,
     /// True if the block has any successor, back edges included.
-    leads_on: Vec<bool>,
+    has_successor: Vec<bool>,
     is_catch_start: Vec<bool>,
     is_in_try_block: Vec<bool>,
     found: Vec<Found<'a>>,
@@ -357,7 +357,7 @@ impl<'a> Blocks<'a> {
                 *slot = with;
             }
         };
-        for &(segment, first) in &walk.side_by_side {
+        for &(segment, first) in &walk.concurrent_segments {
             if let (Some(segment), Some(first)) = (number(segment), number(first)) {
                 unite(&mut sets, segment, first);
             }
@@ -375,13 +375,13 @@ impl<'a> Blocks<'a> {
         }
 
         // Each set's successors, indexed by its representative's number.
-        let mut leads_to: Vec<Numbers> = vec![Numbers::new(); segments.len()];
+        let mut set_successors: Vec<BlockNumbers> = vec![BlockNumbers::new(); segments.len()];
         let mut edges: FxHashSet<(usize, usize)> = FxHashSet::default();
-        let mut lead = |sets: &mut [usize], from: usize, to: usize| {
+        let mut add_edge = |sets: &mut [usize], from: usize, to: usize| {
             let (from, to) = (find(sets, from), find(sets, to));
             if from != to
                 && edges.insert((from, to))
-                && let Some(all) = leads_to.get_mut(from)
+                && let Some(all) = set_successors.get_mut(from)
             {
                 all.push(to);
             }
@@ -389,33 +389,33 @@ impl<'a> Blocks<'a> {
         for (i, &segment) in segments.iter().enumerate() {
             for next in segment.next_segments() {
                 if let Some(next) = number(next).filter(|_| !is_catch_start(next)) {
-                    lead(&mut sets, i, next);
+                    add_edge(&mut sets, i, next);
                 }
             }
         }
         for (catch_start, in_try_block) in &walk.catch_starts {
             if let Some(catch_start) = number(*catch_start) {
                 for segment in in_try_block.iter().filter_map(|it| number(*it)) {
-                    lead(&mut sets, segment, catch_start);
+                    add_edge(&mut sets, segment, catch_start);
                 }
             }
         }
 
         // Number the sets in reverse postorder. An edge to a set that's still on the stack is a back edge.
         let mut postorder: Vec<usize> = Vec::new();
-        // For each set: `NOT_SEEN`, `GONE_THROUGH`, or its index in the postorder.
+        // For each set: `NOT_SEEN`, `IN_PROGRESS`, or its index in the postorder.
         let mut state: Vec<usize> = vec![NOT_SEEN; segments.len()];
-        let mut leads_back: FxHashSet<(usize, usize)> = FxHashSet::default();
+        let mut back_edges: FxHashSet<(usize, usize)> = FxHashSet::default();
         let first = find(&mut sets, 0);
         let mut stack: Vec<(usize, usize)> = vec![(first, 0)];
         if let Some(slot) = state.get_mut(first) {
-            *slot = GONE_THROUGH;
+            *slot = IN_PROGRESS;
         }
         while let Some(top) = stack.last_mut() {
             let (set, done) = *top;
             top.1 += 1;
             // Visit the last successor first, so that the first one comes first after reversing.
-            let next = leads_to.get(set).and_then(|all| all.len().checked_sub(done + 1).and_then(|it| all.get(it))).copied();
+            let next = set_successors.get(set).and_then(|all| all.len().checked_sub(done + 1).and_then(|it| all.get(it))).copied();
             let Some(next) = next else {
                 if let Some(slot) = state.get_mut(set) {
                     *slot = postorder.len();
@@ -427,12 +427,12 @@ impl<'a> Blocks<'a> {
             match state.get(next).copied() {
                 Some(NOT_SEEN) => {
                     if let Some(slot) = state.get_mut(next) {
-                        *slot = GONE_THROUGH;
+                        *slot = IN_PROGRESS;
                     }
                     stack.push((next, 0));
                 }
-                Some(GONE_THROUGH) => {
-                    leads_back.insert((set, next));
+                Some(IN_PROGRESS) => {
+                    back_edges.insert((set, next));
                 }
                 _ => {}
             }
@@ -442,30 +442,30 @@ impl<'a> Blocks<'a> {
         let block_of = |set: usize| state.get(set).and_then(|it| len.checked_sub(it.checked_add(1)?));
 
         let mut blocks = Blocks {
-            incoming: vec![Numbers::new(); len],
-            outgoing: vec![Numbers::new(); len],
-            leads_on: vec![false; len],
+            incoming: vec![BlockNumbers::new(); len],
+            outgoing: vec![BlockNumbers::new(); len],
+            has_successor: vec![false; len],
             is_catch_start: vec![false; len],
             is_in_try_block: vec![false; len],
             found: std::iter::repeat_with(Found::default).take(len).collect(),
         };
         // Each block's predecessors through forward edges, and through back edges.
-        let mut forward: Vec<Numbers> = vec![Numbers::new(); len];
-        let mut back: Vec<Numbers> = vec![Numbers::new(); len];
+        let mut forward: Vec<BlockNumbers> = vec![BlockNumbers::new(); len];
+        let mut back: Vec<BlockNumbers> = vec![BlockNumbers::new(); len];
         for (from, &set) in postorder.iter().rev().enumerate() {
-            for &next in leads_to.get(set).into_iter().flatten() {
+            for &next in set_successors.get(set).into_iter().flatten() {
                 let Some(to) = block_of(next) else {
                     continue;
                 };
-                let is_back = leads_back.contains(&(set, next));
-                let leading_there = if is_back { &mut back } else { &mut forward };
-                if let Some(all) = leading_there.get_mut(to) {
+                let is_back = back_edges.contains(&(set, next));
+                let edge_list = if is_back { &mut back } else { &mut forward };
+                if let Some(all) = edge_list.get_mut(to) {
                     all.push(from);
                 }
                 if let Some(all) = blocks.outgoing.get_mut(from).filter(|_| !is_back) {
                     all.push(to);
                 }
-                if let Some(slot) = blocks.leads_on.get_mut(from) {
+                if let Some(slot) = blocks.has_successor.get_mut(from) {
                     *slot = true;
                 }
             }
@@ -509,7 +509,7 @@ impl<'a> Blocks<'a> {
 
     fn out_going_block_count(&self, block: usize) -> usize {
         match self.outgoing.get(block).map_or(0, |it| it.len()) {
-            0 => usize::from(self.leads_on.get(block) == Some(&true)),
+            0 => usize::from(self.has_successor.get(block) == Some(&true)),
             count => count,
         }
     }

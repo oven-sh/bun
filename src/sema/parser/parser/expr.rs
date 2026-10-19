@@ -85,7 +85,7 @@ fn can_be_type_arguments_with_an_error(
     let mut from = (failed_at as usize).saturating_sub(less_than);
     // An unexpected word is left for the enclosing construct. Only a list accepts it, as its next element after a
     // missing comma.
-    if failed_token.is_identifier_or_keyword() && !is_in_list_of_type(statement, from) {
+    if failed_token.is_identifier_or_keyword() && !is_inside_type_list(statement, from) {
         from = statement.len();
     }
     while let Some(found) = statement
@@ -102,7 +102,7 @@ fn can_be_type_arguments_with_an_error(
 
 /// `GetTextOfNodeFromSourceText`: returns the source range of `e`, including its parentheses if no other expression has
 /// been parenthesized since.
-fn range_as_written(f: &FileBuilder, e: ExprId) -> (u32, u32) {
+fn source_range_of(f: &FileBuilder, e: ExprId) -> (u32, u32) {
     match (f.parens.last(), f.exprs.get(e.idx())) {
         (Some(&(inside, open, end)), _) if inside == e => (open, end),
         (_, Some(written)) => (written.pos, written.end),
@@ -112,7 +112,7 @@ fn range_as_written(f: &FileBuilder, e: ExprId) -> (u32, u32) {
 
 /// True if offset `end` of `text`, which is the source of some types, is inside a tuple, an object type or a parameter
 /// list.
-fn is_in_list_of_type(text: &[u8], end: usize) -> bool {
+fn is_inside_type_list(text: &[u8], end: usize) -> bool {
     let mut open = Vec::new();
     for (at, c) in text.iter().enumerate().take(end) {
         match c {
@@ -265,13 +265,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let mut expression = self.assignment_expression();
         // The missing expression of `()` stays at the `)`.
         if is_in_parentheses && self.recovers() && self.token() != T::CloseParen {
-            start = self.place_missing_operand(expression).unwrap_or(start);
+            start = self.move_missing_operand_back(expression).unwrap_or(start);
         }
         while self.token() == T::Comma {
             self.next();
             let right = self.assignment_expression();
             if is_in_parentheses && self.recovers() {
-                self.place_missing_operand(right);
+                self.move_missing_operand_back(right);
             }
             let kind = ExprKind::Binary {
                 op: BinOp::Comma,
@@ -288,7 +288,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `( , a)`, moves it to the end of the previous token and returns that position.
     #[cold]
     #[inline(never)]
-    fn place_missing_operand(&mut self, operand: ExprId) -> Option<u32> {
+    fn move_missing_operand_back(&mut self, operand: ExprId) -> Option<u32> {
         let (here, after_previous) = (self.pos(), self.full_start());
         let missing = self.f.exprs.get_mut(operand.idx())?;
         if !matches!(missing.kind, ExprKind::Missing) || missing.pos != here {
@@ -351,7 +351,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let (start, full) = (self.pos(), self.full_start());
         // Most arguments, elements and initializers are a name or a literal and nothing more.
         let Some(primary) = self.name_or_literal() else {
-            return self.assignment_expression_in_general(allow_return_type);
+            return self.assignment_expression_slow(allow_return_type);
         };
         if self.token().ends_expression() {
             return primary;
@@ -380,7 +380,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         Some(self.token_expr(kind))
     }
 
-    fn assignment_expression_in_general(&mut self, allow_return_type: bool) -> ExprId {
+    fn assignment_expression_slow(&mut self, allow_return_type: bool) -> ExprId {
         if self.is_too_deep() {
             return ExprId::NONE;
         }
@@ -462,7 +462,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             };
             let kind = ExprKind::Cond {
                 test: expression,
-                branches: self.f.place_of_branches(Branches { yes, no }),
+                branches: self.f.store_branches(Branches { yes, no }),
             };
             return self.finish_expr(kind, start);
         }
@@ -696,7 +696,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     }
                     self.next();
                     let kind =
-                        if token == T::As && self.token() == T::Const && self.is_at_const_alone() {
+                        if token == T::As && self.token() == T::Const && self.is_at_bare_const() {
                             self.js_error((self.lx.start, self.lx.end), 8016, b"");
                             self.const_assertion_type();
                             ExprKind::AsConst(left)
@@ -727,18 +727,20 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     self.next();
                     // `checkNullishCoalesceOperands` reports `a ?? b || c`, and callers that emulate acorn or Babel
                     // look for it in the tree.
-                    let takes_a_mix = self.recovers();
-                    let is_as_or = takes_a_mix && !self.options.dialect.typescript_5;
+                    let allows_mixed_coalesce = self.recovers();
+                    let coalesce_binds_like_or =
+                        allows_mixed_coalesce && !self.options.dialect.typescript_5;
                     // Check this before the right side records its parentheses.
-                    let looks_for_a_mix = !takes_a_mix || self.is_for_oxc();
-                    let is_left_a_mix = looks_for_a_mix && self.is_logical_and_or_or(left);
-                    let right = self.binary_expression(match is_as_or {
+                    let checks_mixed_coalesce = !allows_mixed_coalesce || self.is_for_oxc();
+                    let is_left_mixed = checks_mixed_coalesce && self.is_logical_and_or_or(left);
+                    let right = self.binary_expression(match coalesce_binds_like_or {
                         // `OperatorPrecedenceCoalesce` is `OperatorPrecedenceLogicalOR`.
                         true => T::BarBar.binary_precedence(),
                         false => new_precedence,
                     });
-                    if is_left_a_mix || (looks_for_a_mix && self.is_logical_and_or_or(right)) {
-                        match takes_a_mix {
+                    if is_left_mixed || (checks_mixed_coalesce && self.is_logical_and_or_or(right))
+                    {
+                        match allows_mixed_coalesce {
                             true => {
                                 let at = (start, self.prev_end());
                                 oxc::mixed_coalesce(&mut self.f.diagnostics, at);
@@ -786,13 +788,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `IsConstTypeReference`, at a `const` in type position: true if the type doesn't continue after it, except with
     /// an empty type argument list. Without recovery, see `const_assertion_type`.
     #[inline(always)]
-    fn is_at_const_alone(&mut self) -> bool {
-        !self.recovers() || self.is_at_const_alone_slowly()
+    fn is_at_bare_const(&mut self) -> bool {
+        !self.recovers() || self.is_at_bare_const_slow()
     }
 
     #[cold]
     #[inline(never)]
-    fn is_at_const_alone_slowly(&mut self) -> bool {
+    fn is_at_bare_const_slow(&mut self) -> bool {
         self.look_ahead(|p| {
             p.next();
             match p.token() {
@@ -830,11 +832,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let start = self.pos();
         match self.name_or_literal() {
             Some(primary) => self.rest_of_operand(start, primary),
-            None => self.unary_expression_in_general(),
+            None => self.unary_expression_slow(),
         }
     }
 
-    fn unary_expression_in_general(&mut self) -> ExprId {
+    fn unary_expression_slow(&mut self) -> ExprId {
         let start = self.pos();
         match self.token() {
             T::Plus
@@ -921,10 +923,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let is_javascript = self.options.is_javascript;
         // `None`: the token can follow a name, but then it's scanned differently than after the operator.
-        let follows_no_name = self.look_ahead(|p| {
+        let cannot_follow_name = self.look_ahead(|p| {
             p.next();
             let is_on_line = !p.newline_before();
-            let follows_no_name = match p.token() {
+            let cannot_follow_name = match p.token() {
                 T::Slash | T::SlashEquals | T::LessThan => return None,
                 // `await!`
                 T::Exclamation if !is_javascript => return None,
@@ -948,10 +950,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 }
                 _ => false,
             };
-            Some(follows_no_name && is_on_line)
+            Some(cannot_follow_name && is_on_line)
         });
-        match follows_no_name {
-            Some(follows_no_name) => follows_no_name && !self.is_module_so_far(),
+        match cannot_follow_name {
+            Some(cannot_follow_name) => cannot_follow_name && !self.is_module_so_far(),
             None => !self.is_module_so_far() && !self.can_await_be_a_name(),
         }
     }
@@ -967,14 +969,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.has_await_identifier,
         );
         let errors = |p: &Self| {
-            let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
-            p.f.diagnostics.iter().filter(is_of_parser).count()
+            let is_parse_error = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
+            p.f.diagnostics.iter().filter(is_parse_error).count()
         };
         let can_be = self.look_ahead_parsing(|p| {
             let before = errors(p);
             p.context &= !ctx::AWAIT;
             p.assignment_expression();
-            p.take_errors_of_scanner();
+            p.take_scanner_errors();
             // oxc's lexer scans `</` as a `<` followed by a regular expression.
             let is_before_open_regex = p.token() == T::LessThanSlash && {
                 let rest = p.lx.src.get(p.lx.end as usize..).unwrap_or_default();
@@ -1073,7 +1075,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let start = self.pos();
         self.expect(T::LessThan);
         let ty = match self.token() {
-            T::Const if self.is_at_const_alone() => {
+            T::Const if self.is_at_bare_const() => {
                 self.const_assertion_type();
                 None
             }
@@ -1243,7 +1245,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             token => {
                 let kind = ExprKind::Instantiation {
                     expr: obj,
-                    type_args: self.f.place_of_list(type_args),
+                    type_args: self.f.store_list(type_args),
                 };
                 let instantiation = self.finish_expr(kind, start);
                 match token {
@@ -1286,7 +1288,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 b"defer" if self.peek() == T::OpenParen => {}
                 b"defer" if self.recovers() && self.is_callee(true) => {}
                 b"source" if self.options.dialect.babel || self.options.dialect.oxc => {}
-                _ => return self.other_meta_property_of_import(start),
+                _ => return self.unknown_import_meta_property(start),
             }
             // `parseIdentifierName`
             self.next_after_name();
@@ -1355,7 +1357,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.call_specifier(argument, SpecifierKind::ImportCall);
             }
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::ArgumentExpressions, element)
+                && !self.continues_without_comma(ListKind::ArgumentExpressions, element)
             {
                 break;
             }
@@ -1421,7 +1423,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.flag(DiagnosticKind::Grammar, 1326, at, &[]);
         let kind = ExprKind::Instantiation {
             expr: keyword,
-            type_args: self.f.place_of_list(type_args),
+            type_args: self.f.store_list(type_args),
         };
         let instantiation = self.finish_expr(kind, start);
         match self.token() {
@@ -1441,7 +1443,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// At the `x` of an `import.x` that starts at `start`. It's stored as a property access on a missing expression.
     /// Reports the errors of `checkGrammarMetaProperty` and `checkGrammarImportCallExpression`.
     #[cold]
-    fn other_meta_property_of_import(&mut self, start: u32) -> ExprId {
+    fn unknown_import_meta_property(&mut self, start: u32) -> ExprId {
         // `tokenIsIdentifierOrKeyword` is true for a private name.
         if !self.token().is_identifier_or_keyword() {
             let name = self.missing_identifier(0, 0);
@@ -1565,10 +1567,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !self.token().can_follow_member_expression() {
             return expression;
         }
-        self.expression_rest_in_general(start, expression, allows_calls)
+        self.expression_rest_slow(start, expression, allows_calls)
     }
 
-    fn expression_rest_in_general(
+    fn expression_rest_slow(
         &mut self,
         start: u32,
         mut expression: ExprId,
@@ -1685,7 +1687,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         _ => {
                             let kind = ExprKind::Instantiation {
                                 expr: expression,
-                                type_args: self.f.place_of_list(type_args),
+                                type_args: self.f.store_list(type_args),
                             };
                             let mut instantiation = self.finish_expr(kind, start);
                             // `tryReparseOptionalChain`: it isn't part of a chain.
@@ -1780,7 +1782,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         self.expected(T::OpenParen);
         let (args, close_pos) = self.rest_of_argument_list();
-        let type_args = self.f.place_of_list(type_args);
+        let type_args = self.f.store_list(type_args);
         let call = self.f.add_call(Call {
             callee,
             args,
@@ -1801,7 +1803,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 (self.lx.start, self.lx.end),
                 &[],
             ),
-            false => self.error_and_go_on(18030, (self.lx.start, self.lx.end), &[]),
+            false => self.error_and_continue(18030, (self.lx.start, self.lx.end), &[]),
         }
     }
 
@@ -1840,7 +1842,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             };
             self.s.ids.push(argument.0);
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::ArgumentExpressions, element)
+                && !self.continues_without_comma(ListKind::ArgumentExpressions, element)
             {
                 break;
             }
@@ -1894,7 +1896,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.call_specifier(argument, SpecifierKind::RequireCall);
             }
         }
-        let type_args = self.f.place_of_list(type_args);
+        let type_args = self.f.store_list(type_args);
         let call = self.f.add_call(Call {
             callee,
             args,
@@ -2095,7 +2097,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn array_literal(&mut self) -> ExprId {
         let start = self.pos();
         self.next();
-        let cleared = self.disallow_in_if_brackets_end_it() | ctx::DECORATOR;
+        let cleared = self.disallow_in_if_cleared_by_brackets() | ctx::DECORATOR;
         let saved = self.enter_context(0, cleared);
         let base = self.s.ids.len();
         let lists = self.enter_list(ListKind::ArrayLiteralMembers);
@@ -2110,7 +2112,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             };
             self.s.ids.push(element.0);
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::ArrayLiteralMembers, full)
+                && !self.continues_without_comma(ListKind::ArrayLiteralMembers, full)
             {
                 break;
             }
@@ -2126,7 +2128,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn template_expression(&mut self) -> ExprId {
         // A `NoSubstitutionTemplateLiteral` is a string.
         if self.token() == T::NoSubstitutionTemplate {
-            self.piece_of_template_without_tag();
+            self.untagged_template_piece();
             return self.token_expr(ExprKind::String(self.lx.atom));
         }
         let start = self.pos();
@@ -2135,7 +2137,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// Call at a piece of an untagged template, where every escape has to be valid.
-    pub(crate) fn piece_of_template_without_tag(&mut self) {
+    pub(crate) fn untagged_template_piece(&mut self) {
         if self.lx.has_escape {
             self.rescan_template_piece();
         }
@@ -2188,13 +2190,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         // The first text, then each substitution and the text after it.
         let base = self.s.ids.len();
         if !has_tag {
-            self.piece_of_template_without_tag();
+            self.untagged_template_piece();
         }
         self.s.ids.push(self.lx.atom.0);
-        let mut goes_on = self.token() == T::TemplateHead;
-        let mut is_incomplete = has_tag && !goes_on && self.is_at_unterminated_piece();
+        let mut has_more_spans = self.token() == T::TemplateHead;
+        let mut is_incomplete = has_tag && !has_more_spans && self.is_at_unterminated_piece();
         self.next();
-        while goes_on {
+        while has_more_spans {
             let expression = self.expression_allowing_in();
             self.s.ids.push(expression.0);
             if self.token() != T::CloseBrace {
@@ -2206,11 +2208,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             self.lx.rescan_template_continuation();
             if !has_tag {
-                self.piece_of_template_without_tag();
+                self.untagged_template_piece();
             }
             self.s.ids.push(self.lx.atom.0);
-            goes_on = self.token() == T::TemplateMiddle;
-            is_incomplete = has_tag && !goes_on && self.is_at_unterminated_piece();
+            has_more_spans = self.token() == T::TemplateMiddle;
+            is_incomplete = has_tag && !has_more_spans && self.is_at_unterminated_piece();
             self.next();
         }
         let parts = self.s.ids.get(base..).unwrap_or_default();
@@ -2233,7 +2235,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let backtick = self.pos();
         let head = self.lx.atom;
         if self.token() == T::NoSubstitutionTemplate && self.is_at_unterminated_piece() {
-            self.unterminated_template_again();
+            self.re_report_unterminated_template();
         }
         // `checkTaggedTemplateExpression`: `checkGrammarTypeArguments` isn't called after the error below.
         let is_of_list = |it: &Diagnostic| it.code == 1099 && (start..backtick).contains(&it.start);
@@ -2257,7 +2259,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             false => ExprKind::Template { exprs },
         };
         let template = self.finish_expr(kind, backtick);
-        let type_args = self.f.place_of_list(type_args);
+        let type_args = self.f.store_list(type_args);
         let call = self.f.add_call(Call {
             callee,
             args: exprs,
@@ -2276,13 +2278,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// That makes it the last error, so no other error is reported at the end of the text.
     #[cold]
     #[inline(never)]
-    fn unterminated_template_again(&mut self) {
+    fn re_report_unterminated_template(&mut self) {
         if self.options.dialect != Default::default() {
             return;
         }
-        self.take_errors_of_scanner();
-        let is_it = |it: &Diagnostic| it.code == 1160 && it.kind == DiagnosticKind::Parse;
-        if let Some(at) = self.f.diagnostics.iter().rposition(is_it) {
+        self.take_scanner_errors();
+        let is_match = |it: &Diagnostic| it.code == 1160 && it.kind == DiagnosticKind::Parse;
+        if let Some(at) = self.f.diagnostics.iter().rposition(is_match) {
             let error = self.f.diagnostics.remove(at);
             self.f.diagnostics.push(error);
         }
@@ -2334,7 +2336,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             _ => (IdList::EMPTY, u32::MAX),
         };
-        let type_args = self.f.place_of_list(type_args);
+        let type_args = self.f.store_list(type_args);
         let call = self.f.add_call(Call {
             callee,
             args,
@@ -2356,7 +2358,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !self.recovers() {
             return self.refuse(Refusal::Reported);
         }
-        let (from, to) = range_as_written(&self.f, callee);
+        let (from, to) = source_range_of(&self.f, callee);
         let src = self.lx.src;
         let text = src.get(from as usize..to as usize).unwrap_or_default();
         self.error_at_token(1209, &[text]);
@@ -2369,7 +2371,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let start = self.pos();
         // Only `parseJSONText` gets here at a token other than `{`.
         let open = self.expect(T::OpenBrace).then_some(start);
-        let cleared = self.disallow_in_if_brackets_end_it() | ctx::DECORATOR;
+        let cleared = self.disallow_in_if_cleared_by_brackets() | ctx::DECORATOR;
         let saved = self.enter_context(0, cleared);
         let base = self.s.props.len();
         let modifiers = self.s.prop_modifiers.len();
@@ -2378,7 +2380,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             let element = self.full_start();
             self.object_literal_element(base);
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::ObjectLiteralMembers, element)
+                && !self.continues_without_comma(ListKind::ObjectLiteralMembers, element)
             {
                 break;
             }
@@ -2592,7 +2594,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
         }
         // `getDeclarationName`: a private name outside a class doesn't declare anything. Neither does a bigint.
-        if self.classes_around == 0 && matches!(key, PropKey::Private(_)) || is_bigint {
+        if self.class_depth == 0 && matches!(key, PropKey::Private(_)) || is_bigint {
             key = PropKey::None;
         }
         // "Disallowing of optional property assignments and definite assignment assertion happens in
@@ -2695,7 +2697,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             postfix_token,
         };
         if self.options.is_javascript && is_function {
-            self.check_js_method_of_object(&prop, modifiers);
+            self.check_js_object_method(&prop, modifiers);
         }
         let prop = match self.reads_jsdoc() {
             true => self.property_jsdoc(prop),

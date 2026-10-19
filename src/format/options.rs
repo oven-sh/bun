@@ -194,7 +194,7 @@ pub struct InHtml {
     /// `singleQuote: true`, regardless of the options: what `prettier-plugin-svelte` asks for between double quotes.
     pub has_single_quotes: bool,
     /// The parser is `babel-ts`: TypeScript in Babel's tree.
-    pub has_tree_of_babel: bool,
+    pub has_babel_tree: bool,
 }
 
 /// The kind of code.

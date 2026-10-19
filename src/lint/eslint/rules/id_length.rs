@@ -16,7 +16,7 @@ pub struct IdLength {
     check_generic: bool,
     /// A name that starts with this many ASCII letters has a valid length, whatever follows them. `usize::MAX` if the
     /// length can't be judged from a prefix.
-    enough: usize,
+    sufficient_prefix_len: usize,
 }
 
 const TOO_SHORT: Message = Message::new(
@@ -106,25 +106,26 @@ fn is_definition(member: Member) -> bool {
 }
 
 impl IdLength {
-    /// Fast path: true if [`IdLength::enough`] shows that the name at the start of `text` has a valid length.
+    /// Fast path: true if [`IdLength::sufficient_prefix_len`] shows that the name at the start of `text` has a valid
+    /// length.
     #[inline]
-    fn is_right_by_its_start(&self, text: &[u8]) -> bool {
-        text.get(..self.enough)
+    fn has_valid_length_by_prefix(&self, text: &[u8]) -> bool {
+        text.get(..self.sufficient_prefix_len)
             .is_some_and(|it| it.iter().all(u8::is_ascii_alphabetic))
     }
 
     /// Same for the name at offset `start`.
     #[inline]
-    fn is_right_at(&self, file: &File, start: u32) -> bool {
+    fn has_valid_length_at(&self, file: &File, start: u32) -> bool {
         file.text()
             .get(start as usize..)
-            .is_some_and(|it| self.is_right_by_its_start(it))
+            .is_some_and(|it| self.has_valid_length_by_prefix(it))
     }
 
     /// Returns what to report for an identifier named `name`, given without its `#`, and the limit that the message
     /// mentions.
     fn problem(&self, name: &[u8], is_private: bool) -> Option<(Message, &'static str, f64)> {
-        if self.is_right_by_its_start(name) {
+        if self.has_valid_length_by_prefix(name) {
             return None;
         }
         let length = get_grapheme_count(name) as f64;
@@ -183,7 +184,7 @@ impl IdLength {
         if let (name, Some((message, limit, value))) = self.problem_of(name)
             && let Some(at) = at()
         {
-            let report = cx.report(at, message).called_with_the_name();
+            let report = cx.report(at, message).called_with_name();
             report
                 .data("name", name)
                 .data(limit, text::number_to_string(value));
@@ -343,7 +344,7 @@ impl IdLength {
 impl IdLength {
     #[inline]
     fn check_ident<'a>(&self, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.is_right_at(cx.file(), name.start()) && !name.is_string() {
+        if !self.has_valid_length_at(cx.file(), name.start()) && !name.is_string() {
             self.check(cx, name.name(), || Some(name.span()));
         }
     }
@@ -451,7 +452,7 @@ impl IdLength {
     #[inline]
     fn check_assigned<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(start) = e.member_name_start()
-            && !self.is_right_at(cx.file(), start)
+            && !self.has_valid_length_at(cx.file(), start)
             // oxlint's rule visits private names separately.
             && !(cx.language().is_oxlint && e.is_private_member())
         {
@@ -583,7 +584,7 @@ impl Rule for IdLength {
                 .filter_map(|it| Regex::new(it, "u").ok())
                 .collect(),
             check_generic: options.bool_or("checkGeneric", true),
-            enough: match max == f64::INFINITY {
+            sufficient_prefix_len: match max == f64::INFINITY {
                 true => min.ceil() as usize,
                 false => usize::MAX,
             },

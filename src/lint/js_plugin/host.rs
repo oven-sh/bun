@@ -95,7 +95,7 @@ pub struct Loading {
     /// The time it took to load plugins and processors.
     pub milliseconds: f64,
     /// The things that only the config file has, so a realm has to run the whole file to get them.
-    pub need_the_configuration: Vec<Box<[u8]>>,
+    pub need_config_file: Vec<Box<[u8]>>,
     /// How many texts were passed to ESLint's own `Linter`.
     pub linted_by_eslint: u64,
     /// [`Engine::sizes`]
@@ -103,9 +103,9 @@ pub struct Loading {
 }
 
 impl Loading {
-    fn needs_the_configuration_for(&mut self, what: &[u8]) {
-        if !self.need_the_configuration.iter().any(|it| **it == *what) {
-            self.need_the_configuration.push(what.into());
+    fn needs_config_file_for(&mut self, what: &[u8]) {
+        if !self.need_config_file.iter().any(|it| **it == *what) {
+            self.need_config_file.push(what.into());
         }
     }
 }
@@ -114,7 +114,7 @@ struct Loaded {
     /// JSON: its location.
     location: Vec<u8>,
     /// Only the config file has it.
-    needs_the_configuration: bool,
+    needs_config_file: bool,
     first_rule: u32,
     plugin: Arc<Plugin>,
 }
@@ -133,7 +133,7 @@ struct State {
 }
 
 /// The start of the error that `getParserServices` in `@typescript-eslint/utils` throws, in every version.
-const ASKS_FOR_TYPES: &[u8] = b"You have used a rule which requires ";
+const NEEDS_TYPES_ERROR_PREFIX: &[u8] = b"You have used a rule which requires ";
 
 /// A run's plugins, shared by all threads.
 pub struct Host<'e> {
@@ -165,7 +165,7 @@ struct Each<'e> {
 }
 
 impl Each<'_> {
-    fn is_left(&self, list: usize) -> bool {
+    fn has_remaining(&self, list: usize) -> bool {
         self.next[list].load(Ordering::Relaxed) < self.lists[list].len()
     }
 
@@ -177,7 +177,7 @@ impl Each<'_> {
 
 impl Work for Each<'_> {
     fn has_heavy(&self) -> bool {
-        self.is_left(0)
+        self.has_remaining(0)
     }
 
     fn heavy(&self) -> bool {
@@ -189,7 +189,7 @@ impl Work for Each<'_> {
     }
 
     fn needs_realms(&self) -> bool {
-        self.is_left(1)
+        self.has_remaining(1)
     }
 }
 
@@ -202,7 +202,7 @@ struct How<'h> {
     physical_path_len: Option<usize>,
 }
 
-const OUT_OF_STEP: &[u8] =
+const PLUGIN_PROTOCOL_ERROR: &[u8] =
     b"Internal error while running JavaScript plugins. This is a bug in Bun.";
 
 impl<'e> Host<'e> {
@@ -222,7 +222,7 @@ impl<'e> Host<'e> {
         Host { measures, ..self }
     }
 
-    pub(super) fn count_one_for_eslint(&self) {
+    pub(super) fn count_eslint_run(&self) {
         self.state.lock().loading.linted_by_eslint += 1;
     }
 
@@ -236,7 +236,7 @@ impl<'e> Host<'e> {
     }
 
     /// Answers the requests that a realm can make during any kind of call. Returns `false` for any other request.
-    pub(super) fn serve_any(&self, asked: u32, details: &[u8], out: &mut Vec<u8>) -> bool {
+    pub(super) fn serve_common(&self, asked: u32, details: &[u8], out: &mut Vec<u8>) -> bool {
         match asked {
             ask::START => {
                 self.state.lock().loading.realms += 1;
@@ -325,7 +325,7 @@ impl<'e> Host<'e> {
     pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
         // With an oxlint config, the error's class precedes the message.
         let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
-        if !message.starts_with(ASKS_FOR_TYPES) {
+        if !message.starts_with(NEEDS_TYPES_ERROR_PREFIX) {
             return false;
         }
         if !self.has_asked_for_types(rule) {
@@ -381,12 +381,13 @@ impl<'e> Host<'e> {
         json_stringify(specifier, &mut message);
         // `ONLY_RESOLVE`
         message.extend_from_slice(b",null],-1,null]");
-        let mut found = Err(OUT_OF_STEP.to_vec());
+        let mut found = Err(PLUGIN_PROTOCOL_ERROR.to_vec());
         self.engine
             .with_vm(0, &mut |vm| found = self.ask_to_load(vm, &message))?;
         let found = crate::json::parse(&found?);
         let file = found.as_ref().and_then(|it| it.get(b"file")?.as_str());
-        file.map(<[u8]>::to_vec).ok_or_else(|| OUT_OF_STEP.to_vec())
+        file.map(<[u8]>::to_vec)
+            .ok_or_else(|| PLUGIN_PROTOCOL_ERROR.to_vec())
     }
 
     /// Loads a plugin that an `eslint.config.js` has under `prefix`. `location` is its entry in `$jsPlugins`, where the
@@ -414,19 +415,19 @@ impl<'e> Host<'e> {
         &self,
         location: Vec<u8>,
         described: &Json,
-        needs_the_configuration: bool,
+        needs_config_file: bool,
     ) -> Arc<Plugin> {
         let mut state = self.state.lock();
         if let Some(known) = state.plugins.iter().find(|it| it.location == location) {
             return Arc::clone(&known.plugin);
         }
         let place = (state.plugins.len() as u32, state.rules);
-        let plugin = Arc::new(plugin_of(described, place, needs_the_configuration));
+        let plugin = Arc::new(plugin_from_description(described, place, needs_config_file));
         let first_rule = state.rules;
         state.rules += plugin.rules.len() as u32;
         state.plugins.push(Loaded {
             location,
-            needs_the_configuration,
+            needs_config_file,
             first_rule,
             plugin: Arc::clone(&plugin),
         });
@@ -444,10 +445,10 @@ impl<'e> Host<'e> {
         if let Some(plugin) = known(&self.state.lock()) {
             return Ok(plugin);
         }
-        let mut loaded = Err(OUT_OF_STEP.to_vec());
+        let mut loaded = Err(PLUGIN_PROTOCOL_ERROR.to_vec());
         self.engine
             .with_vm(0, &mut |vm| loaded = self.load_in(vm, &location, None))?;
-        let described = crate::json::parse(&loaded?).ok_or(OUT_OF_STEP)?;
+        let described = crate::json::parse(&loaded?).ok_or(PLUGIN_PROTOCOL_ERROR)?;
         Ok(self.register(location, &described, false))
     }
 
@@ -468,12 +469,12 @@ impl<'e> Host<'e> {
 
     fn ask_to_load(&self, vm: &mut dyn Vm, message: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
         let returned = vm.call(call::LOAD, message, &mut |asked, details, out| {
-            self.serve_any(asked, details, out);
+            self.serve_common(asked, details, out);
         })?;
         match returned.split_first() {
             Some((&result::DONE, described)) => Ok(described.to_vec()),
             Some((&result::FAILED, why)) => Err(why.to_vec()),
-            _ => Err(OUT_OF_STEP.to_vec()),
+            _ => Err(PLUGIN_PROTOCOL_ERROR.to_vec()),
         }
     }
 
@@ -528,7 +529,7 @@ impl<'e> Host<'e> {
     }
 
     /// The indices of the plugins that a realm has to load for the rules `enabled`, ascending.
-    fn plugins_of(enabled: &[&Configured]) -> Vec<u32> {
+    fn plugins_to_load(enabled: &[&Configured]) -> Vec<u32> {
         let without_module = enabled.iter().filter(|it| it.rule.location.is_none());
         let mut positions: Vec<u32> = without_module.map(|it| it.rule.plugin).collect();
         positions.sort_unstable();
@@ -556,8 +557,8 @@ impl<'e> Host<'e> {
             physical_path_len,
         };
         let size = file.text().len();
-        let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
-        if self.engine.is_here() {
+        let mut outcome = Err(Failure::from(PLUGIN_PROTOCOL_ERROR.to_vec()));
+        if self.engine.thread_has_realm() {
             (self.engine).with_vm_here(size, &mut |vm| outcome = self.run_in(vm, file, &how))?;
         } else if let Some(parse_again) = parse_again {
             self.engine.with_vm(size, &mut |vm| {
@@ -584,14 +585,14 @@ impl<'e> Host<'e> {
         } = *how;
         let text = file.text();
         let offsets = Utf16OffsetTable::without_bom(text);
-        let has_mark = text.starts_with(b"\xEF\xBB\xBF");
+        let has_bom = text.starts_with(b"\xEF\xBB\xBF");
         let path = file.path();
-        let plugins = Self::plugins_of(enabled);
+        let plugins = Self::plugins_to_load(enabled);
         let mut message =
             Vec::with_capacity(24 + (plugins.len() + enabled.len()) * 4 + path.len() + text.len());
         let is_espree = Dialect::of(file) == Dialect::Espree;
         let flags = u32::from(wants_fixes)
-            | (u32::from(has_mark) << 1)
+            | (u32::from(has_bom) << 1)
             | (u32::from(is_espree) << 2)
             | (u32::from(settings.sources.is_some()) << 3)
             | (u32::from(file.language().is_oxlint) << 4)
@@ -613,14 +614,14 @@ impl<'e> Host<'e> {
             wire::words(&mut message, &[configured.id]);
         }
         message.extend_from_slice(path);
-        message.extend_from_slice(if has_mark { &text[3..] } else { text });
+        message.extend_from_slice(if has_bom { &text[3..] } else { text });
 
         let mut nodes = None;
         // The result of `code_path::estree::analyze` for the file.
         let mut code_paths: Option<Vec<u32>> = None;
         let reported = RefCell::new(Vec::new());
         let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| match asked {
-            _ if self.serve_any(asked, details, out) => {}
+            _ if self.serve_common(asked, details, out) => {}
             ask::SETTINGS => out.extend_from_slice(&settings.json),
             ask::CONFIGURED => {
                 let position = std::str::from_utf8(details)
@@ -690,13 +691,13 @@ impl<'e> Host<'e> {
         loop {
             let returned = vm.call(call::LINT, &message, &mut serve)?;
             let Some((&kind, content)) = returned.split_first() else {
-                return Err(OUT_OF_STEP.to_vec().into());
+                return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
             };
             if kind == result::DONE && content.is_empty() {
                 return Ok((reported.take(), Vec::new()));
             }
             let Some(parts) = crate::json::parse(content).and_then(Json::into_array) else {
-                return Err(OUT_OF_STEP.to_vec().into());
+                return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
             };
             match kind {
                 result::DONE => {
@@ -722,12 +723,12 @@ impl<'e> Host<'e> {
                     for position in parts.iter().filter_map(|it| number(Some(it))) {
                         let mut state = self.state.lock();
                         let Some(plugin) = state.plugins.get(position as usize) else {
-                            return Err(OUT_OF_STEP.to_vec().into());
+                            return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
                         };
                         let (location, first_rule) = (plugin.location.clone(), plugin.first_rule);
-                        if plugin.needs_the_configuration {
+                        if plugin.needs_config_file {
                             let what = [b"the plugin \"", &plugin.plugin.name[..], b"\""].concat();
-                            state.loading.needs_the_configuration_for(&what);
+                            state.loading.needs_config_file_for(&what);
                         }
                         drop(state);
                         self.load_in(vm, &location, Some((position as usize, first_rule)))?;
@@ -735,7 +736,7 @@ impl<'e> Host<'e> {
                 }
                 result::NEEDS_SETTINGS => {
                     let Some(sources) = &settings.sources else {
-                        return Err(OUT_OF_STEP.to_vec().into());
+                        return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
                     };
                     let id = settings.id.to_string();
                     let parts: [&[u8]; 7] = [
@@ -751,12 +752,12 @@ impl<'e> Host<'e> {
                     match loaded.split_first() {
                         Some((&result::DONE, _)) => {}
                         Some((&result::FAILED, why)) => return Err(why.to_vec().into()),
-                        _ => return Err(OUT_OF_STEP.to_vec().into()),
+                        _ => return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into()),
                     }
                     let loading = &mut self.state.lock().loading;
-                    loading.needs_the_configuration_for(b"\"settings\"");
+                    loading.needs_config_file_for(b"\"settings\"");
                 }
-                _ => return Err(OUT_OF_STEP.to_vec().into()),
+                _ => return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into()),
             }
         }
     }
@@ -783,11 +784,11 @@ fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
 /// Reads a plugin's description:
 /// `{ name, isAlias, id, file, export, hasNothing, rules: [{ name, at, type, fixable, hasSuggestions, schema, .. }] }`,
 /// where `..` is `defaultOptions`, `deprecated` and `replacedBy`. The rules are numbered from `first`, in that order.
-/// `position` is the plugin's index. `needs_the_configuration` means no module exports it.
-fn plugin_of(
+/// `position` is the plugin's index. `needs_config_file` means no module exports it.
+fn plugin_from_description(
     described: &Json,
     (position, first): (u32, u32),
-    needs_the_configuration: bool,
+    needs_config_file: bool,
 ) -> Plugin {
     let name = described
         .get(b"name")
@@ -835,7 +836,7 @@ fn plugin_of(
                 let replaced_by = it.get(b"replacedBy").cloned().unwrap_or(Json::Null);
                 Box::new((deprecated.clone(), replaced_by))
             }),
-            needs_the_configuration: needs_the_configuration && it.get(b"at").is_none(),
+            needs_config_file: needs_config_file && it.get(b"at").is_none(),
             location: it.get(b"at").map(|at| {
                 let mut written = Vec::new();
                 write_json(&mut written, at);
@@ -860,7 +861,8 @@ fn plugin_of(
             ])
         }),
         id: (described.get(b"id").and_then(Json::as_str)).map(Into::into),
-        has_nothing: described.get(b"hasNothing").and_then(Json::as_bool) == Some(true),
+        has_no_plugin_properties: described.get(b"hasNothing").and_then(Json::as_bool)
+            == Some(true),
         rules,
     }
 }

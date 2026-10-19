@@ -183,12 +183,12 @@ pub trait Host: Sync {
     /// Whatever the parser leaves in `arena`, which belongs to the calling thread, is garbage.
     fn parse_package_json(&self, arena: &crate::session::Arena, text: &[u8]) -> Option<Json>;
     /// `ExtendedConfigCache`, for a host that reads many configuration files. Returns what
-    /// `keep_extended_config` stored for the file at `path`.
+    /// `cache_extended_config` stored for the file at `path`.
     fn extended_config(&self, _path: &[u8]) -> Option<Kept> {
         None
     }
     /// Only calls `parsed` if the host caches the result.
-    fn keep_extended_config(&self, _path: &[u8], _parsed: &dyn Fn() -> Kept) {}
+    fn cache_extended_config(&self, _path: &[u8], _parsed: &dyn Fn() -> Kept) {}
     /// For a host that reads many configuration files: returns a shared list equal to `paths`, so
     /// the projects of a build that get their `paths` from the same file share one copy.
     fn shared_paths(&self, paths: std::sync::Arc<Paths>) -> std::sync::Arc<Paths> {
@@ -210,7 +210,7 @@ pub trait Host: Sync {
         meanwhile();
     }
     /// True if `parallel` would currently run only on the calling thread, however many threads are requested.
-    fn is_of_one_thread(&self) -> bool {
+    fn is_single_threaded(&self) -> bool {
         false
     }
     /// Returns true if the process exits right after this host's program is checked and reported: no other program of the
@@ -614,7 +614,7 @@ pub struct ParseOptions {
     pub jsx_imports_its_factory: bool,
     /// The source text of TypeScript's own libraries is only needed when they're checked. With
     /// `libReplacement` a library can be any file.
-    pub keeps_the_text_of_libraries: bool,
+    pub keeps_library_text: bool,
     /// `Options::keeps_comments`
     pub keeps_comments: bool,
     pub bind: crate::bind::BindOptions,
@@ -871,7 +871,7 @@ impl Options {
             experimental_decorators: self.experimental_decorators,
             module_detection: self.module_detection,
             jsx_imports_its_factory: matches!(self.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev),
-            keeps_the_text_of_libraries: self.lib_replacement
+            keeps_library_text: self.lib_replacement
                 || !(self.skip_lib_check || self.skip_default_lib_check),
             keeps_comments: self.keeps_comments,
             bind: crate::bind::BindOptions {
@@ -1387,7 +1387,7 @@ pub fn is_same_path(a: &[u8], b: &[u8], is_case_sensitive: bool) -> bool {
 }
 
 /// A hash that's equal for two file names that [`is_same_path`] treats as one when case is ignored.
-pub fn hash_without_case(file_name: &[u8]) -> u64 {
+pub fn case_insensitive_hash(file_name: &[u8]) -> u64 {
     match file_name.is_ascii() {
         true => bun_wyhash::hash_ascii_lowercase(0, file_name),
         false => bun_wyhash::hash(&to_file_name_lower_case(file_name)),
@@ -2023,7 +2023,7 @@ enum Memo<K, V> {
 }
 
 struct SmallMemo<K, V> {
-    places: bun_threading::Guarded<FxHashMap<K, u32>>,
+    index_by_key: bun_threading::Guarded<FxHashMap<K, u32>>,
     values: AppendVec<V>,
 }
 
@@ -2031,7 +2031,7 @@ impl<K: std::hash::Hash + Eq, V> Memo<K, V> {
     fn new(is_small: bool) -> Memo<K, V> {
         match is_small {
             true => Memo::Small(Box::new(SmallMemo {
-                places: Default::default(),
+                index_by_key: Default::default(),
                 values: AppendVec::new(),
             })),
             false => Memo::Sharded(ShardedMap::default()),
@@ -2047,7 +2047,7 @@ impl<K: std::hash::Hash + Eq, V> Memo<K, V> {
         match self {
             Memo::Sharded(map) => map.get_ref(key),
             Memo::Small(map) => {
-                let at = *map.places.lock().get(key)?;
+                let at = *map.index_by_key.lock().get(key)?;
                 Some(map.values.get(at))
             }
         }
@@ -2058,8 +2058,10 @@ impl<K: std::hash::Hash + Eq, V> Memo<K, V> {
         match self {
             Memo::Sharded(map) => map.insert_ref(key, value),
             Memo::Small(map) => {
-                let mut places = map.places.lock();
-                let at = *places.entry(key).or_insert_with(|| map.values.push(value));
+                let mut index_by_key = map.index_by_key.lock();
+                let at = *index_by_key
+                    .entry(key)
+                    .or_insert_with(|| map.values.push(value));
                 map.values.get(at)
             }
         }
@@ -2504,7 +2506,7 @@ impl<'h> Resolver<'h> {
     }
 
     /// Returns the real path of `found`. `found` itself becomes `resolved.originalPath`.
-    fn followed(&self, found: &[u8], look: Look) -> Vec<u8> {
+    fn follow_symlink(&self, found: &[u8], look: Look) -> Vec<u8> {
         let Some(real) = self.get_original_and_resolved_file_name(found, look) else {
             return found.to_vec();
         };
@@ -2563,10 +2565,10 @@ impl<'h> Resolver<'h> {
         let mut not_linked: Vec<Vec<u8>> = Vec::new();
         let mut seen: Vec<&[u8]> = Vec::new();
         // The directories handled so far. Thousands of files share hundreds of directories.
-        let mut asked: FxHashSet<&[u8]> = FxHashSet::default();
+        let mut visited_directories: FxHashSet<&[u8]> = FxHashSet::default();
         for path in emitted {
             let of_file = dirname::<Posix>(path);
-            if !asked.insert(of_file) {
+            if !visited_directories.insert(of_file) {
                 continue;
             }
             let Some((directory, package)) = self.package_scope(of_file) else {
@@ -2819,8 +2821,8 @@ impl<'h> Resolver<'h> {
 
     /// `resolved.packageId` of the file that `look` found, or `None` if `PackageId.Name` is empty.
     fn package_id_of(&self, look: Look) -> Option<PackageId<'h>> {
-        let made_of = look.outcome.package_id.borrow();
-        let (directory, found) = made_of.as_ref()?;
+        let package_id_inputs = look.outcome.package_id.borrow();
+        let (directory, found) = package_id_inputs.as_ref()?;
         let package = self.package(directory)?;
         let (name, version) = package.name_and_version.filter(|it| !it.0.is_empty())?;
         let peer_dependencies = *package.peer_dependencies.get_or_init(|| {
@@ -3017,7 +3019,7 @@ impl<'h> Resolver<'h> {
             look.outcome.is_external.set(is_in_package);
             // It already has one if a target of `imports` names a module and resolving that went through a symlink.
             if follows_links && is_in_package && !look.outcome.has_original_path.get() {
-                self.followed(&found, look)
+                self.follow_symlink(&found, look)
             } else {
                 found
             }
@@ -3164,13 +3166,13 @@ impl<'h> Resolver<'h> {
         let is_requested = self.options.resolves_like_node
             && format_by_extension(path) == ResolutionMode::None
             || strings::contains(path, b"/node_modules/");
-        let says_type = is_requested
+        let has_type_field = is_requested
             && package
                 .json
                 .get(b"type")
                 .and_then(Json::as_str)
                 .is_some_and(|specified| !specified.is_empty());
-        (!says_type).then(|| inside(dir, b"package.json"))
+        (!has_type_field).then(|| inside(dir, b"package.json"))
     }
 
     /// Under `module: node16` and later: true if the file at `path` is an ECMAScript module,
@@ -3194,8 +3196,8 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) {
         let package = package.filter(|package| package.name_and_version.is_some());
-        let made_of = package.map(|_| (directory.to_vec(), found.to_vec()));
-        look.outcome.package_id.replace(made_of);
+        let package_id_inputs = package.map(|_| (directory.to_vec(), found.to_vec()));
+        look.outcome.package_id.replace(package_id_inputs);
         if look.tracer.is_some()
             && let Some(package) = package
         {
@@ -3338,7 +3340,7 @@ impl<'h> Resolver<'h> {
         let found = if self.options.preserve_symlinks || source.is_some() && tracer.is_none() {
             found
         } else {
-            self.followed(&found, look)
+            self.follow_symlink(&found, look)
         };
         let package_id = self.package_id_of(look);
         // `traceTypeReferenceDirectiveResult`
@@ -3415,7 +3417,7 @@ impl<'h> Resolver<'h> {
                 ending_from_config: look.ending_from_config || !known_extension(target).is_empty(),
                 ..look
             };
-            self.very_file(target, &candidate, look)
+            self.exact_file(target, &candidate, look)
                 .or_else(|| self.file_or_directory(&candidate, look))
         })
     }
@@ -3423,7 +3425,7 @@ impl<'h> Resolver<'h> {
     /// In `tryLoadModuleUsingPaths`: a substitution `written` with an extension may name the file
     /// at `path` exactly. That file is then the result, regardless of the requested kinds of file,
     /// before the extension is interpreted.
-    fn very_file(&self, written: &[u8], path: &[u8], look: Look) -> Option<Vec<u8>> {
+    fn exact_file(&self, written: &[u8], path: &[u8], look: Look) -> Option<Vec<u8>> {
         if known_extension(written).is_empty() {
             return None;
         }
@@ -3517,7 +3519,7 @@ impl<'h> Resolver<'h> {
                 let filled = target.replacen(b"*", matched, 1);
                 look.trace(6093, &[Arg::Bytes(target), Arg::Bytes(&filled)]);
                 let candidate = resolve_path(dir, &filled);
-                self.very_file(target, &candidate, look)
+                self.exact_file(target, &candidate, look)
                     .or_else(|| load(&candidate, !known_extension(target).is_empty()))
             })
     }
@@ -4371,14 +4373,14 @@ impl<'h> Resolver<'h> {
                     return Found::No;
                 }
                 // The target must stay inside the package and outside the packages nested in it.
-                let leads_away = |path: &[u8], parts_before: usize| {
+                let escapes_package = |path: &[u8], parts_before: usize| {
                     let path = normalize_slashes(path);
                     let parts = get_path_components(&path);
                     let mut parts = parts.iter().skip(parts_before);
                     parts.any(|part| matches!(*part, b".." | b"." | b"node_modules"))
                 };
                 // `partsAfterFirst`: those after the root, which is empty, and the `.`.
-                if leads_away(target_string, 2) || leads_away(subpath, 0) {
+                if escapes_package(target_string, 2) || escapes_package(subpath, 0) {
                     look.trace(6275, &[Arg::Path(package_dir), Arg::Bytes(module_name)]);
                     return Found::No;
                 }
@@ -4468,11 +4470,11 @@ impl<'h> Resolver<'h> {
             ..look
         };
         // `getOutputDirectoriesForBaseDirectory`
-        let mut assigned_to = vec![options.declaration_dir.as_slice()];
+        let mut output_dirs = vec![options.declaration_dir.as_slice()];
         if options.out_dir != options.declaration_dir {
-            assigned_to.push(options.out_dir.as_slice());
+            output_dirs.push(options.out_dir.as_slice());
         }
-        for dir in assigned_to {
+        for dir in output_dirs {
             if dir.is_empty() || !contains_path(dir, path, is_case_sensitive) {
                 continue;
             }

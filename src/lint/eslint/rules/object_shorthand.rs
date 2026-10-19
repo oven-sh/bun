@@ -368,13 +368,13 @@ impl ObjectShorthand {
             }
             Finding::MethodShorthand(func) => {
                 // oxlint points at the function.
-                let place = if cx.language().is_oxlint {
+                let location = if cx.language().is_oxlint {
                     value.span()
                 } else {
                     prop.span()
                 };
                 let report = cx
-                    .report(place, EXPECTED_METHOD_SHORTHAND)
+                    .report(location, EXPECTED_METHOD_SHORTHAND)
                     .called_with(prop);
                 report.fix(|fixer| make_function_shorthand(fixer, prop, func));
             }

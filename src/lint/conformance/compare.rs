@@ -14,12 +14,12 @@ pub struct Outcome {
     pub output: Option<Vec<u8>>,
     pub has_parse_errors: bool,
     /// True if any message has a [held-back](held_back) fix.
-    pub holds_back_a_fix: bool,
+    pub has_held_back_fix: bool,
 }
 
 /// Returns the fix that upstream applies with `--fix` but that needs `--fix-dangerously` here, because it can change
 /// what the program does. It's compared as a regular fix, so its text is still checked, and the case is
-/// [counted](Counts::holding_back_a_fix).
+/// [counted](Counts::cases_with_held_back_fix).
 fn held_back(message: &LintMessage) -> Option<&Suggestion> {
     let is_fix = |it: &&Suggestion| it.kind == SuggestionKind::DangerousFix;
     match message.fix {
@@ -69,7 +69,7 @@ impl Outcome {
     pub fn new(entry: &'static RuleEntry, code: &[u8], messages: &[LintMessage]) -> Outcome {
         let mut fixes: Vec<_> = messages.iter().filter_map(fix_of).collect();
         Outcome {
-            holds_back_a_fix: messages.iter().any(|it| held_back(it).is_some()),
+            has_held_back_fix: messages.iter().any(|it| held_back(it).is_some()),
             has_parse_errors: messages
                 .iter()
                 .any(|it| it.is_fatal && it.message.starts_with(b"Parsing error")),
@@ -198,14 +198,14 @@ pub fn expected_messages(case: &Json) -> Vec<Reported> {
 #[derive(Default)]
 pub struct Counts {
     /// Messages that have no help text where oxlint has one.
-    pub lacking_help: AtomicUsize,
+    pub missing_help: AtomicUsize,
     /// Cases whose messages match the recorded ones but in a different order.
-    pub in_another_order: AtomicUsize,
+    pub reordered_cases: AtomicUsize,
     /// Set by `--in-order`, which makes such a case fail.
     pub fails_on_order: bool,
     /// Passing cases where `--fix` applies fewer fixes than upstream's `--fix`. The rest need `--fix-suggestions` or
     /// `--fix-dangerously`.
-    pub holding_back_a_fix: AtomicUsize,
+    pub cases_with_held_back_fix: AtomicUsize,
 }
 
 /// Sorts the messages, because the order of messages that start at the same position depends on ESLint's node visiting
@@ -232,7 +232,7 @@ pub struct Problem {
 /// Checks `messages`, reported for `code`, against oxlint's recorded output. It compares the messages without their
 /// fixes, and the code after the fixes that each additional oxlint flag applies. If a message has help text, it has to
 /// match oxlint's.
-pub(crate) fn problem_of_oxlint(
+pub(crate) fn oxlint_problem(
     entry: &'static RuleEntry,
     code: &[u8],
     messages: &[LintMessage],
@@ -250,7 +250,7 @@ pub(crate) fn problem_of_oxlint(
     sort::sort_by_key(&mut outcome.messages, |it| (it.line, it.column));
     // `output` is compared below.
     outcome.output = string_of(case, b"output").map(<[u8]>::to_vec);
-    outcome.holds_back_a_fix = false;
+    outcome.has_held_back_fix = false;
     if let Some(problem) = problem_of(Some(outcome), case, counts) {
         return Some(problem);
     }
@@ -266,7 +266,7 @@ pub(crate) fn problem_of_oxlint(
         let helps: Vec<&bstr::BStr> = helps.map(bstr::BStr::new).collect();
         match message.help() {
             "" => {
-                (counts.lacking_help).fetch_add(usize::from(!helps.is_empty()), Ordering::Relaxed);
+                (counts.missing_help).fetch_add(usize::from(!helps.is_empty()), Ordering::Relaxed);
             }
             help if helps.iter().any(|it| **it == help) => {}
             help => {
@@ -299,13 +299,13 @@ pub(crate) fn problem_of_oxlint(
             .collect();
         bun_lint::fix::apply_fixes(code, &mut fixes).unwrap_or_else(|| code.to_vec())
     });
-    let (mut before, mut holds_back_a_fix) = (code.to_vec(), false);
+    let (mut before, mut has_held_back_fix) = (code.to_vec(), false);
     for (step, (key, _)) in steps.iter().enumerate() {
         let expected = string_of(case, key).unwrap_or(&before).to_vec();
         // Output that oxlint produces with these flags may need more flags here, but never fewer.
         match outputs.iter().skip(step).position(|it| *it == expected) {
             Some(0) => {}
-            Some(_) => holds_back_a_fix = true,
+            Some(_) => has_held_back_fix = true,
             None => {
                 return Some(Problem {
                     summary: "output differs",
@@ -320,7 +320,7 @@ pub(crate) fn problem_of_oxlint(
         }
         before = expected;
     }
-    (counts.holding_back_a_fix).fetch_add(usize::from(holds_back_a_fix), Ordering::Relaxed);
+    (counts.cases_with_held_back_fix).fetch_add(usize::from(has_held_back_fix), Ordering::Relaxed);
     None
 }
 
@@ -336,7 +336,7 @@ pub fn problem_of(outcome: Option<Outcome>, case: &Json, counts: &Counts) -> Opt
     let (actual, expected) = (outcome.messages, expected_messages(case));
     if actual != expected {
         let order = || format!("  expected: {expected:#?}\n  actual: {actual:#?}");
-        let as_they_came = counts.fails_on_order.then(order);
+        let unsorted_details = counts.fails_on_order.then(order);
         let (actual, expected) = (in_order(actual), in_order(expected));
         if actual != expected {
             return problem(
@@ -344,8 +344,8 @@ pub fn problem_of(outcome: Option<Outcome>, case: &Json, counts: &Counts) -> Opt
                 format!("  expected: {expected:#?}\n  actual: {actual:#?}"),
             );
         }
-        counts.in_another_order.fetch_add(1, Ordering::Relaxed);
-        if let Some(details) = as_they_came {
+        counts.reordered_cases.fetch_add(1, Ordering::Relaxed);
+        if let Some(details) = unsorted_details {
             return problem("the order differs", details);
         }
     }
@@ -359,6 +359,7 @@ pub fn problem_of(outcome: Option<Outcome>, case: &Json, counts: &Counts) -> Opt
             format!("  expected: {expected:?}\n  actual: {actual:?}"),
         );
     }
-    (counts.holding_back_a_fix).fetch_add(usize::from(outcome.holds_back_a_fix), Ordering::Relaxed);
+    (counts.cases_with_held_back_fix)
+        .fetch_add(usize::from(outcome.has_held_back_fix), Ordering::Relaxed);
     None
 }

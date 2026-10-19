@@ -47,7 +47,7 @@ pub(crate) struct Context<'c, 'm> {
     /// True if the messages' fixes and suggestions are read, even if only to count them.
     pub(crate) reads_fixes: bool,
     /// True if they're printed.
-    pub(crate) reads_texts_of_fixes: bool,
+    pub(crate) reads_fix_texts: bool,
     /// True if oxlint's help is read.
     pub(crate) reads_help: bool,
     /// Help is only read for the few problems that are shown with their code. Generating it for every problem takes
@@ -182,10 +182,10 @@ impl Context<'_, '_> {
             // It's part of the config. See `Loader::override_config`.
             report_unused_disable_directives: None,
             wants_fixes: self.fixes() || self.reads_fixes,
-            wants_texts_of_fixes: self.fixes() || self.reads_texts_of_fixes,
+            wants_fix_texts: self.fixes() || self.reads_fix_texts,
             wants_help: self.reads_help,
             wants_messages: !self.options.silent,
-            wants_places: !self.options.silent,
+            wants_positions: !self.options.silent,
             wants_suppressions: self.reads_suppressions,
             // Warnings have to be counted for `--max-warnings`, and for oxlint, where `--quiet` only hides them from
             // the report.
@@ -228,8 +228,8 @@ impl Context<'_, '_> {
             }
         };
         for message in &mut result.messages {
-            let is_of_js_plugin = matches!(message.rule_id, Some(RuleId::Js(_)));
-            if !options.fix_safely && !options.fix_dangerously && !is_of_js_plugin {
+            let is_from_js_plugin = matches!(message.rule_id, Some(RuleId::Js(_)));
+            if !options.fix_safely && !options.fix_dangerously && !is_from_js_plugin {
                 message.fix = None;
             }
             if message.fix.is_none()
@@ -359,8 +359,9 @@ impl Context<'_, '_> {
         };
         let path = paths::from_native(&result.path);
         let was_made = result.had_types || Framework::of(&path).is_some();
-        let says_more = |it: &LintMessage| matches!(&it.rule_id, Some(RuleId::Known(meta) | RuleId::Named(meta, _)) if meta.plugin == Plugin::BunTest || meta.follows_oxlint || meta.has_hints);
-        let has_help = linted.config.language.is_oxlint || result.messages.iter().any(says_more);
+        let has_extra_help = |it: &LintMessage| matches!(&it.rule_id, Some(RuleId::Known(meta) | RuleId::Named(meta, _)) if meta.plugin == Plugin::BunTest || meta.follows_oxlint || meta.has_hints);
+        let has_help =
+            linted.config.language.is_oxlint || result.messages.iter().any(has_extra_help);
         if was_made || !has_help || linted.config.dialect.is_some() {
             return Vec::new();
         }
@@ -380,7 +381,7 @@ impl Context<'_, '_> {
         };
         let result = match Framework::of(path).filter(|_| config.language.is_oxlint) {
             Some(framework) => {
-                self.verify_scripts_by(framework, path, text, config, Some(&no_rule))
+                self.verify_scripts_filtered(framework, path, text, config, Some(&no_rule))
             }
             None => self.verify_as(path, text, config, &how),
         };
@@ -411,7 +412,7 @@ impl Context<'_, '_> {
             physical_path_len: Some(physical_path_len),
             ..How::default()
         };
-        Some(self.verify_as(path, text, config, &how)).filter(|it| !it.is_unread)
+        Some(self.verify_as(path, text, config, &how)).filter(|it| !it.needs_another_linter)
     }
 
     /// Like [`Self::verify`], for text in `dialect`, which isn't JavaScript. `physical_path_len` is set if the text is
@@ -570,7 +571,7 @@ impl Context<'_, '_> {
             path,
             script_kind,
             text,
-            self.atoms.of_this_thread(),
+            self.atoms.for_current_thread(),
             how.experimental_decorators,
             how.every_file_is_a_module,
             |hir, atoms| {
@@ -579,7 +580,7 @@ impl Context<'_, '_> {
                     before_es2020: false,
                     before_es2017: false,
                 };
-                let mut recycled = Recycled::of_this_thread();
+                let mut recycled = Recycled::for_current_thread();
                 let bound = bind_for_lint_in(&hir, bind_options, atoms, &mut recycled);
                 self.timing.add(&self.timing.parse, started);
                 if hir.mentioned.is_empty() {
@@ -667,7 +668,7 @@ impl Context<'_, '_> {
         // This is a processor's block that may be misread. Don't lint it. The caller decides what to do with it.
         if as_what.physical_path_len.is_some() && may_be_misread(file) {
             return LintResult {
-                is_unread: true,
+                needs_another_linter: true,
                 ..LintResult::default()
             };
         }
@@ -675,7 +676,7 @@ impl Context<'_, '_> {
         // Help on demand lints the text a second time. That only works for a file that's linted in one piece.
         let is_whole = as_what.script.is_none() && as_what.physical_path_len.is_none();
         let is_for_help = matches!(as_what.rules, Which::WithHelp(_));
-        let waits_for_demand = self.help_on_demand && is_whole && !is_for_help;
+        let defers_help = self.help_on_demand && is_whole && !is_for_help;
         let options = LintOptions {
             again: as_what.again,
             wants_fixes: match as_what.fixes {
@@ -685,11 +686,10 @@ impl Context<'_, '_> {
             },
             disables_fixes: as_what.fixes == Fixes::Disabled,
             // A block's messages are handed to its processor, so they have to be complete.
-            wants_texts_of_fixes: options.wants_texts_of_fixes
-                || as_what.physical_path_len.is_some(),
-            wants_help: options.wants_help && !waits_for_demand,
+            wants_fix_texts: options.wants_fix_texts || as_what.physical_path_len.is_some(),
+            wants_help: options.wants_help && !defers_help,
             wants_messages: options.wants_messages || as_what.physical_path_len.is_some(),
-            wants_places: options.wants_places || as_what.physical_path_len.is_some(),
+            wants_positions: options.wants_positions || as_what.physical_path_len.is_some(),
             // JavaScript rules have no help, so there's no reason to run them again.
             js_plugins: options.js_plugins.filter(|_| !is_for_help),
             parse_again: Some(parse_again),

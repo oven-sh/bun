@@ -535,7 +535,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         attr: &Attribute<'_>,
         write_value: impl FnOnce(&mut Self) -> bool,
     ) -> bool {
-        let attempt = self.out.start_attempt_behind_text();
+        let attempt = self.out.start_attempt_after_text();
         let is_written = write_value(self);
         self.print_attribute_with_attempt(attr, attempt, is_written)
     }

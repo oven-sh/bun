@@ -213,7 +213,7 @@ impl JsdocFormatter<'_> {
     }
 
     /// Pushes `prefix` followed by `description`, wrapped, with every line but the first indented.
-    fn push_desc_behind(&mut self, prefix: &[u8], description: &[u8]) {
+    fn push_desc_after(&mut self, prefix: &[u8], description: &[u8]) {
         let tag_string_length = strings::element_length_utf8_into_utf16(prefix)
             .saturating_sub(Self::CONTINUATION_INDENT.len());
         let wrapped = self.wrap_text(description, self.indented_width(), tag_string_length);
@@ -450,7 +450,7 @@ impl JsdocFormatter<'_> {
             self.content_lines.push(tag_line);
             self.push_wrapped_desc(&full_desc);
         } else {
-            self.push_desc_behind(&prefix, &full_desc);
+            self.push_desc_after(&prefix, &full_desc);
         }
     }
 
@@ -543,7 +543,7 @@ impl JsdocFormatter<'_> {
             self.content_lines.push(tag_line);
             self.push_wrapped_desc(desc_text);
         } else {
-            self.push_desc_behind(&prefix, desc_text);
+            self.push_desc_after(&prefix, desc_text);
         }
     }
 
@@ -675,7 +675,7 @@ impl JsdocFormatter<'_> {
             self.content_lines.push([&prefix[..], raw_desc].concat());
         } else if skip_wrapping {
             // `@deprecated` isn't capitalized, but it's still wrapped.
-            self.push_desc_behind(&prefix, raw_desc);
+            self.push_desc_after(&prefix, raw_desc);
         } else if prefix_len
             + strings::split_unicode_whitespace(&desc_text)
                 .next()
@@ -685,7 +685,7 @@ impl JsdocFormatter<'_> {
             self.content_lines.push(tag_line);
             self.push_wrapped_desc(&desc_text);
         } else {
-            self.push_desc_behind(&prefix, &desc_text);
+            self.push_desc_after(&prefix, &desc_text);
         }
     }
 }

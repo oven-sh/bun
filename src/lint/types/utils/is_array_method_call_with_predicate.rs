@@ -14,7 +14,7 @@ fn is_array_or_tuple_type_at_location(object: Expr<'_>) -> bool {
 }
 
 /// tsgolint's `IsArrayMethodCallWithPredicate`: the callee's name comes from the checker's `getAccessedPropertyName`.
-fn is_array_method_call_with_predicate_of_tsgolint(node: Expr<'_>) -> bool {
+fn tsgolint_is_array_method_call_with_predicate(node: Expr<'_>) -> bool {
     let Some(call) = node.as_call() else {
         return false;
     };
@@ -49,7 +49,7 @@ fn is_array_method_call_with_predicate_of_tsgolint(node: Expr<'_>) -> bool {
 /// With an oxlint config it's tsgolint's `IsArrayMethodCallWithPredicate`.
 pub fn is_array_method_call_with_predicate(node: Expr) -> bool {
     if node.file().language().is_oxlint {
-        return is_array_method_call_with_predicate_of_tsgolint(node);
+        return tsgolint_is_array_method_call_with_predicate(node);
     }
     ts_utils::is_array_method_call_with_predicate(node, is_array_or_tuple_type_at_location)
 }

@@ -173,7 +173,7 @@ pub fn render_all<'a, 'f>(
 ) -> impl Iterator<Item = (&'f Finding, Rendered)> {
     let mut said = FxHashSet::default();
     findings.into_iter().filter_map(move |finding| {
-        if is_about_what_a_callback_captures(file, finding) {
+        if is_about_callback_capture(file, finding) {
             return None;
         }
         let rendered = render(file, finding);
@@ -183,7 +183,7 @@ pub fn render_all<'a, 'f>(
                 .iter()
                 .map(|label| (label.span, label.text.clone()))
         };
-        let is_new = !is_said_once(finding) || said.insert(labels().collect::<Vec<_>>());
+        let is_new = !is_reported_once(finding) || said.insert(labels().collect::<Vec<_>>());
         is_new.then_some((finding, rendered))
     })
 }
@@ -191,7 +191,7 @@ pub fn render_all<'a, 'f>(
 /// The compiler reports these every time it encounters them. oxc's `validate_no_ref_access_in_render` drops a
 /// diagnostic that equals an earlier one (`DiagnosticKey`), and its `resolve_binding_with_span` only complains about a
 /// binding the first time it resolves it.
-fn is_said_once(finding: &Finding) -> bool {
+fn is_reported_once(finding: &Finding) -> bool {
     finding.category == ErrorCategory::Refs || finding.reason == LOCAL_FBT
 }
 
@@ -254,7 +254,7 @@ fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Rendered {
 
 /// Of a call's effects, oxc's ref validation only checks those on the call's operands. Upstream's also checks those on
 /// values captured by a function operand, and such a diagnostic points into that function.
-fn is_about_what_a_callback_captures<'a>(file: &'a File<'a>, finding: &Finding) -> bool {
+fn is_about_callback_capture<'a>(file: &'a File<'a>, finding: &Finding) -> bool {
     let Some(Detail::Error {
         span: Some(at),
         message: Some(message),
@@ -394,7 +394,7 @@ fn start_of(span: Span, len: u32) -> Span {
 }
 
 /// The span oxc's HIR has for a parameter. It has none for a pattern or a parameter with a default.
-fn place_of_parameter(param: Param) -> Option<Span> {
+fn parameter_span(param: Param) -> Option<Span> {
     if param.is_rest() {
         return Some(param.span());
     }
@@ -409,7 +409,7 @@ fn function_head(func: Func) -> Span {
     let end = match func.body_span() {
         Some(body) => body.start.saturating_add(1),
         None if func.is_async() => whole.start.saturating_add(5),
-        None => match func.params().first().and_then(place_of_parameter) {
+        None => match func.params().first().and_then(parameter_span) {
             Some(first) => first.end,
             None => whole.start.saturating_add(2),
         },
@@ -631,7 +631,7 @@ fn use_memo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
         // `use_memo_callback_parameters`
         "useMemo() callbacks may not accept parameters" => {
             if let Some(param) = out.place().and_then(|at| parameter_at(file, at)) {
-                match place_of_parameter(param) {
+                match parameter_span(param) {
                     Some(span) => out.move_to(Some(span)),
                     None => out.labels.clear(),
                 }
@@ -766,7 +766,7 @@ fn is_in_reactive_scope<'a>(read: Expr<'a>, callback: Func<'a>, barren: &mut Spa
     for node in Node::Expr(read).ancestors() {
         match node {
             Node::Func(func) if func == callback => break,
-            _ if makes_an_object(node) => return true,
+            _ if creates_object(node) => return true,
             Node::Expr(e) => match e.kind() {
                 ExprKind::Cond { .. }
                 | ExprKind::Binary {
@@ -783,7 +783,7 @@ fn is_in_reactive_scope<'a>(read: Expr<'a>, callback: Func<'a>, barren: &mut Spa
     };
     let mut rest = vec![Node::Expr(outermost)];
     while let Some(node) = rest.pop() {
-        if makes_an_object(node) {
+        if creates_object(node) {
             return true;
         }
         node.for_each_child(|child| rest.push(child));
@@ -792,7 +792,7 @@ fn is_in_reactive_scope<'a>(read: Expr<'a>, callback: Func<'a>, barren: &mut Spa
     false
 }
 
-fn makes_an_object(node: Node) -> bool {
+fn creates_object(node: Node) -> bool {
     match node {
         Node::Func(_) | Node::Class(_) => true,
         Node::Expr(e) => matches!(

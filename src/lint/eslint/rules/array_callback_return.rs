@@ -76,7 +76,7 @@ fn full_method_name(array_method_name: &str) -> String {
 }
 
 /// Where oxlint labels the method call: at the method's name, or at all of `Array.from`.
-fn place_of_method(callee: Expr, array_method_name: &str) -> Option<Span> {
+fn method_label_span(callee: Expr, array_method_name: &str) -> Option<Span> {
     match callee.kind() {
         _ if matches!(array_method_name, "from" | "fromAsync") => Some(callee.span()),
         ExprKind::Dot { name, .. } => Some(name.span()),
@@ -244,7 +244,7 @@ impl ArrayCallbackReturn {
                 .data("value_requirement", value_requirement)
                 .labels_with(|it| {
                     it.note = note.into();
-                    if let (true, Some(last), Some(called)) = (can_run_past_the_last, last, place_of_method(callee, method)) {
+                    if let (true, Some(last), Some(called)) = (can_run_past_the_last, last, method_label_span(callee, method)) {
                         it.push(last, "This path may reach the end of the callback.");
                         it.push(called, format!("\"{}\" is called here.", full_method_name(method)));
                     }
@@ -256,7 +256,7 @@ impl ArrayCallbackReturn {
     fn check_for_each_callback<'a>(&self, func: Func<'a>, callee: Expr<'a>, cx: &Cx<'a, Self>) {
         let is_allowed = |value: Expr<'a>| self.allow_void && is_expression_void(value);
         // oxlint reports a callback once, at the method's name.
-        let place_of_oxlint = place_of_method(callee, "forEach").filter(|_| cx.language().is_oxlint);
+        let oxlint_span = method_label_span(callee, "forEach").filter(|_| cx.language().is_oxlint);
         let label = |labels: &mut Details, value: Expr<'a>| {
             labels.first("\"Array.prototype.forEach\" is called here.");
             labels.push(value.outer_span(), match self.allow_void {
@@ -271,10 +271,10 @@ impl ArrayCallbackReturn {
             if is_allowed(argument) {
                 continue;
             }
-            let place = place_of_oxlint.unwrap_or_else(|| statement.span());
+            let place = oxlint_span.unwrap_or_else(|| statement.span());
             let mut report = Self::report(cx, place, EXPECTED_NO_RETURN_VALUE, func, "forEach")
                 .labels_with(|labels| label(labels, argument));
-            if self.allow_void && place_of_oxlint.is_some() {
+            if self.allow_void && oxlint_span.is_some() {
                 report = report.help(EXPECTED_VOID);
             }
             if self.allow_void {
@@ -282,7 +282,7 @@ impl ArrayCallbackReturn {
                 let keyword = Span::new(start, start + "return".len() as u32);
                 report.suggest(PREPEND_VOID, |fixer| void_prepend_fixer(fixer, argument, keyword, true));
             }
-            if place_of_oxlint.is_some() {
+            if oxlint_span.is_some() {
                 return;
             }
         }
@@ -292,11 +292,11 @@ impl ArrayCallbackReturn {
         if is_allowed(body) {
             return;
         }
-        let head = place_of_oxlint.unwrap_or_else(|| ast_utils::get_function_head_loc(func));
+        let head = oxlint_span.unwrap_or_else(|| ast_utils::get_function_head_loc(func));
         let mut report = Self::report(cx, head, EXPECTED_NO_RETURN_VALUE, func, "forEach")
             .labels_with(|labels| label(labels, body))
             .suggest(WRAP_BRACES, |fixer| curly_wrap_fixer(fixer, func));
-        if self.allow_void && place_of_oxlint.is_some() {
+        if self.allow_void && oxlint_span.is_some() {
             report = report.help(EXPECTED_VOID);
         }
         if self.allow_void {

@@ -22,13 +22,13 @@ fn find_asserted_argument(
         return None;
     }
     let type_predicate = node.resolved_signature()?.get_type_predicate()?;
-    let is_about_a_name = matches!(
+    let is_identifier_predicate = matches!(
         type_predicate.kind(),
         TypePredicateKind::Identifier | TypePredicateKind::AssertsIdentifier
     );
     let parameter_index = match type_predicate.parameter_index() {
         Some(parameter_index) => parameter_index,
-        None if wraps_around && is_about_a_name => checkable_arguments - 1,
+        None if wraps_around && is_identifier_predicate => checkable_arguments - 1,
         None => return None,
     };
     let argument = arguments

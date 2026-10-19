@@ -34,7 +34,7 @@ pub(super) struct Source<'r> {
     /// [`Info::filename`]
     pub(super) name: Vec<u8>,
     /// True if the problems are about a file at all, even one without a name.
-    pub(super) is_of_a_file: bool,
+    pub(super) is_about_a_file: bool,
     text: &'r [u8],
     offsets: Offsets<'r>,
     /// Line starts where only `\n`, `\r\n` and `\r` end a line. `None` if they're the same as in `offsets`.
@@ -74,7 +74,7 @@ impl<'r> Source<'r> {
         });
         Source {
             name,
-            is_of_a_file: !result.path.is_empty() || result.text.is_some(),
+            is_about_a_file: !result.path.is_empty() || result.text.is_some(),
             text,
             offsets,
             lines,

@@ -376,7 +376,7 @@ impl Checker<'_, '_> {
     /// `mergeSymbol`: reports the pairs of symbols that `Files::merge` refused to merge.
     fn check_refused_merges(&mut self, file: FileId) {
         let files = self.files();
-        if !files.has_refused_merges(file) {
+        if !files.has_rejected_merges(file) {
             return;
         }
         let declarations = |parts: &[Sym]| -> Vec<Declaration> {
@@ -389,7 +389,7 @@ impl Checker<'_, '_> {
             };
             parts.iter().flat_map(of_part).collect()
         };
-        for refused in &files.refused_merges {
+        for refused in &files.rejected_merges {
             let (there, added) = (refused.target_parts, refused.source_parts);
             if !there.iter().chain(added).any(|part| part.file == file) {
                 continue;

@@ -92,7 +92,7 @@ impl DotNotation {
         }
         // With `noPropertyAccessFromIndexSignature` tsgolint 7.0 doesn't require an index signature: `(a as any)["b"]`.
         let file = obj.file();
-        let needs_no_index_signature = || {
+        let skips_index_signature_check = || {
             let options = file.type_checker().compiler_options();
             file.language().is_oxlint
                 && is_compiler_option_enabled(options, CompilerOption::NoPropertyAccessFromIndexSignature)
@@ -100,7 +100,7 @@ impl DotNotation {
         if property_symbol.is_some() || !allow_index_signature_property_access {
             return false;
         }
-        if needs_no_index_signature() {
+        if skips_index_signature_check() {
             return true;
         }
         let mut index_infos = obj.ty().get_non_nullable_type().get_index_infos();

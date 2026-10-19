@@ -48,7 +48,7 @@ fn is_less_than_length_expression<'a>(test: Expr<'a>, name: Name<'a>) -> Option<
 
 /// oxlint only checks a loop whose array is a name or a member expression that doesn't use the index: `a`, `a.b`,
 /// `a[b]`.
-fn oxlint_looks_at<'a>(array: Expr<'a>, index_var: Symbol<'a>) -> bool {
+fn oxlint_checks_array<'a>(array: Expr<'a>, index_var: Symbol<'a>) -> bool {
     !array.is_parenthesized()
         && matches!(array.tag(), ExprTag::Ident | ExprTag::Dot | ExprTag::Index)
         && !index_var
@@ -58,7 +58,7 @@ fn oxlint_looks_at<'a>(array: Expr<'a>, index_var: Symbol<'a>) -> bool {
 
 /// True if a part of the loop header that oxlint matches is parenthesized. oxlint doesn't look through parentheses,
 /// except around an assignment target.
-fn oxlint_minds_parentheses<'a>(init: Expr<'a>, test: Expr<'a>, update: Expr<'a>) -> bool {
+fn oxlint_rejects_parentheses<'a>(init: Expr<'a>, test: Expr<'a>, update: Expr<'a>) -> bool {
     let value = update.as_assign().map(|(_, _, value)| value);
     let right = test.right();
     let parts = [
@@ -77,7 +77,7 @@ fn oxlint_minds_parentheses<'a>(init: Expr<'a>, test: Expr<'a>, update: Expr<'a>
 
 /// The kind of a node's parent in oxc's AST, as far as oxlint distinguishes them.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Around {
+enum ParentKind {
     Delete,
     Update,
     /// An assignment to the node.
@@ -90,33 +90,33 @@ enum Around {
 
 /// Returns the kind of `at`'s oxc parent, the parent itself, and whether `at` is assigned to there. `at` is an
 /// expression or a property of a pattern.
-fn oxc_parent(at: Node<'_>) -> Option<(Around, Node<'_>, bool)> {
+fn oxc_parent(at: Node<'_>) -> Option<(ParentKind, Node<'_>, bool)> {
     let is_pattern = |it: Node| matches!(it, Node::Expr(it) if it.is_assignment_target());
     let parent = at.parent();
     Some(match (at, parent) {
         (Node::Expr(e), Node::Expr(around)) => match around.kind() {
             ExprKind::Unary {
                 op: UnOp::Delete, ..
-            } => (Around::Delete, parent, false),
+            } => (ParentKind::Delete, parent, false),
             ExprKind::Unary {
                 op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
                 ..
-            } => (Around::Update, parent, true),
+            } => (ParentKind::Update, parent, true),
             ExprKind::Assign { target, .. } if target == e && !is_pattern(parent) => {
-                (Around::Assignment, parent, true)
+                (ParentKind::Assignment, parent, true)
             }
-            ExprKind::Assign { target, .. } => (Around::Other, parent, target == e),
-            ExprKind::Array(_) if is_pattern(parent) => (Around::Pattern, parent, true),
-            ExprKind::Spread(_) => (Around::Other, parent, is_pattern(parent)),
-            ExprKind::Dot { .. } | ExprKind::Index { .. } => (Around::Member, parent, false),
-            _ => (Around::Other, parent, false),
+            ExprKind::Assign { target, .. } => (ParentKind::Other, parent, target == e),
+            ExprKind::Array(_) if is_pattern(parent) => (ParentKind::Pattern, parent, true),
+            ExprKind::Spread(_) => (ParentKind::Other, parent, is_pattern(parent)),
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => (ParentKind::Member, parent, false),
+            _ => (ParentKind::Other, parent, false),
         },
         (Node::Expr(e), Node::Prop(prop)) if is_pattern(prop.parent()) => match prop.kind() {
             // In oxc a shorthand property and its default are one node.
-            PropKind::Shorthand => (Around::Pattern, prop.parent(), true),
-            _ => (Around::Other, parent, prop.value() == Some(e)),
+            PropKind::Shorthand => (ParentKind::Pattern, prop.parent(), true),
+            _ => (ParentKind::Other, parent, prop.value() == Some(e)),
         },
-        (Node::Prop(_), _) => (Around::Pattern, parent, true),
+        (Node::Prop(_), _) => (ParentKind::Pattern, parent, true),
         _ => return None,
     })
 }
@@ -124,7 +124,7 @@ fn oxc_parent(at: Node<'_>) -> Option<(Around, Node<'_>, bool)> {
 /// oxlint's test for an assignment to `member`, which looks at the two nearest ancestors. Parentheses count as
 /// ancestors, except around an assignment target.
 fn oxlint_is_assignee(member: Expr) -> bool {
-    let mut around = [Around::Other; 2];
+    let mut around = [ParentKind::Other; 2];
     let (mut at, mut parentheses) = (Node::Expr(member), 0);
     for it in &mut around {
         let Some((kind, parent, is_assigned_to)) = oxc_parent(at) else {
@@ -137,8 +137,8 @@ fn oxlint_is_assignee(member: Expr) -> bool {
         (*it, at, parentheses) = (kind, parent, 0);
     }
     let [first, second] = around;
-    !matches!(first, Around::Member | Around::Other)
-        || second == Around::Pattern && first != Around::Member
+    !matches!(first, ParentKind::Member | ParentKind::Other)
+        || second == ParentKind::Pattern && first != ParentKind::Member
 }
 
 fn is_increment<'a>(update: Expr<'a>, name: Name<'a>) -> bool {
@@ -241,21 +241,21 @@ impl Rule for PreferForOf {
             return;
         };
         if is_oxlint
-            && (!oxlint_looks_at(array, index_var)
+            && (!oxlint_checks_array(array, index_var)
                 || declarator
                     .init()
-                    .is_some_and(|init| oxlint_minds_parentheses(init, test, update)))
+                    .is_some_and(|init| oxlint_rejects_parentheses(init, test, update)))
         {
             return;
         }
         if is_index_only_used_with_array(body, index_var, array) {
             // oxlint reports everything between the parentheses.
-            let place = if is_oxlint {
+            let report_span = if is_oxlint {
                 Span::new(init.span().start, update.span().end)
             } else {
                 stmt.span()
             };
-            cx.report(place, PREFER_FOR_OF).called_with(stmt);
+            cx.report(report_span, PREFER_FOR_OF).called_with(stmt);
         }
     }
 }

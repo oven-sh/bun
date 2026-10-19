@@ -58,7 +58,7 @@ fn can_be_fixed(e: Expr) -> bool {
 }
 
 /// oxlint's `check_is_same_reference`. An index can be any expression, written twice: `a[i - 1] = a[i - 1] + b`.
-fn is_same_reference_for_oxlint<'a>(target: Expr<'a>, e: Expr<'a>) -> bool {
+fn oxlint_is_same_reference<'a>(target: Expr<'a>, e: Expr<'a>) -> bool {
     match target.kind() {
         ExprKind::Ident(name) => e.as_ident() == Some(name) && !e.is_parenthesized(),
         ExprKind::Dot { .. } | ExprKind::Index { .. } => {
@@ -85,7 +85,7 @@ impl OperatorAssignment {
         let replacement = assign_op_text(Some(op));
         let is_oxlint = cx.language().is_oxlint;
         let is_same_reference = |e: Expr<'a>| match is_oxlint {
-            true => is_same_reference_for_oxlint(target, e),
+            true => oxlint_is_same_reference(target, e),
             false => is_same_reference(target, e, true),
         };
         if is_same_reference(left) {

@@ -29,7 +29,7 @@ enum Found<'r> {
 
 /// The spans an access can be reported at.
 #[derive(Copy, Clone)]
-struct Places {
+struct ReportSpans {
     eslint: Span,
     /// oxlint points at what is restricted: the object, the property, or both.
     object: Option<Span>,
@@ -37,14 +37,14 @@ struct Places {
     access: Span,
 }
 
-impl Places {
-    fn everywhere(at: Span) -> Places {
-        Places { eslint: at, object: None, property: at, access: at }
+impl ReportSpans {
+    fn all_at(at: Span) -> ReportSpans {
+        ReportSpans { eslint: at, object: None, property: at, access: at }
     }
 
     /// `key` is the key of a property in the pattern.
-    fn of_pattern(pattern: Span, key: Option<Span>) -> Places {
-        Places { eslint: pattern, ..Places::everywhere(key.unwrap_or(pattern)) }
+    fn of_pattern(pattern: Span, key: Option<Span>) -> ReportSpans {
+        ReportSpans { eslint: pattern, ..ReportSpans::all_at(key.unwrap_or(pattern)) }
     }
 }
 
@@ -101,17 +101,17 @@ impl NoRestrictedProperties {
 
     fn report<'a>(
         &self,
-        places: Places,
+        spans: ReportSpans,
         found: Found<'_>,
         object_name: Option<Name<'a>>,
         property_name: Cow<'a, [u8]>,
         cx: &Cx<'a, Self>,
     ) {
         let at = match found {
-            _ if !cx.language().is_oxlint => places.eslint,
-            Found::ObjectProperty(_) => places.access,
-            Found::Object(_) => places.object.unwrap_or(places.property),
-            Found::Property(_) => places.property,
+            _ if !cx.language().is_oxlint => spans.eslint,
+            Found::ObjectProperty(_) => spans.access,
+            Found::Object(_) => spans.object.unwrap_or(spans.property),
+            Found::Property(_) => spans.property,
         };
         match found {
             Found::ObjectProperty(matched) | Found::Object(matched) => {
@@ -153,7 +153,7 @@ impl NoRestrictedProperties {
     /// ESLint's `checkPropertyAccess`.
     fn check_property_access<'a>(
         &self,
-        at: impl FnOnce() -> Places,
+        at: impl FnOnce() -> ReportSpans,
         object_name: Option<Name<'a>>,
         property_name: Option<Cow<'a, [u8]>>,
         cx: &Cx<'a, Self>,
@@ -186,8 +186,8 @@ impl NoRestrictedProperties {
                 ExprKind::Index { obj, index, .. } => (Some(obj.outer_span()), index.outer_span()),
                 _ => (None, e.span()),
             };
-            let places = Places { object, property, ..Places::everywhere(e.span()) };
-            self.report(places, found, object_name, property_name, cx);
+            let spans = ReportSpans { object, property, ..ReportSpans::all_at(e.span()) };
+            self.report(spans, found, object_name, property_name, cx);
         }
     }
 
@@ -207,11 +207,11 @@ impl NoRestrictedProperties {
         let object_name = right.and_then(Expr::as_ident);
         for property in properties {
             let property_name = ast_utils::get_static_property_name(property);
-            let places = || {
+            let spans = || {
                 let key = property.key().map(|it| it.inner_span(cx.file()));
-                Places::of_pattern(utils::estree_span(Node::Pat(pat)), key)
+                ReportSpans::of_pattern(utils::estree_span(Node::Pat(pat)), key)
             };
-            self.check_property_access(places, object_name, property_name, cx);
+            self.check_property_access(spans, object_name, property_name, cx);
         }
     }
 
@@ -230,8 +230,8 @@ impl NoRestrictedProperties {
         };
         for property in properties {
             let property_name = ast_utils::get_static_property_name(property);
-            let places = || Places::of_pattern(e.span(), property.key().map(|it| it.inner_span(cx.file())));
-            self.check_property_access(places, object_name, property_name, cx);
+            let spans = || ReportSpans::of_pattern(e.span(), property.key().map(|it| it.inner_span(cx.file())));
+            self.check_property_access(spans, object_name, property_name, cx);
         }
     }
 
@@ -247,7 +247,7 @@ impl NoRestrictedProperties {
                 && utils::estree_type_name(Node::Type(ty)) != "TSTypeReference"
             {
                 let at = Span::new(ty.span().start, property.span().end);
-                self.report(Places::everywhere(at), found, object_name, Cow::Borrowed(property.bytes()), cx);
+                self.report(ReportSpans::all_at(at), found, object_name, Cow::Borrowed(property.bytes()), cx);
             }
             object_name = None;
         }

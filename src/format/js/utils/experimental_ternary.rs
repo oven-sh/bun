@@ -450,7 +450,7 @@ fn is_followed_by_line_break(e: Expr<'_>) -> bool {
 /// Prettier's `isSimpleExpressionByNodeCount`: true if `e` has at most `max` nodes, counting only those that are the
 /// value of an ESTree node's property. Nodes in a list, like a call's arguments, don't count.
 fn is_simple_expression_by_node_count<'a>(e: Expr<'a>, max: u32, f: &Formatter<'a>) -> bool {
-    inner_node_count(e, max, f.context().has_tree_of_babel()) <= max
+    inner_node_count(e, max, f.context().has_babel_tree()) <= max
 }
 
 /// The count can stop at anything above `max`. Babel, which Prettier uses to parse JavaScript, has no `ChainExpression`

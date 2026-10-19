@@ -42,14 +42,14 @@ const GROUP: usize = 16;
 
 const FREE: u32 = u32::MAX;
 
-/// Stores `place` in the first free bucket hashbrown finds for `hash`. The table must have a free bucket.
-fn put(table: &mut [u32], hash: u32, place: u32) {
+/// Stores `index` in the first free bucket hashbrown finds for `hash`. The table must have a free bucket.
+fn put(table: &mut [u32], hash: u32, index: u32) {
     let mask = table.len() - 1;
     let (mut at, mut stride) = (hash as usize & mask, 0);
     loop {
         let mut group = (0..GROUP.min(table.len())).map(|it| (at + it) & mask);
         if let Some(free) = group.find(|&it| table[it] == FREE) {
-            table[free] = place;
+            table[free] = index;
             return;
         }
         stride += GROUP;
@@ -62,14 +62,14 @@ fn put(table: &mut [u32], hash: u32, place: u32) {
 ///
 /// This is the order of `Scoping::get_bindings` for a scope, given the names in declaration order, and of
 /// `Scoping::root_unresolved_references`, given the names in order of each one's first unresolved reference.
-pub fn order_in_table_of_oxc<'a>(names: impl Iterator<Item = &'a [u8]>) -> Vec<u32> {
+pub fn oxc_table_order<'a>(names: impl Iterator<Item = &'a [u8]>) -> Vec<u32> {
     let hashes: Vec<u32> = names.map(hash).collect();
-    order_in_table(&hashes, 0)
+    hashbrown_table_order(&hashes, 0)
 }
 
 /// The same for a hashbrown table with any hasher. `hashes` holds the low half of each key's hash, in insertion order.
 /// `capacity` is what the table was created with (`with_capacity`, `collect`), or 0 for `new`.
-pub fn order_in_table(hashes: &[u32], capacity: usize) -> Vec<u32> {
+pub fn hashbrown_table_order(hashes: &[u32], capacity: usize) -> Vec<u32> {
     let buckets_for = |wanted: usize| match wanted {
         0 => 0,
         1..=3 => 4,
@@ -85,8 +85,8 @@ pub fn order_in_table(hashes: &[u32], capacity: usize) -> Vec<u32> {
     for (count, &hash) in hashes.iter().enumerate() {
         if count == capacity_of(table.len()) {
             let mut grown = vec![FREE; buckets_for(count + 1)];
-            for &place in table.iter().filter(|&&it| it != FREE) {
-                put(&mut grown, hashes[place as usize], place);
+            for &index in table.iter().filter(|&&it| it != FREE) {
+                put(&mut grown, hashes[index as usize], index);
             }
             table = grown;
         }

@@ -69,7 +69,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
     /// Loops over nodes check this before each node. Otherwise every enclosing `:has()` would
     /// descend this far again for each of its nodes.
     #[inline]
-    fn goes_on(&self) -> bool {
+    fn should_continue(&self) -> bool {
         !self.is_too_deep.get()
     }
 
@@ -174,8 +174,10 @@ impl<'s, 'a> Matcher<'s, 'a> {
         let mut matches =
             |it: Option<VNode<'a>>| it.is_some_and(|it| self.matches_node(selector, it));
         match side {
-            Side::Left => (list.take(at).take_while(|_| self.goes_on())).any(&mut matches),
-            Side::Right => (list.skip(at + 1).take_while(|_| self.goes_on())).any(&mut matches),
+            Side::Left => (list.take(at).take_while(|_| self.should_continue())).any(&mut matches),
+            Side::Right => {
+                (list.skip(at + 1).take_while(|_| self.should_continue())).any(&mut matches)
+            }
         }
     }
 
@@ -228,7 +230,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
         }
         let mut open: SmallVec<[Children<'a>; 8]> = SmallVec::new();
         open.push(self.children(node, node_type));
-        while let Some(innermost) = open.last_mut().filter(|_| self.goes_on()) {
+        while let Some(innermost) = open.last_mut().filter(|_| self.should_continue()) {
             let Some(child) = innermost.next() else {
                 open.pop();
                 continue;
@@ -345,7 +347,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
             Op::Descendant(left, right) => {
                 self.matches(right, node, node_type)
                     && std::iter::successors(self.parent(node), |it| self.parent(*it))
-                        .take_while(|_| self.goes_on())
+                        .take_while(|_| self.should_continue())
                         .any(|it| self.matches_node(left, it))
             }
             Op::Sibling {

@@ -529,7 +529,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             self.out.end_group();
             self.out.text(tags.node_content(id));
             self.out
-                .built_text(|out| match tags.is_written_to_its_end(id) {
+                .built_text(|out| match tags.is_verbatim_without_end_tag(id) {
                     true => tags.closing_tag_suffix(id, out),
                     false => tags.closing_tag(id, out),
                 });

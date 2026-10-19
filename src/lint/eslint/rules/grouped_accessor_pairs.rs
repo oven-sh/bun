@@ -101,14 +101,14 @@ impl GroupedAccessorPairs {
         // For oxlint the span ends with the key, before the `]`.
         let end = if is_oxlint { getter.key.inner_span(cx.file()).end } else { head.end };
         // oxlint reports both problems for a pair that's neither grouped nor in order.
-        let says_order = !is_in_order && (is_grouped || is_oxlint);
-        for (is_said, message) in [(!is_grouped, NOT_GROUPED), (says_order, INVALID_ORDER)] {
+        let reports_order = !is_in_order && (is_grouped || is_oxlint);
+        for (is_reported, message) in [(!is_grouped, NOT_GROUPED), (reports_order, INVALID_ORDER)] {
             // For a pair that isn't grouped, oxlint's message mentions the getter first.
             let (first, second) = match is_oxlint && message.id == NOT_GROUPED.id {
                 true => (getter, setter),
                 false => (former, latter),
             };
-            if is_said {
+            if is_reported {
                 cx.report(Span::new(head.start, end), message)
                     .data("formerName", ast_utils::get_function_name_with_kind(first.func))
                     .data("latterName", ast_utils::get_function_name_with_kind(second.func))

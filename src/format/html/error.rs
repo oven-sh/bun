@@ -20,14 +20,14 @@ pub(crate) enum ErrorKind {
     IncompleteLet,
     /// Not one of the parser's errors. Its `$EOF` is 0, so a NUL between tags ends the text, and Prettier drops
     /// everything after it.
-    TextBehindNul,
+    TextAfterNul,
     /// Not one of the parser's errors: Prettier itself fails on the parsed tree.
     Other,
 }
 
 impl ErrorKind {
     /// True for the lexer's errors, which are reported before the parser's.
-    pub(crate) fn is_of_lexer(self) -> bool {
+    pub(crate) fn is_lexer_error(self) -> bool {
         matches!(
             self,
             ErrorKind::UnexpectedCharacter
@@ -124,7 +124,7 @@ impl<'a> SyntaxError<'a> {
                 "Incomplete @let declaration \"",
                 "\". @let declarations must be written as `@let <name> = <value>;`",
             ),
-            TextBehindNul => ("Unexpected NUL character", ""),
+            TextAfterNul => ("Unexpected NUL character", ""),
             Other => ("Unexpected token", ""),
         };
         let name: &[u8] = match (self.kind, &name[..]) {

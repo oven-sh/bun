@@ -87,7 +87,7 @@ fn is_annotated_with_never(node: Node<'_>) -> bool {
 }
 
 /// True if `getKeyValue` of `node`'s key isn't a string, e.g. `1`, `[1n]`, `[null]` or `[/a/]`.
-fn is_named_by_no_string(node: Node<'_>) -> bool {
+fn has_non_string_key(node: Node<'_>) -> bool {
     let Node::Prop(property) = node else {
         return false;
     };
@@ -128,7 +128,7 @@ impl NoUnusedPropTypes {
             let full_name = prop.full_name.as_deref();
             // Upstream compares with `===` and `indexOf`, so a number never equals a string. In a shape the full name
             // is a string.
-            let is_number = prop.node.is_some_and(is_named_by_no_string);
+            let is_number = prop.node.is_some_and(has_non_string_key);
             let is_ignored = !(is_number && prop.full_name == prop.name)
                 && full_name.is_some_and(|name| self.ignore.iter().any(|it| name == &**it));
             // If no prop is used at all, a shape isn't used either.

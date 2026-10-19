@@ -55,7 +55,7 @@ pub(crate) struct Sink<'o> {
     /// How many times something other than text has gone to the output.
     line_breaks: u32,
     /// The unit needs a document.
-    has_failed: bool,
+    needs_document: bool,
     /// The style sheet is embedded in HTML, where Prettier runs `cleanDoc` on its document.
     is_cleaned: bool,
 }
@@ -75,7 +75,7 @@ impl<'o> Sink<'o> {
             line_start_column: 0,
             has_group_in_line: false,
             line_breaks: 0,
-            has_failed: false,
+            needs_document: false,
         }
     }
 
@@ -93,7 +93,7 @@ impl<'o> Sink<'o> {
             line_start_column: 0,
             has_group_in_line: false,
             line_breaks: 0,
-            has_failed: false,
+            needs_document: false,
         }
     }
 
@@ -123,7 +123,8 @@ impl<'o> Sink<'o> {
     /// going to a document, or if it's part of something larger that would be rewritten as a whole.
     pub(crate) fn start_unit(&mut self) -> Option<Mark> {
         let printer = self.printer.as_ref()?;
-        if self.is_document || self.has_group_in_line || self.has_failed || self.flat_groups > 0 {
+        if self.is_document || self.has_group_in_line || self.needs_document || self.flat_groups > 0
+        {
             return None;
         }
         Some(Mark {
@@ -139,7 +140,7 @@ impl<'o> Sink<'o> {
     pub(crate) fn end_unit(&mut self) -> bool {
         self.check_line();
         self.has_group_in_line = false;
-        !std::mem::take(&mut self.has_failed)
+        !std::mem::take(&mut self.needs_document)
     }
 
     /// Rolls back the output of the unit that started at `mark`. From now on, writes go to a document.
@@ -176,7 +177,7 @@ impl<'o> Sink<'o> {
 
     /// Writes `document`, which isn't inside a group and ends with a line break.
     pub(crate) fn document(&mut self, document: &Doc<'_>) {
-        if !self.is_straight() {
+        if !self.writes_directly() {
             return self.elements.document(document);
         }
         self.elements.clear();
@@ -201,7 +202,7 @@ impl<'o> Sink<'o> {
                 .as_ref()
                 .is_some_and(|printer| self.column() > printer.width)
         {
-            self.has_failed = true;
+            self.needs_document = true;
         }
     }
 
@@ -212,27 +213,27 @@ impl<'o> Sink<'o> {
         let printer = self
             .printer
             .as_ref()
-            .filter(|_| self.is_straight() && !self.has_failed)?;
+            .filter(|_| self.writes_directly() && !self.needs_document)?;
         Some((printer.out.len(), self.line_breaks))
     }
 
     /// Returns the output since `position` if it's all on one line, and whether that line has a group on it.
     pub(crate) fn written_since(&self, (len, line_breaks): (usize, u32)) -> Option<(&[u8], bool)> {
         let printer = self.printer.as_ref().filter(|_| {
-            self.is_straight() && !self.has_failed && self.line_breaks == line_breaks
+            self.writes_directly() && !self.needs_document && self.line_breaks == line_breaks
         })?;
         Some((printer.out.get(len..)?, self.has_group_in_line))
     }
 
     /// Writes output that `written_since` returned earlier.
-    pub(crate) fn write_again(&mut self, text: &[u8], has_group: bool) {
+    pub(crate) fn replay_output(&mut self, text: &[u8], has_group: bool) {
         self.text(text);
         self.has_group_in_line |= has_group;
     }
 
     // ───────────────────────────── the parts of a document ─────────────────────────────
 
-    fn is_straight(&self) -> bool {
+    fn writes_directly(&self) -> bool {
         !self.is_document
     }
 
@@ -290,7 +291,7 @@ impl<'o> Sink<'o> {
         if self.is_document {
             self.elements.hard_line();
         } else if self.flat_groups > 0 {
-            self.has_failed = true;
+            self.needs_document = true;
         } else {
             self.write_line_break();
         }
@@ -300,7 +301,7 @@ impl<'o> Sink<'o> {
     pub(crate) fn literal_line(&mut self) {
         match self.is_document {
             true => self.elements.line(Line::Literal),
-            false => self.has_failed = true,
+            false => self.needs_document = true,
         }
     }
 
@@ -308,7 +309,7 @@ impl<'o> Sink<'o> {
         if self.is_document {
             self.elements.break_parent();
         } else if self.flat_groups > 0 {
-            self.has_failed = true;
+            self.needs_document = true;
         }
     }
 
@@ -338,7 +339,7 @@ impl<'o> Sink<'o> {
                 ..Group::default()
             });
         } else if self.flat_groups > 0 {
-            self.has_failed |= should_break;
+            self.needs_document |= should_break;
             self.flat_groups += 1;
         } else if !should_break {
             self.flat_groups = 1;
@@ -391,7 +392,7 @@ impl<'o> Sink<'o> {
             self.elements.start_item();
         } else if self.flat_groups == 0 {
             // Only the doc printer can work out how much fits on each line.
-            self.has_failed = true;
+            self.needs_document = true;
         }
     }
 
@@ -401,7 +402,7 @@ impl<'o> Sink<'o> {
             return match separator {
                 Separator::Line | Separator::DedentedLine => self.token(" "),
                 Separator::SoftLine => {}
-                Separator::HardLine | Separator::DedentedHardLine => self.has_failed = true,
+                Separator::HardLine | Separator::DedentedHardLine => self.needs_document = true,
             };
         }
         let elements = &mut self.elements;
@@ -461,7 +462,7 @@ impl<'o> Sink<'o> {
     pub(crate) fn start_line_suffix(&mut self) {
         match self.is_document {
             true => self.elements.start_line_suffix(),
-            false => self.has_failed = true,
+            false => self.needs_document = true,
         }
     }
 
@@ -475,7 +476,7 @@ impl<'o> Sink<'o> {
     pub(crate) fn start_without_lines(&mut self) {
         match self.is_document {
             true => self.without_lines.push(self.elements.position()),
-            false => self.has_failed = true,
+            false => self.needs_document = true,
         }
     }
 

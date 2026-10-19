@@ -259,7 +259,7 @@ fn get_type_arguments<'a>(ty: Type<'a>) -> impl ExactSizeIterator<Item = Type<'a
 
 /// The types [`type_contains`] has visited.
 #[derive(Default)]
-struct Met<'a> {
+struct Visited<'a> {
     seen: IdSet<Type<'a>>,
     /// The declarations of the signatures currently being examined. Only used for tsgolint.
     active_signatures: SmallVec<[TsNode<'a>; 8]>,
@@ -267,11 +267,11 @@ struct Met<'a> {
 
 /// `None` if the type is infinite. Upstream runs out of stack, which ends the walk. Continuing with the rest of each
 /// level instead would take exponential time.
-fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Met<'a>) -> Option<bool> {
+fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, visited: &mut Visited<'a>) -> Option<bool> {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
     }
-    if !met.seen.insert(ty) {
+    if !visited.seen.insert(ty) {
         return Some(false);
     }
     if predicate(ty) {
@@ -279,14 +279,14 @@ fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Me
     }
     if ty.is_union_or_intersection() {
         for part in ty.types() {
-            if type_contains(part, predicate, met)? {
+            if type_contains(part, predicate, visited)? {
                 return Some(true);
             }
         }
         return Some(false);
     }
     for type_argument in get_type_arguments(ty) {
-        if type_contains(type_argument, predicate, met)? {
+        if type_contains(type_argument, predicate, visited)? {
             return Some(true);
         }
     }
@@ -295,24 +295,24 @@ fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Me
         // A signature's instantiation inside that signature's own parameters or return type. tsgolint assumes that the
         // type is infinite and may contain what we're looking for. All instantiations share one declaration.
         let declaration = signature.declaration().filter(|_| is_oxlint);
-        if declaration.is_some_and(|it| met.active_signatures.contains(&it)) {
+        if declaration.is_some_and(|it| visited.active_signatures.contains(&it)) {
             return Some(true);
         }
-        met.active_signatures.extend(declaration);
+        visited.active_signatures.extend(declaration);
         // tsgolint starts with the parameters. The order matters, because each type is only examined once.
-        if !is_oxlint && type_contains(signature.get_return_type(), predicate, met)? {
+        if !is_oxlint && type_contains(signature.get_return_type(), predicate, visited)? {
             return Some(true);
         }
         for parameter in signature.parameters() {
-            if type_contains(parameter.get_type(), predicate, met)? {
+            if type_contains(parameter.get_type(), predicate, visited)? {
                 return Some(true);
             }
         }
-        if is_oxlint && type_contains(signature.get_return_type(), predicate, met)? {
+        if is_oxlint && type_contains(signature.get_return_type(), predicate, visited)? {
             return Some(true);
         }
         if declaration.is_some() {
-            met.active_signatures.pop();
+            visited.active_signatures.pop();
         }
     }
     Some(false)
@@ -321,12 +321,12 @@ fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Me
 // What upstream decides about `any` in an infinite type, once it has run out of stack, depends on the rest of the file.
 // Mostly it decides there is one, which is also the answer that reports nothing.
 fn contains_any(ty: Type) -> bool {
-    type_contains(ty, |t| is_type_flag_set(t, TypeFlags::ANY), &mut Met::default()).unwrap_or(true)
+    type_contains(ty, |t| is_type_flag_set(t, TypeFlags::ANY), &mut Visited::default()).unwrap_or(true)
 }
 
 fn contains_type_variable(ty: Type) -> bool {
     let is_one = |t| is_type_flag_set(t, TypeFlags::TYPE_VARIABLE | TypeFlags::INDEX);
-    type_contains(ty, is_one, &mut Met::default()).unwrap_or(false)
+    type_contains(ty, is_one, &mut Visited::default()).unwrap_or(false)
 }
 
 fn has_phantom_type_arguments(ty: Type) -> bool {
@@ -919,20 +919,20 @@ fn get_uncast_type(expression: Expr<'_>) -> Type<'_> {
 /// Looks for a call that infers its type arguments. It skips functions and assertions, which have their own contextual
 /// types.
 #[derive(Default)]
-struct CallThatInfers {
+struct InferringCallFinder {
     /// The number of enclosing functions and assertions.
     hidden: u32,
     is_found: bool,
 }
 
-impl CallThatInfers {
+impl InferringCallFinder {
     fn hides(node: Node) -> bool {
         matches!(node, Node::Expr(e) if e.as_fn().is_some()
             || matches!(e.tag(), ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies))
     }
 }
 
-impl<'a> Visitor<'a> for CallThatInfers {
+impl<'a> Visitor<'a> for InferringCallFinder {
     fn enter(&mut self, node: Node<'a>) {
         self.hidden += u32::from(Self::hides(node));
         if self.hidden == 0
@@ -988,7 +988,7 @@ fn is_asserted_type_expected_of_a_call_in_the_arguments(expression: Expr) -> boo
     let is_by_index = infers.is_some()
         && !matches!(call.kind(), ExprKind::TaggedTemplate(_))
         && !it.args().iter().any(|argument| argument.tag() == ExprTag::Spread);
-    let mut calls = CallThatInfers::default();
+    let mut calls = InferringCallFinder::default();
     for (index, argument) in it.args().iter().enumerate() {
         // The same goes for a parameter without a type variable.
         if !is_by_index || tsgolint_has_generic_inference_parameter_at_argument(call, index, &mut std::iter::empty()) {

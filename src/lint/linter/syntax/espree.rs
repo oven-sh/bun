@@ -45,9 +45,9 @@ struct Checks<'a, 'c> {
     noticed: u32,
     /// True if the tree is complete because the parser reported nothing.
     is_whole: bool,
-    /// Report only what Prettier rejects. See [`refusal_of_babel`].
+    /// Report only what Prettier rejects. See [`babel_refusal`].
     is_babel: bool,
-    /// Report only what oxc rejects. See [`Checks::early_errors_of_oxc`].
+    /// Report only what oxc rejects. See [`Checks::oxc_early_errors`].
     is_oxc: bool,
     /// For oxc: report only what its parser reports, and don't use the scopes. Set if TypeScript's parser has an error,
     /// so the tree has holes, or if the file is being formatted.
@@ -59,7 +59,7 @@ struct Checks<'a, 'c> {
 /// Prefixes of the acorn messages for errors that Babel also has, that Babel either doesn't recover from or Prettier
 /// rethrows, and that Babel reports everywhere acorn does. Prettier formats a file whose only errors aren't listed
 /// here.
-const REFUSED_BY_BABEL: [&str; 48] = [
+const REJECTED_BY_BABEL: [&str; 48] = [
     "A string literal cannot be used as an exported binding without `from`.",
     "An export name cannot include a lone surrogate.",
     "Assigning to rvalue",
@@ -180,7 +180,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
         };
         error.stage(Stage::Parser)
     };
-    let waits = |at: u32, what: &str| {
+    let await_error = |at: u32, what: &str| {
         let message =
             format!("{what} only allowed within async functions and at the top levels of modules");
         error(at, &message)
@@ -206,15 +206,15 @@ pub(super) fn module_syntax_in_commonjs<'a>(
     for it in file.exprs_of_kind(ExprTag::Await) {
         // `await` is an identifier there, and after an identifier these characters continue the expression.
         let operand = it.operand().map(|it| it.outer_span().start as usize);
-        let goes_on = matches!(
+        let continues_expression = matches!(
             operand.and_then(|at| file.text().get(at)),
             Some(b'(' | b'[' | b'/' | b'+' | b'-' | b'`')
         );
         // Only the first `await` of `await await a` is reported.
-        let follows_one = !it.is_parenthesized()
+        let follows_await = !it.is_parenthesized()
             && matches!(it.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Await);
-        if !goes_on && !follows_one && is_at_top_level(Node::Expr(it)) {
-            all.push(waits(it.span().start, "`await` is"));
+        if !continues_expression && !follows_await && is_at_top_level(Node::Expr(it)) {
+            all.push(await_error(it.span().start, "`await` is"));
         }
     }
     if file.has_rare_syntax(hir::rare::AWAIT_USING) {
@@ -223,7 +223,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
             if first.is_some_and(|it| it.var_kind() == VarKind::AwaitUsing)
                 && is_at_top_level(Node::Stmt(it))
             {
-                all.push(waits(it.span().start, "`await` is"));
+                all.push(await_error(it.span().start, "`await` is"));
             }
         }
     }
@@ -232,7 +232,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
             && is_at_top_level(Node::Stmt(it))
         {
             let keyword = skip_trivia(file.text(), it.span().start + 3);
-            all.push(waits(keyword, "`for await` loops are"));
+            all.push(await_error(keyword, "`for await` loops are"));
         }
     }
     all
@@ -245,10 +245,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
 /// this only reports errors that Prettier is known to throw. It doesn't use the file's scopes.
 ///
 /// `finds_candidates` is `false` only in a test that checks it makes no difference.
-pub(super) fn refusal_of_babel<'a>(
-    file: &'a File<'a>,
-    finds_candidates: bool,
-) -> Option<SyntaxError> {
+pub(super) fn babel_refusal<'a>(file: &'a File<'a>, finds_candidates: bool) -> Option<SyntaxError> {
     let candidates = finds_candidates.then(|| Candidates::of(file));
     let mut checks = Checks {
         file,
@@ -263,7 +260,7 @@ pub(super) fn refusal_of_babel<'a>(
         only_parser: false,
         is_oxfmt: false,
     };
-    checks.keywords_as_names();
+    checks.keywords_as_identifiers();
     checks.early_errors();
     checks.first.map(|it| it.1)
 }
@@ -273,7 +270,7 @@ pub(super) fn refusal_of_babel<'a>(
 /// each of a, b, c.
 #[derive(Default)]
 struct Tops<'a> {
-    /// Caches the outermost expression for expressions nested at least [`LONG`] deep.
+    /// Caches the outermost expression for expressions nested at least [`CACHE_DEPTH`] deep.
     known: IdMap<Expr<'a>, Expr<'a>>,
 }
 
@@ -283,7 +280,7 @@ impl<'a> Tops<'a> {
         // Fast path: almost every chain is short and isn't worth caching.
         if self.known.is_empty() {
             let mut at = of;
-            for _ in 0..LONG {
+            for _ in 0..CACHE_DEPTH {
                 match at.parent() {
                     Node::Expr(parent) => at = parent,
                     above => return (at, above),
@@ -304,7 +301,7 @@ impl<'a> Tops<'a> {
                 above => break (at, above),
             }
         };
-        if passed.len() >= LONG {
+        if passed.len() >= CACHE_DEPTH {
             self.known
                 .extend(passed.into_iter().map(|it| (it, found.0)));
         }
@@ -329,9 +326,9 @@ impl<'a> Tops<'a> {
 }
 
 /// The nesting depth from which [`Tops`] caches the outermost expression.
-const LONG: usize = 16;
+const CACHE_DEPTH: usize = 16;
 
-/// The expressions that [`refusal_of_babel`] needs to look at. Nothing else in `bun fmt` needs the file's expressions
+/// The expressions that [`babel_refusal`] needs to look at. Nothing else in `bun fmt` needs the file's expressions
 /// indexed by kind, and sorting all of them costs ten times as much as the checks.
 ///
 /// If a check starts looking at more expressions of a kind, add them HERE. `prettier-refusals.mjs` compares the results
@@ -368,7 +365,7 @@ impl Candidates {
         let mut found = Vec::new();
         for (i, raw) in file.hir.exprs.iter().enumerate() {
             let is_candidate = match raw.kind {
-                // `keywords_as_names`
+                // `keywords_as_identifiers`
                 Kind::Ident(name) => name.is_keyword_identifier(),
                 // `private_names`: `a.#b`
                 Kind::Dot { .. } => {
@@ -466,7 +463,7 @@ pub(super) fn first_error<'a>(
         is_oxfmt: false,
     };
     if let Some((diagnostic, at)) = of_parser {
-        checks.error_of_parser(diagnostic, at);
+        checks.translate_parser_error(diagnostic, at);
         checks.at_sign_before(at);
     }
     checks.editions();
@@ -476,7 +473,7 @@ pub(super) fn first_error<'a>(
     checks.module_syntax();
     checks.strict_mode();
     checks.octals_in_strict_code();
-    checks.keywords_as_names();
+    checks.keywords_as_identifiers();
     checks.parameters();
     checks.early_errors();
     if checks.is_whole {
@@ -507,7 +504,7 @@ pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
 }
 
 /// oxc's error for `export = a` at the top level of a file that also exports something else.
-pub(super) fn export_assignment_beside_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
+pub(super) fn export_assignment_with_other_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if !file.has_rare_syntax(hir::rare::EXPORT_ASSIGNMENT) {
         return Vec::new();
     }
@@ -534,7 +531,7 @@ pub(super) fn export_assignment_beside_exports<'a>(file: &'a File<'a>) -> Vec<Sy
 
 /// oxc's error for `for await` in a non-`async` function, or at the top level of a script. For a file whose extension
 /// makes it CommonJS, see [`module_syntax_in_commonjs`].
-pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
+pub(super) fn for_await_outside_async<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if !file.has_rare_syntax(hir::rare::FOR_AWAIT) {
         return Vec::new();
     }
@@ -605,12 +602,12 @@ pub(super) fn with_in_strict_code<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
 
 /// Runs the checks of [`first_error`] that oxc also has. See [`super::oxc`]. oxc treats a file as a module if it has
 /// `import` or `export`.
-pub(super) fn errors_of_oxc<'a>(
+pub(super) fn oxc_errors<'a>(
     file: &'a File<'a>,
     only_parser: bool,
     is_oxfmt: bool,
 ) -> Vec<SyntaxError> {
-    // In TypeScript, `early_errors_of_oxc` only looks at these kinds. In JavaScript it looks at one expression in ten,
+    // In TypeScript, `oxc_early_errors` only looks at these kinds. In JavaScript it looks at one expression in ten,
     // and the rules are about to need the index by kind anyway.
     let suspends = hir::rare::SUSPENDS_IN_PARAMETERS | hir::rare::SUSPENDS_IN_STATIC_BLOCK;
     let kinds: &[ExprTag] = match file.has_rare_syntax(suspends) {
@@ -630,18 +627,18 @@ pub(super) fn errors_of_oxc<'a>(
         ],
     };
     // `a.#b` and `delete a` belong to kinds that have many expressions.
-    let asks_about_many = hir::rare::ODD_PRIVATE_NAME | hir::rare::DELETES_A_NAME;
-    let candidates = (!file.is_javascript()).then(|| match file.has_rare_syntax(asks_about_many) {
+    let common_kinds = hir::rare::ODD_PRIVATE_NAME | hir::rare::DELETES_A_NAME;
+    let candidates = (!file.is_javascript()).then(|| match file.has_rare_syntax(common_kinds) {
         true => Candidates::of(file),
         false => Candidates::of_kinds(file, kinds),
     });
-    let mut checks = checks_of_oxc(file, candidates.as_ref());
+    let mut checks = oxc_checks(file, candidates.as_ref());
     (checks.only_parser, checks.is_oxfmt) = (only_parser, is_oxfmt);
-    checks.early_errors_of_oxc();
+    checks.oxc_early_errors();
     checks.all
 }
 
-fn checks_of_oxc<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>) -> Checks<'a, 'c> {
+fn oxc_checks<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>) -> Checks<'a, 'c> {
     Checks {
         file,
         candidates,
@@ -681,7 +678,7 @@ impl<'a, 'c> Checks<'a, 'c> {
     /// Like [`Checks::fail`], for an error that oxc labels up to `label.end`. See [`SyntaxError::end`].
     fn fail_for(&mut self, label: Span, message: Vec<u8>) {
         let Span { start: at, end } = label;
-        if self.is_babel && !(REFUSED_BY_BABEL.iter()).any(|it| message.starts_with(it.as_bytes()))
+        if self.is_babel && !(REJECTED_BY_BABEL.iter()).any(|it| message.starts_with(it.as_bytes()))
         {
             return;
         }
@@ -829,7 +826,7 @@ impl<'a, 'c> Checks<'a, 'c> {
     // ───────────────────────────── rewording parser errors ─────────────────────────────
 
     #[optimize(size)]
-    fn error_of_parser(&mut self, diagnostic: Option<&Diagnostic>, at: u32) {
+    fn translate_parser_error(&mut self, diagnostic: Option<&Diagnostic>, at: u32) {
         let text = self.file.text();
         match diagnostic.map_or(0, |it| it.code) {
             1002 => {
@@ -1311,15 +1308,15 @@ impl<'a, 'c> Checks<'a, 'c> {
                             false => scope.is_strict(),
                         });
             if is_strict && self.is_oxc {
-                self.octal_of_oxc(it);
+                self.oxc_octal_error(it);
             } else if is_strict {
-                self.error_of_parser(Some(it), it.start);
+                self.translate_parser_error(Some(it), it.start);
             }
         }
     }
 
     /// oxc's error for an octal literal or escape in strict code. Its label covers the whole literal.
-    fn octal_of_oxc(&mut self, it: &Diagnostic) {
+    fn oxc_octal_error(&mut self, it: &Diagnostic) {
         // Find the token that contains the diagnostic.
         let before = self.file.token_before(Span::empty(it.start));
         let literal = self
@@ -1344,7 +1341,7 @@ impl<'a, 'c> Checks<'a, 'c> {
     }
 
     /// Checks identifiers that are keywords in some contexts. Costs one comparison per identifier in the file.
-    fn keywords_as_names(&mut self) {
+    fn keywords_as_identifiers(&mut self) {
         let file = self.file;
         for it in self.exprs_of(ExprTag::Ident) {
             let Some(hir::ExprKind::Ident(name)) = it.try_raw().map(|it| it.kind) else {

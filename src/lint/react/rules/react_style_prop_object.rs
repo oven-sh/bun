@@ -79,7 +79,7 @@ impl StylePropObject {
             let place = match value {
                 AttributeValue::StringLiteral(_) => Some(whole),
                 AttributeValue::ExpressionContainer(_) => {
-                    value.as_expression().and_then(|it| place_of_invalid(it, whole, cx))
+                    value.as_expression().and_then(|it| invalid_value_span(it, whole, cx))
                 }
                 // oxlint allows an element.
                 AttributeValue::Element(_) | AttributeValue::Fragment(_) => (!is_oxlint).then_some(whole),
@@ -138,9 +138,9 @@ impl StylePropObject {
             })
         };
         // Upstream only checks the first one.
-        let looked_at = if is_oxlint { usize::MAX } else { 1 };
-        for value in properties.iter().filter(is_style).take(looked_at).filter_map(Prop::value) {
-            if let Some(place) = place_of_invalid(value, value.span(), cx) {
+        let check_limit = if is_oxlint { usize::MAX } else { 1 };
+        for value in properties.iter().filter(is_style).take(check_limit).filter_map(Prop::value) {
+            if let Some(place) = invalid_value_span(value, value.span(), cx) {
                 cx.report(place, message(is_oxlint));
             }
         }
@@ -161,7 +161,7 @@ fn is_non_nullary_literal(expression: Expr) -> bool {
 
 /// Returns where to report `value` (an expression in braces or a property value) if it isn't an object. A literal is
 /// reported at `whole`.
-fn place_of_invalid<'a>(value: Expr<'a>, whole: Span, cx: &mut Cx<'a, StylePropObject>) -> Option<Span> {
+fn invalid_value_span<'a>(value: Expr<'a>, whole: Span, cx: &mut Cx<'a, StylePropObject>) -> Option<Span> {
     if cx.language().is_oxlint {
         return is_invalid_expression(value, &mut cx.state).then_some(whole);
     }

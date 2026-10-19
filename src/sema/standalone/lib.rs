@@ -157,7 +157,7 @@ mod tests {
     use bun_sema_driver::host::{Disk, from_argument, from_native, to_native};
 
     #[test]
-    fn a_directory_in_the_root_can_be_named_like_a_root_of_typescript() {
+    fn directory_in_root_can_be_named_like_a_typescript_root() {
         for native in [
             &b"/c:/a/b.ts"[..],
             b"/c:",
@@ -192,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn the_real_path_of_what_is_below_the_marked_root_is_below_it() {
+    fn realpath_under_the_marked_root_stays_under_it() {
         // A test can't create a directory in `/`. `/usr/lib` already exists and isn't a symlink.
         let disk = Disk::with_already_read(1, Default::default(), b"/");
         assert_eq!(disk.realpath(b"/usr/lib"), b"/usr/lib");

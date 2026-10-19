@@ -112,21 +112,21 @@ pub fn format(
     let Some(parsers) = Parsers::new(parse_javascript, options) else {
         return Err(FormatError::SyntaxError);
     };
-    let without_mark = original.strip_prefix(crate::text::BOM).unwrap_or(original);
-    let first = original.len() - without_mark.len();
+    let without_bom = original.strip_prefix(crate::text::BOM).unwrap_or(original);
+    let first = original.len() - without_bom.len();
     let range = Offsets::new(original, first, options);
-    if (range.start >= range.end && !without_mark.is_empty())
-        || (options.require_pragma && !print::has_pragma(without_mark))
+    if (range.start >= range.end && !without_bom.is_empty())
+        || (options.require_pragma && !print::has_pragma(without_bom))
     {
         out.extend_from_slice(original);
         return Ok(());
     }
-    let normalized = bun_core::strings::crlf_as_lf(without_mark);
+    let normalized = bun_core::strings::crlf_as_lf(without_bom);
     let text = trimmed(&normalized);
     // Maps an offset in `text` to an offset in the file.
     let in_file = |SyntaxError(message, at): SyntaxError| {
         let before = (normalized.len() - trimmed_start(&normalized).len()) as u32;
-        SyntaxError(message, before + at).before_normalizing_end_of_line(without_mark)
+        SyntaxError(message, before + at).before_normalizing_end_of_line(without_bom)
     };
     let refuse = |error: SyntaxError| FormatError::SyntaxErrorAt(in_file(error));
     let mut tree = (parsers.tree_of(text))
@@ -147,7 +147,7 @@ pub fn format(
         ..options.clone()
     };
     let svelte = options.svelte;
-    let is_typescript = tree.says_typescript;
+    let is_typescript = tree.uses_typescript;
     let how = (parsers.program, is_typescript);
     let sorted =
         (options.tailwind.as_deref()).and_then(|it| tailwind::sort(&mut tree, text, it, how));
@@ -163,7 +163,7 @@ pub fn format(
     // Without `embed`, the only JavaScript the plugin can print is an identifier, and it throws for a script or a
     // style sheet.
     if options.embedded_language_formatting == EmbeddedLanguageFormatting::Off
-        && !document.replace_code_by_names()
+        && !document.replace_identifier_code_with_text()
     {
         let error = SyntaxError(Message::NeedsEmbeddedFormatting, 0);
         return Err(FormatError::SyntaxErrorAt(error));
@@ -197,11 +197,11 @@ pub fn format(
     let mut unformatted = unformatted.take();
     crate::sort::sort_by_key(&mut unformatted, |it| it.1);
     let before = (normalized.len() - trimmed_start(&normalized).len()) as u32;
-    let mut places = BeforeNormalizing::new(without_mark);
+    let mut offsets = BeforeNormalizing::new(without_bom);
     scratch
         .unformatted
         .extend(unformatted.into_iter().map(|(message, at)| {
-            let at = places.place_of(before + at);
+            let at = offsets.original_offset_of(before + at);
             Unformatted { message, at }
         }));
     if original.starts_with(crate::text::BOM) {
@@ -245,9 +245,9 @@ pub fn has_same_content(
         false => before.into_owned(),
     };
     let sensitivity = options.html_whitespace_sensitivity;
-    let is_kept_in =
+    let matches_input =
         |after: &[u8]| verify::has_same_content(&before, &prepared(after), parsers, sensitivity);
-    if is_kept_in(after) {
+    if matches_input(after) {
         return true;
     }
     if options.sort_imports.is_none() && options.jsdoc.is_none() && options.tailwind.is_none() {
@@ -272,5 +272,5 @@ pub fn has_same_content(
         &mut formatted,
     )
     .is_ok()
-        && is_kept_in(&formatted)
+        && matches_input(&formatted)
 }

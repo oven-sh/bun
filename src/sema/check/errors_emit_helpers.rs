@@ -121,7 +121,7 @@ impl Checker<'_, '_> {
     pub(super) fn check_external_emit_helpers(&mut self, file: FileId) {
         // FOR SPEED: skips the walk if this file's `tslib` has every helper, even though a later file may resolve to a
         // different `tslib`.
-        if !self.files().options.import_helpers || self.emit_helpers_lacks_none(file) {
+        if !self.files().options.import_helpers || self.emit_helpers_has_every_helper(file) {
             return;
         }
         let (checked, elsewhere) = self.emit_helpers_checked_out_of_order(file);
@@ -156,7 +156,7 @@ impl Checker<'_, '_> {
         later.dedup();
         for file in later {
             if !self.emit_helpers_is_effective_external_module(file)
-                || self.emit_helpers_lacks_none(file)
+                || self.emit_helpers_has_every_helper(file)
             {
                 continue;
             }
@@ -187,7 +187,7 @@ impl Checker<'_, '_> {
 
     /// FOR SPEED: true if `checkExternalEmitHelpers` can't report anything in `file`, whichever helper is requested,
     /// because its `tslib` has every helper.
-    fn emit_helpers_lacks_none(&mut self, file: FileId) -> bool {
+    fn emit_helpers_has_every_helper(&mut self, file: FileId) -> bool {
         let files = self.files();
         let mode = files.module(file).default_mode;
         match files.module_of_specifier_as(file, known::tslib, mode) {
@@ -831,7 +831,7 @@ impl Checker<'_, '_> {
             }
             decorated.push(owner);
             // `NodeCanBeDecorated`
-            if bound.refused_decorators.contains(&e) {
+            if bound.rejected_decorators.contains(&e) {
                 continue;
             }
             let Some(deferred) = self.emit_helpers_span(file, bound.parent_of_expr(e)) else {
@@ -947,7 +947,7 @@ impl Checker<'_, '_> {
     }
 
     /// `ClassElementOrClassElementParameterIsDecorated` for the member `node` of the class `parent`, with
-    /// `useLegacyDecorators` taken from the options. `refused_decorators` has the results of `NodeCanBeDecorated` for
+    /// `useLegacyDecorators` taken from the options. `rejected_decorators` has the results of `NodeCanBeDecorated` for
     /// that setting.
     fn class_element_or_class_element_parameter_is_decorated(
         &self,
@@ -962,7 +962,7 @@ impl Checker<'_, '_> {
         };
         let node_is_decorated = |of: DecoratorOwner| {
             let mut decorators = hir.decorators.iter();
-            decorators.any(|d| d.0 == of && !bound.refused_decorators.contains(&d.1))
+            decorators.any(|d| d.0 == of && !bound.rejected_decorators.contains(&d.1))
         };
         let parameters = match hir[node].kind {
             MemberKind::Getter | MemberKind::Setter => {
@@ -1002,7 +1002,7 @@ impl Checker<'_, '_> {
         let decorator_of = |owner: DecoratorOwner| {
             hir.decorators
                 .iter()
-                .find(|d| d.0 == owner && !bound.refused_decorators.contains(&d.1))
+                .find(|d| d.0 == owner && !bound.rejected_decorators.contains(&d.1))
                 .map(|d| d.1)
         };
         // `willTransformStaticElementsOfDecoratedClass`

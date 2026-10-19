@@ -60,7 +60,7 @@ fn is_undefined(e: Expr<'_>) -> bool {
 
 /// Returns `e`. For oxlint, type-only wrappers are stripped: `a as T`, `a!`.
 #[inline]
-fn seen(e: Expr<'_>) -> Expr<'_> {
+fn strip_type_wrappers_for_oxlint(e: Expr<'_>) -> Expr<'_> {
     if e.file().language().is_oxlint { get_inner_expression(e) } else { e }
 }
 
@@ -70,7 +70,7 @@ fn is_same_reference<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
         return ast_utils::is_same_reference(a, b, false);
     }
     let is_member = |it: Expr<'a>| matches!(it.tag(), ExprTag::Dot | ExprTag::Index) && !it.is_chain_root();
-    let (a, b) = (seen(a), seen(b));
+    let (a, b) = (strip_type_wrappers_for_oxlint(a), strip_type_wrappers_for_oxlint(b));
     match (a.as_ident(), b.as_ident()) {
         (Some(a), Some(b)) => a == b,
         _ => is_member(a) && is_member(b) && is_same_member_expression(a, b),
@@ -79,7 +79,7 @@ fn is_same_reference<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
 
 /// True for an `Identifier` or a `MemberExpression`. An optional chain is neither.
 fn is_reference(e: Expr<'_>) -> bool {
-    let e = seen(e);
+    let e = strip_type_wrappers_for_oxlint(e);
     match e.kind() {
         ExprKind::Ident(name) => !name.is("undefined"),
         ExprKind::Dot { .. } | ExprKind::Index { .. } => !e.is_in_optional_chain(),
@@ -306,7 +306,7 @@ impl LogicalAssignmentOperators {
         let (Some(op), Some(left), Some(right)) = (logical.binary_op(), logical.left(), logical.right()) else {
             return;
         };
-        let assignment = seen(right);
+        let assignment = strip_type_wrappers_for_oxlint(right);
         let (Some(None), Some(target)) = (assignment.assign_op(), assignment.left()) else {
             return;
         };
@@ -448,7 +448,7 @@ impl Rule for LogicalAssignmentOperators {
 
     #[inline]
     fn binary<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if expr.right().is_some_and(|right| seen(right).assign_op() == Some(None)) {
+        if expr.right().is_some_and(|right| strip_type_wrappers_for_oxlint(right).assign_op() == Some(None)) {
             self.check_logical(expr, cx);
         }
     }

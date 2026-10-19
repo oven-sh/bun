@@ -77,26 +77,26 @@ impl ParentType {
 
 /// One entry of upstream's `nodes`.
 #[derive(Copy, Clone)]
-struct Place {
+struct ExportNode {
     at: Span,
     parent: ParentType,
 }
 
 /// An exported name and its `nodes`.
-struct Named<'a> {
+struct NamedExport<'a> {
     name: &'a [u8],
-    nodes: SmallVec<[Place; 2]>,
+    nodes: SmallVec<[ExportNode; 2]>,
 }
 
 /// `new Set(Array.from(nodes, (node) => node.parent.type))`
-fn types_of(nodes: &[Place]) -> u8 {
+fn types_of(nodes: &[ExportNode]) -> u8 {
     nodes
         .iter()
         .fold(0, |types, node| types | node.parent.bit())
 }
 
 /// Runs after `removeTypescriptFunctionOverloads`, so `nodes` has no `TSDeclareFunction`.
-fn is_typescript_namespace_merging(nodes: &[Place]) -> bool {
+fn is_typescript_namespace_merging(nodes: &[ExportNode]) -> bool {
     let (types, namespace) = (types_of(nodes), ParentType::TsModuleDeclaration.bit());
     let no_namespace_nodes = nodes
         .iter()
@@ -108,9 +108,9 @@ fn is_typescript_namespace_merging(nodes: &[Place]) -> bool {
         || (is_with_class_or_enum && no_namespace_nodes.count() == 1)
 }
 
-impl Place {
+impl ExportNode {
     /// The caller has already checked that `is_typescript_namespace_merging` is false.
-    fn should_skip_typescript_namespace(self, nodes: &[Place]) -> bool {
+    fn should_skip_typescript_namespace(self, nodes: &[ExportNode]) -> bool {
         let merged_with = ParentType::TsEnumDeclaration.bit()
             | ParentType::ClassDeclaration.bit()
             | ParentType::FunctionDeclaration.bit();
@@ -123,8 +123,8 @@ struct Exports<'a, 'c> {
     cx: &'c Cx<'a, Export>,
     is_oxlint: bool,
     /// Upstream's `namespace`: the index in `named` for each (parent, is a type, name).
-    places: FxHashMap<(u32, bool, &'a [u8]), usize>,
-    named: Vec<Named<'a>>,
+    index_by_key: FxHashMap<(u32, bool, &'a [u8]), usize>,
+    named: Vec<NamedExport<'a>>,
     maps: Option<&'c ExportMaps<'a>>,
     /// oxlint only: the modules already reached through an `export *`.
     visited: FxHashSet<ModuleId>,
@@ -144,18 +144,21 @@ impl<'a> Exports<'a, '_> {
         is_type: bool,
     ) {
         let next = self.named.len();
-        let place = *self.places.entry((parent, is_type, name)).or_insert(next);
-        if place == next {
-            self.named.push(Named {
+        let named_index = *self
+            .index_by_key
+            .entry((parent, is_type, name))
+            .or_insert(next);
+        if named_index == next {
+            self.named.push(NamedExport {
                 name,
                 nodes: SmallVec::new(),
             });
         }
         // Upstream's `nodes` is a `Set`, and one `export *` can add the same name twice.
-        if let Some(Named { nodes, .. }) = self.named.get_mut(place)
+        if let Some(NamedExport { nodes, .. }) = self.named.get_mut(named_index)
             && nodes.last().is_none_or(|last| last.at != at)
         {
-            nodes.push(Place {
+            nodes.push(ExportNode {
                 at,
                 parent: parent_type,
             });
@@ -361,7 +364,7 @@ impl<'a> Exports<'a, '_> {
     /// `Program:exit`
     fn report(&mut self) {
         let (cx, is_oxlint) = (self.cx, self.is_oxlint);
-        for Named { name, nodes } in &mut self.named {
+        for NamedExport { name, nodes } in &mut self.named {
             // `removeTypescriptFunctionOverloads`
             nodes.retain(|node| node.parent != ParentType::TsDeclareFunction);
             let (name, nodes) = (*name, nodes.as_slice());
@@ -428,7 +431,7 @@ impl Rule for Export {
         let mut exports = Exports {
             cx,
             is_oxlint,
-            places: FxHashMap::default(),
+            index_by_key: FxHashMap::default(),
             named: Vec::new(),
             maps: maps.as_ref(),
             visited: FxHashSet::default(),

@@ -265,7 +265,7 @@ const FIELDS: Properties = &[
 ];
 
 /// `defaultNpmScripts`
-const SCRIPTS_OF_NPM: [&[u8]; 11] = [
+const NPM_SCRIPTS: [&[u8]; 11] = [
     b"install",
     b"pack",
     b"prepare",
@@ -318,7 +318,7 @@ fn sorts_dependencies_like_npm(document: Document<'_>, plugin: &Plugin) -> bool 
             .and_then(|it| document.get(it, b"npm")),
     )
     .is_some()
-        || !plugin.has_files_of_yarn_or_pnpm
+        || !plugin.has_yarn_or_pnpm_files
 }
 
 /// `sortDependencies`
@@ -538,7 +538,7 @@ fn has_sequential_script(document: Document<'_>) -> bool {
 }
 
 /// The order of `sortScriptNames`: `a:b` is in the group `a`, which comes before `a-b`.
-fn order_of_script_names(a: &[u8], b: &[u8]) -> Ordering {
+fn compare_script_names(a: &[u8], b: &[u8]) -> Ordering {
     // Where the group's name ends, and where the rest starts after the colon.
     let split = |name: &[u8]| match strings::index_of_char_usize(name, b':') {
         None | Some(0) => (name.len(), None),
@@ -569,7 +569,7 @@ pub(super) fn sort_scripts(scripts: &mut [Member<'_>], keeps_order: bool) {
                 .strip_prefix(b"pre")
                 .or_else(|| name.strip_prefix(b"post"));
             let omitted = omitted.unwrap_or(name);
-            if SCRIPTS_OF_NPM.contains(&omitted) || all.contains(omitted) {
+            if NPM_SCRIPTS.contains(&omitted) || all.contains(omitted) {
                 prefixable.insert(omitted);
                 return omitted;
             }
@@ -577,7 +577,7 @@ pub(super) fn sort_scripts(scripts: &mut [Member<'_>], keeps_order: bool) {
         })
         .collect();
     if !keeps_order {
-        crate::sort::sort_by(&mut names, |a, b| order_of_script_names(a, b));
+        crate::sort::sort_by(&mut names, |a, b| compare_script_names(a, b));
     }
     // Each script's rank: the first position that mentions it.
     let mut ranks: FxHashMap<Vec<u8>, usize> = FxHashMap::default();

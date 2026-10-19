@@ -1,4 +1,4 @@
-use crate::bun::{CALLED, Each, calls_of_bun, calls_of_modules, is_listed, list_option, written_start};
+use crate::bun::{CALLED, Each, bun_calls, module_calls, is_listed, list_option, static_prefix};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -59,7 +59,7 @@ fn is_relative(start: &[u8]) -> bool {
 }
 
 fn is_relative_path(e: Expr) -> bool {
-    written_start(e).is_some_and(|it| is_relative(it.0))
+    static_prefix(e).is_some_and(|it| is_relative(it.0))
 }
 
 impl Rule for NoCwdDependentPath {
@@ -80,7 +80,7 @@ impl Rule for NoCwdDependentPath {
         };
         let arguments_of = |e: Expr<'a>| e.as_call().map(Call::args);
         if FILE_SYSTEM.names.iter().any(|it| file.mentions(it)) {
-            for (e, name) in calls_of_modules(file, &FILE_SYSTEM) {
+            for (e, name) in module_calls(file, &FILE_SYSTEM) {
                 let Some(arguments) = arguments_of(e) else {
                     continue;
                 };
@@ -94,13 +94,13 @@ impl Rule for NoCwdDependentPath {
         }
         if PATH.names.iter().any(|it| file.mentions(it)) {
             // If any argument is absolute, `resolve()` starts from it instead of the working directory.
-            for arguments in calls_of_modules(file, &PATH).into_iter().filter_map(|it| arguments_of(it.0)) {
+            for arguments in module_calls(file, &PATH).into_iter().filter_map(|it| arguments_of(it.0)) {
                 if arguments.iter().all(is_relative_path) {
                     report(arguments.first());
                 }
             }
         }
-        for arguments in calls_of_bun(file, &["file", "write"]).into_iter().filter_map(|it| arguments_of(it.0)) {
+        for arguments in bun_calls(file, &["file", "write"]).into_iter().filter_map(|it| arguments_of(it.0)) {
             report(arguments.first());
         }
         if !self.functions.is_empty() {

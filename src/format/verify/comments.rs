@@ -44,7 +44,7 @@ fn compare_in_any_order(before: Comments<'_>, after: Comments<'_>) -> Result<(),
         .zip(&ys)
         .find(|(x, y)| x.0 != y.0)
         .map(|(x, y)| (x.1, y.1));
-    let place = |all: &[(Vec<u8>, u32)], at: usize, text: &[u8]| {
+    let offset_at = |all: &[(Vec<u8>, u32)], at: usize, text: &[u8]| {
         all.get(at).map_or(text.len() as u32, |it| it.1)
     };
     let shorter = xs.len().min(ys.len());
@@ -53,8 +53,8 @@ fn compare_in_any_order(before: Comments<'_>, after: Comments<'_>) -> Result<(),
         None if xs.len() == ys.len() => Ok(()),
         None => Err(Difference::new(
             "the number of comments",
-            (before.0, place(&xs, shorter, before.0)),
-            (after.0, place(&ys, shorter, after.0)),
+            (before.0, offset_at(&xs, shorter, before.0)),
+            (after.0, offset_at(&ys, shorter, after.0)),
         )),
     }
 }
@@ -125,7 +125,7 @@ fn jsdoc(comment: &[u8]) -> Option<&[u8]> {
 
 /// True if the JSDoc comment has more than a single tag name. One that doesn't can be dropped.
 #[optimize(size)]
-fn says_something(inner: &[u8]) -> bool {
+fn has_content(inner: &[u8]) -> bool {
     let is_part_of_word = |it: &u8| it.is_ascii_alphanumeric() || !it.is_ascii();
     let mut words = inner
         .split(|it| !is_part_of_word(it) && *it != b'@')
@@ -161,11 +161,11 @@ fn compare_without_jsdoc(before: Comments<'_>, after: Comments<'_>) -> Result<()
             .partition(|&&it| jsdoc(text_of(text, it)).is_none())
     };
     let (x, y) = (split(before), split(after));
-    let can_be_left_out =
+    let droppable_count =
         x.1.iter()
-            .filter(|&&it| !jsdoc(text_of(before.0, it)).is_some_and(says_something))
+            .filter(|&&it| !jsdoc(text_of(before.0, it)).is_some_and(has_content))
             .count();
-    if x.1.len() < y.1.len() || x.1.len() - y.1.len() > can_be_left_out {
+    if x.1.len() < y.1.len() || x.1.len() - y.1.len() > droppable_count {
         let end = |text: &[u8]| text.len() as u32;
         return Err(Difference::new(
             "the number of JSDoc comments",

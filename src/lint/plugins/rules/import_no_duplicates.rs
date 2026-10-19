@@ -130,7 +130,7 @@ impl Rule for NoDuplicates {
             }
             // oxlint sorts them by attributes.
             let several = attribute_groups.iter().filter(|it| it.1.len() > 1);
-            for (_, group) in utils::sort::in_order_of(several, |it| it.0) {
+            for (_, group) in utils::sort::collect_sorted_by_key(several, |it| it.0) {
                 self.check_group(group, cx);
             }
         }

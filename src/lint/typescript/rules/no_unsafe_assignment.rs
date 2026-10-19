@@ -121,10 +121,10 @@ impl<'a> Destructured<'a> {
         message: Message,
     ) -> Self {
         // tsgolint looks at a binding element's name, whatever its default is.
-        let is_name_alone = matches!(target, Target::Pat(pat) if pat.file().language().is_oxlint);
+        let uses_name_only = matches!(target, Target::Pat(pat) if pat.file().language().is_oxlint);
         Destructured {
-            span: if is_name_alone { target.span() } else { span_of_value(element) },
-            has_default: element.default.is_some() && !is_name_alone,
+            span: if uses_name_only { target.span() } else { span_of_value(element) },
+            has_default: element.default.is_some() && !uses_name_only,
             target,
             sender,
             message,
@@ -149,7 +149,7 @@ fn relation_span(sender_node: Expr, whole: Span) -> Span {
 #[derive(Copy, Clone)]
 struct Place {
     shown: Span,
-    of_comments: Span,
+    for_comments: Span,
 }
 
 fn check_destructure<'a>(
@@ -166,7 +166,7 @@ fn check_destructure<'a>(
         } else {
             span
         },
-        of_comments: span,
+        for_comments: span,
     };
     // Iterative, because a pattern can be nested as deeply as the parser allows. The next part to process is at the
     // end.
@@ -237,13 +237,13 @@ fn check_array_destructure<'a>(
     // `const [x] = [] as any[];`
     if is_type_any_array_type(sender_type) {
         cx.report(receiver_span.shown, UNSAFE_ARRAY_PATTERN)
-            .comments_apply_at(receiver_span.of_comments)
+            .comments_apply_at(receiver_span.for_comments)
             .data("sender", describe_sender(sender_type, cx))
             .labels_with(|labels| {
                 let ty = diagnostic_type_text(sender_type);
                 labels.first(format!("Destructured source provides type `{ty}`."));
-                labels.push(receiver_span.of_comments, "This binding receives type `any`.");
-                labels.push(receiver_span.of_comments, "");
+                labels.push(receiver_span.for_comments, "This binding receives type `any`.");
+                labels.push(receiver_span.for_comments, "");
             });
         return;
     }

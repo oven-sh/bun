@@ -238,11 +238,11 @@ impl Facts {
     fn of_declaration(declaration: Declaration) -> u16 {
         match declaration {
             Declaration::Var(_) => Self::OF_VARIABLE,
-            _ => Self::of_what_is_no_variable(declaration),
+            _ => Self::of_non_variable(declaration),
         }
     }
 
-    fn of_what_is_no_variable(declaration: Declaration) -> u16 {
+    fn of_non_variable(declaration: Declaration) -> u16 {
         let declared = Self::DEFINED | Self::NOT_IMPORTED_AS_TYPE;
         let both = Self::TYPE | Self::VALUE;
         match declaration {

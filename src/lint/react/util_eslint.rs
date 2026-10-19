@@ -49,7 +49,7 @@ pub(crate) fn mark_variable_as_used<'a>(name: Name<'a>, node: Node<'a>) {
     match node.scope().find_variable(name).map(Variable::kind) {
         Some(VariableKind::Declared(symbol)) => symbol.mark_used(),
         // Nothing reads the used flag of the variable that a class declares for its name in its own scope.
-        Some(VariableKind::NameInClass { .. } | VariableKind::ArgumentsOfFile) => {}
+        Some(VariableKind::NameInClass { .. } | VariableKind::FileArguments) => {}
         Some(VariableKind::Global(_)) | None => {
             if node.file().global_in_comments(name.bytes()).is_some() {
                 node.file().mark_global_used(name.bytes());

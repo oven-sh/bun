@@ -76,17 +76,17 @@ fn check<'a>(_: &PreferNegativeIndex, e: Expr<'a>, cx: &mut Cx<'a, PreferNegativ
     };
     let range_increment = if callee_name.is_any(&["slice", "subarray"]) { 2 } else { 1 };
     let arg_range_end = usize::from(is_prototype) + if is_prototype && name.is("apply") { 1 } else { range_increment };
-    let length_of_it = |binary_expr: Expr<'a>| {
+    let matching_length_access = |binary_expr: Expr<'a>| {
         get_binary_left_expr(binary_expr)
             .filter(|it| it.object().is_some_and(|object| is_same_node(identifier_expr, object)))
     };
     let mut member_exprs: SmallVec<[Expr<'a>; 2]> = SmallVec::new();
     for arg_expr in call_expr.args().iter().take(arg_range_end).filter(|it| !it.is_parenthesized()) {
         match arg_expr.kind() {
-            ExprKind::Binary { .. } => member_exprs.extend(length_of_it(arg_expr)),
+            ExprKind::Binary { .. } => member_exprs.extend(matching_length_access(arg_expr)),
             ExprKind::Array(elements) => {
                 let elements = elements.iter().take(range_increment).filter(|it| !it.is_parenthesized());
-                member_exprs.extend(elements.filter_map(length_of_it));
+                member_exprs.extend(elements.filter_map(matching_length_access));
             }
             _ => {}
         }
@@ -96,11 +96,11 @@ fn check<'a>(_: &PreferNegativeIndex, e: Expr<'a>, cx: &mut Cx<'a, PreferNegativ
     }
     cx.report(e, PREFER_NEGATIVE_INDEX).fix(|fixer| {
         // Including the space after it.
-        let with_blank = |span: Span| match fixer.file().text().get(span.end as usize) {
+        let with_trailing_space = |span: Span| match fixer.file().text().get(span.end as usize) {
             Some(b' ') => Span::new(span.start, span.end + 1),
             _ => span,
         };
-        member_exprs.iter().map(|it| fixer.remove(with_blank(it.span()))).collect::<Vec<_>>()
+        member_exprs.iter().map(|it| fixer.remove(with_trailing_space(it.span()))).collect::<Vec<_>>()
     });
 }
 

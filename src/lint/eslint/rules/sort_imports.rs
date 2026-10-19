@@ -158,9 +158,9 @@ impl Rule for SortImports {
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         let mut rank = [0, 1, 2, 3];
-        for (place, name) in options.strings("memberSyntaxSortOrder").into_iter().enumerate() {
+        for (position, name) in options.strings("memberSyntaxSortOrder").into_iter().enumerate() {
             if let Some(syntax) = Syntax::ALL.into_iter().find(|it| it.name() == name) {
-                rank[syntax as usize] = place;
+                rank[syntax as usize] = position;
             }
         }
         SortImports {
@@ -237,18 +237,18 @@ impl Rule for SortImports {
                 if specifiers.iter().any(has_comments) {
                     return None;
                 }
-                let written: Vec<ImportSpec<'a>> = specifiers.iter().collect();
-                let mut sorted = written.clone();
+                let original: Vec<ImportSpec<'a>> = specifiers.iter().collect();
+                let mut sorted = original.clone();
                 self.sort(&mut sorted);
                 // The text between the specifiers stays where it is.
                 let mut text = Vec::new();
                 for (i, specifier) in sorted.iter().enumerate() {
                     text.extend_from_slice(specifier.text());
-                    if let (Some(this), Some(next)) = (written.get(i), written.get(i + 1)) {
+                    if let (Some(this), Some(next)) = (original.get(i), original.get(i + 1)) {
                         text.extend_from_slice(file.slice(this.span().between(next.span())));
                     }
                 }
-                Some(fixer.replace(written.first()?.span().to(written.last()?.span()), text))
+                Some(fixer.replace(original.first()?.span().to(original.last()?.span()), text))
             });
     }
 }

@@ -22,7 +22,7 @@ fn is_declared(decl: VarDecl<'_>) -> bool {
 }
 
 /// oxlint doesn't report a variable declared in a loop's head, or anywhere in a namespace.
-fn oxlint_passes_over(decl: VarDecl<'_>) -> bool {
+fn oxlint_skips(decl: VarDecl<'_>) -> bool {
     let is_module = |it: Node| matches!(it, Node::Stmt(stmt) if stmt.tag() == StmtTag::Module);
     matches!(decl.parent().parent(), Node::Stmt(stmt) if stmt.is_loop()) || Node::VarDecl(decl).ancestors().any(is_module)
 }
@@ -60,12 +60,12 @@ impl Rule for NoUnassignedVars {
             let is_read = |it: Reference| {
                 it.is_read() && !it.is_jsx_pragma() && !it.expr().is_some_and(Expr::is_in_type_query)
             };
-            if is_oxlint && (oxlint_passes_over(decl) || !symbol.references().any(is_read)) {
+            if is_oxlint && (oxlint_skips(decl) || !symbol.references().any(is_read)) {
                 return;
             }
             // oxlint points at the name, without its type.
-            let place = if is_oxlint { decl.pat().span() } else { decl.span() };
-            cx.report(place, UNASSIGNED).data("name", name);
+            let location = if is_oxlint { decl.pat().span() } else { decl.span() };
+            cx.report(location, UNASSIGNED).data("name", name);
         }
     }
 }

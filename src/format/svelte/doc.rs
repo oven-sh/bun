@@ -59,9 +59,9 @@ pub(crate) struct Js<'a> {
     /// `forceSingleLine`
     pub(crate) is_on_one_line: bool,
     /// `removeParentheses`
-    pub(crate) is_without_parentheses: bool,
+    pub(crate) remove_parentheses: bool,
     /// Svelte resumes parsing right where the code ends and doesn't allow a comment there: `{#each a}`.
-    pub(crate) is_without_comment_behind: bool,
+    pub(crate) forbids_trailing_comment: bool,
     /// Set if the code comes right after a `{`.
     pub(crate) follows: Option<Brace>,
 }
@@ -196,7 +196,7 @@ impl<'a> Doc<'a> {
     }
 
     /// True for the docs that the plugin trims from a fragment: a line, an all-whitespace string or `breakParent`.
-    pub(crate) fn is_white_space_of_fragment(&self) -> bool {
+    pub(crate) fn is_fragment_whitespace(&self) -> bool {
         self.is_line()
             || matches!(self, Doc::BreakParent)
             || (self.as_string()).is_some_and(|it| {
@@ -206,7 +206,7 @@ impl<'a> Doc<'a> {
     }
 
     /// True if it prints nothing at all.
-    fn is_nothing(&self) -> bool {
+    fn prints_nothing(&self) -> bool {
         self.all(|doc, rest| match doc {
             Doc::Text(text) => text.is_empty(),
             Doc::Token(text) => text.is_empty(),
@@ -226,7 +226,7 @@ impl<'a> Doc<'a> {
     }
 
     /// Replaces each piece of code that's only an identifier with its text. Returns false if there's any other code.
-    pub(crate) fn replace_code_by_names(&mut self) -> bool {
+    pub(crate) fn replace_identifier_code_with_text(&mut self) -> bool {
         let mut rest: Vec<&mut Doc<'a>> = vec![self];
         while let Some(doc) = rest.pop() {
             match doc {
@@ -322,8 +322,8 @@ fn ends_with_soft_line(mut doc: &Doc<'_>) -> bool {
         doc = match doc {
             Doc::Line | Doc::Softline => return true,
             Doc::List(parts) | Doc::Fill(parts) => {
-                let mut full = (parts.iter().rev()).filter(|it| it.as_string() != Some(b""));
-                match full.next() {
+                let mut non_empty = (parts.iter().rev()).filter(|it| it.as_string() != Some(b""));
+                match non_empty.next() {
                     Some(last) => last,
                     None => return false,
                 }
@@ -359,7 +359,7 @@ pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, how: &mut Wr
             }
         }
         // The writer counts any start/end pair as content, even an empty one.
-        Doc::Group(contents) if contents.is_nothing() => {}
+        Doc::Group(contents) if contents.prints_nothing() => {}
         Doc::Group(contents) => {
             let id = ends_with_soft_line(contents).then(|| out.new_group_id());
             out.start_group_with(false, id);
@@ -393,7 +393,7 @@ pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, how: &mut Wr
             }
             out.end_fill();
         }
-        Doc::Line => out.line_or_blank(),
+        Doc::Line => out.line_or_literal_space(),
         Doc::Softline => out.softline(),
         Doc::Hardline => out.hardline(),
         Doc::Literalline => out.text(b"\n"),

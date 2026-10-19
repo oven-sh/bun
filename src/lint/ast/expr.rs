@@ -117,12 +117,12 @@ impl<'a> Expr<'a> {
     pub fn kind(self) -> ExprKind<'a> {
         match self.file.plain_exprs.get(self.id.idx()) {
             Some(raw) => self.kind_of::<true>(raw),
-            None => self.kind_in_general(),
+            None => self.kind_slow(),
         }
     }
 
     #[inline(never)]
-    fn kind_in_general(self) -> ExprKind<'a> {
+    fn kind_slow(self) -> ExprKind<'a> {
         match self.try_raw() {
             Some(raw) => self.kind_of::<false>(raw),
             None => ExprKind::Missing,
@@ -313,23 +313,23 @@ impl<'a> Expr<'a> {
         const fn kind(tag: ExprTag) -> u64 {
             1 << tag as u8
         }
-        let kind_of_it = kind(raw.kind.tag());
+        let tag_bit = kind(raw.kind.tag());
         // This is inlined into every caller, so it's a few bit tests instead of a jump table over the kinds.
-        let is_as_in_the_hir = if kind_of_it & (kind(ExprTag::Ident) | kind(ExprTag::Dot)) != 0 {
+        let is_hir_span_exact = if tag_bit & (kind(ExprTag::Ident) | kind(ExprTag::Dot)) != 0 {
             file.has_no_unicode_escape_in(raw.pos, raw.end)
-        } else if kind_of_it & (kind(ExprTag::Spread) | kind(ExprTag::String)) != 0 {
+        } else if tag_bit & (kind(ExprTag::Spread) | kind(ExprTag::String)) != 0 {
             file.hir.jsx.is_empty()
         } else {
-            kind_of_it & (kind(ExprTag::Class) | kind(ExprTag::Fn)) == 0
+            tag_bit & (kind(ExprTag::Class) | kind(ExprTag::Fn)) == 0
         };
-        match is_as_in_the_hir {
+        match is_hir_span_exact {
             true => Span::new(raw.pos, raw.end),
-            false => self.span_that_the_hir_may_not_have(),
+            false => self.corrected_span(),
         }
     }
 
     #[inline(never)]
-    fn span_that_the_hir_may_not_have(self) -> Span {
+    fn corrected_span(self) -> Span {
         match self.try_raw() {
             // The HIR doesn't record where the `...e` of a JSX child `{...e}` starts.
             Some(&hir::Expr {
@@ -1177,8 +1177,7 @@ impl<'a> File<'a> {
     /// The `name` of a `Dot`, which starts at `start`.
     #[inline]
     fn member_name(&'a self, name: Atom, start: u32) -> Ident<'a> {
-        match self.spells_private_names_apart() && self.hir.text.get(start as usize) == Some(&b'#')
-        {
+        match self.mangles_private_names() && self.hir.text.get(start as usize) == Some(&b'#') {
             true => self.private_member_name(name, start),
             false => self.ident(name, start),
         }
@@ -1399,12 +1398,12 @@ impl<'a> Template<'a> {
     /// The cooked value of text piece `i`. `None` if it has an invalid escape, which a tagged template allows.
     #[inline]
     pub fn cooked(self, i: usize) -> Option<Name<'a>> {
-        self.text_of_scanner(i)
+        self.scanner_text(i)
             .filter(|_| !has_invalid_escape(self.raw(i)))
     }
 
     /// Like [`Template::cooked`], but keeps an invalid escape as written, the way TypeScript's scanner does.
-    pub(crate) fn text_of_scanner(self, i: usize) -> Option<Name<'a>> {
+    pub(crate) fn scanner_text(self, i: usize) -> Option<Name<'a>> {
         let file = self.expr.file;
         let at = self.exprs.start as usize + self.exprs.len() + i;
         if i >= self.quasi_count() {

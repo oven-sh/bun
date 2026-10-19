@@ -5,7 +5,7 @@
 //! immutable from then on. Positions are byte offsets into the source.
 
 use crate::atom::Atom;
-pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, Places, ToNode};
+pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, RangeSet, ToNode};
 use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::borrow::Cow;
@@ -175,7 +175,7 @@ pub struct ListAt<T> {
     _of: PhantomData<T>,
 }
 
-macro_rules! impl_place {
+macro_rules! impl_handle {
     ($name:ident) => {
         impl<T> Copy for $name<T> {}
         impl<T> Clone for $name<T> {
@@ -191,7 +191,7 @@ macro_rules! impl_place {
         }
     };
 }
-impl_place!(ListAt);
+impl_handle!(ListAt);
 
 impl BranchesAt {
     /// `ids` must be the file's [`File::ids`].
@@ -427,7 +427,7 @@ impl<'s, T: Copy> Fixed<'s, T> {
     }
 
     /// Call before writing into it. Turns a shared list into a copy in `arena`.
-    pub(crate) fn make_own_in(&mut self, arena: &'s Arena) {
+    pub(crate) fn make_owned_in(&mut self, arena: &'s Arena) {
         if let FixedIn::Shared(list) = self.0 {
             *self = Fixed::copied_in(arena, list);
         }
@@ -523,9 +523,9 @@ impl<T: Id> Ids<T> for Narrow<'_, T> {
 impl<'s, T: Id> Narrow<'s, T> {
     /// Copies `list` into `arena` and clears it. `list` keeps its capacity.
     pub(crate) fn moved_in(arena: &'s Arena, list: &mut Vec<T>) -> Self {
-        let fits =
+        let all_fit =
             |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
-        if !list.iter().fold(true, fits) {
+        if !list.iter().fold(true, all_fit) {
             return Narrow {
                 short: Fixed::default(),
                 long: copy_to_arena(list, arena),
@@ -579,22 +579,22 @@ pub struct LazyCells {
     /// `FnId::to_node`, `ClassId::to_node`
     pub(crate) owners: OnceLock<crate::node::Owners>,
     /// `File::is_in_ambient_or_type_node`
-    pub(crate) ambient_or_type_places: OnceLock<Places<Box<[TextRange]>>>,
+    pub(crate) ambient_or_type_ranges: OnceLock<RangeSet<Box<[TextRange]>>>,
     /// `File::is_in_type_query`
-    pub(crate) type_query_places: OnceLock<Places<Box<[TextRange]>>>,
+    pub(crate) type_query_ranges: OnceLock<RangeSet<Box<[TextRange]>>>,
     /// `File::is_in_class_extends`
-    pub(crate) class_extends_places: OnceLock<Places<Box<[TextRange]>>>,
+    pub(crate) class_extends_ranges: OnceLock<RangeSet<Box<[TextRange]>>>,
     /// `File::keyword_identifiers`
     pub(crate) keyword_identifiers: OnceLock<Box<[Node]>>,
 }
 
 /// The cells of every file without nodes. What's computed from such a file is the same for all of them.
-static CELLS_OF_NO_NODES: LazyCells = LazyCells {
+static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     parents: OnceLock::new(),
     owners: OnceLock::new(),
-    ambient_or_type_places: OnceLock::new(),
-    type_query_places: OnceLock::new(),
-    class_extends_places: OnceLock::new(),
+    ambient_or_type_ranges: OnceLock::new(),
+    type_query_ranges: OnceLock::new(),
+    class_extends_ranges: OnceLock::new(),
     keyword_identifiers: OnceLock::new(),
 };
 
@@ -2022,7 +2022,7 @@ impl Mapped {
 pub struct Name {
     pub text: Atom,
     /// Its position. The top bit is set if it's preceded by a name and a dot.
-    place: u32,
+    packed_pos: u32,
 }
 
 impl Name {
@@ -2030,13 +2030,13 @@ impl Name {
 
     #[inline]
     pub fn pos(self) -> u32 {
-        self.place & !Name::QUALIFIED
+        self.packed_pos & !Name::QUALIFIED
     }
 
     /// True if it's the `Right` of a `QualifiedName`.
     #[inline]
     pub fn is_qualified(self) -> bool {
-        self.place & Name::QUALIFIED != 0
+        self.packed_pos & Name::QUALIFIED != 0
     }
 }
 
@@ -2308,7 +2308,7 @@ pub struct FileIn<S: Storage> {
     pub check_directive: Option<bool>,
     /// A module even without module syntax: by its extension, or because the options force every
     /// file to be a module. Such a file can still be a CommonJS module.
-    pub is_module_by_decree: bool,
+    pub is_forced_module: bool,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -2570,7 +2570,7 @@ pub const fn mention_bit(text: &[u8]) -> u32 {
 
 /// The bit of `FileIn::mentioned` that's also set if the file mentions `use`, or a text that starts with `use` and an
 /// ASCII capital or digit, which is what React treats as a hook name.
-pub const MENTION_OF_A_HOOK: u32 = mention_bit(b"use\0");
+pub const HOOK_MENTION_BIT: u32 = mention_bit(b"use\0");
 
 /// `mention_bit` of the text of length `len` whose first 16 bytes are `words`, little endian and padded with zeros.
 #[inline(always)]
@@ -2837,12 +2837,12 @@ impl FileBuilder {
         self.ids.extend(items.iter().map(|&i| i.into()));
         IdList::new(start, items.len() as u32)
     }
-    pub fn place_of_branches(&mut self, branches: Branches) -> BranchesAt {
+    pub fn store_branches(&mut self, branches: Branches) -> BranchesAt {
         let at = self.ids.len() as u32;
         self.ids.extend([branches.yes.0, branches.no.0]);
         BranchesAt(at)
     }
-    pub fn place_of_list<T>(&mut self, list: IdList<T>) -> ListAt<T> {
+    pub fn store_list<T>(&mut self, list: IdList<T>) -> ListAt<T> {
         if list.is_empty() {
             return ListAt::EMPTY;
         }
@@ -2879,9 +2879,9 @@ impl FileBuilder {
     pub fn entity_name(&mut self, names: impl Iterator<Item = (Atom, u32)>) -> Span<NameId> {
         let start = self.names.len();
         self.names
-            .extend(names.map(|(text, place)| Name { text, place }));
+            .extend(names.map(|(text, packed_pos)| Name { text, packed_pos }));
         for name in self.names.iter_mut().skip(start + 1) {
-            name.place |= Name::QUALIFIED;
+            name.packed_pos |= Name::QUALIFIED;
         }
         Span::new(start as u32, (self.names.len() - start) as u32)
     }
@@ -2933,7 +2933,7 @@ macro_rules! file_in_arena {
             is_js: $this.is_js,
             is_flow: $this.is_flow,
             check_directive: $this.check_directive,
-            is_module_by_decree: $this.is_module_by_decree,
+            is_forced_module: $this.is_forced_module,
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,
@@ -3144,7 +3144,7 @@ impl<'s> File<'s> {
     pub fn empty_in(arena: &'s Arena, session: &'s Session) -> File<'s> {
         let no_nodes = FileBuilder::default();
         no_nodes
-            .into_arena_with(arena, session, &CELLS_OF_NO_NODES)
+            .into_arena_with(arena, session, &EMPTY_FILE_CELLS)
             .0
     }
 

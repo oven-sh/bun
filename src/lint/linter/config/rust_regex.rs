@@ -100,7 +100,7 @@ struct Parser<'p> {
     stack_class: Vec<Option<(Span, bool)>>,
     capture_names: Vec<(&'p str, Span)>,
     /// The first error that's only reported after the whole pattern has parsed.
-    later: Option<Error>,
+    deferred_error: Option<Error>,
 }
 
 #[optimize(size)]
@@ -296,9 +296,9 @@ impl<'p> Parser<'p> {
     }
 
     #[optimize(size)]
-    fn refuse_after_parsing(&mut self, span: Span, kind: &'static str) {
-        if self.later.is_none() {
-            self.later = Some(Error {
+    fn defer_error(&mut self, span: Span, kind: &'static str) {
+        if self.deferred_error.is_none() {
+            self.deferred_error = Some(Error {
                 kind,
                 span,
                 original: None,
@@ -308,9 +308,9 @@ impl<'p> Parser<'p> {
 
     /// With `(?-u)` a pattern matches bytes, and it must not match invalid UTF-8.
     #[optimize(size)]
-    fn refuse_later(&mut self, span: Span, kind: &'static str) {
+    fn defer_error_unless_unicode(&mut self, span: Span, kind: &'static str) {
         if !self.modes.unicode {
-            self.refuse_after_parsing(span, kind);
+            self.defer_error(span, kind);
         }
     }
 
@@ -577,7 +577,7 @@ impl<'p> Parser<'p> {
     fn parse_primitive(&mut self) -> Parsed<()> {
         match self.char() {
             '\\' => return self.parse_escape(false).map(|_| ()),
-            '.' => self.refuse_later(self.span_char(), INVALID_UTF8),
+            '.' => self.defer_error_unless_unicode(self.span_char(), INVALID_UTF8),
             _ => {}
         }
         self.bump();
@@ -600,24 +600,24 @@ impl<'p> Parser<'p> {
                 let (c, end, is_byte) = self.parse_hex()?;
                 let span = Span { start, end };
                 match c.is_ascii() {
-                    false if is_byte => self.refuse_later(span, INVALID_UTF8),
-                    false if is_in_class => self.refuse_later(span, NO_UNICODE),
+                    false if is_byte => self.defer_error_unless_unicode(span, INVALID_UTF8),
+                    false if is_in_class => self.defer_error_unless_unicode(span, NO_UNICODE),
                     _ => {}
                 }
                 return Ok((Primitive::Literal(c), span));
             }
             'p' | 'P' => {
                 let is_known = self.parse_unicode_class()?;
-                self.refuse_later(self.span_from(start), NO_UNICODE);
+                self.defer_error_unless_unicode(self.span_from(start), NO_UNICODE);
                 if !is_known {
-                    self.refuse_after_parsing(self.span_from(start), "Unicode property not found");
+                    self.defer_error(self.span_from(start), "Unicode property not found");
                 }
                 return Ok((Primitive::Class, self.span_from(start)));
             }
             'd' | 's' | 'w' | 'D' | 'S' | 'W' => {
                 self.bump();
                 if c.is_ascii_uppercase() {
-                    self.refuse_later(self.span_from(start), INVALID_UTF8);
+                    self.defer_error_unless_unicode(self.span_from(start), INVALID_UTF8);
                 }
                 return Ok((Primitive::Class, self.span_from(start)));
             }
@@ -803,7 +803,7 @@ impl<'p> Parser<'p> {
                     let open = self.stack_class.pop().flatten();
                     self.bump();
                     if let Some((open, true)) = open {
-                        self.refuse_later(self.span_from(open.start), INVALID_UTF8);
+                        self.defer_error_unless_unicode(self.span_from(open.start), INVALID_UTF8);
                     }
                     if self.stack_class.is_empty() {
                         return Ok(());
@@ -867,7 +867,7 @@ impl<'p> Parser<'p> {
         }
         let item = (Primitive::Literal(self.char()), self.span_char());
         if !self.char().is_ascii() {
-            self.refuse_later(item.1, NO_UNICODE);
+            self.defer_error_unless_unicode(item.1, NO_UNICODE);
         }
         self.bump();
         Ok(item)
@@ -939,7 +939,7 @@ impl<'p> Parser<'p> {
         if !is_one {
             self.pos = start;
         } else if is_negated {
-            self.refuse_later(self.span_from(start), INVALID_UTF8);
+            self.defer_error_unless_unicode(self.span_from(start), INVALID_UTF8);
         }
         is_one
     }
@@ -1069,8 +1069,8 @@ pub(super) fn syntax_error(pattern: &[u8]) -> Option<Vec<u8>> {
         stack_group: Vec::new(),
         stack_class: Vec::new(),
         capture_names: Vec::new(),
-        later: None,
+        deferred_error: None,
     };
-    let error = parser.parse().err().or(parser.later)?;
+    let error = parser.parse().err().or(parser.deferred_error)?;
     Some(describe(pattern, &error))
 }

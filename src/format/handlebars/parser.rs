@@ -574,7 +574,7 @@ impl Parser<'_> {
 
         let text = self.text(original);
         let has_slash = strings::contains_char(text, b'/');
-        let is_refused = match has_slash {
+        let is_rejected = match has_slash {
             true => {
                 text.starts_with(b"./")
                     || text.starts_with(b"../")
@@ -599,7 +599,7 @@ impl Parser<'_> {
             original: Original::Text(original),
             is_splat,
         };
-        if is_refused || matches!(prefix, Prefix::SubExpression(_)) {
+        if is_rejected || matches!(prefix, Prefix::SubExpression(_)) {
             return Ok(invalid);
         }
 

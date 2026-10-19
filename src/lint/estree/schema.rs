@@ -522,7 +522,7 @@ estree_schema! {
     Literal [literals()] (v) {
         data Raw = v.file().slice(v.span());
         data Value = match v.leaf()?.0 {
-            Leaf::String(value) => Value::Str(attribute_as_written(v).unwrap_or(value)),
+            Leaf::String(value) => Value::Str(raw_jsx_attribute_string(v).unwrap_or(value)),
             Leaf::Number(value) => Value::Number(value),
             Leaf::Bool(value) => Value::Bool(value),
             Leaf::BigInt(digits) => Value::BigInt(digits),

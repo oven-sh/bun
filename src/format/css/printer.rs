@@ -4,7 +4,7 @@ use super::Parser as Syntax;
 use super::media_query::{MediaKind, MediaNode};
 use super::memo::Memo;
 use super::misc::{
-    adjust_numbers, adjust_strings, ends_before_escaped_blank, ends_with_hex_escape,
+    adjust_numbers, adjust_strings, ends_with_hex_escape, ends_with_unescaped_backslash,
     last_line_has_inline_comment, maybe_to_lower_case, print_css_number, print_string, print_unit,
     quote_attribute_value, to_lower_case,
 };
@@ -113,7 +113,7 @@ pub(crate) struct Printer<'a, 'o> {
     /// The ancestors, within the value, of the value node being printed.
     pub(crate) value_stack: Vec<ValueId>,
     /// If nonzero, the comment that starts the item after a comma and has already been printed right after that comma.
-    pub(crate) comment_behind_comma: ValueId,
+    pub(crate) comment_after_comma: ValueId,
     /// Index of the `value-comma_group` member being printed.
     pub(crate) index_in_comma_group: usize,
     /// A list item, and how many of its leading comments have already been printed above it.
@@ -154,7 +154,7 @@ fn has_placeholder_in_first_selector(selector: &[u8]) -> bool {
 /// True if oxfmt prints a custom property's `value` verbatim because part of it isn't a valid value in the language, as
 /// in `--a: [{"b":1}]`, `--a: b:c` and `--a: 1px !b`. Prettier formats it as a value anyway. Only applies to
 /// single-line values.
-fn is_more_than_values(value: &[u8], syntax: Syntax) -> bool {
+fn has_non_value_syntax(value: &[u8], syntax: Syntax) -> bool {
     let is_name_part =
         |byte: u8| bun_core::strings::is_regexp_word_byte(byte) || byte == b'-' || byte >= 0x80;
     // The number of open `(`.
@@ -225,7 +225,7 @@ fn is_range_or_condition(text: &[u8]) -> bool {
 
 /// In a media query, oxfmt puts a space on both sides of `<`, `>`, `=`, `<=` and `>=`, one after a `:`, and none after
 /// a `(` or before a `)`. Prettier only understands a name, a `:` and a value, and leaves everything else alone.
-fn with_blanks_in_media_feature(text: &[u8]) -> Vec<u8> {
+fn with_spaces_in_media_feature(text: &[u8]) -> Vec<u8> {
     let mut result: Vec<u8> = Vec::with_capacity(text.len() + 8);
     let mut at = 0;
     while let Some(&byte) = text.get(at) {
@@ -278,7 +278,7 @@ fn with_blanks_in_media_feature(text: &[u8]) -> Vec<u8> {
 /// - `*` always gets spaces around it.
 /// - `+` and `-` get them if there's no space before them and a variable, a name or a function is next to them, so not
 ///   in `1+2`. A `-` after anything but a `)` is part of a name, and so is one before a letter.
-fn with_blanks_around_operators(value: &[u8]) -> Cow<'_, [u8]> {
+fn with_spaces_around_operators(value: &[u8]) -> Cow<'_, [u8]> {
     if bun_core::strings::index_of_any(value, b"+-*").is_none() {
         return Cow::Borrowed(value);
     }
@@ -663,7 +663,7 @@ impl<'a> Printer<'a, '_> {
         if let Some(((context, text), _)) = position
             && let Some((output, has_group)) = self.memo.get(context, text)
         {
-            return self.sink.write_again(output, has_group);
+            return self.sink.replay_output(output, has_group);
         }
 
         let mut own = None;
@@ -812,7 +812,7 @@ impl<'a> Printer<'a, '_> {
                         && node.prop.starts_with(b"--")
                         // The raw text includes `!default` and `!global`, which are also printed after the value.
                         && !(node.scss_default || node.scss_global)
-                        && is_more_than_values(printer.context.of(raw.value), printer.syntax()) =>
+                        && has_non_value_syntax(printer.context.of(raw.value), printer.syntax()) =>
                 {
                     printer.sink.text(printer.context.written(raw.value));
                 }
@@ -848,7 +848,7 @@ impl<'a> Printer<'a, '_> {
                 printer.sink.end_indent();
             }
             // Otherwise the backslash would escape the `;`, as it does in Prettier's output.
-            if ends_before_escaped_blank(printer.context.of(raw.value).trim_ascii_end()) {
+            if ends_with_unescaped_backslash(printer.context.of(raw.value).trim_ascii_end()) {
                 printer.sink.token(" ");
             }
             printer.print_rest_of_declaration(scope, raw);
@@ -895,7 +895,7 @@ impl<'a> Printer<'a, '_> {
             .is_some_and(|parent| parent.kind == Kind::AtRule && parent.variable);
         // Tailwind `@plugin` options are JavaScript object keys, and the names in `@font-feature-values` blocks are
         // chosen by the author. Both are case-sensitive. Prettier prints `className` as `classname`.
-        let is_name_of_the_author = statement.inside_at_rule(&[
+        let is_author_defined_name = statement.inside_at_rule(&[
             b"plugin",
             b"stylistic",
             b"historical-forms",
@@ -905,7 +905,7 @@ impl<'a> Printer<'a, '_> {
             b"ornaments",
             b"annotation",
         ]);
-        match is_in_less_variable || is_name_of_the_author || statement.inside_icss_rule() {
+        match is_in_less_variable || is_author_defined_name || statement.inside_icss_rule() {
             true => self.sink.text(&node.prop),
             false => self.sink.text(&maybe_to_lower_case(&node.prop)),
         }
@@ -914,13 +914,13 @@ impl<'a> Printer<'a, '_> {
         }
         self.sink.text(trimmed_between);
         // `a:${b} { .. }` in a JavaScript template.
-        let is_placeholder_right_behind_colon = node.is_nested
+        let is_placeholder_right_after_colon = node.is_nested
             && !(is_colon && node.between.ends_with(b" "))
             && matches!(node.value, Value::Parsed(value) if top_level_group(statement.values, value).is_some_and(|group| {
                 is_at_word_placeholder(statement.values, group)
                     || statement.values.groups(group).first().is_some_and(|&first| is_at_word_placeholder(statement.values, first))
             }));
-        if !(node.extend || is_value_all_space || is_placeholder_right_behind_colon) {
+        if !(node.extend || is_value_all_space || is_placeholder_right_after_colon) {
             self.sink.token(" ");
         }
         if let Some(selector) = node
@@ -1148,7 +1148,7 @@ impl<'a> Printer<'a, '_> {
                     let has_comment = bun_core::strings::contains(params, b"/*");
                     let sorted = (self.tailwind.as_deref())
                         .filter(|it| is_sorted && (it.follows_plugin || !has_comment))
-                        .and_then(|tailwind| tailwind.sorted_to_apply(params));
+                        .and_then(|tailwind| tailwind.sorted_apply_params(params));
                     self.sink.text(sorted.as_deref().unwrap_or(params));
                 }
                 Params::Media(list) => self.print_media(list, true),
@@ -1161,7 +1161,7 @@ impl<'a> Printer<'a, '_> {
             self.print_selector(statement, selector, None, None);
             self.sink.end_indent();
         }
-        let ends_with_blank = match node.value {
+        let ends_with_space = match node.value {
             Value::Parsed(_) => is_control_directive,
             _ => node.name == b"else",
         };
@@ -1190,7 +1190,7 @@ impl<'a> Printer<'a, '_> {
                 if statement.values.node(value).kind == ValueKind::Unknown && statement.values.value(value).is_some_and(|it| it.ends_with(b";")));
         match node.has_block {
             true if !node.line_comment.is_empty() => {
-                if !ends_with_blank {
+                if !ends_with_space {
                     self.sink.token(" ");
                 }
                 self.sink.text(node.line_comment);
@@ -1217,7 +1217,7 @@ impl<'a> Printer<'a, '_> {
             false => {
                 // Otherwise the backslash would escape the `;`, as it does in Prettier's output. The value of `@if` is
                 // already followed by a space.
-                if ends_before_escaped_blank(&node.raw_params) && !is_control_directive {
+                if ends_with_unescaped_backslash(&node.raw_params) && !is_control_directive {
                     self.sink.token(" ");
                 }
                 self.sink.token(semicolon);
@@ -1236,7 +1236,7 @@ impl<'a> Printer<'a, '_> {
 
     /// `atRuleAncestorNode`, for a value. In oxfmt only an at-rule's own params count as inside it. The contents of its
     /// block are printed as they would be anywhere else.
-    pub(crate) fn at_rule_around<'s>(
+    pub(crate) fn enclosing_at_rule<'s>(
         &self,
         statement: Statement<'s, 'a>,
     ) -> Option<&'s CssNode<'a>> {
@@ -1288,7 +1288,7 @@ impl<'a> Printer<'a, '_> {
                 let is_expression =
                     node.kind == MediaKind::Value && self.is_oxfmt && self.syntax() == Syntax::Scss;
                 let value = match is_expression {
-                    true => with_blanks_around_operators(node.value),
+                    true => with_spaces_around_operators(node.value),
                     false => Cow::Borrowed(node.value),
                 };
                 self.sink
@@ -1297,7 +1297,7 @@ impl<'a> Printer<'a, '_> {
             MediaKind::FeatureExpression => match &node.nodes {
                 None => self.sink.text(node.value),
                 Some(_) if self.is_oxfmt && is_range_or_condition(node.value) => {
-                    let text = with_blanks_in_media_feature(node.value);
+                    let text = with_spaces_in_media_feature(node.value);
                     self.sink
                         .text(&adjust_numbers(&maybe_to_lower_case(&adjust_strings(
                             &text,
@@ -1312,7 +1312,7 @@ impl<'a> Printer<'a, '_> {
                     // `(a\ )`, which Prettier prints as `(a\)`.
                     if let Some(inner) = node.value.strip_suffix(b")")
                         && inner.last().is_some_and(u8::is_ascii_whitespace)
-                        && ends_before_escaped_blank(inner.trim_ascii_end())
+                        && ends_with_unescaped_backslash(inner.trim_ascii_end())
                     {
                         self.sink.token(" ");
                     }
@@ -1494,7 +1494,7 @@ impl<'a> Printer<'a, '_> {
                 if node.has_value {
                     let value = bun_core::strings::trim_js_whitespace_start(value);
                     let mut len = bun_core::strings::trim_js_whitespace_end(value).len();
-                    if len < value.len() && ends_before_escaped_blank(&value[..len]) {
+                    if len < value.len() && ends_with_unescaped_backslash(&value[..len]) {
                         len += 1;
                     }
                     let adjusted = adjust_strings(&value[..len], single_quote);
@@ -1757,7 +1757,7 @@ impl<'a> Printer<'a, '_> {
                 self.sink.start_group(false);
                 self.sink.token(":");
                 let is_as_written = statement.is_custom_property()
-                    && (ValueRef { values, id }).blanks_behind() == 0;
+                    && (ValueRef { values, id }).whitespace_after() == 0;
                 if !(is_escaped || is_as_written || self.inside_value_function(values, b"url")) {
                     self.sink.line();
                 }

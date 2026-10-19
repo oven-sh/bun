@@ -122,7 +122,7 @@ fn write_import_specifiers<'a>(import: Import<'a>, f: &mut Formatter<'a>) {
 }
 
 /// `import {⏎⏎// comment⏎a } from "b"`: oxfmt keeps the empty line, even right after the `{`.
-fn empty_line_before_comments_of_specifier_stays(f: &Formatter<'_>) -> bool {
+fn keeps_empty_line_before_specifier_comments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -141,7 +141,7 @@ impl<T: Spanned> Spanned for FormatSpecifier<'_, T> {
 impl<'a, T: Format<'a>> Format<'a> for FormatSpecifier<'a, T> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if !f.is_quiet()
-            && empty_line_before_comments_of_specifier_stays(f)
+            && keeps_empty_line_before_specifier_comments(f)
             && let Some(first) = f.comments().of_node(self.node).leading.first()
             && first.span().start < self.node.span().start
             && crate::text::is_previous_line_empty(

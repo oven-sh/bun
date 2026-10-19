@@ -86,7 +86,7 @@ pub(crate) mod prefer_snapshot_hint {
                 }
             }
             let first = |it: &&SmallVec<[Expr<'a>; 2]>| it.first().map(|it| it.span().start);
-            for expects in utils::sort::in_order_of(scoped_expects.values(), first) {
+            for expects in utils::sort::collect_sorted_by_key(scoped_expects.values(), first) {
                 if self == SnapshotHintMode::Always || expects.len() > 1 {
                     expects.iter().for_each(|it| check_expect(*it, ctx));
                 }

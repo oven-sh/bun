@@ -68,7 +68,7 @@ pub fn is_visited_as_pattern(node: Expr) -> bool {
 }
 
 /// True if the file's name allows both a script and a module. The scripts in `.vue` and `.svelte` files are modules.
-pub(crate) fn is_either(file: &File) -> bool {
+pub(crate) fn can_be_script_or_module(file: &File) -> bool {
     !matches!(
         file.path(),
         [.., b'.', b'm' | b'c', b'j' | b't', b's']
@@ -80,7 +80,7 @@ pub(crate) fn is_either(file: &File) -> bool {
 /// True if oxc treats the file as a script, where the `await` in an `await (a)` outside any function is a function's
 /// name.
 pub fn is_script<'a>(file: &'a File<'a>) -> bool {
-    is_either(file) && !has_module_syntax(file)
+    can_be_script_or_module(file) && !has_module_syntax(file)
 }
 
 /// `ModuleRecord::has_module_syntax`
@@ -106,11 +106,11 @@ pub fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
     file.body().iter().any(is_module_declaration)
         || file.has_exprs([ExprTag::ImportMeta])
         || file.has_exprs([ExprTag::Await])
-            && is_either(file)
+            && can_be_script_or_module(file)
             && file
                 .exprs_of_kind(ExprTag::Await)
                 .any(|it| is_unambiguous_await(it, &mut in_function))
-        || is_either(file)
+        || can_be_script_or_module(file)
             && (file.stmts_of_kind(StmtTag::Var).filter(is_await_using)).any(|it| {
                 in_function
                     .find(Node::Stmt(it), |_, parent| parent.as_func().map(|_| ()))
@@ -151,14 +151,14 @@ pub fn is_strict_mode<'a>(scope: Scope<'a>, file: &'a File<'a>) -> bool {
 /// True if a rule that now resolves what `Boolean`, `Promise` or `NaN` refers to should only check the name. Its oxlint
 /// port does that, and so did the rule before ESLint 10. ESLint 8 configurations only have `Promise` if `env` enables
 /// it.
-pub fn goes_by_the_name(language: &LanguageOptions) -> bool {
+pub fn checks_name_only(language: &LanguageOptions) -> bool {
     language.is_oxlint || language.eslint_major < 10
 }
 
-/// [`is_global_reference`] for such a rule. Where it [`goes_by_the_name`], any `e` counts, because the caller has
+/// [`is_global_reference`] for such a rule. Where it [`checks_name_only`], any `e` counts, because the caller has
 /// already checked the name.
 pub fn is_global_by_name(e: Expr) -> bool {
-    goes_by_the_name(e.file().language()) || is_global_reference(e)
+    checks_name_only(e.file().language()) || is_global_reference(e)
 }
 
 /// True if `scope` belongs to a class, or to a function or file that begins with `"use strict"`. oxc then treats it and
@@ -328,11 +328,11 @@ pub fn member_key_name(member: Member<'_>) -> Option<&[u8]> {
 
 /// `get_static_property_name` of the key. A string or a number has none.
 fn get_static_property_name<'a>(key: Key<'a>, file: &File<'a>) -> Option<&'a [u8]> {
-    let written = || file.slice(key.inner_span(file));
+    let key_text = || file.slice(key.inner_span(file));
     match key.kind() {
         KeyKind::Ident(_) | KeyKind::Private(_) => property_key_name(key),
-        KeyKind::Number(name) if written().ends_with(b"n") => Some(name.bytes()),
-        KeyKind::ComputedString(name) if written().starts_with(b"`") => Some(name.bytes()),
+        KeyKind::Number(name) if key_text().ends_with(b"n") => Some(name.bytes()),
+        KeyKind::ComputedString(name) if key_text().starts_with(b"`") => Some(name.bytes()),
         KeyKind::Computed(e) => name_of_computed_literal(e),
         _ => None,
     }

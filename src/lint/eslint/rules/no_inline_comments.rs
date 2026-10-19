@@ -83,7 +83,9 @@ impl NoInlineComments {
         let is_directive = match cx.language().is_oxlint {
             true => is_directive_for_oxlint(comment),
             // Without a config, both tools' directive comments count.
-            false if cx.language().stands_alone && is_directive_for_oxlint(comment) => true,
+            false if cx.language().has_no_foreign_config && is_directive_for_oxlint(comment) => {
+                true
+            }
             false => ast_utils::is_directive_comment(&comment),
         };
         if is_directive {

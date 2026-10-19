@@ -431,7 +431,7 @@ impl<'v> ValueRef<'v> {
     }
 
     /// Returns the number of whitespace bytes after its `value` in the source, or after its unit if it's a number.
-    pub(crate) fn blanks_behind(self) -> usize {
+    pub(crate) fn whitespace_after(self) -> usize {
         let end = match self.kind() {
             ValueKind::Number => self.node().unit.1,
             _ => self.node().value.1,
@@ -443,7 +443,7 @@ impl<'v> ValueRef<'v> {
     }
 
     /// True if anything other than whitespace follows its `value` in the text.
-    pub(crate) fn is_before_more(self) -> bool {
+    pub(crate) fn has_more_after(self) -> bool {
         let rest = self.values.text.get(self.node().value.1 as usize..);
         !rest.unwrap_or_default().trim_ascii_start().is_empty()
     }

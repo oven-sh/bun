@@ -72,7 +72,7 @@ fn refusal(parts: &[&[u8]]) -> ConfigError {
 }
 
 /// Like [`refusal`], for text that isn't escaped as a Rust string yet.
-fn refusal_in_words(text: &[u8]) -> ConfigError {
+fn refusal_from_text(text: &[u8]) -> ConfigError {
     let mut message = b"Failed to parse config with error Error(".to_vec();
     write_debug(&mut message, text);
     message.extend_from_slice(b", line: 0, column: 0)");
@@ -80,7 +80,7 @@ fn refusal_in_words(text: &[u8]) -> ConfigError {
 }
 
 fn wrong_kind(found: &Json, expected: &str) -> ConfigError {
-    refusal_in_words(&wrong_type(found, expected.as_bytes()))
+    refusal_from_text(&wrong_type(found, expected.as_bytes()))
 }
 
 type Entries = [(Vec<u8>, Json)];
@@ -100,7 +100,7 @@ fn strings(json: &Json) -> Result<(), ConfigError> {
     }
 }
 
-fn says_something(entry: &(Vec<u8>, Json), nullable: &[&str]) -> bool {
+fn is_present(entry: &(Vec<u8>, Json), nullable: &[&str]) -> bool {
     entry.1 != Json::Null || !nullable.iter().any(|it| it.as_bytes() == entry.0)
 }
 
@@ -145,7 +145,7 @@ fn known_keys(entries: &Entries, known: &[&str], what: &str) -> Result<(), Confi
 }
 
 /// The error that oxlint and oxfmt give for the pattern `written`. `None` if they accept it.
-pub fn glob_refusal(written: &[u8]) -> Option<Vec<u8>> {
+pub fn glob_error(written: &[u8]) -> Option<Vec<u8>> {
     let Unclosed { kind, at } = unclosed(written)?;
     let (what, open, close) = match kind {
         UnclosedKind::Class => ("character class", '[', ']'),
@@ -170,7 +170,7 @@ fn value(key: &[u8], json: &Json) -> Result<(), ConfigError> {
         b"files" | b"excludeFiles" => {
             strings(json)?;
             let patterns = json.as_array().unwrap_or_default().iter();
-            match patterns.filter_map(Json::as_str).find_map(glob_refusal) {
+            match patterns.filter_map(Json::as_str).find_map(glob_error) {
                 Some(why) => Err(refusal(&[&bytes::replace_owned(&why, b"\\", b"\\\\")])),
                 None => Ok(()),
             }
@@ -252,7 +252,7 @@ fn severity(json: &Json) -> Result<(), ConfigError> {
             write_debug_of_value(&mut text, other);
         }
     }
-    Err(refusal_in_words(&text))
+    Err(refusal_from_text(&text))
 }
 
 /// Checks a rule's setting: a severity, or a list that starts with one.
@@ -268,7 +268,7 @@ fn rule(json: &Json) -> Result<(), ConfigError> {
     let mut text = b"Failed to rule value ".to_vec();
     write_debug(&mut text, &compact(json));
     text.extend_from_slice(&[b" with error \"Type should be `", expected, b"`\""].concat());
-    Err(refusal_in_words(&text))
+    Err(refusal_from_text(&text))
 }
 
 /// `settings.jest.version`: a number, or a string that starts with one.
@@ -295,12 +295,12 @@ fn jest_version(version: &Json) -> Result<(), ConfigError> {
             return Err(wrong_kind(version, expected));
         }
     }
-    Err(refusal_in_words(&why))
+    Err(refusal_from_text(&why))
 }
 
 /// `settings.react.version` is up to three numbers separated by dots.
 fn settings(json: &Json) -> Result<(), ConfigError> {
-    check_as(SETTINGS, json).map_err(|why| refusal_in_words(&why))?;
+    check_as(SETTINGS, json).map_err(|why| refusal_from_text(&why))?;
     if let Some(version) = json.get(b"jest").and_then(|it| it.get(b"version")) {
         jest_version(version)?;
     }
@@ -339,7 +339,7 @@ fn settings(json: &Json) -> Result<(), ConfigError> {
 
 /// oxlint's deserializer accepts a list for a struct, with the fields in order. Some of an override's trailing fields
 /// can be omitted.
-fn override_in_a_list(items: &[Json]) -> Result<(), ConfigError> {
+fn check_override_list(items: &[Json]) -> Result<(), ConfigError> {
     for (at, key) in KEYS_OF_OVERRIDES.iter().enumerate() {
         match items.get(at) {
             Some(Json::Null) if NULLABLE_IN_OVERRIDES.contains(key) => {}
@@ -347,7 +347,7 @@ fn override_in_a_list(items: &[Json]) -> Result<(), ConfigError> {
             None if matches!(*key, "files" | "env" | "globals") => {
                 let why =
                     format!("invalid length {at}, expected struct OxlintOverride with 7 elements");
-                return Err(refusal_in_words(why.as_bytes()));
+                return Err(refusal_from_text(why.as_bytes()));
             }
             None => {}
         }
@@ -357,7 +357,7 @@ fn override_in_a_list(items: &[Json]) -> Result<(), ConfigError> {
             "invalid length {}, expected fewer elements in array",
             items.len()
         );
-        return Err(refusal_in_words(why.as_bytes()));
+        return Err(refusal_from_text(why.as_bytes()));
     }
     Ok(())
 }
@@ -378,17 +378,17 @@ pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
         return Ok(());
     };
     known_keys(entries, KEYS, "field")?;
-    for (key, json) in entries.iter().filter(|it| says_something(it, NULLABLE)) {
+    for (key, json) in entries.iter().filter(|it| is_present(it, NULLABLE)) {
         match &key[..] {
             b"$schema" if json.as_str().is_none() => return Err(wrong_kind(json, "a string")),
             b"categories" => {
                 for entry in map(json, "a map")? {
                     known_keys(std::slice::from_ref(entry), CATEGORIES, "variant")?;
-                    check_as(b"A", &entry.1).map_err(|why| refusal_in_words(&why))?;
+                    check_as(b"A", &entry.1).map_err(|why| refusal_from_text(&why))?;
                 }
             }
             b"settings" => settings(json)?,
-            b"options" => check_as(OPTIONS, json).map_err(|why| refusal_in_words(&why))?,
+            b"options" => check_as(OPTIONS, json).map_err(|why| refusal_from_text(&why))?,
             b"extends" => {
                 let is_known = |it: &&Json| it.as_str().is_some() || it.as_object().is_some();
                 if let Some(other) = sequence(json)?.iter().find(|it| !is_known(it)) {
@@ -398,7 +398,7 @@ pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
             b"overrides" => {
                 for item in sequence(json)? {
                     if let Json::Array(items) = item {
-                        override_in_a_list(items)?;
+                        check_override_list(items)?;
                         continue;
                     }
                     let entries = map(item, "struct OxlintOverride")?;
@@ -407,7 +407,7 @@ pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
                         return Err(refusal(&[b"missing field `files`"]));
                     }
                     let mut entries =
-                        (entries.iter()).filter(|it| says_something(it, NULLABLE_IN_OVERRIDES));
+                        (entries.iter()).filter(|it| is_present(it, NULLABLE_IN_OVERRIDES));
                     entries.try_for_each(|it| value(&it.0, &it.1))?;
                 }
             }

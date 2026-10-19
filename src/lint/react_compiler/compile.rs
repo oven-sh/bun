@@ -36,9 +36,9 @@ pub(crate) struct Compiler<'a> {
     arena: bun_alloc::Arena,
 }
 
-/// oxlint's `react_compiler_plugin_options`, or the plugin's `COMPILER_OPTIONS`. With `stands_alone` we don't follow
-/// the plugin where that would make a rule useless.
-fn config_of(flavor: Flavor, stands_alone: bool) -> EnvironmentConfig {
+/// oxlint's `react_compiler_plugin_options`, or the plugin's `COMPILER_OPTIONS`. With `has_no_foreign_config` we don't
+/// follow the plugin where that would make a rule useless.
+fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
     let is_oxlint = flavor == Flavor::Oxlint;
     EnvironmentConfig {
         validate_ref_access_during_render: true,
@@ -59,7 +59,7 @@ fn config_of(flavor: Flavor, stands_alone: bool) -> EnvironmentConfig {
         validate_static_components: true,
         validate_no_freezing_known_mutable_functions: true,
         validate_no_void_use_memo: true,
-        validate_no_capitalized_calls: Some(match is_oxlint || stands_alone {
+        validate_no_capitalized_calls: Some(match is_oxlint || has_no_foreign_config {
             // Globals that oxc's compiler knows and Bun's doesn't.
             true => vec!["BigInt".to_owned(), "Symbol".to_owned()],
             false => Vec::new(),
@@ -68,7 +68,7 @@ fn config_of(flavor: Flavor, stands_alone: bool) -> EnvironmentConfig {
         validate_no_derived_computations_in_effects: true,
         validate_exhaustive_memoization_dependencies: true,
         // The plugin keeps this behind a flag that's off, so its `exhaustive-effect-dependencies` never reports.
-        validate_exhaustive_effect_dependencies: match is_oxlint || stands_alone {
+        validate_exhaustive_effect_dependencies: match is_oxlint || has_no_foreign_config {
             true => ExhaustiveEffectDepsMode::All,
             false => ExhaustiveEffectDepsMode::Off,
         },
@@ -82,7 +82,7 @@ impl<'a> Compiler<'a> {
             file,
             flavor,
             wanted,
-            config: config_of(flavor, file.language().stands_alone),
+            config: config_of(flavor, file.language().has_no_foreign_config),
             arena: bun_alloc::Arena::new(),
         }
     }
@@ -157,7 +157,7 @@ impl<'a> Compiler<'a> {
         });
         // The JSX is a call in the converted tree, and this is the lowering's diagnostic for that call. `recorded`
         // already has the right one.
-        let is_said_already = |it: &Finding| {
+        let is_already_recorded = |it: &Finding| {
             it.reason.starts_with(CANNOT_BE_REORDERED)
                 && converted.recorded.iter().any(|recorded| {
                     matches!(recorded, Recorded::DefaultIsJsx { span, .. }
@@ -167,8 +167,8 @@ impl<'a> Compiler<'a> {
         let file = self.file;
         let said = |error| {
             findings(&converted, error)
-                .filter(|it| !is_said_already(it))
-                .map(|it| with_kind_of_estree(file, it))
+                .filter(|it| !is_already_recorded(it))
+                .map(|it| with_estree_kind(file, it))
         };
         let all: Vec<Finding> = match linted.result {
             Ok(()) if converted.recorded.is_empty() => return Ok(()),
@@ -178,7 +178,7 @@ impl<'a> Compiler<'a> {
         };
         let wrapped = &converted.wrapped_defaults;
         Err((all.into_iter())
-            .map(|it| with_what_is_around(wrapped, it))
+            .map(|it| with_wrapper_span(wrapped, it))
             .collect())
     }
 }
@@ -206,7 +206,7 @@ const CANNOT_BE_REORDERED: &str = "(BuildHIR::node.lowerReorderableExpression) E
 
 /// `a || b` is a `BinaryExpression` in Bun's tree, so that's what the lowering calls it. ESTree has a
 /// `LogicalExpression`.
-fn with_kind_of_estree<'a>(file: &'a File<'a>, mut finding: Finding) -> Finding {
+fn with_estree_kind<'a>(file: &'a File<'a>, mut finding: Finding) -> Finding {
     if let Some(rest) = finding.reason.strip_prefix(CANNOT_BE_REORDERED)
         && let Some(rest) = rest.strip_prefix("BinaryExpression")
         && let Some(Detail::Error { span: Some(at), .. }) = finding.details.first()
@@ -218,7 +218,7 @@ fn with_kind_of_estree<'a>(file: &'a File<'a>, mut finding: Finding) -> Finding 
     finding
 }
 
-fn with_what_is_around(wrapped: &[WrappedDefault], mut finding: Finding) -> Finding {
+fn with_wrapper_span(wrapped: &[WrappedDefault], mut finding: Finding) -> Finding {
     if let Some(rest) = finding.reason.strip_prefix(CANNOT_BE_REORDERED)
         && let Some(tick) = strings::index_of_char_usize(rest.as_bytes(), b'`')
         && let Some(rest) = rest.get(tick + 1..)

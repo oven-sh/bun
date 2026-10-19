@@ -83,7 +83,7 @@ fn name_in_closing_tag(reference: Reference) -> Option<Span> {
 
 /// True for the `a` in `export default a` and `export = a`, which can be a type. oxc treats it as a value, along with
 /// whatever the name resolves to.
-fn oxlint_takes_for_a_value(variable: Symbol, reference: Reference) -> bool {
+fn oxlint_treats_as_value(variable: Symbol, reference: Reference) -> bool {
     variable.file().language().is_oxlint
         && matches!(reference.expr().map(Expr::parent), Some(Node::Stmt(it))
             if matches!(it.tag(), StmtTag::ExportDefault | StmtTag::ExportAssign))
@@ -101,7 +101,7 @@ impl NoUseBeforeDefine {
     ) -> bool {
         let config = &self.config;
         if config.ignore_type_references
-            && (reference.is_type() && !oxlint_takes_for_a_value(variable, reference)
+            && (reference.is_type() && !oxlint_treats_as_value(variable, reference)
                 || reference_contains_type_query(reference)
                 || variable.file().language().is_oxlint && oxlint_is_in_key_of_type(reference))
         {

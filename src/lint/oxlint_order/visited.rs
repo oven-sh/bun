@@ -267,7 +267,7 @@ static KNOWN: LazyLock<Known> = LazyLock::new(|| {
 
 /// oxc's name for `node`, derived from its [`estree_type_name`]. Covers the nodes that [`Known::kind_of`] doesn't
 /// handle itself. Empty if oxc has a node kind for it that no rule is called with.
-fn name_in_oxc(node: Node) -> &'static str {
+fn oxc_kind_name(node: Node) -> &'static str {
     match (estree_type_name(node), node) {
         ("Identifier", Node::Expr(_)) => "IdentifierReference",
         ("Identifier", _) => "BindingIdentifier",
@@ -307,7 +307,7 @@ fn name_in_oxc(node: Node) -> &'static str {
 impl Known {
     /// The kind of the oxc node that corresponds to `node`.
     fn kind_of(&self, node: Node) -> u8 {
-        let by_name = || kind_named(name_in_oxc(node)).unwrap_or(NONE);
+        let by_name = || kind_named(oxc_kind_name(node)).unwrap_or(NONE);
         match node {
             Node::Expr(e) => {
                 let tag = e.tag();
@@ -391,7 +391,7 @@ impl Known {
 
     /// Of the oxc nodes that `node` represents, the innermost one whose kind is in `kinds` and whose span satisfies
     /// `fits`.
-    fn one_of<'a>(
+    fn innermost_match<'a>(
         &self,
         node: Node<'a>,
         kinds: &Kinds,
@@ -558,7 +558,7 @@ impl<'a> Places<'a> {
     /// The fast path of [`Places::of`], which covers most diagnostics: `node`, the node of `it`, is an expression or
     /// statement that oxlint calls the rule with. `None` if it isn't, or if a bit test can't tell.
     #[inline]
-    pub(super) fn at_a_look(
+    pub(super) fn by_bit_test(
         &self,
         called: &Called,
         node: Packed,
@@ -593,7 +593,11 @@ impl<'a> Places<'a> {
                     false if called.kinds.has(known.chain_expression) && is_chain_root(e) => CHAIN,
                     false => return None,
                 };
-                let span = if it.states_node { e.span() } else { it.span };
+                let span = if it.has_explicit_node {
+                    e.span()
+                } else {
+                    it.span
+                };
                 let is_leaf = level == ITSELF && (known.leaf_exprs >> tag as u32) & 1 != 0;
                 (node, level, is_leaf, span)
             }
@@ -606,7 +610,7 @@ impl<'a> Places<'a> {
                 {
                     return None;
                 }
-                let span = if it.states_node {
+                let span = if it.has_explicit_node {
                     statement.span()
                 } else {
                     it.span
@@ -693,7 +697,7 @@ impl<'a> Places<'a> {
         }
         // Or they're called with a part of it: an element's opening tag, a function's body.
         if label.is_none()
-            && let Some(found) = known.one_of(from, kinds, &|_| true)
+            && let Some(found) = known.innermost_match(from, kinds, &|_| true)
         {
             return place_of(found);
         }
@@ -706,22 +710,22 @@ impl<'a> Places<'a> {
             |it: Span| it.contains(label),
             |it: Span| it.start >= label.end,
         );
-        if let Some(found) = known.one_of(from, kinds, &around) {
+        if let Some(found) = known.innermost_match(from, kinds, &around) {
             return place_of(found);
         }
         if kinds.are_among(&known.leaves) {
             return nowhere;
         }
         // The rule may report a name or a key but be called with the value, like a method's function.
-        let value = |node: Node<'a>| known.one_of(value_of(node)?, kinds, &beside);
+        let value = |node: Node<'a>| known.innermost_match(value_of(node)?, kinds, &beside);
         let parent = estree_parent(from);
         let found = value(from)
-            .or_else(|| known.one_of(parent, kinds, &around))
+            .or_else(|| known.innermost_match(parent, kinds, &around))
             .or_else(|| value(parent))
             .or_else(|| {
                 let far = self.far.entry(rule).or_default();
                 far.find_with(parent, estree_parent, |child, node| {
-                    known.one_of(node, kinds, &|it| it.contains(estree_span(child)))
+                    known.innermost_match(node, kinds, &|it| it.contains(estree_span(child)))
                 })
             });
         found.map_or(nowhere, place_of)

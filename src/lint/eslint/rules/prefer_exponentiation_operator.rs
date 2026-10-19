@@ -210,8 +210,8 @@ impl Rule for PreferExponentiationOperator {
             };
             // oxlint requires exactly two arguments and a literal `Math.pow`, with nothing in parentheses.
             let object = as_member_expression(call.callee()).and_then(Expr::object);
-            let is_written_out = object.is_some_and(|it| !it.is_parenthesized() && !it.is_chain_root());
-            if cx.language().is_oxlint && !(is_written_out && call.args().len() == 2) {
+            let is_literal_math_pow = object.is_some_and(|it| !it.is_parenthesized() && !it.is_chain_root());
+            if cx.language().is_oxlint && !(is_literal_math_pow && call.args().len() == 2) {
                 continue;
             }
             cx.report(node, USE_EXPONENTIATION).fix(|fixer| fix(fixer, node, call));

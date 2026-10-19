@@ -155,7 +155,7 @@ pub fn environment(
 }
 
 /// The ECMAScript version whose variables are defined. ESLint 8 defines those of ES5 and leaves the rest to `env`.
-fn edition_of_globals(language: &LanguageOptions) -> u32 {
+fn globals_ecma_version(language: &LanguageOptions) -> u32 {
     match language.eslint_8 {
         Some(_) => 5,
         None => language.ecma_version,
@@ -178,7 +178,7 @@ pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, 
         }
     };
     let versions = tables::ECMA_VERSIONS.iter();
-    let edition = edition_of_globals(language);
+    let edition = globals_ecma_version(language);
     if versions.clone().any(|it| it.0 == edition) {
         for &(_, start, len) in versions.filter(|it| it.0 <= edition) {
             add(start, len);
@@ -205,7 +205,7 @@ pub struct ConfigGlobals {
     /// `languageOptions.globals`. Sorted by name.
     settings: Vec<(Cow<'static, [u8]>, Global)>,
     /// With an oxlint config: what `settings` would have for a variable if `globals` didn't turn it off. Sorted by name.
-    behind_off: Vec<(Cow<'static, [u8]>, Global)>,
+    shadowed_by_off: Vec<(Cow<'static, [u8]>, Global)>,
     /// Two bits for each name in the pool: whether TypeScript's libraries define it as a type, and as a value.
     libs: Box<[u8]>,
     /// The names that the libraries define, in typescript-eslint's order.
@@ -217,7 +217,7 @@ impl ConfigGlobals {
         let mut settings: Vec<(Cow<'static, [u8]>, Global)> =
             Vec::with_capacity(80 + language.globals.len());
         // ESLint has no table for a version it doesn't know, and then defines nothing.
-        let edition = edition_of_globals(language);
+        let edition = globals_ecma_version(language);
         if tables::ECMA_VERSIONS.iter().any(|it| it.0 == edition) {
             for &(_, start, len) in tables::ECMA_VERSIONS.iter().filter(|it| it.0 <= edition) {
                 settings.extend(
@@ -234,26 +234,26 @@ impl ConfigGlobals {
             );
         }
         settings.extend(
-            (language.env_behind_off.iter().rev())
+            (language.shadowed_env_globals.iter().rev())
                 .chain(language.globals.iter())
                 .map(|(name, setting)| (Cow::Owned(name.to_vec()), *setting)),
         );
         // If two have the same name, the later one wins.
         settings.reverse();
         crate::utils::sort::sort_by(&mut settings, |a, b| a.0.cmp(&b.0));
-        let mut behind_off: Vec<(Cow<'static, [u8]>, Global)> = Vec::new();
+        let mut shadowed_by_off: Vec<(Cow<'static, [u8]>, Global)> = Vec::new();
         settings.dedup_by(|dropped, kept| {
             let is_same = dropped.0 == kept.0;
             if is_same && language.is_oxlint && kept.1 == Global::Off {
-                behind_off.push(dropped.clone());
+                shadowed_by_off.push(dropped.clone());
             }
             is_same
         });
-        behind_off.dedup_by(|a, b| a.0 == b.0);
+        shadowed_by_off.dedup_by(|a, b| a.0 == b.0);
         let (libs, lib_order) = Self::libs(language);
         ConfigGlobals {
             settings,
-            behind_off,
+            shadowed_by_off,
             libs,
             lib_order,
         }
@@ -307,12 +307,12 @@ impl ConfigGlobals {
     }
 
     /// oxlint's `env_contains_var(name)`, for a variable that `globals` turns off.
-    fn behind_off(&self, name: &[u8]) -> Option<Global> {
+    fn shadowed_by_off(&self, name: &[u8]) -> Option<Global> {
         let at = self
-            .behind_off
+            .shadowed_by_off
             .binary_search_by(|it| (*it.0).cmp(name))
             .ok()?;
-        Some(self.behind_off[at].1)
+        Some(self.shadowed_by_off[at].1)
     }
 
     /// `TYPE`, `VALUE`, or 0 if no library defines `name`.
@@ -386,7 +386,7 @@ pub(crate) struct CommentVariables {
     /// Each one's index in `globals`.
     pub(crate) global_by_name: FxHashMap<Box<[u8]>, u32>,
     /// The variables of the environments listed in `/* eslint-env */` comments.
-    pub(crate) of_environments: FxHashMap<Cow<'static, [u8]>, Global>,
+    pub(crate) env_comment_globals: FxHashMap<Cow<'static, [u8]>, Global>,
     /// The names in `/* exported */` comments.
     pub(crate) exported: Vec<Box<[u8]>>,
     pub(crate) is_exported: FxHashSet<Box<[u8]>>,
@@ -423,8 +423,8 @@ impl GlobalVariable<'_> {
     /// True if a reference resolves to it. `is_type` tells whether the reference is in a type.
     #[inline]
     pub fn accepts(&self, is_type: bool) -> bool {
-        let asks_what_it_is = self.is_only_in_lib || self.is_inferred;
-        !asks_what_it_is || if is_type { self.is_type } else { self.is_value }
+        let checks_reference_kind = self.is_only_in_lib || self.is_inferred;
+        !checks_reference_kind || if is_type { self.is_type } else { self.is_value }
     }
 }
 
@@ -448,26 +448,26 @@ impl<'a> File<'a> {
     pub fn global(&'a self, name: &[u8]) -> Option<GlobalVariable<'a>> {
         let config = self.language().config_globals();
         // The program's libraries replace the tables.
-        let only_written = self.language().infers_globals != InferGlobals::Besides
+        let only_own_globals = self.language().infers_globals != InferGlobals::Besides
             && (self.inferred_globals())
                 .is_some_and(|it| it.checks_javascript || !self.is_javascript());
         // TypeScript knows these in JavaScript without a declaration.
-        let is_of_commonjs = || {
+        let is_commonjs_global = || {
             matches!(name, b"require" | b"module" | b"exports")
                 && self.is_javascript()
                 && !crate::utils::oxlint::has_module_syntax(self)
         };
         // In oxlint, "off" only cancels an entry of `globals`. What an `env` defines stays defined.
-        let of_config = match config.setting(name) {
-            Some(Global::Off) => config.behind_off(name).or(Some(Global::Off)),
+        let config_setting = match config.setting(name) {
+            Some(Global::Off) => config.shadowed_by_off(name).or(Some(Global::Off)),
             setting => setting,
         };
-        let implicit = of_config
+        let implicit = config_setting
             .filter(|it| {
-                !only_written
+                !only_own_globals
                     || *it == Global::Off
-                    || self.language().is_written_global(name)
-                    || is_of_commonjs()
+                    || self.language().is_enabled_own_global(name)
+                    || is_commonjs_global()
             })
             .or_else(|| self.global_of_environment_in_comments(name));
         let comment = self.global_in_comments(name);

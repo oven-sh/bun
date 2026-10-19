@@ -201,10 +201,10 @@ pub(super) struct FlowMemo {
     /// `before_idle_calls`.
     idle_runs: Vec<(FlowId, u32)>,
     /// The subjects of each test in the file `tests_of`, indexed by the test's flow node.
-    tests: Vec<About>,
+    tests: Vec<TestSubjects>,
     tests_of: Option<FileId>,
     /// The same for tests in other files.
-    other_tests: FxHashMap<(FileId, FlowId), About>,
+    other_tests: FxHashMap<(FileId, FlowId), TestSubjects>,
     /// `getTypeWithFacts`, keyed by the type and the facts, and `getAdjustedTypeWithFacts`, keyed
     /// by the type and the facts with `ADJUSTED` set.
     types_with_facts: instantiate::Recent,
@@ -474,11 +474,11 @@ fn root_key(root: Root) -> u32 {
 
 /// The references a test can narrow.
 #[derive(Copy, Clone, Default)]
-struct About {
+struct TestSubjects {
     /// 0 means the test hasn't been analyzed.
     state: u32,
     /// The expressions `narrow` compares a reference with. For each: its root's `root_key`, and its
-    /// first property's atom number plus one (`ALONE` if it has no property, 0 if that's unknown or
+    /// first property's atom number plus one (`NO_PROPERTY` if it has no property, 0 if that's unknown or
     /// irrelevant).
     chains: [(u32, u32); 3],
 }
@@ -512,22 +512,22 @@ enum ResolvesKey {
     Always,
 }
 
-impl NarrowingSubjects for About {
+impl NarrowingSubjects for TestSubjects {
     fn add(&mut self, root: u32, first: u32) {
-        About::add(self, root, first);
+        TestSubjects::add(self, root, first);
     }
 
     fn is_full(&self) -> bool {
-        self.state & About::ANYTHING != 0
+        self.state & TestSubjects::ANYTHING != 0
     }
 
     fn bails_on_computed_key(&mut self, _: ResolvesKey) -> bool {
-        self.state |= About::ANYTHING;
+        self.state |= TestSubjects::ANYTHING;
         true
     }
 
     fn add_union(&mut self) {
-        self.state |= About::ANYTHING;
+        self.state |= TestSubjects::ANYTHING;
     }
 }
 
@@ -582,8 +582,8 @@ impl NarrowingSubjects for CallStatementSubjects<'_> {
     }
 }
 
-impl About {
-    const ALONE: u32 = u32::MAX;
+impl TestSubjects {
+    const NO_PROPERTY: u32 = u32::MAX;
     const KNOWN: u32 = 1;
     /// There are more subjects than `chains` can hold, a key whose name can only be resolved by a
     /// query, or a union (`add_union`).
@@ -599,14 +599,14 @@ impl About {
                 return;
             }
         }
-        self.state |= About::ANYTHING;
+        self.state |= TestSubjects::ANYTHING;
     }
 
     /// True if one of `chains` can be `reference`, have it as a prefix, or be the object of its
     /// last property.
     fn concerns(&self, reference: &Reference) -> bool {
         let root = root_key(reference.root);
-        if root == 0 || self.state & About::ANYTHING != 0 {
+        if root == 0 || self.state & TestSubjects::ANYTHING != 0 {
             return true;
         }
         let Some(first) = reference.path.first() else {
@@ -629,7 +629,7 @@ const NEVER_RETURNS: u32 = u32::MAX - 1;
 const ADJUSTED: u32 = 1 << 31;
 /// Sentinel in `FlowMemo::types_with_facts`. The answer can't be cached, so later calls compute it
 /// without trying to cache it.
-const COUNTS_EACH_TIME: u32 = u32::MAX;
+const NOT_CACHEABLE: u32 = u32::MAX;
 
 /// The error `checkNonNullTypeWithReporter` reports.
 #[derive(Copy, Clone)]
@@ -672,25 +672,30 @@ pub(super) mod facts {
 
     /// All eight of `TYPEOF_NE_*`.
     const TYPEOF_NE: u32 = 0xff << 8;
-    const THERE: u32 = NE_UNDEFINED | NE_NULL | NE_UNDEFINED_OR_NULL;
+    const NON_NULLISH: u32 = NE_UNDEFINED | NE_NULL | NE_UNDEFINED_OR_NULL;
     /// The extra facts that every type except `undefined`, `null` and `void` has without
     /// strictNullChecks. `StringFacts` is `StringStrictFacts` plus these.
     pub(super) const LOOSE: u32 = EQ_UNDEFINED | EQ_NULL | EQ_UNDEFINED_OR_NULL | FALSY;
     /// `BaseStringStrictFacts` and similar. For symbols, objects and functions: `SymbolStrictFacts`
     /// and similar, without `Truthy`.
-    pub(super) const OF_STRING: u32 = TYPEOF_EQ_STRING | TYPEOF_NE & !TYPEOF_NE_STRING | THERE;
-    pub(super) const OF_NUMBER: u32 = TYPEOF_EQ_NUMBER | TYPEOF_NE & !TYPEOF_NE_NUMBER | THERE;
-    pub(super) const OF_BIGINT: u32 = TYPEOF_EQ_BIGINT | TYPEOF_NE & !TYPEOF_NE_BIGINT | THERE;
-    pub(super) const OF_BOOLEAN: u32 = TYPEOF_EQ_BOOLEAN | TYPEOF_NE & !TYPEOF_NE_BOOLEAN | THERE;
-    pub(super) const OF_SYMBOL: u32 = TYPEOF_EQ_SYMBOL | TYPEOF_NE & !TYPEOF_NE_SYMBOL | THERE;
+    pub(super) const OF_STRING: u32 =
+        TYPEOF_EQ_STRING | TYPEOF_NE & !TYPEOF_NE_STRING | NON_NULLISH;
+    pub(super) const OF_NUMBER: u32 =
+        TYPEOF_EQ_NUMBER | TYPEOF_NE & !TYPEOF_NE_NUMBER | NON_NULLISH;
+    pub(super) const OF_BIGINT: u32 =
+        TYPEOF_EQ_BIGINT | TYPEOF_NE & !TYPEOF_NE_BIGINT | NON_NULLISH;
+    pub(super) const OF_BOOLEAN: u32 =
+        TYPEOF_EQ_BOOLEAN | TYPEOF_NE & !TYPEOF_NE_BOOLEAN | NON_NULLISH;
+    pub(super) const OF_SYMBOL: u32 =
+        TYPEOF_EQ_SYMBOL | TYPEOF_NE & !TYPEOF_NE_SYMBOL | NON_NULLISH;
     pub(super) const OF_OBJECT: u32 = TYPEOF_EQ_OBJECT
         | TYPEOF_EQ_HOST_OBJECT
         | TYPEOF_NE & !(TYPEOF_NE_OBJECT | TYPEOF_NE_HOST_OBJECT)
-        | THERE;
+        | NON_NULLISH;
     pub(super) const OF_FUNCTION: u32 = TYPEOF_EQ_FUNCTION
         | TYPEOF_EQ_HOST_OBJECT
         | TYPEOF_NE & !(TYPEOF_NE_FUNCTION | TYPEOF_NE_HOST_OBJECT)
-        | THERE;
+        | NON_NULLISH;
     /// `VoidFacts`, `UndefinedFacts`, `NullFacts`
     pub(super) const OF_VOID: u32 =
         TYPEOF_NE | EQ_UNDEFINED | EQ_UNDEFINED_OR_NULL | NE_NULL | FALSY;
@@ -1113,7 +1118,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTypeWithFacts`
     fn type_with_facts(&mut self, ty: TypeId, include: u32) -> TypeId {
-        self.kept_type_with_facts(ty, include, |c| {
+        self.cached_type_with_facts(ty, include, |c| {
             c.filter(ty, |c, m| c.has_type_facts(m, include))
         })
     }
@@ -1128,47 +1133,47 @@ impl<'p, 's> Checker<'p, 's> {
     /// the first computation for a type whose members it resolves. It also excludes every
     /// computation that makes `NonNullable<T>` for a member, because `type_alias_instantiation`
     /// increments `instantiation_count` every time.
-    fn kept_type_with_facts(
+    fn cached_type_with_facts(
         &mut self,
         ty: TypeId,
         key: u32,
         compute: impl Fn(&mut Self) -> TypeId,
     ) -> TypeId {
-        if !self.is_at_rest_for_type_facts() {
+        if !self.can_cache_type_facts() {
             return compute(self);
         }
         if let Some(known) = self.flow_memo.types_with_facts.get(ty.0, key) {
-            if known == COUNTS_EACH_TIME {
+            if known == NOT_CACHEABLE {
                 return compute(self);
             }
 
             return TypeId(known);
         }
-        let traces = |c: &Self| (c.traces(), c.times_cut_short.get(), c.taints);
+        let counter_snapshot = |c: &Self| (c.counter_snapshot(), c.times_cut_short.get(), c.taints);
         let resolved = |c: &Self| (c.work, c.types().first_new_type_id());
-        let (before, resolved_before) = (traces(self), resolved(self));
+        let (before, resolved_before) = (counter_snapshot(self), resolved(self));
         let (narrowed, stored) = self.run_memoizable(&compute);
         // `types_with_facts` can evict the answer, so this scope isn't counted. See
         // `Checker::scopes_begun`.
         self.scopes_begun -= 1;
-        if stored.is_some() && traces(self) == before {
+        if stored.is_some() && counter_snapshot(self) == before {
             let kept = &mut self.flow_memo.types_with_facts;
             kept.put(ty.0, key, narrowed.0);
         } else if stored.is_some() && resolved(self) == resolved_before {
             // Nothing was resolved, so the next computation would change `Traces` the same way.
             let kept = &mut self.flow_memo.types_with_facts;
-            kept.put(ty.0, key, COUNTS_EACH_TIME);
+            kept.put(ty.0, key, NOT_CACHEABLE);
         }
         narrowed
     }
 
     /// True if the checker's current state can't change the result or the side effects of a
-    /// `kept_type_with_facts` computation in a way that `Traces` doesn't show. False in two states:
+    /// `cached_type_with_facts` computation in a way that `Traces` doesn't show. False in two states:
     /// - An instantiation is in progress. While a mapper is active, `instantiate` with that mapper
     ///   counts only once per type. Also, `instantiate` and `members` check
     ///   `index_infos_in_instantiation` and `unresolved_members` before they look in a table.
     /// - The checker is idle. Every comparison then starts with `instantiation_count` at 0.
-    fn is_at_rest_for_type_facts(&self) -> bool {
+    fn can_cache_type_facts(&self) -> bool {
         let is_idle = self.stack.is_empty()
             && self.current_source_element.is_none()
             && self.outermost_comparison.is_none();
@@ -1197,7 +1202,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ty
             };
         }
-        self.kept_type_with_facts(ty, include | ADJUSTED, |c| {
+        self.cached_type_with_facts(ty, include | ADJUSTED, |c| {
             c.adjusted_type_with_facts_uncached(ty, include)
         })
     }
@@ -2713,14 +2718,14 @@ impl<'p, 's> Checker<'p, 's> {
         if known.state != 0 {
             return known.concerns(reference);
         }
-        self.look_into_test(file, flow, expr).concerns(reference)
+        self.analyze_test(file, flow, expr).concerns(reference)
     }
 
     #[inline(never)]
-    fn look_into_test(&mut self, file: FileId, flow: FlowId, expr: ExprId) -> About {
-        let mut about = About {
-            state: About::KNOWN,
-            ..About::default()
+    fn analyze_test(&mut self, file: FileId, flow: FlowId, expr: ExprId) -> TestSubjects {
+        let mut about = TestSubjects {
+            state: TestSubjects::KNOWN,
+            ..TestSubjects::default()
         };
         self.note_test(file, expr, 0, &mut about);
         let nodes = self.bound(file).flow.len();
@@ -2729,7 +2734,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.task.file == Some(file) && memo.tests_of != Some(file) {
             memo.tests_of = Some(file);
             memo.tests.clear();
-            memo.tests.resize(nodes, About::default());
+            memo.tests.resize(nodes, TestSubjects::default());
         }
         if memo.tests_of == Some(file) {
             memo.tests[flow.idx()] = about;
@@ -2746,7 +2751,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        self.note_chain(file, e, true, About::ALONE, about);
+        self.note_chain(file, e, true, TestSubjects::NO_PROPERTY, about);
         match hir[e].kind {
             // `const ok = test; if (ok)`
             ExprKind::Ident(_) if level < 5 => {
@@ -2797,16 +2802,26 @@ impl<'p, 's> Checker<'p, 's> {
                             ExprKind::Unary {
                                 op: UnOp::Typeof,
                                 operand,
-                            } => self.note_chain(file, operand, true, About::ALONE, about),
+                            } => self.note_chain(
+                                file,
+                                operand,
+                                true,
+                                TestSubjects::NO_PROPERTY,
+                                about,
+                            ),
                             // `test(x) === true`
                             _ if matches!(hir[other].kind, ExprKind::True | ExprKind::False) => {
                                 self.note_test(file, side, level, about);
                             }
-                            _ => self.note_chain(file, side, true, About::ALONE, about),
+                            _ => {
+                                self.note_chain(file, side, true, TestSubjects::NO_PROPERTY, about)
+                            }
                         }
                     }
                 }
-                BinOp::Instanceof => self.note_chain(file, left, false, About::ALONE, about),
+                BinOp::Instanceof => {
+                    self.note_chain(file, left, false, TestSubjects::NO_PROPERTY, about)
+                }
                 // `"a" in x` narrows `x.a`.
                 BinOp::In => self.note_chain(file, right, false, 0, about),
                 BinOp::Comma => self.note_test(file, right, level, about),
@@ -2922,7 +2937,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if is_whole
                         && let Some(init) = self.initializer_of_discriminant_alias(file, symbol)
                     {
-                        self.note_chain(file, init, false, About::ALONE, about);
+                        self.note_chain(file, init, false, TestSubjects::NO_PROPERTY, about);
                     }
                     return;
                 }
@@ -5161,7 +5176,9 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 Flow::Assign { target, .. } => match target {
-                    FlowTarget::Expr(e) => self.note_chain(file, e, false, About::ALONE, about),
+                    FlowTarget::Expr(e) => {
+                        self.note_chain(file, e, false, TestSubjects::NO_PROPERTY, about)
+                    }
                     FlowTarget::Var(d) => {
                         if let Some(at) =
                             declaration_node.get_mut(bound.pat_symbol[hir[d].pat.idx()].idx())
@@ -5174,7 +5191,7 @@ impl<'p, 's> Checker<'p, 's> {
                             && let StmtKind::ForIn { left, expr, .. } = hir[owner].kind
                             && left == stmt
                         {
-                            self.note_chain(file, expr, false, About::ALONE, about);
+                            self.note_chain(file, expr, false, TestSubjects::NO_PROPERTY, about);
                         }
                     }
                     FlowTarget::Pat(p) => {
@@ -6215,7 +6232,7 @@ impl<'p, 's> Checker<'p, 's> {
                 walked.push((file, parent, is_visiting));
                 // Nothing imports a leaf file, so no other task walks it.
                 if is_visiting && !self.files().module(file).is_leaf {
-                    self.task.stop_writing_at_once();
+                    self.task.stop_writing_immediately();
                 }
             }
         }
@@ -7322,7 +7339,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return known;
         }
-        self.with_loops_in_sight(|c| c.get_type_of_expression(file, init))
+        self.with_flow_loops_visible(|c| c.get_type_of_expression(file, init))
     }
 
     /// `getInitialTypeOfVariableDeclaration`
@@ -8645,13 +8662,13 @@ impl<'p, 's> Checker<'p, 's> {
             let reference = Reference::synthetic(file, root, SmallVec::new(), node);
             let outer = std::mem::replace(&mut self.walk_declared, declared);
             let when_true =
-                self.param_type_past_test(&reference, declared, declared, before, body, true);
+                self.param_type_after_test(&reference, declared, declared, before, body, true);
             // It has to be "if and only if": nothing of the narrowed type may fail the test.
             let leftover = if when_true == declared {
                 when_true
             } else {
-                let left =
-                    self.param_type_past_test(&reference, declared, when_true, before, body, false);
+                let left = self
+                    .param_type_after_test(&reference, declared, when_true, before, body, false);
                 self.reduced(left)
             };
             self.walk_declared = outer;
@@ -8673,7 +8690,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getFlowTypeOfReference` for a parameter declared as `declared` whose type is `initial` at
     /// the start of its function, after the condition `test`, which is evaluated at `before`
     /// (`NONE` means the start of the function) with the outcome `sense`.
-    fn param_type_past_test(
+    fn param_type_after_test(
         &mut self,
         reference: &Reference,
         declared: TypeId,

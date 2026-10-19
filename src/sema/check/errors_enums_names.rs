@@ -32,7 +32,7 @@ fn is_in_right_side_of_import_or_export_assignment(hir: &hir::File, mut node: No
 }
 
 impl Checker<'_, '_> {
-    pub(super) fn check_x_enums_names(&mut self, file: FileId) {
+    pub(super) fn check_enums_and_names(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.has_errors || hir.kind == FileKind::Json {
             return;
@@ -40,13 +40,13 @@ impl Checker<'_, '_> {
         // `checkEnumDeclaration`, `initializeChecker` and `checkAndReportErrorForUsingTypeAsValue` apply to declaration
         // files too. The other passes only support source files.
         if hir.kind == FileKind::Declaration {
-            self.check_x_built_in_global_names(file);
+            self.check_built_in_global_names(file);
             return;
         }
-        self.check_x_built_in_global_names(file);
-        self.check_x_names_from_other_files(file);
-        self.check_x_umd_globals(file);
-        self.check_x_jsx_factories(file);
+        self.check_built_in_global_names(file);
+        self.check_names_from_other_files(file);
+        self.check_umd_globals(file);
+        self.check_jsx_factories(file);
     }
 
     // ───────────────────────────── `const` enums ─────────────────────────────
@@ -124,7 +124,7 @@ impl Checker<'_, '_> {
     // ───────────────────────────── reserved names ─────────────────────────────
 
     /// `initializeChecker`, `addUndefinedToGlobalsOrErrorOnRedeclaration`: 2397
-    fn check_x_built_in_global_names(&mut self, file: FileId) {
+    fn check_built_in_global_names(&mut self, file: FileId) {
         let (bound, files) = (self.bound(file), self.files());
         let report = |c: &mut Self, decl: Decl, name: Atom| {
             if let Some((start, _)) = c.error_range_of_declaration(file, decl) {
@@ -138,7 +138,7 @@ impl Checker<'_, '_> {
             // The table has a placeholder for a symbol that `mergeSymbol` rejected (`Files::redirect_name_to`).
             let is_local =
                 |part: &&Sym| part.file == file && bound.symbol(part.id).parent.is_none();
-            let refused = files.refused_merges.iter();
+            let refused = files.rejected_merges.iter();
             let refused = refused.filter(|it| it.target == files.global_this_symbol);
             let refused = refused.flat_map(|it| it.source_parts).find(is_local);
             let symbol = refused.map_or(symbol, |part| part.id);
@@ -163,7 +163,7 @@ impl Checker<'_, '_> {
     // ───────────────────────────── names that resolve after all ─────────────────────────────
 
     /// `Resolve`, at an enum declaration: 1281.
-    fn check_x_names_from_other_files(&mut self, file: FileId) {
+    fn check_names_from_other_files(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         if !files.options.isolated_modules || hir.enums.is_empty() {
             return;
@@ -265,7 +265,7 @@ impl Checker<'_, '_> {
     // ─────────────────────────────
 
     /// `onSuccessfullyResolvedSymbol`: 2686. A module's UMD global name is only for scripts.
-    fn check_x_umd_globals(&mut self, file: FileId) {
+    fn check_umd_globals(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         for &(e, scope) in &bound.free_idents {
             if let ExprKind::Ident(name) = hir[e].kind
@@ -280,7 +280,7 @@ impl Checker<'_, '_> {
 
     /// `markJsxAliasReferenced`, where a name it looks up resolves: the JSX factory at every tag name, plus the
     /// fragment factory at an opening fragment.
-    fn check_x_jsx_factories(&mut self, file: FileId) {
+    fn check_jsx_factories(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let options = &files.options;
         // `jsxFactoryRefErr`: otherwise `Resolve` doesn't report anything.

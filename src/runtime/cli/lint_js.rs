@@ -10,7 +10,7 @@
 //!
 //! The rule that keeps this free of deadlocks: **a thread with a VM never waits for something that can itself wait for
 //! a VM. Other threads may wait for it.** So it never joins a parallel region of the pool
-//! (`keep_regions_on_this_thread`), and it never posts a job. And no thread posts a job while holding a lock that
+//! (`run_regions_inline_on_this_thread`), and it never posts a job. And no thread posts a job while holding a lock that
 //! linting a file takes. A thread with a VM does wait for its own JavaScript, which can need Bun's pool, but no
 //! `bun lint` work runs on that pool.
 //!
@@ -45,29 +45,29 @@ pub(crate) struct LintVm {
     /// Set while `handle` runs.
     call: Cell<Option<NonNull<Call<'static, 'static>>>>,
     /// The answers to [`Bun__Lint__ask`] during this call.
-    kept: RefCell<Kept>,
+    kept: RefCell<KeptAnswers>,
 }
 
 /// Answers that native code has spans into. Each is written once, and its bytes don't move until the call is over:
 /// pushing to `all` moves the `Vec`s, not what they point to.
 #[derive(Default)]
-struct Kept {
+struct KeptAnswers {
     all: Vec<Vec<u8>>,
     /// Maps a kind that was queried without details to its answer's index in `all`.
     plain: Vec<(u32, usize)>,
     /// Native code was given a span.
-    is_lent: bool,
+    has_lent_span: bool,
 }
 
 /// Clears `LintVm::call` when the call is over.
-struct Lent<'v>(&'v LintVm, &'v JSGlobalObject);
+struct CallGuard<'v>(&'v LintVm, &'v JSGlobalObject);
 
-impl Drop for Lent<'_> {
+impl Drop for CallGuard<'_> {
     fn drop(&mut self) {
         self.0.call.set(None);
         let kept = core::mem::take(&mut *self.0.kept.borrow_mut());
         // The program does this itself, unless it was cut short.
-        if kept.is_lent {
+        if kept.has_lent_span {
             Bun__Lint__endFile(self.1);
         }
     }
@@ -126,7 +126,7 @@ fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
     // SAFETY: it points to the stack of `ThreadVm::call`, which is below this frame and clears the pointer before it
     // returns. `serve` runs no JavaScript, so this is the only reference.
     let call = unsafe { call.as_mut() };
-    state.kept.borrow_mut().is_lent = true;
+    state.kept.borrow_mut().has_lent_span = true;
     if kind == 0 {
         return Some(LintSpan::of(call.content));
     }
@@ -275,7 +275,7 @@ impl Vm for ThreadVm {
             let state = program_of(vm)?;
             let mut call = Call { content, serve };
             state.call.set(Some(NonNull::from(&mut call).cast()));
-            let _lent = Lent(state, global);
+            let _call_guard = CallGuard(state, global);
             let _scope = vm.enter_event_loop_scope();
             let kind = JSValue::js_number_from_int32(kind as i32);
             let mut returned = (state.handle.get().call(global, JSValue::UNDEFINED, &[kind]))
@@ -315,7 +315,7 @@ impl Vm for ThreadVm {
 /// group's directory and in every directory above it. A cgroup v2 line looks like `0::/a/b`, a v1 line like
 /// `9:memory:/a/b`.
 #[cfg_attr(not(any(target_os = "linux", test)), expect(dead_code))]
-fn group_in(line: &[u8]) -> Option<(&[u8], &'static [u8], &'static [u8])> {
+fn parse_cgroup_line(line: &[u8]) -> Option<(&[u8], &'static [u8], &'static [u8])> {
     let (_, rest) = strings::split_once_char(line, b':')?;
     let (controllers, group) = strings::split_once_char(rest, b':')?;
     if controllers.is_empty() {
@@ -329,30 +329,30 @@ fn group_in(line: &[u8]) -> Option<(&[u8], &'static [u8], &'static [u8])> {
 }
 
 /// Parses a limit file. `max` means no limit.
-fn limit_in(text: &[u8]) -> Option<usize> {
+fn parse_limit(text: &[u8]) -> Option<usize> {
     core::str::from_utf8(text.trim_ascii()).ok()?.parse().ok()
 }
 
 /// The lowest memory limit among this process's control groups. That's how a container limits it.
 #[cfg(target_os = "linux")]
-fn limit_of_the_groups() -> Option<usize> {
+fn cgroup_memory_limit() -> Option<usize> {
     use bun_sys::{Fd, File};
     let groups = File::read_from(Fd::cwd(), b"/proc/self/cgroup").ok()?;
     let limits = strings::split(&groups, b"\n")
-        .filter_map(group_in)
+        .filter_map(parse_cgroup_line)
         .flat_map(|(group, root, file)| {
             let above = core::iter::successors(Some(group), |it| {
                 Some(&it[..strings::last_index_of_char(it, b'/')?])
             });
             above.filter_map(move |it| {
-                limit_in(&File::read_from(Fd::cwd(), &[root, it, b"/", file].concat()).ok()?)
+                parse_limit(&File::read_from(Fd::cwd(), &[root, it, b"/", file].concat()).ok()?)
             })
         });
     limits.min()
 }
 
 #[cfg(not(target_os = "linux"))]
-fn limit_of_the_groups() -> Option<usize> {
+fn cgroup_memory_limit() -> Option<usize> {
     None
 }
 
@@ -360,8 +360,8 @@ fn limit_of_the_groups() -> Option<usize> {
 /// shouldn't take over the machine.
 fn memory_for_engines() -> usize {
     // A test's result must not depend on how much memory happens to be free on the machine that runs it.
-    if let Some(said) = memory_a_test_says() {
-        return said / 2;
+    if let Some(override_bytes) = memory_override_for_tests() {
+        return override_bytes / 2;
     }
     // macOS always reports next to nothing as free.
     let free = match cfg!(any(target_os = "linux", windows)) {
@@ -375,15 +375,15 @@ fn memory_for_engines() -> usize {
     }) / 2
 }
 
-fn memory_a_test_says() -> Option<usize> {
-    bun_core::getenv_z(bun_core::zstr!("BUN_LINT_MEMORY")).and_then(limit_in)
+fn memory_override_for_tests() -> Option<usize> {
+    bun_core::getenv_z(bun_core::zstr!("BUN_LINT_MEMORY")).and_then(parse_limit)
 }
 
 /// Total memory of the machine or the container. Tests override it with `BUN_LINT_MEMORY`.
 pub(super) fn memory() -> usize {
-    memory_a_test_says().unwrap_or_else(|| {
+    memory_override_for_tests().unwrap_or_else(|| {
         let machine = bun_core::get_total_memory_size();
-        limit_of_the_groups().map_or(machine, |it| it.min(machine))
+        cgroup_memory_limit().map_or(machine, |it| it.min(machine))
     })
 }
 
@@ -481,12 +481,12 @@ struct Memory {
     taken: usize,
     most: usize,
     most_for_one: usize,
-    /// `taken` and the bytes still to lint when `grows_by` was last computed. `grows_by` is how many bytes RSS grew per
-    /// linted byte.
-    looked_at: (usize, u64),
-    grows_by: Option<f64>,
+    /// `taken` and the bytes still to lint when `growth_per_byte` was last computed. `growth_per_byte` is how many
+    /// bytes RSS grew per linted byte.
+    last_sample: (usize, u64),
+    growth_per_byte: Option<f64>,
     /// How many files the VMs have finished, and what that count was when a VM was last freed.
-    given_back: u32,
+    files_done: u32,
     freed_at: u32,
 }
 
@@ -494,7 +494,7 @@ impl Memory {
     /// Call this before the first VM starts. `left` is [`Demand::left`].
     fn begin(&mut self, left: u64) {
         self.before = bun_sys::self_process_memory_usage().unwrap_or(0);
-        self.looked_at = (0, left);
+        self.last_sample = (0, left);
     }
 
     /// `left` is [`Demand::left`].
@@ -503,11 +503,11 @@ impl Memory {
         self.taken = now.saturating_sub(self.before);
         self.most = self.most.max(self.taken);
         // Only after 1/32 of the remaining bytes. A smaller sample is too noisy.
-        let (taken, left_then) = self.looked_at;
+        let (taken, left_then) = self.last_sample;
         let done = left_then.saturating_sub(left);
         if done > 0 && done >= left_then / 32 {
-            self.grows_by = Some(self.taken.saturating_sub(taken) as f64 / done as f64);
-            self.looked_at = (self.taken, left);
+            self.growth_per_byte = Some(self.taken.saturating_sub(taken) as f64 / done as f64);
+            self.last_sample = (self.taken, left);
         }
         if let Some(for_one) = self.taken.checked_div(loaded) {
             self.most_for_one = self.most_for_one.max(for_one);
@@ -515,18 +515,21 @@ impl Memory {
     }
 
     /// A VM has loaded its plugins. Growth is measured from here on, so that loading doesn't count as growth.
-    fn note_a_load(&mut self, left: u64, loaded: usize) {
+    fn note_load(&mut self, left: u64, loaded: usize) {
         self.measure(left, loaded);
-        if self.grows_by.is_none() {
-            self.looked_at = (self.taken, left);
+        if self.growth_per_byte.is_none() {
+            self.last_sample = (self.taken, left);
         }
     }
 
     /// A VM has finished a file. Measuring costs a system call, so it happens every 16th time, or every time while the
     /// growth rate isn't known yet or the VMs have used up what was `planned`.
-    fn note_a_file(&mut self, planned: usize, demand: &Demand, loaded: usize) {
-        self.given_back = self.given_back.wrapping_add(1);
-        if self.given_back.is_multiple_of(16) || self.grows_by.is_none() || self.taken >= planned {
+    fn note_file(&mut self, planned: usize, demand: &Demand, loaded: usize) {
+        self.files_done = self.files_done.wrapping_add(1);
+        if self.files_done.is_multiple_of(16)
+            || self.growth_per_byte.is_none()
+            || self.taken >= planned
+        {
             self.measure(demand.left(), loaded);
         }
     }
@@ -534,15 +537,15 @@ impl Memory {
     /// True if a VM should be freed. That throws away everything it has loaded and compiled, so only at 1.5 times what
     /// was `planned`. And not within 16 files of the last time, because freed memory takes a while to show.
     fn is_too_much(&self, planned: usize) -> bool {
-        self.taken > planned / 2 * 3 && self.given_back.wrapping_sub(self.freed_at) >= 16
+        self.taken > planned / 2 * 3 && self.files_done.wrapping_sub(self.freed_at) >= 16
     }
 
     /// True if one more VM fits into what was `planned`. Assumes that the loaded VMs keep growing per byte as they have
     /// so far, until everything is linted, and that the new VM and those still loading end up as large as one of them.
     fn has_room_for_another(&self, planned: usize, left: u64, vms: Vms) -> bool {
-        let one = match self.grows_by {
-            Some(grows_by) if vms.loaded > 0 => {
-                (self.taken as f64 + grows_by * left as f64) / vms.loaded as f64
+        let one = match self.growth_per_byte {
+            Some(growth_per_byte) if vms.loaded > 0 => {
+                (self.taken as f64 + growth_per_byte * left as f64) / vms.loaded as f64
             }
             // The size right after loading is a poor predictor of the final size.
             _ => NOT_LOADED_YET as f64,
@@ -706,7 +709,7 @@ impl Vm for Own<'_> {
             Some(failure) => Err(failure.clone()),
             None => ThreadVm.call(kind, content, serve),
         };
-        Crew::note_a_call(self.crew, self.at);
+        Crew::note_call(self.crew, self.at);
         returned
     }
 }
@@ -742,7 +745,7 @@ impl Crew {
             // SAFETY: no VM or JS state crosses threads, only a number and the crew, whose jobs are `Send`. The new
             // thread creates its own VM and is done with it before `end_all` returns.
             std::thread::Builder::new()
-                .stack_size(bun_sema_driver::STACK_OF_A_WORKER as usize)
+                .stack_size(bun_sema_driver::WORKER_STACK_SIZE as usize)
                 .spawn(move || Crew::run_member(&for_thread, at))
                 .map_err(|_| b"Could not start a thread for the plugins.".to_vec())?;
             if state.all.is_empty() {
@@ -757,7 +760,7 @@ impl Crew {
     }
 
     /// The member `at` has nothing left to do for `shared`.
-    fn leave_the_work(&self, state: &mut CrewState, at: usize) {
+    fn finish_shared_work(&self, state: &mut CrewState, at: usize) {
         let Some(shared) = state
             .shared
             .filter(|it| state.all[at].done_with != it.number)
@@ -778,7 +781,7 @@ impl Crew {
         loop {
             if state.all[at].is_freed || state.ends == Some(at) {
                 let frees = state.all[at].is_freed;
-                self.leave_the_work(&mut state, at);
+                self.finish_shared_work(&mut state, at);
                 return Next::End { frees };
             }
             // Heavy jobs go to the first member. It leaves the other jobs alone as long as another member is free.
@@ -809,7 +812,7 @@ impl Crew {
     /// the process exits.
     fn run_member(crew: &Arc<Crew>, at: usize) -> ! {
         name_this_thread(at);
-        bun_sema_driver::keep_regions_on_this_thread();
+        bun_sema_driver::run_regions_inline_on_this_thread();
         let failure = crew.start.start_vm().err();
         {
             let mut state = crew.state.lock();
@@ -825,17 +828,17 @@ impl Crew {
                     posted.ticket.finish();
                 }
                 Next::Heavy(shared) => {
-                    // SAFETY: this member is counted in `pending` until `leave_the_work`.
+                    // SAFETY: this member is counted in `pending` until `finish_shared_work`.
                     let work = unsafe { shared.work() };
                     if !work.heavy() {
                         crew.state.lock().is_done_with_heavy = true;
                     }
                 }
                 Next::Light(shared) => {
-                    // SAFETY: this member is counted in `pending` until `leave_the_work`.
+                    // SAFETY: this member is counted in `pending` until `finish_shared_work`.
                     let work = unsafe { shared.work() };
                     if !work.light(at) {
-                        crew.leave_the_work(&mut crew.state.lock(), at);
+                        crew.finish_shared_work(&mut crew.state.lock(), at);
                     }
                 }
                 Next::End { frees } => {
@@ -855,7 +858,7 @@ impl Crew {
 
     /// Counts the calls a VM has answered. The first one only reports what it has to load, so it's loaded after the
     /// second.
-    fn note_a_call(crew: &Arc<Crew>, at: usize) {
+    fn note_call(crew: &Arc<Crew>, at: usize) {
         let mut state = crew.state.lock();
         let calls = &mut state.all[at].calls;
         *calls = calls.saturating_add(1);
@@ -863,7 +866,7 @@ impl Crew {
             return;
         }
         let loaded = state.vms().loaded;
-        state.memory.note_a_load(crew.demand.left(), loaded);
+        state.memory.note_load(crew.demand.left(), loaded);
         // Another VM may fit now. If it can't be started, the existing members do the work.
         let _ = Crew::start_more(crew, &mut state);
     }
@@ -882,14 +885,14 @@ impl Crew {
         let mut state = crew.state.lock();
         state.all[at].is_in_use = false;
         let (planned, vms) = (crew.start.memory(), state.vms());
-        (state.memory).note_a_file(planned, &crew.demand, vms.loaded);
+        (state.memory).note_file(planned, &crew.demand, vms.loaded);
         // Never the first member, which has the heavy files, and never the last one besides it.
         if at != 0
             && state.memory.is_too_much(planned)
             && vms.count - state.kept() > 1
             && !state.all.iter().any(|it| it.is_freed && !it.is_gone)
         {
-            state.memory.freed_at = state.memory.given_back;
+            state.memory.freed_at = state.memory.files_done;
             state.all[at].is_freed = true;
         }
         // `Demand` doesn't count heavy files.
@@ -986,7 +989,7 @@ impl Engines {
 }
 
 impl Engine for Engines {
-    fn is_here(&self) -> bool {
+    fn thread_has_realm(&self) -> bool {
         self.0.here().is_some()
     }
 
@@ -1042,31 +1045,31 @@ impl Engine for Engines {
 
 #[cfg(test)]
 mod tests {
-    use super::{group_in, limit_in};
+    use super::{parse_cgroup_line, parse_limit};
 
     #[test]
-    fn reads_the_groups() {
+    fn parses_cgroup_lines() {
         let unified = (
             &b"/a/b.scope"[..],
             &b"/sys/fs/cgroup"[..],
             &b"memory.max"[..],
         );
-        assert_eq!(group_in(b"0::/a/b.scope"), Some(unified));
+        assert_eq!(parse_cgroup_line(b"0::/a/b.scope"), Some(unified));
         let own = (
             &b"/docker/1"[..],
             &b"/sys/fs/cgroup/memory"[..],
             &b"memory.limit_in_bytes"[..],
         );
-        assert_eq!(group_in(b"9:memory:/docker/1"), Some(own));
-        assert_eq!(group_in(b"4:cpu,memory:/docker/1"), Some(own));
-        assert_eq!(group_in(b"1:name=systemd:/"), None);
-        assert_eq!(group_in(b""), None);
+        assert_eq!(parse_cgroup_line(b"9:memory:/docker/1"), Some(own));
+        assert_eq!(parse_cgroup_line(b"4:cpu,memory:/docker/1"), Some(own));
+        assert_eq!(parse_cgroup_line(b"1:name=systemd:/"), None);
+        assert_eq!(parse_cgroup_line(b""), None);
     }
 
     #[test]
-    fn reads_a_limit() {
-        assert_eq!(limit_in(b"629145600\n"), Some(629_145_600));
-        assert_eq!(limit_in(b"max\n"), None);
-        assert_eq!(limit_in(b""), None);
+    fn parses_limit_file() {
+        assert_eq!(parse_limit(b"629145600\n"), Some(629_145_600));
+        assert_eq!(parse_limit(b"max\n"), None);
+        assert_eq!(parse_limit(b""), None);
     }
 }

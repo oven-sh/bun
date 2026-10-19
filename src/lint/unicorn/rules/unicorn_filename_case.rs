@@ -1,4 +1,4 @@
-use bun_lint_oxlint::regex_flags::regex_of_option;
+use bun_lint_oxlint::regex_flags::option_regex;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -66,7 +66,7 @@ fn is_digit(grapheme: &str) -> bool {
 
 impl Case {
     /// True if `name` is in this case.
-    fn is_that_of(self, name: &str) -> bool {
+    fn accepts(self, name: &str) -> bool {
         let has_no_capitals = matches!(self, Case::Kebab | Case::Snake | Case::Lowercase);
         !(has_no_capitals && name.bytes().any(|it| it.is_ascii_uppercase())) && self.convert(name) == name
     }
@@ -161,7 +161,7 @@ impl FilenameCase {
     /// The cases the file name should be in, as the message lists them. `None` if it's already in one.
     fn expected_cases(&self, path: &[u8]) -> Option<String> {
         let (_, trimmed_filename) = self.checked_part(path)?;
-        if self.cases.iter().any(|it| it.is_that_of(trimmed_filename)) {
+        if self.cases.iter().any(|it| it.accepts(trimmed_filename)) {
             return None;
         }
         let mut expected = String::new();
@@ -204,7 +204,7 @@ impl Rule for FilenameCase {
         };
         FilenameCase {
             cases: CASES.iter().filter(|it| is_allowed(it)).map(|it| it.0).collect(),
-            ignore: options.strings("ignore").into_iter().filter_map(regex_of_option).collect(),
+            ignore: options.strings("ignore").into_iter().filter_map(option_regex).collect(),
             multiple_file_extensions: options.bool_or("multipleFileExtensions", true),
         }
     }

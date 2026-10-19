@@ -52,7 +52,7 @@ fn write_file(path: &str, contents: &[u8]) -> bun_sys::Maybe<()> {
 
 /// For a file that's only written for a person to read. A failure is reported and the run
 /// continues.
-pub fn write_file_to_look_at(path: &str, contents: &[u8]) {
+pub fn write_debug_file(path: &str, contents: &[u8]) {
     if let Err(error) = write_file(path, contents) {
         error_line!("cannot write {path}: {:?}", error.get_errno());
     }
@@ -622,7 +622,7 @@ fn settings_of(code: &[u8]) -> BTreeMap<String, String> {
 }
 
 /// `splitOptionValues` for the case where a single value remains. Returns that value.
-fn the_one_value(option: &str, value: &str) -> String {
+fn single_option_value(option: &str, value: &str) -> String {
     let Some(all) = bun_sema::config_options::choices(option.as_bytes()) else {
         return value.to_owned();
     };
@@ -1126,13 +1126,13 @@ fn type_or_symbol_baseline(
 /// `DoJSEmitBaseline` writes `tsCode`, the JavaScript files, the declaration files, and then its
 /// notes about the output. Returns `baseline` from the first declaration file on, without the notes
 /// about JavaScript files. Returns `None` if `baseline` doesn't begin with `ts_code`.
-fn after_the_javascript<'a>(baseline: &'a [u8], ts_code: &[u8]) -> Option<&'a [u8]> {
+fn declarations_part<'a>(baseline: &'a [u8], ts_code: &[u8]) -> Option<&'a [u8]> {
     let js_code = baseline.strip_prefix(ts_code)?.strip_prefix(b"\r\n\r\n")?;
-    let about_them = [
+    let output_notes = [
         &b"\r\n\r\n//// [DtsFileErrors]\r\n"[..],
         b"\r\n\r\n!!!! File ",
     ];
-    let end = (about_them
+    let end = (output_notes
         .iter()
         .filter_map(|it| strings::index_of(js_code, it)))
     .min();
@@ -1269,7 +1269,7 @@ fn heads(top: &str) -> Vec<String> {
 /// The end of `compileFilesWithHost`. Returns the errors of `postProgram`, which emits before it's
 /// checked. If `preProgram`, which is only checked, has a different number of errors, returns the
 /// shorter list plus TS-1.
-fn errors_of_both_programs(pre: Report, mut post: Report) -> Report {
+fn merge_pre_and_post_emit_errors(pre: Report, mut post: Report) -> Report {
     let (before, after) = (pre.diagnostics.len(), post.diagnostics.len());
     if before == after {
         return post;
@@ -1845,7 +1845,7 @@ fn run_one(
             if traces_resolution {
                 trace = Some(sanitize_trace(&post.resolution_trace, is_case_sensitive));
             }
-            errors_of_both_programs(pre, post)
+            merge_pre_and_post_emit_errors(pre, post)
         }
     };
     let sections = std::mem::take(&mut *sections.lock());
@@ -2030,7 +2030,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                         for (name, value) in settings.iter_mut() {
                             match varied.iter().find(|v| v.0 == name) {
                                 Some(&(_, chosen)) => chosen.clone_into(value),
-                                None => *value = the_one_value(name, value),
+                                None => *value = single_option_value(name, value),
                             }
                         }
                         let configured = if configuration.is_empty() {
@@ -2068,8 +2068,8 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                             if let (Some(out), Some(_)) = (setup.out, &difference) {
                                 let dir = format!("{out}/{}", suite.name);
                                 let path = format!("{dir}/{configured}.{}", kind.extension());
-                                write_file_to_look_at(&path, ours);
-                                write_file_to_look_at(&format!("{path}.expected"), expected);
+                                write_debug_file(&path, ours);
+                                write_debug_file(&format!("{path}.expected"), expected);
                             }
                             (kind, difference)
                         };
@@ -2210,7 +2210,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                     others.push(match baseline(Kind::Declarations) {
                                         // `baseline.NoContent`
                                         None => compare(Kind::Declarations, &ours, b""),
-                                        Some(expected) => match after_the_javascript(&expected, &ts_code)
+                                        Some(expected) => match declarations_part(&expected, &ts_code)
                                         {
                                             Some(expected) => {
                                                 compare(Kind::Declarations, &ours, expected)
@@ -2256,7 +2256,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                 {
                                     let dir = format!("{out}/{}", suite.name);
                                     let path = format!("{dir}/{configured}.errors.txt");
-                                    write_file_to_look_at(&path, ours.as_bytes());
+                                    write_debug_file(&path, ours.as_bytes());
                                 }
                                 let note = if level == Level::Differs {
                                     let (a, b) = (heads(top_of(&ours)), heads(top_of(&expected)));

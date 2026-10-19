@@ -23,13 +23,13 @@ impl<'a> Name<'a> {
     pub fn bytes(self) -> &'a [u8] {
         match self.file.texts.in_source(self.atom) {
             Some(text) => text,
-            None => self.bytes_elsewhere(),
+            None => self.bytes_slow(),
         }
     }
 
     /// The slow path: the name doesn't appear verbatim in the source, or the atoms aren't the file's own.
     #[inline(never)]
-    fn bytes_elsewhere(self) -> &'a [u8] {
+    fn bytes_slow(self) -> &'a [u8] {
         match KNOWN_TEXTS.get(self.atom.0 as usize) {
             Some(known) => known,
             None if self.atom.is_some() => self.file.atoms.bytes(self.atom),
@@ -42,7 +42,7 @@ impl<'a> Name<'a> {
     pub fn len(self) -> usize {
         match self.file.texts.span_of(self.atom) {
             Some((_, len)) => len as usize,
-            None => self.bytes_elsewhere().len(),
+            None => self.bytes_slow().len(),
         }
     }
 
@@ -61,13 +61,13 @@ impl<'a> Name<'a> {
     pub fn is_any(self, texts: &[&str]) -> bool {
         match self.file.texts.span_of(self.atom) {
             Some(_) => texts.iter().any(|text| self.has(text.as_bytes())),
-            None => self.is_any_elsewhere(texts),
+            None => self.is_any_slow(texts),
         }
     }
 
     #[inline(never)]
-    fn is_any_elsewhere(self, texts: &[&str]) -> bool {
-        let bytes = self.bytes_elsewhere();
+    fn is_any_slow(self, texts: &[&str]) -> bool {
+        let bytes = self.bytes_slow();
         texts.iter().any(|text| bytes == text.as_bytes())
     }
 
@@ -185,7 +185,7 @@ impl<'a> Ident<'a> {
     pub fn span(self) -> Span {
         let len = match self.len_if_plain() {
             Some(len) => len,
-            None => self.written_len() as u32,
+            None => self.source_len() as u32,
         };
         Span::new(self.start, self.start + len)
     }
@@ -211,7 +211,7 @@ impl<'a> Ident<'a> {
     }
 
     #[inline(never)]
-    fn written_len(self) -> usize {
+    fn source_len(self) -> usize {
         let (text, name) = (self.name.file.text(), self.name.bytes());
         let written = text.get(self.start as usize..).unwrap_or_default();
         match !name.is_empty() && !self.is_string() && written.starts_with(name) {

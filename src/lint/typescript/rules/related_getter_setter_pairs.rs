@@ -137,13 +137,13 @@ impl RelatedGetterSetterPairs {
                     .1 = Some(param);
             }
         }
-        let place = |it: &(Option<Member<'a>>, Option<Param<'a>>)| {
+        let start_offsets = |it: &(Option<Member<'a>>, Option<Param<'a>>)| {
             (
                 it.0.map(|it| it.span().start),
                 it.1.map(|it| it.span().start),
             )
         };
-        for pair in utils::sort::in_order_of(pairs.into_values(), place) {
+        for pair in utils::sort::collect_sorted_by_key(pairs.into_values(), start_offsets) {
             if let (Some(getter), Some(param)) = pair {
                 Self::check_accessors_pair(getter, param, cx);
             }

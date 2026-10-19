@@ -213,12 +213,12 @@ struct Entry {
 
 /// The entries that the file mentions together with one of their reported members. Tracking references costs far more,
 /// so it's only done for these.
-fn named_in<'a>(file: &'a File<'a>, entries: &[Entry]) -> Roots<data::Builtin> {
-    let named = entries.iter().filter(|it| is_named_in(file, it));
+fn mentioned_in<'a>(file: &'a File<'a>, entries: &[Entry]) -> Roots<data::Builtin> {
+    let named = entries.iter().filter(|it| is_mentioned_in(file, it));
     Roots(named.map(|it| it.member).collect())
 }
 
-fn is_named_in(file: &File, entry: &Entry) -> bool {
+fn is_mentioned_in(file: &File, entry: &Entry) -> bool {
     // `export * from "os"` uses all of `os`.
     file.mentions_bit(entry.bit)
         && (entry.is_reported
@@ -320,7 +320,7 @@ impl Builtins {
                 .iter()
                 .chain(&tables.modules)
                 .chain(&tables.import_meta);
-            has_candidates = all.into_iter().any(|it| is_named_in(file, it));
+            has_candidates = all.into_iter().any(|it| is_mentioned_in(file, it));
         });
         has_candidates
     }
@@ -371,7 +371,7 @@ impl Builtins {
         let file = cx.file();
         self.with_tables(file, |tables| {
             let tracker = ReferenceTracker::new(file).with_mode(Mode::Legacy);
-            let modules = named_in(file, &tables.modules);
+            let modules = mentioned_in(file, &tables.modules);
             if !modules.0.is_empty() {
                 let modules: &dyn Trace<'_> = &modules;
                 if file.mentions("require") {
@@ -414,7 +414,7 @@ impl Builtins {
                 }
                 self.report(tables, &[], &tracker.iterate_esm_references(modules), cx);
             }
-            let globals = named_in(file, &tables.globals);
+            let globals = mentioned_in(file, &tables.globals);
             if !globals.0.is_empty() {
                 self.report(
                     tables,
@@ -424,7 +424,7 @@ impl Builtins {
                 );
             }
             let import_meta = if file.mentions("meta") {
-                named_in(file, &tables.import_meta)
+                mentioned_in(file, &tables.import_meta)
             } else {
                 Roots(Vec::new())
             };

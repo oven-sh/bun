@@ -69,7 +69,7 @@ pub(super) fn report(
 ) -> Result<Vec<u8>, Fatal> {
     let own = configs.for_directory(cwd)?;
     let shown = |file: &[u8]| paths::relative(cwd, file);
-    let file = configs.path_of_config(&own).map(shown);
+    let file = configs.config_file_path(&own).map(shown);
     let is_oxfmt = configs.is_oxfmt_for(&own);
     let is_svelte_off = configs.turns_svelte_off(&own, cwd);
     let found = files.found.iter().filter_map(|it| match it {
@@ -80,21 +80,21 @@ pub(super) fn report(
     let (mut plugins, mut nested) = (Plugins::default(), Vec::new());
     for target in found {
         let (scope, path) = (&target.scope, &target.path);
-        let named = configs.packages_of_plugins(scope, Some(path));
+        let named = configs.plugin_packages(scope, Some(path));
         let missing = configs.missing_plugins(scope, Some(path)).iter();
         // With `svelte = false`, nothing does the Svelte plugin's job, so it isn't in use.
-        let is_in_use = |it: &&[u8]| !(is_svelte_off && config::is_plugin_for_svelte(it));
+        let is_in_use = |it: &&[u8]| !(is_svelte_off && config::is_svelte_plugin(it));
         named
             .chain(missing.map(|it| &it[..]))
             .filter(is_in_use)
             .for_each(|it| plugins.add(it, config::is_built_in_plugin(it)));
-        nested.extend(configs.path_of_config(scope).map(shown));
+        nested.extend(configs.config_file_path(scope).map(shown));
     }
     let mut nested = sorted(nested);
     nested.retain(|it| Some(it) != file.as_ref());
     // Prettier loads every plugin listed in a file's config, so all of them have to stay installed.
     let for_files = files.handed_over.iter().flat_map(|(_, target)| {
-        let named = configs.packages_of_plugins(&target.scope, Some(&target.path));
+        let named = configs.plugin_packages(&target.scope, Some(&target.path));
         std::iter::once(&b"prettier"[..]).chain(named)
     });
     // Packages that aren't installed yet are needed too. They're the reason some files can't go to Prettier.
@@ -141,8 +141,8 @@ pub(super) fn report(
             {
                 Some(Need::SkippedFiles)
             } else if let Some(file) = &file {
-                let is_asked =
-                    name == b"prettier-plugin-tailwindcss" && configs.classes.asks_plugin();
+                let is_asked = name == b"prettier-plugin-tailwindcss"
+                    && configs.classes.uses_bundled_tailwind();
                 (is_asked || loaded.iter().any(|it| it == name))
                     .then(|| Need::Configuration(file.clone()))
             } else {

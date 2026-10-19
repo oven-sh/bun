@@ -52,7 +52,7 @@ pub struct State<'a> {
     own: Option<Box<Active>>,
     found: RefCell<Vec<Found>>,
     /// Set once the remaining checks are the ones that eslint-plugin-es-x's rules run on `Program:exit`.
-    is_at_the_end: Cell<bool>,
+    is_in_program_exit: Cell<bool>,
     /// The names in [`Active::methods`] that the file may mention.
     methods: smallvec::SmallVec<[Name<'a>; 8]>,
     types: RefCell<ExpressionTypes<'a>>,
@@ -254,7 +254,7 @@ impl Rule for EsSyntax {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let found = self.active_in(file);
-        let active = found.as_ref().and_then(|it| it.1.as_deref().or_else(|| self.kept(it.0)));
+        let active = found.as_ref().and_then(|it| it.1.as_deref().or_else(|| self.cached(it.0)));
         let Some(active) = active.filter(|it| it.has_any()) else {
             return On::new();
         };
@@ -356,7 +356,7 @@ impl Rule for EsSyntax {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let (known, own) = self.active_in(file)?;
-        let methods = methods_in(own.as_deref().or_else(|| self.kept(known))?, file);
+        let methods = methods_in(own.as_deref().or_else(|| self.cached(known))?, file);
         Some(State {
             known,
             own,
@@ -422,7 +422,7 @@ impl Rule for EsSyntax {
                 if let StmtKind::Var(declarators) = stmt.kind()
                     && matches!(declarators.first().map(VarDecl::var_kind), Some(VarKind::Let | VarKind::Const))
                 {
-                    self.report_in(cx, BLOCK_SCOPED_VARIABLES, stmt.span_without_export(), Node::Stmt(stmt));
+                    self.report_with_strict_mode(cx, BLOCK_SCOPED_VARIABLES, stmt.span_without_export(), Node::Stmt(stmt));
                 }
             }
             StmtTag::Fn => self.function_declaration(stmt, cx),
@@ -481,7 +481,7 @@ impl Rule for EsSyntax {
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Context<'a>) {
-        self.report_in(cx, CLASSES, class.estree_span(), Node::Class(class));
+        self.report_with_strict_mode(cx, CLASSES, class.estree_span(), Node::Class(class));
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Context<'a>) {
@@ -594,7 +594,7 @@ impl Rule for EsSyntax {
                 }
             }
         }
-        cx.state.is_at_the_end.set(true);
+        cx.state.is_in_program_exit.set(true);
         let tracker = ReferenceTracker::new(file);
         for feature in active.globals_in(file) {
             let globals = FEATURES.get(feature).map_or(&[][..], Feature::globals);
@@ -715,12 +715,12 @@ impl EsSyntax {
         }
     }
 
-    fn kept(&self, at: usize) -> Option<&Active> {
+    fn cached(&self, at: usize) -> Option<&Active> {
         self.known.get(at)?.get()?.1.as_ref()
     }
 
     fn active<'s>(&'s self, state: &'s State<'_>) -> Option<&'s Active> {
-        state.own.as_deref().or_else(|| self.kept(state.known))
+        state.own.as_deref().or_else(|| self.cached(state.known))
     }
 
     fn report<'a>(&self, cx: &Context<'a>, feature: usize, at: Span) {
@@ -728,12 +728,12 @@ impl EsSyntax {
     }
 
     /// For a feature that has several listeners.
-    fn report_of<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, by: u64) {
+    fn report_from_listener<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, by: u64) {
         self.report_with(cx, feature, at, None, false, by);
     }
 
     /// For a feature that was supported in strict mode first. `node`: the reported node.
-    fn report_in<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, node: Node<'a>) {
+    fn report_with_strict_mode<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, node: Node<'a>) {
         self.report_with(cx, feature, at, Some(node), false, listener_of(feature));
     }
 
@@ -757,7 +757,7 @@ impl EsSyntax {
                 return;
             }
         }
-        let by = if cx.state.is_at_the_end.get() { listener(PROGRAM_EXIT, 0, 1) } else { by };
+        let by = if cx.state.is_in_program_exit.get() { listener(PROGRAM_EXIT, 0, 1) } else { by };
         cx.state.found.borrow_mut().push(Found {
             at,
             is_position,
@@ -892,7 +892,7 @@ impl EsSyntax {
                 return self.report(cx, CLASS_FIELDS, name.span());
             }
             if active.has(KEYWORD_PROPERTIES) && is_keyword(name.name()) {
-                self.report_of(cx, KEYWORD_PROPERTIES, e.span(), listener(NODE, 0, 1));
+                self.report_from_listener(cx, KEYWORD_PROPERTIES, e.span(), listener(NODE, 0, 1));
             }
             // Fast path: most names aren't one of the methods.
             if !cx.state.methods.contains(&name.name()) && !active.has(LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS) {
@@ -957,7 +957,7 @@ impl EsSyntax {
         }
         let span = stmt.span_without_export();
         match parent.tag() {
-            StmtTag::Block => self.report_in(cx, BLOCK_SCOPED_FUNCTIONS, span, Node::Func(func)),
+            StmtTag::Block => self.report_with_strict_mode(cx, BLOCK_SCOPED_FUNCTIONS, span, Node::Func(func)),
             StmtTag::If => self.report(cx, FUNCTION_DECLARATIONS_IN_IF_STATEMENT_CLAUSES_WITHOUT_BLOCK, span),
             StmtTag::Labeled => self.report(cx, LABELLED_FUNCTION_DECLARATIONS, parent.span()),
             _ => {}
@@ -969,7 +969,7 @@ impl EsSyntax {
             StmtKind::ForOf { left, is_await, .. } => {
                 self.report(cx, FOR_OF_LOOPS, stmt.span());
                 if is_await {
-                    self.report_of(cx, ASYNC_ITERATION, stmt.span(), listener(NODE, 1, 1));
+                    self.report_from_listener(cx, ASYNC_ITERATION, stmt.span(), listener(NODE, 1, 1));
                     if !is_in_function(Node::Stmt(stmt), &mut cx.state.function_around) {
                         self.report(cx, TOP_LEVEL_AWAIT, stmt.span());
                     }

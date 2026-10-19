@@ -4,7 +4,7 @@ use super::*;
 use crate::util::{PositionSet, fx_hash};
 
 /// A declaration's sort key for `compareNodes`: library files first, then by file, then by position.
-type Place = (bool, FileId, u32);
+type DeclarationPosition = (bool, FileId, u32);
 
 /// The members of a union or an intersection under construction.
 type Flat = smallvec::SmallVec<[TypeId; 16]>;
@@ -60,10 +60,10 @@ const MUCH_LONGER: usize = 8;
 
 /// More runs than this are sorted as one list. Every member then takes part in a comparison anyway, so every name is
 /// looked up, and the standard library's sort exploits runs too.
-const MOST_RUNS_TO_MERGE: usize = 8;
+const MAX_RUNS_TO_MERGE: usize = 8;
 
 /// See `join_by_position`.
-const MOST_STEPS_FOR_A_POSITION: usize = 32;
+const MAX_STEPS_PER_POSITION: usize = 32;
 
 /// `UnionReduction`. `UnionReductionSubtype` compares the members, so calls with it aren't cached.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -101,7 +101,7 @@ impl<'a> UnionArguments<'a> {
 }
 
 #[derive(Copy, Clone)]
-struct KeptUnionCall {
+struct CachedUnionCall {
     /// `UnionArguments::hash`
     hash: u64,
     reduction: Reduction,
@@ -127,20 +127,20 @@ struct KeptUnionCall {
 #[derive(Default)]
 pub(super) struct UnionCalls {
     /// Empty at first, then a power-of-two length.
-    places: Vec<KeptUnionCall>,
-    /// A hash shifted right by this amount is an index into `places`.
+    slots: Vec<CachedUnionCall>,
+    /// A hash shifted right by this amount is an index into `slots`.
     shift: u32,
-    /// Number of calls added since `places` last grew.
+    /// Number of calls added since `slots` last grew.
     added: usize,
-    /// The types of the calls in `places`, and of calls that were overwritten.
+    /// The types of the calls in `slots`, and of calls that were overwritten.
     types: Vec<TypeId>,
 }
 
 impl UnionCalls {
-    const MOST_PLACES: usize = 1 << 12;
+    const MAX_SLOTS: usize = 1 << 12;
     /// Everything is dropped once `types` would grow past this. That only costs time.
-    const MOST_TYPES: usize = 1 << 20;
-    const EMPTY: KeptUnionCall = KeptUnionCall {
+    const MAX_TYPES: usize = 1 << 20;
+    const EMPTY: CachedUnionCall = CachedUnionCall {
         hash: 0,
         reduction: Reduction::None,
         alias: None,
@@ -158,7 +158,7 @@ impl UnionCalls {
     /// `arguments` has at least one type, and `hash` is its hash.
     #[inline]
     fn get(&self, hash: u64, arguments: &UnionArguments) -> Option<TypeId> {
-        let call = self.places.get(self.place(hash))?;
+        let call = self.slots.get(self.place(hash))?;
         if call.hash != hash
             || call.types as usize != arguments.types.len()
             || call.reduction != arguments.reduction
@@ -176,20 +176,20 @@ impl UnionCalls {
     fn put(&mut self, hash: u64, arguments: &UnionArguments, answer: TypeId) {
         let alias_type_arguments = arguments.alias_type_arguments();
         let len = arguments.types.len() + alias_type_arguments.len();
-        if len > Self::MOST_TYPES {
+        if len > Self::MAX_TYPES {
             return;
         }
-        if self.types.len() + len > Self::MOST_TYPES {
-            self.places.fill(Self::EMPTY);
+        if self.types.len() + len > Self::MAX_TYPES {
+            self.slots.fill(Self::EMPTY);
             self.types.clear();
             self.added = 0;
         }
-        if self.added == self.places.len() && self.added < Self::MOST_PLACES {
+        if self.added == self.slots.len() && self.added < Self::MAX_SLOTS {
             self.grow();
         }
         self.added += 1;
         let place = self.place(hash);
-        self.places[place] = KeptUnionCall {
+        self.slots[place] = CachedUnionCall {
             hash,
             reduction: arguments.reduction,
             alias: arguments.alias.map(|alias| alias.0),
@@ -204,14 +204,14 @@ impl UnionCalls {
 
     #[cold]
     fn grow(&mut self) {
-        let len = (self.places.len() * 4).max(64);
-        let old = std::mem::replace(&mut self.places, vec![Self::EMPTY; len]);
+        let len = (self.slots.len() * 4).max(64);
+        let old = std::mem::replace(&mut self.slots, vec![Self::EMPTY; len]);
         self.shift = 64 - len.trailing_zeros();
         self.added = 0;
         for call in old {
             if call.types != 0 {
                 let place = self.place(call.hash);
-                self.places[place] = call;
+                self.slots[place] = call;
             }
         }
     }
@@ -252,7 +252,7 @@ struct PatternsByPrefix<'p> {
 }
 
 impl<'p> PatternsByPrefix<'p> {
-    const WORTHWHILE: usize = 16;
+    const MIN_PATTERNS: usize = 16;
     const NONE: u32 = u32::MAX;
 
     fn new(c: &Checker<'p, '_>, patterns: &[TypeId]) -> Self {
@@ -864,7 +864,7 @@ impl<'p, 's> Checker<'p, 's> {
         if patterns.is_empty() {
             return;
         }
-        let by_prefix = (patterns.len() >= PatternsByPrefix::WORTHWHILE)
+        let by_prefix = (patterns.len() >= PatternsByPrefix::MIN_PATTERNS)
             .then(|| PatternsByPrefix::new(self, &patterns));
         let mut candidates: Vec<u32> = Vec::new();
         for m in std::mem::take(members) {
@@ -1591,18 +1591,18 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let strict = self.p.files.options.strict_null_checks;
         // No value is both an object and null or undefined, or belongs to two disjoint domains.
-        let is_in_another_too = |domain: u32| {
+        let overlaps_another_domain = |domain: u32| {
             includes & domain != 0 && includes & (tf::DISJOINT_DOMAINS & !domain) != 0
         };
         if strict
             && includes & tf::NULLABLE != 0
             && includes & (tf::OBJECT | tf::NON_PRIMITIVE | tf::INCLUDES_EMPTY_OBJECT) != 0
-            || is_in_another_too(tf::NON_PRIMITIVE)
-            || is_in_another_too(tf::STRING_LIKE)
-            || is_in_another_too(tf::NUMBER_LIKE)
-            || is_in_another_too(tf::BIGINT_LIKE)
-            || is_in_another_too(tf::ES_SYMBOL_LIKE)
-            || is_in_another_too(tf::VOID_LIKE)
+            || overlaps_another_domain(tf::NON_PRIMITIVE)
+            || overlaps_another_domain(tf::STRING_LIKE)
+            || overlaps_another_domain(tf::NUMBER_LIKE)
+            || overlaps_another_domain(tf::BIGINT_LIKE)
+            || overlaps_another_domain(tf::ES_SYMBOL_LIKE)
+            || overlaps_another_domain(tf::VOID_LIKE)
         {
             return TypeId::NEVER;
         }
@@ -1873,7 +1873,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             for &literal in &literals {
-                let fits = match *self.data(literal) {
+                let is_matched = match *self.data(literal) {
                     // An enum member matches a template literal type by its value, and is never a member of a string
                     // mapping type.
                     TypeData::EnumLit {
@@ -1886,7 +1886,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     _ => self.is_subtype(literal, pattern),
                 };
-                if fits {
+                if is_matched {
                     set.remove(i);
                     break;
                 }
@@ -2038,7 +2038,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The position of `sym`'s first declaration. `compareSymbols`
-    fn symbol_place(&self, sym: Sym) -> Option<Place> {
+    fn symbol_position(&self, sym: Sym) -> Option<DeclarationPosition> {
         let files = self.files();
         let (file, decl) = if files.flags(sym).contains(SymFlags::MERGED) {
             files.decls_of(sym).first().copied()?
@@ -2050,15 +2050,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The declaration position of `ty`'s symbol, or of the syntax it's the type of. A synthesized type has none here.
-    fn sort_place(&self, ty: TypeId) -> Option<Place> {
-        let at = |file: FileId, pos: u32| -> Option<Place> {
+    fn sort_position(&self, ty: TypeId) -> Option<DeclarationPosition> {
+        let at = |file: FileId, pos: u32| -> Option<DeclarationPosition> {
             Some((!self.files().module(file).is_lib, file, pos))
         };
         match *self.data(ty) {
             TypeData::Ref { target: sym, .. }
             | TypeData::ThisParam(sym)
             | TypeData::Enum { symbol: sym, .. }
-            | TypeData::EnumLit { member: sym, .. } => self.symbol_place(sym),
+            | TypeData::EnumLit { member: sym, .. } => self.symbol_position(sym),
             TypeData::Anon { origin, .. } => match origin {
                 Origin::TypeLiteral(file, node) | Origin::Mapped(file, node) => {
                     at(file, self.hir(file)[node].pos)
@@ -2070,7 +2070,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | Origin::Function(sym)
                 | Origin::EnumObject(sym)
                 | Origin::Module(sym)
-                | Origin::Namespace { module: sym, .. } => self.symbol_place(sym),
+                | Origin::Namespace { module: sym, .. } => self.symbol_position(sym),
                 _ => None,
             },
             TypeData::Fns { ref decls, .. } => decls
@@ -2098,7 +2098,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::TypeParam(file, tp, _) => at(file, self.hir(file)[tp].pos),
             TypeData::Cond { file, node, .. } => at(file, self.hir(file)[node].pos),
             TypeData::UniqueSymbol { symbol, .. } => match symbol {
-                UniqueSymbolDeclaration::Variable(variable) => self.symbol_place(variable),
+                UniqueSymbolDeclaration::Variable(variable) => self.symbol_position(variable),
                 UniqueSymbolDeclaration::Member(file, member) => {
                     at(file, self.hir(file)[member].name_pos)
                 }
@@ -2130,7 +2130,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The sort key `compareNodes` uses for a node at `pos` in `file`: the file's index in the program
     /// (`fileIndexMap`), then the position. Library files come first.
-    pub(super) fn place_in_program_order(&self, file: FileId, pos: u32) -> (bool, u32, u32) {
+    pub(super) fn position_in_program_order(&self, file: FileId, pos: u32) -> (bool, u32, u32) {
         let files = self.files();
         (!files.module(file).is_lib, files.rank_of_file(file), pos)
     }
@@ -2148,7 +2148,8 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Synth(ref shape) => shape.symbol_declared_at.map_or(ExprId::NONE, |it| it.2),
             _ => ExprId::NONE,
         };
-        self.sort_place(ty).map(|place| (place.1, place.2, literal))
+        self.sort_position(ty)
+            .map(|place| (place.1, place.2, literal))
     }
 
     /// `Shape::mapper` for a type that gets `t.symbol`, the symbol of an object literal (`newAnonymousType(t.symbol,
@@ -2178,8 +2179,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `compareSymbols`, limited to comparing the first declarations.
     pub(super) fn compare_symbols(&self, s: Sym, t: Sym) -> std::cmp::Ordering {
         let place = |symbol: Sym| {
-            let (_, file, pos) = self.symbol_place(symbol)?;
-            Some(self.place_in_program_order(file, pos))
+            let (_, file, pos) = self.symbol_position(symbol)?;
+            Some(self.position_in_program_order(file, pos))
         };
         some_first(place(s), place(t))
     }
@@ -2270,8 +2271,8 @@ impl<'p, 's> Checker<'p, 's> {
         let types = |x: TypeId, y: TypeId| self.compare_types_without_ids(x, y);
         let lists = |x: &[TypeId], y: &[TypeId]| self.compare_type_lists(x, y);
         let place = |t: TypeId| {
-            let (_, file, pos) = self.sort_place(t)?;
-            Some(self.place_in_program_order(file, pos))
+            let (_, file, pos) = self.sort_position(t)?;
+            Some(self.position_in_program_order(file, pos))
         };
         // A synthesized type doesn't always record where its symbol is declared.
         let has_symbol = |t: TypeId| match self.data(t) {
@@ -2292,16 +2293,16 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // Among object types with the same symbol, or none, type references come first. A tuple is
         // a type reference and has no symbol.
-        let is_no_reference =
+        let is_not_reference =
             |t: TypeId| !matches!(self.data(t), TypeData::Ref { .. } | TypeData::Tuple { .. });
-        let are_of_one_symbol = matches!(
+        let have_same_target = matches!(
             (self.data(a), self.data(b)),
             (TypeData::Ref { target: s, .. }, TypeData::Ref { target: t, .. }) if s == t
         );
         if flags & NAMED != 0 {
             let by_symbol = self
                 .compare_type_names(a, b)
-                .then_with(|| match are_of_one_symbol {
+                .then_with(|| match have_same_target {
                     true => Equal,
                     false => some_first(place(a), place(b))
                         .then_with(|| {
@@ -2314,7 +2315,7 @@ impl<'p, 's> Checker<'p, 's> {
                         .then_with(|| has_symbol(b).cmp(&has_symbol(a))),
                 })
                 .then_with(|| originating_import(a).cmp(&originating_import(b)))
-                .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)));
+                .then_with(|| is_not_reference(a).cmp(&is_not_reference(b)));
             if by_symbol.is_ne() {
                 return by_symbol;
             }
@@ -2330,7 +2331,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let node = |deferred: Option<&DeferredTypeArguments>| {
                     let deferred = deferred?;
                     let pos = self.hir(deferred.file)[deferred.node].pos;
-                    Some(self.place_in_program_order(deferred.file, pos))
+                    Some(self.position_in_program_order(deferred.file, pos))
                 };
                 some_first(node(x), node(y)).then_with(|| match (x, y) {
                     (Some(x), Some(y)) => self.compare_type_mappers(x.mapper, y.mapper),
@@ -2517,7 +2518,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 (file, self.hir(file)[node].pos)
                             }
                         };
-                        Some(self.place_in_program_order(file, pos))
+                        Some(self.position_in_program_order(file, pos))
                     };
                     some_first(node(x), node(y))
                         .then_with(|| x.spread_rank.cmp(&y.spread_rank))
@@ -2810,12 +2811,12 @@ impl<'p, 's> Checker<'p, 's> {
                 .then_with(|| some_first(a.name, b.name))
         });
         let mut buffer = Vec::new();
-        for of_one_name in types.chunk_by_mut(|a, b| (a.flags, a.name) == (b.flags, b.name)) {
+        for same_name_group in types.chunk_by_mut(|a, b| (a.flags, a.name) == (b.flags, b.name)) {
             let mut compare = |a: &Ranked<'p>, b: &Ranked<'p>| match a.ty == b.ty {
                 true => std::cmp::Ordering::Equal,
                 false => self.compare_types(a.ty, b.ty),
             };
-            merge_sort_by(of_one_name, &mut compare, &mut buffer);
+            merge_sort_by(same_name_group, &mut compare, &mut buffer);
         }
     }
 
@@ -2843,7 +2844,7 @@ impl<'p, 's> Checker<'p, 's> {
         found: Option<(TypeId, &PositionSet)>,
     ) -> Option<Shortcut> {
         if let Some((whole, positions)) = found
-            && self.has_sorted_runs_for_parts(whole)
+            && self.is_known_sorted_run(whole)
         {
             let all = self.parts(whole);
             members.extend(positions.iter().map(|at| all[at]));
@@ -2880,7 +2881,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// True if the members of the union `whole` are known to be a sorted run.
-    fn has_sorted_runs_for_parts(&self, whole: TypeId) -> bool {
+    fn is_known_sorted_run(&self, whole: TypeId) -> bool {
         self.types().is_sorted_run(whole)
     }
 
@@ -2913,7 +2914,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// FOR SPEED: sorts `kept`, a subset of the members of the union `whole`, into union order. Returns `None` if the
     /// caller has to sort.
     fn order_as_in(&self, whole: TypeId, kept: &mut Flat) -> Option<Shortcut> {
-        if !self.has_sorted_runs_for_parts(whole) {
+        if !self.is_known_sorted_run(whole) {
             return None;
         }
         sort_by_id(kept);
@@ -2935,7 +2936,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// combined again. If the members of each of `actual` are a subsequence of one union's members, then their union
     /// has the members at all those positions, in that order, and nothing needs to be compared. Returns that one union.
     ///
-    /// It's one of `actual`, or the union that one of them was derived from. `wholes_of_unions` only suggests a
+    /// It's one of `actual`, or the union that one of them was derived from. `superset_unions` only suggests a
     /// candidate. The positions are verified here.
     fn join_by_position(&self, members: &mut Flat, actual: &[TypeId]) -> Option<TypeId> {
         let (mut total, mut longest, mut remembered) = (0, TypeId::NEVER, None);
@@ -2946,7 +2947,7 @@ impl<'p, 's> Checker<'p, 's> {
                 longest = ty;
             }
             if remembered.is_none() && len > 1 {
-                remembered = self.wholes_of_unions.get(ty.0, 0).map(TypeId);
+                remembered = self.superset_unions.get(ty.0, 0).map(TypeId);
             }
         }
         let longest = (remembered != Some(longest)).then_some(longest);
@@ -2954,8 +2955,8 @@ impl<'p, 's> Checker<'p, 's> {
             let all = self.parts(whole);
             // Each of `actual` is searched for from the start of `all`, which isn't worth it if `all` is much longer
             // than the requested union.
-            if actual.len() * all.len() > MOST_STEPS_FOR_A_POSITION * total
-                || !self.has_sorted_runs_for_parts(whole)
+            if actual.len() * all.len() > MAX_STEPS_PER_POSITION * total
+                || !self.is_known_sorted_run(whole)
             {
                 continue;
             }
@@ -3008,7 +3009,7 @@ impl<'p, 's> Checker<'p, 's> {
         match unions[..] {
             [] => members.extend(singles.iter().map(|it| it.ty)),
             [run] if singles.len() <= 1 || singles.len() * MUCH_LONGER <= run.len() => {
-                self.place_in_run(members, run, &mut singles);
+                self.insert_into_run(members, run, &mut singles);
             }
             _ => {
                 let merged = self.merge_runs(&unions, &singles);
@@ -3024,7 +3025,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Adds the members of `run` and `singles`, two sorted runs, to `members`, deduplicated and in order.
     /// Binary-searches for the position of each of `singles` and copies the rest.
-    fn place_in_run(&self, members: &mut Flat, run: &[TypeId], singles: &mut [Ranked<'p>]) {
+    fn insert_into_run(&self, members: &mut Flat, run: &[TypeId], singles: &mut [Ranked<'p>]) {
         let mut from = 0;
         for single in singles {
             let (mut low, mut high) = (from, run.len());
@@ -3066,7 +3067,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ends.push(runs.len());
         }
-        if ends.len() > MOST_RUNS_TO_MERGE {
+        if ends.len() > MAX_RUNS_TO_MERGE {
             self.sort_ranked(&mut runs);
             runs.dedup_by_key(|it| it.ty);
             return runs;
@@ -3226,8 +3227,8 @@ impl<'p, 's> Checker<'p, 's> {
             types.mark_sorted_run(part);
         }
         // `whole` may be a part itself.
-        let whole = self.wholes_of_unions.get(whole.0, 0).unwrap_or(whole.0);
-        self.wholes_of_unions.put(part.0, 0, whole);
+        let whole = self.superset_unions.get(whole.0, 0).unwrap_or(whole.0);
+        self.superset_unions.put(part.0, 0, whole);
     }
 
     /// `containsType` for the members of a union. It tests identity, and comparing two types costs more than a linear
@@ -3296,7 +3297,7 @@ mod tests {
     }
 
     #[test]
-    fn a_kept_call_answers_the_same_arguments_only() {
+    fn cached_call_matches_only_identical_arguments() {
         let alias = |id: u32| Sym {
             file: FileId(0),
             id: SymbolId(id),
@@ -3367,14 +3368,14 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn kept_calls_are_overwritten_and_dropped_but_never_mixed_up() {
+    fn cached_calls_are_evicted_but_never_mixed_up() {
         let mut calls = UnionCalls::default();
         let types_of = |at: u32, len: usize| -> Vec<TypeId> {
             (0..len as u32).map(|i| TypeId(at * 7 + i)).collect()
         };
-        // Long enough for `places` to reach its full size, and for `types` to be dropped a few times.
+        // Long enough for `slots` to reach its full size, and for `types` to be dropped a few times.
         let lens = [2, 3, 8, 9, 100, 5000];
-        let count = 3 * UnionCalls::MOST_PLACES as u32;
+        let count = 3 * UnionCalls::MAX_SLOTS as u32;
         let mut found = 0;
         for at in 0..count {
             let types = types_of(at, lens[at as usize % lens.len()]);
@@ -3385,7 +3386,7 @@ mod tests {
             };
             calls.put(call.hash(), &call, TypeId(at));
             assert_eq!(get(&calls, &call), Some(TypeId(at)));
-            assert!(calls.types.len() <= UnionCalls::MOST_TYPES);
+            assert!(calls.types.len() <= UnionCalls::MAX_TYPES);
             // An earlier call either still has its own answer or is gone.
             let earlier = at / 2;
             let types = types_of(earlier, lens[earlier as usize % lens.len()]);
@@ -3398,8 +3399,8 @@ mod tests {
             found += u32::from(known.is_some());
         }
         assert!(found > 0 && found < count);
-        assert_eq!(calls.places.len(), UnionCalls::MOST_PLACES);
-        let too_long = vec![TypeId(1); UnionCalls::MOST_TYPES + 1];
+        assert_eq!(calls.slots.len(), UnionCalls::MAX_SLOTS);
+        let too_long = vec![TypeId(1); UnionCalls::MAX_TYPES + 1];
         let call = UnionArguments {
             reduction: Reduction::None,
             types: &too_long,
@@ -3410,7 +3411,7 @@ mod tests {
     }
 
     #[test]
-    fn long_lists_that_differ_in_the_middle_are_told_apart() {
+    fn long_lists_differing_in_the_middle_are_distinct() {
         fn call(types: &[TypeId]) -> UnionArguments<'_> {
             UnionArguments {
                 reduction: Reduction::None,
@@ -3434,7 +3435,7 @@ mod tests {
     }
 
     #[test]
-    fn a_subsequence_has_its_items_in_the_order_of_the_whole() {
+    fn subsequence_keeps_the_order_of_the_whole() {
         let ids = |numbers: &[u32]| -> Vec<TypeId> { numbers.iter().map(|&n| TypeId(n)).collect() };
         let all = ids(&[5, 3, 9, 1, 7]);
         for some in [&[][..], &[5], &[7], &[5, 7], &[3, 9, 1], &[5, 3, 9, 1, 7]] {

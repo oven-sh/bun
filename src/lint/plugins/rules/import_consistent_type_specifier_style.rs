@@ -78,7 +78,7 @@ impl Rule for ConsistentTypeSpecifierStyle {
         if !should_use_top_level {
             return;
         }
-        let fix = |fixer: Fixer<'a>| if is_oxlint { Some(print_anew(fixer, import)) } else { move_types_out(fixer, import) };
+        let fix = |fixer: Fixer<'a>| if is_oxlint { Some(reprint_as_two_imports(fixer, import)) } else { move_types_out(fixer, import) };
         // The plugin reports a statement once if it has only inline types. oxlint does that only in its own
         // `TopLevelIfOnlyTypeImports` mode.
         let is_one_report =
@@ -139,7 +139,7 @@ fn move_types_out<'a>(fixer: Fixer<'a>, import: Import<'a>) -> Option<Fix> {
 /// oxlint's fix: reprints the statement as one import for the values and one for the types.
 #[cold]
 #[inline(never)]
-fn print_anew(fixer: Fixer, import: Import) -> Fix {
+fn reprint_as_two_imports(fixer: Fixer, import: Import) -> Fix {
     let (types, values): (Specifiers, Specifiers) = import.named().iter().partition(|it| it.is_type_only());
     let mut import_source = Vec::new();
     if import.default().is_some() || !values.is_empty() {

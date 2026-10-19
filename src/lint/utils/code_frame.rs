@@ -141,7 +141,7 @@ pub fn write_rows_of<'a>(
         if !is_in_range || !has_column {
             continue;
         }
-        let (blanks, carets) = if number == first {
+        let (padding, carets) = if number == first {
             (before, on_first)
         } else if number == last {
             (0, to)
@@ -154,7 +154,7 @@ pub fn write_rows_of<'a>(
         out.push(b'\n');
         out.resize(out.len() + 2 + gutter, b' ');
         out.extend_from_slice(b" | ");
-        write_blanks(out, text, blanks);
+        write_padding(out, text, padding);
         out.resize(out.len() + carets.max(1) as usize, b'^');
         if number == last && !frame.message.is_empty() {
             out.push(b' ');
@@ -165,7 +165,7 @@ pub fn write_rows_of<'a>(
 }
 
 /// `line.slice(0, units).replace(/[^\t]/g, " ")`
-fn write_blanks(out: &mut Vec<u8>, line: &[u8], units: u64) {
+fn write_padding(out: &mut Vec<u8>, line: &[u8], units: u64) {
     let (mut at, mut written) = (0, 0);
     while written < units {
         let (c, size) = bun_core::lexer::char_and_size(line, at);

@@ -63,7 +63,7 @@ enum Body {
 }
 
 /// Builds a record property from its name alone. `name_token` is the name's first token.
-fn property_of_record(
+fn record_property(
     name_token: T,
     (key, name_kind, name_pos): (PropKey, NameKind, u32),
     flags: Flags,
@@ -76,7 +76,7 @@ fn property_of_record(
     Member {
         kind: MemberKind::Property,
         key,
-        flags: flags | super::class::flags_of_member_name(name_token, name_kind, key),
+        flags: flags | super::class::member_name_flags(name_token, name_kind, key),
         ty: TypeNodeId::NONE,
         init: ExprId::NONE,
         func: FnId::NONE,
@@ -105,7 +105,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// True if the token is directly followed by `byte`.
     #[inline]
-    fn is_directly_before(&self, byte: u8) -> bool {
+    fn is_directly_followed_by(&self, byte: u8) -> bool {
         self.lx.src.get(self.lx.end as usize) == Some(&byte)
     }
 
@@ -169,7 +169,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// True if the token is the `|` of a union and not the `|` of `|}`.
     #[inline]
     fn is_at_union_operator(&self) -> bool {
-        self.token() == T::Bar && !self.is_directly_before(b'}')
+        self.token() == T::Bar && !self.is_directly_followed_by(b'}')
     }
 
     fn flow_union_type(&mut self) -> TypeNodeId {
@@ -458,7 +458,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// declaration, where `T` can be a union.
     fn flow_renders_type(&mut self, is_of_declaration: bool) -> TypeNodeId {
         let start = self.pos();
-        let has_mark = self.is_directly_before(b'?') || self.is_directly_before(b'*');
+        let has_mark = self.is_directly_followed_by(b'?') || self.is_directly_followed_by(b'*');
         self.next();
         if has_mark {
             if self.token() == T::QuestionQuestion {
@@ -880,7 +880,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.is_too_deep() {
             return Span::EMPTY;
         }
-        let is_exact = self.is_directly_before(b'|');
+        let is_exact = self.is_directly_followed_by(b'|');
         self.expect(T::OpenBrace);
         let base = self.s.members.len();
         match self.token() {
@@ -939,7 +939,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// Parses a property name in an object type. `@@iterator` is a valid name.
     fn flow_property_name(&mut self, member: &mut Member) {
-        if self.token() == T::At && self.is_directly_before(b'@') {
+        if self.token() == T::At && self.is_directly_followed_by(b'@') {
             let start = self.pos();
             self.next();
             self.next();
@@ -1302,7 +1302,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// Fails if there's a decorator among the modifiers on the stack from `base` on. They precede something that can't
     /// have decorators.
-    pub(crate) fn flow_refuse_decorators(&mut self, base: usize) {
+    pub(crate) fn flow_reject_decorators(&mut self, base: usize) {
         let is_decorator = |it: &Modifier| matches!(it.kind, ModifierKind::Decorator(_));
         let written = self.s.modifiers.get(base..).unwrap_or_default();
         if written.iter().any(is_decorator) {
@@ -1453,7 +1453,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `declare class A<T> extends B<T> mixins C implements D { }`, at `class`.
     pub(crate) fn flow_declare_class(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
-        self.flow_refuse_decorators(base);
+        self.flow_reject_decorators(base);
         if flags.contains(Flags::ABSTRACT) {
             self.fail();
         }
@@ -1874,7 +1874,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let base = self.s.ids.len();
         self.s.ids.push(braces.0);
         let args = self.take_ids(base);
-        let type_args = self.f.place_of_list(type_args);
+        let type_args = self.f.store_list(type_args);
         let call = self.f.add_call(Call {
             callee: head,
             args,
@@ -2173,7 +2173,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `record A<T> implements B { a: T = b, static c: U = d, e() { } }`, after `record`, which is the last modifier.
     fn flow_record(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
-        self.flow_refuse_decorators(base);
+        self.flow_reject_decorators(base);
         let (name, name_pos) = self.identifier();
         let type_params = self.type_parameters();
         let implements = match self.eat(T::Implements) {
@@ -2181,12 +2181,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             false => IdList::EMPTY,
         };
         self.expect(T::OpenBrace);
-        self.classes_around += 1;
+        self.class_depth += 1;
         let first = self.s.members.len();
         while self.is_in_list(T::CloseBrace) {
             self.flow_record_member();
         }
-        self.classes_around -= 1;
+        self.class_depth -= 1;
         self.expect(T::CloseBrace);
         let members = take_span!(self, members, first);
         let modifiers = self.take_modifiers(base);
@@ -2231,7 +2231,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let name_token = self.token();
         let name = self.property_name();
-        let mut member = property_of_record(name_token, name, flags, start.pos);
+        let mut member = record_property(name_token, name, flags, start.pos);
         let (key, flags, name_pos) = (member.key, member.flags, member.name_pos);
         let mut end = 0;
         if self.token() == T::Colon && !is_generator && !flags.contains(Flags::ASYNC) {

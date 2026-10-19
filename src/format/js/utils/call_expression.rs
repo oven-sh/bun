@@ -12,14 +12,14 @@ use crate::write;
 /// node type checks give different answers.
 #[inline]
 pub(crate) fn is_call_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    e.tag() == ExprTag::Call && (f.context().has_tree_of_babel() || !e.is_chain_root())
+    e.tag() == ExprTag::Call && (f.context().has_babel_tree() || !e.is_chain_root())
 }
 
 /// Prettier's `isMemberExpression`. See [`is_call_expression`].
 #[inline]
 pub(crate) fn is_member_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     matches!(e.tag(), ExprTag::Dot | ExprTag::Index)
-        && (f.context().has_tree_of_babel() || !e.is_chain_root())
+        && (f.context().has_babel_tree() || !e.is_chain_root())
 }
 
 /// Prettier's `stripChainElementWrappers`: `e` without the `!`s after it. The `ChainExpression` isn't a node here.
@@ -47,7 +47,7 @@ pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
 /// a link in a member chain.
 ///
 /// `is_in_member_chain` means `callee` is printed as part of a member chain.
-pub(crate) fn comments_stay_behind_callee<'a>(
+pub(crate) fn keeps_comments_after_callee<'a>(
     callee: Expr<'a>,
     is_in_member_chain: bool,
     f: &Formatter<'a>,
@@ -56,7 +56,7 @@ pub(crate) fn comments_stay_behind_callee<'a>(
         && comments_stay_after_callee_for_oxfmt(callee, |_| is_in_member_chain)
 }
 
-/// See [`comments_stay_behind_callee`]. Comment attachment also calls this, and works out from the tree if a call is a
+/// See [`keeps_comments_after_callee`]. Comment attachment also calls this, and works out from the tree if a call is a
 /// link in a member chain.
 pub(crate) fn comments_stay_after_callee_for_oxfmt<'a>(
     callee: Expr<'a>,
@@ -83,16 +83,16 @@ pub(crate) struct FormatCallee<'a> {
 impl<'a> Format<'a> for FormatCallee<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let callee = self.callee;
-        if f.is_quiet() || !comments_stay_behind_callee(callee, self.is_in_member_chain, f) {
+        if f.is_quiet() || !keeps_comments_after_callee(callee, self.is_in_member_chain, f) {
             return write!(f, callee);
         }
         write!(f, FormatNodeWithoutTrailingComments(&callee));
-        write_comments_behind_callee(comments_of_expression(callee, f).trailing, f);
+        write_comments_after_callee(comments_of_expression(callee, f).trailing, f);
     }
 }
 
-/// See [`comments_stay_behind_callee`]. The comments on the callee's line trail it. The others keep their lines.
-pub(crate) fn write_comments_behind_callee<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
+/// See [`keeps_comments_after_callee`]. The comments on the callee's line trail it. The others keep their lines.
+pub(crate) fn write_comments_after_callee<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
     let same_line_count = (comments.iter())
         .take_while(|comment| !comment.has_newline_before())
         .count();
@@ -123,10 +123,9 @@ pub(crate) fn is_test_call_expression(e: Expr<'_>) -> bool {
 
 /// The same, with the callees that the flavor recognizes.
 pub(crate) fn is_test_call_expression_in_flavor<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    match knows_test_callees_of_vitest_and_deno(f) {
+    match recognizes_vitest_and_deno_test_callees(f) {
         true => {
-            is_test_call(e, contains_a_test_pattern_of_oxfmt)
-                && !has_comments_around_arguments(e, f)
+            is_test_call(e, contains_oxfmt_test_pattern) && !has_comments_around_arguments(e, f)
         }
         false => is_test_call_expression(e),
     }
@@ -153,12 +152,12 @@ fn has_comments_around_arguments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 }
 
 /// oxfmt has a longer list than Prettier: `it.todo("name", () => {})`, `Deno.test("name", () => {})`.
-fn knows_test_callees_of_vitest_and_deno(f: &Formatter<'_>) -> bool {
+fn recognizes_vitest_and_deno_test_callees(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
 /// oxfmt's `contains_a_test_pattern`: Prettier's `testCallCalleePatterns` and some more.
-fn contains_a_test_pattern_of_oxfmt(e: Expr<'_>) -> bool {
+fn contains_oxfmt_test_pattern(e: Expr<'_>) -> bool {
     if contains_a_test_pattern(e) {
         return true;
     }

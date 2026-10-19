@@ -34,7 +34,7 @@
 //!   itself, or to a placeholder it has put in place, depends on where the checker entered the cycle
 //!   (`Checker::close_ring_from`). `tsc --singleThreaded` enters from the first file in program order that leads there.
 //!   So a task is only trusted about a cycle if every file before the one it's visiting is checked for good. None of
-//!   those files leads to the cycle, or the task would have found the members' results (`Task::close_ring`). Any other
+//!   those files leads to the cycle, or the task would have found the members' results (`Task::close_cycle`). Any other
 //!   task is discarded, and the driver rechecks its file once all earlier files are done.
 //!   - Earlier files that can't reach the cycle don't matter. If only importers of the current file can reach it, the task
 //!     is trusted once the earlier files of its own import cycle are done (`Checker::is_reachable_only_by_importers`).
@@ -45,10 +45,10 @@
 //! - **A cycle is seen whole or not at all.** A task has a snapshot per file but none for the record-keyed entries. So
 //!   it could miss one member of a cycle and hit the next, which doesn't close a cycle and isn't what any entry point
 //!   produces. The commit of a task that was trusted about a cycle follows a file, so none of it is withheld, and it
-//!   announces itself before it stores its first entry (`Numbers::with_a_ring`). A task that hasn't been idle since
-//!   then publishes nothing immediately (`Task::is_beside_a_ring`). It's discarded if it has stored under a key that
-//!   the commit lists for its cycles (`Task::take_logged_at_cycles`), because that means it missed that entry
-//!   (`Checker::lose_what_has_missed_a_ring`).
+//!   announces itself before it stores its first entry (`Numbers::with_a_cycle`). A task that hasn't been idle since
+//!   then publishes nothing immediately (`Task::overlaps_a_cycle_commit`). It's discarded if it has stored under a key
+//!   that the commit lists for its cycles (`Task::take_logged_at_cycles`), because that means it missed that entry
+//!   (`Checker::discard_if_missed_cycle_member`).
 //! - **The last round** is one task that checks the files that are still discarded, in program order, while nothing
 //!   else runs. It finds everything that was committed. Whatever it computes at a limit is final, as with a single
 //!   checker. It commits once, when it ends (`Checker::is_commit_due`).
@@ -65,22 +65,22 @@
 //!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
 //!   never finds such entries of its own. This covers the entries under nodes, not those under records.
 //! - **What a task stores about an expression of the file it visits never leaves the task**
-//!   (`crate::table::Location::KEEPS_THE_VISITED_FILE`). That's most of what a check stores, and other tasks rarely
+//!   (`crate::table::Location::KEEPS_VISITED_FILE_LOCAL`). That's most of what a check stores, and other tasks rarely
 //!   look it up. It's neither logged nor counted as a `Task::hold_back`.
-//! - **A record-keyed entry doesn't wait for a commit if nothing it depends on does** (`Task::may_write_at_once`). That
-//!   requires that neither its key nor its value is bound, and that since its evaluation began nothing was stored that
-//!   waits for a commit and nothing was read that's only valid for the checker's current stack (`Task::hold_back`).
-//!   Then everything its evaluation stored was also published immediately, before it. An entry that's published
-//!   immediately can't be rolled back. So a task stops publishing immediately from the moment something happens that
-//!   may get it discarded, or it stores the result of a resolution cycle, until its next commit
-//!   (`Task::stop_writing_at_once`).
+//! - **A record-keyed entry doesn't wait for a commit if nothing it depends on does** (`Task::may_write_immediately`).
+//!   That requires that neither its key nor its value is bound, and that since its evaluation began nothing was stored
+//!   that waits for a commit and nothing was read that's only valid for the checker's current stack
+//!   (`Task::hold_back`). Then everything its evaluation stored was also published immediately, before it. An entry
+//!   that's published immediately can't be rolled back. So a task stops publishing immediately from the moment
+//!   something happens that may get it discarded, or it stores the result of a resolution cycle, until its next commit
+//!   (`Task::stop_writing_immediately`).
 //! - **Results that depend on how deep the checker was never leave the task**: a base constraint that was cut short, a
 //!   comparison that succeeded because two types inside it counted as deeply nested, and whatever follows from either
 //!   (`Checker::constraints_of_this_file`, `relations_of_this_file`). In a shared table the first such result would
 //!   stick for every task.
 //! - Variances don't wait for a commit either. See `Claims`.
 
-use super::task::{Ended, Task, tables_of, tables_written_at_once};
+use super::task::{Ended, Task, tables_of, tables_written_immediately};
 use super::{Checker, Program, Spare};
 use crate::local::{Log, node_word};
 use crate::node::Node;
@@ -99,15 +99,15 @@ pub(super) struct Commits<'s> {
     committing: Guarded<Committing>,
     numbers: &'s Numbers,
     claims: Claims,
-    /// The commits of tasks that `Task::close_ring` trusted, ordered by number.
-    rings: Guarded<Vec<Ring>>,
+    /// The commits of tasks that `Task::close_cycle` trusted, ordered by number.
+    cycle_commits: Guarded<Vec<CycleCommit>>,
     /// `Files::rank_of_file`, indexed by file.
     ranks_of_files: &'s [u32],
     /// One bit per file. Set once a task that was checking another file has found an error while evaluating something
     /// about this file, and has committed. See `View::hides`.
     with_errors: &'s [AtomicU32],
-    /// `tables_written_at_once`
-    at_once: u128,
+    /// `tables_written_immediately`
+    immediate_tables: u128,
 }
 
 /// Allocated in an arena so that tasks can refer to it.
@@ -116,20 +116,20 @@ struct Numbers {
     begun: AtomicU32,
     /// This commit and all earlier ones have stored everything.
     stored: AtomicU32,
-    /// The number of the newest commit by a task that `Task::close_ring` trusted.
-    with_a_ring: AtomicU32,
+    /// The number of the newest commit by a task that `Task::close_cycle` trusted.
+    with_a_cycle: AtomicU32,
     /// Indexed by commit number: the highest `Files::rank_of_file` among the files the commit's task was checking. [0]
     /// is unused. `Commits` frees it, because arena contents are never dropped.
     ranks: Guarded<Vec<u32>>,
 }
 
-/// A commit by a task that `Task::close_ring` trusted.
-pub(super) struct Ring {
+/// A commit by a task that `Task::close_cycle` trusted.
+pub(super) struct CycleCommit {
     number: u32,
     /// The keys from `Task::take_logged_at_cycles`, sorted. They cover the queries in the cycles and whatever else was
     /// stored in the same statements. A record key is its table's slot and `Publish::identity_of_logged`.
-    of_records: Vec<(u32, u64)>,
-    of_nodes: Vec<[u32; 3]>,
+    record_keys: Vec<(u32, u64)>,
+    node_keys: Vec<[u32; 3]>,
     /// Hashes of the queries in the cycles this commit resolves, sorted. See `Task::take_cycle_members`.
     members: Vec<u64>,
 }
@@ -155,17 +155,17 @@ impl<'s> Commits<'s> {
             numbers: arena.alloc(Numbers {
                 begun: AtomicU32::new(0),
                 stored: AtomicU32::new(0),
-                with_a_ring: AtomicU32::new(0),
+                with_a_cycle: AtomicU32::new(0),
                 ranks: Guarded::new(vec![0]),
             }),
             claims: Claims {
                 table: Guarded::default(),
                 has_changed: Condvar::new(),
             },
-            rings: Guarded::default(),
+            cycle_commits: Guarded::default(),
             ranks_of_files: &[],
             with_errors: &[],
-            at_once: tables_written_at_once(),
+            immediate_tables: tables_written_immediately(),
         }
     }
 
@@ -173,7 +173,7 @@ impl<'s> Commits<'s> {
     pub(super) fn release(&mut self) {
         *self.committing.get_mut() = Committing::default();
         *self.claims.table.get_mut() = FxHashMap::default();
-        *self.rings.get_mut() = Vec::new();
+        *self.cycle_commits.get_mut() = Vec::new();
         *self.numbers.ranks.lock() = Vec::new();
     }
 
@@ -196,10 +196,10 @@ impl<'s> Commits<'s> {
             ranks_of_files: self.ranks_of_files,
             with_errors: self.with_errors,
             rank: Cell::new(0),
-            of_files: vec![Cell::new(0); files].into_boxed_slice(),
+            file_snapshots: vec![Cell::new(0); files].into_boxed_slice(),
             touched: RefCell::default(),
             pinned: Cell::new(NO_FILE),
-            at_rest: Cell::new(self.numbers.stored.load(Ordering::Acquire)),
+            last_idle_commit: Cell::new(self.numbers.stored.load(Ordering::Acquire)),
             compared_with_pinned: Cell::new(0),
             oldest_pin: Cell::new(u32::MAX),
             own: RefCell::default(),
@@ -215,21 +215,23 @@ impl<'s> Commits<'s> {
         task: &Task<'s>,
         log: &mut Log,
         number: u32,
-        ring: Option<Ring>,
+        ring: Option<CycleCommit>,
     ) -> u64 {
         let mut stored = 0;
         self.numbers.begun.store(number, Ordering::Release);
         // This comes before the first entry, so a task that finds an entry also sees this.
         if let Some(ring) = ring {
-            self.rings.lock().push(Ring { number, ..ring });
-            self.numbers.with_a_ring.store(number, Ordering::Release);
+            self.cycle_commits
+                .lock()
+                .push(CycleCommit { number, ..ring });
+            self.numbers.with_a_cycle.store(number, Ordering::Release);
         }
-        for &[slot, key] in &log.of_records {
+        for &[slot, key] in &log.record_keys {
             if let Some(table) = tables.get(slot as usize) {
                 stored += u64::from(table.store_logged(task, u64::from(key), number));
             }
         }
-        for &[slot, file, index] in &log.of_nodes {
+        for &[slot, file, index] in &log.node_keys {
             if let Some(table) = tables.get(slot as usize) {
                 stored += u64::from(table.store_logged(task, node_word(file, index), number));
             }
@@ -273,13 +275,13 @@ pub(crate) struct View<'s> {
     rank: Cell<u32>,
     /// Indexed by file: one more than the number of the last commit the task sees there, or 0 if the task hasn't looked
     /// at the file since `forget`.
-    of_files: Box<[Cell<u32>]>,
-    /// The files with a nonzero entry in `of_files`.
+    file_snapshots: Box<[Cell<u32>]>,
+    /// The files with a nonzero entry in `file_snapshots`.
     touched: RefCell<Vec<u32>>,
     /// The file that the task is visiting, or `NO_FILE`.
     pinned: Cell<u32>,
     /// The number of the last commit that had stored everything when `forget` was last called.
-    at_rest: Cell<u32>,
+    last_idle_commit: Cell<u32>,
     /// Commits up to this number haven't stored anything under `pinned` that the task doesn't see.
     compared_with_pinned: Cell<u32>,
     /// The lowest snapshot that a file had while it was `pinned`, since the task's last commit.
@@ -295,7 +297,7 @@ impl View<'_> {
     /// nodes in a table.
     #[inline]
     pub(crate) fn snapshot_of(&self, file: FileId) -> u32 {
-        match self.of_files.get(file.idx()).map_or(0, Cell::get) {
+        match self.file_snapshots.get(file.idx()).map_or(0, Cell::get) {
             0 => self.touch(file),
             known => known - 1,
         }
@@ -304,7 +306,7 @@ impl View<'_> {
     #[inline(never)]
     fn touch(&self, file: FileId) -> u32 {
         let stored = self.numbers.stored.load(Ordering::Acquire);
-        if let Some(of_file) = self.of_files.get(file.idx()) {
+        if let Some(of_file) = self.file_snapshots.get(file.idx()) {
             of_file.set(stored + 1);
             self.touched.borrow_mut().push(file.0);
         }
@@ -314,12 +316,12 @@ impl View<'_> {
     /// Drops the snapshots of all files except the pinned one. Call when nothing in progress in the task has looked at
     /// a table.
     pub(super) fn forget(&self) {
-        self.at_rest
+        self.last_idle_commit
             .set(self.numbers.stored.load(Ordering::Acquire));
         let pinned = self.pinned.get();
         self.touched.borrow_mut().retain(|&file| {
             if file != pinned
-                && let Some(of_file) = self.of_files.get(file as usize)
+                && let Some(of_file) = self.file_snapshots.get(file as usize)
             {
                 of_file.set(0);
             }
@@ -376,10 +378,10 @@ impl View<'_> {
                 .is_some_and(|&it| it > rank)
     }
 
-    /// See `Task::is_beside_a_ring`.
+    /// See `Task::overlaps_a_cycle_commit`.
     #[inline]
-    pub(super) fn is_beside_a_ring(&self) -> bool {
-        self.numbers.with_a_ring.load(Ordering::Acquire) > self.at_rest.get()
+    pub(super) fn overlaps_a_cycle_commit(&self) -> bool {
+        self.numbers.with_a_cycle.load(Ordering::Acquire) > self.last_idle_commit.get()
     }
 
     fn is_own(&self, commit: u32) -> bool {
@@ -417,7 +419,7 @@ impl View<'_> {
 ///
 /// - A thread that's about to start an outermost measurement claims the symbol (`Program::claim_variances`).
 /// - A thread that finds the symbol claimed waits, and then takes the result.
-/// - When an outermost measurement ends, its results are shared immediately if `Checker::share_what_was_measured`
+/// - When an outermost measurement ends, its results are shared immediately if `Checker::share_measured_variances`
 ///   allows it. They go to `Program::serial_variances`, which `variances_worker` checks before it measures and which
 ///   every commit is compared with. So every later commit agrees with them.
 /// - A claim that ends without a result wakes the waiters too. One of them claims the symbol, or they all measure.
@@ -549,9 +551,11 @@ impl<'s> Program<'s> {
     /// True if a commit numbered `after + 1..=last` resolved a cycle that contains one of `members`. See
     /// `Checker::take_unresolved_cycle`.
     pub fn is_cycle_resolved(&self, members: &[u64], after: u32, last: u32) -> bool {
-        let rings = self.commits.rings.lock();
-        let from = rings.partition_point(|ring| ring.number <= after);
-        let mut since = rings[from..].iter().take_while(|ring| ring.number <= last);
+        let cycle_commits = self.commits.cycle_commits.lock();
+        let from = cycle_commits.partition_point(|ring| ring.number <= after);
+        let mut since = cycle_commits[from..]
+            .iter()
+            .take_while(|ring| ring.number <= last);
         since.any(|ring| {
             let mut members = members.iter();
             members.any(|member| ring.members.binary_search(member).is_ok())
@@ -584,7 +588,7 @@ impl<'s> Program<'s> {
         let unseen: Vec<(FileId, Node)> = (unseen.filter(|it| !view.is_own(it.0)))
             .map(|it| (it.1, it.2))
             .collect();
-        self.has_walked_across_earlier_walk(&task.assignments_walked.borrow(), &unseen)
+        self.overlaps_earlier_walk(&task.assignments_walked.borrow(), &unseen)
     }
 
     /// Call once `task`'s commit `number` is known to be valid. Later commits are compared with what the task noted.
@@ -610,11 +614,11 @@ impl<'s> Checker<'_, 's> {
         let view = self.p.commits.view(files);
         // When it's alone there's no reader, so nothing is published immediately. And at a limit it has to store, and
         // later replace, the same entries as tsgo.
-        let at_once = match is_alone {
+        let immediate_tables = match is_alone {
             true => 0,
-            false => self.p.commits.at_once,
+            false => self.p.commits.immediate_tables,
         };
-        self.task.see_commits(view, is_alone, at_once);
+        self.task.see_commits(view, is_alone, immediate_tables);
     }
 
     /// For a task that sees commits, returns a greater number than last time if a commit may have added to the tables
@@ -626,20 +630,20 @@ impl<'s> Checker<'_, 's> {
 
     /// Returns the number of the newest commit that resolves a cycle, as far as this task sees commits.
     pub(super) fn newest_commit_with_a_cycle(&self) -> u64 {
-        let newest = |view: &View| view.numbers.with_a_ring.load(Ordering::Acquire);
+        let newest = |view: &View| view.numbers.with_a_cycle.load(Ordering::Acquire);
         self.task.view().map_or(0, |view| u64::from(newest(view)))
     }
 
     /// Call between two statements or two deferred nodes of the task's own walk.
     #[inline]
-    pub(super) fn rest_between_statements(&mut self) {
+    pub(super) fn idle_between_statements(&mut self) {
         if self.task.commits()
             && self.stack.is_empty()
             && self.contextual.is_empty()
             && self.inference_contexts.is_empty()
             && !self.in_variance_computation
         {
-            self.rest();
+            self.on_idle();
         }
     }
 
@@ -649,62 +653,64 @@ impl<'s> Checker<'_, 's> {
     /// error.
     fn is_commit_due(&self) -> bool {
         self.task.commits()
-            && !self.task.is_believed()
+            && !self.task.is_trusted()
             && self.task.buffer().logged() >= KEYS_PER_COMMIT
     }
 
     /// Call when nothing in progress has looked at a table or is about to store in one.
-    fn rest(&mut self) {
-        self.lose_what_has_missed_a_ring();
+    fn on_idle(&mut self) {
+        self.discard_if_missed_cycle_member();
         // A commit here would store the members of a cycle that are in other files, and withhold those in this one.
-        if self.is_commit_due() && !self.task.is_lost() && !self.task.has_closed_a_ring() {
+        if self.is_commit_due() && !self.task.was_discarded() && !self.task.has_resolved_a_cycle() {
             let is_between_files = false;
             self.commit(is_between_files);
         } else if let Some(view) = self.task.view() {
             view.forget();
         }
-        self.task.note_what_is_logged_at_rest();
+        self.task.note_idle();
     }
 
     /// Call when the task is idle. Discards the task if it missed a member of a cycle that some commit has. Such a task
     /// hits the other members, which doesn't close a cycle and isn't what any entry point produces. There are two signs
     /// of a miss:
     /// - The task has stored, since it was last idle, under a key that the commit has. A task that misses a member
-    ///   evaluates it and stores it. See `Task::is_beside_a_ring`.
+    ///   evaluates it and stores it. See `Task::overlaps_a_cycle_commit`.
     /// - The commit has a key in the file the task is visiting, which doesn't change during the visit.
-    fn lose_what_has_missed_a_ring(&self) {
+    fn discard_if_missed_cycle_member(&self) {
         let Some(view) = self.task.view() else {
             return;
         };
-        let newest = view.numbers.with_a_ring.load(Ordering::Acquire);
-        let (at_rest, compared) = (view.at_rest.get(), view.compared_with_pinned.get());
-        if newest <= at_rest.min(compared) {
+        let newest = view.numbers.with_a_cycle.load(Ordering::Acquire);
+        let (last_idle_commit, compared) =
+            (view.last_idle_commit.get(), view.compared_with_pinned.get());
+        if newest <= last_idle_commit.min(compared) {
             return;
         }
         // Copied because `identities_of` borrows the task's buffer again.
-        let (of_records, of_nodes) = self.task.logged_since_rest();
-        let (of_records, of_nodes) = (of_records.to_vec(), of_nodes.to_vec());
-        let of_records = identities_of(&tables_of(self.p), &self.task, &of_records);
-        let rings = self.p.commits.rings.lock();
-        let from = rings.partition_point(|ring| ring.number <= at_rest.min(compared));
+        let (record_keys, node_keys) = self.task.logged_since_idle();
+        let (record_keys, node_keys) = (record_keys.to_vec(), node_keys.to_vec());
+        let record_keys = identities_of(&tables_of(self.p), &self.task, &record_keys);
+        let cycle_commits = self.p.commits.cycle_commits.lock();
+        let from =
+            cycle_commits.partition_point(|ring| ring.number <= last_idle_commit.min(compared));
         let is_of_later_file = |commit: u32| {
             let rank = self.p.commits.rank_of(commit);
             (self.task.file).is_some_and(|file| rank > Some(self.p.files.rank_of_file(file)))
         };
-        let has_missed = rings[from..].iter().any(|ring| {
+        let has_missed = cycle_commits[from..].iter().any(|ring| {
             ring.number > compared
-                && ring.of_nodes.iter().any(|key| key[1] == view.pinned.get())
+                && ring.node_keys.iter().any(|key| key[1] == view.pinned.get())
                 && !is_of_later_file(ring.number)
-                || ring.number > at_rest
-                    && (of_records
+                || ring.number > last_idle_commit
+                    && (record_keys
                         .iter()
-                        .any(|key| ring.of_records.binary_search(key).is_ok())
-                        || of_nodes
+                        .any(|key| ring.record_keys.binary_search(key).is_ok())
+                        || node_keys
                             .iter()
-                            .any(|key| ring.of_nodes.binary_search(key).is_ok()))
+                            .any(|key| ring.node_keys.binary_search(key).is_ok()))
         });
         view.compared_with_pinned.set(compared.max(newest));
-        if has_missed && !self.task.is_lost() {
+        if has_missed && !self.task.was_discarded() {
             // That cycle is already committed, so the file can be rechecked right away.
             drop(self.task.take_cycle_members());
             (self.task).discard_until_recheck("a ring of which it has missed a member");
@@ -712,8 +718,8 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// True if the task is discarded. Its files will be rechecked, and nothing it computes from now on is kept.
-    pub fn is_lost(&self) -> bool {
-        self.task.is_lost()
+    pub fn was_discarded(&self) -> bool {
+        self.task.was_discarded()
     }
 
     /// True if the task was discarded because of a cycle or an invalid commit, not a limit. Its files can be rechecked
@@ -738,9 +744,9 @@ impl<'s> Checker<'_, 's> {
     /// commit follows every file, so a discarded task never takes an earlier file with it. The exception is the last
     /// round's task.
     pub fn commit_after_file(&mut self, is_last: bool) -> bool {
-        self.lose_what_has_missed_a_ring();
+        self.discard_if_missed_cycle_member();
         // The last round's task commits once, when it ends. See `is_commit_due`. It's never discarded.
-        if self.task.is_believed() && !is_last && !self.task.is_lost() {
+        if self.task.is_trusted() && !is_last && !self.task.was_discarded() {
             return true;
         }
         self.commit(true)
@@ -760,13 +766,13 @@ impl<'s> Checker<'_, 's> {
             if let Some(view) = self.task.view() {
                 view.forget();
             }
-            return !self.task.is_lost();
+            return !self.task.was_discarded();
         };
         p.publish_reported(self.task.number(), of_entries_written_at_once);
-        if self.task.is_lost() {
+        if self.task.was_discarded() {
             return false;
         }
-        let ranks = self.task.files_in_doubt.iter();
+        let ranks = self.task.uncommitted_files.iter();
         let rank = ranks
             .map(|&file| p.files.rank_of_file(file))
             .max()
@@ -774,19 +780,19 @@ impl<'s> Checker<'_, 's> {
         let at_cycles = self.task.take_logged_at_cycles();
         let mut log = self.task.buffer().take_log();
         let ring = (!at_cycles.is_empty()).then(|| {
-            let (mut of_records, mut of_nodes) = (Vec::new(), Vec::new());
+            let (mut record_keys, mut node_keys) = (Vec::new(), Vec::new());
             let tables = tables_of(p);
             for [from, to] in &at_cycles {
-                let logged = log.of_records.get(from[0]..to[0]).unwrap_or(&[]);
-                of_records.extend(identities_of(&tables, &self.task, logged));
-                of_nodes.extend_from_slice(log.of_nodes.get(from[1]..to[1]).unwrap_or(&[]));
+                let logged = log.record_keys.get(from[0]..to[0]).unwrap_or(&[]);
+                record_keys.extend(identities_of(&tables, &self.task, logged));
+                node_keys.extend_from_slice(log.node_keys.get(from[1]..to[1]).unwrap_or(&[]));
             }
-            of_records.shared_sort_unstable();
-            of_nodes.shared_sort_unstable();
-            Ring {
+            record_keys.shared_sort_unstable();
+            node_keys.shared_sort_unstable();
+            CycleCommit {
                 number: 0,
-                of_records,
-                of_nodes,
+                record_keys,
+                node_keys,
                 members: self.task.take_cycle_members(),
             }
         });
@@ -794,7 +800,7 @@ impl<'s> Checker<'_, 's> {
         let asked = Instant::now();
         let mut committing = p.commits.committing.lock();
         let entered = Instant::now();
-        let is_invalid = !self.task.is_believed()
+        let is_invalid = !self.task.is_trusted()
             && (self.task.view()).is_some_and(|view| p.is_invalid(&self.task, view, &committing));
         if is_invalid {
             drop(committing);
@@ -823,11 +829,11 @@ impl<'s> Checker<'_, 's> {
         if let Some(view) = task.view() {
             view.has_committed(number);
         }
-        task.write_at_once_again();
+        task.resume_writing_immediately();
         if task.closed_a_cycle {
             p.closed_a_cycle.store(true, Ordering::Relaxed);
         }
-        task.buffer().give_back_log(log);
+        task.buffer().recycle_log(log);
         true
     }
 
@@ -838,12 +844,12 @@ impl<'s> Checker<'_, 's> {
     fn withhold_until_the_file_ends(&mut self, log: &mut Log, is_between_files: bool) {
         let withheld = &mut self.withheld_until_the_file_ends;
         if is_between_files {
-            log.of_nodes.append(withheld);
-            self.task.files_in_doubt.clear();
+            log.node_keys.append(withheld);
+            self.task.uncommitted_files.clear();
             return;
         }
-        let in_doubt = &self.task.files_in_doubt;
-        log.of_nodes.retain(|&entry| {
+        let in_doubt = &self.task.uncommitted_files;
+        log.node_keys.retain(|&entry| {
             let is_in_doubt = in_doubt.contains(&FileId(entry[1]));
             if is_in_doubt {
                 withheld.push(entry);

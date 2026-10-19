@@ -38,7 +38,7 @@ pub struct State<'a> {
     /// The restricted names that the file mentions.
     restricted: SmallVec<[Name<'a>; 6]>,
     /// A filter over `restricted`: bit `atom % 64` is set for each name.
-    numbers: u64,
+    name_bits: u64,
     /// Start offsets of the names already reported.
     reported: FxHashSet<u32>,
     /// Caches `safely_shadows_undefined` for the variables with several declarations.
@@ -48,7 +48,7 @@ pub struct State<'a> {
 impl NoShadowRestrictedNames {
     #[inline]
     fn is_restricted<'a>(name: Name<'a>, cx: &Cx<'a, Self>) -> bool {
-        cx.state.numbers >> (name.atom().0 % 64) & 1 != 0 && cx.state.restricted.contains(&name)
+        cx.state.name_bits >> (name.atom().0 % 64) & 1 != 0 && cx.state.restricted.contains(&name)
     }
 
     fn report_once<'a>(at: Span, name: Name<'a>, cx: &mut Cx<'a, Self>) {
@@ -92,8 +92,8 @@ impl NoShadowRestrictedNames {
         {
             return;
         }
-        let place = if cx.language().is_oxlint { pat.span() } else { utils::estree_span(Node::Pat(pat)) };
-        Self::report(place, name, pat.symbol(), cx);
+        let location = if cx.language().is_oxlint { pat.span() } else { utils::estree_span(Node::Pat(pat)) };
+        Self::report(location, name, pat.symbol(), cx);
     }
 }
 
@@ -142,7 +142,7 @@ impl Rule for NoShadowRestrictedNames {
         let restricted: SmallVec<[Name<'a>; 6]> =
             names.into_iter().filter_map(|name| file.find_name(name)).collect();
         let state = State {
-            numbers: restricted.iter().fold(0, |numbers, name| numbers | 1 << (name.atom().0 % 64)),
+            name_bits: restricted.iter().fold(0, |name_bits, name| name_bits | 1 << (name.atom().0 % 64)),
             restricted,
             reported: FxHashSet::default(),
             seen: IdMap::default(),

@@ -136,22 +136,22 @@ fn check_parameter_default<'a>(
         return;
     };
     let references = || symbol.references().filter(|it| !matches!(it.node(), Node::Type(ty) if ty.tag() == TypeTag::Predicate));
-    let is_it = |it: &Reference| it.span() == param_ident.span();
+    let is_param_read = |it: &Reference| it.span() == param_ident.span();
     let has_no_extra_references = match reassignment {
-        Reassignment::Logical(_) => references().next().is_some_and(|it| is_it(&it)),
+        Reassignment::Logical(_) => references().next().is_some_and(|it| is_param_read(&it)),
         Reassignment::Assignment(_) => {
-            references().filter(|it| it.is_write()).count() == 1 && references().any(|it| !it.is_write() && is_it(&it))
+            references().filter(|it| it.is_write()).count() == 1 && references().any(|it| !it.is_write() && is_param_read(&it))
         }
-        Reassignment::Declaration => references().count() == 1 && references().all(|it| is_it(&it)),
+        Reassignment::Declaration => references().count() == 1 && references().all(|it| is_param_read(&it)),
     };
     if !has_no_extra_references || !has_no_side_effects_before(func, statement, param_name) {
         return;
     }
-    let place = match reassignment {
+    let report_span = match reassignment {
         Reassignment::Declaration => statement.span(),
         Reassignment::Assignment(e) | Reassignment::Logical(e) => e.span(),
     };
-    cx.report(place, PREFER_DEFAULT_PARAMETERS).data("name", param_name).suggest(USE_DEFAULT_PARAMETER, |fixer| {
+    cx.report(report_span, PREFER_DEFAULT_PARAMETERS).data("name", param_name).suggest(USE_DEFAULT_PARAMETER, |fixer| {
         let file = fixer.file();
         let binding = param.pat().span();
         let (annotation, mut replace_span) = match param.ty() {

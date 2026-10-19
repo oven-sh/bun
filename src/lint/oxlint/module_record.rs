@@ -139,13 +139,13 @@ pub fn requested_modules<'a>(
 /// Reorders `requested` from source order to the order in which oxlint iterates over its `requested_modules`. That's an
 /// `FxHashMap` collected from another `FxHashMap`, which the parser fills one specifier at a time.
 pub fn in_hash_order<'a, T>(requested: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)> {
-    let mut of_parser = HashOrder::new();
+    let mut parser_map = HashOrder::new();
     for (at, (name, _)) in requested.iter().enumerate() {
         let hash = hash_of_str(name.bytes());
-        of_parser.insert(hash, (hash, at));
+        parser_map.insert(hash, (hash, at));
     }
     let mut collected = HashOrder::with_capacity(requested.len());
-    of_parser
+    parser_map
         .iter()
         .for_each(|(hash, at)| collected.insert(hash, at));
     picked(requested, collected.iter())
@@ -153,7 +153,7 @@ pub fn in_hash_order<'a, T>(requested: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)>
 
 /// Reorders `entries` from the order in which oxlint inserts their names into an `FxHashMap` to that map's iteration
 /// order.
-pub fn in_order_of_map<'a, T>(entries: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)> {
+pub fn in_map_order<'a, T>(entries: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)> {
     let mut map = HashOrder::new();
     for (at, (name, _)) in entries.iter().enumerate() {
         map.insert(hash_of_str(name.bytes()), at);
@@ -161,10 +161,10 @@ pub fn in_order_of_map<'a, T>(entries: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)>
     picked(entries, map.iter())
 }
 
-/// The elements of `all` at `places`, which must be distinct.
-fn picked<T>(all: Vec<T>, places: impl Iterator<Item = usize>) -> Vec<T> {
+/// The elements of `all` at `indices`, which must be distinct.
+fn picked<T>(all: Vec<T>, indices: impl Iterator<Item = usize>) -> Vec<T> {
     let mut all: Vec<Option<T>> = all.into_iter().map(Some).collect();
-    places.filter_map(|at| all.get_mut(at)?.take()).collect()
+    indices.filter_map(|at| all.get_mut(at)?.take()).collect()
 }
 
 impl<'a> ModuleRecord<'a> {

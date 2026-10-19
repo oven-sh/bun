@@ -488,7 +488,7 @@ pub(crate) mod prefer_spy_on {
     }
 
     /// Returns the callee of `mock(..)` if it's the `mock` imported from `bun:test`.
-    fn mock_of_bun(value: Expr<'_>) -> Option<Expr<'_>> {
+    fn bun_mock_callee(value: Expr<'_>) -> Option<Expr<'_>> {
         let callee = value.as_call().filter(|_| is_plain(value))?.callee();
         let (file, local) = (value.file(), callee.as_ident()?);
         let is_mock = import_entries(file).any(|it| {
@@ -521,7 +521,7 @@ pub(crate) mod prefer_spy_on {
     }
 
     /// Reports `a.b = mock(c)`.
-    fn check_mock_of_bun<'a>(
+    fn check_bun_mock<'a>(
         assign_expr: Expr<'a>,
         (callee, call_expr): (Expr<'a>, Expr<'a>),
         left_assign: Expr<'a>,
@@ -555,9 +555,9 @@ pub(crate) mod prefer_spy_on {
                 continue;
             }
             if ctx.runner == Runner::Bun
-                && let Some(callee) = mock_of_bun(value)
+                && let Some(callee) = bun_mock_callee(value)
             {
-                check_mock_of_bun(node, (callee, value), target, ctx);
+                check_bun_mock(node, (callee, value), target, ctx);
                 continue;
             }
             // `jest.fn()`, or a member of a call's result: `jest.fn().a`

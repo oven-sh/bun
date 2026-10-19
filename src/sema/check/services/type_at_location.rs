@@ -367,7 +367,7 @@ impl Checker<'_, '_> {
             // `prototype`, which `bindClassLikeDeclaration` declares without a declaration, also rejects a late-bound
             // member.
             _ => {
-                bound.is_member_in_no_table(m)
+                bound.is_member_not_in_table(m)
                     || name == known::prototype
                         && member.flags.contains(Flags::STATIC)
                         && flags_of_member(&member)

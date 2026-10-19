@@ -300,7 +300,7 @@ pub(super) fn would_repeat_substitution(tree: &Tree<'_>) -> bool {
 
 /// True if `document`, the result of formatting `text`, still has the same number of substitutions. If not, oxfmt
 /// leaves the template as it is.
-fn has_as_many_substitutions(
+fn keeps_substitution_count(
     text: &[u8],
     document: Interned,
     options: &FormatOptions,
@@ -374,7 +374,7 @@ pub(crate) fn write_template<'a>(
         return false;
     };
     // Both tools format the HTML with Prettier's options.
-    if f.options().flavor.is_oxfmt() && !has_as_many_substitutions(&text, document, &options, f) {
+    if f.options().flavor.is_oxfmt() && !keeps_substitution_count(&text, document, &options, f) {
         return false;
     }
     // Written in source order, whatever the order of the placeholders, because comments are consumed in that order.

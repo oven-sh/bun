@@ -90,17 +90,17 @@ impl Rule for NoUnusedLabels {
         };
         // One pass over the labeled statements and the jumps, in source order.
         let mut is_used = vec![false; all.len()];
-        // `around` has the indexes of the labeled statements enclosing the current position, outermost first.
+        // `enclosing` has the indexes of the labeled statements enclosing the current position, outermost first.
         // `with_label` has the same indexes, by label.
-        let mut around: Vec<usize> = Vec::new();
+        let mut enclosing: Vec<usize> = Vec::new();
         let mut with_label: FxHashMap<Name<'a>, Vec<usize>> = FxHashMap::default();
         let mut rest = all.iter().copied().enumerate().peekable();
         for (jump, name) in jumps {
             loop {
                 let next = rest.next_if(|it| it.1.span().start <= jump);
-                let place = next.map_or(jump, |it| it.1.span().start);
-                while let Some(ended) = around.last().and_then(|&it| all.get(it)).filter(|it| it.span().end <= place) {
-                    around.pop();
+                let position = next.map_or(jump, |it| it.1.span().start);
+                while let Some(ended) = enclosing.last().and_then(|&it| all.get(it)).filter(|it| it.span().end <= position) {
+                    enclosing.pop();
                     if let Some(same) = label_of(*ended).and_then(|it| with_label.get_mut(&it)) {
                         same.pop();
                     }
@@ -108,7 +108,7 @@ impl Rule for NoUnusedLabels {
                 let Some((index, statement)) = next else {
                     break;
                 };
-                around.push(index);
+                enclosing.push(index);
                 if let Some(label) = label_of(statement) {
                     with_label.entry(label).or_default().push(index);
                 }

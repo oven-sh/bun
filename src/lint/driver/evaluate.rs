@@ -144,25 +144,25 @@ fn run(
         b"" => SILENT.to_vec(),
         why => why.to_vec(),
     })?;
-    let Some(entries) = handed_to_finish(&printed) else {
+    let Some(entries) = finish_payload(&printed) else {
         return Err(SILENT.to_vec());
     };
     let config = entries.into_iter().find(|it| it.0 == b"config");
     Ok(config.map_or(Json::Null, |mut it| {
-        read_what_is_no_number(&mut it.1);
+        restore_nan(&mut it.1);
         it.1
     }))
 }
 
 /// Finds the object that the script's `finish` wrote. `printed` is everything the script printed.
-fn handed_to_finish(printed: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
+fn finish_payload(printed: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
     let at = strings::last_index_of(printed, MARKER)?;
     bun_lint::json::parse(&printed[at + MARKER.len()..])?.into_object()
 }
 
 /// Paths of the modules a script loaded. It only reports them under `--doctor`. `printed` is everything it printed.
 pub(crate) fn modules_in(printed: &[u8]) -> Vec<Vec<u8>> {
-    let entries = handed_to_finish(printed).unwrap_or_default();
+    let entries = finish_payload(printed).unwrap_or_default();
     let modules = entries.iter().find(|it| it.0 == b"modules");
     let modules = modules.and_then(|it| it.1.as_array()).unwrap_or_default();
     (modules.iter().filter_map(Json::as_str))
@@ -171,14 +171,14 @@ pub(crate) fn modules_in(printed: &[u8]) -> Vec<Vec<u8>> {
 }
 
 /// Restores `NaN`, which JSON can't represent. See `serialize` in evaluate-describe.js.
-fn read_what_is_no_number(json: &mut Json) {
+fn restore_nan(json: &mut Json) {
     match json {
-        Json::Array(items) => items.iter_mut().for_each(read_what_is_no_number),
+        Json::Array(items) => items.iter_mut().for_each(restore_nan),
         Json::Object(entries) => match &entries[..] {
             [(key, Json::String(kind))] if key == b"$unserializable" && kind == b"number" => {
                 *json = Json::Number(f64::NAN);
             }
-            _ => (entries.iter_mut()).for_each(|it| read_what_is_no_number(&mut it.1)),
+            _ => (entries.iter_mut()).for_each(|it| restore_nan(&mut it.1)),
         },
         _ => {}
     }

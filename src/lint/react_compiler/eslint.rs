@@ -39,19 +39,19 @@ pub(crate) struct Suggested {
 
 /// `None` if the plugin reports nothing.
 pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report> {
-    let is_read_by_babel = file.path().ends_with(b".ts") || file.path().ends_with(b".tsx");
+    let is_parsed_by_babel = file.path().ends_with(b".ts") || file.path().ends_with(b".tsx");
     let is_about_dependencies = matches!(
         finding.category,
         ErrorCategory::MemoDependencies | ErrorCategory::EffectExhaustiveDependencies
     );
-    let has_list = is_read_by_babel || !is_about_dependencies;
+    let has_list = is_parsed_by_babel || !is_about_dependencies;
     // The plugin doesn't say where a function accesses a ref.
-    let is_of_plugin = |it: &&Detail| {
+    let is_plugin_detail = |it: &&Detail| {
         !matches!(it, Detail::Error { message: Some(said), .. }
             if finding.category == ErrorCategory::Refs
                 && matches!(&**said, "The ref is accessed here" | "The ref is updated here"))
     };
-    let details = finding.details.iter().filter(is_of_plugin);
+    let details = finding.details.iter().filter(is_plugin_detail);
     let details = details.filter(|it| has_list || inferred_dependencies(it).is_none());
     let mut details: Vec<&Detail> = details.collect();
     if is_about_dependencies {
@@ -71,8 +71,8 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
     let Some(Detail::Error { span: Some(at), .. }) = details.get(first) else {
         return None;
     };
-    let at = place_of(file, finding, *at);
-    let reason = reason_of(file, finding, at);
+    let at = plugin_span(file, finding, *at);
+    let reason = plugin_reason(file, finding, at);
     let is_error_detail = is_error_detail(finding, reason);
     if is_error_detail {
         details = details.get(first..=first)?.to_vec();
@@ -105,7 +105,7 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
             Detail::Error {
                 span: Some(span),
                 message: said,
-            } => (place_of(file, finding, *span), said.as_deref()),
+            } => (plugin_span(file, finding, *span), said.as_deref()),
         };
         // `CompilerError.invariant()` repeats the reason if there's no other message.
         let said = match said {
@@ -115,7 +115,7 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
         };
         let (start, end) = (file.position(span.start), file.position(span.end));
         message.extend_from_slice(b"\n\n");
-        if is_read_by_babel {
+        if is_parsed_by_babel {
             write_path(&mut message, file.path());
             let _ = writeln!(message, ":{}:{}", start.line, start.column + 1);
         }
@@ -175,7 +175,7 @@ fn suggested(suggestion: &Suggestion) -> Suggested {
 // ───────────────────────── where the plugin's compiler words things differently ─────────────────────────
 
 /// For a computed key in a pattern, the plugin's compiler points at the whole property.
-fn place_of<'a>(file: &'a File<'a>, finding: &Finding, at: Span) -> Span {
+fn plugin_span<'a>(file: &'a File<'a>, finding: &Finding, at: Span) -> Span {
     let is_computed_key = finding.category == ErrorCategory::Todo
         && finding.reason
             == "(BuildHIR::lowerAssignment) Handle computed properties in ObjectPattern";
@@ -185,7 +185,7 @@ fn place_of<'a>(file: &'a File<'a>, finding: &Finding, at: Span) -> Span {
     }
 }
 
-fn reason_of<'a, 'f>(file: &'a File<'a>, finding: &'f Finding, at: Span) -> &'f str {
+fn plugin_reason<'a, 'f>(file: &'a File<'a>, finding: &'f Finding, at: Span) -> &'f str {
     match (finding.category, finding.reason.as_str()) {
         (
             ErrorCategory::Todo,

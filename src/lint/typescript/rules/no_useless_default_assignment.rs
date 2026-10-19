@@ -282,8 +282,8 @@ fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
         return;
     }
     // tsgolint only checks the first signature.
-    let asked = if cx.language().is_oxlint { 1 } else { signatures.len() };
-    let default_can_be_used = signatures.iter().take(asked).any(|signature| {
+    let checked_count = if cx.language().is_oxlint { 1 } else { signatures.len() };
+    let default_can_be_used = signatures.iter().take(checked_count).any(|signature| {
         let Some(param_symbol) = signature.get_parameters().get(param_index) else {
             return true;
         };

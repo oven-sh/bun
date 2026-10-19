@@ -51,7 +51,7 @@ impl Format {
     pub(crate) const NAMES: &'static str = "stylish, pretty, json, json-with-metadata, unix, github, agent, checkstyle, junit, gitlab, sarif";
 
     /// The error for the unknown format `name`.
-    pub(crate) fn is_missing(name: &[u8]) -> Vec<u8> {
+    pub(crate) fn unknown_format_error(name: &[u8]) -> Vec<u8> {
         [
             b"Unknown format \"",
             name,
@@ -103,7 +103,7 @@ impl Format {
     }
 
     /// True if it's meant for people and isn't parsed by tools.
-    pub(crate) fn is_for_people(self) -> bool {
+    pub(crate) fn is_human_readable(self) -> bool {
         matches!(
             self,
             Format::Pretty | Format::Stylish | Format::OxlintDefault | Format::OxlintStylish
@@ -142,7 +142,7 @@ impl Format {
     }
 
     /// True if it prints fixes or suggestions.
-    pub(crate) fn reads_texts_of_fixes(self) -> bool {
+    pub(crate) fn reads_fix_texts(self) -> bool {
         matches!(self, Format::Json | Format::JsonWithMetadata)
     }
 

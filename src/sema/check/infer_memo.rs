@@ -24,7 +24,7 @@
 //! - It follows that the same walk, run later, would hit the same entries and follow the same path without filling any
 //!   table. The task creates, stores, and publishes exactly what it would without the memo. The exception is
 //!   in-progress state that a function checks before it looks in a table. The walk runs in that case
-//!   (`obstacle_to_leaving_out`).
+//!   (`obstacle_to_skipping`).
 //! - Effects that a walk has every time it runs are stored and replayed. See the fields of `Entry`.
 //!
 //! The thresholds and size limits only decide which walks are stored and for how long. They never change a result.
@@ -64,14 +64,14 @@ pub(in super::super) enum Count {
     /// Walks that ran and made at least `LONG_WALK` calls.
     Long,
     ToLongTarget,
-    /// This and the next two are the obstacles that `obstacle_to_leaving_out` can return.
+    /// This and the next two are the obstacles that `obstacle_to_skipping` can return.
     InInstantiation,
     InVarianceComputation,
-    NotAtRest,
+    NotIdle,
     Keyed,
-    LeftOut,
+    Skipped,
     /// Sum of `Entry::calls` over the skipped walks.
-    CallsLeftOut,
+    CallsSkipped,
     /// The matching entry is older than the last disturbance.
     Disturbed,
     /// The matching entry still needs a second walk to confirm it. See `InferenceMemo::store`.
@@ -129,7 +129,7 @@ impl Entry {
     }
 
     /// True if two walks with the same key had the same outcome.
-    fn did_the_same_as(&self, other: &Entry) -> bool {
+    fn has_same_outcome_as(&self, other: &Entry) -> bool {
         self.words == other.words
             && self.calls == other.calls
             && self.instantiations == other.instantiations
@@ -186,7 +186,7 @@ struct Readings {
 }
 
 impl Readings {
-    fn shows_no_trace_since(&self, before: &Readings) -> bool {
+    fn has_no_trace_since(&self, before: &Readings) -> bool {
         self.traces == before.traces
             && self.disturbances == before.disturbances
             && self.lowest_taint == before.lowest_taint
@@ -217,9 +217,9 @@ pub(in super::super) struct InferenceMemo {
 impl InferenceMemo {
     /// 2^15 bits, or 4 KB.
     const LONG_TARGET_BITS: u32 = 15;
-    const MOST_ENTRIES: usize = 1 << 10;
-    /// Longest `Entry::words` that gets stored. Together with `MOST_ENTRIES`, it caps the memo at 4 MB per task.
-    const MOST_WORDS: usize = 1 << 10;
+    const MAX_ENTRIES: usize = 1 << 10;
+    /// Longest `Entry::words` that gets stored. Together with `MAX_ENTRIES`, it caps the memo at 4 MB per task.
+    const MAX_WORDS: usize = 1 << 10;
 
     #[inline]
     fn bit_of(target: TypeId) -> usize {
@@ -256,9 +256,9 @@ impl InferenceMemo {
     }
 
     /// Returns the slot of the entry with `key`, whatever its generation.
-    fn place(&self, hash: u64, key: &[u32]) -> Option<usize> {
-        let place = (hash >> self.shift) as usize;
-        (self.entries.get(place)?.key() == key).then_some(place)
+    fn slot(&self, hash: u64, key: &[u32]) -> Option<usize> {
+        let slot = (hash >> self.shift) as usize;
+        (self.entries.get(slot)?.key() == key).then_some(slot)
     }
 
     /// Stores `walked`. `instantiate` counts its calls, and the checker caches some results outside the tables, such as
@@ -267,21 +267,21 @@ impl InferenceMemo {
     fn store(&mut self, hash: u64, mut walked: Entry) {
         self.count(Count::Stored);
         walked.is_confirmed = walked.instantiations == 0;
-        if let Some(place) = self.place(hash, walked.key()) {
-            let earlier = &self.entries[place];
+        if let Some(slot) = self.slot(hash, walked.key()) {
+            let earlier = &self.entries[slot];
             if earlier.generation == self.generation {
-                walked.is_confirmed |= walked.did_the_same_as(earlier);
+                walked.is_confirmed |= walked.has_same_outcome_as(earlier);
                 walked.stack = walked.stack.max(earlier.stack);
             }
-            self.entries[place] = walked;
+            self.entries[slot] = walked;
             return;
         }
-        if self.stored == self.entries.len() && self.stored < Self::MOST_ENTRIES {
+        if self.stored == self.entries.len() && self.stored < Self::MAX_ENTRIES {
             self.grow();
         }
         self.stored += 1;
-        let place = (hash >> self.shift) as usize;
-        self.entries[place] = walked;
+        let slot = (hash >> self.shift) as usize;
+        self.entries[slot] = walked;
     }
 
     #[cold]
@@ -292,8 +292,8 @@ impl InferenceMemo {
         self.stored = 0;
         for entry in std::mem::replace(&mut self.entries, empty) {
             if entry.key_len != 0 && entry.generation == self.generation {
-                let place = (fx_hash(entry.key()) >> self.shift) as usize;
-                self.entries[place] = entry;
+                let slot = (fx_hash(entry.key()) >> self.shift) as usize;
+                self.entries[slot] = entry;
             }
         }
     }
@@ -361,7 +361,7 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
     ) {
         self.inference_memo.count(Count::ToLongTarget);
-        if let Some(obstacle) = self.obstacle_to_leaving_out() {
+        if let Some(obstacle) = self.obstacle_to_skipping() {
             self.inference_memo.count(obstacle);
             return self.infer_types(n, source, target);
         }
@@ -371,8 +371,8 @@ impl<'p, 's> Checker<'p, 's> {
         let disturbances = self.inference_disturbances();
         (self.inference_memo).begin_generation_if_disturbed(&disturbances);
         let in_use = self.stack_base.saturating_sub(stack_pointer());
-        if let Some(place) = self.inference_memo.place(hash, &key) {
-            let entry = &self.inference_memo.entries[place];
+        if let Some(slot) = self.inference_memo.slot(hash, &key) {
+            let entry = &self.inference_memo.entries[slot];
             let is_disturbed = entry.generation != self.inference_memo.generation;
             // Neither the count limit in `instantiate` nor an `is_stack_low` check would have stopped the walk.
             let count = (self.instantiation_count).saturating_add(entry.instantiations);
@@ -382,9 +382,9 @@ impl<'p, 's> Checker<'p, 's> {
                 _ if is_disturbed => Count::Disturbed,
                 _ if !entry.is_confirmed => Count::NotConfirmed,
                 _ if !has_room => Count::WithoutRoom,
-                _ => Count::LeftOut,
+                _ => Count::Skipped,
             };
-            if !matches!(found, Count::LeftOut) {
+            if !matches!(found, Count::Skipped) {
                 self.inference_memo.count(found);
             } else {
                 if !entry.state_after().is_empty() {
@@ -396,8 +396,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let deepest = (in_use + entry.stack as usize).max(self.deepest_stack.get());
                 self.deepest_stack.set(deepest);
                 let calls = u64::from(entry.calls);
-                self.inference_memo.counts[Count::CallsLeftOut as usize] += calls;
-                self.inference_memo.count(Count::LeftOut);
+                self.inference_memo.counts[Count::CallsSkipped as usize] += calls;
+                self.inference_memo.count(Count::Skipped);
                 return;
             }
         }
@@ -417,7 +417,7 @@ impl<'p, 's> Checker<'p, 's> {
         let reliability = self.reliability;
         self.reliability |= outer_reliability;
         self.lowest_taint = self.lowest_taint.min(outer_taint);
-        let has_left_no_trace = after.shows_no_trace_since(&before);
+        let has_left_no_trace = after.has_no_trace_since(&before);
         if n.calls < LONG_WALK || !has_left_no_trace {
             if n.calls >= LONG_WALK {
                 self.inference_memo.count(Count::LeftTrace);
@@ -440,7 +440,7 @@ impl<'p, 's> Checker<'p, 's> {
             stack: u32::try_from(deepest.saturating_sub(in_use)).unwrap_or(u32::MAX),
             generation: self.inference_memo.generation,
         };
-        if walked.words.len() <= InferenceMemo::MOST_WORDS {
+        if walked.words.len() <= InferenceMemo::MAX_WORDS {
             self.inference_memo.store(hash, walked);
         }
     }
@@ -467,7 +467,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// - A comparison or a mapped type was cut short in this file. It isn't evaluated again.
     /// - The declared type of an alias is being resolved. `same_alias` searches `stack` for it.
     /// - No query is in progress at all. Every comparison then starts by resetting `instantiation_count` to 0.
-    pub(in super::super) fn obstacle_to_leaving_out(&self) -> Option<Count> {
+    pub(in super::super) fn obstacle_to_skipping(&self) -> Option<Count> {
         if self.instantiation_depth != 0
             || !self.index_infos_in_instantiation.is_empty()
             || !self.unresolved_members.is_empty()
@@ -477,7 +477,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.in_variance_computation {
             return Some(Count::InVarianceComputation);
         }
-        let is_at_rest = !self.is_rechecking()
+        let is_idle = !self.is_rechecking()
             && !self.pulls_contextual_types()
             && !self.relation_too_complex
             && self.reverse_mapped_source_stack.is_empty()
@@ -488,10 +488,10 @@ impl<'p, 's> Checker<'p, 's> {
             && self.generic_mapped_types_cut_short.is_empty()
             && !self.stack.is_empty()
             && !(self.stack.iter()).any(|q| matches!(q, Query::Declared(_)));
-        (!is_at_rest).then_some(Count::NotAtRest)
+        (!is_idle).then_some(Count::NotIdle)
     }
 
-    /// True if the table entries that a walk hits now are final. Call it only after `obstacle_to_leaving_out` has
+    /// True if the table entries that a walk hits now are final. Call it only after `obstacle_to_skipping` has
     /// returned `None`. It requires that:
     /// - No frame will overwrite an entry that a nested visit of the same query has stored. Type node and conditional
     ///   type queries do that without recording the nested visit, so a frame for one of them always fails the test. The
@@ -588,14 +588,14 @@ mod tests {
         memo.store(fx_hash(key), walked);
     }
 
-    fn is_left_out(memo: &InferenceMemo, key: &[u32]) -> bool {
-        let place = memo.place(fx_hash(key), key);
-        let entry = place.map(|place| &memo.entries[place]);
+    fn is_replayable(memo: &InferenceMemo, key: &[u32]) -> bool {
+        let slot = memo.slot(fx_hash(key), key);
+        let entry = slot.map(|slot| &memo.entries[slot]);
         entry.is_some_and(|entry| entry.is_confirmed && entry.generation == memo.generation)
     }
 
     #[test]
-    fn the_first_long_walk_marks_its_target() {
+    fn first_long_walk_marks_its_target() {
         let mut memo = InferenceMemo::default();
         assert!(!memo.has_long_walk_to(TypeId(7)));
         memo.note_long_walk_to(TypeId(7));
@@ -604,40 +604,40 @@ mod tests {
     }
 
     #[test]
-    fn a_walk_that_instantiates_is_left_out_after_two_that_did_the_same() {
+    fn walk_that_instantiates_is_replayed_after_two_matching_walks() {
         let mut memo = InferenceMemo::default();
         let key = [1, 2, 3];
         store(&mut memo, &key, &[7], 0);
-        assert!(is_left_out(&memo, &key));
+        assert!(is_replayable(&memo, &key));
         store(&mut memo, &key, &[7], 5);
-        assert!(!is_left_out(&memo, &key));
+        assert!(!is_replayable(&memo, &key));
         store(&mut memo, &key, &[7], 4);
-        assert!(!is_left_out(&memo, &key));
+        assert!(!is_replayable(&memo, &key));
         store(&mut memo, &key, &[8], 4);
-        assert!(!is_left_out(&memo, &key));
+        assert!(!is_replayable(&memo, &key));
         store(&mut memo, &key, &[8], 4);
-        assert!(is_left_out(&memo, &key));
-        assert!(!is_left_out(&memo, &[1, 2]));
+        assert!(is_replayable(&memo, &key));
+        assert!(!is_replayable(&memo, &[1, 2]));
     }
 
     #[test]
-    fn an_entry_lasts_until_something_is_disturbed() {
+    fn entry_is_valid_until_a_disturbance() {
         let mut memo = InferenceMemo::default();
         let key = [1, 2, 3];
         memo.begin_generation_if_disturbed(&[1; DISTURBANCES.len()]);
         store(&mut memo, &key, &[], 0);
         memo.begin_generation_if_disturbed(&[1; DISTURBANCES.len()]);
-        assert!(is_left_out(&memo, &key));
+        assert!(is_replayable(&memo, &key));
         let mut disturbed = [1; DISTURBANCES.len()];
         disturbed[DISTURBANCES.len() - 1] = 2;
         memo.begin_generation_if_disturbed(&disturbed);
-        assert!(!is_left_out(&memo, &key));
+        assert!(!is_replayable(&memo, &key));
         assert_eq!(memo.counts[Count::Disturbances as usize], 2);
         assert_eq!(memo.counts[Count::Stored as usize], 1);
     }
 
     #[test]
-    fn a_changed_reading_counts_as_a_trace() {
+    fn changed_reading_counts_as_a_trace() {
         let before = Readings {
             traces: [5; TRACES.len()],
             disturbances: [7; DISTURBANCES.len()],
@@ -649,12 +649,12 @@ mod tests {
             instantiation_count: 12,
             ..before
         };
-        assert!(after.shows_no_trace_since(&before));
+        assert!(after.has_no_trace_since(&before));
         after.traces[1] += 1;
-        assert!(!after.shows_no_trace_since(&before));
+        assert!(!after.has_no_trace_since(&before));
         let mut after = Readings { ..before };
         after.disturbances[DISTURBANCES.len() - 1] += 1;
-        assert!(!after.shows_no_trace_since(&before));
+        assert!(!after.has_no_trace_since(&before));
         for after in [
             Readings {
                 instantiation_count: 9,
@@ -669,24 +669,24 @@ mod tests {
                 ..before
             },
         ] {
-            assert!(!after.shows_no_trace_since(&before));
+            assert!(!after.has_no_trace_since(&before));
         }
     }
 
     #[test]
-    fn the_table_grows_up_to_its_bound() {
+    fn table_grows_up_to_its_limit() {
         let mut memo = InferenceMemo::default();
         for i in 0..5000 {
             store(&mut memo, &[i, 0, 0], &[], 0);
-            assert!(is_left_out(&memo, &[i, 0, 0]));
+            assert!(is_replayable(&memo, &[i, 0, 0]));
         }
-        assert_eq!(memo.entries.len(), InferenceMemo::MOST_ENTRIES);
-        let kept = (0..5000).filter(|&i| is_left_out(&memo, &[i, 0, 0]));
-        assert!(kept.count() > InferenceMemo::MOST_ENTRIES / 2);
+        assert_eq!(memo.entries.len(), InferenceMemo::MAX_ENTRIES);
+        let still_replayable = (0..5000).filter(|&i| is_replayable(&memo, &[i, 0, 0]));
+        assert!(still_replayable.count() > InferenceMemo::MAX_ENTRIES / 2);
     }
 
     #[test]
-    fn the_state_of_the_infos_is_written_as_it_was() {
+    fn write_state_round_trips_push_state() {
         let params = [TypeId(10), TypeId(11)];
         let fresh = Inference::for_params(&params, None);
         let mut n = fresh.clone();

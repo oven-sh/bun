@@ -28,9 +28,9 @@ impl Checker<'_, '_> {
             ScriptTarget::None => ScriptTarget::ES2025,
             target => target,
         };
-        let mut noted: Vec<Noted> = Vec::new();
-        check_regular_expression_literal(&hir.text, hir[e].pos as usize, target, &mut noted);
-        for (start, end, code, args) in noted {
+        let mut scan_errors: Vec<RegExpError> = Vec::new();
+        check_regular_expression_literal(&hir.text, hir[e].pos as usize, target, &mut scan_errors);
+        for (start, end, code, args) in scan_errors {
             // `Did_you_mean_0` is attached to the previous error and has no file.
             match self.reported.last_mut() {
                 Some(last) if code == 1369 => {
@@ -45,7 +45,7 @@ impl Checker<'_, '_> {
 }
 
 /// An error's start, end, code and message arguments.
-type Noted = (u32, u32, u32, Vec<Vec<u8>>);
+type RegExpError = (u32, u32, u32, Vec<Vec<u8>>);
 
 const HAS_INDICES: u8 = 1 << 0; // d
 const GLOBAL: u8 = 1 << 1; // g
@@ -125,7 +125,7 @@ fn check_regular_expression_literal(
     text: &[u8],
     token_start: usize,
     target: ScriptTarget,
-    noted: &mut Vec<Noted>,
+    scan_errors: &mut Vec<RegExpError>,
 ) {
     if text.get(token_start) != Some(&b'/') {
         return;
@@ -172,7 +172,7 @@ fn check_regular_expression_literal(
         named_capturing_groups: Vec::new(),
         pending_low_surrogate: 0,
         last_error: None,
-        noted,
+        scan_errors,
     };
     p += 1;
     let mut flags = 0u8;
@@ -228,7 +228,7 @@ struct RegExpParser<'a> {
     pending_low_surrogate: u32,
     /// Position of the most recently reported error.
     last_error: Option<usize>,
-    noted: &'a mut Vec<Noted>,
+    scan_errors: &'a mut Vec<RegExpError>,
 }
 
 impl<'a> RegExpParser<'a> {
@@ -252,7 +252,7 @@ impl<'a> RegExpParser<'a> {
                 0 => super::explain::NO_LENGTH,
                 _ => (start + length) as u32,
             };
-            self.noted.push((start as u32, end, code, args()));
+            self.scan_errors.push((start as u32, end, code, args()));
         }
     }
 
@@ -268,12 +268,12 @@ impl<'a> RegExpParser<'a> {
     ) {
         let (start, end) = (start as u32, (start + length) as u32);
         if self
-            .noted
+            .scan_errors
             .last()
             .is_some_and(|last| (last.0, last.1) == (start, end))
             && let Some(suggestion) = spelling_suggestion(name, candidates)
         {
-            self.noted.push((start, end, 1369, vec![suggestion]));
+            self.scan_errors.push((start, end, 1369, vec![suggestion]));
         }
     }
 

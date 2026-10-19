@@ -41,7 +41,7 @@ fn concat(value: Option<&Json>) -> Attributes<'_> {
 
 impl Components {
     /// `settings[..] || []`, the way `concat` appends it to the default: a non-array value becomes one element.
-    fn of_settings<'a>(&self, file: &'a File<'a>) -> &'a [Json] {
+    fn from_settings<'a>(&self, file: &'a File<'a>) -> &'a [Json] {
         match file.settings().get(self.setting) {
             Some(Json::Array(all)) => all.as_slice(),
             Some(Json::String(falsy)) if falsy.is_empty() => &[],
@@ -56,14 +56,14 @@ impl Components {
 
     /// `new Map(..).get(name)`. If two entries have the same name, the later one wins.
     fn get<'a>(&self, file: &'a File<'a>, name: &[u8]) -> Option<Attributes<'a>> {
-        let of_settings = self.of_settings(file).iter().rev().find_map(|value| {
+        let from_settings = self.from_settings(file).iter().rev().find_map(|value| {
             if let Some(value) = value.as_str() {
                 return (value == name).then(|| self.default_attributes());
             }
             (value.get(b"name")?.as_str()? == name).then(|| concat(value.get(self.attribute)))
         });
         let is_default = name == self.default_component;
-        of_settings.or_else(|| is_default.then(|| self.default_attributes()))
+        from_settings.or_else(|| is_default.then(|| self.default_attributes()))
     }
 }
 

@@ -295,7 +295,7 @@ impl Moves<'_, '_> {
 
 /// Indices into `all`, which is in source order, sorted into the order the references are created in. `moved` is
 /// `References::moved`. `None` if nothing but `moved` changes the order.
-pub(super) fn as_made<'a>(
+pub(super) fn in_creation_order<'a>(
     file: &'a File<'a>,
     all: &[RawReference],
     moved: &[(u32, u32)],
@@ -311,7 +311,7 @@ pub(super) fn as_made<'a>(
         }
     }
     let was_in_order = written.is_sorted();
-    references::sort_what_is_nearly_in_order(&mut written);
+    references::sort_nearly_sorted(&mut written);
     let mut visits: Vec<u32> = written.iter().map(|it| (it >> 32) as u32).collect();
     let mut moves = Moves {
         file,
@@ -350,7 +350,7 @@ pub(super) fn as_made<'a>(
     let mut made: Vec<u64> = (visits.iter().zip(0..))
         .map(|(&visit, place)| key(visit, place))
         .collect();
-    references::sort_what_is_nearly_in_order(&mut made);
+    references::sort_nearly_sorted(&mut made);
     let index = |place: &u64| written[*place as u32 as usize] as u32;
     Some(made.iter().map(index).collect())
 }

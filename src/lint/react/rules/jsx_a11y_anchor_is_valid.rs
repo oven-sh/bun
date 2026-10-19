@@ -1,6 +1,6 @@
 use crate::a11y::is_null_literal;
 use crate::jsx::{
-    AttributeValue, as_jsx_element, get_attribute_names_of_settings, get_element_type, get_prop_value, has_jsx_prop_ignore_case,
+    AttributeValue, as_jsx_element, get_attribute_names_from_settings, get_element_type, get_prop_value, has_jsx_prop_ignore_case,
     is_identifier_ignore_case, is_undefined,
 };
 use bun_lint::prelude::*;
@@ -58,7 +58,7 @@ impl Rule for AnchorIsValid {
         let Some(span) = jsx_el.tag().map(Expr::span) else {
             return;
         };
-        let names_of_settings = get_attribute_names_of_settings(cx.file(), "href");
+        let names_of_settings = get_attribute_names_from_settings(cx.file(), "href");
         let is_href = |attr: Prop| {
             let is_it = |href_name: &[u8]| is_identifier_ignore_case(attr, href_name);
             let is_known = match names_of_settings {

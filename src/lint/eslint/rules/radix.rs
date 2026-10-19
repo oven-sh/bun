@@ -37,7 +37,7 @@ fn is_valid_radix(radix: Expr) -> bool {
 }
 
 /// oxlint's `is_valid_radix`: an integer between 2 and 36, or a name other than `undefined`.
-fn is_valid_radix_for_oxlint(radix: Expr) -> bool {
+fn oxlint_is_valid_radix(radix: Expr) -> bool {
     match radix.kind() {
         _ if radix.is_parenthesized() => false,
         ExprKind::Number(value) => is_valid_radix_value(value),
@@ -105,7 +105,7 @@ impl Rule for Radix {
                 });
             }
             (Some(_), Some(radix)) => {
-                if !(if is_oxlint { is_valid_radix_for_oxlint(radix) } else { is_valid_radix(radix) }) {
+                if !(if is_oxlint { oxlint_is_valid_radix(radix) } else { is_valid_radix(radix) }) {
                     // oxlint points at the radix.
                     cx.report(if is_oxlint { radix.outer_span() } else { e.span() }, INVALID_RADIX);
                 }

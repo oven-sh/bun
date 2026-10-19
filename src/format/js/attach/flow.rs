@@ -232,7 +232,7 @@ pub(super) fn start_of_hook_type(ty: TypeNode<'_>) -> Option<u32> {
 }
 
 /// True if `node` isn't a node in Prettier's tree.
-pub(super) fn is_no_node(node: N<'_>) -> bool {
+pub(super) fn is_not_prettier_node(node: N<'_>) -> bool {
     match node {
         N::TSPropertySignature(member) => is_inexact_mark(member),
         N::TSRestType(element) => element.flow_type().is_none(),
@@ -312,9 +312,9 @@ pub(super) fn preceding_node<'a>(
         // the `(`.
         NodeOrName::Name(_) if is_in_function_type(enclosing_node, comment_start) => return None,
         NodeOrName::Name(start) => {
-            let is_no_node = is_name_of_type_parameter(enclosing_node, start)
+            let is_not_prettier_node = is_name_of_type_parameter(enclosing_node, start)
                 || members_of_enum_with_explicit_type(enclosing_node, start).is_some();
-            return match is_no_node {
+            return match is_not_prettier_node {
                 true => unrecorded_preceding_node(enclosing_node, start),
                 false => Some(node),
             };

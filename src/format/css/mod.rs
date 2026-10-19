@@ -154,7 +154,7 @@ fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {
 
 /// oxfmt treats Less's `each(@list, { .. })` as a statement and adds the `;` after it if it's missing. `postcss-less`
 /// would read on to the next `;`, wherever that is. So the `;` is inserted before parsing.
-fn with_semicolons_behind_each(text: &[u8]) -> Cow<'_, [u8]> {
+fn with_semicolons_after_each(text: &[u8]) -> Cow<'_, [u8]> {
     if !bun_core::strings::contains(text, b"each(") {
         return Cow::Borrowed(text);
     }
@@ -240,7 +240,7 @@ fn parse_and_print<'o>(
     memo: &'o mut Memo,
 ) -> Result<Sink<'o>, FormatError> {
     let with_semicolons = match parser == Parser::Less && options.flavor.is_oxfmt() {
-        true => with_semicolons_behind_each(text),
+        true => with_semicolons_after_each(text),
         false => Cow::Borrowed(text),
     };
     let text = &with_semicolons[..];
@@ -349,7 +349,7 @@ fn parse_and_print<'o>(
         is_html_style_attribute: options.in_html.is_style_attribute,
         tailwind: options.tailwind.clone(),
         value_stack: Vec::new(),
-        comment_behind_comma: 0,
+        comment_after_comma: 0,
         index_in_comma_group: 0,
         comments_above_item: (0, 0),
         scratch: Vec::new(),
@@ -411,7 +411,7 @@ pub fn format(
         !is_range,
         options,
     ) {
-        BeforeParsing::LeaveAsItIs => {
+        BeforeParsing::LeaveUnchanged => {
             out.extend_from_slice(original);
             return Ok(());
         }

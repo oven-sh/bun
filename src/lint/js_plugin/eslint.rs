@@ -26,7 +26,7 @@ mod call {
 const NEEDS_CONFIGURATION: u8 = b'4';
 pub(super) const NOT_INSTALLED: u8 = b'5';
 
-pub(super) const OUT_OF_STEP: &[u8] =
+pub(super) const PLUGIN_PROTOCOL_ERROR: &[u8] =
     b"Internal error while running JavaScript plugins. This is a bug in Bun.";
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(0);
@@ -102,7 +102,7 @@ impl Host<'_> {
         run: &[u8],
     ) -> Result<Vec<u8>, Refusal> {
         let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| {
-            self.serve_any(asked, details, out);
+            self.serve_common(asked, details, out);
         };
         for _ in 0..2 {
             let returned = vm.call(call::LINT, message, &mut serve)?;
@@ -130,7 +130,7 @@ impl Host<'_> {
                 _ => break,
             }
         }
-        Err(OUT_OF_STEP.to_vec().into())
+        Err(PLUGIN_PROTOCOL_ERROR.to_vec().into())
     }
 
     /// Calls ESLint's `Linter.verify`. `run` is JSON with what all files of a config file share: `from`, `basePath`,
@@ -155,16 +155,16 @@ impl Host<'_> {
         );
         message.extend_from_slice(file.path);
         message.extend_from_slice(file.text);
-        self.count_one_for_eslint();
-        let mut returned = Err(OUT_OF_STEP.to_vec().into());
+        self.count_eslint_run();
+        let mut returned = Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
         self.engine.with_vm(file.text.len(), &mut |vm| {
             returned = self.lint_in(vm, &message, configuration, run)
         })?;
         let Some(parts) = crate::json::parse(&returned?).and_then(Json::into_array) else {
-            return Err(OUT_OF_STEP.to_vec().into());
+            return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
         };
         let [shown, suppressed, deprecated] = &parts[..] else {
-            return Err(OUT_OF_STEP.to_vec().into());
+            return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
         };
         let mut written = Vec::new();
         write_json(&mut written, deprecated);

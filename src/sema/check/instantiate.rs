@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 pub(super) struct Recent {
     /// The two key numbers, the result and a tag. Initially empty, then a power-of-two number of
     /// entries.
-    places: Vec<[u32; 4]>,
+    slots: Vec<[u32; 4]>,
     /// A hash shifted right by this amount is a slot index.
     shift: u32,
     /// Number of entries inserted since the table last grew.
@@ -19,17 +19,17 @@ pub(super) struct Recent {
 }
 
 impl Recent {
-    const MOST_PLACES: usize = 1 << 14;
+    const MAX_SLOTS: usize = 1 << 14;
 
     #[inline]
-    fn place(&self, a: u32, b: u32) -> usize {
+    fn slot(&self, a: u32, b: u32) -> usize {
         let both = u64::from(a) << 32 | u64::from(b);
         (both.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> self.shift) as usize
     }
 
     #[inline]
     pub(super) fn get(&self, a: u32, b: u32) -> Option<u32> {
-        match self.places.get(self.place(a, b)) {
+        match self.slots.get(self.slot(a, b)) {
             Some(&[x, y, answer, _]) if x == a && y == b => Some(answer),
             _ => None,
         }
@@ -38,8 +38,8 @@ impl Recent {
     /// Returns the result, and the tag for the caller to read and replace.
     #[inline]
     fn get_tagged(&mut self, a: u32, b: u32) -> Option<(u32, &mut u32)> {
-        let place = self.place(a, b);
-        match self.places.get_mut(place) {
+        let slot = self.slot(a, b);
+        match self.slots.get_mut(slot) {
             Some([x, y, answer, tag]) if *x == a && *y == b => Some((*answer, tag)),
             _ => None,
         }
@@ -52,25 +52,25 @@ impl Recent {
 
     #[inline]
     fn put_tagged(&mut self, a: u32, b: u32, answer: u32, tag: u32) {
-        if self.added == self.places.len() && self.added < Self::MOST_PLACES {
+        if self.added == self.slots.len() && self.added < Self::MAX_SLOTS {
             self.grow();
         }
         self.added += 1;
-        let place = self.place(a, b);
-        self.places[place] = [a, b, answer, tag];
+        let slot = self.slot(a, b);
+        self.slots[slot] = [a, b, answer, tag];
     }
 
     /// Most files need few slots, and the few that need many dominate the time.
     #[cold]
     fn grow(&mut self) {
-        let len = (self.places.len() * 4).max(64);
-        let old = std::mem::replace(&mut self.places, vec![[0; 4]; len]);
+        let len = (self.slots.len() * 4).max(64);
+        let old = std::mem::replace(&mut self.slots, vec![[0; 4]; len]);
         self.shift = 64 - len.trailing_zeros();
         self.added = 0;
         for entry @ [a, b, ..] in old {
             if (a, b) != (0, 0) {
-                let place = self.place(a, b);
-                self.places[place] = entry;
+                let slot = self.slot(a, b);
+                self.slots[slot] = entry;
             }
         }
     }
@@ -142,7 +142,7 @@ pub(super) enum PropInstantiation {
     /// `Prop::mapper`, with any other source.
     Mapper(MapperId),
     /// `Prop::mapper` of a mapped type's property whose key was stored separately
-    /// (`Types::key_apart`). This mapper includes the key.
+    /// (`Types::separate_key`). This mapper includes the key.
     MapperWithKey(MapperId),
 }
 
@@ -161,7 +161,7 @@ impl PropInstantiation {
 
     /// True if `apply_to(own)` and `other.apply_to(theirs)` would make `own` and `theirs` equal.
     /// They have the same name.
-    pub(super) fn makes_the_same_as(self, own: &Prop, other: Self, theirs: &Prop) -> bool {
+    pub(super) fn yields_same_prop_as(self, own: &Prop, other: Self, theirs: &Prop) -> bool {
         let name_type = |it: Self, of: &Prop| match it {
             Self::MapperWithKey(_) => TypeId::UNRESOLVED,
             Self::Type(_) | Self::Mapper(_) => of.name_type,
@@ -446,13 +446,13 @@ impl<'p, 's> Checker<'p, 's> {
             PropSource::Mapped(..)
                 if mapper != MapperId::IDENTITY
                     && self.maps_to_closed_types(prop.mapper)
-                    && (self.types().key_apart(prop))
+                    && (self.types().separate_key(prop))
                         .is_none_or(|key| self.is_closed_type(key)) =>
             {
                 PropInstantiation::Mapper(prop.mapper)
             }
             PropSource::Mapped(..)
-                if mapper != MapperId::IDENTITY && self.types().key_apart(prop).is_some() =>
+                if mapper != MapperId::IDENTITY && self.types().separate_key(prop).is_some() =>
             {
                 let with_key = self.mapper_of_prop(prop);
                 let composed = self.compose(with_key, mapper);
@@ -484,7 +484,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `map` as the mapper. A deferred type records the mapping of each of its outer type
     /// parameters, so a mapper reaches the type parameters `any_type_in` finds and no others.
     /// `getObjectTypeInstantiation` maps the outer type parameters, so those declared by a
-    /// signature in `t` are left as they are. tsgo makes the call once per `t`. `may_keep` is
+    /// signature in `t` are left as they are. tsgo makes the call once per `t`. `may_cache` is
     /// called after `map` was used, and returns whether `map` will return the same results from now
     /// on.
     fn instantiate_type_parameters(
@@ -492,24 +492,24 @@ impl<'p, 's> Checker<'p, 's> {
         t: TypeId,
         fixed: FixedMapper,
         map: fn(&Self, TypeId) -> TypeId,
-        may_keep: fn(&Self) -> bool,
+        may_cache: fn(&Self) -> bool,
     ) -> TypeId {
         if self.flags(t) & (tf::PRIMITIVE | tf::ANY | tf::UNKNOWN | tf::NEVER) != 0 {
             return t;
         }
 
-        if let Some(kept) = self.kept_with_fixed_mapper(fixed, t) {
+        if let Some(kept) = self.cached_with_fixed_mapper(fixed, t) {
             return kept;
         }
         let forgotten = self.links.times_forgotten();
         let ((instantiated, _), stored) = self.derive_settled(
             |c| c.derive_instantiation_of_type_parameters(t, map),
             |c, &(_, mapper)| {
-                c.is_mapper_idle(mapper) && may_keep(c) && c.links.times_forgotten() == forgotten
+                c.is_mapper_idle(mapper) && may_cache(c) && c.links.times_forgotten() == forgotten
             },
         );
         if let Some(stored) = stored {
-            self.keep_with_fixed_mapper(fixed, t, instantiated, stored);
+            self.cache_with_fixed_mapper(fixed, t, instantiated, stored);
         }
         instantiated
     }
@@ -541,16 +541,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getRestrictiveInstantiation`, with `getRestrictiveTypeParameter`. Restrictive type
     /// parameters map to themselves, so the restrictive instantiation of a restrictive instantiation is itself.
     pub(super) fn restrictive_instantiation(&mut self, t: TypeId) -> TypeId {
-        if !self.restrictive_instantiations_kept.is_empty()
-            && let Some(&kept) = self.restrictive_instantiations_kept.get(&t)
+        if !self.pinned_restrictive_instantiations.is_empty()
+            && let Some(&kept) = self.pinned_restrictive_instantiations.get(&t)
         {
             return kept;
         }
-        let around = self.kept_a_renamed_param.replace(false);
+        let around = self.left_a_renamed_param_unchanged.replace(false);
         let map: fn(&Self, TypeId) -> TypeId = |c, param| match c.data(param) {
             // `tp.constraint == nil && getConstraintDeclaration(tp) == nil`
             TypeData::TypeParam(..) if c.unresolved_renamed_params.contains(&param) => {
-                c.kept_a_renamed_param.set(true);
+                c.left_a_renamed_param_unchanged.set(true);
                 param
             }
             TypeData::Marker(
@@ -566,18 +566,19 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => c.intern(TypeData::Marker(Marker::Restrictive(param))),
         };
-        // A result with such a type parameter goes in `restrictive_instantiations_kept`, for as
+        // A result with such a type parameter goes in `pinned_restrictive_instantiations`, for as
         // long as it's valid.
         let result = self.instantiate_type_parameters(t, FixedMapper::Restrictive, map, |c| {
-            !c.kept_a_renamed_param.get()
+            !c.left_a_renamed_param_unchanged.get()
         });
         // Only `getConstraintOfDistributiveConditionalType` reads this set.
         if matches!(self.data(result), TypeData::Cond { .. }) {
             self.restrictive_instantiations.insert(result);
         }
-        if self.kept_a_renamed_param.replace(around) {
-            self.restrictive_instantiations_kept.insert(t, result);
-            self.restrictive_instantiations_kept.insert(result, result);
+        if self.left_a_renamed_param_unchanged.replace(around) {
+            self.pinned_restrictive_instantiations.insert(t, result);
+            self.pinned_restrictive_instantiations
+                .insert(result, result);
         }
         result
     }
@@ -856,7 +857,7 @@ impl<'p, 's> Checker<'p, 's> {
 
         self.instantiations_computed += 1;
         // See `instantiations_in_progress`. A call that stores nothing in the table doesn't need to be listed.
-        let is_listed = !skips_table && self.task.writes_at_once();
+        let is_listed = !skips_table && self.task.writes_immediately();
         let is_inner = is_listed && self.instantiations_in_progress.contains(&(ty, mapper));
         if is_listed {
             self.instantiations_in_progress.push((ty, mapper));

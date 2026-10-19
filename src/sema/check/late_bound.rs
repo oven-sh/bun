@@ -2,7 +2,7 @@
 //! `lateBindMember`, `addDeclarationToLateBoundSymbol`, `mergeSymbol`, `getLateBoundSymbol`.
 
 use super::*;
-use crate::bind::{Decl, flags_of_member, flags_of_property, takes_over_as_value_declaration};
+use crate::bind::{Decl, flags_of_member, flags_of_property, replaces_value_declaration};
 use crate::program::get_excluded_symbol_flags;
 
 /// An error that `lateBindMember` or `combineSymbolTables` reports.
@@ -52,7 +52,7 @@ pub(super) type LateBoundMembers = Option<std::rc::Rc<LateBoundSymbols>>;
 
 /// `SetValueDeclaration`
 fn set_value_declaration(value_declaration: &mut Option<(FileId, Decl)>, node: (FileId, Decl)) {
-    if takes_over_as_value_declaration(value_declaration.map(|it| it.1), node.1) {
+    if replaces_value_declaration(value_declaration.map(|it| it.1), node.1) {
         *value_declaration = Some(node);
     }
 }
@@ -95,12 +95,13 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let side = (files.sym(file, parent), is_static);
-        let asks_by_itself = name == known::computed && matches!(declaration, Decl::Member(_));
-        if asks_by_itself {
+        let requests_members_itself =
+            name == known::computed && matches!(declaration, Decl::Member(_));
+        if requests_members_itself {
             self.late_binding_by_symbol.push(side);
         }
         let late = self.late_bound_members(side.0, is_static);
-        if asks_by_itself {
+        if requests_members_itself {
             self.late_binding_by_symbol.pop();
         }
         let late = late?;

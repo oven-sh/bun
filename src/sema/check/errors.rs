@@ -176,21 +176,22 @@ impl Checker<'_, '_> {
             return;
         }
         let leaves = std::mem::take(&mut self.checked_leaves.files);
-        let stays = |file: FileId| !leaves.contains(file.idx());
-        self.literals_checked_under.retain(|key, _| stays(key.0));
-        self.discriminated.retain(|key, _| stays(key.0));
-        self.conditional_roots.retain(|key, _| stays(key.0));
-        self.non_existent_properties.retain(|key, _| stays(key.0));
-        self.rechecked_exprs.retain(|key, _| stays(key.0));
-        self.rechecked_members.retain(|key, _| stays(key.0));
-        self.late_bound_members.retain(|key, _| stays(key.0.file));
-        self.thisless_members.retain(|key, _| stays(key.file));
-        self.early_bound_for_good.retain(|key| stays(key.0.file));
-        self.resolved_signatures.retain(|key| stays(key.0));
-        self.context_checked_here.retain(|key| stays(key.0));
-        self.prepared.retain(|key| stays(key.0));
+        let is_kept = |file: FileId| !leaves.contains(file.idx());
+        self.literals_checked_under.retain(|key, _| is_kept(key.0));
+        self.discriminated.retain(|key, _| is_kept(key.0));
+        self.conditional_roots.retain(|key, _| is_kept(key.0));
+        self.non_existent_properties.retain(|key, _| is_kept(key.0));
+        self.rechecked_exprs.retain(|key, _| is_kept(key.0));
+        self.rechecked_members.retain(|key, _| is_kept(key.0));
+        self.late_bound_members.retain(|key, _| is_kept(key.0.file));
+        self.thisless_members.retain(|key, _| is_kept(key.file));
+        self.permanently_early_bound
+            .retain(|key| is_kept(key.0.file));
+        self.resolved_signatures.retain(|key| is_kept(key.0));
+        self.context_checked_here.retain(|key| is_kept(key.0));
+        self.prepared.retain(|key| is_kept(key.0));
         self.circular_before_parameter_symbol
-            .retain(|key| stays(key.0));
+            .retain(|key| is_kept(key.0));
         self.checked_leaves = CheckedLeaves {
             files: leaves,
             is_any: false,
@@ -208,7 +209,7 @@ impl Checker<'_, '_> {
             + self.rechecked_members.len()
             + self.late_bound_members.len()
             + self.thisless_members.len()
-            + self.early_bound_for_good.len()
+            + self.permanently_early_bound.len()
             + self.resolved_signatures.len()
             + self.context_checked_here.len()
             + self.prepared.len()
@@ -250,8 +251,8 @@ impl Checker<'_, '_> {
         self.never_checked.borrow_mut().clear();
         self.unknown_symbols.clear();
         self.alias_targets_reported.clear();
-        self.signatures_resolved_discarding.clear();
-        self.expressions_cached_discarding.clear();
+        self.signatures_resolved_with_errors_discarded.clear();
+        self.expressions_cached_with_errors_discarded.clear();
         self.starts_of_discarded_errors.clear();
         self.reported.clear();
         self.release_provisional_shapes();
@@ -314,7 +315,7 @@ impl Checker<'_, '_> {
         let logged = self.task.diagnostics.len();
         self.check_source_file(file);
         // The file will be rechecked, so skip the remaining passes.
-        if self.task.is_lost() {
+        if self.task.was_discarded() {
             self.reported.clear();
             self.is_type_checked = true;
             return self.checked(syntactic, Vec::new());
@@ -336,14 +337,14 @@ impl Checker<'_, '_> {
         self.check_misc(file);
         self.check_circularities(file);
         self.check_assignments(file);
-        self.check_x_aliases(file);
+        self.check_alias_errors(file);
         // Removes the diagnostics reported for specifiers that are never resolved.
-        self.check_x_modules(file);
+        self.check_module_statements(file);
         self.produce_deferred_diagnostics(file);
-        self.check_x_typenodes(file);
+        self.check_all_instantiation_expressions(file);
         // These replace messages that were already reported, for assignments and for unresolved names.
-        self.check_x_operators(file);
-        self.check_x_enums_names(file);
+        self.check_plain_assignments(file);
+        self.check_enums_and_names(file);
         self.report_unresolved_identifiers();
         self.check_external_emit_helpers(file);
         // Removes the diagnostics reported for misplaced decorators.
@@ -384,7 +385,7 @@ impl Checker<'_, '_> {
             if !self.is_plain_js(file) {
                 self.report_hir_diagnostics(file, &[DiagnosticKind::JsDoc]);
                 for mut d in std::mem::take(&mut self.reported) {
-                    self.settle_place(&mut d);
+                    self.resolve_span_end(&mut d);
                     d.directive = directives.preceding(file, hir, d.start);
                     semantic.push(d);
                 }
@@ -395,7 +396,7 @@ impl Checker<'_, '_> {
             checked.include = std::mem::take(&mut self.reported);
             (checked.include).retain(|d| directives.preceding(file, hir, d.start) == NO_DIRECTIVE);
             for d in &mut checked.include {
-                self.settle_place(d);
+                self.resolve_span_end(d);
             }
         }
         checked.semantic = Some(semantic);
@@ -416,7 +417,7 @@ impl Checker<'_, '_> {
 
     fn checked(&mut self, mut syntactic: Vec<Reported>, mut declaration: Vec<Reported>) -> Checked {
         for d in syntactic.iter_mut().chain(&mut declaration) {
-            self.settle_place(d);
+            self.resolve_span_end(d);
         }
         Checked {
             syntactic,
@@ -454,7 +455,7 @@ impl Checker<'_, '_> {
         } else if errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_err() {
             return None;
         }
-        self.settle_place(&mut d);
+        self.resolve_span_end(&mut d);
         d.start = super::spans::start_of_error_range(hir, d.start, d.end);
         Some(d)
     }
@@ -721,7 +722,7 @@ impl Checker<'_, '_> {
             self.error_at((file, import.clause_start, end), 2613, &args);
             return;
         }
-        let export_star = self.export_star_past_a_default(module);
+        let export_star = self.export_star_of_module_with_default(module);
         let related = export_star.map(|at| self.new_diagnostic(at, 1195, &[]));
         let end = self.end_of_identifier_at(file, import.default, import.default_pos);
         self.error_at((file, import.default_pos, end), 1192, &[Arg::Sym(module)])
@@ -743,7 +744,7 @@ impl Checker<'_, '_> {
         if self.files().options.no_check {
             return;
         }
-        let (code, other) = self.why_no_module_member(from, module, target, name, start);
+        let (code, other) = self.missing_module_member_error(from, module, target, name, start);
         self.enclosing_module_specifier_mode = specifier_mode;
         let containing_location = Some(Enclosing::at_scope(from, ScopeId(0)));
         let module_name = fully_qualified_name(self, module, containing_location);
@@ -792,7 +793,7 @@ impl Checker<'_, '_> {
 
     /// `reportNonDefaultExport`: the first `export *` of `module` that targets a module with a default export, which
     /// `export *` doesn't re-export.
-    fn export_star_past_a_default(&self, module: Sym) -> Option<(FileId, u32, u32)> {
+    fn export_star_of_module_with_default(&self, module: Sym) -> Option<(FileId, u32, u32)> {
         let files = self.files();
         for part in files.parts(module) {
             let hir = self.hir(part.file);
@@ -845,7 +846,7 @@ impl Checker<'_, '_> {
     /// `errorNoModuleMemberSymbol`, `reportNonExportedMember`, `reportInvalidImportEqualsExportMember`. Takes the same
     /// arguments as `error_no_module_member_symbol`. 2724 comes with the suggested name, 2460 with the name it's
     /// exported as.
-    fn why_no_module_member(
+    fn missing_module_member_error(
         &mut self,
         from: FileId,
         module: Sym,
@@ -1338,8 +1339,8 @@ impl Checker<'_, '_> {
     /// members, which would close a cycle with a query in flight. So it's reported when no query is in flight.
     ///
     /// Only for the file being checked. No other task stores an unresolved identifier's entry
-    /// (`is_noted_for_check_file`), so another file's `check_file` evaluates its own identifiers itself, before its
-    /// last call of this function.
+    /// (`has_side_effect_for_check_file`), so another file's `check_file` evaluates its own identifiers itself, before
+    /// its last call of this function.
     pub(super) fn report_unresolved_identifiers(&mut self) {
         while !self.unresolved_identifiers.is_empty() {
             let mut unresolved = std::mem::take(&mut self.unresolved_identifiers);
@@ -1922,7 +1923,7 @@ impl Checker<'_, '_> {
         }
         // `getSuggestedSymbolForNonexistentSymbol`
         let Some((suggestion, leads_to_export)) =
-            similar_in_scope_and_where(self, location, name, meaning)
+            spelling_suggestion_in_scope(self, location, name, meaning)
         else {
             return self.new_diagnostic(at, name_not_found_message, &[declaration_name]);
         };
@@ -2180,8 +2181,8 @@ pub(crate) enum SpellingSuggestion {
 }
 
 /// `compareSymbols`, `compareNodes`: the sort key of `sym`'s first declaration, in the form that
-/// `place_in_program_order` returns.
-fn place_of_first_declaration(files: &Files, sym: Sym) -> Option<(bool, u32, u32)> {
+/// `position_in_program_order` returns.
+fn sort_key_of_first_declaration(files: &Files, sym: Sym) -> Option<(bool, u32, u32)> {
     let (file, decl) = files.decls_of(sym).first().copied()?;
     let pos = files.start_of_declaration(file, decl);
     Some((!files.module(file).is_lib, files.rank_of_file(file), pos))
@@ -2194,7 +2195,7 @@ fn get_spelling_suggestion_for_name<'a>(
     candidates: impl Iterator<Item = (&'a [u8], SpellingSuggestion)>,
 ) -> Option<SpellingSuggestion> {
     let place = |suggestion: SpellingSuggestion| match suggestion {
-        SpellingSuggestion::Symbol(sym) => place_of_first_declaration(files, sym),
+        SpellingSuggestion::Symbol(sym) => sort_key_of_first_declaration(files, sym),
         SpellingSuggestion::Word(_) => None,
     };
     // `compareSymbols`
@@ -2211,7 +2212,7 @@ fn get_spelling_suggestion_for_name<'a>(
 /// `getSuggestedSymbolForNonexistentSymbol`, plus a flag that's true if the suggestion was found among the locals of
 /// the module or namespace block that exports it. `declareModuleMember`: the local there is a symbol that only refers
 /// to the export symbol.
-fn similar_in_scope_and_where(
+fn spelling_suggestion_in_scope(
     c: &mut Checker<'_, '_>,
     location: Option<(FileId, ScopeId)>,
     name: Atom,
@@ -2221,13 +2222,13 @@ fn similar_in_scope_and_where(
     let name = (name, c.atoms().bytes(name));
     let among_globals = std::mem::take(&mut c.suggestions_among_globals);
     // `try_resolve_alias` returns `None` for an alias in progress.
-    let is_function_of_candidate = c.alias_targets_in_progress.is_empty();
+    let is_cacheable = c.alias_targets_in_progress.is_empty();
     let suggested = files.suggested_symbol_for_nonexistent_symbol(
         location,
         name,
         meaning,
         c,
-        is_function_of_candidate.then_some(&among_globals),
+        is_cacheable.then_some(&among_globals),
     );
     c.suggestions_among_globals = among_globals;
     // `Resolve` returns nil where the name can't be used.
@@ -2280,14 +2281,14 @@ impl SuggestionLookup for Checker<'_, '_> {
 /// Caches the results of `getSuggestionForSymbolNameLookup`. A program that lacks its test framework's types looks up
 /// the same few names thousands of times, from everywhere in a file.
 #[derive(Default)]
-pub(crate) struct KnownSuggestions {
+pub(crate) struct SuggestionCache {
     /// In `globals`, by `meaning` and by the name's text.
     among_globals: FxHashMap<u32, FxHashMap<Vec<u8>, Option<SpellingSuggestion>>>,
     /// In a scope's locals, by the scope, `meaning` and the name.
     among_locals: FxHashMap<(FileId, ScopeId, u32, Atom), Option<SpellingSuggestion>>,
 }
 
-pub(crate) type SuggestionsAmongGlobals = std::cell::RefCell<KnownSuggestions>;
+pub(crate) type SuggestionsAmongGlobals = std::cell::RefCell<SuggestionCache>;
 
 impl Files<'_> {
     /// `getSuggestedSymbolForNonexistentSymbol`, plus a flag that's true if the result is among the locals of a block
@@ -2313,7 +2314,7 @@ impl Files<'_> {
                 return Some(found);
             }
             // `GetSpellingSuggestion` first gets each candidate's name, then computes its edit distance.
-            let fits = |&(candidate, sym): &(Atom, Sym)| {
+            let is_candidate = |&(candidate, sym): &(Atom, Sym)| {
                 files.is_spelling_candidate(sym, meaning, &mut *symbols)
                     && is_close(text, files.atoms.bytes(candidate))
             };
@@ -2355,7 +2356,7 @@ impl Files<'_> {
                         let locals = bound.table(s.locals).iter().filter(is_in_table);
                         let locals =
                             locals.map(|&(candidate, id)| (candidate, files.sym(file, id)));
-                        let locals = locals.filter(fits).map(named);
+                        let locals = locals.filter(is_candidate).map(named);
                         let suggestion = get_spelling_suggestion_for_name(files, text, locals);
                         if let Some(among_globals) = among_globals {
                             let known = &mut among_globals.borrow_mut().among_locals;
@@ -2367,7 +2368,7 @@ impl Files<'_> {
                 SymbolTable::Exports(container) => get_spelling_suggestion_for_name(
                     files,
                     text,
-                    files.each_export(container).filter(fits).map(named),
+                    files.each_export(container).filter(is_candidate).map(named),
                 ),
                 SymbolTable::Globals
                     if let Some(known) = among_globals.and_then(|it| {
@@ -2404,7 +2405,7 @@ impl Files<'_> {
                     let suggestion = get_spelling_suggestion_for_name(
                         files,
                         text,
-                        globals.filter(fits).map(named).chain(words),
+                        globals.filter(is_candidate).map(named).chain(words),
                     );
                     if let Some(among_globals) = among_globals {
                         let mut known = among_globals.borrow_mut();
@@ -2890,7 +2891,7 @@ impl Checker<'_, '_> {
         invalid_optional_chain: u32,
     ) -> bool {
         let hir = self.hir(file);
-        let Some(code) = super::errors_operators::why_no_reference(
+        let Some(code) = super::errors_operators::invalid_reference_code(
             hir,
             e,
             invalid_reference,

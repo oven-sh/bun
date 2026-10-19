@@ -7,22 +7,22 @@ use crate::hir::*;
 use bun_core::strings;
 
 /// JavaScript's own modifiers (`ModifierFlagsJavaScript`). `checkJSSyntax` reports the others.
-const JAVASCRIPT: Flags = Flags::EXPORT
+const JAVASCRIPT_MODIFIERS: Flags = Flags::EXPORT
     .union(Flags::STATIC)
     .union(Flags::ACCESSOR)
     .union(Flags::ASYNC)
     .union(Flags::DEFAULT);
 
 /// Returns the first of `modifiers` that acorn and Babel reject on something that can have the modifiers in `allowed`:
-/// one that isn't allowed, a repeated one, or `static` after another modifier. Only the modifiers in `looked_at` are
+/// one that isn't allowed, a repeated one, or `static` after another modifier. Only the modifiers in `relevant` are
 /// considered.
-fn misplaced(modifiers: &[Modifier], allowed: Flags, looked_at: Flags) -> Option<Found> {
+fn misplaced(modifiers: &[Modifier], allowed: Flags, relevant: Flags) -> Option<Found> {
     let mut seen = Flags::empty();
     for modifier in modifiers {
         let ModifierKind::Keyword(flag) = modifier.kind else {
             continue;
         };
-        if !looked_at.intersects(flag) {
+        if !relevant.intersects(flag) {
             continue;
         }
         if !allowed.contains(flag)
@@ -53,7 +53,7 @@ fn position_of(sign: u8, text: &[u8], from: u32) -> u32 {
 /// - `?` after the name of an accessor or a constructor, `?` and `!` in an object literal
 /// - a `this` parameter
 /// - `declare module "a"`, `declare global`, `export as namespace a`
-pub fn report_syntax_of_typescript(file: &mut FileBuilder, text: &[u8]) {
+pub fn report_typescript_only_syntax(file: &mut FileBuilder, text: &[u8]) {
     let mut found: Vec<Found> = Vec::new();
     for (stmt, id) in file.stmts.iter().zip(0..) {
         let written = file.stmt_modifiers(StmtId(id));
@@ -67,7 +67,11 @@ pub fn report_syntax_of_typescript(file: &mut FileBuilder, text: &[u8]) {
             _ if written.is_empty() => {}
             _ => {
                 let modifiers = file.modifier_list(written);
-                found.extend(misplaced(modifiers, JAVASCRIPT, JAVASCRIPT));
+                found.extend(misplaced(
+                    modifiers,
+                    JAVASCRIPT_MODIFIERS,
+                    JAVASCRIPT_MODIFIERS,
+                ));
             }
         }
     }
@@ -102,7 +106,7 @@ pub fn report_syntax_of_typescript(file: &mut FileBuilder, text: &[u8]) {
             found.push((position_of(b'?', text, member.name_pos), 8009, "?"));
         }
         let modifiers = file.modifier_list(member.modifiers);
-        found.extend(misplaced(modifiers, allowed, JAVASCRIPT));
+        found.extend(misplaced(modifiers, allowed, JAVASCRIPT_MODIFIERS));
         if member.kind == MemberKind::StaticBlock {
             let is_decorator = |it: &&Modifier| matches!(it.kind, ModifierKind::Decorator(_));
             let decorator = modifiers.iter().find(is_decorator);
@@ -119,12 +123,12 @@ pub fn report_syntax_of_typescript(file: &mut FileBuilder, text: &[u8]) {
     }
     for &(prop, modifiers) in file.modifiers_of_props.iter() {
         // `checkJSSyntax` only looks at the modifiers of a method.
-        let (allowed, looked_at) = match file[prop].kind {
-            PropKind::Method => (Flags::ASYNC, JAVASCRIPT),
+        let (allowed, relevant) = match file[prop].kind {
+            PropKind::Method => (Flags::ASYNC, JAVASCRIPT_MODIFIERS),
             _ => (Flags::empty(), Flags::all()),
         };
         let modifiers = file.modifier_list(modifiers);
-        found.extend(misplaced(modifiers, allowed, looked_at));
+        found.extend(misplaced(modifiers, allowed, relevant));
     }
     for (pos, code, argument) in found {
         let arguments: &[&[u8]] = &[argument.as_bytes()];

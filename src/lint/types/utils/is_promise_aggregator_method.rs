@@ -6,7 +6,7 @@ use crate::utils::ts_utils;
 
 /// tsgolint's `isPromiseAggregatorMethod`: unwraps the callee's parentheses, even where they end an optional chain, and
 /// takes the method's name from the checker's `getAccessedPropertyName`.
-fn is_promise_aggregator_method_of_tsgolint(node: Expr) -> bool {
+fn tsgolint_is_promise_aggregator_method(node: Expr) -> bool {
     let ExprKind::Call(call) = node.kind() else {
         return false;
     };
@@ -27,7 +27,7 @@ fn is_promise_aggregator_method_of_tsgolint(node: Expr) -> bool {
 /// `any` on the `Promise` constructor.
 pub fn is_promise_aggregator_method(node: Expr) -> bool {
     if node.file().language().is_oxlint {
-        return is_promise_aggregator_method_of_tsgolint(node);
+        return tsgolint_is_promise_aggregator_method(node);
     }
     ts_utils::is_promise_aggregator_method(node, |object| {
         is_promise_constructor_like(get_constrained_type_at_location(object))

@@ -132,7 +132,7 @@ fn is_value_context(e: Expr<'_>) -> bool {
 }
 
 /// oxlint's `is_read`, for an `a.#x`.
-fn is_read_for_oxlint(access: Expr<'_>) -> bool {
+fn oxlint_is_read(access: Expr<'_>) -> bool {
     let is_cast = |e: Expr| {
         matches!(
             e.tag(),
@@ -357,7 +357,7 @@ impl NoUnusedPrivateClassMembers {
                 && let Some(class) = classes.find(usage, class_of_member)
             {
                 let is_read = referenced.entry((class, name)).or_insert(false);
-                *is_read = *is_read || (e.tag() == ExprTag::Dot && is_read_for_oxlint(e));
+                *is_read = *is_read || (e.tag() == ExprTag::Dot && oxlint_is_read(e));
             }
         }
         for (class, name, member) in declared {
@@ -372,7 +372,7 @@ impl NoUnusedPrivateClassMembers {
 }
 
 /// True if removing the member removes nothing else: it has no decorator, and no initializer that runs other code.
-fn is_removed_safely(member: Member) -> bool {
+fn is_safe_to_remove(member: Member) -> bool {
     member.decorators().next().is_none() && member.init().is_none_or(is_pure)
 }
 
@@ -427,7 +427,7 @@ impl Rule for NoUnusedPrivateClassMembers {
             }
         }
         for ((_, name), member) in
-            utils::sort::in_order_of(&members, |it| it.1.declared.span().start)
+            utils::sort::collect_sorted_by_key(&members, |it| it.1.declared.span().start)
         {
             let (declared, has_reference) = (member.declared, member.has_reference);
             let Some(key) = declared.key().filter(|_| !member.is_used) else {
@@ -441,7 +441,12 @@ impl Rule for NoUnusedPrivateClassMembers {
                     |fixer| match has_reference {
                         true => None,
                         // `--fix-suggestions` applies this without review, so keep `#sent = sendEmail()`.
-                        false if cx.language().stands_alone && !is_removed_safely(declared) => None,
+                        false
+                            if cx.language().has_no_foreign_config
+                                && !is_safe_to_remove(declared) =>
+                        {
+                            None
+                        }
                         false => remove_member(fixer, declared),
                     },
                 );

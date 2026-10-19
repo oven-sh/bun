@@ -822,7 +822,7 @@ impl NamesByElement {
     }
 
     /// Copies every entry of `config` except the key `except`.
-    pub(crate) fn of_option(config: Object, except: &str) -> Self {
+    pub(crate) fn from_option_except(config: Object, except: &str) -> Self {
         let keys = config
             .entries()
             .iter()
@@ -840,13 +840,13 @@ impl NamesByElement {
     }
 
     /// Returns `None` if the option has no entry for `element`.
-    pub(crate) fn has_if_named(&self, element: &[u8], name: &[u8]) -> Option<bool> {
+    pub(crate) fn has_if_listed(&self, element: &[u8], name: &[u8]) -> Option<bool> {
         let names = self.0.iter().find(|it| it.0.as_bytes() == element)?;
         Some(names.1.iter().any(|it| it.as_bytes() == name))
     }
 
     pub(crate) fn has(&self, element: &[u8], name: &[u8]) -> bool {
-        self.has_if_named(element, name) == Some(true)
+        self.has_if_listed(element, name) == Some(true)
     }
 }
 

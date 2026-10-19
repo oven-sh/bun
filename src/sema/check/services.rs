@@ -59,7 +59,7 @@ struct ManyChildren<'c> {
 
 impl ManyChildren<'_> {
     /// Pushes the parts and the children that contain `offset`, in child order. Finds the children by binary search.
-    fn push_around(self, offset: u32, work: &mut SmallVec<[Node; 16]>) {
+    fn push_containing(self, offset: u32, work: &mut SmallVec<[Node; 16]>) {
         let from = self.spans.partition_point(|it| it.end <= offset);
         let to = self.spans.partition_point(|it| it.start <= offset);
         let mut around = self
@@ -132,7 +132,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.bound(file).has_types_that_depend_on_order()
             && !self.reports_semantic_errors(file)
         {
-            self.check_source_file_and_report_nothing(file);
+            self.check_source_file_silently(file);
         }
         // A reference whose control flow walk is too deep disables the analysis (2563). From then on every reference
         // has the error type until the enclosing function or module block ends, which at the top level of a file is
@@ -417,16 +417,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             let before = work.len();
             let known = self.many_children.get(&at).copied();
             if let Some(Some(children)) = known {
-                children.push_around(offset, &mut work);
+                children.push_containing(offset, &mut work);
             } else {
                 let mut count = 0;
                 hir.for_each_child(at, &mut |child| {
                     count += 1;
                     // The span of a node derived from another node isn't always known.
-                    let is_around = child.part().is_some()
+                    let contains_offset = child.part().is_some()
                         || hir.start(child) <= offset
                             && offset < self.c.end_of_node(self.file, child);
-                    if is_around {
+                    if contains_offset {
                         work.push(child);
                     }
                     false
@@ -693,7 +693,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 }
                 StmtKind::Module(module) => match hir[module].name {
                     ModuleName::Global => flags |= NodeFlags::GLOBAL_AUGMENTATION,
-                    ModuleName::Ident(_) if self.is_written_as_namespace(node.file, at) => {
+                    ModuleName::Ident(_) if self.has_namespace_keyword(node.file, at) => {
                         flags |= NodeFlags::NAMESPACE;
                     }
                     _ => {}
@@ -717,7 +717,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     /// True if the `ModuleDeclaration` uses the `namespace` keyword. An inner part of
     /// `namespace a.b` has no keyword and counts too.
-    fn is_written_as_namespace(&self, file: FileId, node: Node) -> bool {
+    fn has_namespace_keyword(&self, file: FileId, node: Node) -> bool {
         let hir = self.c.hir(file);
         let mut text = hir.text.get(hir.start(node) as usize..).unwrap_or_default();
         for modifier in [&b"export"[..], b"declare"] {
@@ -803,7 +803,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         };
         let e = self.expr_of(node)?;
         let outer = self.c.begin_recheck();
-        let is_pushed = self.push_contextual_type_of_literal_around(node.file, e);
+        let is_pushed = self.push_contextual_type_of_enclosing_literal(node.file, e);
         let ty = self.c.contextual_type(node.file, e, ContextFlags::empty());
         if is_pushed {
             self.c.pop_contextual_type();
@@ -816,7 +816,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// the check of the literal, its contextual type is then computed once for all of them. Computing it can take time
     /// linear in their number, because the type a pattern implies is built from all its properties. Returns true if a
     /// type was pushed.
-    fn push_contextual_type_of_literal_around(&mut self, file: FileId, e: ExprId) -> bool {
+    fn push_contextual_type_of_enclosing_literal(&mut self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let literal = match bound.parent_of_expr(e) {
             crate::bind::Parent::Prop(p) => bound.prop_owner[p.idx()],

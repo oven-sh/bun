@@ -7,7 +7,7 @@ use super::*;
 use crate::atom::Interner;
 use crate::bind::SymbolId;
 use crate::check::commit::Commits;
-use crate::local::{Found, Hashed, LOCAL, MaybeLocal, SlotNumber, spread_word};
+use crate::local::{HashIndex, Hashed, LOCAL, MaybeLocal, SlotNumber, spread_word};
 use crate::program::Sym;
 use crate::session::Session;
 use crate::table::{
@@ -51,7 +51,7 @@ struct Tables<'s> {
     set: ByNode<Node, (), Buffered, &'s Session>,
     by_id: ById<TypeId, TypeId, Buffered, &'s Session>,
     shapes: ByIdIndirect<TypeId, Box<[TypeId]>, Buffered, &'s Session>,
-    kept_by_node: ByNodeIndirect<Node, Box<[TypeId]>, Buffered, &'s Session>,
+    indirect_by_node: ByNodeIndirect<Node, Box<[TypeId]>, Buffered, &'s Session>,
     members: ByIdIndirect<TypeId, Holder, Buffered, &'s Session>,
     by_key: ByKey<(TypeId, TypeId), TypeId, Buffered, &'s Session>,
 }
@@ -70,7 +70,7 @@ impl<'s> Tables<'s> {
             set: ByNode::new_in(&bases, session),
             by_id: ById::new_in(session),
             shapes: ByIdIndirect::new_in(session),
-            kept_by_node: ByNodeIndirect::new_in(&bases, session),
+            indirect_by_node: ByNodeIndirect::new_in(&bases, session),
             members: ByIdIndirect::new_in(session),
             by_key: ByKey::new_in(session),
         };
@@ -78,7 +78,7 @@ impl<'s> Tables<'s> {
         tables.set.set_slot(numbered(1));
         tables.by_id.set_slot(numbered(2));
         tables.shapes.set_slot(numbered(3));
-        tables.kept_by_node.set_slot(numbered(4));
+        tables.indirect_by_node.set_slot(numbered(4));
         tables.members.set_slot(numbered(5));
         tables.by_key.set_slot(numbered(6));
         (tables.members).hold_handles_of(&tables.shapes, Holder::shape_mut);
@@ -91,7 +91,7 @@ impl<'s> Tables<'s> {
             &self.set,
             &self.by_id,
             &self.shapes,
-            &self.kept_by_node,
+            &self.indirect_by_node,
             &self.members,
             &self.by_key,
         ]
@@ -148,7 +148,7 @@ fn stored() -> Stored {
 // ───────────────────────────── the buffer ─────────────────────────────
 
 #[test]
-fn insert_keeps_what_is_there_and_rewrite_replaces_the_tasks_entry() {
+fn insert_keeps_existing_entry_and_rewrite_replaces_it() {
     let session = Session::new();
     let tables = Tables::new(&session);
     let task = begin_in(&session, &tables.types, 0, A);
@@ -179,7 +179,7 @@ fn insert_keeps_what_is_there_and_rewrite_replaces_the_tasks_entry() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn what_a_task_outside_the_plan_writes_is_dropped_with_it() {
+fn unplanned_task_drops_its_writes() {
     let session = Session::new();
     let tables = Tables::new(&session);
     let task = Task::new_in(session.arena(), &tables.types);
@@ -201,7 +201,7 @@ fn what_a_task_outside_the_plan_writes_is_dropped_with_it() {
 /// entries can still be looked up afterwards.
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_task_that_goes_through_files_that_nothing_imports() {
+fn task_visits_unimported_files() {
     let session = Session::new();
     let tables = Tables::new(&session);
     let mut task = begin(&session, &tables.types, 0);
@@ -238,7 +238,7 @@ fn a_task_that_goes_through_files_that_nothing_imports() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_reference_to_a_kept_value_stays_good_while_the_task_keeps_more() {
+fn reference_to_stored_value_survives_later_inserts() {
     let session = Session::new();
     let tables = Tables::new(&session);
     let task = begin(&session, &tables.types, 0);
@@ -257,7 +257,7 @@ fn a_reference_to_a_kept_value_stays_good_while_the_task_keeps_more() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_permission_tells_whether_the_task_has_held_back_since_its_computation_began() {
+fn permission_detects_hold_back_since_computation_began() {
     let session = Session::new();
     let task = begin(
         &session,
@@ -277,7 +277,7 @@ fn a_permission_tells_whether_the_task_has_held_back_since_its_computation_began
 
 #[test]
 #[should_panic]
-fn a_table_that_knows_its_slot_takes_no_other() {
+fn table_with_fixed_slot_rejects_another_slot() {
     let mut table = ById::<TypeId, TypeId, Buffered<At<3>>>::default();
     table.set_slot(numbered(4));
 }
@@ -285,7 +285,7 @@ fn a_table_that_knows_its_slot_takes_no_other() {
 // ───────────────────────────── bit storage ─────────────────────────────
 
 #[test]
-fn the_fields_of_a_shared_cell() {
+fn shared_cell_fields_keep_first_value() {
     let cell = AtomicU32::new(0);
     assert_eq!(cell.put_field_if_empty(4, 3, 2), 2);
     // The first value wins.
@@ -297,7 +297,7 @@ fn the_fields_of_a_shared_cell() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn file_local_values_of_a_bit_or_two_share_a_word() {
+fn one_and_two_bit_file_local_values_share_a_word() {
     let session = Session::new();
     let mut set = ByNode::<Node, (), FileLocal>::new_in(&Bases::none_in(&Global), Global);
     let mut flags = ByNode::<Node, bool, FileLocal>::new_in(&Bases::none_in(&Global), Global);
@@ -337,7 +337,7 @@ fn file_local_values_of_a_bit_or_two_share_a_word() {
 
 /// `TypeKey` is hashed and compared like the equivalent `TypeData`.
 #[test]
-fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
+fn borrowed_key_finds_type_interned_with_owned_lists() {
     let session = Session::new();
     let tables = Tables::new(&session);
     let task = begin(&session, &tables.types, 0);
@@ -468,10 +468,10 @@ fn hashed_lists_its_entries_in_insertion_order() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_vacancy_is_filled_only_while_it_is_one() {
+fn stale_vacancy_does_not_overwrite_an_entry() {
     let is = |number: u32| move |found: u32| found == number;
     // A vacancy in a table that has no slots yet.
-    let found = Found::default();
+    let found = HashIndex::default();
     assert_eq!(found.find(7, |_| true), None);
     let Err(vacancy) = found.find_or_vacancy(7, |_| true) else {
         unreachable!()
@@ -502,10 +502,10 @@ fn a_vacancy_is_filled_only_while_it_is_one() {
 
 /// The table is replaced when an entry would make it more than three quarters full.
 #[test]
-fn what_is_found_stays_found_when_the_table_is_replaced() {
+fn entries_survive_table_growth() {
     // The first table has 256 slots.
     for count in [1, 191, 192, 193, 384, 385] {
-        let mut found = Found::default();
+        let mut found = HashIndex::default();
         for number in 0..count {
             found.add(spread_word(u64::from(number)), number);
             for earlier in [0, number / 2, number] {
@@ -522,7 +522,7 @@ fn what_is_found_stays_found_when_the_table_is_replaced() {
 }
 
 #[test]
-fn the_top_bits_of_a_hash_are_its_shard() {
+fn shard_is_top_bits_of_hash() {
     for shards in [1, 2, 8, 64, 256] {
         for top in 0..256 {
             for rest in [0, (1 << 56) - 1] {
@@ -535,7 +535,7 @@ fn the_top_bits_of_a_hash_are_its_shard() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn the_nodes_of_many_files_have_different_hashes() {
+fn nodes_of_many_files_rarely_collide() {
     let mut tags = crate::util::FxHashSet::default();
     for file in 0..512u64 {
         for index in 0..512u64 {
@@ -577,9 +577,9 @@ fn threads_fill_and_read_a_windowed_map() {
                 let i = (i * 7 + thread as u32) % KEYS;
                 let key = key_of(i);
                 map.add_if_absent(spread_in_window(&key), &key, i);
-                assert_eq!(map.get_by_now(spread_in_window(&key), &key), Some(&i));
+                assert_eq!(map.get_acquire(spread_in_window(&key), &key), Some(&i));
                 let other = key_of((i + 11) % KEYS);
-                if let Some(value) = map.get_by_now(spread_in_window(&other), &other) {
+                if let Some(value) = map.get_acquire(spread_in_window(&other), &other) {
                     assert_eq!(*value, (i + 11) % KEYS);
                 }
             }
@@ -620,7 +620,7 @@ fn begin_committing<'s>(
 }
 
 /// Like `begin_committing`, but the task writes immediately to the tables of `Tables` that are keyed by a record.
-fn begin_writing_at_once<'s>(
+fn begin_writing_immediately<'s>(
     session: &'s Session,
     tables: &Tables<'s>,
     commits: &Commits<'s>,
@@ -642,7 +642,7 @@ fn commit<'s>(tables: &Tables<'s>, commits: &Commits<'s>, task: &Task<'s>, numbe
     let mut log = task.buffer().take_log();
     let stored = commits.store(&tables.all(), task, &mut log, number, None);
     task.view().unwrap().has_committed(number);
-    task.write_at_once_again();
+    task.resume_writing_immediately();
     stored
 }
 
@@ -651,7 +651,7 @@ fn next_statement(task: &Task) {
 }
 
 #[test]
-fn a_commit_stores_every_kind_of_entry_and_the_task_keeps_its_own() {
+fn commit_publishes_every_kind_of_entry() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let mut first = begin_committing(&session, &tables, &commits, 0);
@@ -664,7 +664,7 @@ fn a_commit_stores_every_kind_of_entry_and_the_task_keeps_its_own() {
     let (shape, _) = (tables.shapes).insert_ref(&first, STRING, Box::new([NUMBER]), stored());
     // The value is already where every task can read it. Only the handle waits for the commit.
     assert!(shape.local_number().is_none());
-    (tables.kept_by_node).insert_ref(&first, (A, 4), Box::new([STRING]), stored());
+    (tables.indirect_by_node).insert_ref(&first, (A, 4), Box::new([STRING]), stored());
     let holder = Holder { shape, of: NUMBER };
     tables.members.insert(&first, STRING, holder, stored());
     (tables.by_key).insert(&first, (STRING, NUMBER), STRING, stored());
@@ -682,7 +682,7 @@ fn a_commit_stores_every_kind_of_entry_and_the_task_keeps_its_own() {
         assert_eq!(tables.by_id.get(task, &STRING), Some(NUMBER));
         assert_eq!(tables.shapes.handle(task, &STRING), Some(shape));
         assert_eq!(tables.shapes.at(task, shape)[..], [NUMBER]);
-        let kept = tables.kept_by_node.get_ref(task, &(A, 4));
+        let kept = tables.indirect_by_node.get_ref(task, &(A, 4));
         assert_eq!(kept.map(|it| &it[..]), Some(&[STRING][..]));
         assert_eq!(tables.members.get(task, &STRING), Some(holder));
         assert_eq!(tables.by_key.get(task, &(STRING, NUMBER)), Some(STRING));
@@ -691,7 +691,7 @@ fn a_commit_stores_every_kind_of_entry_and_the_task_keeps_its_own() {
 }
 
 #[test]
-fn a_task_that_begins_again_has_none_of_its_earlier_entries() {
+fn begin_drops_earlier_entries() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let mut task = begin_committing(&session, &tables, &commits, 0);
@@ -701,7 +701,7 @@ fn a_task_that_begins_again_has_none_of_its_earlier_entries() {
     tables.set.insert(&task, (A, 3), (), stored());
     tables.by_id.insert(&task, STRING, NUMBER, stored());
     (tables.shapes).insert_ref(&task, STRING, Box::new([NUMBER]), stored());
-    (tables.kept_by_node).insert_ref(&task, (A, 4), Box::new([STRING]), stored());
+    (tables.indirect_by_node).insert_ref(&task, (A, 4), Box::new([STRING]), stored());
     (tables.by_key).insert(&task, (STRING, NUMBER), STRING, stored());
     assert_ne!(task.buffer().logged(), 0);
     // Nothing was committed, so a new task finds nothing.
@@ -714,7 +714,7 @@ fn a_task_that_begins_again_has_none_of_its_earlier_entries() {
     assert_eq!(tables.set.get(&task, &(A, 3)), None);
     assert_eq!(tables.by_id.get(&task, &STRING), None);
     assert_eq!(tables.shapes.get_ref(&task, &STRING), None);
-    assert_eq!(tables.kept_by_node.get_ref(&task, &(A, 4)), None);
+    assert_eq!(tables.indirect_by_node.get_ref(&task, &(A, 4)), None);
     assert_eq!(tables.by_key.get(&task, &(STRING, NUMBER)), None);
 }
 
@@ -724,54 +724,54 @@ fn is_like_new(task: &mut Task) -> bool {
     let Task {
         place,
         file,
-        files_in_doubt,
+        uncommitted_files,
         diagnostics,
         closed_a_cycle,
         order_dependent_variances,
         assignments_walked,
         held_back,
         view,
-        is_lost,
-        is_believed,
+        was_discarded,
+        is_trusted,
         can_recheck_early,
         is_first_in_order,
         is_first_in_component,
         cycle_members,
-        cycle_since_rest,
+        cycle_since_idle,
         logged_at_cycles,
-        logged_at_rest,
+        logged_when_idle,
         committed,
         waits,
-        at_once,
-        at_once_unless_stopped,
-        logged_before_the_stop,
+        immediate_tables,
+        immediate_tables_after_commit,
+        diagnostics_logged_before_stop,
         own,
         buffer,
         file_local,
     } = task;
     place.is_none()
         && file.is_none()
-        && files_in_doubt.is_empty()
+        && uncommitted_files.is_empty()
         && diagnostics.is_empty()
         && !*closed_a_cycle
         && order_dependent_variances.is_empty()
         && assignments_walked.get_mut().is_empty()
         && held_back.get() == 0
         && view.is_none()
-        && is_lost.get().is_none()
-        && !*is_believed
+        && was_discarded.get().is_none()
+        && !*is_trusted
         && !can_recheck_early.get()
         && !is_first_in_order.get()
         && !is_first_in_component.get()
         && cycle_members.get_mut().is_empty()
-        && cycle_since_rest.get().is_none()
+        && cycle_since_idle.get().is_none()
         && logged_at_cycles.borrow().is_empty()
-        && logged_at_rest.get() == [0; 2]
+        && logged_when_idle.get() == [0; 2]
         && committed.get() == [0; 2]
         && waits.get() == [Duration::ZERO; 3]
-        && at_once.get() == 0
-        && *at_once_unless_stopped == 0
-        && logged_before_the_stop.get() == usize::MAX
+        && immediate_tables.get() == 0
+        && *immediate_tables_after_commit == 0
+        && diagnostics_logged_before_stop.get() == usize::MAX
         && own.is_like_new()
         && buffer.get_mut().is_like_new()
         && file_local.get_mut().is_like_new()
@@ -788,14 +788,14 @@ fn ends_like_new<'s>(
     assert!(is_like_new(&mut task));
     change(&mut task);
     assert!(!is_like_new(&mut task));
-    tables.types.take_back_ids(&task.own);
+    tables.types.reclaim_ids(&task.own);
     task.drop_everything();
     assert!(is_like_new(&mut task));
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_task_that_ended_is_like_a_new_task() {
+fn ended_task_is_like_new() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let check = |change: &dyn Fn(&mut Task<'_>)| ends_like_new(&tables, &session, change);
@@ -805,7 +805,7 @@ fn a_task_that_ended_is_like_a_new_task() {
     };
     check(&|task| task.place = Some((0, 1)));
     check(&|task| task.file = Some(A));
-    check(&|task| task.files_in_doubt.push(A));
+    check(&|task| task.uncommitted_files.push(A));
     check(&|task| {
         let reported = Reported::bare((A, 0, 0), 2322);
         task.diagnostics.push((None, reported));
@@ -829,20 +829,20 @@ fn a_task_that_ended_is_like_a_new_task() {
     ends_like_new(&tables, &session, |task| {
         task.view = Some(commits.view(3));
     });
-    check(&|task| task.is_lost.set(Some("a test")));
-    check(&|task| task.is_believed = true);
+    check(&|task| task.was_discarded.set(Some("a test")));
+    check(&|task| task.is_trusted = true);
     check(&|task| task.can_recheck_early.set(true));
     check(&|task| task.set_first_in_order(true, false));
     check(&|task| task.set_first_in_order(false, true));
     check(&|task| task.cycle_members.get_mut().push(1));
-    check(&|task| task.cycle_since_rest.set(Some([0; 2])));
+    check(&|task| task.cycle_since_idle.set(Some([0; 2])));
     check(&|task| task.logged_at_cycles.borrow_mut().push([[0; 2]; 2]));
-    check(&|task| task.logged_at_rest.set([0, 1]));
+    check(&|task| task.logged_when_idle.set([0, 1]));
     check(&|task| task.count_committed(0, 1));
     check(&|task| task.count_waits([Duration::ZERO, Duration::ZERO, Duration::from_nanos(1)]));
-    check(&|task| task.at_once.set(1));
-    check(&|task| task.at_once_unless_stopped = 1);
-    check(&|task| task.logged_before_the_stop.set(0));
+    check(&|task| task.immediate_tables.set(1));
+    check(&|task| task.immediate_tables_after_commit = 1);
+    check(&|task| task.diagnostics_logged_before_stop.set(0));
     // The task's own records.
     check(&|task| task.own.add_visited_file(A));
     check(&|task| task.own.add_unimported_file(A));
@@ -855,7 +855,7 @@ fn a_task_that_ended_is_like_a_new_task() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_task_that_ended_has_none_of_its_records_and_entries() {
+fn ended_task_has_no_records_or_entries() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let mut flags = ByNode::<Node, bool, FileLocal>::new_in(&Bases::none_in(&Global), Global);
@@ -883,7 +883,9 @@ fn a_task_that_ended_has_none_of_its_records_and_entries() {
         &|task| tables.set.insert(task, (A, 3), (), stored()),
         &|task| _ = tables.by_id.insert(task, STRING, NUMBER, stored()),
         &|task| _ = (tables.shapes).insert_ref(task, STRING, Box::new([NUMBER]), stored()),
-        &|task| _ = (tables.kept_by_node).insert_ref(task, (A, 4), Box::new([STRING]), stored()),
+        &|task| {
+            _ = (tables.indirect_by_node).insert_ref(task, (A, 4), Box::new([STRING]), stored())
+        },
         &|task| _ = (tables.by_key).insert(task, (STRING, NUMBER), STRING, stored()),
         &|task| _ = flags.insert(task, (B, 5), true),
     ];
@@ -899,7 +901,7 @@ fn a_task_that_ended_has_none_of_its_records_and_entries() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_file_that_a_task_has_looked_at_stays_as_it_was_until_the_next_statement() {
+fn file_snapshot_lasts_until_next_statement() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let first = begin_committing(&session, &tables, &commits, 0);
@@ -922,7 +924,7 @@ fn a_file_that_a_task_has_looked_at_stays_as_it_was_until_the_next_statement() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn the_file_that_a_task_visits_stays_as_it_was_when_the_visit_began() {
+fn visited_file_snapshot_lasts_for_the_visit() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let first = begin_committing(&session, &tables, &commits, 0);
@@ -945,7 +947,7 @@ fn the_file_that_a_task_visits_stays_as_it_was_when_the_visit_began() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn an_entry_that_a_task_stored_before_it_saw_another_one_loses() {
+fn own_entry_loses_to_earlier_commit() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let first = begin_committing(&session, &tables, &commits, 0);
@@ -980,13 +982,13 @@ fn an_entry_that_a_task_stored_before_it_saw_another_one_loses() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn what_is_stored_about_an_expression_of_the_visited_file_stays_in_the_task() {
+fn expression_entries_of_visited_file_stay_local() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let bases = Bases::new_in([10, 10, 10].into_iter(), &Global);
     let mut table = ByNode::<Node, TypeId, Buffered<OfExpressions<0>>>::new_in(&bases, Global);
     table.set_slot(numbered(0));
-    let mut task = begin_writing_at_once(&session, &tables, &commits, 0);
+    let mut task = begin_writing_immediately(&session, &tables, &commits, 0);
     task.begin_file(A, true);
     table.insert(&task, (A, 1), STRING, stored());
     table.rewrite(&task, (A, 1), NUMBER, stored());
@@ -1006,7 +1008,7 @@ fn what_is_stored_about_an_expression_of_the_visited_file_stays_in_the_task() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_commit_stores_nothing_that_is_bound() {
+fn commit_skips_bound_entries() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let mut task = begin_committing(&session, &tables, &commits, 0);
@@ -1036,7 +1038,7 @@ fn a_commit_stores_nothing_that_is_bound() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn what_is_keyed_by_a_record_is_logged_in_the_order_in_which_it_was_stored() {
+fn record_keys_are_logged_in_store_order() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let task = begin_committing(&session, &tables, &commits, 0);
@@ -1046,14 +1048,14 @@ fn what_is_keyed_by_a_record_is_logged_in_the_order_in_which_it_was_stored() {
     (tables.by_key).insert(&task, (NUMBER, STRING), STRING, stored());
     (tables.shapes).insert_ref(&task, NUMBER, Box::new([STRING]), stored());
     let log = task.buffer().take_log();
-    let of_records = [[6, 0], [2, STRING.0], [6, 1], [3, NUMBER.0]];
-    assert_eq!(log.of_records, of_records);
-    assert_eq!(log.of_nodes, [[0, A.0, 1]]);
+    let record_keys = [[6, 0], [2, STRING.0], [6, 1], [3, NUMBER.0]];
+    assert_eq!(log.record_keys, record_keys);
+    assert_eq!(log.node_keys, [[0, A.0, 1]]);
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_commit_stores_what_a_key_has_by_then_and_the_first_entry_stays() {
+fn commit_publishes_latest_value_and_first_commit_wins() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let task = begin_committing(&session, &tables, &commits, 0);
@@ -1075,7 +1077,7 @@ fn a_commit_stores_what_a_key_has_by_then_and_the_first_entry_stays() {
 }
 
 #[test]
-fn a_task_sees_all_that_a_commit_stores_under_the_nodes_of_a_file_or_nothing_of_it() {
+fn node_entries_of_a_commit_appear_atomically() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     std::thread::scope(|scope| {
@@ -1109,11 +1111,11 @@ fn a_task_sees_all_that_a_commit_stores_under_the_nodes_of_a_file_or_nothing_of_
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn an_entry_is_written_at_once_if_nothing_was_held_back_since_its_computation_began() {
+fn entry_is_written_immediately_unless_held_back_since_computation_began() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
-    let task = begin_writing_at_once(&session, &tables, &commits, 0);
-    let other = begin_writing_at_once(&session, &tables, &commits, 1);
+    let task = begin_writing_immediately(&session, &tables, &commits, 0);
+    let other = begin_writing_immediately(&session, &tables, &commits, 1);
     let outer = from_now(&task);
     tables.by_id.insert(&task, STRING, NUMBER, from_now(&task));
     (tables.by_key).insert(&task, (STRING, STRING), NUMBER, from_now(&task));
@@ -1146,11 +1148,11 @@ fn an_entry_is_written_at_once_if_nothing_was_held_back_since_its_computation_be
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn the_first_of_two_entries_written_immediately_is_kept() {
+fn first_immediate_write_wins() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
-    let first = begin_writing_at_once(&session, &tables, &commits, 0);
-    let second = begin_writing_at_once(&session, &tables, &commits, 1);
+    let first = begin_writing_immediately(&session, &tables, &commits, 0);
+    let second = begin_writing_immediately(&session, &tables, &commits, 1);
     (tables.by_id).rewrite(&first, STRING, NUMBER, from_now(&first));
     (tables.by_key).rewrite(&first, (STRING, STRING), NUMBER, from_now(&first));
     (tables.shapes).insert_ref(&first, STRING, Box::new([NUMBER]), from_now(&first));
@@ -1172,13 +1174,13 @@ fn the_first_of_two_entries_written_immediately_is_kept() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_task_that_has_stopped_writes_at_once_again_after_its_next_commit() {
+fn immediate_writes_resume_after_next_commit() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
-    let task = begin_writing_at_once(&session, &tables, &commits, 0);
-    let other = begin_writing_at_once(&session, &tables, &commits, 1);
-    task.stop_writing_at_once();
-    assert!(!task.writes_at_once());
+    let task = begin_writing_immediately(&session, &tables, &commits, 0);
+    let other = begin_writing_immediately(&session, &tables, &commits, 1);
+    task.stop_writing_immediately();
+    assert!(!task.writes_immediately());
     tables.by_id.insert(&task, STRING, NUMBER, from_now(&task));
     assert_eq!(tables.by_id.get(&other, &STRING), None);
     assert_eq!(commit(&tables, &commits, &task, 1), 1);
@@ -1186,51 +1188,51 @@ fn a_task_that_has_stopped_writes_at_once_again_after_its_next_commit() {
     tables.by_id.insert(&task, NUMBER, NUMBER, from_now(&task));
     assert_eq!(tables.by_id.get(&other, &NUMBER), Some(NUMBER));
     // A discarded task doesn't resume.
-    task.lose("a test");
+    task.discard("a test");
     assert_eq!(commit(&tables, &commits, &task, 2), 0);
-    assert!(!task.writes_at_once() && !task.shares_what_it_stores());
+    assert!(!task.writes_immediately() && !task.shares_what_it_stores());
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_task_that_hit_a_limit_is_not_rechecked_early() {
+fn task_that_hit_a_limit_is_not_rechecked_early() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
-    let task = begin_writing_at_once(&session, &tables, &commits, 0);
+    let task = begin_writing_immediately(&session, &tables, &commits, 0);
     assert!(!task.can_recheck_early());
     task.discard_until_recheck("a test");
-    assert!(task.is_lost() && task.can_recheck_early());
+    assert!(task.was_discarded() && task.can_recheck_early());
     // Hitting a limit later doesn't matter, because the task was already discarded.
-    task.lose("a limit");
+    task.discard("a limit");
     assert!(task.can_recheck_early());
-    let other = begin_writing_at_once(&session, &tables, &commits, 1);
-    other.lose("a limit");
+    let other = begin_writing_immediately(&session, &tables, &commits, 1);
+    other.discard("a limit");
     other.discard_until_recheck("a test");
     assert!(!other.can_recheck_early());
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_commit_lists_what_was_logged_from_each_cycle_to_the_next_idle_moment() {
+fn commit_lists_log_ranges_from_each_cycle_to_next_idle_moment() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let mut task = begin_committing(&session, &tables, &commits, 0);
     task.set_first_in_order(true, true);
-    let resolve_a_cycle = |task: &Task| task.close_ring(|| false, std::iter::once(1));
+    let resolve_a_cycle = |task: &Task| task.close_cycle(|| false, std::iter::once(1));
     // Before the first cycle.
     tables.by_id.insert(&task, STRING, NUMBER, stored());
-    assert!(!task.has_closed_a_ring());
+    assert!(!task.has_resolved_a_cycle());
     resolve_a_cycle(&task);
-    assert!(task.has_closed_a_ring());
+    assert!(task.has_resolved_a_cycle());
     tables.by_id.insert(&task, NUMBER, NUMBER, stored());
     // A second cycle in the same statement doesn't start another part.
     resolve_a_cycle(&task);
     tables.by_node.insert(&task, (A, 1), STRING, stored());
-    task.note_what_is_logged_at_rest();
+    task.note_idle();
     // A statement without a cycle.
     tables.by_node.insert(&task, (A, 2), STRING, stored());
-    task.note_what_is_logged_at_rest();
-    assert!(task.has_closed_a_ring());
+    task.note_idle();
+    assert!(task.has_resolved_a_cycle());
     // The commit follows this cycle without an idle moment in between.
     resolve_a_cycle(&task);
     tables.by_node.insert(&task, (A, 3), STRING, stored());
@@ -1238,23 +1240,23 @@ fn a_commit_lists_what_was_logged_from_each_cycle_to_the_next_idle_moment() {
         task.take_logged_at_cycles(),
         [[[1, 0], [2, 1]], [[2, 2], [2, 3]]]
     );
-    assert!(!task.has_closed_a_ring());
+    assert!(!task.has_resolved_a_cycle());
     assert_eq!(task.take_logged_at_cycles(), [[[0; 2]; 2]; 0]);
     // `begin` forgets the resolved cycles.
     resolve_a_cycle(&task);
-    task.note_what_is_logged_at_rest();
+    task.note_idle();
     resolve_a_cycle(&task);
     task.begin(0, 1);
-    assert!(!task.has_closed_a_ring());
+    assert!(!task.has_resolved_a_cycle());
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn what_a_task_holds_back_under_a_key_is_what_it_goes_by() {
+fn held_back_entry_wins_over_later_immediate_write() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
-    let task = begin_writing_at_once(&session, &tables, &commits, 0);
-    let other = begin_writing_at_once(&session, &tables, &commits, 1);
+    let task = begin_writing_immediately(&session, &tables, &commits, 0);
+    let other = begin_writing_immediately(&session, &tables, &commits, 1);
     tables.by_id.insert(&task, STRING, NUMBER, stored());
     (tables.by_key).insert(&task, (STRING, STRING), NUMBER, stored());
     let kept = tables.by_id.insert(&task, STRING, STRING, from_now(&task));
@@ -1267,12 +1269,12 @@ fn what_a_task_holds_back_under_a_key_is_what_it_goes_by() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn nothing_that_is_bound_is_written_at_once() {
+fn bound_entries_are_not_written_immediately() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
-    let mut task = begin_writing_at_once(&session, &tables, &commits, 0);
+    let mut task = begin_writing_immediately(&session, &tables, &commits, 0);
     task.begin_file(C, false);
-    let other = begin_writing_at_once(&session, &tables, &commits, 1);
+    let other = begin_writing_immediately(&session, &tables, &commits, 1);
     let bound = tables.this_of(&task, C);
     let outer = from_now(&task);
     tables.by_id.insert(&task, STRING, bound, from_now(&task));
@@ -1289,50 +1291,52 @@ fn nothing_that_is_bound_is_written_at_once() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn what_a_task_finds_out_about_a_record_of_a_file_that_it_visits_stays_in_the_task() {
+fn entries_about_records_of_visited_file_stay_local() {
     let session = Session::new();
     let (mut tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     tables.types.share_records();
     let begin_publishing = |index: u32| {
-        let mut task = begin_writing_at_once(&session, &tables, &commits, index);
+        let mut task = begin_writing_immediately(&session, &tables, &commits, index);
         task.own.set_sharing(crate::types::Sharing::Publishes);
         task
     };
     let (mut task, other) = (begin_publishing(0), begin_publishing(1));
     task.begin_file(A, true);
-    let of_file = tables.this_of(&task, A);
-    let made_of_it = tables.keyof(&task, of_file);
-    assert!(!of_file.is_local() && !made_of_it.is_local());
+    let file_type = tables.this_of(&task, A);
+    let derived_type = tables.keyof(&task, file_type);
+    assert!(!file_type.is_local() && !derived_type.is_local());
     let outer = from_now(&task);
-    tables.by_id.insert(&task, of_file, NUMBER, from_now(&task));
-    (tables.by_key).insert(&task, (made_of_it, NUMBER), NUMBER, from_now(&task));
-    let (shape, _) = (tables.shapes).insert_ref(&task, made_of_it, Box::new([NUMBER]), outer);
+    tables
+        .by_id
+        .insert(&task, file_type, NUMBER, from_now(&task));
+    (tables.by_key).insert(&task, (derived_type, NUMBER), NUMBER, from_now(&task));
+    let (shape, _) = (tables.shapes).insert_ref(&task, derived_type, Box::new([NUMBER]), outer);
     assert!(shape.local_number().is_some());
-    assert_eq!(tables.by_id.get(&task, &of_file), Some(NUMBER));
+    assert_eq!(tables.by_id.get(&task, &file_type), Some(NUMBER));
     assert_eq!(
-        tables.by_key.get(&task, &(made_of_it, NUMBER)),
+        tables.by_key.get(&task, &(derived_type, NUMBER)),
         Some(NUMBER)
     );
-    assert_eq!(tables.shapes.handle(&task, &made_of_it), Some(shape));
-    assert_eq!(tables.by_id.get(&other, &of_file), None);
-    assert_eq!(tables.by_key.get(&other, &(made_of_it, NUMBER)), None);
-    assert_eq!(tables.shapes.handle(&other, &made_of_it), None);
+    assert_eq!(tables.shapes.handle(&task, &derived_type), Some(shape));
+    assert_eq!(tables.by_id.get(&other, &file_type), None);
+    assert_eq!(tables.by_key.get(&other, &(derived_type, NUMBER)), None);
+    assert_eq!(tables.shapes.handle(&other, &derived_type), None);
     // No commit stores them, and they don't defer anything.
     assert_eq!(task.buffer().logged(), 0);
     assert!(!task.has_held_back_since(outer));
     // An entry that doesn't mention any of the task's files is published.
-    let of_no_file = tables.keyof(&task, STRING);
+    let unrelated_type = tables.keyof(&task, STRING);
     tables
         .by_id
-        .insert(&task, of_no_file, NUMBER, from_now(&task));
-    assert_eq!(tables.by_id.get(&other, &of_no_file), Some(NUMBER));
+        .insert(&task, unrelated_type, NUMBER, from_now(&task));
+    assert_eq!(tables.by_id.get(&other, &unrelated_type), Some(NUMBER));
     // A task that isn't visiting the file publishes its results about the file's records.
-    assert_eq!(tables.this_of(&other, A), of_file);
+    assert_eq!(tables.this_of(&other, A), file_type);
     tables
         .by_id
-        .insert(&other, of_file, NUMBER, from_now(&other));
+        .insert(&other, file_type, NUMBER, from_now(&other));
     assert_eq!(
-        tables.by_id.get(&begin_publishing(2), &of_file),
+        tables.by_id.get(&begin_publishing(2), &file_type),
         Some(NUMBER)
     );
 }

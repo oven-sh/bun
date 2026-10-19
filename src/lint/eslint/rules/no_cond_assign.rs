@@ -70,7 +70,7 @@ impl NoCondAssign {
 
     /// With `"always"`, oxlint reports a test that's an assignment a second time.
     #[inline(never)]
-    fn check_test_once_more<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_test_again<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         if let Some((test, kind)) = test_of(node)
             && let assignment = get_inner_expression(test)
             && assignment.tag() == ExprTag::Assign
@@ -143,7 +143,7 @@ impl Rule for NoCondAssign {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Assign => self.check_assignment(e, cx),
-            ExprTag::Cond if self.is_always => self.check_test_once_more(e.into(), cx),
+            ExprTag::Cond if self.is_always => self.check_test_again(e.into(), cx),
             ExprTag::Cond => self.check_test(e.into(), cx),
             _ => {}
         }
@@ -152,7 +152,7 @@ impl Rule for NoCondAssign {
     #[inline]
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if self.is_always {
-            self.check_test_once_more(stmt.into(), cx);
+            self.check_test_again(stmt.into(), cx);
         } else {
             self.check_test(stmt.into(), cx);
         }

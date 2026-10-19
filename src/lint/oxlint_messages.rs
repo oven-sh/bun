@@ -53,9 +53,9 @@ fn of_name(meta: &Meta) -> [&'static [Message]; 2] {
         .unwrap_or([&[], &[]])
 }
 
-/// oxlint's version of `message`. `said` comes from [`of_rule`].
-pub(crate) fn of(said: &[&'static [Message]; 2], message: Message) -> Message {
-    let mut all = said.iter().flat_map(|it| it.iter());
+/// oxlint's version of `message`. `replacements` comes from [`of_rule`].
+pub(crate) fn of(replacements: &[&'static [Message]; 2], message: Message) -> Message {
+    let mut all = replacements.iter().flat_map(|it| it.iter());
     all.find(|it| it.id == message.id)
         .copied()
         .unwrap_or(message)

@@ -132,7 +132,7 @@ fn is_boolean_constructor_context(mut node: Expr) -> bool {
         let Node::Expr(expression) = parent else {
             return false;
         };
-        let is_passed_on = match expression.kind() {
+        let defers_to_parent = match expression.kind() {
             ExprKind::Binary {
                 op: BinOp::And | BinOp::Or | BinOp::Nullish,
                 ..
@@ -147,7 +147,7 @@ fn is_boolean_constructor_context(mut node: Expr) -> bool {
             } => right == node && is_sequence_root(expression),
             _ => false,
         };
-        if !is_passed_on {
+        if !defers_to_parent {
             return is_built_in_boolean_call(parent);
         }
         node = expression;
@@ -155,7 +155,7 @@ fn is_boolean_constructor_context(mut node: Expr) -> bool {
 }
 
 /// True if [`is_conditional_test`] and [`is_boolean_constructor_context`] return the same for `at` as for `parent`.
-fn is_passed_on<'a>(at: Node<'a>, parent: Node<'a>) -> bool {
+fn defers_to_parent<'a>(at: Node<'a>, parent: Node<'a>) -> bool {
     let (Node::Expr(at), Node::Expr(parent)) = (at, parent) else {
         return false;
     };
@@ -178,7 +178,7 @@ fn ask_outermost<'a>(
 ) -> bool {
     let decide = |at: Node<'a>, parent: Node<'a>| match at {
         Node::Expr(at) if at.with_jsdoc_cast() != at => Some(false),
-        _ if is_passed_on(at, parent) => None,
+        _ if defers_to_parent(at, parent) => None,
         Node::Expr(at) => Some(ask(at)),
         _ => Some(false),
     };
@@ -672,8 +672,8 @@ impl PreferNullishCoalescing {
         } else {
             // For an `if`, tsgolint uses the type of the assignment target at the assignment.
             let is_assigned_to = node.is_none() && test.file().language().is_oxlint;
-            let asked = if is_assigned_to { non_nullish_node } else { nullish_coalescing_left_node };
-            let flags = get_type_flags(asked.ty());
+            let checked_node = if is_assigned_to { non_nullish_node } else { nullish_coalescing_left_node };
+            let flags = get_type_flags(checked_node.ty());
             if flags.intersects(TypeFlags::ANY | TypeFlags::UNKNOWN) {
                 false
             } else if has_undefined_check && !flags.intersects(TypeFlags::NULL) {

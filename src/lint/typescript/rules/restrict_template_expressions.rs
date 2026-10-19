@@ -10,7 +10,7 @@ use bun_lint::types::{IdMap, IdSet, Type, TypeFlags};
 pub struct RestrictTemplateExpressions {
     allow: Vec<TypeOrValueSpecifier>,
     /// True if `allow` isn't configured.
-    allows_the_default: bool,
+    uses_default_allow: bool,
     /// `string`, plus the flags that `allowAny`, `allowBoolean`, `allowNullish`, `allowNumber` and `allowNever` add.
     allowed_flags: TypeFlags,
     allow_array: bool,
@@ -35,31 +35,31 @@ fn is_allowed_global(ty: Type) -> bool {
 }
 
 impl RestrictTemplateExpressions {
-    /// `on_the_way` holds the array types around `inner_type`, because `type A = A[]` would recurse forever.
-    fn recursively_check_type<'a>(&self, inner_type: Type<'a>, on_the_way: &mut IdSet<Type<'a>>) -> bool {
+    /// `enclosing_arrays` holds the array types around `inner_type`, because `type A = A[]` would recurse forever.
+    fn recursively_check_type<'a>(&self, inner_type: Type<'a>, enclosing_arrays: &mut IdSet<Type<'a>>) -> bool {
         if inner_type.is_unresolved() || !bun_core::StackCheck::init().is_safe_to_recurse() {
             return true;
         }
         if inner_type.is_union() {
-            return inner_type.types().iter().all(|it| self.recursively_check_type(it, on_the_way));
+            return inner_type.types().iter().all(|it| self.recursively_check_type(it, enclosing_arrays));
         }
         if inner_type.is_intersection() {
-            return inner_type.types().iter().any(|it| self.recursively_check_type(it, on_the_way));
+            return inner_type.types().iter().any(|it| self.recursively_check_type(it, enclosing_arrays));
         }
         inner_type.has_flags(self.allowed_flags)
             || !self.allow.is_empty()
                 && matches_type_or_base_type(|it| type_matches_some_specifier(it, &self.allow), inner_type)
-            || self.allows_the_default
-                && inner_type.file().language().stands_alone
+            || self.uses_default_allow
+                && inner_type.file().language().has_no_foreign_config
                 && matches_type_or_base_type(is_allowed_global, inner_type)
             || self.allow_array
                 && inner_type.is_array_or_tuple_type()
                 && inner_type.get_number_index_type().is_some_and(|it| {
-                    if !on_the_way.insert(inner_type) {
+                    if !enclosing_arrays.insert(inner_type) {
                         return true;
                     }
-                    let is_allowed = self.recursively_check_type(it, on_the_way);
-                    on_the_way.remove(inner_type);
+                    let is_allowed = self.recursively_check_type(it, enclosing_arrays);
+                    enclosing_arrays.remove(inner_type);
                     is_allowed
                 })
             || self.allow_reg_exp
@@ -100,7 +100,7 @@ impl Rule for RestrictTemplateExpressions {
                     name: ALLOWED_BY_DEFAULT.iter().map(|it| it.as_bytes().to_vec()).collect(),
                 }],
             },
-            allows_the_default: !options.has("allow"),
+            uses_default_allow: !options.has("allow"),
             allowed_flags,
             allow_array: options.bool_or("allowArray", false),
             allow_reg_exp: options.bool_or("allowRegExp", true),

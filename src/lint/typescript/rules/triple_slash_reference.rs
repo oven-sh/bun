@@ -68,8 +68,8 @@ impl TripleSlashReference {
             _ => return,
         };
         // oxlint ignores an import in a `declare module`.
-        let is_passed_over = cx.language().is_oxlint && !matches!(stmt.parent(), Node::File(_));
-        if is_passed_over {
+        let is_ignored = cx.language().is_oxlint && !matches!(stmt.parent(), Node::File(_));
+        if is_ignored {
             return;
         }
         let report = |directive: &Directive<'a>| {

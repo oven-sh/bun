@@ -619,7 +619,7 @@ impl UnifiedSignatures {
         let outer = OuterTypeParameters::new(outer);
         let several = by_key.values().filter(|it| it.len() > 1);
         for signatures in
-            utils::sort::in_order_of(several, |it| it.first().map(|it| it.span().start))
+            utils::sort::collect_sorted_by_key(several, |it| it.first().map(|it| it.span().start))
         {
             self.check_overloads(signatures, &outer, cx);
         }

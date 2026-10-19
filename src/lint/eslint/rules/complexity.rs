@@ -29,9 +29,9 @@ pub struct State<'a> {
     /// Nodes that add to the complexity of their code path: the node's start, how much it adds, and the node.
     found: Vec<(u32, usize, Node<'a>)>,
     /// The complexity of each function's code path, by function index. 0 if it isn't known to have more than one path.
-    of_functions: Vec<usize>,
+    function_complexity: Vec<usize>,
     /// Same for field initializers, few of which have more than one path.
-    of_fields: FxHashMap<Member<'a>, usize>,
+    field_complexity: FxHashMap<Member<'a>, usize>,
     owners: AncestorMemo<'a, Node<'a>>,
 }
 
@@ -105,13 +105,15 @@ impl Complexity {
             });
         match owner {
             Some(Node::Func(func)) => Self::increase_function(func, by, cx),
-            Some(Node::Member(member)) => *cx.state.of_fields.entry(member).or_insert(1) += by,
+            Some(Node::Member(member)) => {
+                *cx.state.field_complexity.entry(member).or_insert(1) += by
+            }
             _ => {}
         }
     }
 
     fn increase_function<'a>(func: Func<'a>, by: usize, cx: &mut Cx<'a, Self>) {
-        let (at, known) = (func.id().idx(), &mut cx.state.of_functions);
+        let (at, known) = (func.id().idx(), &mut cx.state.function_complexity);
         if at >= known.len() {
             known.resize(at + 1, 0);
         }
@@ -311,7 +313,7 @@ impl Rule for Complexity {
         if let Some(init) = member.init()
             && is_field_initializer(member, Node::Expr(init))
         {
-            cx.state.of_fields.entry(member).or_insert(1);
+            cx.state.field_complexity.entry(member).or_insert(1);
         }
     }
 
@@ -335,16 +337,16 @@ impl Rule for Complexity {
         // oxlint reports an initializer that's a function and the function itself at the same location, the initializer
         // first.
         for (&member, &complexity) in
-            utils::sort::in_order_of(&cx.state.of_fields, |it| it.0.span().start)
+            utils::sort::collect_sorted_by_key(&cx.state.field_complexity, |it| it.0.span().start)
         {
             self.report(Node::Member(member), complexity, cx);
         }
-        let of_functions = &cx.state.of_functions;
-        if of_functions.iter().all(|it| *it <= threshold) {
+        let function_complexity = &cx.state.function_complexity;
+        if function_complexity.iter().all(|it| *it <= threshold) {
             return;
         }
         for func in cx.file().funcs() {
-            let complexity = of_functions.get(func.id().idx());
+            let complexity = function_complexity.get(func.id().idx());
             self.report(Node::Func(func), complexity.copied().unwrap_or(0), cx);
         }
     }

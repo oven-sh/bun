@@ -72,7 +72,7 @@ pub struct Document<'t> {
     is_ascii: bool,
     /// The last byte offset that was converted, and its index. Most lookups come in source order, and the whole file
     /// can be a single line, so the next lookup counts from here instead of from the start of the line.
-    last_asked: Cell<(u32, u32)>,
+    last_lookup: Cell<(u32, u32)>,
     length: OnceCell<Index>,
 }
 
@@ -87,7 +87,7 @@ impl<'t> Document<'t> {
             text,
             mdast,
             is_ascii: strings::first_non_ascii(text).is_none(),
-            last_asked: Cell::new((0, 0)),
+            last_lookup: Cell::new((0, 0)),
             length: OnceCell::new(),
         }
     }
@@ -160,12 +160,12 @@ impl<'t> Document<'t> {
             self.line_starts().get(line).copied().unwrap_or(0),
             self.line_indices().get(line).copied().unwrap_or(0),
         );
-        let last = self.last_asked.get();
+        let last = self.last_lookup.get();
         if (from.0..=offset).contains(&last.0) {
             from = last;
         }
         let index = from.1 + strings::wtf8_len_utf16(self.slice(Span::new(from.0, offset)));
-        self.last_asked.set((offset, index));
+        self.last_lookup.set((offset, index));
         Index::from(index)
     }
 
@@ -181,7 +181,7 @@ impl<'t> Document<'t> {
             self.line_starts().get(line).copied().unwrap_or(0),
             self.line_indices().get(line).copied().unwrap_or(0),
         );
-        let last = self.last_asked.get();
+        let last = self.last_lookup.get();
         if (from.1..=index).contains(&last.1) {
             from = last;
         }

@@ -43,12 +43,12 @@ impl<'f> Expander<'f, '_> {
     /// Writes a property's key and the `:`. Before a pattern the plugin prints `key.name`, which a literal key
     /// doesn't have, so it prints `undefined:`.
     fn key(&mut self, key: Key<'f>) {
-        let written = self.file.slice(key.inner_span(self.file));
+        let key_text = self.file.slice(key.inner_span(self.file));
         match key.is_computed() {
-            true => [&b" ["[..], written, b"]:"]
+            true => [&b" ["[..], key_text, b"]:"]
                 .iter()
                 .for_each(|it| self.push(it)),
-            false => [&b" "[..], written, b":"]
+            false => [&b" "[..], key_text, b":"]
                 .iter()
                 .for_each(|it| self.push(it)),
         }
@@ -278,10 +278,10 @@ pub(crate) fn expand(
     is_typescript: bool,
     stack: &Stack,
 ) -> Vec<u8> {
-    let as_written = || [b" ", pattern].concat();
+    let verbatim = || [b" ", pattern].concat();
     // Fast path: most patterns are a single identifier.
     if bun_lint::utils::text::is_identifier_name(pattern) {
-        return as_written();
+        return verbatim();
     }
     let program = [BEFORE_PATTERN, pattern, b"\n) {}"].concat();
     let mut expanded = None;
@@ -308,5 +308,5 @@ pub(crate) fn expand(
             expanded = Some(expander.out);
         }
     });
-    expanded.unwrap_or_else(as_written)
+    expanded.unwrap_or_else(verbatim)
 }

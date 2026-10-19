@@ -1747,17 +1747,16 @@ fn resolve(
     let is_quote = |text: &[u8], at: Option<u32>| {
         matches!(at.and_then(|at| text.get(at as usize)), Some(b'"' | b'\''))
     };
-    let has_other_quotes =
+    let quotes_differ =
         |old: Option<u32>, new: Option<u32>| is_quote(source, old) != is_quote(formatted, new);
-    let is_name_with_other_quotes = match region {
-        Region::Node(_) => names.0 && has_other_quotes(Some(old_span.start), Some(new_span.start)),
+    let is_name_with_changed_quotes = match region {
+        Region::Node(_) => names.0 && quotes_differ(Some(old_span.start), Some(new_span.start)),
         Region::Between { .. } => {
-            (names.0
-                && has_other_quotes(old_span.start.checked_sub(1), new_span.start.checked_sub(1)))
-                || (names.1 && has_other_quotes(Some(old_span.end), Some(new_span.end)))
+            (names.0 && quotes_differ(old_span.start.checked_sub(1), new_span.start.checked_sub(1)))
+                || (names.1 && quotes_differ(Some(old_span.end), Some(new_span.end)))
         }
     };
-    let (old_span, new_span) = if is_name_with_other_quotes {
+    let (old_span, new_span) = if is_name_with_changed_quotes {
         whole
     } else {
         (old_span, new_span)
@@ -1915,12 +1914,12 @@ pub(crate) fn cursor_in_region(
         )
         && old == new
     {
-        let behind = source
+        let up_to_cursor = source
             .get(span.start as usize..offset as usize)
             .unwrap_or_default();
         return (bun_core::strings::element_length_utf8_into_utf16(
             formatted.get(..start as usize).unwrap_or_default(),
-        ) + bun_core::strings::element_length_utf8_into_utf16(behind)) as u32;
+        ) + bun_core::strings::element_length_utf8_into_utf16(up_to_cursor)) as u32;
     }
     let offset = Offset {
         bytes: offset,

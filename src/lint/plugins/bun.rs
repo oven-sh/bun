@@ -7,7 +7,7 @@ use bun_lint_oxlint::ast_util::is_global_reference;
 
 /// True for `(function () {})()`, `new (function () {})()` and `(function () {}).call(this)`, where the body runs
 /// immediately. A generator's body doesn't.
-fn is_called_at_once(func: Func) -> bool {
+fn is_called_immediately(func: Func) -> bool {
     let Node::Expr(e) = func.owner() else {
         return false;
     };
@@ -33,7 +33,7 @@ pub(crate) fn runs_while_module_is_evaluated<'a>(
 ) -> bool {
     let runs_later = known.find(node, |child, parent| {
         let is_later = match parent {
-            Node::Func(func) => func.kind() != FnKind::StaticBlock && !is_called_at_once(func),
+            Node::Func(func) => func.kind() != FnKind::StaticBlock && !is_called_immediately(func),
             Node::Member(member) => {
                 !member.is_static() && member.init().map(Node::Expr) == Some(child)
             }
@@ -61,7 +61,7 @@ pub(crate) fn is_listed(list: &[Box<[u8]>], name: &[u8]) -> bool {
 }
 
 /// The static prefix of a string or a template, and true if that's the whole value.
-pub(crate) fn written_start(e: Expr<'_>) -> Option<(&[u8], bool)> {
+pub(crate) fn static_prefix(e: Expr<'_>) -> Option<(&[u8], bool)> {
     match e.kind() {
         ExprKind::String(value) => Some((value.bytes(), true)),
         ExprKind::Template(template) => {
@@ -111,7 +111,7 @@ impl<'m> Trace<'m> for Each<'m> {
 
 /// The calls that match the trace map `modules`, whether the module is imported or required. Each comes with the last
 /// name on its path.
-pub(crate) fn calls_of_modules<'a, 'm>(
+pub(crate) fn module_calls<'a, 'm>(
     file: &'a File<'a>,
     modules: &'m dyn Trace<'m>,
 ) -> Vec<(Expr<'a>, &'m str)> {
@@ -127,7 +127,7 @@ pub(crate) fn calls_of_modules<'a, 'm>(
 }
 
 /// The `Bun.name()` calls where `name` is one of `names`, each with that name.
-pub(crate) fn calls_of_bun<'a>(
+pub(crate) fn bun_calls<'a>(
     file: &'a File<'a>,
     names: &'static [&'static str],
 ) -> Vec<(Expr<'a>, &'static str)> {
@@ -179,14 +179,14 @@ pub(crate) fn can_launch(file: &File) -> bool {
 /// The calls that start a process: those of `node:child_process`, `Bun.spawn()` and `Bun.spawnSync()`.
 pub(crate) fn launches<'a>(file: &'a File<'a>) -> Vec<(Call<'a>, Starter)> {
     let of_node = match CHILD_PROCESS.names.iter().any(|it| file.mentions(it)) {
-        true => calls_of_modules(file, &CHILD_PROCESS),
+        true => module_calls(file, &CHILD_PROCESS),
         false => Vec::new(),
     };
     let of_node = of_node.into_iter().map(|(e, name)| match name {
         "exec" | "execSync" => (e, Starter::Shell),
         _ => (e, Starter::File),
     });
-    let of_bun = calls_of_bun(file, &["spawn", "spawnSync"])
+    let of_bun = bun_calls(file, &["spawn", "spawnSync"])
         .into_iter()
         .map(|(e, _)| (e, Starter::Bun));
     of_node
@@ -245,7 +245,7 @@ impl<'a> LaunchOptions<'a> {
     }
 
     /// True if the process inherits one of its parent's streams.
-    pub(crate) fn shares_a_stream(&self) -> bool {
+    pub(crate) fn inherits_a_stream(&self) -> bool {
         let is_inherit = |e: Expr| e.as_string().is_some_and(|it| it.is("inherit"));
         let mut streams = ["stdio", "stdin", "stdout", "stderr"]
             .into_iter()
@@ -270,8 +270,8 @@ pub(crate) fn exports_option(options: &Options, key: &str) -> Exports {
     listed.collect()
 }
 
-/// Calls `each` with every call that matches `then` on one of `exports`, in the form [`calls_of_modules`] returns.
-pub(crate) fn each_call_of_exports<'a>(
+/// Calls `each` with every call that matches `then` on one of `exports`, in the form [`module_calls`] returns.
+pub(crate) fn for_each_export_call<'a>(
     file: &'a File<'a>,
     exports: &Exports,
     then: TraceMap<'_, ()>,
@@ -284,7 +284,7 @@ pub(crate) fn each_call_of_exports<'a>(
             false => TraceMap::new(&members),
         };
         let modules = [(&**module, exported)];
-        for (e, name) in calls_of_modules(file, &TraceMap::new(&modules)) {
+        for (e, name) in module_calls(file, &TraceMap::new(&modules)) {
             each(e, name);
         }
     }

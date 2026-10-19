@@ -90,7 +90,7 @@ fn single_character(word: &[u8]) -> Option<char> {
 /// oxfmt's version of [`Children::push_separator_with_whitespace`] before `text`, which starts with a word. A single
 /// letter followed by more words starts a sentence, like `A dog`, and stays on its line. The node after the text only
 /// matters if the text is that one word.
-fn is_joined_to_what_is_before_it(text: &[u8], is_before_self_closing_element: bool) -> bool {
+fn is_joined_to_previous_child(text: &[u8], is_before_self_closing_element: bool) -> bool {
     let (word, after_word) = split_first_word(text);
     let (whitespace, rest) = split_leading_whitespace(after_word);
     single_character(word).is_some_and(|c| match rest.is_empty() {
@@ -200,7 +200,7 @@ impl<'a> Children<'a> {
         if !leading_whitespace.is_empty() {
             match has_line_break(leading_whitespace) {
                 true if self.is_oxfmt && !self.is_facebook_translation_tag => self.push_line(
-                    match is_joined_to_what_is_before_it(rest, is_before_self_closing_element) {
+                    match is_joined_to_previous_child(rest, is_before_self_closing_element) {
                         true => Separator::SoftLine,
                         false => Separator::HardLine,
                     },

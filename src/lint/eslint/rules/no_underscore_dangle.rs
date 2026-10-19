@@ -72,12 +72,12 @@ impl NoUnderscoreDangle {
             && (func.has_body() || cx.language().is_oxlint)
         {
             // Here and below, oxlint points at the name.
-            let place = if cx.language().is_oxlint {
+            let location = if cx.language().is_oxlint {
                 name.span()
             } else {
                 statement.span_without_export()
             };
-            cx.report(place, UNEXPECTED_UNDERSCORE)
+            cx.report(location, UNEXPECTED_UNDERSCORE)
                 .called_with(func)
                 .data("identifier", name);
         }
@@ -89,12 +89,12 @@ impl NoUnderscoreDangle {
             && !param.is_parameter_property()
             && param.func().is_some_and(ast_utils::is_function_with_body)
         {
-            let place = if cx.language().is_oxlint {
+            let location = if cx.language().is_oxlint {
                 param.pat().span()
             } else {
                 param.span_without_modifiers()
             };
-            cx.report(place, UNEXPECTED_UNDERSCORE)
+            cx.report(location, UNEXPECTED_UNDERSCORE)
                 .called_with(param.pat())
                 .data("identifier", name);
         }
@@ -110,12 +110,12 @@ impl NoUnderscoreDangle {
                 && is_declarator()
                 && !(is_using && self.allow_in_using_declarations)
             {
-                let place = if cx.language().is_oxlint {
+                let location = if cx.language().is_oxlint {
                     pat.span()
                 } else {
                     declaration.span()
                 };
-                cx.report(place, UNEXPECTED_UNDERSCORE)
+                cx.report(location, UNEXPECTED_UNDERSCORE)
                     .called_with(pat)
                     .data("identifier", name);
             }
@@ -141,12 +141,12 @@ impl NoUnderscoreDangle {
                 _ => false,
             };
             if !is_allowed_here && !self.is_allowed(name.bytes()) {
-                let place = if cx.language().is_oxlint {
+                let location = if cx.language().is_oxlint {
                     binding.span()
                 } else {
                     declaration.span()
                 };
-                cx.report(place, UNEXPECTED_UNDERSCORE)
+                cx.report(location, UNEXPECTED_UNDERSCORE)
                     .called_with(binding)
                     .data("identifier", name);
             }
@@ -168,13 +168,13 @@ impl NoUnderscoreDangle {
         {
             return;
         }
-        let place = match e.member_name() {
+        let location = match e.member_name() {
             Some(name) if cx.language().is_oxlint => name.span(),
             // oxlint doesn't report `a[_b]`.
             None if cx.language().is_oxlint => return,
             _ => e.span(),
         };
-        cx.report(place, UNEXPECTED_UNDERSCORE)
+        cx.report(location, UNEXPECTED_UNDERSCORE)
             .called_with(e)
             .data("identifier", identifier);
     }

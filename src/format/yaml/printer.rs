@@ -120,7 +120,7 @@ impl<'c> Words<'c> {
         matches!(self, Words::None) || matches!(self, Words::Slices(words) if words.is_empty())
     }
 
-    fn ends_with_blank(&self) -> bool {
+    fn ends_with_space_or_tab(&self) -> bool {
         let last = match self {
             Words::None => None,
             Words::One(word) => Some(*word),
@@ -198,7 +198,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     /// Makes `printNextEmptyLine` print nothing after `id`.
-    fn has_no_next_empty_line(&mut self, id: Id) {
+    fn suppress_next_empty_line(&mut self, id: Id) {
         let end = self.node(id).position.end.offset as usize;
         if let Some(it) = self.printed_empty_lines.get_mut(end) {
             *it = true;
@@ -290,7 +290,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     /// The fast path of `print`, which covers most nodes: a one-line scalar or an alias, or a key or value that holds
     /// nothing else. Each prints as a group with one text in it. For any other node it returns false without writing
     /// anything.
-    fn prints_text(&mut self, node: &'t Node<'a>) -> bool {
+    fn try_print_text(&mut self, node: &'t Node<'a>) -> bool {
         if !is_bare(node) {
             return false;
         }
@@ -319,7 +319,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     /// comment, a tag or an anchor.
     pub(crate) fn print(&mut self, id: Id, is_last_descendant: bool) {
         let node = self.node(id);
-        if self.prints_text(node) || !self.stack.has_room() {
+        if self.try_print_text(node) || !self.stack.has_room() {
             return;
         }
         if node.kind != Kind::MappingValue && !node.leading_comments.is_empty() {
@@ -418,7 +418,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.out.break_parent();
             }
             if self.is_oxfmt {
-                self.has_no_next_empty_line(comment);
+                self.suppress_next_empty_line(comment);
             }
             self.print(comment, false);
             self.out.end_line_suffix();
@@ -585,7 +585,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 if self.is_oxfmt
                     && let Some(last) = node.end_comments.last()
                 {
-                    self.has_no_next_empty_line(last);
+                    self.suppress_next_empty_line(last);
                 }
                 self.print_comments(node.end_comments);
             }
@@ -803,11 +803,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         join_words(lines, self.prose_wrap == ProseWrap::Never)
     }
 
-    /// `getBlockValueLineContents`. `column_of_item` is the zero-based column of the item that contains `node`, if any.
+    /// `getBlockValueLineContents`. `item_column` is the zero-based column of the item that contains `node`, if any.
     fn block_value_line_contents(
         &self,
         node: &Node<'a>,
-        column_of_item: Option<u32>,
+        item_column: Option<u32>,
         is_last_descendant: bool,
     ) -> Vec<Words<'a>> {
         if node.position.start.line == node.position.end.line {
@@ -830,7 +830,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     (spaces < line.len()).then_some(spaces)
                 })
                 .unwrap_or(usize::MAX),
-            Some(indent) => match column_of_item {
+            Some(indent) => match item_column {
                 Some(column) => column.saturating_add(indent) as usize,
                 None => (indent as usize).saturating_sub(1),
             },
@@ -856,7 +856,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     false => split_with_single_space(line),
                 };
                 // Prettier tests the array, which is coerced to its words joined by commas.
-                let is_blank_at = |word: Option<&&[u8]>, at_start: bool| {
+                let is_whitespace_at = |word: Option<&&[u8]>, at_start: bool| {
                     word.is_some_and(|word| match at_start {
                         true => text::starts_with_white_space(word),
                         false => strings::trim_js_whitespace_end(word).len() < word.len(),
@@ -867,9 +867,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         if index > 0
                             && !words.is_empty()
                             && !raw_lines[index - 1].is_empty()
-                            && !is_blank_at(words.first(), true)
-                            && !is_blank_at(last.first(), true)
-                            && !is_blank_at(last.last(), false) =>
+                            && !is_whitespace_at(words.first(), true)
+                            && !is_whitespace_at(last.first(), true)
+                            && !is_whitespace_at(last.last(), false) =>
                     {
                         last.extend(words);
                     }
@@ -956,7 +956,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         {
             item = self.parent(it);
         }
-        let column_of_item = item.map(|it| it.position.start.column.saturating_sub(1));
+        let item_column = item.map(|it| it.position.start.column.saturating_sub(1));
         self.out.text(if node.kind == Kind::BlockFolded {
             b">"
         } else {
@@ -981,7 +981,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.out.end_line_suffix();
             }
         }
-        let lines = self.block_value_line_contents(node, column_of_item, is_last_descendant);
+        let lines = self.block_value_line_contents(node, item_column, is_last_descendant);
         match node.indent {
             None => {
                 self.out.start_indent(IndentCommand::Dedent);
@@ -989,7 +989,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
             // The indentation indicator is relative to the item. Prettier keeps the lines in their original columns, so
             // if the item moves, the value changes or the output isn't valid YAML.
-            Some(indent) if column_of_item.is_some() => {
+            Some(indent) if item_column.is_some() => {
                 self.out.start_indent(IndentCommand::Dedent);
                 self.start_align(indent);
             }
@@ -1010,8 +1010,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             words.write_fill(out);
             // Trailing spaces and tabs are part of the value. Prettier drops them from the last line, because the hard
             // line after the scalar trims them (prettier#19764).
-            if words.ends_with_blank() {
-                out.keep_blanks();
+            if words.ends_with_space_or_tab() {
+                out.keep_trailing_whitespace();
             }
             if index + 1 != lines.len() {
                 match words.is_empty() {
@@ -1062,7 +1062,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             .comment_in_brackets
             .take_if(|(_, start)| *start == node.position.start.offset)
         {
-            self.has_no_next_empty_line(comment);
+            self.suppress_next_empty_line(comment);
             self.print(comment, false);
             self.out.hard_line();
         }
@@ -1148,10 +1148,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     /// True if a scalar inside `node` spans several lines.
-    fn has_scalar_over_several_lines(&self, node: Option<&Node<'a>>) -> bool {
+    fn has_multiline_scalar(&self, node: Option<&Node<'a>>) -> bool {
         let tree = self.tree;
-        let mut left: Vec<Id> = node.map_or(Vec::new(), |it| tree.items(it.children).collect());
-        while let Some(id) = left.pop() {
+        let mut pending: Vec<Id> = node.map_or(Vec::new(), |it| tree.items(it.children).collect());
+        while let Some(id) = pending.pop() {
             let node = self.node(id);
             if matches!(
                 node.kind,
@@ -1160,7 +1160,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             {
                 return true;
             }
-            left.extend(tree.items(node.children));
+            pending.extend(tree.items(node.children));
         }
         false
     }
@@ -1343,7 +1343,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         // Explicit if the key breaks, implicit otherwise. A line break in a scalar in a pair in `{ }` doesn't break
         // any group around the pair, so Prettier prints an implicit key that spans several lines, which can't be
         // parsed.
-        let should_break = self.has_scalar_over_several_lines(key_content);
+        let should_break = self.has_multiline_scalar(key_content);
         self.last_group_id += 1;
         let group_id = self.last_group_id;
         self.out.start_group(Group {

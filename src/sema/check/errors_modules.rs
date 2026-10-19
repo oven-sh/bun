@@ -58,7 +58,7 @@ struct Cx<'a> {
 
 /// The node whose body is the statement list being checked.
 #[derive(Copy, Clone)]
-struct Around {
+struct StatementParent {
     /// `isInAppropriateContext` of `checkGrammarModuleElementContext`: it's the file or a module.
     is_appropriate_context: bool,
     /// `NONE` for the file, or for a node that isn't a module.
@@ -82,7 +82,7 @@ impl Cx<'_> {
 }
 
 impl Checker<'_, '_> {
-    pub(super) fn check_x_modules(&mut self, file: FileId) {
+    pub(super) fn check_module_statements(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.kind == FileKind::Json {
             return;
@@ -116,7 +116,7 @@ impl Checker<'_, '_> {
             aliases: self.symbols_of_alias_declarations(file),
             uses,
         };
-        let top = Around {
+        let top = StatementParent {
             is_appropriate_context: true,
             module: ModuleId::NONE,
             is_ambient_module: false,
@@ -229,14 +229,14 @@ impl Checker<'_, '_> {
     }
 
     /// Checks the statements of the file or of a module's body.
-    fn modules_statements(&mut self, cx: &Cx<'_>, list: IdList<StmtId>, around: Around) {
+    fn modules_statements(&mut self, cx: &Cx<'_>, list: IdList<StmtId>, around: StatementParent) {
         for s in self.hir(cx.file).ids(list) {
             self.modules_statement(cx, s, around);
         }
     }
 
     /// Checks the statement `s`, whose parent is `around`.
-    fn modules_statement(&mut self, cx: &Cx<'_>, s: StmtId, around: Around) {
+    fn modules_statement(&mut self, cx: &Cx<'_>, s: StmtId, around: StatementParent) {
         match self.hir(cx.file)[s].kind {
             StmtKind::Module(m) => self.modules_declaration(cx, s, m, around),
             StmtKind::Import(i) => self.modules_import(cx, s, i, around),
@@ -254,7 +254,12 @@ impl Checker<'_, '_> {
 
     /// `bindNamespaceExportDeclaration`: `export as namespace N` doesn't accept modifiers, and must be at the top level
     /// of a declaration file that's a module.
-    fn modules_namespace_export_declaration(&mut self, cx: &Cx<'_>, s: StmtId, around: Around) {
+    fn modules_namespace_export_declaration(
+        &mut self,
+        cx: &Cx<'_>,
+        s: StmtId,
+        around: StatementParent,
+    ) {
         let hir = self.hir(cx.file);
         let node = (cx.file, hir[s].start, self.end_of_stmt(cx.file, s));
         if !hir.stmt_modifiers(s).is_empty() {
@@ -277,7 +282,7 @@ impl Checker<'_, '_> {
         &mut self,
         cx: &Cx<'_>,
         s: StmtId,
-        around: Around,
+        around: StatementParent,
         code: u32,
     ) -> bool {
         if !around.is_appropriate_context && cx.grammar && !cx.text.is_empty() {
@@ -288,7 +293,7 @@ impl Checker<'_, '_> {
 
     /// `node.Flags&NodeFlagsAmbient` of the statement `s`, whose parent is `around`. Whatever follows `declare` is
     /// parsed in an ambient context.
-    fn modules_is_ambient(&self, cx: &Cx<'_>, s: StmtId, around: Around) -> bool {
+    fn modules_is_ambient(&self, cx: &Cx<'_>, s: StmtId, around: StatementParent) -> bool {
         let hir = self.hir(cx.file);
         around.is_ambient
             || hir
@@ -299,7 +304,13 @@ impl Checker<'_, '_> {
     // ───────────────────────────── module declarations ─────────────────────────────
 
     /// `bindModuleDeclaration`, `checkModuleDeclaration`
-    fn modules_declaration(&mut self, cx: &Cx<'_>, s: StmtId, m: ModuleId, around: Around) {
+    fn modules_declaration(
+        &mut self,
+        cx: &Cx<'_>,
+        s: StmtId,
+        m: ModuleId,
+        around: StatementParent,
+    ) {
         if self.is_stack_low() {
             return;
         }
@@ -319,7 +330,7 @@ impl Checker<'_, '_> {
             around.is_ambient_module && around.is_top_level && !cx.is_module
         };
         let is_augmentation = is_ambient_module && adds_to_another;
-        let inner = Around {
+        let inner = StatementParent {
             is_appropriate_context: true,
             module: m,
             is_ambient_module,
@@ -433,7 +444,13 @@ impl Checker<'_, '_> {
 
     /// The errors `mergeModuleAugmentation` reports for the declaration `m`, which augments the module named `name`.
     /// `Files::merge` has merged it, and `check_refused_merges` reports what `mergeSymbol` does.
-    fn modules_merge_augmentation(&mut self, cx: &Cx<'_>, m: ModuleId, name: Atom, around: Around) {
+    fn modules_merge_augmentation(
+        &mut self,
+        cx: &Cx<'_>,
+        m: ModuleId,
+        name: Atom,
+        around: StatementParent,
+    ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let symbol = bound.module_symbol[m.idx()];
         // "do the work only for first declaration"
@@ -481,7 +498,7 @@ impl Checker<'_, '_> {
         s: StmtId,
         spec: Atom,
         is_export: bool,
-        around: Around,
+        around: StatementParent,
     ) -> bool {
         // The specifier is missing or isn't a string literal. The parser has reported 1141.
         if spec.is_none() {
@@ -539,7 +556,7 @@ impl Checker<'_, '_> {
         cx: &Cx<'_>,
         s: StmtId,
         spec: Atom,
-        around: Around,
+        around: StatementParent,
     ) -> bool {
         let written = cx.specifier(self.hir(cx.file)[s].start, spec);
         written.is_none_or(|written| {
@@ -749,7 +766,7 @@ impl Checker<'_, '_> {
     /// Checks the statements that aren't directly in the file or a module declaration, where
     /// `checkGrammarModuleElementContext` rejects imports, exports and module declarations. Also 1211 for a class
     /// declaration.
-    fn modules_misplaced_statements(&mut self, cx: &Cx<'_>, top: Around) {
+    fn modules_misplaced_statements(&mut self, cx: &Cx<'_>, top: StatementParent) {
         let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
         let reports_grammar_errors = cx.grammar && !cx.text.is_empty();
         for (i, statement) in hir.stmts.iter().enumerate() {
@@ -787,7 +804,7 @@ impl Checker<'_, '_> {
                 continue;
             }
             let s = StmtId(i as u32);
-            let around = Around {
+            let around = StatementParent {
                 is_appropriate_context: false,
                 is_ambient: hir.is_ambient(hir.parent(hir.node(s))),
                 ..top
@@ -802,7 +819,7 @@ impl Checker<'_, '_> {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let alias = files.symbol(sym).name;
         let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
-        let means_it = |from: ScopeId, name: Atom| {
+        let resolves_to_alias = |from: ScopeId, name: Atom| {
             name == alias
                 && from.is_some()
                 && files.resolve_name(cx.file, from, name, all) == Some(sym)
@@ -811,13 +828,13 @@ impl Checker<'_, '_> {
         let is_checked = |s: StmtId| is_in_appropriate_context(bound, s);
         (0..).map(ExprId).zip(hir.exprs.iter()).any(|(id, e)| bound.symbol_of_expr(id).is_some() && files.sym(cx.file, bound.symbol_of_expr(id)) == sym && !matches!(bound.parent_of_expr(id), Parent::None) && !self.is_never_checked(e.pos))
             || hir.types.iter().enumerate().any(|(t, node)| match node.kind {
-                TypeNodeKind::Ref { name, .. } | TypeNodeKind::Typeof { name, .. } => !name.is_empty() && !self.is_never_checked(node.pos) && means_it(bound.type_scope[t], hir[name.at(0)].text),
+                TypeNodeKind::Ref { name, .. } | TypeNodeKind::Typeof { name, .. } => !name.is_empty() && !self.is_never_checked(node.pos) && resolves_to_alias(bound.type_scope[t], hir[name.at(0)].text),
                 _ => false,
             })
             || hir.import_equals.iter().enumerate().any(|(other, import)| {
-                matches!(import.target, ImportEqualsTarget::Entity(names) if !names.is_empty() && is_checked(import.stmt) && means_it(bound.import_equals_scope[other], hir[names.at(0)].text))
+                matches!(import.target, ImportEqualsTarget::Entity(names) if !names.is_empty() && is_checked(import.stmt) && resolves_to_alias(bound.import_equals_scope[other], hir[names.at(0)].text))
             })
-            || hir.exports.iter().enumerate().any(|(x, export)| !export.has_module_specifier && is_checked(export.stmt) && export.items.iter().any(|s| means_it(bound.export_scope[x], hir[s].local)))
+            || hir.exports.iter().enumerate().any(|(x, export)| !export.has_module_specifier && is_checked(export.stmt) && export.items.iter().any(|s| resolves_to_alias(bound.export_scope[x], hir[s].local)))
             || cx.is_global_source_file
                 && files.globals.get(alias) == Some(&sym)
                 && self.modules_resolves_members_of_global_this(cx)
@@ -865,7 +882,7 @@ impl Checker<'_, '_> {
     fn modules_is_imported_by_name(
         &self,
         cx: &Cx<'_>,
-        around: Around,
+        around: StatementParent,
         is_requested: &dyn Fn(Atom) -> bool,
     ) -> bool {
         let is_module = if around.module.is_none() {
@@ -908,7 +925,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkImportDeclaration`
-    fn modules_import(&mut self, cx: &Cx<'_>, s: StmtId, i: ImportId, around: Around) {
+    fn modules_import(&mut self, cx: &Cx<'_>, s: StmtId, i: ImportId, around: StatementParent) {
         let (hir, files) = (self.hir(cx.file), self.files());
         let (import, pos) = (hir[i], hir[s].start);
         let context_error = if cx.is_js { 1473 } else { 1232 };
@@ -1058,7 +1075,13 @@ impl Checker<'_, '_> {
     }
 
     /// `checkImportEqualsDeclaration`
-    fn modules_import_equals(&mut self, cx: &Cx<'_>, s: StmtId, i: ImportEqualsId, around: Around) {
+    fn modules_import_equals(
+        &mut self,
+        cx: &Cx<'_>,
+        s: StmtId,
+        i: ImportEqualsId,
+        around: StatementParent,
+    ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let (import, decl) = (hir[i], Decl::ImportEquals(i));
         let context_error = if cx.is_js { 1473 } else { 1232 };
@@ -1255,7 +1278,13 @@ impl Checker<'_, '_> {
     }
 
     /// `checkExportDeclaration` for `export { .. }`
-    fn modules_export_named(&mut self, cx: &Cx<'_>, s: StmtId, x: ExportId, around: Around) {
+    fn modules_export_named(
+        &mut self,
+        cx: &Cx<'_>,
+        s: StmtId,
+        x: ExportId,
+        around: StatementParent,
+    ) {
         let hir = self.hir(cx.file);
         let export = hir[x];
         let context_error = if cx.is_js { 1474 } else { 1233 };
@@ -1363,7 +1392,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkExportDeclaration` for `export * from` and `export * as alias from`
-    fn modules_export_star(&mut self, cx: &Cx<'_>, s: StmtId, around: Around) {
+    fn modules_export_star(&mut self, cx: &Cx<'_>, s: StmtId, around: StatementParent) {
         let files = self.files();
         let statement = self.hir(cx.file)[s];
         let pos = statement.start;
@@ -1444,7 +1473,7 @@ impl Checker<'_, '_> {
         s: StmtId,
         e: ExprId,
         is_export_equals: bool,
-        around: Around,
+        around: StatementParent,
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let start = hir[s].start;

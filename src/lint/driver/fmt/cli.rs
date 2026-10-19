@@ -276,7 +276,7 @@ pub struct Override {
 impl Override {
     /// Drops the options that the command-line flag `name` replaces. A flag that only turns a feature on keeps the
     /// override's options for it.
-    fn give_way_to(&mut self, name: &[u8], value: &[u8]) {
+    fn drop_overridden(&mut self, name: &[u8], value: &[u8]) {
         self.format.retain(|it| {
             let (whole, is_part) = match strings::split_once_char(it.0, b'.') {
                 Some((whole, _)) => (whole, true),
@@ -303,7 +303,7 @@ pub struct Options {
     pub stdin_filepath: Option<Vec<u8>>,
     pub config: Option<Vec<u8>>,
     /// True if [`Options::config`] comes from bunfig.toml.
-    is_config_of_bunfig: bool,
+    config_is_from_bunfig: bool,
     /// False for `--no-config`.
     pub config_lookup: bool,
     pub disable_nested_config: bool,
@@ -312,20 +312,20 @@ pub struct Options {
     /// `None` means `.gitignore` and `.prettierignore`.
     pub ignore_path: Option<Vec<Vec<u8>>>,
     /// Number of leading `ignore_path` entries that come from bunfig.toml.
-    ignore_paths_of_bunfig: usize,
+    bunfig_ignore_path_count: usize,
     /// Filled by [`Options::load_pipes`].
     pub(crate) pipes: fs::NamedPipes,
     /// Treated as lines of an ignore file in the working directory.
     pub ignore_pattern: Vec<Vec<u8>>,
     /// The number of leading entries that came from bunfig.toml. Those are treated as lines of an ignore file in that
     /// file's directory.
-    pub ignore_patterns_of_bunfig: usize,
+    pub bunfig_ignore_pattern_count: usize,
     /// The bunfig that was read, or would have been, relative to the working directory.
     pub bunfig: Vec<u8>,
     /// True if it has a `[fmt]` section, which was read.
-    pub has_section_of_bunfig: bool,
+    pub has_bunfig_section: bool,
     /// True if it was passed with `bun --config=<path>`.
-    pub is_bunfig_named: bool,
+    pub is_bunfig_from_flag: bool,
     /// `--staged`, `--changed`
     pub only: Option<crate::git::Only>,
     pub with_node_modules: bool,
@@ -376,19 +376,19 @@ impl Default for Options {
             modes: Vec::new(),
             stdin_filepath: None,
             config: None,
-            is_config_of_bunfig: false,
+            config_is_from_bunfig: false,
             config_lookup: true,
             disable_nested_config: false,
             editorconfig: true,
             config_precedence: Precedence::default(),
             ignore_path: None,
-            ignore_paths_of_bunfig: 0,
+            bunfig_ignore_path_count: 0,
             pipes: fs::NamedPipes::default(),
             ignore_pattern: Vec::new(),
-            ignore_patterns_of_bunfig: 0,
+            bunfig_ignore_pattern_count: 0,
             bunfig: b"bunfig.toml".to_vec(),
-            has_section_of_bunfig: false,
-            is_bunfig_named: false,
+            has_bunfig_section: false,
+            is_bunfig_from_flag: false,
             only: None,
             with_node_modules: false,
             error_on_unmatched_pattern: true,
@@ -485,7 +485,7 @@ impl Options {
             b"write" => self.write = is_on,
             b"stdin-filepath" => self.stdin_filepath = owned(),
             // `--no-config`, which negates a flag that takes a value, is handled in `with`.
-            b"config" => (self.config, self.is_config_of_bunfig) = (owned(), false),
+            b"config" => (self.config, self.config_is_from_bunfig) = (owned(), false),
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"list-files" => self.list_files = is_on,
             b"init" => self.init = is_on,
@@ -585,18 +585,18 @@ impl Options {
     }
 
     /// The same command line as oxfmt would parse it, if that's different.
-    pub(crate) fn as_oxfmt_reads_it(&self) -> Option<Options> {
+    pub(crate) fn reparsed_for_oxfmt(&self) -> Option<Options> {
         let (path, checks) = self.after_short_c.as_ref()?;
         let mut options = self.clone();
         let at = options.patterns.iter().position(|it| it == path)?;
         options.config = Some(options.patterns.remove(at));
-        options.is_config_of_bunfig = false;
+        options.config_is_from_bunfig = false;
         options.check = *checks;
         Some(options)
     }
 
     /// The tool's own error message if it rejects this combination of mode flags.
-    pub(crate) fn refusal_of_modes(&self, is_oxfmt: bool) -> Option<Vec<u8>> {
+    pub(crate) fn mode_conflict_error(&self, is_oxfmt: bool) -> Option<Vec<u8>> {
         let of_debug_check = || {
             (self.write && self.debug_check)
                 .then(|| b"Cannot use --write and --debug-check together.".to_vec())
@@ -634,14 +634,14 @@ impl Options {
     }
 
     /// `self` has the options parsed from the bunfig at `path`, which is relative to the working directory. Paths in it
-    /// are relative to [`Options::start_of_bunfig`]. `is_named` becomes [`Options::is_bunfig_named`].
-    pub fn of_bunfig_at(mut self, path: &[u8], is_named: bool) -> Options {
+    /// are relative to [`Options::bunfig_base_directory`]. `is_named` becomes [`Options::is_bunfig_from_flag`].
+    pub fn from_bunfig_at(mut self, path: &[u8], is_named: bool) -> Options {
         self.bunfig = paths::from_native(path);
-        self.has_section_of_bunfig = true;
-        self.is_bunfig_named = is_named;
-        self.is_config_of_bunfig = self.config.is_some();
-        self.ignore_paths_of_bunfig = self.ignore_path.as_ref().map_or(0, Vec::len);
-        self.ignore_patterns_of_bunfig = self.ignore_pattern.len();
+        self.has_bunfig_section = true;
+        self.is_bunfig_from_flag = is_named;
+        self.config_is_from_bunfig = self.config.is_some();
+        self.bunfig_ignore_path_count = self.ignore_path.as_ref().map_or(0, Vec::len);
+        self.bunfig_ignore_pattern_count = self.ignore_pattern.len();
         let directory = paths::dirname(&self.bunfig).to_vec();
         if directory != b"." && !is_named {
             let files = self.ignore_path.iter_mut().flatten();
@@ -658,24 +658,24 @@ impl Options {
     /// Reads any named pipes passed to `--config` and `--ignore-path`. See [`fs::NamedPipes::load`].
     pub(crate) fn load_pipes(&mut self, cwd: &[u8]) -> Result<(), Vec<u8>> {
         let mut named = Vec::new();
-        if !self.is_config_of_bunfig {
+        if !self.config_is_from_bunfig {
             named.extend(self.config.clone());
         }
         let ignore_paths = self.ignore_path.iter().flatten();
-        named.extend(ignore_paths.skip(self.ignore_paths_of_bunfig).cloned());
+        named.extend(ignore_paths.skip(self.bunfig_ignore_path_count).cloned());
         self.pipes.load(cwd, &named)
     }
 
     /// The bunfig.toml in a parent of the working directory, if its `[fmt]` section was read.
     pub(crate) fn bunfig_above(&self) -> Option<&[u8]> {
-        let is_above = paths::dirname(&self.bunfig) != b"." && !self.is_bunfig_named;
-        (is_above && self.has_section_of_bunfig).then_some(&self.bunfig)
+        let is_above = paths::dirname(&self.bunfig) != b"." && !self.is_bunfig_from_flag;
+        (is_above && self.has_bunfig_section).then_some(&self.bunfig)
     }
 
     /// The directory that paths and patterns in bunfig.toml are relative to, which is the file's directory. A file
     /// passed with `--config` can live anywhere, so then it's the working directory.
-    pub(crate) fn start_of_bunfig(&self, cwd: &[u8]) -> Vec<u8> {
-        match self.is_bunfig_named {
+    pub(crate) fn bunfig_base_directory(&self, cwd: &[u8]) -> Vec<u8> {
+        match self.is_bunfig_from_flag {
             true => cwd.to_vec(),
             false => paths::dirname(&paths::resolve(cwd, &self.bunfig)).to_vec(),
         }
@@ -683,14 +683,17 @@ impl Options {
 
     /// Like [`Options::parse`], but flags that aren't passed keep their value from `defaults`, which come from
     /// [`crate::bunfig::format`].
-    pub fn parse_over(mut defaults: Options, args: &[&[u8]]) -> Result<Options, UsageError> {
-        let alone = Options::parse(args)?;
+    pub fn parse_with_defaults(
+        mut defaults: Options,
+        args: &[&[u8]],
+    ) -> Result<Options, UsageError> {
+        let from_args = Options::parse(args)?;
         // `--config` and `--no-config` are rejected together. Either one replaces the default.
-        if alone.config.is_some() || !alone.config_lookup {
+        if from_args.config.is_some() || !from_args.config_lookup {
             (defaults.config, defaults.config_lookup) = (None, true);
         }
-        for (name, value) in &alone.format {
-            (defaults.overrides.iter_mut()).for_each(|it| it.give_way_to(name, value));
+        for (name, value) in &from_args.format {
+            (defaults.overrides.iter_mut()).for_each(|it| it.drop_overridden(name, value));
         }
         defaults.with(args)
     }

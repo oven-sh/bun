@@ -12,7 +12,7 @@ use crate::resolve::ScriptTarget;
 
 impl Checker<'_, '_> {
     /// Runs `check_plain_assignment` for every `a = b`.
-    pub(super) fn check_x_operators(&mut self, file: FileId) {
+    pub(super) fn check_plain_assignments(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.kind == FileKind::Declaration {
             return;
@@ -134,7 +134,7 @@ pub(super) fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
 // ───────────────────────────── assignment targets ─────────────────────────────
 
 /// `checkReferenceExpression`: which of the two codes is reported for `e`, if it isn't a reference.
-pub(super) fn why_no_reference(
+pub(super) fn invalid_reference_code(
     hir: &File,
     e: ExprId,
     invalid: u32,

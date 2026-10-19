@@ -168,7 +168,7 @@ impl Matters {
 
     /// True if nothing in `node` matters, except that it may throw.
     #[inline]
-    pub(super) fn is_nothing_in(&self, node: Node) -> bool {
+    pub(super) fn can_skip(&self, node: Node) -> bool {
         match node {
             Node::Expr(e) => !self.exprs.has(e.id().idx()),
             Node::Type(ty) => !self.listens_in_types && !self.types.has(ty.id().idx()),

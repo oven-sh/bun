@@ -250,7 +250,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `isStartOfDeclaration`
     pub(crate) fn is_start_of_declaration(&mut self) -> bool {
         // Fast path for the most common case, where the text is enough to know the scan's answer.
-        if self.token() == T::Import && self.is_before(b" {") {
+        if self.token() == T::Import && self.is_followed_by(b" {") {
             return true;
         }
         // The scan steps over one modifier at a time and keeps no state, so it gives the same answer from each of them.
@@ -586,11 +586,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
         };
         // JavaScript allows no other modifier before a declaration.
-        let is_no_javascript = self.is_ecmascript
+        let is_invalid_javascript = self.is_ecmascript
             && (flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC))
                 || flags.contains(Flags::ASYNC) && self.token() != T::Function
-                || self.has_modifier_twice(base, flags));
-        if is_no_javascript {
+                || self.has_duplicate_modifier(base, flags));
+        if is_invalid_javascript {
             match self.is_flow() {
                 true => self.flow_declare_before_export(base, flags),
                 // `oxc::declaration` reports what oxc reports.
@@ -600,7 +600,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let saved = self.context;
         if flags.intersects(Flags::AMBIENT | Flags::ABSTRACT) {
-            self.leave_await_like_oxc(flags);
+            self.clear_await_like_oxc(flags);
         }
         if flags.contains(Flags::AMBIENT) {
             if self.context & (ctx::TOP_LEVEL | ctx::IN_NAMESPACE) != ctx::TOP_LEVEL {
@@ -619,7 +619,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let statement = self.declaration_worker(start, base, flags);
         self.context = saved;
         let is_odd = match self.options.is_javascript {
-            true => is_no_javascript,
+            true => is_invalid_javascript,
             false => flags.intersects(!(Flags::EXPORT | Flags::DEFAULT)),
         };
         if (is_decorated || is_odd) && self.is_for_oxc() {
@@ -633,7 +633,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// True if a keyword is repeated among the modifiers above `base`, whose combined flags are `flags`.
-    fn has_modifier_twice(&self, base: usize, flags: Flags) -> bool {
+    fn has_duplicate_modifier(&self, base: usize, flags: Flags) -> bool {
         let written = self.s.modifiers.get(base..).unwrap_or_default();
         let is_keyword = |it: &&Modifier| matches!(it.kind, ModifierKind::Keyword(_));
         written.iter().filter(is_keyword).count() != flags.bits().count_ones() as usize
@@ -643,7 +643,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// and the TypeScript-only declarations. `export` and `const enum` take a different path.
     /// `declaration` restores the context.
     #[inline]
-    fn leave_await_like_oxc(&mut self, flags: Flags) {
+    fn clear_await_like_oxc(&mut self, flags: Flags) {
         if self.options.dialect.oxc && !flags.intersects(Flags::EXPORT | Flags::CONST) {
             self.context &= !ctx::AWAIT;
         }
@@ -666,17 +666,17 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             T::Class => self.class_declaration(start, base, flags),
             T::Interface if self.is_flow() => self.flow_interface(start, base, flags),
             T::Interface => {
-                self.leave_await_like_oxc(flags);
+                self.clear_await_like_oxc(flags);
                 self.interface_declaration(start, base, flags)
             }
             T::Type if self.is_flow() => self.flow_type_alias(start, base, flags),
             T::Type => {
-                self.leave_await_like_oxc(flags);
+                self.clear_await_like_oxc(flags);
                 self.type_alias_declaration(start, base, flags)
             }
             T::Enum if self.is_flow() => self.flow_enum(start, base, flags),
             T::Enum => {
-                self.leave_await_like_oxc(flags);
+                self.clear_await_like_oxc(flags);
                 self.enum_declaration(start, base, flags)
             }
             T::Module if self.is_flow() && self.peek() == T::Dot => {
@@ -687,7 +687,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 StmtId::NONE
             }
             T::Global | T::Module | T::Namespace => {
-                self.leave_await_like_oxc(flags);
+                self.clear_await_like_oxc(flags);
                 self.module_declaration(start, base, flags)
             }
             T::Import => self.import_declaration_or_import_equals(start, base, flags),
@@ -946,7 +946,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             self.s.var_decls.push(declaration);
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::VariableDeclarations, full)
+                && !self.continues_without_comma(ListKind::VariableDeclarations, full)
             {
                 break;
             }
@@ -997,12 +997,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn enum_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         // `enum` is a reserved word in JavaScript. After `const` it's where a name belongs, which
         // `oxc::declaration` reports. For `let enum;` it has already been reported.
-        let is_said =
+        let is_already_reported =
             |it: &Diagnostic| it.kind == DiagnosticKind::Parse && it.start == self.lx.start;
         if self.options.is_javascript
             && !flags.contains(Flags::CONST)
             && self.is_for_oxc()
-            && !self.f.diagnostics.last().is_some_and(is_said)
+            && !self.f.diagnostics.last().is_some_and(is_already_reported)
         {
             self.unexpected_like_oxc();
         }
@@ -1074,7 +1074,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 },
             });
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::EnumMembers, member.full)
+                && !self.continues_without_comma(ListKind::EnumMembers, member.full)
             {
                 break;
             }

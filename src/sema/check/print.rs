@@ -4302,13 +4302,13 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             return Place::Nowhere;
         };
         let pos = self.c.files().start_of_declaration(file, decl);
-        Place::At(self.c.place_in_program_order(file, pos))
+        Place::At(self.c.position_in_program_order(file, pos))
     }
 
     /// Returns the position of the first declaration of `prop`.
     fn place_of_property(&mut self, prop: &Prop) -> Place {
         let at = |c: &Checker<'p, '_>, file: FileId, pos: u32| {
-            Place::At(c.place_in_program_order(file, pos))
+            Place::At(c.position_in_program_order(file, pos))
         };
         let Some(prop) = first_declared(prop) else {
             return Place::Nowhere;
@@ -4342,7 +4342,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     let pos = self
                         .c
                         .first_declaration_pos_of_literal_property(*file, *written);
-                    Place::At(self.c.place_in_program_order(*file, pos))
+                    Place::At(self.c.position_in_program_order(*file, pos))
                 }
                 _ => self.place_of_property(prop),
             };

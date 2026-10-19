@@ -103,9 +103,9 @@ const FIELDS: Properties = &[
     ("exports", KEPT),
     ("publishConfig", Over::Fields),
     // Scripts
-    ("scripts", Over::ScriptsOfOxfmt),
-    ("betterScripts", Over::ScriptsOfOxfmt),
-    ("wireit", Over::ScriptsOfOxfmt),
+    ("scripts", Over::OxfmtScripts),
+    ("betterScripts", Over::OxfmtScripts),
+    ("wireit", Over::OxfmtScripts),
     // Dependencies
     ("dependencies", SORTED),
     ("devDependencies", SORTED),

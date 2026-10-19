@@ -7,13 +7,13 @@
 /// transitive. Where the items end up then depends on the algorithm. This is V8 14's, used by
 /// Node.js 25 and 26, and it makes the same comparisons in the same order.
 pub fn array_sort_by<T: Copy>(items: &mut [T], mut is_before: impl FnMut(T, T) -> bool) {
-    let given = items.to_vec();
-    let mut places: Vec<u32> = (0..given.len() as u32).collect();
-    sort_places(&mut places, &mut |a, b| {
-        is_before(given[a as usize], given[b as usize])
+    let original = items.to_vec();
+    let mut indices: Vec<u32> = (0..original.len() as u32).collect();
+    sort_indices(&mut indices, &mut |a, b| {
+        is_before(original[a as usize], original[b as usize])
     });
-    for (item, &place) in items.iter_mut().zip(&places) {
-        *item = given[place as usize];
+    for (item, &source_index) in items.iter_mut().zip(&indices) {
+        *item = original[source_index as usize];
     }
 }
 
@@ -22,7 +22,7 @@ type IsBefore<'f> = &'f mut dyn FnMut(u32, u32) -> bool;
 const MIN_GALLOP_WINS: usize = 7;
 
 /// `ArrayTimSort`
-fn sort_places(work: &mut [u32], is_before: IsBefore) {
+fn sort_indices(work: &mut [u32], is_before: IsBefore) {
     let length = work.len();
     if length < 8 {
         return binary_insertion_sort(work, 0, is_before);

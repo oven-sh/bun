@@ -68,18 +68,22 @@ struct Scanner<'i, 't> {
     index: usize,
     tokens: &'t mut Vec<Token>,
     /// Offsets of characters that are whitespace to Angular but not to TypeScript.
-    odd_blanks: &'t mut Vec<u32>,
+    angular_only_whitespace: &'t mut Vec<u32>,
     brace_stack: Vec<Brace>,
 }
 
-/// Appends the tokens of `input` to `tokens`. Appends to `odd_blanks` the offset of every character between tokens
-/// that's whitespace to Angular but not to TypeScript.
-pub(crate) fn tokenize(input: &[u8], tokens: &mut Vec<Token>, odd_blanks: &mut Vec<u32>) {
+/// Appends the tokens of `input` to `tokens`. Appends to `angular_only_whitespace` the offset of every character
+/// between tokens that's whitespace to Angular but not to TypeScript.
+pub(crate) fn tokenize(
+    input: &[u8],
+    tokens: &mut Vec<Token>,
+    angular_only_whitespace: &mut Vec<u32>,
+) {
     let mut scanner = Scanner {
         input,
         index: 0,
         tokens,
-        odd_blanks,
+        angular_only_whitespace,
         brace_stack: Vec::new(),
     };
     while let Some(token) = scanner.scan_token() {
@@ -118,7 +122,7 @@ impl Scanner<'_, '_> {
                 [] => return None,
                 [b'\t'..=b'\r' | b' ', ..] => self.index += 1,
                 [0..=b' ', ..] => {
-                    self.odd_blanks.push(self.index as u32);
+                    self.angular_only_whitespace.push(self.index as u32);
                     self.index += 1;
                 }
                 // A no-break space.

@@ -17,7 +17,7 @@ use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
     Host, Kept, ModuleDetection, ParseOptions, Paths, Phase, ScriptKind, Spent, ancestors,
-    hash_without_case, inside, is_declaration_file_name, is_same_path, join, root_length,
+    case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join, root_length,
     to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
@@ -59,10 +59,10 @@ pub fn to_native(path: &[u8]) -> &[u8] {
 /// `to_native`, for a system call. Returns `None` if the system can't represent the path, so nothing exists there.
 /// Either it's too long, since an import can spell a path with any number of segments, or it contains a NUL, which a
 /// configuration file can contain and which would make the system use only the part before it.
-fn for_the_system(path: &[u8]) -> Option<&[u8]> {
+fn to_syscall_path(path: &[u8]) -> Option<&[u8]> {
     let native = to_native(path);
-    let is_a_name = native.len() < bun_paths::MAX_PATH_BYTES && !contains_char(native, 0);
-    is_a_name.then_some(native)
+    let is_representable = native.len() < bun_paths::MAX_PATH_BYTES && !contains_char(native, 0);
+    is_representable.then_some(native)
 }
 
 /// A drive's root is `/C:`. The system treats `C:` as the working directory on that drive, so it needs `/C:/`. The same
@@ -98,7 +98,7 @@ struct Entry {
     /// Offset of its name in `Listing::names`.
     start: u32,
     len: u32,
-    /// `hash_without_case` of its name.
+    /// `case_insensitive_hash` of its name.
     hash: u32,
     is_directory: bool,
     is_link: bool,
@@ -130,7 +130,7 @@ struct Entries {
 enum Found<'a> {
     Exact(&'a Entry),
     /// The entry's name differs in case.
-    Alike(&'a Entry),
+    DifferentCase(&'a Entry),
     Nothing,
 }
 
@@ -143,7 +143,7 @@ impl Entries {
         self.entries.push(Entry {
             start,
             len,
-            hash: hash_without_case(name) as u32,
+            hash: case_insensitive_hash(name) as u32,
             is_directory,
             is_link,
         });
@@ -196,22 +196,24 @@ impl Listing {
     }
 
     fn look_up(&self, name: &[u8]) -> Found<'_> {
-        let hash = hash_without_case(name) as u32;
+        let hash = case_insensitive_hash(name) as u32;
         let from = self.entries.partition_point(|it| it.hash < hash);
         let with_hash = || self.entries[from..].iter().take_while(|it| it.hash == hash);
         if let Some(exact) = with_hash().find(|it| self.name(it) == name) {
             return Found::Exact(exact);
         }
-        let alike = with_hash().find(|it| is_same_path(self.name(it), name, false));
-        alike.map_or(Found::Nothing, Found::Alike)
+        let different_case = with_hash().find(|it| is_same_path(self.name(it), name, false));
+        different_case.map_or(Found::Nothing, Found::DifferentCase)
     }
 
     /// Returns the name as spelled in the directory, and whether it's a directory.
     fn find(&self, name: &[u8], case_sensitive: bool) -> Option<(&[u8], bool)> {
         match self.look_up(name) {
             Found::Exact(entry) => Some((self.name(entry), entry.is_directory)),
-            Found::Alike(entry) if !case_sensitive => Some((self.name(entry), entry.is_directory)),
-            Found::Alike(_) | Found::Nothing => None,
+            Found::DifferentCase(entry) if !case_sensitive => {
+                Some((self.name(entry), entry.is_directory))
+            }
+            Found::DifferentCase(_) | Found::Nothing => None,
         }
     }
 
@@ -240,7 +242,7 @@ pub struct Disk {
     pub(crate) caches: crate::ThreadCaches,
     /// True if a pool thread created this `Disk`. All the other pool threads may be blocked on the work it was created
     /// for, so nothing may wait for them, not even the threads that a request starts to coordinate its projects.
-    is_of_a_thread_of_the_pool: bool,
+    created_on_pool_thread: bool,
     case_sensitive: bool,
     /// Threads that request the same directory at the same time wait for the first one to read it.
     directories: ShardedMap<Vec<u8>, OnceLock<Directory>>,
@@ -371,16 +373,16 @@ const MAX_IDLE_READERS: usize = 16;
 const READERS: usize = 6;
 
 /// One of the few slots for reading a file.
-struct Turn<'a>(&'a bun_threading::Semaphore);
+struct ReadSlot<'a>(&'a bun_threading::Semaphore);
 
-impl<'a> Turn<'a> {
-    fn wait_for(places: &'a bun_threading::Semaphore) -> Turn<'a> {
-        places.wait();
-        Turn(places)
+impl<'a> ReadSlot<'a> {
+    fn wait_for(read_slots: &'a bun_threading::Semaphore) -> ReadSlot<'a> {
+        read_slots.wait();
+        ReadSlot(read_slots)
     }
 }
 
-impl Drop for Turn<'_> {
+impl Drop for ReadSlot<'_> {
     fn drop(&mut self) {
         self.0.post();
     }
@@ -430,7 +432,7 @@ pub fn as_read(path: &[u8], bytes: Vec<u8>, keeps_byte_order_marks: bool) -> Vec
 
 /// `vfs.FS.ReadFile` for the file at `path`, opened by its full path.
 pub(crate) fn read_at(path: &[u8], keeps_mark: bool) -> Option<Cow<'static, [u8]>> {
-    let bytes = bun_sys::File::read_from(Fd::cwd(), for_the_system(path)?);
+    let bytes = bun_sys::File::read_from(Fd::cwd(), to_syscall_path(path)?);
     bytes.ok().map(|bytes| decoded(bytes, keeps_mark))
 }
 
@@ -505,17 +507,17 @@ impl Disk {
             extended_configs: Default::default(),
             paths: Default::default(),
             caches: Default::default(),
-            is_of_a_thread_of_the_pool: !bun_threading::thread_pool::Thread::current().is_null(),
+            created_on_pool_thread: !bun_threading::thread_pool::Thread::current().is_null(),
             case_sensitive,
             directories: ShardedMap::default(),
             working_directory: Vec::new(),
             real_directories: ShardedMap::default(),
             reading: cfg!(target_os = "macos").then(|| {
-                let places = bun_threading::Semaphore::default();
+                let read_slots = bun_threading::Semaphore::default();
                 for _ in 0..READERS {
-                    places.post();
+                    read_slots.post();
                 }
-                places
+                read_slots
             }),
             // The bundler's condition, plus the same threshold for this check's own threads.
             io_pool: (threads > 3 && bun_threading::io_thread_pool::uses_io_pool())
@@ -560,7 +562,7 @@ impl Disk {
 
     /// True if the entries of `path` are queried from the system every time. That's the case for the roots, which
     /// aren't directories on Windows. Neither is a server, and `C:` means the working directory on that drive.
-    fn is_above_listings(path: &[u8]) -> bool {
+    fn is_never_listed(path: &[u8]) -> bool {
         // `(length, 0)`: a drive, or a server without a share.
         let is_volume = |path: &[u8]| {
             let native = to_native(path);
@@ -591,7 +593,7 @@ impl Disk {
     /// the entry. Directories above the working directory aren't read for a lookup. They're only queried for a
     /// `node_modules`, a `package.json` and little else, and reading one takes time proportional to its entries. A
     /// project can sit in a directory with any number of others.
-    fn directory_to_look_in(&self, path: &[u8]) -> Option<&Directory> {
+    fn directory_for_lookup(&self, path: &[u8]) -> Option<&Directory> {
         let rest = self.working_directory.strip_prefix(path);
         let is_above =
             rest.is_some_and(|it| it.starts_with(b"/") || !it.is_empty() && path.ends_with(b"/"));
@@ -615,7 +617,7 @@ impl Disk {
         {
             return Directory::Missing;
         }
-        match (list(path), self.added_to(path)) {
+        match (list(path), self.in_memory_entries_of(path)) {
             (read, None) | (read @ Directory::Unreadable, _) => read,
             (Directory::Listed(listing), Some(more)) => Directory::Listed(listing.with(more)),
             (Directory::Missing, Some(more)) => Directory::Listed(Listing::default().with(more)),
@@ -623,7 +625,7 @@ impl Disk {
     }
 
     /// Returns the entries that `already_read` adds to the directory at `path`.
-    fn added_to(&self, path: &[u8]) -> Option<&InMemory> {
+    fn in_memory_entries_of(&self, path: &[u8]) -> Option<&InMemory> {
         match self.in_memory.is_empty() {
             true => None,
             false => self.in_memory.get(&*to_path(path, self.case_sensitive)),
@@ -633,7 +635,7 @@ impl Disk {
     /// For a path that `already_read` adds, returns whether it's a directory.
     fn find_in_memory(&self, path: &[u8]) -> Option<bool> {
         let Split { parent, name } = split(path);
-        let names = self.added_to(parent)?;
+        let names = self.in_memory_entries_of(parent)?;
         if name.is_empty() {
             return Some(true);
         }
@@ -648,18 +650,18 @@ impl Disk {
     }
 
     /// Checks the in-memory entries first, then queries the system, which doesn't know about them.
-    fn ask_whether_directory(&self, path: &[u8]) -> Option<bool> {
+    fn query_is_directory(&self, path: &[u8]) -> Option<bool> {
         self.find_in_memory(path)
-            .or_else(|| is_directory(Fd::cwd(), for_the_system(&with_root(path))?))
+            .or_else(|| is_directory(Fd::cwd(), to_syscall_path(&with_root(path))?))
     }
 
     /// `None`: the system has to be queried.
     fn find(&self, path: &[u8]) -> Option<Option<(&[u8], bool)>> {
         let Split { parent, name } = split(path);
-        if name.is_empty() || Self::is_above_listings(parent) {
+        if name.is_empty() || Self::is_never_listed(parent) {
             return None;
         }
-        match self.directory_to_look_in(parent)? {
+        match self.directory_for_lookup(parent)? {
             Directory::Missing => Some(None),
             Directory::Unreadable => None,
             Directory::Listed(listing) => self.find_in(listing, name),
@@ -673,18 +675,18 @@ impl Disk {
     /// case-sensitive or not. Or it may be a short name.
     fn find_in<'a>(&self, listing: &'a Listing, name: &[u8]) -> Option<Option<(&'a [u8], bool)>> {
         match listing.look_up(name) {
-            Found::Alike(_) if self.case_sensitive => None,
-            Found::Exact(entry) | Found::Alike(entry) => {
+            Found::DifferentCase(_) if self.case_sensitive => None,
+            Found::Exact(entry) | Found::DifferentCase(entry) => {
                 Some(Some((listing.name(entry), entry.is_directory)))
             }
-            Found::Nothing if !name.is_ascii() || is_like_a_short_name(name) => None,
+            Found::Nothing if !name.is_ascii() || looks_like_short_name(name) => None,
             Found::Nothing => Some(None),
         }
     }
 
-    fn ask_for_real_path(path: &[u8]) -> Vec<u8> {
+    fn query_real_path(path: &[u8]) -> Vec<u8> {
         let rooted = with_root(path);
-        let Some(native) = for_the_system(&rooted) else {
+        let Some(native) = to_syscall_path(&rooted) else {
             return path.to_vec();
         };
         let (mut name, mut real) = (path_buffer_pool::get(), path_buffer_pool::get());
@@ -702,7 +704,7 @@ impl Disk {
         let mut above = path;
         loop {
             let Split { parent, name } = split(above);
-            if name.is_empty() || Self::is_above_listings(parent) {
+            if name.is_empty() || Self::is_never_listed(parent) {
                 break;
             }
             names.push((parent, name));
@@ -731,20 +733,20 @@ impl Disk {
     /// `path` must exist.
     fn real_path_of(&self, path: &[u8]) -> Vec<u8> {
         let Split { parent, name } = split(path);
-        if name.is_empty() || Self::is_above_listings(parent) {
-            return Self::ask_for_real_path(path);
+        if name.is_empty() || Self::is_never_listed(parent) {
+            return Self::query_real_path(path);
         }
-        let Some(Directory::Listed(listing)) = self.directory_to_look_in(parent) else {
-            return Self::ask_for_real_path(path);
+        let Some(Directory::Listed(listing)) = self.directory_for_lookup(parent) else {
+            return Self::query_real_path(path);
         };
         let Some(found) = self.find_in(listing, name) else {
-            return Self::ask_for_real_path(path);
+            return Self::query_real_path(path);
         };
         let Some((written, _)) = found else {
             return path.to_vec();
         };
         if matches!(listing.look_up(written), Found::Exact(it) if it.is_link) {
-            return Self::ask_for_real_path(path);
+            return Self::query_real_path(path);
         }
         let real_parent = match self.real_directories.get_ref(parent) {
             Some(known) => known,
@@ -756,7 +758,7 @@ impl Disk {
                 } else if self.known_directory(above).is_some() {
                     self.real_path_of(parent)
                 } else {
-                    Self::ask_for_real_path(parent)
+                    Self::query_real_path(parent)
                 };
                 self.real_directories.insert_ref(parent.to_vec(), real)
             }
@@ -779,7 +781,7 @@ impl Drop for Disk {
 
 /// True if `name` looks like the alternate name that NTFS and FAT give an entry whose own name isn't 8.3: `PROGRA~1`
 /// for `Program Files`, `RUNNER~1` for `runneradmin`. The entry can be opened by that name, but no listing has it.
-fn is_like_a_short_name(name: &[u8]) -> bool {
+fn looks_like_short_name(name: &[u8]) -> bool {
     let Some((before, after)) = rsplit_once_char(name, b'~') else {
         return false;
     };
@@ -794,7 +796,7 @@ fn is_like_a_short_name(name: &[u8]) -> bool {
 /// Reads the entries of the directory at `path` from the system.
 fn list(path: &[u8]) -> Directory {
     let rooted = with_root(path);
-    let Some(native) = for_the_system(&rooted) else {
+    let Some(native) = to_syscall_path(&rooted) else {
         return Directory::Missing;
     };
     let directory = match bun_sys::open_dir_absolute(native) {
@@ -852,8 +854,8 @@ fn is_file_system_case_sensitive(path: &[u8]) -> bool {
         (swapped != name).then_some(swapped)
     };
     // `[eval]` only exists in memory, so no spelling of its name is found.
-    let is_there = |it: &&[u8]| for_the_system(it).is_some_and(bun_sys::exists);
-    let Some(path) = ancestors(path).find(is_there) else {
+    let exists_on_disk = |it: &&[u8]| to_syscall_path(it).is_some_and(bun_sys::exists);
+    let Some(path) = ancestors(path).find(exists_on_disk) else {
         return true;
     };
     // A directory's entries are on its file system. Its own name isn't if it's that file system's mount point, like
@@ -1068,9 +1070,9 @@ fn unmarshal_map(
             }
         }
         if is_repeated || text.is_none() {
-            let mut refused = value.clone();
-            refused.push((name.to_vec(), actual_json_type(&property.value)));
-            return Some(Json::Object(refused));
+            let mut rejected = value.clone();
+            rejected.push((name.to_vec(), actual_json_type(&property.value)));
+            return Some(Json::Object(rejected));
         }
     }
     None
@@ -1089,7 +1091,7 @@ struct Expected {
 impl Expected {
     /// `Expected.UnmarshalJSON`. `T` is `map[string]string` or `string`.
     fn unmarshal_json(&mut self, data: &JsonValue, is_map: bool, has_duplicates: bool) {
-        let refused = match data {
+        let rejected = match data {
             JsonValue::Null => {
                 *self = Expected {
                     actual: Some(Json::Null),
@@ -1105,15 +1107,15 @@ impl Expected {
             JsonValue::Object(object) if is_map => {
                 let value = self.value.take().and_then(Json::into_object);
                 let mut value = value.unwrap_or_default();
-                let refused = unmarshal_map(object.get(), has_duplicates, &mut value);
+                let rejected = unmarshal_map(object.get(), has_duplicates, &mut value);
                 self.value = Some(Json::Object(value));
-                refused
+                rejected
             }
             _ => Some(actual_json_type(data)),
         };
-        match refused {
+        match rejected {
             None => self.valid = true,
-            Some(_) => self.actual = refused,
+            Some(_) => self.actual = rejected,
         }
     }
 }
@@ -1178,10 +1180,10 @@ fn unmarshal_fields(object: &ObjectJSON, has_duplicates: bool) -> Option<Json> {
                     Some((_, known)) => {
                         // `json.UnmarshalDecode(dec, &v.Value)`, which decodes a string, a boolean and a number,
                         // decodes into the type of the value that `v.Value` already holds.
-                        let fits = matches!(known, Json::Null)
+                        let has_same_type = matches!(known, Json::Null)
                             || matches!(value, Json::Null | Json::Array(_) | Json::Object(_))
                             || std::mem::discriminant(&*known) == std::mem::discriminant(&value);
-                        if !fits {
+                        if !has_same_type {
                             return None;
                         }
                         *known = value;
@@ -1236,7 +1238,7 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
 /// cached for it. A `Disk` lists the directory of whatever it's queried about, which pays off when most of the
 /// directory is queried.
 #[derive(Copy, Clone)]
-pub(crate) struct Asking<'k> {
+pub(crate) struct UncachedDisk<'k> {
     /// `Host::extended_config`
     pub(crate) extended: Option<&'k bun_threading::Guarded<FxHashMap<Vec<u8>, Kept>>>,
     pub(crate) is_case_sensitive: bool,
@@ -1244,10 +1246,10 @@ pub(crate) struct Asking<'k> {
     pub(crate) lists: bool,
 }
 
-impl Asking<'_> {
+impl UncachedDisk<'_> {
     /// `project`: a path in the project, in the checker's path format.
-    pub(crate) fn new(project: &[u8]) -> Asking<'static> {
-        Asking {
+    pub(crate) fn new(project: &[u8]) -> UncachedDisk<'static> {
+        UncachedDisk {
             extended: None,
             is_case_sensitive: is_file_system_case_sensitive(project),
             lists: false,
@@ -1255,18 +1257,18 @@ impl Asking<'_> {
     }
 
     fn is_directory(path: &[u8]) -> Option<bool> {
-        is_directory(Fd::cwd(), for_the_system(&with_root(path))?)
+        is_directory(Fd::cwd(), to_syscall_path(&with_root(path))?)
     }
 }
 
-impl Host for Asking<'_> {
+impl Host for UncachedDisk<'_> {
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         read_at(path, false)
     }
     fn extended_config(&self, path: &[u8]) -> Option<Kept> {
         self.extended?.lock().get(path).cloned()
     }
-    fn keep_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> Kept) {
+    fn cache_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> Kept) {
         if let Some(extended) = self.extended {
             extended.lock().insert(path.to_vec(), parsed());
         }
@@ -1278,7 +1280,7 @@ impl Host for Asking<'_> {
         Self::is_directory(path) == Some(true)
     }
     fn realpath(&self, path: &[u8]) -> Vec<u8> {
-        Disk::ask_for_real_path(path)
+        Disk::query_real_path(path)
     }
     fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
         match self.lists.then(|| list(path)) {
@@ -1330,7 +1332,7 @@ impl Host for Asking<'_> {
 
 /// Number of consecutive indices a thread of a parallel region takes at a time. Adjacent paths are in the same
 /// directory.
-fn run_of(count: usize) -> usize {
+fn chunk_len_for(count: usize) -> usize {
     if count > 1024 { 16 } else { 1 }
 }
 
@@ -1338,7 +1340,7 @@ impl Host for Disk {
     fn extended_config(&self, path: &[u8]) -> Option<Kept> {
         self.extended_configs.lock().get(path).cloned()
     }
-    fn keep_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> Kept) {
+    fn cache_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> Kept) {
         self.extended_configs.lock().insert(path.to_vec(), parsed());
     }
     fn shared_paths(&self, paths: Arc<Paths>) -> Arc<Paths> {
@@ -1370,14 +1372,14 @@ impl Host for Disk {
         if let Some(before_read) = &self.before_read {
             before_read(path);
         }
-        for_the_system(path)?;
+        to_syscall_path(path)?;
         let Split { parent, name } = split(path);
         // Config files and `package.json` are read as JSON, so they never keep the mark.
         let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
-        if name.is_empty() || Self::is_above_listings(parent) {
+        if name.is_empty() || Self::is_never_listed(parent) {
             return read_at(path, keeps_mark);
         }
-        let _turn = self.reading.as_ref().map(Turn::wait_for);
+        let _turn = self.reading.as_ref().map(ReadSlot::wait_for);
         let mut reader = self.take_reader(parent);
         // The second and later files read from a directory are opened relative to the directory. An absolute path makes
         // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a
@@ -1420,7 +1422,7 @@ impl Host for Disk {
         }
         match self.find(path) {
             Some(found) => matches!(found, Some((_, false))),
-            None => self.ask_whether_directory(path) == Some(false),
+            None => self.query_is_directory(path) == Some(false),
         }
     }
     fn is_dir(&self, path: &[u8]) -> bool {
@@ -1429,7 +1431,7 @@ impl Host for Disk {
         }
         match self.find(path) {
             Some(found) => matches!(found, Some((_, true))),
-            None => self.ask_whether_directory(path) == Some(true),
+            None => self.query_is_directory(path) == Some(true),
         }
     }
     fn realpath(&self, path: &[u8]) -> Vec<u8> {
@@ -1506,7 +1508,7 @@ impl Host for Disk {
     fn loaded(&self) {
         // With shares, the threads continue with the next program's files, so they keep the parser's caches.
         if self.shares.lock().is_none() {
-            self.caches.drop_those_of_the_parser();
+            self.caches.drop_parser_caches();
         }
     }
     fn threads(&self) -> usize {
@@ -1526,16 +1528,16 @@ impl Host for Disk {
         }
     }
     fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        crate::for_each_with_helpers(&self.caches, helpers, count, run_of(count), work);
+        crate::for_each_with_helpers(&self.caches, helpers, count, chunk_len_for(count), work);
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        if self.is_of_a_thread_of_the_pool {
+        if self.created_on_pool_thread {
             return self.with_helpers(0, count, work);
         }
-        let run = run_of(count);
+        let run = chunk_len_for(count);
         let shares = self.shares.lock().clone();
         match shares {
-            Some(shares) => crate::for_each_with_a_share(&self.caches, &shares, count, run, work),
+            Some(shares) => crate::for_each_with_share(&self.caches, &shares, count, run, work),
             None => crate::for_each_parallel_in_runs(&self.caches, self.threads, count, run, work),
         }
     }
@@ -1546,11 +1548,11 @@ impl Host for Disk {
         meanwhile: &mut dyn FnMut(),
     ) {
         // In these cases the calling thread is one of the workers.
-        if self.is_of_a_thread_of_the_pool || self.shares.lock().is_some() {
+        if self.created_on_pool_thread || self.shares.lock().is_some() {
             self.parallel(count, work);
             return meanwhile();
         }
-        let run = run_of(count);
+        let run = chunk_len_for(count);
         crate::for_each_parallel_while(&self.caches, self.threads, count, run, work, meanwhile);
     }
 }

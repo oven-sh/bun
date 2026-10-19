@@ -1,7 +1,7 @@
 //! Prettier's `print/comma-separated-value-group.js` and `print/parenthesized-value-group.js`.
 
 use super::Parser as Syntax;
-use super::misc::{ends_before_escaped_blank, ends_with_hex_escape};
+use super::misc::{ends_with_hex_escape, ends_with_unescaped_backslash};
 use super::postcss::Kind;
 use super::printer::{Printer, Statement};
 use super::sink::Separator;
@@ -40,7 +40,7 @@ fn is_math_operator(node: ValueRef<'_>) -> bool {
 }
 
 /// Excludes `/`, which is also a separator, as in `rgb(from a r g b / 50%)` and `font: 1px / 2 a`.
-fn is_operator_of_expression(node: ValueRef<'_>) -> bool {
+fn is_expression_operator(node: ValueRef<'_>) -> bool {
     is_math_operator(node) && !is_division(node)
 }
 
@@ -82,7 +82,7 @@ fn has_empty_raw_before(node: ValueRef<'_>) -> bool {
 }
 
 /// True if there's no whitespace before `node` in the source.
-fn touches_what_is_before(mut node: ValueRef<'_>) -> bool {
+fn has_no_whitespace_before(mut node: ValueRef<'_>) -> bool {
     loop {
         let first = match node.kind() {
             ValueKind::ParenGroup if node.node().open != 0 => Some(node.at(node.node().open)),
@@ -121,10 +121,10 @@ fn end_of_closing_parenthesis(node: ValueRef<'_>) -> Option<u32> {
 }
 
 /// True if `node` ends with a backslash that escapes the whitespace after it.
-fn is_before_escaped_blank(node: ValueRef<'_>) -> bool {
+fn ends_with_escaped_whitespace(node: ValueRef<'_>) -> bool {
     node.kind() == ValueKind::Word
-        && node.value().is_some_and(ends_before_escaped_blank)
-        && node.blanks_behind() > 0
+        && node.value().is_some_and(ends_with_unescaped_backslash)
+        && node.whitespace_after() > 0
 }
 
 fn ends_where_starts(a: ValueRef<'_>, b: ValueRef<'_>) -> bool {
@@ -221,7 +221,7 @@ impl<'a> Printer<'a, '_> {
 
     /// `node` is a `value-comma_group`.
     fn shape_of_comma_group(&self, statement: Statement<'_, 'a>, node: ValueRef<'_>) -> Shape {
-        let at_rule = self.at_rule_around(statement);
+        let at_rule = self.enclosing_at_rule(statement);
         if at_rule.is_some_and(|it| self.is_scss_control_directive(it)) {
             Shape::GroupIndent
         } else if node.groups().len() == 2
@@ -255,7 +255,7 @@ impl<'a> Printer<'a, '_> {
             && declaration_prop
                 .as_ref()
                 .is_some_and(|prop| **prop == *b"grid" || prop.starts_with(b"grid-template"));
-        let at_rule = self.at_rule_around(statement);
+        let at_rule = self.enclosing_at_rule(statement);
         let is_control_directive = at_rule.is_some_and(|it| self.is_scss_control_directive(it));
         let has_inline_comment = node.groups().any(is_inline_comment);
         let is_custom_property = statement.is_custom_property();
@@ -282,8 +282,8 @@ impl<'a> Printer<'a, '_> {
         {
             let mut previous = None;
             for it in node.groups() {
-                if it.id == self.comment_behind_comma {
-                    self.comment_behind_comma = 0;
+                if it.id == self.comment_after_comma {
+                    self.comment_after_comma = 0;
                     continue;
                 }
                 self.value_stack.push(id);
@@ -309,26 +309,26 @@ impl<'a> Printer<'a, '_> {
         let has_expressions = self.is_oxfmt && self.syntax() == Syntax::Scss && !inside_calc;
         let mut is_in_expression = false;
 
-        let written_above = match self.comments_above_item {
+        let comments_printed_above = match self.comments_above_item {
             (item, count) if item == id => count,
             _ => 0,
         };
-        for (i, i_node) in node.groups().enumerate().skip(written_above) {
+        for (i, i_node) in node.groups().enumerate().skip(comments_printed_above) {
             let prev_node = i
                 .checked_sub(1)
-                .filter(|at| *at >= written_above)
+                .filter(|at| *at >= comments_printed_above)
                 .and_then(|at| node.group(at));
             let next_node = node.group(i + 1);
 
-            if i_node.id == self.comment_behind_comma {
-                self.comment_behind_comma = 0;
+            if i_node.id == self.comment_after_comma {
+                self.comment_after_comma = 0;
                 continue;
             }
 
             // `a -1px` is two values.
             let is_operator_at = |at: usize| {
                 node.group(at).is_some_and(|it| {
-                    is_operator_of_expression(it)
+                    is_expression_operator(it)
                         && (has_empty_raw_before(it)
                             || !node.group(at + 1).is_some_and(has_empty_raw_before))
                 })
@@ -339,7 +339,7 @@ impl<'a> Printer<'a, '_> {
                 && is_operator_at(i + 1);
             if !is_in_expression
                 && is_before_operator
-                && prev_node.is_none_or(|it| !is_operator_of_expression(it))
+                && prev_node.is_none_or(|it| !is_expression_operator(it))
             {
                 let mut last = i;
                 while is_operator_at(last + 1)
@@ -423,12 +423,15 @@ impl<'a> Printer<'a, '_> {
             let Some(next_node) = next_node else {
                 // `(b a\ )`, which Prettier prints as `(b a\)`. At the end of the whole value, the declaration's
                 // printer handles this.
-                if is_in_paren_group && is_before_escaped_blank(i_node) && i_node.is_before_more() {
+                if is_in_paren_group
+                    && ends_with_escaped_whitespace(i_node)
+                    && i_node.has_more_after()
+                {
                     self.sink.token(" ");
                 }
                 continue;
             };
-            if is_custom_property && touches_what_is_before(next_node) {
+            if is_custom_property && has_no_whitespace_before(next_node) {
                 continue;
             }
             // `if(condition: value; else: value)`
@@ -509,10 +512,10 @@ impl<'a> Printer<'a, '_> {
             // without digits.
             if i_node.kind() == ValueKind::Number
                 && is_next_word
-                && i_node.blanks_behind() > 0
+                && i_node.whitespace_after() > 0
                 && i_node.number_as_written().is_some_and(ends_with_hex_escape)
             {
-                self.sink.token(match i_node.blanks_behind() {
+                self.sink.token(match i_node.whitespace_after() {
                     1 => " ",
                     _ => "  ",
                 });
@@ -527,13 +530,13 @@ impl<'a> Printer<'a, '_> {
                 // one word.
                 if next_node.node().before == Before::Spaces {
                     let is_word = is_next_word;
-                    match is_before_escaped_blank(i_node) {
-                        true if is_word && i_node.blanks_behind() > 1 => self.sink.token("  "),
+                    match ends_with_escaped_whitespace(i_node) {
+                        true if is_word && i_node.whitespace_after() > 1 => self.sink.token("  "),
                         true => self.sink.token(" "),
                         // `\e9  x`
                         false
                             if is_word
-                                && i_node.blanks_behind() > 1
+                                && i_node.whitespace_after() > 1
                                 && i_value.is_some_and(ends_with_hex_escape) =>
                         {
                             self.sink.token("  ")
@@ -881,7 +884,7 @@ impl<'a> Printer<'a, '_> {
         if !self.is_oxfmt
             || item.kind() != ValueKind::CommaGroup
             || !item.group(0).is_some_and(is_comment)
-            || self.at_rule_around(statement).is_some()
+            || self.enclosing_at_rule(statement).is_some()
         {
             return false;
         }
@@ -891,8 +894,8 @@ impl<'a> Printer<'a, '_> {
         }
         self.sink.start_group(false);
         for comment in item.groups().take(count) {
-            if comment.id == self.comment_behind_comma {
-                self.comment_behind_comma = 0;
+            if comment.id == self.comment_after_comma {
+                self.comment_after_comma = 0;
                 continue;
             }
             self.value_stack.push(list);
@@ -909,7 +912,7 @@ impl<'a> Printer<'a, '_> {
 
     /// oxfmt keeps a `//` comment on the same line as the comma before it. Prettier makes it the first node of `next`,
     /// the item after the comma, on its own line. Returns true if the comment was printed.
-    fn print_comment_behind_comma(
+    fn print_comment_after_comma(
         &mut self,
         statement: Statement<'_, 'a>,
         next: Option<ValueRef<'_>>,
@@ -937,7 +940,7 @@ impl<'a> Printer<'a, '_> {
         self.print_value(statement, comment.id, None);
         self.sink.end_line_suffix();
         self.sink.break_parent();
-        self.comment_behind_comma = comment.id;
+        self.comment_after_comma = comment.id;
         true
     }
 
@@ -1072,25 +1075,26 @@ impl<'a> Printer<'a, '_> {
                     self.sink.start_fill();
                 }
             }
-            let mut is_behind_comment = false;
+            let mut is_after_comment = false;
             for (index, child) in node.groups().enumerate() {
                 if index > 0 {
-                    match (force_hard_line, is_behind_comment) {
+                    match (force_hard_line, is_after_comment) {
                         (true, _) => self.sink.hard_line(),
                         (false, true) => self.sink.fill_separator(Separator::HardLine),
-                        (false, false) if is_custom_property && touches_what_is_before(child) => {}
+                        (false, false) if is_custom_property && has_no_whitespace_before(child) => {
+                        }
                         (false, false) => self.sink.fill_separator(Separator::Line),
                     }
                 }
                 self.print_child_value(statement, id, child.id);
                 if index + 1 < count {
                     // Otherwise the backslash would escape the `,`.
-                    if is_before_escaped_blank(child) {
+                    if ends_with_escaped_whitespace(child) {
                         self.sink.token(" ");
                     }
                     self.sink.token(",");
-                    is_behind_comment =
-                        self.print_comment_behind_comma(statement, node.group(index + 1));
+                    is_after_comment =
+                        self.print_comment_after_comma(statement, node.group(index + 1));
                 }
             }
             if !force_hard_line {
@@ -1155,7 +1159,7 @@ impl<'a> Printer<'a, '_> {
         for (index, child) in node.groups().enumerate() {
             let is_last = index + 1 == count;
             // Prettier turns `f(a,b)` into `f(⏎a,⏎b⏎)`.
-            if index > 0 && !(is_custom_property && touches_what_is_before(child)) {
+            if index > 0 && !(is_custom_property && has_no_whitespace_before(child)) {
                 self.sink.line();
             }
             // In oxfmt the comments before a key don't affect how the pair is laid out.
@@ -1181,7 +1185,7 @@ impl<'a> Printer<'a, '_> {
             self.print_child_value(statement, id, child.id);
             // `(a\ )`, which Prettier prints as `(a\)`. A single word isn't in a comma group, which would otherwise
             // print the space.
-            if is_before_escaped_blank(child) {
+            if ends_with_escaped_whitespace(child) {
                 self.sink.token(" ");
             }
             self.comments_above_item = (0, 0);
@@ -1195,7 +1199,7 @@ impl<'a> Printer<'a, '_> {
 
             if !is_last {
                 self.sink.token(",");
-                self.print_comment_behind_comma(statement, node.group(index + 1));
+                self.print_comment_after_comma(statement, node.group(index + 1));
             } else {
                 let is_only_comments = is_comment(child)
                     || (child.kind() == ValueKind::CommaGroup && child.groups().all(is_comment));

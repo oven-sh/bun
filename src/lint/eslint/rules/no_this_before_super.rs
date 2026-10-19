@@ -34,11 +34,11 @@ pub struct State<'a> {
     func_infos: Vec<FuncInfo<'a>>,
     /// Keyed by `Segment::id`, for the segments of the constructor being checked.
     seg_info_map: FxHashMap<u32, SegmentInfo<'a>>,
-    /// The result of `winding_switches`, computed on first use.
-    winding_switches: Option<Vec<u32>>,
+    /// The result of `switches_with_early_default`, computed on first use.
+    switches_with_early_default: Option<Vec<u32>>,
     /// Only under an oxlint config: the number of enclosing `super()` calls that have the current node in their
     /// arguments and that oxlint already counts as called.
-    called_around: u32,
+    enclosing_called_supers: u32,
 }
 
 impl<'a> State<'a> {
@@ -102,7 +102,7 @@ fn has_this_or_super(node: Node<'_>) -> bool {
 
 /// True if the source has neither word between the start of `constructor` and the last argument of `call`, not counting
 /// the callee.
-fn writes_neither_up_to(constructor: Func<'_>, call: Call<'_>) -> bool {
+fn has_neither_word_up_to(constructor: Func<'_>, call: Call<'_>) -> bool {
     let (file, callee) = (constructor.file(), call.callee().span());
     let end = call.args().last().map_or(callee.end, |it| it.outer_span().end);
     let before = file.slice(Span::new(constructor.span().start, callee.start));
@@ -114,7 +114,7 @@ fn writes_neither_up_to(constructor: Func<'_>, call: Call<'_>) -> bool {
 /// `this` or `super` in the parameters, the signature's types, the statements before it, or its arguments.
 fn calls_super_first(constructor: Func<'_>) -> bool {
     first_super_statement(constructor).is_some_and(|(mut before, call)| {
-        writes_neither_up_to(constructor, call)
+        has_neither_word_up_to(constructor, call)
             || !constructor.params().iter().any(|it| has_this_or_super(it.into()))
                 && !constructor.type_params().iter().any(|it| has_this_or_super(it.into()))
                 && !constructor.return_type().is_some_and(|it| has_this_or_super(it.into()))
@@ -126,26 +126,26 @@ fn calls_super_first(constructor: Func<'_>) -> bool {
 /// Returns the sorted start offsets of the `switch` statements whose `default` isn't the last case. Where such a
 /// statement is unreachable, ESLint still creates a reachable segment without predecessors, so `super()` isn't called
 /// before it.
-fn winding_switches<'a>(file: &'a File<'a>) -> Vec<u32> {
-    let is_winding = |statement: &Stmt| match statement.kind() {
+fn switches_with_early_default<'a>(file: &'a File<'a>) -> Vec<u32> {
+    let has_early_default = |statement: &Stmt| match statement.kind() {
         StmtKind::Switch { cases, .. } => {
             cases.iter().position(|it| it.test().is_none()).is_some_and(|at| at + 1 < cases.len())
         }
         _ => false,
     };
-    let winding = file.stmts_of_kind(StmtTag::Switch).filter(is_winding);
-    let mut starts: Vec<u32> = winding.map(|it| it.span().start).collect();
+    let with_early_default = file.stmts_of_kind(StmtTag::Switch).filter(has_early_default);
+    let mut starts: Vec<u32> = with_early_default.map(|it| it.span().start).collect();
     starts.sort_unstable();
     starts
 }
 
 impl NoThisBeforeSuper {
-    fn has_winding_switch<'a>(constructor: Func<'a>, cx: &mut Cx<'a, Self>) -> bool {
+    fn has_switch_with_early_default<'a>(constructor: Func<'a>, cx: &mut Cx<'a, Self>) -> bool {
         let file = cx.file();
         if !file.has_stmts([StmtTag::Switch]) {
             return false;
         }
-        let starts = cx.state.winding_switches.get_or_insert_with(|| winding_switches(file));
+        let starts = cx.state.switches_with_early_default.get_or_insert_with(|| switches_with_early_default(file));
         let span = constructor.span();
         starts.get(starts.partition_point(|&it| it < span.start)).is_some_and(|&it| it < span.end)
     }
@@ -163,7 +163,7 @@ impl NoThisBeforeSuper {
             }
         }
         cx.state.seg_info_map.clear();
-        cx.state.called_around = 0;
+        cx.state.enclosing_called_supers = 0;
     }
 
     fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -248,11 +248,11 @@ impl NoThisBeforeSuper {
             // counts.
             let call = e.parent().as_expr().and_then(Expr::as_call).filter(|_| is_oxlint);
             if !call.is_some_and(|call| oxlint_contains_this_or_super(call.args())) {
-                cx.state.called_around += u32::from(is_oxlint);
+                cx.state.enclosing_called_supers += u32::from(is_oxlint);
                 return;
             }
         }
-        if e.is_jsx_tag_name() && !is_oxlint || cx.state.called_around > 0 {
+        if e.is_jsx_tag_name() && !is_oxlint || cx.state.enclosing_called_supers > 0 {
             return;
         }
         for segment in cx.state.segments_before_call_of_super().unwrap_or_default() {
@@ -273,7 +273,7 @@ impl NoThisBeforeSuper {
             if oxlint_contains_this_or_super(call.args()) {
                 return;
             }
-            cx.state.called_around = cx.state.called_around.saturating_sub(1);
+            cx.state.enclosing_called_supers = cx.state.enclosing_called_supers.saturating_sub(1);
         }
         Self::mark_as_called(cx);
     }
@@ -306,7 +306,7 @@ impl Rule for NoThisBeforeSuper {
         }
         let constructors = class.members().iter().filter(|it| it.is_constructor());
         for constructor in constructors.filter_map(Member::func).filter(|it| it.has_body()) {
-            if !calls_super_first(constructor) || Self::has_winding_switch(constructor, cx) {
+            if !calls_super_first(constructor) || Self::has_switch_with_early_default(constructor, cx) {
                 self.check_constructor(constructor, cx);
             }
         }

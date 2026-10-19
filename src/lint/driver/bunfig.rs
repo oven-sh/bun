@@ -18,7 +18,7 @@ use bun_clap::Values;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::Step;
-use bun_lint::linter::config::glob_refusal;
+use bun_lint::linter::config::glob_error;
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 use bun_lint::utils::text::number_to_string;
@@ -29,7 +29,7 @@ pub struct Refusal {
     pub message: Vec<u8>,
 }
 
-fn refuse<T>(at: Loc, parts: &[&[u8]]) -> Result<T, Refusal> {
+fn reject<T>(at: Loc, parts: &[&[u8]]) -> Result<T, Refusal> {
     Err(Refusal {
         at,
         message: parts.concat(),
@@ -38,7 +38,7 @@ fn refuse<T>(at: Loc, parts: &[&[u8]]) -> Result<T, Refusal> {
 
 fn expected<T>(what: &str, value: &Expr) -> Result<T, Refusal> {
     let received = value.data.tag_name().as_bytes();
-    refuse(
+    reject(
         value.loc,
         &[b"expected ", what.as_bytes(), b" but received ", received],
     )
@@ -157,7 +157,7 @@ impl Table {
         }
         let positive = |flag: &&'static [u8]| flag.strip_prefix(b"no-").unwrap_or(flag);
         if let Some(flag) = (self.actions.iter()).find(|flag| key_of(positive(flag)) == key) {
-            return refuse(
+            return reject(
                 at,
                 &[
                     b"\"",
@@ -170,14 +170,14 @@ impl Table {
         }
         let section = self.section.as_bytes();
         match self.renamed.iter().find(|it| key_of(it.1) == key) {
-            Some((meant, _)) => refuse(at, &[&not_a_key(key, section, Some(meant))]),
+            Some((meant, _)) => reject(at, &[&not_a_key(key, section, Some(meant))]),
             None => unknown_key(key, at, section, self.keys()),
         }
     }
 
     /// Applies `key = value` as if it were the flag.
     fn set(&self, key: &Key, value: &Expr, set: &mut Set) -> Result<(), Refusal> {
-        give(self.param_of(&key.name, key.at)?, value, set)
+        apply_value(self.param_of(&key.name, key.at)?, value, set)
     }
 }
 
@@ -202,7 +202,7 @@ fn unknown_key<T>(
         .min_by_key(|it| it.0)
         .filter(|it| it.0 <= key.len().max(3) / 3);
     let closest = closest.as_ref().map(|it| &it.1[..]);
-    refuse(at, &[&not_a_key(key, section, closest)])
+    reject(at, &[&not_a_key(key, section, closest)])
 }
 
 fn at(value: &Expr) -> impl Fn(UsageError) -> Refusal {
@@ -211,7 +211,7 @@ fn at(value: &Expr) -> impl Fn(UsageError) -> Refusal {
 }
 
 /// Applies `value` as the value of the flag `param`.
-fn give(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), Refusal> {
+fn apply_value(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), Refusal> {
     let name = param.names.long.unwrap_or_default();
     match (param.takes_value, &value.data) {
         (Values::None, Data::EBoolean(it)) => set(name, None, it.value).map_err(at(value)),
@@ -522,7 +522,7 @@ impl Feature {
                     }
                     _ => b"",
                 };
-                return refuse(
+                return reject(
                     value.loc,
                     &[b"Invalid ", name, b" value: ", &text, b".", hint],
                 );
@@ -547,7 +547,7 @@ impl Feature {
 /// Parses `file`'s `[fmt]` section.
 pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> {
     if let Some(section) = file.get(b"format") {
-        return refuse(
+        return reject(
             section.loc,
             &[b"Unknown section [format]\n  Did you mean [fmt]?"],
         );
@@ -607,8 +607,8 @@ fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, Refusal> {
         }
         _ => return expected("string or array", value),
     };
-    match all.iter().find_map(|it| glob_refusal(it)) {
-        Some(refusal) => refuse(value.loc, &[&refusal]),
+    match all.iter().find_map(|it| glob_error(it)) {
+        Some(refusal) => reject(value.loc, &[&refusal]),
         None => Ok(all),
     }
 }
@@ -623,7 +623,7 @@ fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
         for (key, value) in entries(table)? {
             if key.name == b"parser" {
                 let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
-                give(FORMAT.param(b"parser"), value, set)?;
+                apply_value(FORMAT.param(b"parser"), value, set)?;
                 continue;
             }
             let mut keys = FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
@@ -660,7 +660,7 @@ fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
 fn tables_of<'e>(value: &'e Expr, section: &[u8]) -> Result<&'e [Expr], Refusal> {
     match &value.data {
         Data::EArray(items) => Ok(items.slice()),
-        Data::EObject(_) => refuse(
+        Data::EObject(_) => reject(
             value.loc,
             &[
                 b"\"overrides\" is an array of tables\n  Write [[",
@@ -675,7 +675,7 @@ fn tables_of<'e>(value: &'e Expr, section: &[u8]) -> Result<&'e [Expr], Refusal>
 /// Rejects `item`, an entry of `overrides`, if it has no `files` to say what it applies to.
 fn needs_files(item: &Expr, files: &[Vec<u8>]) -> Result<(), Refusal> {
     match files.is_empty() {
-        true => refuse(item.loc, &[b"an override needs \"files\""]),
+        true => reject(item.loc, &[b"an override needs \"files\""]),
         false => Ok(()),
     }
 }
@@ -819,7 +819,7 @@ fn severity_of(of: &[u8], value: &Expr) -> Result<Severity, Refusal> {
     let written = json_of(value)?;
     let severity = bun_lint::linter::severity_of(&written);
     severity.map_or_else(
-        || refuse(value.loc, &[&crate::native::invalid_severity(of, &written)]),
+        || reject(value.loc, &[&crate::native::invalid_severity(of, &written)]),
         Ok,
     )
 }
@@ -886,7 +886,7 @@ impl Place {
 
 /// One entry of `plugins` in `[lint]`.
 #[derive(Clone, Debug)]
-pub struct PluginOfBunfig {
+pub struct BunfigPlugin {
     /// `name`: the prefix for its rules, if it differs from the plugin's own name.
     pub alias: Option<Vec<u8>>,
     pub at: usize,
@@ -894,7 +894,7 @@ pub struct PluginOfBunfig {
 
 /// Parses `plugins`. An entry is a path or the name of a package, or `{ name = "..", specifier = ".." }`, as in
 /// oxlint's `jsPlugins`.
-fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<PluginOfBunfig>), Refusal> {
+fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<BunfigPlugin>), Refusal> {
     let Data::EArray(items) = &value.data else {
         return expected("array", value);
     };
@@ -913,7 +913,7 @@ fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<PluginOfBunfig>), Refusal>
                         b"name" => {
                             let name = text(value)?;
                             if name.is_empty() {
-                                return refuse(value.loc, &[b"A plugin's name can't be empty"]);
+                                return reject(value.loc, &[b"A plugin's name can't be empty"]);
                             }
                             alias = Some(name);
                         }
@@ -932,13 +932,13 @@ fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<PluginOfBunfig>), Refusal>
             _ => specifier = Some(text(item)?),
         }
         let Some(specifier) = specifier else {
-            return refuse(
+            return reject(
                 item.loc,
                 &[b"A plugin needs a specifier\n  A path, or the name of a package"],
             );
         };
         specifiers.push(specifier);
-        places.push(PluginOfBunfig {
+        places.push(BunfigPlugin {
             alias,
             at: item.loc.start.max(0) as usize,
         });
@@ -948,7 +948,7 @@ fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<PluginOfBunfig>), Refusal>
 
 /// One entry of `[lint.rules]` or of an override's `rules`.
 #[derive(Clone, Debug)]
-pub struct RuleOfBunfig {
+pub struct BunfigRule {
     pub key_at: usize,
     /// `None` if `--rule` has overridden this entry.
     pub setting: Option<Json>,
@@ -958,13 +958,13 @@ pub struct RuleOfBunfig {
 fn json_of(value: &Expr) -> Result<Json, Refusal> {
     let json = bun_lint::json::from_parsed(value);
     json.map_or_else(
-        || refuse(value.loc, &[b"this value is nested too deeply"]),
+        || reject(value.loc, &[b"this value is nested too deeply"]),
         Ok,
     )
 }
 
 /// The return type of [`rules`]: the individual rules, each one's location, and the wildcards.
-type Rules = (Vec<(Vec<u8>, Json)>, Vec<RuleOfBunfig>, Vec<Wildcard>);
+type Rules = (Vec<(Vec<u8>, Json)>, Vec<BunfigRule>, Vec<Wildcard>);
 
 /// Parses `[lint.rules]` or an override's `rules`, and records where each entry is. This doesn't go through `--rule`,
 /// because that flag parses levn, which can't express every string.
@@ -978,7 +978,7 @@ fn rules(table: &Expr) -> Result<Rules, Refusal> {
         let key_at = rule.at.start.max(0) as usize;
         if Wildcard::plugin_of(&rule.name).is_some() {
             if bun_lint::linter::severity_of(&json_of(first)?) != Some(Severity::Off) {
-                return refuse(first.loc, &[&Wildcard::must_be_off(&rule.name)]);
+                return reject(first.loc, &[&Wildcard::must_be_off(&rule.name)]);
             }
             wildcards.push(Wildcard {
                 id: rule.name,
@@ -988,7 +988,7 @@ fn rules(table: &Expr) -> Result<Rules, Refusal> {
         }
         severity_of(&rule.name, first)?;
         let written = json_of(setting)?;
-        places.push(RuleOfBunfig {
+        places.push(BunfigRule {
             key_at,
             setting: Some(written.clone()),
             place: Place::of(setting),
@@ -999,7 +999,7 @@ fn rules(table: &Expr) -> Result<Rules, Refusal> {
 }
 
 /// Parses `[[lint.overrides]]`.
-fn overrides_of_lint(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal> {
+fn lint_overrides(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal> {
     let items = tables_of(value, b"lint")?;
     let one = |item: &Expr| {
         let mut it = crate::cli::Override::default();
@@ -1044,7 +1044,7 @@ fn globals(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
                 message.extend_from_slice(b" is not a valid value for the global ");
                 message.extend_from_slice(&name.name);
                 message.extend_from_slice(b"\n  Expected \"readonly\", \"writable\", or \"off\"");
-                return refuse(value.loc, &[&message]);
+                return reject(value.loc, &[&message]);
             }
         };
         Ok((name.name, Json::String(kind.to_vec())))
@@ -1078,7 +1078,7 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
             b"maxWarnings" => match json_of(value)? {
                 Json::Number(count) if count.fract() == 0.0 => options.max_warnings = count as i64,
                 Json::Number(_) => {
-                    return refuse(value.loc, &[b"maxWarnings must be a whole number"]);
+                    return reject(value.loc, &[b"maxWarnings must be a whole number"]);
                 }
                 _ => return expected("number", value),
             },
@@ -1096,7 +1096,7 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                     .iter()
                     .all(|it| Format::by_name(name, *it).is_none())
                 {
-                    return refuse(value.loc, &[&Format::is_missing(name)]);
+                    return reject(value.loc, &[&Format::unknown_format_error(name)]);
                 }
             }
             b"nativePluginRules" => {
@@ -1137,12 +1137,12 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                     set(flag, Some(&name.name), true).map_err(at(value))?;
                 }
             }
-            b"plugins" => (options.plugin, options.plugins_of_bunfig) = plugins(value)?,
+            b"plugins" => (options.plugin, options.bunfig_plugins) = plugins(value)?,
             b"rules" => {
-                (options.rule, options.rules_of_bunfig, options.wildcards) = rules(value)?;
+                (options.rule, options.bunfig_rules, options.wildcards) = rules(value)?;
             }
             b"settings" => options.settings = settings(value)?,
-            b"overrides" => options.overrides = overrides_of_lint(value)?,
+            b"overrides" => options.overrides = lint_overrides(value)?,
             b"parserOptions" => {
                 for (name, value) in entries(value)? {
                     options.add_parser_options(vec![(name.name, json_of(value)?)]);
@@ -1151,6 +1151,6 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
             _ => LINT.set(&key, value, set)?,
         }
     }
-    options.forget_whose_flags_it_has();
+    options.clear_tool_specific_flags();
     Ok(Some(options))
 }

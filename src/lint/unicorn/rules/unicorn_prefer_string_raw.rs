@@ -40,7 +40,7 @@ impl Rule for PreferStringRaw {
         if found
             .get(found.partition_point(|it| *it < span.start))
             .is_none_or(|it| *it >= span.end)
-            || is_where_no_template_can_be(string_literal)
+            || is_skipped_position(string_literal)
         {
             return;
         }
@@ -69,7 +69,7 @@ impl Rule for PreferStringRaw {
             return;
         }
         cx.report(string_literal, PREFER_STRING_RAW)
-            .called_with_the_name()
+            .called_with_name()
             .fix(|fixer| {
                 // Bun's runtime passes `\u00E9` to a tag as the raw text of `é`, so the string's value would change.
                 if !unescaped.is_ascii() {
@@ -106,7 +106,7 @@ fn unescape_backslash(input: &[u8], quote: u8) -> Option<Vec<u8>> {
 }
 
 /// The positions oxlint skips, judged by the parent. They include a property's value unless the key is a string.
-fn is_where_no_template_can_be(string_literal: Literal) -> bool {
+fn is_skipped_position(string_literal: Literal) -> bool {
     let is_string = |key: Option<Key>| {
         matches!(
             key.map(Key::kind),

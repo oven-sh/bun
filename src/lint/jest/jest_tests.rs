@@ -6,7 +6,7 @@ use crate::jest::{
     ParsedGeneralJestFnCall, PossibleJestNode, Runner, Scopes, for_each_call_named_like,
     get_node_name_vec, is_in_call_or_member, is_type_of_jest_fn_call, is_vitest,
     iter_possible_jest_call_node, iter_possible_jest_call_node_with_scope, mentions_jest_method,
-    parent_expression, parse_general_jest_fn_call, parse_jest_fn_call, tests_as_written,
+    parent_expression, parse_general_jest_fn_call, parse_jest_fn_call, tests_by_name,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -169,8 +169,8 @@ pub(crate) mod valid_describe_callback {
             return;
         }
         let as_function = |arg: Expr<'a>| arg.as_fn().filter(|_| !arg.is_parenthesized());
-        let told_apart = Arguments::of(arguments, ctx.runner);
-        let Some(second) = told_apart.callback else {
+        let parsed_arguments = Arguments::of(arguments, ctx.runner);
+        let Some(second) = parsed_arguments.callback else {
             ctx.report(
                 arguments
                     .first()
@@ -191,7 +191,7 @@ pub(crate) mod valid_describe_callback {
         };
         let Some(func) = as_function(callback) else {
             // We can't tell what an identifier refers to.
-            if !is_for_bun || !told_apart.can_have_callback() {
+            if !is_for_bun || !parsed_arguments.can_have_callback() {
                 ctx.report(callback.outer_span(), SECOND_ARGUMENT_MUST_BE_FUNCTION);
             }
             return;
@@ -778,7 +778,7 @@ pub(crate) mod no_conditional_in_test {
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         let file = ctx.file;
-        let tests = tests_as_written(file, ctx.runner);
+        let tests = tests_by_name(file, ctx.runner);
         if tests.is_empty() {
             return;
         }
@@ -899,7 +899,7 @@ pub(crate) mod no_identical_title {
         let several = title_to_calls.values_mut().filter(|it| it.len() > 1);
         let first =
             |it: &&mut SmallVec<[Titled<'a>; 1]>| it.first().map(|it| it.argument.span().start);
-        for calls in utils::sort::in_order_of(several, first) {
+        for calls in utils::sort::collect_sorted_by_key(several, first) {
             let order = order.get_or_insert_with(|| OxlintOrder::new(ctx.file));
             utils::sort::sort_by_cached_key(calls, |it| order.key(it.possible_jest_node));
             let mut kind_and_spans: Vec<(Span, bool, u32)> = calls
@@ -1305,8 +1305,8 @@ pub(crate) mod prefer_todo {
             return;
         };
         let (callee, arguments) = (call_expr.callee(), call_expr.args());
-        let told_apart = Arguments::of(arguments, ctx.runner);
-        let Some(title) = told_apart.title else {
+        let parsed_arguments = Arguments::of(arguments, ctx.runner);
+        let Some(title) = parsed_arguments.title else {
             return;
         };
         let is_filtered = match callee.as_ident() {
@@ -1328,7 +1328,7 @@ pub(crate) mod prefer_todo {
         if is_filtered
             || !matches!(title.tag(), ExprTag::String | ExprTag::Template)
             || title.is_parenthesized()
-            || !told_apart.callback.is_none_or(is_empty_function)
+            || !parsed_arguments.callback.is_none_or(is_empty_function)
             || !is_type_of_jest_fn_call(
                 ctx.file,
                 possible_jest_node,
@@ -1348,7 +1348,7 @@ pub(crate) mod prefer_todo {
             report = report.help("Replace with `test.todo` or `it.todo`.");
         }
         // The fix never removes `test.if(a)(..)` or the options.
-        if ctx.runner == Runner::Bun && (!is_renamed || told_apart.options.is_some()) {
+        if ctx.runner == Runner::Bun && (!is_renamed || parsed_arguments.options.is_some()) {
             return;
         }
         report.fix(|fixer| {

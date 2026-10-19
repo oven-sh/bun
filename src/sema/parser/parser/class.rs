@@ -21,7 +21,7 @@ struct Heritage {
 }
 
 /// Returns the flags a class member gets from its name. `name_token` is the name's first token.
-pub(crate) fn flags_of_member_name(name_token: T, name_kind: NameKind, key: PropKey) -> Flags {
+pub(crate) fn member_name_flags(name_token: T, name_kind: NameKind, key: PropKey) -> Flags {
     match name_kind {
         _ if name_token == T::BigInt => Flags::LITERAL_NAME,
         NameKind::StringLiteral => Flags::STRING_NAME | Flags::LITERAL_NAME,
@@ -159,14 +159,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     #[track_caller]
-    fn type_arguments_in_no_list(&mut self) {
+    fn discard_type_arguments(&mut self) {
         if !self.recovers() {
             return self.refuse(Refusal::Reported);
         }
         let before = self.checkpoint();
         let (list, _) = self.type_arguments_unchecked();
         self.check_js_type_arguments(list);
-        self.forget_nodes(&before);
+        self.discard_nodes(&before);
     }
 
     /// `parseHeritageClauses` for a class, plus the errors of `checkGrammarClassDeclarationHeritageClauses`.
@@ -225,13 +225,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     if index > 0 || has_extends {
                         // Type arguments that the expression didn't consume aren't stored anywhere.
                         if p.token() == T::LessThan {
-                            p.type_arguments_in_no_list();
+                            p.discard_type_arguments();
                         }
                         other_extends.push(extended);
                         // Skip this if oxc already gave up inside the element.
-                        let is_of_parser = |it: &Diagnostic| it.kind == DiagnosticKind::Parse;
+                        let is_parse_error = |it: &Diagnostic| it.kind == DiagnosticKind::Parse;
                         let found = p.f.diagnostics.get(errors..).unwrap_or_default();
-                        if index > 0 && p.is_for_oxc() && !found.iter().any(is_of_parser) {
+                        if index > 0 && p.is_for_oxc() && !found.iter().any(is_parse_error) {
                             let at = (first_token.0, p.prev_end());
                             oxc::second_base_class(&mut p.f.diagnostics, at);
                         }
@@ -338,7 +338,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         self.next();
         // `GetContainingClass`: a class also contains its heritage clauses.
-        self.classes_around += 1;
+        self.class_depth += 1;
         // `parseNameOfClassDeclarationOrExpression`
         let (mut name, mut name_pos) = (Atom::NONE, unnamed_at);
         if self.is_binding_identifier() && !self.is_implements_clause() {
@@ -402,7 +402,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.expect(T::CloseBrace);
         }
         self.names_are_in_await_context = in_names;
-        self.classes_around -= 1;
+        self.class_depth -= 1;
         if std::mem::replace(&mut self.has_odd_members, has_odd_members) {
             let (written, place) = (&self.s.members[members..], self.place());
             let is_abstract = flags.contains(Flags::ABSTRACT);
@@ -629,7 +629,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let is_keyword =
             name_token == T::Constructor && !(written.contains(Flags::STATIC) && self.is_for_oxc());
         key = declared_key(key, name_token, is_default);
-        flags |= flags_of_member_name(name_token, name_kind, key);
+        flags |= member_name_flags(name_token, name_kind, key);
         // Neither `tryParseConstructorDeclaration` nor a property with a missing name looks for a `?`.
         let mut question = None;
         if self.token() == T::Question
@@ -715,8 +715,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 _ => 1005,
             };
             self.context |= ctx::CLASS_MEMBER;
-            member.func =
-                self.function_rest_or(code, fn_kind, fn_flags, (name, name_pos), start.pos);
+            member.func = self.function_rest_with_error_code(
+                code,
+                fn_kind,
+                fn_flags,
+                (name, name_pos),
+                start.pos,
+            );
         } else {
             // `parsePropertyDeclaration`
             if self.token() == T::Exclamation {
@@ -796,7 +801,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseClassStaticBlockDeclaration`, at `static`.
     fn class_static_block(&mut self, start: Start, first_modifier: usize) {
         if self.is_flow() {
-            self.flow_refuse_decorators(first_modifier);
+            self.flow_reject_decorators(first_modifier);
         }
         // The checker reports modifiers on a static block.
         let modifiers = self.take_modifiers(first_modifier);

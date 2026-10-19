@@ -57,7 +57,7 @@ pub(crate) struct ConfigComment {
     pub(crate) justification: Span,
     /// `// eslint-disable` or `// eslint-enable`. ESLint doesn't let a line comment apply to more than one line, so it
     /// treats these as ordinary comments.
-    pub(crate) is_only_of_oxlint: bool,
+    pub(crate) is_oxlint_only: bool,
 }
 
 /// True if `value`, a comment without its delimiters, could start with a label.
@@ -80,7 +80,10 @@ fn range_in(outer: &[u8], inner: &[u8]) -> Span {
 
 /// `getInlineConfigNodes` as the languages in ESLint's own plugins implement it. Any kind of comment can have any of
 /// these labels, and no other labels are recognized.
-fn config_comments_among(text: &[u8], parsed: &crate::languages::Parsed) -> Vec<ConfigComment> {
+fn config_comments_of_language(
+    text: &[u8],
+    parsed: &crate::languages::Parsed,
+) -> Vec<ConfigComment> {
     let found = parsed.comments.iter().filter_map(|comment| {
         let joined = parsed.joined.iter().find(|it| it.value() == comment.value);
         let value = match joined {
@@ -105,7 +108,7 @@ fn config_comments_among(text: &[u8], parsed: &crate::languages::Parsed) -> Vec<
                 )
         })?;
         Some(ConfigComment {
-            is_only_of_oxlint: false,
+            is_oxlint_only: false,
             span: comment.span,
             label,
             label_span: span_of(directive.label),
@@ -120,7 +123,7 @@ fn config_comments_among(text: &[u8], parsed: &crate::languages::Parsed) -> Vec<
 pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
     let text = file.text();
     if let Some(parsed) = file.parsed() {
-        return config_comments_among(text, parsed);
+        return config_comments_of_language(text, parsed);
     }
     let space = match file.language().is_oxlint {
         true => Space::Unicode,
@@ -143,15 +146,15 @@ pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
         let Some(label) = Label::of(directive.label) else {
             continue;
         };
-        let is_only_of_oxlint = is_line && matches!(label, Label::Disable | Label::Enable);
+        let is_oxlint_only = is_line && matches!(label, Label::Disable | Label::Enable);
         if is_line
-            && !is_only_of_oxlint
+            && !is_oxlint_only
             && !matches!(label, Label::DisableLine | Label::DisableNextLine)
         {
             continue;
         }
         comments.push(ConfigComment {
-            is_only_of_oxlint,
+            is_oxlint_only,
             span,
             label,
             label_span: range_in(text, directive.label),

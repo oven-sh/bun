@@ -21,7 +21,7 @@ enum Tristate {
 enum Ambiguity {
     Allowed,
     /// Anything that isn't definitely a parameter list is rejected.
-    Refused,
+    Disallowed,
 }
 
 /// Returns the context bits for the parameters and body of a function with `flags`.
@@ -139,12 +139,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             FnKind::Decl => 1144,
             _ => 1005,
         };
-        self.function_rest_or(code, kind, flags, (name, name_pos), start)
+        self.function_rest_with_error_code(code, kind, flags, (name, name_pos), start)
     }
 
     /// Like `function_rest`. `code` is the error reported at a token that's neither the body's `{` nor a `;` in its
     /// place.
-    pub(crate) fn function_rest_or(
+    pub(crate) fn function_rest_with_error_code(
         &mut self,
         code: u32,
         kind: FnKind,
@@ -168,7 +168,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let odd_parameters = self.odd_parameters;
         let (this_param, params) = self.parameters(signature_context(flags));
         let parameters = (odd_parameters, this_param);
-        self.note_parameters_of_accessor(kind, params);
+        self.note_odd_accessor_parameters(kind, params);
         let ret = match self.token() {
             T::Colon => {
                 self.next();
@@ -234,7 +234,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let open = self.pos();
         let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::DECORATOR | ctx::CLASS_MEMBER;
         let cleared = cleared | ctx::IN_LOOP | ctx::IN_SWITCH | ctx::OUTSIDE_BODIES;
-        let cleared = cleared | self.disallow_in_if_brackets_end_it();
+        let cleared = cleared | self.disallow_in_if_cleared_by_brackets();
         let saved = self.enter_context(context, cleared);
         let had_await_identifier = self.has_await_identifier;
         // `None` only for a block that recovery parses without its `{`.
@@ -332,7 +332,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 flags,
                 modifiers,
             });
-            if !self.eat(T::Comma) && !self.goes_on_without_comma(ListKind::TypeParameters, element)
+            if !self.eat(T::Comma)
+                && !self.continues_without_comma(ListKind::TypeParameters, element)
             {
                 break;
             }
@@ -394,7 +395,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let strays = self.s.stray_decorators.len();
         self.unary_expression();
         self.s.stray_decorators.truncate(strays);
-        self.forget_nodes(&before);
+        self.discard_nodes(&before);
     }
 
     /// `parseParameters`, at the `(`. Returns the `this` parameter and the other parameters. `context` is the
@@ -415,7 +416,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return (ambiguity == Ambiguity::Allowed).then_some((ParamId::NONE, Span::EMPTY));
         }
         let list = self.parameter_list_if(context, T::CloseParen, ambiguity)?;
-        if !self.expect(T::CloseParen) && ambiguity == Ambiguity::Refused {
+        if !self.expect(T::CloseParen) && ambiguity == Ambiguity::Disallowed {
             return None;
         }
         // `GetThisParameter`: the first parameter, if it's named `this`.
@@ -436,7 +437,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// Sets `rare::ODD_ACCESSOR`. Call after parsing a function's parameters.
     #[inline]
-    pub(crate) fn note_parameters_of_accessor(&mut self, kind: FnKind, params: Span<ParamId>) {
+    pub(crate) fn note_odd_accessor_parameters(&mut self, kind: FnKind, params: Span<ParamId>) {
         let first = self.f.params.get(params.start as usize);
         let is_odd = match kind {
             FnKind::Getter => !params.is_empty(),
@@ -459,7 +460,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// Sets `hir::File::may_bind_a_parameter_twice`. Call after parsing two or more parameters, which are on the stack
     /// from `base` on.
     #[inline]
-    fn note_names_of_parameters(&mut self, base: usize) {
+    fn note_duplicate_parameter_names(&mut self, base: usize) {
         let (pats, params) = (&self.f.pats, self.s.params.get(base..).unwrap_or_default());
         let name_of = |it: &Param| match pats.get(it.pat.idx()) {
             Some(&Pat {
@@ -501,7 +502,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             true => self.cleared_in_types | ctx::TOP_LEVEL,
             false => ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL,
         };
-        let cleared = cleared | self.disallow_in_if_brackets_end_it();
+        let cleared = cleared | self.disallow_in_if_cleared_by_brackets();
         let saved = self.enter_context(context, cleared);
         let suspensions = self.suspensions;
         let base = self.s.params.len();
@@ -513,7 +514,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             if !self.parameter(base, outer_await, ambiguity) {
                 return None;
             }
-            if !self.eat(T::Comma) && !self.goes_on_without_comma(ListKind::Parameters, element) {
+            if !self.eat(T::Comma) && !self.continues_without_comma(ListKind::Parameters, element) {
                 break;
             }
         }
@@ -523,7 +524,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.f.rare_syntax |= rare::SUSPENDS_IN_PARAMETERS;
         }
         if self.s.params.len() > base + 1 {
-            self.note_names_of_parameters(base);
+            self.note_duplicate_parameter_names(base);
         }
         let params: Span<ParamId> = take_span!(self, params, base);
         for index in modifiers..self.s.param_modifiers.len() {
@@ -620,7 +621,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 flags |= Flags::REST;
             }
             // `isParameterNameStart`
-            if ambiguity == Ambiguity::Refused
+            if ambiguity == Ambiguity::Disallowed
                 && !self.is_binding_identifier()
                 && !matches!(self.token(), T::OpenBracket | T::OpenBrace)
             {
@@ -641,7 +642,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             if self.token() == T::Question {
                 self.js_error((self.pos(), 0), 8009, b"?");
-                self.question_of_parameter = self.pos();
+                self.parameter_question_pos = self.pos();
                 self.next();
                 flags |= Flags::OPTIONAL;
             }
@@ -754,11 +755,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `tryParseAsyncSimpleArrowFunctionExpression`, at a `(`, a `<` or `async`.
     pub(crate) fn try_arrow_function(&mut self, allow_return_type: bool) -> Option<ExprId> {
         // For `() =>`, checking the text gives the same answer as scanning the tokens.
-        let is_one = match self.token() == T::OpenParen && self.is_before(b") =>") {
+        let arrow_lookahead = match self.token() == T::OpenParen && self.is_followed_by(b") =>") {
             true => Tristate::True,
             false => self.look_ahead(Self::is_parenthesized_arrow_function),
         };
-        match is_one {
+        match arrow_lookahead {
             Tristate::True => {
                 return self.parenthesized_arrow_function(Tristate::True, true);
             }
@@ -923,20 +924,20 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.parenthesized_arrow_function(Tristate::True, allow_return_type)
     }
 
-    /// `parseParenthesizedArrowFunctionExpression`. `is_one` is the result of the lookahead.
+    /// `parseParenthesizedArrowFunctionExpression`. `arrow_lookahead` is the result of the lookahead.
     fn parenthesized_arrow_function(
         &mut self,
-        is_one: Tristate,
+        arrow_lookahead: Tristate,
         allow_return_type: bool,
     ) -> Option<ExprId> {
-        let allow_ambiguity = is_one == Tristate::True;
+        let allow_ambiguity = arrow_lookahead == Tristate::True;
         let start = self.pos();
         let mut flags = Flags::empty();
         if self.eat(T::Async) {
             flags |= Flags::ASYNC;
         }
         // For oxc, an `async` arrow function's type parameters and return type are parsed in its context, as in
-        // `function_rest_or`.
+        // `function_rest_with_error_code`.
         let in_types = match self.options.dialect.oxc && flags.contains(Flags::ASYNC) {
             true => (ctx::AWAIT, ctx::TOP_LEVEL),
             false => (0, 0),
@@ -946,7 +947,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.context = saved;
         let ambiguity = match allow_ambiguity {
             true => Ambiguity::Allowed,
-            false => Ambiguity::Refused,
+            false => Ambiguity::Disallowed,
         };
         // oxc first parses the parameters as an expression, in the context around the arrow function.
         let around = match self.options.dialect.oxc {

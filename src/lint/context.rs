@@ -30,7 +30,7 @@ pub struct Diagnostic {
     /// name or a span was reported.
     pub node: Option<Packed>,
     /// True if `node` was set explicitly by [`Report::called_with`] and the like, rather than being what was reported.
-    pub states_node: bool,
+    pub has_explicit_node: bool,
     /// True if ESLint was given a position instead of a range, so it reports no `endLine` or `endColumn`.
     pub has_no_end: bool,
     pub when: When,
@@ -94,7 +94,7 @@ pub(crate) struct Sink {
     pub(crate) wants_fixes: Cell<bool>,
     /// True if nothing reads [`Fix::text`] because fixable problems are only counted. A fix often contains its node's
     /// text, so the fixes of n nested nodes add up to O(n²) bytes.
-    pub(crate) drops_texts_of_fixes: Cell<bool>,
+    pub(crate) drops_fix_texts: Cell<bool>,
     /// True if anything reads oxlint's help. Otherwise it isn't looked up.
     pub(crate) wants_help: Cell<bool>,
     /// True if nothing reads [`Diagnostic::message`] and [`Suggestion::message`] because problems are only counted.
@@ -102,10 +102,10 @@ pub(crate) struct Sink {
     pub(crate) drops_messages: Cell<bool>,
     /// The error a rule threw. If several threw, it's the one earliest in the text, which ESLint reaches first.
     pub(crate) thrown: RefCell<Option<Thrown>>,
-    /// [`File::calls_in_turns`]
-    pub(crate) calls_in_turns: OnceCell<Box<[(Span, u32)]>>,
+    /// [`File::jest_calls_in_oxlint_order`]
+    pub(crate) jest_calls_in_oxlint_order: OnceCell<Box<[(Span, u32)]>>,
     /// True if a rule has requested [`File::modules`], so the file may be linted again.
-    pub(crate) asks_about_modules: Cell<bool>,
+    pub(crate) has_requested_modules: Cell<bool>,
     /// The rules of the [pairs](crate::rule_set::Pairs) active on the file. Each entry is the rule's [`CxBase::rule`],
     /// its pair's number in the file, and whether it's the type-aware rule.
     pub(crate) paired: RefCell<SmallVec<[(u16, u8, bool); 8]>>,
@@ -158,8 +158,8 @@ impl File<'_> {
     /// after the nodes, in its own order. `calls` runs once per file and returns the calls sorted by start, longer ones
     /// first, each with its index in oxlint's order.
     #[inline]
-    pub fn calls_in_turns(&self, calls: impl FnOnce() -> Box<[(Span, u32)]>) {
-        self.sink.calls_in_turns.get_or_init(calls);
+    pub fn jest_calls_in_oxlint_order(&self, calls: impl FnOnce() -> Box<[(Span, u32)]>) {
+        self.sink.jest_calls_in_oxlint_order.get_or_init(calls);
     }
 }
 
@@ -322,7 +322,7 @@ impl<'a> CxBase<'a> {
             message: Vec::new(),
             span,
             node,
-            states_node: false,
+            has_explicit_node: false,
             has_no_end: false,
             when: self.meta.reports,
             details: None,
@@ -353,7 +353,7 @@ impl<'a> CxBase<'a> {
             _ => return Ok(whole as u64),
         };
         let name = self.meta.name.as_bytes();
-        match self.file.language().is_oxlint && crate::linter::config::is_rule_of_oxlint(name) {
+        match self.file.language().is_oxlint && crate::linter::config::is_oxlint_rule(name) {
             true => Ok(whole.max(0.0) as u64),
             false => Err(message),
         }
@@ -475,7 +475,7 @@ impl<'a> Report<'a> {
         }
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.node = node.packed_node();
-            diagnostic.states_node = true;
+            diagnostic.has_explicit_node = true;
         }
         self
     }
@@ -489,7 +489,7 @@ impl<'a> Report<'a> {
     pub fn called_with(mut self, node: impl Into<Node<'a>>) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.node = Some(node.into().packed());
-            diagnostic.states_node = true;
+            diagnostic.has_explicit_node = true;
         }
         self
     }
@@ -497,10 +497,10 @@ impl<'a> Report<'a> {
     /// [`Report::called_with`] for when oxlint runs its rule on exactly what's reported, but that's a name, which isn't
     /// a node here.
     #[inline]
-    pub fn called_with_the_name(mut self) -> Self {
+    pub fn called_with_name(mut self) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.node = None;
-            diagnostic.states_node = true;
+            diagnostic.has_explicit_node = true;
         }
         self
     }
@@ -661,7 +661,7 @@ impl<'a> Report<'a> {
 
     #[inline(never)]
     fn set_fix(&mut self, fix: Option<Fix>) {
-        let fix = fix.map(|it| self.as_it_is_read(it));
+        let fix = fix.map(|it| self.without_unread_text(it));
         if self.file.sink.wants_fixes.get()
             && let Some(diagnostic) = &mut self.diagnostic
         {
@@ -671,41 +671,43 @@ impl<'a> Report<'a> {
 
     #[inline(never)]
     fn reads_fixes(&self) -> bool {
-        self.diagnostic.is_some() && (self.file.sink.wants_fixes.get() || self.makes_help_of_fix())
+        self.diagnostic.is_some()
+            && (self.file.sink.wants_fixes.get() || self.derives_help_from_fix())
     }
 
     #[inline]
-    fn as_it_is_read(&self, mut fix: Fix) -> Fix {
-        if self.file.sink.drops_texts_of_fixes.get() {
+    fn without_unread_text(&self, mut fix: Fix) -> Fix {
+        if self.file.sink.drops_fix_texts.get() {
             fix.text = Vec::new();
         }
         fix
     }
 
     #[inline]
-    fn makes_help_of_fix(&self) -> bool {
+    fn derives_help_from_fix(&self) -> bool {
         let help = self.diagnostic.as_ref().and_then(|it| it.constant_help);
-        help.is_some_and(Help::is_of_the_fix)
+        help.is_some_and(Help::is_fix_description)
     }
 
     /// [`IntoFix::into_fix`], plus the help that oxlint derives from the fix.
     #[inline(never)]
     fn merged<F: IntoFix>(&mut self, fix: F) -> Option<Fix> {
-        if !self.makes_help_of_fix() {
+        if !self.derives_help_from_fix() {
             return fix.into_fix(self.file);
         }
-        self.take_help_of(fix.first_fix(), Edits::First);
+        self.set_help_from_fix(fix.first_fix(), Edits::First);
         let fix = fix.into_fix(self.file);
-        self.take_help_of(fix.as_ref(), Edits::All);
+        self.set_help_from_fix(fix.as_ref(), Edits::All);
         fix
     }
 
     /// oxlint's `LintContext::finish_create_fix`: a diagnostic without a help gets `RuleFixer`'s description of the
     /// fix. `of` tells whether `fix` is the first edit or all of them.
     #[inline(never)]
-    fn take_help_of(&mut self, fix: Option<&Fix>, of: Edits) {
+    fn set_help_from_fix(&mut self, fix: Option<&Fix>, of: Edits) {
         let help = self.diagnostic.as_ref().and_then(|it| it.constant_help);
-        let Some(Found::OfTheFix { removes, edits }) = help.map(|it| it.found(Part::Help)) else {
+        let Some(Found::FixDescription { removes, edits }) = help.map(|it| it.found(Part::Help))
+        else {
             return;
         };
         let Some(fix) = fix.filter(|_| edits == of) else {
@@ -752,13 +754,13 @@ impl<'a> Report<'a> {
     /// A suggestion that changes the program's behavior or whether it type checks. ESLint and editors treat it as an
     /// ordinary suggestion. With no config file, `--fix-suggestions` skips it, because that flag applies everything in
     /// one go without review, and only `--fix-dangerously` applies it.
-    pub fn suggest_change_of_behavior<F: IntoFix>(
+    pub fn suggest_behavior_change<F: IntoFix>(
         self,
         message: Message,
         data: &[(&'static str, &[u8])],
         fix: impl FnOnce(Fixer<'a>) -> F,
     ) -> Self {
-        let kind = match self.file.language().stands_alone {
+        let kind = match self.file.language().has_no_foreign_config {
             true => SuggestionKind::DangerousSuggestion,
             false => SuggestionKind::Suggestion,
         };
@@ -824,7 +826,7 @@ impl<'a> Report<'a> {
         let Some(fix) = fix.filter(|_| self.file.sink.wants_fixes.get()) else {
             return;
         };
-        let fix = self.as_it_is_read(fix);
+        let fix = self.without_unread_text(fix);
         let wants_text = !self.file.sink.drops_messages.get();
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.suggestions.push(Suggestion {

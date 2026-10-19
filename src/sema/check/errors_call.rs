@@ -1159,7 +1159,7 @@ impl Checker<'_, '_> {
         for &sig in sigs {
             let params = self.sig_params_with_first(sig, 0);
             let (from, to) = (
-                self.min_argument_count_asked(Some(sig), &params),
+                self.min_argument_count_for(Some(sig), &params),
                 self.parameter_count(&params),
             );
             counts.least = counts.least.min(from);
@@ -1185,7 +1185,7 @@ impl Checker<'_, '_> {
         let mut closest: Option<(usize, SigId)> = None;
         for &sig in sigs {
             let params = self.sig_params_with_first(sig, 0);
-            let least = self.min_argument_count_asked(Some(sig), &params);
+            let least = self.min_argument_count_for(Some(sig), &params);
             if closest.is_none_or(|(fewest, _)| least < fewest) {
                 closest = Some((least, sig));
             }

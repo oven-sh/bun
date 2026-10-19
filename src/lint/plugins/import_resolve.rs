@@ -1,7 +1,7 @@
 //! `resolve` from eslint-module-utils: resolves a specifier from a file with the resolvers in
 //! `settings["import/resolver"]`.
 
-use crate::import_settings::is_of_package;
+use crate::import_settings::is_package_or_file_in_it;
 use bun_core::strings;
 use bun_lint::modules::{Lookup, Modules};
 use bun_lint::paths;
@@ -91,7 +91,8 @@ fn opts(config: Option<&Json>) -> Lookup<'_> {
 
 /// `requireResolver`, combined with the resolver's config. `None` for an unsupported resolver.
 fn require_resolver<'s>(name: &[u8], config: Option<&'s Json>) -> Option<Lookup<'s>> {
-    let is = |short: &[u8], package: &[u8]| name == short || is_of_package(name, package);
+    let is =
+        |short: &[u8], package: &[u8]| name == short || is_package_or_file_in_it(name, package);
     if is(b"node", b"eslint-import-resolver-node") {
         Some(opts(config))
     } else if is(b"typescript", b"eslint-import-resolver-typescript") {

@@ -119,7 +119,7 @@ pub(super) struct TypeNotIterable {
     pub(super) ty: TypeId,
     pub(super) allows_async: bool,
     /// The error node is the iterated expression of a `for..of`.
-    pub(super) is_of_for_of: bool,
+    pub(super) is_for_of_expression: bool,
 }
 
 pub(super) const NO_DIRECTIVE: u32 = u32::MAX;
@@ -602,9 +602,9 @@ impl Checker<'_, '_> {
             .rev()
             .find(|&i| !self.is_part_of(self.stack[i], self.stack[i - 1]))
             .unwrap_or(lowest);
-        let asked_by = (from > floor).then(|| self.stack[from - 1]);
+        let requested_by = (from > floor).then(|| self.stack[from - 1]);
         // `getTypeOfAccessors` of a getter of an object literal calls `getReturnTypeFromBody` itself.
-        let is_return_type_from_body = match asked_by {
+        let is_return_type_from_body = match requested_by {
             Some(Query::Return(..) | Query::ReturnAtFirstLook(..)) => true,
             Some(Query::LiteralProp(file, p)) => self.hir(file)[p].kind == PropKind::Getter,
             _ => false,
@@ -619,7 +619,7 @@ impl Checker<'_, '_> {
             Parent::FnBody(_) => true,
             _ => false,
         };
-        let is_checked_again = match (*self.stack.get(from)?, asked_by) {
+        let is_checked_again = match (*self.stack.get(from)?, requested_by) {
             (Query::Expr(file, e), _) if is_return_type_from_body || is_body(file, e) => {
                 let hir = self.hir(file);
                 is_parenthesized(hir, e)
@@ -787,7 +787,7 @@ impl Checker<'_, '_> {
             && self.is_left_to_an_earlier_file(owner, diagnostic.file)
         {
             let members = std::iter::once(crate::util::fx_hash(&q));
-            self.task.close_ring(|| false, members);
+            self.task.close_cycle(|| false, members);
         }
         self.log_diagnostic(owner, diagnostic);
     }
@@ -885,18 +885,18 @@ impl Checker<'_, '_> {
         file: FileId,
     ) -> bool {
         (self.task.file).is_none_or(|current| self.is_checked_no_later_than(current, file))
-            || self.is_asked_by_check_in_time(owner, in_progress, file)
+            || self.is_requested_by_check_in_time(owner, in_progress, file)
     }
 
     /// `is_reported_in_time_under`, ignoring the task's file.
-    fn is_asked_by_check_in_time(
+    fn is_requested_by_check_in_time(
         &self,
         owner: Option<Query>,
         in_progress: &[Query],
         file: FileId,
     ) -> bool {
         let is_in_time = |visited: FileId| self.is_checked_no_later_than(visited, file);
-        let is_asked_by_check = |q: Query| match q {
+        let is_requested_by_check = |q: Query| match q {
             Query::ParameterSymbol(of, name) => !matches!(
                 self.bound(of).pat_parent[name.idx()],
                 crate::bind::PatParent::Param(p) if self.is_resolved_on_request(of, p)
@@ -913,7 +913,7 @@ impl Checker<'_, '_> {
             _ => true,
         };
         (owner.iter().chain(in_progress))
-            .any(|&q| is_asked_by_check(q) && q.syntax().is_none_or(is_in_time))
+            .any(|&q| is_requested_by_check(q) && q.syntax().is_none_or(is_in_time))
     }
 
     /// True if `checkVariableLikeDeclaration` `returns_before_type_of_symbol` for every name
@@ -934,7 +934,7 @@ impl Checker<'_, '_> {
             && file != NOWHERE.0
             && self.task.file != Some(file)
             && self.reports_semantic_errors(file)
-            && !self.is_asked_by_check_in_time(owner, &self.stack, file)
+            && !self.is_requested_by_check_in_time(owner, &self.stack, file)
     }
 
     /// Takes the diagnostics that a commit publishes. A query's diagnostics go with the query's entry, which the commit
@@ -955,10 +955,10 @@ impl Checker<'_, '_> {
         &mut self,
         is_between_files: bool,
     ) -> Option<[Logged; 2]> {
-        let while_writing_at_once = self.task.logged_while_writing_at_once();
+        let while_writing_immediately = self.task.logged_while_writing_immediately();
         let logged = &mut self.task.diagnostics;
         // See `withhold_until_the_file_ends`.
-        let in_doubt = &self.task.files_in_doubt;
+        let in_doubt = &self.task.uncommitted_files;
         let is_withheld = |q: Query| {
             !matches!(q, Query::Cond(..)) && q.syntax().is_some_and(|file| in_doubt.contains(&file))
         };
@@ -982,7 +982,7 @@ impl Checker<'_, '_> {
             logged.clear();
         }
         let mut directives = Default::default();
-        let [mut of_entries_written_at_once, mut others] = [Vec::new(), Vec::new()];
+        let [mut of_entries_written_immediately, mut others] = [Vec::new(), Vec::new()];
         for (at, (owner, diagnostic)) in taken {
             if diagnostic.is_taken() {
                 continue;
@@ -991,11 +991,11 @@ impl Checker<'_, '_> {
                 continue;
             };
             let owner = owner.filter(|&q| is_same_in_every_task(q));
-            match at < while_writing_at_once && owner.is_some_and(|q| !is_task_independent(q)) {
-                true => of_entries_written_at_once.push((owner, diagnostic)),
+            match at < while_writing_immediately && owner.is_some_and(|q| !is_task_independent(q)) {
+                true => of_entries_written_immediately.push((owner, diagnostic)),
                 false => others.push((owner, diagnostic)),
             }
         }
-        Some([of_entries_written_at_once, others])
+        Some([of_entries_written_immediately, others])
     }
 }

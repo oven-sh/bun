@@ -33,7 +33,7 @@ mod call {
 /// A first byte of a call's result, numbered after those in [`wire::result`].
 const NEEDS_PROCESSOR: u8 = b'3';
 
-const OUT_OF_STEP: &[u8] =
+const PLUGIN_PROTOCOL_ERROR: &[u8] =
     b"Internal error while running JavaScript plugins. This is a bug in Bun.";
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(0);
@@ -58,7 +58,7 @@ pub enum Route {
 #[derive(Debug)]
 pub struct Processor {
     /// No module exports it, so a realm has to run the whole config file to get it.
-    pub needs_the_configuration: bool,
+    pub needs_config_file: bool,
     id: u32,
     /// `[id, location]`
     json: Box<[u8]>,
@@ -74,7 +74,7 @@ impl Processor {
         json.push(b']');
         let is_in_configuration = |it: &Json| it.get(b"config").is_some();
         Arc::new(Processor {
-            needs_the_configuration: is_in_configuration(location)
+            needs_config_file: is_in_configuration(location)
                 || location.get(b"plugin").is_some_and(is_in_configuration),
             id,
             json: json.into(),
@@ -233,7 +233,7 @@ impl Host<'_> {
         text: &[u8],
         lint: &mut (dyn FnMut(bool, Vec<Block>) -> Result<Vec<u8>, Vec<u8>> + Send),
     ) -> Result<Json, Vec<u8>> {
-        let mut outcome = Err(OUT_OF_STEP.to_vec());
+        let mut outcome = Err(PLUGIN_PROTOCOL_ERROR.to_vec());
         // Both calls have to go to the same realm, because a processor remembers a file's blocks.
         self.engine.with_vm(text.len(), &mut |vm| {
             outcome = self.process_in(vm, processor, path, text, lint);
@@ -256,13 +256,13 @@ impl Host<'_> {
         message.extend_from_slice(path);
         message.extend_from_slice(rest);
         let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| {
-            self.serve_any(asked, details, out);
+            self.serve_common(asked, details, out);
         };
         for _ in 0..2 {
             let returned = vm.call(kind, &message, &mut serve)?;
             match returned.split_first() {
                 Some((&result::DONE, json)) => {
-                    return crate::json::parse(json).ok_or_else(|| OUT_OF_STEP.to_vec());
+                    return crate::json::parse(json).ok_or_else(|| PLUGIN_PROTOCOL_ERROR.to_vec());
                 }
                 Some((&result::FAILED, why)) => return Err(why.to_vec()),
                 Some((&NEEDS_PROCESSOR, _)) => {}
@@ -275,7 +275,7 @@ impl Host<'_> {
                 _ => break,
             }
         }
-        Err(OUT_OF_STEP.to_vec())
+        Err(PLUGIN_PROTOCOL_ERROR.to_vec())
     }
 
     fn process_in(
@@ -288,17 +288,17 @@ impl Host<'_> {
     ) -> Result<Json, Vec<u8>> {
         let returned = self.call_processor(vm, call::PREPROCESS, processor, path, text)?;
         let Some(mut parts) = returned.into_array() else {
-            return Err(OUT_OF_STEP.to_vec());
+            return Err(PLUGIN_PROTOCOL_ERROR.to_vec());
         };
         let (Some(found), Some(supports_autofix)) = (parts.pop(), parts.pop()) else {
-            return Err(OUT_OF_STEP.to_vec());
+            return Err(PLUGIN_PROTOCOL_ERROR.to_vec());
         };
         // The processor threw, so that error is the file's only message.
         let Some(supports_autofix) = supports_autofix.as_bool() else {
             return Ok(Json::Array(vec![found]));
         };
         let Some(found) = found.into_array() else {
-            return Err(OUT_OF_STEP.to_vec());
+            return Err(PLUGIN_PROTOCOL_ERROR.to_vec());
         };
         let mut blocks = Vec::with_capacity(found.len());
         for mut block in found {
@@ -309,9 +309,9 @@ impl Host<'_> {
                         path: std::mem::take(path),
                         text: std::mem::take(text),
                     },
-                    _ => return Err(OUT_OF_STEP.to_vec()),
+                    _ => return Err(PLUGIN_PROTOCOL_ERROR.to_vec()),
                 },
-                _ => return Err(OUT_OF_STEP.to_vec()),
+                _ => return Err(PLUGIN_PROTOCOL_ERROR.to_vec()),
             });
         }
         let lists = lint(supports_autofix, blocks)?;

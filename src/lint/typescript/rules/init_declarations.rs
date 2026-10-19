@@ -28,7 +28,7 @@ impl Rule for InitDeclarations {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         // oxlint uses ESLint's rule here, which defaults to `always`. Do the same when there's no package to match.
         let language = file.language();
-        if !self.has_mode && !language.is_oxlint && !language.stands_alone {
+        if !self.has_mode && !language.is_oxlint && !language.has_no_foreign_config {
             return None;
         }
         Some(())

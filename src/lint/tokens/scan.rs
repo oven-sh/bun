@@ -179,7 +179,7 @@ impl Marks {
             }
         }
         if is_typescript {
-            marks.names_of_typescript(file, stops);
+            marks.typescript_names(file, stops);
             marks.strict_mode_keywords(file);
         }
         if marks_accesses {
@@ -229,15 +229,15 @@ impl Marks {
                 .retain(|at| operands.binary_search(at).is_err());
         }
         // TypeScript parses a class's `implements` and an interface's `extends` entries as expressions.
-        let of_classes = hir
+        let class_heritage = hir
             .classes
             .iter()
             .flat_map(|it| [it.implements, it.other_implements]);
-        let of_interfaces = hir
+        let interface_heritage = hir
             .interfaces
             .iter()
             .flat_map(|it| [it.extends, it.other_heritage]);
-        for list in of_classes.chain(of_interfaces) {
+        for list in class_heritage.chain(interface_heritage) {
             for &ty in hir.ids.get(list.range()).unwrap_or_default() {
                 if let Some(TypeNodeKind::Ref { name, .. }) =
                     hir.types.get(ty as usize).map(|ty| ty.kind)
@@ -251,7 +251,7 @@ impl Marks {
         }
     }
 
-    fn names_of_typescript(&mut self, file: &File, stops: ScannerStops) {
+    fn typescript_names(&mut self, file: &File, stops: ScannerStops) {
         let (hir, text) = (&file.hir, file.text());
         for elem in hir.tuple_elems {
             if elem.name.is_some() {
@@ -922,7 +922,7 @@ impl<'a> Scanner<'a> {
         let mut kind = TokenKind::Identifier;
         let word = Word::of_chunk(Chunk::at(text, start), end - start);
         if word != Word::Name {
-            kind = self.kind_of_word(word);
+            kind = self.word_kind(word);
         }
         if kind == TokenKind::Identifier && self.elements > 0 && self.marks.accesses.has(start) {
             kind = TokenKind::JsxIdentifier;
@@ -931,7 +931,7 @@ impl<'a> Scanner<'a> {
     }
 
     /// Returns the token type of the word at the current position.
-    fn kind_of_word(&mut self, word: Word) -> TokenKind {
+    fn word_kind(&mut self, word: Word) -> TokenKind {
         let kind = match (word, self.dialect) {
             (Word::Name, _) => return TokenKind::Identifier,
             (Word::StrictAndEspree, Dialect::Espree { is_es5 }) => {

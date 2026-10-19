@@ -32,7 +32,7 @@ impl Rule for NoConsoleWindowFlash {
         for (call, starter) in launches(cx.file()) {
             let options = LaunchOptions::of(call, starter);
             let is_unknown = matches!(options, LaunchOptions::Unknown);
-            if !is_unknown && !options.has("windowsHide") && !options.shares_a_stream() {
+            if !is_unknown && !options.has("windowsHide") && !options.inherits_a_stream() {
                 cx.report(call.callee(), CONSOLE_WINDOW);
             }
         }

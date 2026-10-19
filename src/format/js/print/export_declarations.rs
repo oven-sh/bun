@@ -25,7 +25,7 @@ fn ignored_variable_declaration_is_copied_with_its_semicolon(f: &Formatter<'_>) 
 ///
 /// Both tools do that after `export`. When the whole statement is ignored, oxfmt prints the `;` according to the
 /// options. See
-/// [`terminator_of_what_is_ignored_follows_semi`](crate::js::format::terminator_of_what_is_ignored_follows_semi).
+/// [`ignored_node_terminator_follows_semi`](crate::js::format::ignored_node_terminator_follows_semi).
 fn is_ignored_with_its_semicolon<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
     let ends_with_its_semicolon = match statement.kind() {
         StmtKind::TypeAlias(_) | StmtKind::ImportEquals(_) => true,

@@ -89,8 +89,8 @@ enum UnderEslint {
     /// The built-in rules, replacing those of the package with this name. The package is still loaded for the rules
     /// that aren't built in. Without a name, it doesn't matter what the config's plugin says it's called. The second
     /// field is the package version that the built-in rules match.
-    InPlaceOf(Option<&'static str>, &'static str),
-    /// Like `InPlaceOf`, for a plugin that defines [languages](crate::languages) and rules for files in those
+    Replaces(Option<&'static str>, &'static str),
+    /// Like `Replaces`, for a plugin that defines [languages](crate::languages) and rules for files in those
     /// languages. Only ESLint has languages, so the plugin doesn't exist with any other config, or without a config.
     Languages(&'static str, &'static str),
     /// The project's package, which has different messages and options. The built-in rules are oxlint's, for an oxlint
@@ -129,7 +129,7 @@ macro_rules! plugins {
             pub(crate) const ALL: &'static [Plugin] = &[$(Plugin::$plugin),*];
 
             const fn names(self) -> Names {
-                use UnderEslint::{Always, Here, InPlaceOf, Languages, Package};
+                use UnderEslint::{Always, Here, Replaces, Languages, Package};
                 match self {
                     $(Plugin::$plugin => Names {
                         prefixes: &$prefixes,
@@ -145,24 +145,24 @@ macro_rules! plugins {
 // The single source of truth for a plugin's names and which implementation runs it. Looking up a rule by name, reading
 // a config's `plugins` and deciding whether to load a package all go through it. oxlint has the `react-hooks` rules in
 // `react`. Two other lists answer different questions: the order in which oxlint searches for a name without a prefix
-// (`PLUGINS_OF_OXLINT`), and the order in which its rules report at the same node (`order_fixes_as_oxlint`).
+// (`OXLINT_PLUGINS`), and the order in which its rules report at the same node (`order_fixes_as_oxlint`).
 plugins! {
     /// `no-debugger`
     Eslint: ["", "eslint"], Always, Whole;
     /// `@typescript-eslint/no-explicit-any`
-    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(None, "8.71.1"), Whole;
+    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], Replaces(None, "8.71.1"), Whole;
     /// `react-hooks/rules-of-hooks`
-    ReactHooks: ["react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react-hooks"), "7.1.1"), Part;
+    ReactHooks: ["react-hooks", "react_hooks"], Replaces(Some("eslint-plugin-react-hooks"), "7.1.1"), Part;
     /// `import/no-cycle`
-    Import: ["import", "import-x"], InPlaceOf(Some("eslint-plugin-import"), "2.32.0"), Part;
+    Import: ["import", "import-x"], Replaces(Some("eslint-plugin-import"), "2.32.0"), Part;
     /// `n/no-unsupported-features/es-syntax`
-    Node: ["n", "node"], InPlaceOf(Some("eslint-plugin-n"), "18.4.1"), Part;
+    Node: ["n", "node"], Replaces(Some("eslint-plugin-n"), "18.4.1"), Part;
     /// `oxc/no-accumulating-spread`
     Oxc: ["oxc"], Here, Part;
     /// `unicorn/no-null`
     Unicorn: ["unicorn"], Package, Part;
     /// `react/jsx-key`
-    React: ["react", "react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react"), "7.37.5"), Part;
+    React: ["react", "react-hooks", "react_hooks"], Replaces(Some("eslint-plugin-react"), "7.37.5"), Part;
     /// `react-perf/jsx-no-new-object-as-prop`
     ReactPerf: ["react-perf", "react_perf"], Package, Part;
     /// `jsx-a11y/alt-text`
@@ -184,7 +184,7 @@ plugins! {
     /// `bun:test/no-focused-tests`
     BunTest: ["bun:test"], Always, Whole;
     /// `prettier/prettier`
-    Prettier: ["prettier"], InPlaceOf(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
+    Prettier: ["prettier"], Replaces(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
     /// `json/no-duplicate-keys`
     Json: ["json"], Languages("@eslint/json", "2.1.1"), Whole;
     /// `markdown/no-html`
@@ -200,7 +200,7 @@ impl Plugin {
         }
     }
 
-    fn is_called(self, prefix: &[u8]) -> bool {
+    fn has_prefix(self, prefix: &[u8]) -> bool {
         self.names()
             .prefixes
             .iter()
@@ -208,7 +208,7 @@ impl Plugin {
     }
 
     /// True if its rules can be configured without listing the plugin. A project plugin with the same name shadows it.
-    pub fn is_always_there(self) -> bool {
+    pub fn is_always_available(self) -> bool {
         self.names().under_eslint == UnderEslint::Always
     }
 
@@ -221,30 +221,30 @@ impl Plugin {
         self.names().has == Has::Nothing
     }
 
-    fn is_only_of_oxlint(self) -> bool {
+    fn is_oxlint_only(self) -> bool {
         self.names().under_eslint == UnderEslint::Package
     }
 
     /// The plugin that a config or comment calls `prefix`, by its usual ESLint name or by one of oxlint's names.
-    pub fn of_prefix(prefix: &[u8]) -> Option<Plugin> {
+    pub fn from_prefix(prefix: &[u8]) -> Option<Plugin> {
         let all = || {
             Plugin::ALL
                 .iter()
                 .copied()
-                .filter(|it| !it.is_only_of_oxlint())
+                .filter(|it| !it.is_oxlint_only())
         };
         // `react-hooks` is also one of oxlint's names for its `react`.
         all()
             .find(|it| it.prefix().as_bytes() == prefix)
-            .or_else(|| all().find(|it| it.is_called(prefix)))
+            .or_else(|| all().find(|it| it.has_prefix(prefix)))
     }
 
     /// Same, for an oxlint config and the comments of a file linted with one. oxlint has more plugins built in. With
     /// ESLint those are packages in the project.
-    pub fn of_oxlint_prefix(prefix: &[u8]) -> Option<Plugin> {
+    pub fn from_oxlint_prefix(prefix: &[u8]) -> Option<Plugin> {
         let mut all = Plugin::ALL.iter().copied();
-        all.find(|it| it.is_only_of_oxlint() && it.is_called(prefix))
-            .or_else(|| Plugin::of_prefix(prefix))
+        all.find(|it| it.is_oxlint_only() && it.has_prefix(prefix))
+            .or_else(|| Plugin::from_prefix(prefix))
             .filter(|it| !matches!(it.names().under_eslint, UnderEslint::Languages(..)))
             .map(Plugin::in_oxlint)
     }
@@ -252,9 +252,9 @@ impl Plugin {
     /// True if the built-in rules replace the package's for the plugin that an ESLint config registers as `prefix`.
     /// That requires the plugin's usual prefix and the matching package. `package` is the name the plugin reports for
     /// itself, if any.
-    pub(crate) fn answers_in_place_of(prefix: &[u8], package: Option<&[u8]>) -> bool {
+    pub(crate) fn replaces_package(prefix: &[u8], package: Option<&[u8]>) -> bool {
         Plugin::ALL.iter().any(|it| match it.names().under_eslint {
-            UnderEslint::InPlaceOf(usual, _) => {
+            UnderEslint::Replaces(usual, _) => {
                 it.prefix().as_bytes() == prefix
                     && (usual.zip(package))
                         .is_none_or(|(usual, package)| usual.as_bytes() == package)
@@ -269,15 +269,13 @@ impl Plugin {
 
     /// True if, with an ESLint config, the built-in rules run for the plugin usually called `prefix`.
     pub fn is_native_under_eslint(prefix: &[u8]) -> bool {
-        Plugin::answers_in_place_of(prefix, None)
+        Plugin::replaces_package(prefix, None)
     }
 
     /// The package version that the built-in rules match, if they replace a package.
     pub fn follows(self) -> Option<&'static str> {
         match self.names().under_eslint {
-            UnderEslint::InPlaceOf(_, version) | UnderEslint::Languages(_, version) => {
-                Some(version)
-            }
+            UnderEslint::Replaces(_, version) | UnderEslint::Languages(_, version) => Some(version),
             UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => None,
         }
     }
@@ -285,7 +283,7 @@ impl Plugin {
     /// The package that the built-in rules replace, if they only replace that specific package.
     pub fn package(self) -> Option<&'static str> {
         match self.names().under_eslint {
-            UnderEslint::InPlaceOf(package, _) => package,
+            UnderEslint::Replaces(package, _) => package,
             UnderEslint::Languages(package, _) => Some(package),
             UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => None,
         }
@@ -558,7 +556,7 @@ impl Meta {
     }
 
     /// True if enabling this rule gets a file type checked, provided the file's config asks for types.
-    pub const fn asks_types(&self) -> bool {
+    pub const fn triggers_type_check(&self) -> bool {
         self.requires_types || self.uses_types
     }
 
@@ -764,7 +762,7 @@ pub struct On {
     members: [u64; 2],
     /// `mention_bit` of each name in `calls` and `members`, and how many there are. If there are more than fit, the
     /// names are unknown.
-    mentions: [u16; On::MOST_MENTIONS],
+    mentions: [u16; On::MAX_MENTIONS],
     mention_count: u8,
     /// A combination of the constants below.
     sorts: u32,
@@ -836,7 +834,7 @@ impl On {
             pats: 0,
             calls: [0; 3],
             members: [0; 2],
-            mentions: [0; On::MOST_MENTIONS],
+            mentions: [0; On::MAX_MENTIONS],
             mention_count: 0,
             sorts: 0,
             nodes: NodeTags::EMPTY,
@@ -907,7 +905,7 @@ impl On {
         self.with_mention_of(name)
     }
 
-    const MOST_MENTIONS: usize = 12;
+    const MAX_MENTIONS: usize = 12;
 
     const fn with_mention_of(mut self, name: &[u8]) -> On {
         let (bit, count) = (
@@ -915,13 +913,13 @@ impl On {
             self.mention_count as usize,
         );
         let mut at = 0;
-        while at < count && at < On::MOST_MENTIONS {
+        while at < count && at < On::MAX_MENTIONS {
             if self.mentions[at] == bit {
                 return self;
             }
             at += 1;
         }
-        if count < On::MOST_MENTIONS {
+        if count < On::MAX_MENTIONS {
             self.mentions[count] = bit;
         }
         self.mention_count = self.mention_count.saturating_add(1);
@@ -979,7 +977,7 @@ impl On {
     /// The groups of `Call`s by name that the rule is called with: see `runner::ByName`. All zero if it's called with
     /// every `Call` or with none.
     #[inline]
-    pub(crate) const fn groups_of_calls(self) -> [u64; 4] {
+    pub(crate) const fn call_name_groups(self) -> [u64; 4] {
         let [low, high, functions] = self.calls;
         match !self.has_expr(ExprTag::Call) && low | high | functions != 0 {
             true => [low, high, functions, 1],
@@ -989,7 +987,7 @@ impl On {
 
     /// Same for `Dot`s.
     #[inline]
-    pub(crate) const fn groups_of_members(self) -> [u64; 4] {
+    pub(crate) const fn member_name_groups(self) -> [u64; 4] {
         let [low, high] = self.members;
         match !self.has_expr(ExprTag::Dot) && low | high != 0 {
             true => [low, high, 0, 1],
@@ -1045,8 +1043,8 @@ impl On {
     pub(crate) const fn rows(self) -> [(usize, u64); 8] {
         let in_every_file = On::SYMBOLS | On::STRING_LITERALS | On::NUMBER_LITERALS;
         let is_always = self.has_later() || self.has(in_every_file) || !self.nodes.is_empty();
-        let named = ((self.groups_of_calls()[3]) << ExprTag::Call as u32)
-            | ((self.groups_of_members()[3]) << ExprTag::Dot as u32);
+        let named = ((self.call_name_groups()[3]) << ExprTag::Call as u32)
+            | ((self.member_name_groups()[3]) << ExprTag::Dot as u32);
         [
             (0, self.exprs | named),
             (On::BINARIES, self.binaries),

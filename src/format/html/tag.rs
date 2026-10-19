@@ -108,7 +108,9 @@ impl<'o> Tags<'_, '_, 'o> {
             Kind::IeConditionalStartComment => b"]><!-->",
             Kind::Interpolation => b"}}",
             Kind::AngularIcuExpression => b"}",
-            Kind::Element if node.has(Flags::IS_SELF_CLOSING) && !self.stays_without_slash(id) => {
+            Kind::Element
+                if node.has(Flags::IS_SELF_CLOSING) && !self.is_verbatim_void_without_slash(id) =>
+            {
                 b"/>"
             }
             _ => b">",
@@ -117,7 +119,7 @@ impl<'o> Tags<'_, '_, 'o> {
 
     /// True if `id` is a void element written without a slash, like `<br>`, and is printed verbatim. The marker it
     /// lends is then `>`. Prettier assumes `/>`, so `<img a=b>c` becomes `<img a=/>c`.
-    fn stays_without_slash(self, id: Id) -> bool {
+    fn is_verbatim_void_without_slash(self, id: Id) -> bool {
         let end = self.tree[id].span.end as usize;
         self.tree.has_prettier_ignore(id)
             && (self.options.original_text.get(..end)).is_some_and(|text| !text.ends_with(b"/>"))
@@ -126,7 +128,7 @@ impl<'o> Tags<'_, '_, 'o> {
     /// True if the contents of `id` are printed verbatim and `id` has no end tag to mark where they end. Prettier
     /// treats the contents as empty: `<pre><b>a</b>` becomes `<pre>>`. Here they're printed through the end of the last
     /// descendant, without adding an end tag.
-    pub(crate) fn is_written_to_its_end(self, id: Id) -> bool {
+    pub(crate) fn is_verbatim_without_end_tag(self, id: Id) -> bool {
         let node = &self.tree[id];
         node.has(Flags::PRESERVES_CONTENT)
             && !(node.flags).intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
@@ -138,7 +140,7 @@ impl<'o> Tags<'_, '_, 'o> {
             .flags
             .intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
             && (self.tree.has_prettier_ignore(id)
-                || self.is_written_to_its_end(id)
+                || self.is_verbatim_without_end_tag(id)
                 || self
                     .tree
                     .parent_of(id)
@@ -317,7 +319,7 @@ impl<'o> Tags<'_, '_, 'o> {
                 start.saturating_sub(self.len_of(|tags, out| tags.opening_tag_end_marker(id, out)));
         }
         let Some(end_span) = node.end_span() else {
-            if !self.is_written_to_its_end(id) {
+            if !self.is_verbatim_without_end_tag(id) {
                 return b"";
             }
             let (mut end, mut at) = (node.span.end, id);

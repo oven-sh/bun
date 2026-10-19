@@ -1,7 +1,7 @@
 //! Runs the project's own Prettier for `bun fmt`, for files in a language that only a Prettier plugin can parse. See
 //! `worker/prettier.js`.
 
-use super::eslint::{NOT_INSTALLED, OUT_OF_STEP};
+use super::eslint::{NOT_INSTALLED, PLUGIN_PROTOCOL_ERROR};
 use super::host::Host;
 use super::wire::{self, result};
 
@@ -38,10 +38,10 @@ impl Host<'_> {
         wire::words(&mut message, &[how.len() as u32]);
         message.extend_from_slice(how);
         message.extend_from_slice(text);
-        let mut returned = Err(OUT_OF_STEP.to_vec());
+        let mut returned = Err(PLUGIN_PROTOCOL_ERROR.to_vec());
         self.engine.with_vm(text.len(), &mut |vm| {
             let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| {
-                self.serve_any(asked, details, out);
+                self.serve_common(asked, details, out);
             };
             returned = vm.call(call::FORMAT, &message, &mut serve);
         })?;
@@ -50,7 +50,7 @@ impl Host<'_> {
             Some((&NOT_INSTALLED, _)) => Err(Unformatted::NotInstalled),
             Some((&MESSAGE, message)) => Err(Unformatted::Message(message.to_vec())),
             Some((&result::FAILED, why)) => Err(why.to_vec().into()),
-            _ => Err(OUT_OF_STEP.to_vec().into()),
+            _ => Err(PLUGIN_PROTOCOL_ERROR.to_vec().into()),
         }
     }
 }

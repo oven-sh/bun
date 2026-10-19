@@ -42,10 +42,10 @@ fn write_call<'a>(
             callee,
             is_in_member_chain: false
         },
-        boundary_behind_callee(f),
+        boundary_after_callee(f),
         call.is_optional().then_some("?."),
         type_arguments(call.type_args(), Node::Expr(e)),
-        boundary_behind_callee(f).filter(|_| !call.type_args().is_empty())
+        boundary_after_callee(f).filter(|_| !call.type_args().is_empty())
     );
 
     if keeps_arguments_on_one_line(e, call, f) {
@@ -71,11 +71,11 @@ fn write_call<'a>(
 fn is_link_of_member_chain<'a>(callee: Expr<'a>, f: &Formatter<'a>) -> bool {
     matches!(callee.tag(), ExprTag::Dot | ExprTag::Index)
         && (!callee.is_chain_root()
-            || (f.context().has_tree_of_babel() && !chain_expression_needs_parentheses(callee, f)))
+            || (f.context().has_babel_tree() && !chain_expression_needs_parentheses(callee, f)))
 }
 
 /// True if the call `e` is printed by [`write_member_chain`].
-pub(crate) fn is_written_as_member_chain<'a>(
+pub(crate) fn is_printed_as_member_chain<'a>(
     e: Expr<'a>,
     call: Call<'a>,
     f: &Formatter<'a>,
@@ -127,9 +127,9 @@ pub(crate) fn write_new_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Form
             callee: call.callee(),
             is_in_member_chain: false
         },
-        boundary_behind_callee(f),
+        boundary_after_callee(f),
         type_arguments(call.type_args(), Node::Expr(e)),
-        boundary_behind_callee(f).filter(|_| !call.type_args().is_empty())
+        boundary_after_callee(f).filter(|_| !call.type_args().is_empty())
     );
     if is_template_on_its_own_line_only_argument(call.args(), f) {
         return write!(f, [head, FormatArgumentsOnOneLine(call.args())]);
@@ -165,7 +165,7 @@ pub(crate) fn write_import_expression<'a>(
 
 /// A comment at the end of the callee's line stays there. oxfmt, like Prettier 3.8, moves it after the call:
 /// `call // comment\n()` is `call(); // comment`.
-fn boundary_behind_callee(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
+fn boundary_after_callee(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
     (!f.options().flavor.is_oxfmt()).then_some(line_suffix_boundary())
 }
 

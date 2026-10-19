@@ -62,7 +62,7 @@ struct TrackingExpectPair<'a> {
 }
 
 /// The arguments' source text, joined with `, `.
-fn text_of_arguments<'a>(arguments: List<'a, Expr<'a>>) -> Vec<u8> {
+fn arguments_text<'a>(arguments: List<'a, Expr<'a>>) -> Vec<u8> {
     let mut text = Vec::new();
     for (i, argument) in arguments.iter().enumerate() {
         text.extend_from_slice(if i > 0 { ", " } else { "" }.as_bytes());
@@ -149,7 +149,7 @@ fn check_statements<'a>(
         }
     }
     for (identifier, expects) in
-        utils::sort::in_order_of(&variables_expected, |it| it.1.span_to_substitute.start)
+        utils::sort::collect_sorted_by_key(&variables_expected, |it| it.1.span_to_substitute.start)
     {
         let (Some(span_to_remove), Some(called_with)) =
             (expects.span_to_remove, expects.called_with)
@@ -161,7 +161,7 @@ fn check_statements<'a>(
             .first_label("Replace with `toHaveBeenCalledExactlyOnceWith`")
             .label(span_to_remove, "Remove this expect");
         report.fix_dangerously(|fixer| {
-            let arguments = text_of_arguments(called_with.args());
+            let arguments = arguments_text(called_with.args());
             let substitute = [
                 b"expect(".as_slice(),
                 identifier.as_slice(),
@@ -199,7 +199,7 @@ fn get_identifier_and_matcher_to_be_expected(
     {
         return None;
     }
-    Some((text_of_arguments(expect_call.expect_arguments?), matcher))
+    Some((arguments_text(expect_call.expect_arguments?), matcher))
 }
 
 /// Spans from the start of the line to one character past the statement, assumed to be the line break.

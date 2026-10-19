@@ -747,7 +747,7 @@ impl Checker<'_, '_> {
         // `interfaceChecked`: once per interface, at the first of its declarations that's checked. `decls` is in merge
         // order, where the scripts come before every `declare global`.
         let order = |&(f, id): &(FileId, InterfaceId)| {
-            self.place_in_program_order(f, self.hir(f)[id].name_pos)
+            self.position_in_program_order(f, self.hir(f)[id].name_pos)
         };
         let first = (interfaces.clone())
             .filter(|&(f, _)| self.reports_semantic_errors(f))

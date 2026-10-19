@@ -279,8 +279,8 @@ impl Checker<'_, '_> {
             return;
         };
         // `GetSemanticJsxChildren`
-        let is_nothing = |child: ExprId| matches!(hir[child].kind, ExprKind::Missing);
-        if hir.ids(jsx.children).all(is_nothing) {
+        let is_missing_child = |child: ExprId| matches!(hir[child].kind, ExprKind::Missing);
+        if hir.ids(jsx.children).all(is_missing_child) {
             return;
         }
         let mut explicitly_specify_children_attribute = false;
@@ -478,7 +478,7 @@ impl Checker<'_, '_> {
             self.error_at(error_node, 2604, &[text]);
             return unresolved(self, TypeId::ERROR);
         }
-        self.look_at_type_nodes(file, jsx.type_args);
+        self.precheck_type_nodes(file, jsx.type_args);
         let type_args = self.types_from_nodes(file, jsx.type_args);
         let node = CallLike::Jsx(j);
         let args = self.effective_call_arguments(file, e, node);

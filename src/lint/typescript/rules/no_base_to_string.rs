@@ -45,11 +45,11 @@ struct Walk<'a> {
     /// Those of them that still have to be examined.
     pending: Vec<Type<'a>>,
     /// The one being examined.
-    looked_into: Option<Type<'a>>,
+    examining: Option<Type<'a>>,
     /// Each type it reached, paired with the type it was reached from.
-    come_across: Vec<(Type<'a>, Option<Type<'a>>)>,
-    /// True if something wasn't [`Usefulness::Always`] since `looked_into` was started.
-    found_other: bool,
+    reached_from: Vec<(Type<'a>, Option<Type<'a>>)>,
+    /// True if something wasn't [`Usefulness::Always`] since `examining` was started.
+    found_non_always: bool,
     /// The result for an array or tuple type, if it doesn't depend on what was in `visited`. Without this cache, a
     /// `[T, T]` of a `[U, U]` of .. is examined two to the power of the depth times.
     known: IdMap<Type<'a>, Usefulness>,
@@ -264,22 +264,22 @@ impl NoBaseToString {
         let mut others = Vec::new();
         while let Some(t) = walk.pending.pop() {
             assumed.push(t);
-            walk.looked_into = Some(t);
-            walk.found_other = false;
+            walk.examining = Some(t);
+            walk.found_non_always = false;
             self.collect_elements_certainty(t, walk);
-            if walk.found_other {
+            if walk.found_non_always {
                 others.push(t);
             }
         }
         walk.assumed = None;
-        let come_across = std::mem::take(&mut walk.come_across);
+        let reached_from = std::mem::take(&mut walk.reached_from);
         if others.is_empty() {
             walk.is_always.extend(assumed.into_iter().map(|t| (t, true)));
             return true;
         }
         // Find every type that contains one of `others`, at any depth.
         let mut around: IdMap<Type<'a>, SmallVec<[Type<'a>; 1]>> = IdMap::new();
-        for (inner, outer) in come_across {
+        for (inner, outer) in reached_from {
             around.get_or_insert_with(inner, SmallVec::new).extend(outer);
         }
         let mut has_other: IdSet<Type<'a>> = others.iter().copied().collect();
@@ -296,13 +296,13 @@ impl NoBaseToString {
 
     fn collect_to_string_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>) -> Usefulness {
         let certainty = self.to_string_certainty(ty, walk);
-        walk.found_other |= certainty != Usefulness::Always;
+        walk.found_non_always |= certainty != Usefulness::Always;
         certainty
     }
 
     fn to_string_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>) -> Usefulness {
         if !bun_core::StackCheck::init().is_safe_to_recurse() {
-            walk.found_other = true;
+            walk.found_non_always = true;
             walk.was_cut_off = true;
             return Usefulness::Always;
         }
@@ -360,13 +360,13 @@ impl NoBaseToString {
             }
             if let Some(assumed) = &mut walk.assumed {
                 if is_always == Some(false) {
-                    walk.found_other = true;
+                    walk.found_non_always = true;
                     return Usefulness::Always;
                 }
                 if assumed.insert(ty) {
                     walk.pending.push(ty);
                 }
-                walk.come_across.push((ty, walk.looked_into));
+                walk.reached_from.push((ty, walk.examining));
                 return Usefulness::Always;
             }
             if is_always.is_none() && self.is_always_on_every_path(ty, walk) {

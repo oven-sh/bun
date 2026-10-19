@@ -87,7 +87,7 @@ fn is_invalid_promise_aggregator_input<'a>(node: Expr<'a>, ty: Type<'a>) -> bool
 /// True for `expect(promise).resolves.toBe(1)` and `expect(promise).rejects.not.toThrow()` from `bun:test`. In
 /// bun-types these matchers return `void`, like the matchers for a plain value, but tests are conventionally written
 /// with `await`.
-fn is_promise_matcher_of_bun_test(node: Expr) -> bool {
+fn is_bun_test_promise_matcher(node: Expr) -> bool {
     let Some(call) = node.as_call() else {
         return false;
     };
@@ -117,7 +117,7 @@ impl AwaitThenable {
             return;
         };
         if needs_to_be_awaited(argument, argument.ty()) != Awaitable::Never
-            || is_promise_matcher_of_bun_test(argument)
+            || is_bun_test_promise_matcher(argument)
         {
             return;
         }
@@ -128,7 +128,7 @@ impl AwaitThenable {
             labels.first("This expression is not Promise-like");
             labels.push(keyword, "");
         };
-        cx.report(place, AWAIT).comments_apply_at(keyword).labels_with(labels).suggest_change_of_behavior(REMOVE_AWAIT, &[], |fixer| {
+        cx.report(place, AWAIT).comments_apply_at(keyword).labels_with(labels).suggest_behavior_change(REMOVE_AWAIT, &[], |fixer| {
             let file = fixer.file();
             let await_keyword = file.tokens_in(node).find(is_await_keyword)?;
             let await_removal_fix = fixer.remove(get_await_token_removal_range(file, await_keyword));
@@ -197,7 +197,7 @@ impl AwaitThenable {
                 labels.first("This value is not async iterable");
                 labels.push(head, "");
             })
-            .suggest_change_of_behavior(CONVERT_TO_ORDINARY_FOR, &[], |fixer| remove_await_token(fixer, node.span()));
+            .suggest_behavior_change(CONVERT_TO_ORDINARY_FOR, &[], |fixer| remove_await_token(fixer, node.span()));
     }
 
     fn check_variable_declaration<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {

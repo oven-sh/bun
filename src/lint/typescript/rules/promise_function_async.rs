@@ -85,7 +85,7 @@ fn add_async<'a>(fixer: Fixer<'a>, node: Func<'a>) -> Option<Fix> {
 }
 
 /// oxlint reports the whole function, starting at its first decorator or modifier.
-fn place<'a>(node: Func<'a>, cx: &Cx<'a, PromiseFunctionAsync>) -> Span {
+fn report_span<'a>(node: Func<'a>, cx: &Cx<'a, PromiseFunctionAsync>) -> Span {
     if cx.language().is_oxlint { node.span() } else { get_function_head_loc(node) }
 }
 
@@ -132,7 +132,7 @@ impl PromiseFunctionAsync {
             && return_types.iter().any(|ty| is_type_flag_set(*ty, TypeFlags::ANY | TypeFlags::UNKNOWN))
         {
             // No fix, because the returned value is unknown.
-            cx.report(place(node, cx), MISSING_ASYNC);
+            cx.report(report_span(node, cx), MISSING_ASYNC);
             return;
         }
 
@@ -164,7 +164,7 @@ impl PromiseFunctionAsync {
             true => MISSING_ASYNC_HYBRID_RETURN,
             false => MISSING_ASYNC,
         };
-        let report = cx.report(place(node, cx), message);
+        let report = cx.report(report_span(node, cx), message);
         match (cx.language().is_oxlint, is_hybrid_return_type) {
             // tsgolint only suggests it.
             (true, true) => report.suggest(MISSING_ASYNC_HYBRID_RETURN_SUGGESTION, |fixer| {

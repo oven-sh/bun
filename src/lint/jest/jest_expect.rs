@@ -3,10 +3,11 @@
 
 use crate::jest::{
     Arguments, AstKind, Ctx, EnclosingFunctions, ExpectError, JestFnKind, JestGeneralFnKind,
-    KnownMemberExpressionParentKind, PossibleJestNode, Runner, Scopes, calls_of_own_test_blocks,
-    convert_pattern, enclosing_function, get_first_node_name, get_node_name, get_node_name_vec,
-    is_type_of_jest_fn_call, is_vitest, is_vitest_import_source, iter_possible_jest_call_node,
-    parse_expect_jest_fn_call, parse_general_jest_fn_call, possible_jest_node_of,
+    KnownMemberExpressionParentKind, PossibleJestNode, Runner, Scopes, convert_pattern,
+    custom_test_block_calls, enclosing_function, get_first_node_name, get_node_name,
+    get_node_name_vec, is_type_of_jest_fn_call, is_vitest, is_vitest_import_source,
+    iter_possible_jest_call_node, parse_expect_jest_fn_call, parse_general_jest_fn_call,
+    possible_jest_node_of,
 };
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk_node};
@@ -252,12 +253,12 @@ pub(crate) mod valid_expect {
 
     /// True if `e`, or the `await` of it, is an expression statement.
     fn is_discarded(e: Expr) -> bool {
-        let is_passed = |it: &AstKind| match it {
+        let is_transparent = |it: &AstKind| match it {
             AstKind::ParenthesizedExpression(..) | AstKind::ChainExpression(_) => true,
             AstKind::Expr(e) => e.tag() == ExprTag::Await,
             _ => false,
         };
-        let mut around = AstKind::Expr(e).ancestors().skip_while(is_passed);
+        let mut around = AstKind::Expr(e).ancestors().skip_while(is_transparent);
         matches!(around.next(), Some(AstKind::Stmt(it)) if it.tag() == StmtTag::Expr)
     }
 
@@ -411,7 +412,7 @@ pub(crate) mod valid_expect_in_promise {
         };
         let (mut pending_promises, mut return_found) = (PendingPromises::default(), false);
         process_statements(statements, &mut pending_promises, &mut return_found, ctx);
-        for span in utils::sort::in_order_of(pending_promises.values(), |it| it.start) {
+        for span in utils::sort::collect_sorted_by_key(pending_promises.values(), |it| it.start) {
             ctx.report(*span, EXPECT_IN_UNHANDLED_PROMISE);
         }
     }
@@ -714,7 +715,7 @@ pub(crate) mod expect_expect {
     }
 
     /// True if every one of `matchers` needs the chain to have a name, and only depends on the chain's first name.
-    fn look_at_first_name_only(matchers: &[AssertFunctionMatcher]) -> bool {
+    fn match_first_name_only(matchers: &[AssertFunctionMatcher]) -> bool {
         matchers.iter().all(|it| match it {
             AssertFunctionMatcher::Exact(expected) => {
                 !expected.is_empty() && !strings::contains_char(expected.as_bytes(), b'.')
@@ -773,7 +774,7 @@ pub(crate) mod expect_expect {
                 false => &self.assert_function_matchers_jest,
             });
             for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner).chain(
-                calls_of_own_test_blocks(ctx, &self.additional_test_block_functions),
+                custom_test_block_calls(ctx, &self.additional_test_block_functions),
             ) {
                 self.run(possible_jest_node, ctx, use_vitest_assertions, &mut visitor);
             }
@@ -837,7 +838,7 @@ pub(crate) mod expect_expect {
 
     /// A node that can be reached in more than one way: an expression being checked (`true`), a visited call, or a
     /// function whose body is visited.
-    type Place<'a> = (bool, Node<'a>);
+    type VisitKey<'a> = (bool, Node<'a>);
 
     /// oxlint's visitor stops at the first assertion. Which one that is doesn't matter, so neither does the visiting
     /// order. Here the nodes to visit wait in a work list.
@@ -848,17 +849,17 @@ pub(crate) mod expect_expect {
     /// a still-open node has been visited. That's how a graph's strongly connected components are found.
     struct AssertionVisitor<'a, 'm> {
         assert_function_matchers: &'m [AssertFunctionMatcher],
-        /// The result of [`look_at_first_name_only`].
+        /// The result of [`match_first_name_only`].
         first_name_only: bool,
         /// True if the file has any assertion at all. Computed on first use.
         has_assertion: Option<bool>,
         pending: Vec<Task<'a>>,
         /// True if an assertion is reachable from the node.
-        known: FxHashMap<Place<'a>, bool>,
+        known: FxHashMap<VisitKey<'a>, bool>,
         /// The nodes whose result isn't known yet, in the order they were first reached.
-        unknown: Vec<Place<'a>>,
+        unknown: Vec<VisitKey<'a>>,
         /// Each node's index in `unknown`.
-        positions: FxHashMap<Place<'a>, u32>,
+        positions: FxHashMap<VisitKey<'a>, u32>,
         /// The nodes being visited, each reached from the previous one: its position, and the lowest position it leads
         /// back to.
         open: Vec<(u32, u32)>,
@@ -868,7 +869,7 @@ pub(crate) mod expect_expect {
         fn new(assert_function_matchers: &'m [AssertFunctionMatcher]) -> Self {
             AssertionVisitor {
                 assert_function_matchers,
-                first_name_only: look_at_first_name_only(assert_function_matchers),
+                first_name_only: match_first_name_only(assert_function_matchers),
                 has_assertion: None,
                 pending: Vec::new(),
                 known: FxHashMap::default(),
@@ -953,21 +954,21 @@ pub(crate) mod expect_expect {
             }
         }
 
-        /// Returns whether an assertion is reachable from `place`, if that's known. `None` means the caller has to
+        /// Returns whether an assertion is reachable from `visit_key`, if that's known. `None` means the caller has to
         /// visit it now.
-        fn enter(&mut self, place: Place<'a>) -> Option<bool> {
-            if let Some(&known) = self.known.get(&place) {
+        fn enter(&mut self, visit_key: VisitKey<'a>) -> Option<bool> {
+            if let Some(&known) = self.known.get(&visit_key) {
                 return Some(known);
             }
-            if let Some(&position) = self.positions.get(&place) {
+            if let Some(&position) = self.positions.get(&visit_key) {
                 if let Some((_, least)) = self.open.last_mut() {
                     *least = position.min(*least);
                 }
                 return Some(false);
             }
             let position = self.unknown.len() as u32;
-            self.unknown.push(place);
-            self.positions.insert(place, position);
+            self.unknown.push(visit_key);
+            self.positions.insert(visit_key, position);
             self.open.push((position, position));
             self.pending.push(Task::Close);
             None
@@ -984,12 +985,12 @@ pub(crate) mod expect_expect {
                 return;
             }
             // Nothing after it leads further back than to it, so none of them reaches an assertion.
-            for place in self
+            for visit_key in self
                 .unknown
                 .drain((position as usize).min(self.unknown.len())..)
             {
-                self.positions.remove(&place);
-                self.known.insert(place, false);
+                self.positions.remove(&visit_key);
+                self.known.insert(visit_key, false);
             }
         }
 
@@ -1018,7 +1019,7 @@ pub(crate) mod expect_expect {
 
         /// True if checking `e`, which is also visited, reaches more than visiting it does. A call and an arrow
         /// function are entered either way.
-        fn is_checked_besides(e: &Expr) -> bool {
+        fn needs_separate_check(e: &Expr) -> bool {
             match e.tag() {
                 ExprTag::Fn => e.as_fn().is_some_and(|it| !it.is_arrow()),
                 tag => matches!(tag, ExprTag::Ident | ExprTag::Await | ExprTag::Array),
@@ -1076,7 +1077,7 @@ pub(crate) mod expect_expect {
                         if let Some(known) = self.enter((false, node)) {
                             return known;
                         }
-                        let checked = call_expr.args().iter().filter(Self::is_checked_besides);
+                        let checked = call_expr.args().iter().filter(Self::needs_separate_check);
                         self.pending.extend(checked.map(Task::Check));
                         self.visit_children(node);
                     }
@@ -1087,7 +1088,7 @@ pub(crate) mod expect_expect {
                 },
                 Node::Stmt(statement) => match statement.kind() {
                     StmtKind::Expr(e) => {
-                        let checked = Some(e).filter(Self::is_checked_besides);
+                        let checked = Some(e).filter(Self::needs_separate_check);
                         self.pending.extend(checked.map(Task::Check));
                         self.pending.push(Task::Visit(Node::Expr(e)));
                     }
@@ -1126,10 +1127,10 @@ pub(crate) mod no_standalone_expect {
 
     /// Caches the results of long walks up the tree, for later walks along the same path.
     #[derive(Default)]
-    struct Places<'a> {
+    struct WalkCaches<'a> {
         functions: EnclosingFunctions<'a>,
         /// True if `expect` may be called in the function.
-        functions_in_place: IdMap<Func<'a>, bool>,
+        function_results: IdMap<Func<'a>, bool>,
         /// `is_var_declarator_or_test_block` of an array, an object or a call.
         blocks: IdMap<Expr<'a>, bool>,
     }
@@ -1143,7 +1144,7 @@ pub(crate) mod no_standalone_expect {
         }
 
         pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>) {
-            let mut places = Places::default();
+            let mut caches = WalkCaches::default();
             for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node)
                 else {
@@ -1158,7 +1159,7 @@ pub(crate) mod no_standalone_expect {
                 {
                     continue;
                 }
-                if !self.is_correct_place_to_call_expect(possible_jest_node.node, &mut places, ctx)
+                if !self.is_correct_place_to_call_expect(possible_jest_node.node, &mut caches, ctx)
                 {
                     ctx.report(jest_fn_call.head.span, NO_STANDALONE_EXPECT);
                 }
@@ -1168,10 +1169,10 @@ pub(crate) mod no_standalone_expect {
         fn is_correct_place_to_call_expect<'a>(
             &self,
             node: Expr<'a>,
-            places: &mut Places<'a>,
+            caches: &mut WalkCaches<'a>,
             ctx: &Ctx<'a, '_>,
         ) -> bool {
-            let (mut at, mut enclosing) = (node.span(), places.functions.of(Node::Expr(node)));
+            let (mut at, mut enclosing) = (node.span(), caches.functions.of(Node::Expr(node)));
             // The functions the walk has exited. The result found further up applies to each of them.
             let mut passed = SmallVec::<[Func<'a>; 8]>::new();
             let mut is_correct = false;
@@ -1186,12 +1187,12 @@ pub(crate) mod no_standalone_expect {
                     // `function foo() { expect(1).toBe(1); }`, `test('foo', function () { expect(1).toBe(1) })`,
                     // `const foo = () => expect(1).toBe(1)`
                     is_correct = function.as_stmt().is_some()
-                        || self.is_var_declarator_or_test_block(function.parent(), places, ctx);
+                        || self.is_var_declarator_or_test_block(function.parent(), caches, ctx);
                     if is_correct {
                         break;
                     }
                 }
-                if let Some(&known) = places.functions_in_place.get(func) {
+                if let Some(&known) = caches.function_results.get(func) {
                     is_correct = known;
                     break;
                 }
@@ -1200,8 +1201,8 @@ pub(crate) mod no_standalone_expect {
                 enclosing = enclosing_function(func);
             }
             if passed.spilled() {
-                places
-                    .functions_in_place
+                caches
+                    .function_results
                     .extend(passed.iter().map(|it| (*it, is_correct)));
             }
             is_correct
@@ -1210,24 +1211,24 @@ pub(crate) mod no_standalone_expect {
         fn is_var_declarator_or_test_block<'a>(
             &self,
             node: AstKind<'a>,
-            places: &mut Places<'a>,
+            caches: &mut WalkCaches<'a>,
             ctx: &Ctx<'a, '_>,
         ) -> bool {
             // The arrays, objects and calls the walk has exited. The answer is the same for each of them.
             let mut passed = SmallVec::<[Expr<'a>; 8]>::new();
-            let answer = self.is_var_declarator_or_test_block_unless_known(
+            let answer = self.is_var_declarator_or_test_block_uncached(
                 node,
-                &places.blocks,
+                &caches.blocks,
                 &mut passed,
                 ctx,
             );
             if passed.spilled() {
-                places.blocks.extend(passed.iter().map(|it| (*it, answer)));
+                caches.blocks.extend(passed.iter().map(|it| (*it, answer)));
             }
             answer
         }
 
-        fn is_var_declarator_or_test_block_unless_known<'a>(
+        fn is_var_declarator_or_test_block_uncached<'a>(
             &self,
             node: AstKind<'a>,
             known: &IdMap<Expr<'a>, bool>,
@@ -1410,7 +1411,7 @@ pub(crate) mod max_expects {
     );
 
     /// True if `func` is an argument of a call or is called right where it's written, and isn't a test's callback.
-    fn runs_with_what_is_around<'a>(ctx: &Ctx<'a, '_>, func: Func<'a>) -> bool {
+    fn runs_inline<'a>(ctx: &Ctx<'a, '_>, func: Func<'a>) -> bool {
         matches!(
             func.owner().as_expr().map(|it| it.parent()),
             Some(Node::Expr(call)) if call.tag() == ExprTag::Call && !is_type_of_jest_fn_call(
@@ -1439,7 +1440,7 @@ pub(crate) mod max_expects {
                 Runner::Jest | Runner::Vitest => (scopes.of(node), max.max(1)),
                 Runner::Bun => (
                     functions.find(node, |_, parent| match parent {
-                        Node::Func(func) if !runs_with_what_is_around(ctx, func) => Some(parent),
+                        Node::Func(func) if !runs_inline(ctx, func) => Some(parent),
                         _ => None,
                     }),
                     max,

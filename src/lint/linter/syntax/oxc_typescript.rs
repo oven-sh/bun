@@ -7,7 +7,7 @@
 //!
 //! Our parser also parses TypeScript-only syntax in a JavaScript file and records a diagnostic for it
 //! (`DiagnosticKind::Js`). oxc's parser doesn't accept that syntax, and mostly gives up at the first token that isn't
-//! JavaScript. [`of_javascript`] produces its errors.
+//! JavaScript. [`translate_js_diagnostic`] produces its errors.
 //!
 //! Every condition, message and label was verified against oxlint 1.87.
 
@@ -43,7 +43,7 @@ pub(super) fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<Synta
         DiagnosticKind::Oxc => Stage::Parser,
         DiagnosticKind::OxcFatal => Stage::Fatal,
         DiagnosticKind::OxcSemantic => Stage::Semantic,
-        DiagnosticKind::Grammar => return of_grammar(file, it),
+        DiagnosticKind::Grammar => return translate_grammar_error(file, it),
         _ => return None,
     };
     let message = it.args.first().map_or_else(Vec::new, |it| it.to_vec());
@@ -85,7 +85,7 @@ fn brackets_around<'a>(file: &'a File<'a>, inside: u32) -> Span {
 /// same code. Every grammar error was tried. oxc accepts `let a: unique number` (1005), `A<T,>` (1009),
 /// `import.source("a")` (18061) and `Array<?>` (8020).
 #[optimize(size)]
-fn of_grammar<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
+fn translate_grammar_error<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
     if file.is_in_jsdoc(it.start) {
         return None;
     }
@@ -254,7 +254,7 @@ fn modules<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
                 }
             });
             if file.has_rare_syntax(rare::EXPORT_ASSIGNMENT) {
-                export_assignments_beside_exports(file, raw, whole().end, all);
+                export_assignments_with_other_exports(file, raw, whole().end, all);
             }
             continue;
         }
@@ -440,12 +440,12 @@ fn loop_heads<'a>(file: &'a File<'a>, has_scopes: bool, all: &mut Vec<SyntaxErro
         if only.init.is_some() {
             let is_lexical = only.kind != VarKind::Var;
             // Annex B allows `for (var a = 1 in b)` in sloppy mode.
-            let is_taken = word == "in"
+            let is_accepted = word == "in"
                 && !is_lexical
                 && matches!(name.kind, PatKind::Ident(_))
                 && (!has_scopes
                     || !is_strict_mode(Node::Stmt(Stmt::from_raw(file, i as u32)).scope(), file));
-            if !is_taken {
+            if !is_accepted {
                 let message =
                     format!("for-{word} loop variable declaration may not have an initializer");
                 let stage = match word == "in" && is_lexical {
@@ -479,7 +479,7 @@ fn loop_heads<'a>(file: &'a File<'a>, has_scopes: bool, all: &mut Vec<SyntaxErro
 
 /// `export = a` in the body of a `declare module "m" {}` that also exports something else. `end` is the end of the
 /// declaration.
-fn export_assignments_beside_exports<'a>(
+fn export_assignments_with_other_exports<'a>(
     file: &'a File<'a>,
     module: &hir::Module,
     end: u32,
@@ -857,14 +857,14 @@ fn type_as_expression<'a>(file: &'a File<'a>, arrow: &hir::Func) -> SyntaxError 
 fn after_arrow_function<'a>(file: &'a File<'a>, arrow: &hir::Func) -> SyntaxError {
     let hir = &file.hir;
     let is_same = |it: &hir::Func| it.anchor == arrow.anchor;
-    let is_it = |it: &&hir::Expr| match it.kind {
+    let is_match = |it: &&hir::Expr| match it.kind {
         ExprKind::Fn(id) => hir.fns.get(id.idx()).is_some_and(is_same),
         _ => false,
     };
     let end = hir
         .exprs
         .iter()
-        .find(is_it)
+        .find(is_match)
         .map_or(arrow.anchor, |it| it.end);
     after_expression(file, skip_trivia(file.text(), end))
 }
@@ -921,14 +921,14 @@ fn default_interface<'a>(file: &'a File<'a>, name: u32, all: &mut Vec<SyntaxErro
 /// oxc's parser error for a diagnostic that TypeScript's parser recorded in a JavaScript file. Our parser reports the
 /// ones about modifiers and decorators itself.
 #[optimize(size)]
-fn of_javascript<'a>(file: &'a File<'a>, it: &Diagnostic, all: &mut Vec<SyntaxError>) {
+fn translate_js_diagnostic<'a>(file: &'a File<'a>, it: &Diagnostic, all: &mut Vec<SyntaxError>) {
     if file.is_in_jsdoc(it.start) {
         return;
     }
     let (hir, text) = (&file.hir, file.text());
     let argument = it.args.first().map_or(&b""[..], |it| &it[..]);
     let first = token_at(file, it.start);
-    let is_it = |ty: hir::TypeNodeId| {
+    let is_match = |ty: hir::TypeNodeId| {
         let ty = hir.types.get(ty.idx());
         ty.is_some_and(|ty| (ty.pos, ty.end) == (it.start, it.end))
     };
@@ -940,10 +940,10 @@ fn of_javascript<'a>(file: &'a File<'a>, it: &Diagnostic, all: &mut Vec<SyntaxEr
         8010 => {
             let colon = colon_before(file, it.start);
             let before_colon = file.end_of_token_before(colon);
-            if let Some(it) = hir.var_decls.iter().find(|it| is_it(it.ty)) {
+            if let Some(it) = hir.var_decls.iter().find(|it| is_match(it.ty)) {
                 return variable_with_type(file, it, colon, all);
             }
-            if let Some(index) = hir.params.iter().position(|it| is_it(it.ty)) {
+            if let Some(index) = hir.params.iter().position(|it| is_match(it.ty)) {
                 let mut signatures = hir
                     .fns
                     .iter()
@@ -952,12 +952,12 @@ fn of_javascript<'a>(file: &'a File<'a>, it: &Diagnostic, all: &mut Vec<SyntaxEr
                     true => unexpected_at(file, colon),
                     false => in_list(file, colon, (b'(', b')')),
                 }
-            } else if let Some(member) = hir.members.iter().find(|it| is_it(it.ty)) {
+            } else if let Some(member) = hir.members.iter().find(|it| is_match(it.ty)) {
                 match member.flags.contains(Flags::ACCESSOR) {
                     true => semicolon_after(before_colon),
                     false => expected(file, "`;`", colon),
                 }
-            } else if let Some(func) = hir.fns.iter().find(|it| is_it(it.ret)) {
+            } else if let Some(func) = hir.fns.iter().find(|it| is_match(it.ret)) {
                 let open = file.end_of_token_before(before_colon.saturating_sub(1));
                 match func.kind {
                     FnKind::Expr => expected(file, "`{`", colon),
@@ -1009,9 +1009,9 @@ fn of_javascript<'a>(file: &'a File<'a>, it: &Diagnostic, all: &mut Vec<SyntaxEr
             }
         }
         8009 if argument == b"?" => {
-            let is_it =
+            let is_match =
                 |it: &hir::Param| it.flags.contains(Flags::OPTIONAL) && follows_name(it.pat);
-            let Some(index) = hir.params.iter().position(is_it) else {
+            let Some(index) = hir.params.iter().position(is_match) else {
                 // oxc accepts it after a class member's name.
                 return;
             };
@@ -1213,7 +1213,7 @@ pub(super) fn noted<'a>(file: &'a File<'a>, stop: Option<usize>) -> Vec<SyntaxEr
     let (mut all, mut found) = (Vec::new(), Vec::new());
     for (place, it) in diagnostics.iter().enumerate() {
         match it.kind {
-            DiagnosticKind::Js => of_javascript(file, it, &mut found),
+            DiagnosticKind::Js => translate_js_diagnostic(file, it, &mut found),
             _ => found.extend(of_parser(file, it)),
         }
         let is_late = it.kind == DiagnosticKind::Js || stop.is_some_and(|stop| place > stop);

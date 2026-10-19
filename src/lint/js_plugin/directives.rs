@@ -23,7 +23,7 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Utf16OffsetTable, out: &mu
     let mut comments = file.comments().zip(0u32..).peekable();
     for it in file.config_comments() {
         // ESLint ignores `// eslint-disable` and `oxlint-disable`.
-        if it.is_only_of_oxlint || file.slice(it.label_span).starts_with(b"oxlint") {
+        if it.is_oxlint_only || file.slice(it.label_span).starts_with(b"oxlint") {
             continue;
         }
         // Both lists are in source order.

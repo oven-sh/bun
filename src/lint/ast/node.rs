@@ -256,7 +256,7 @@ impl<'a> Node<'a> {
         match self {
             Node::Expr(e) => e.parent(),
             Node::Stmt(s) => s.parent(),
-            _ => self.parent_of_neither_expr_nor_stmt(),
+            _ => self.parent_of_other_node(),
         }
     }
 
@@ -303,15 +303,15 @@ impl<'a> Node<'a> {
         }
     }
 
-    pub(super) fn parent_of_neither_expr_nor_stmt(self) -> Node<'a> {
+    pub(super) fn parent_of_other_node(self) -> Node<'a> {
         match self.file().hides_casts {
-            true => self.parent_where_casts_are_hidden(),
+            true => self.parent_with_hidden_casts(),
             false => self.parent_of_any(),
         }
     }
 
     #[inline(never)]
-    fn parent_where_casts_are_hidden(self) -> Node<'a> {
+    fn parent_with_hidden_casts(self) -> Node<'a> {
         self.parent_of_any()
     }
 
@@ -339,7 +339,7 @@ impl<'a> Node<'a> {
                 Some(&PatParent::Param(p)) => Node::Param(Param::new(file, p)),
                 Some(&PatParent::Prop(_, prop)) => Node::PatProp(PatProp::new(file, prop)),
                 Some(&PatParent::Elem(_, elem)) => Node::PatElem(PatElem::new(file, elem)),
-                Some(PatParent::None) | None => self.parent_that_the_binder_has_not(),
+                Some(PatParent::None) | None => self.parent_not_in_binder(),
             },
             Node::PatProp(p) => owner_of_pattern(p.value().id()),
             Node::PatElem(e) => owner_of_pattern(
@@ -361,9 +361,7 @@ impl<'a> Node<'a> {
                 Some(&MemberOwner::TypeLiteral(t)) => Node::Type(TypeNode::new(file, t)),
                 Some(MemberOwner::None) | None => Node::File(file),
             },
-            Node::Prop(_) if !hir.import_attributes.is_empty() => {
-                self.parent_that_the_binder_has_not()
-            }
+            Node::Prop(_) if !hir.import_attributes.is_empty() => self.parent_not_in_binder(),
             Node::Prop(p) => match bound.prop_owner.get(p.id().idx()) {
                 Some(&owner) if owner.is_some() => Node::Expr(Expr::new(file, owner)),
                 _ => Node::File(file),
@@ -376,16 +374,14 @@ impl<'a> Node<'a> {
             }
             Node::ImportSpec(s) => Node::Stmt(s.import().stmt()),
             Node::ExportSpec(s) => Node::Stmt(s.export().stmt()),
-            Node::Type(_) | Node::TypeParam(_) | Node::TupleElem(_) => {
-                self.parent_that_the_binder_has_not()
-            }
+            Node::Type(_) | Node::TypeParam(_) | Node::TupleElem(_) => self.parent_not_in_binder(),
         }
     }
 
     /// The parents the binder doesn't record: of type syntax, of the `this` of a `this` parameter, and of a property in
     /// a file with import attributes.
     #[inline(never)]
-    fn parent_that_the_binder_has_not(self) -> Node<'a> {
+    fn parent_not_in_binder(self) -> Node<'a> {
         let file = self.file();
         let unpack =
             |parent: Option<&Packed>| parent.map_or(Node::File(file), |it| it.unpack(file));
@@ -447,7 +443,7 @@ impl<'a> Expr<'a> {
     fn parent_in_general(self) -> Node<'a> {
         let file = self.file;
         if !file.hides_casts {
-            let is_in_no_type = file.bound.type_query_operands.is_empty();
+            let has_no_type_queries = file.bound.type_query_operands.is_empty();
             match file.bound.parent_of_expr(self.id) {
                 Parent::VarInit(d) => return Node::VarDecl(VarDecl::new(file, d)),
                 Parent::Prop(p) if file.hir.import_attributes.is_empty() => {
@@ -459,14 +455,14 @@ impl<'a> Expr<'a> {
                         | Some(hir::Stmt {
                             kind: hir::StmtKind::Expr(_),
                             ..
-                        }) => is_in_no_type && file.is_plainly_no_wrapper(s),
+                        }) => has_no_type_queries && file.is_clearly_not_wrapper(s),
                         Some(_) => true,
                     } =>
                 {
                     return Node::Stmt(Stmt::new(file, s));
                 }
-                Parent::FnBody(f) if is_in_no_type => return Node::Func(Func::new(file, f)),
-                Parent::MemberInit(m) if is_in_no_type => {
+                Parent::FnBody(f) if has_no_type_queries => return Node::Func(Func::new(file, f)),
+                Parent::MemberInit(m) if has_no_type_queries => {
                     return Node::Member(Member::new(file, m));
                 }
                 _ => {}
@@ -880,7 +876,7 @@ impl Parents {
 impl File<'_> {
     /// True if its parent's kind alone shows that the expression statement `id` isn't a [wrapper](Stmt::is_wrapper).
     #[inline(always)]
-    fn is_plainly_no_wrapper(&self, id: hir::StmtId) -> bool {
+    fn is_clearly_not_wrapper(&self, id: hir::StmtId) -> bool {
         let Parent::Stmt(parent) = self.bound.parent_of_stmt(id) else {
             return true;
         };
@@ -902,11 +898,11 @@ impl File<'_> {
 
     /// True if the type `id` is inside an error type whose operand isn't a node, like `T?`.
     #[inline]
-    pub(super) fn is_in_type_that_is_an_error(&self, id: hir::TypeNodeId) -> bool {
+    pub(super) fn is_in_error_type(&self, id: hir::TypeNodeId) -> bool {
         let is_error = |it: &hir::TypeNode| matches!(it.kind, hir::TypeNodeKind::JSDoc { .. });
         *self
             .lazy
-            .has_types_that_are_errors
+            .has_error_types
             .get_or_init(|| self.hir.types.iter().any(is_error))
             && self.parents().is_in_error(&self.hir, id)
     }

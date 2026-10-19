@@ -61,7 +61,7 @@ pub(crate) struct ExpressionTypes<'a> {
     /// The stack of expressions currently being evaluated.
     tracked: Vec<Expr<'a>>,
     /// The lowest index in `tracked` of an expression that was reached again (a cycle) since the top one was pushed.
-    came_again_to: Option<usize>,
+    lowest_cycle_index: Option<usize>,
     /// The cached result for an expression at a given depth of `tracked`. Only cached if it doesn't depend on what else
     /// was on the stack.
     known: FxHashMap<(Expr<'a>, usize), Option<&'static str>>,
@@ -76,21 +76,23 @@ impl<'a> ExpressionTypes<'a> {
             return None;
         }
         if let Some(at) = self.tracked.iter().position(|it| *it == node) {
-            self.came_again_to = Some(self.came_again_to.map_or(at, |it| it.min(at)));
+            self.lowest_cycle_index = Some(self.lowest_cycle_index.map_or(at, |it| it.min(at)));
             return None;
         }
         if let Some(&known) = self.known.get(&(node, depth)) {
             return known;
         }
-        let before = self.came_again_to.take();
+        let before = self.lowest_cycle_index.take();
         self.tracked.push(node);
         let result = self.compute(node);
         self.tracked.pop();
-        if self.came_again_to.is_none_or(|it| it >= depth) {
-            self.came_again_to = before;
+        if self.lowest_cycle_index.is_none_or(|it| it >= depth) {
+            self.lowest_cycle_index = before;
             self.known.insert((node, depth), result);
         } else {
-            self.came_again_to = self.came_again_to.min(before.or(self.came_again_to));
+            self.lowest_cycle_index = self
+                .lowest_cycle_index
+                .min(before.or(self.lowest_cycle_index));
         }
         result
     }

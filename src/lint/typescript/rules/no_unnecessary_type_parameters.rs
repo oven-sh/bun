@@ -131,7 +131,7 @@ struct UsageCounter<'a, 'c> {
     visited_default: bool,
     without_type_parameters: &'c mut TypesWithoutTypeParameters<'a>,
     /// The number of type parameters found, plus the number of times something wasn't walked.
-    found_or_left_out: u32,
+    found_or_skipped: u32,
 }
 
 /// Upstream's `assumeMultipleUses`: how much one appearance of a type parameter counts.
@@ -165,12 +165,12 @@ impl<'a> UsageCounter<'a, '_> {
         *usages += 1;
         let usages = *usages;
         if usages > 9 || !bun_core::StackCheck::init().is_safe_to_recurse() {
-            self.found_or_left_out += 1;
+            self.found_or_skipped += 1;
             return;
         }
-        let before = self.found_or_left_out;
+        let before = self.found_or_skipped;
         self.visit_parts(ty, uses, place);
-        if self.found_or_left_out == before {
+        if self.found_or_skipped == before {
             self.without_type_parameters.insert(ty);
         }
     }
@@ -231,7 +231,7 @@ impl<'a> UsageCounter<'a, '_> {
     }
 
     fn visit_type_parameter(&mut self, ty: Type<'a>, uses: Uses) {
-        self.found_or_left_out += 1;
+        self.found_or_skipped += 1;
         let Some(declaration) = ty.get_symbol().and_then(|symbol| symbol.declarations().next()) else {
             return;
         };
@@ -268,7 +268,7 @@ impl<'a> UsageCounter<'a, '_> {
                 self.visit_type(symbol.get_type(), Uses::One, Place::Elsewhere);
             }
         } else {
-            self.found_or_left_out += 1;
+            self.found_or_skipped += 1;
         }
 
         if let TypeStructure::Mapped {
@@ -343,7 +343,7 @@ fn collect_type_parameter_usage_counts<'a>(
         visited_constraints: FxHashSet::default(),
         visited_default: false,
         without_type_parameters,
-        found_or_left_out: 0,
+        found_or_skipped: 0,
     };
     match node.kind() {
         SyntaxKind::CallSignature | SyntaxKind::Constructor => {

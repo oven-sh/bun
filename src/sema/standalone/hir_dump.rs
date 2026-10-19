@@ -68,7 +68,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         is_js,
         is_flow: _,
         check_directive,
-        is_module_by_decree,
+        is_forced_module,
         has_errors,
         ran_out_of_stack: _,
         decorators,
@@ -166,7 +166,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         d,
         0,
         "is_js",
-        "{is_js} {check_directive:?} {is_module_by_decree}"
+        "{is_js} {check_directive:?} {is_forced_module}"
     );
     put!(d, 0, "has_errors", "{has_errors}");
     put!(d, 0, "source_len", "{source_len}");

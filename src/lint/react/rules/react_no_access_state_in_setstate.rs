@@ -42,7 +42,7 @@ fn has_key<'a>(parent: Node<'a>, function: Node<'a>) -> bool {
 
 /// The first relevant ancestor of a `this.state`.
 #[derive(Copy, Clone)]
-enum Around<'a> {
+enum Enclosing<'a> {
     /// A `this.setState` call that has it in its first argument.
     SetState,
     /// A method, or a function that's a property's value, with its `key.name`.
@@ -51,23 +51,23 @@ enum Around<'a> {
     Variable(Option<&'a [u8]>),
 }
 
-impl<'a> Around<'a> {
+impl<'a> Enclosing<'a> {
     /// Returns what `current`, the parent of `child`, is, if it's one of these.
-    fn of(child: Node<'a>, current: Node<'a>) -> Option<Around<'a>> {
+    fn of(child: Node<'a>, current: Node<'a>) -> Option<Enclosing<'a>> {
         match current {
             Node::Expr(call) if is_set_state_call(call) => {
                 let first = call.as_call()?.args().first()?;
-                (normalize(Node::Expr(first)) == child).then_some(Around::SetState)
+                (normalize(Node::Expr(first)) == child).then_some(Enclosing::SetState)
             }
             Node::Member(_) if estree_type_name(current) == "MethodDefinition" => {
-                Some(Around::Method(get_property_name(current)))
+                Some(Enclosing::Method(get_property_name(current)))
             }
             Node::Func(_) if estree_type_name(current) == "FunctionExpression" => {
                 let parent = estree_parent(current);
-                has_key(parent, current).then(|| Around::Method(get_property_name(parent)))
+                has_key(parent, current).then(|| Enclosing::Method(get_property_name(parent)))
             }
             Node::VarDecl(declarator) if estree_type_name(current) == "VariableDeclarator" => {
-                Some(Around::Variable(declarator.pat().as_ident().map(Name::bytes)))
+                Some(Enclosing::Variable(declarator.pat().as_ident().map(Name::bytes)))
             }
             _ => None,
         }
@@ -197,12 +197,12 @@ impl Rule for NoAccessStateInSetstate {
         let mut around = AncestorMemo::default();
         // `is_class_component` needs the scopes, so it's checked last.
         for node in states {
-            match around.find_with(Node::Expr(node), estree_parent, Around::of) {
-                Some(Around::SetState) if is_class_component(node, &pragmas) => {
+            match around.find_with(Node::Expr(node), estree_parent, Enclosing::of) {
+                Some(Enclosing::SetState) if is_class_component(node, &pragmas) => {
                     cx.report(node, USE_CALLBACK);
                 }
-                Some(Around::Method(method_name)) => events.push(Event::State(node, method_name)),
-                Some(Around::Variable(Some(variable_name))) if is_class_component(node, &pragmas) => {
+                Some(Enclosing::Method(method_name)) => events.push(Event::State(node, method_name)),
+                Some(Enclosing::Variable(Some(variable_name))) if is_class_component(node, &pragmas) => {
                     vars.push(Variable {
                         variable_name,
                         scope: Node::Expr(node).scope().id().idx(),
@@ -249,9 +249,9 @@ fn follow_methods<'a>(
         return;
     }
     events.retain(|it| matches!(it, Event::State(node, _) if is_class_component(*node, pragmas)));
-    let is_asking =
+    let is_lookup =
         |it: &Expr<'a>| it.callee().is_some_and(|callee| callee.tag() == ExprTag::Ident) || is_in_set_state(it);
-    events.extend(cx.file().exprs_of_kind(ExprTag::Call).filter(is_asking).map(Event::Call));
+    events.extend(cx.file().exprs_of_kind(ExprTag::Call).filter(is_lookup).map(Event::Call));
     sort::sort_by_key(&mut events, |it| (it.span().start, Reverse(it.span().end)));
     let mut methods: FxHashMap<Option<&'a [u8]>, Vec<Span>> = FxHashMap::default();
     let mut method_around = AncestorMemo::default();

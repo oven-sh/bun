@@ -216,7 +216,7 @@ pub(crate) fn type_arguments<'a>(
 /// ```
 ///
 /// Prettier is on the left, oxfmt on the right.
-fn only_comment_behind_type_argument_counts(f: &Formatter<'_>) -> bool {
+fn only_comment_after_type_argument_counts(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -255,7 +255,7 @@ impl<'a> FormatTypeArguments<'a> {
 /// True if a comment on `only`, the only type argument, keeps it from being printed directly between `<` and `>`.
 fn has_comment_that_unhugs<'a>(only: TypeNode<'a>, f: &Formatter<'a>) -> bool {
     let node = without_lone_operator(only).as_ast_nodes();
-    match only_comment_behind_type_argument_counts(f) {
+    match only_comment_after_type_argument_counts(f) {
         true => !f.is_quiet() && !f.comments().of_node(node).trailing.is_empty(),
         false => has_comment_that_breaks(node, f),
     }

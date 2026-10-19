@@ -77,20 +77,20 @@ fn is_boolean_expression(e: Expr) -> bool {
 
 /// Returns oxlint's replacement for `test ? true : false`, or with `is_inverted` for `test ? false : true`. It goes by
 /// `test`'s syntax, and doesn't recognize any expression in parentheses.
-fn boolean_of_oxlint(test: Expr, is_inverted: bool) -> Vec<u8> {
+fn oxlint_boolean_text(test: Expr, is_inverted: bool) -> Vec<u8> {
     let file = test.file();
-    let written = file.slice(test.outer_span());
+    let source_text = file.slice(test.outer_span());
     let kind = if test.is_parenthesized() || test.is_chain_root() { ExprKind::Missing } else { test.kind() };
     match kind {
         ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma, .. } => {}
-        ExprKind::Binary { .. } | ExprKind::Unary { op: UnOp::Not, .. } if !is_inverted => return written.to_vec(),
+        ExprKind::Binary { .. } | ExprKind::Unary { op: UnOp::Not, .. } if !is_inverted => return source_text.to_vec(),
         ExprKind::Binary { op, left, right } => {
             let inverse: &[u8] = match op {
                 BinOp::EqEq => b" != ",
                 BinOp::EqEqEq => b" !== ",
                 BinOp::NotEq => b" == ",
                 BinOp::NotEqEq => b" === ",
-                _ => return [&b"!("[..], written, b")"].concat(),
+                _ => return [&b"!("[..], source_text, b")"].concat(),
             };
             return [file.slice(left.outer_span()), inverse, file.slice(right.outer_span())].concat();
         }
@@ -109,8 +109,8 @@ fn boolean_of_oxlint(test: Expr, is_inverted: bool) -> Vec<u8> {
             _ => false,
         };
     match needs_no_parentheses {
-        true => [prefix, written].concat(),
-        false => [prefix, b"(", written, b")"].concat(),
+        true => [prefix, source_text].concat(),
+        false => [prefix, b"(", source_text, b")"].concat(),
     }
 }
 
@@ -141,13 +141,13 @@ impl Rule for NoUnneededTernary {
         };
         // oxlint looks through `as T` and the like.
         let is_oxlint = cx.language().is_oxlint;
-        let seen = |it: Expr<'a>| if is_oxlint { get_inner_expression(it) } else { it };
+        let unwrapped = |it: Expr<'a>| if is_oxlint { get_inner_expression(it) } else { it };
         if let (Some(consequent), Some(alternate)) = (boolean_literal(yes), boolean_literal(no)) {
             cx.report(e, UNNECESSARY_CONDITIONAL_EXPRESSION).fix(|fixer| {
                 if is_oxlint {
                     return Some(match consequent == alternate {
                         true => fixer.replace(e, yes.text()),
-                        false => fixer.replace(e, boolean_of_oxlint(test, alternate)),
+                        false => fixer.replace(e, oxlint_boolean_text(test, alternate)),
                     });
                 }
                 if consequent == alternate {
@@ -163,7 +163,7 @@ impl Rule for NoUnneededTernary {
                 })
             });
         } else if !self.allows_default_assignment
-            && let (Some(tested), Some(consequent)) = (seen(test).as_ident(), seen(yes).as_ident())
+            && let (Some(tested), Some(consequent)) = (unwrapped(test).as_ident(), unwrapped(yes).as_ident())
             && tested == consequent
         {
             cx.report(e, UNNECESSARY_CONDITIONAL_ASSIGNMENT).fix(|fixer| {

@@ -106,7 +106,7 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
 /// `FunctionExpression` in a method, so there it's the method.
 fn function_node<'a>(func: Func<'a>, f: &Formatter<'a>) -> AstNodes<'a> {
     let node = func.as_ast_nodes();
-    if !matches!(node, AstNodes::Function(_)) || !f.context().has_tree_of_babel() {
+    if !matches!(node, AstNodes::Function(_)) || !f.context().has_babel_tree() {
         return node;
     }
     match func.owner() {
@@ -182,7 +182,7 @@ fn hugs_pattern_with_comments(f: &Formatter<'_>) -> bool {
 
 /// oxfmt prints `function a({ b } // comment⏎ = {}) {}` as `function a({⏎  b,⏎} = {}) {} // comment`, Prettier as
 /// `function a({ b } = {}) {} // comment`.
-fn comment_behind_pattern_breaks_it(f: &Formatter<'_>) -> bool {
+fn comment_after_pattern_breaks_it(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -239,7 +239,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
             let optional = param.is_optional().then_some("?");
             match param
                 .default()
-                .filter(|_| !comment_behind_pattern_breaks_it(f))
+                .filter(|_| !comment_after_pattern_breaks_it(f))
             {
                 Some(_) => write!(
                     f,
@@ -293,7 +293,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         write!(f, content);
     } else if !has_decorators {
         write!(f, group(&content));
-    } else if decorators_of_parameter_are_a_group_of_their_own(f) {
+    } else if parameter_decorators_get_their_own_group(f) {
         write!(
             f,
             [group(&FormatDecorators::of_param(param)), group(&content)]
@@ -316,7 +316,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
 /// ```
 ///
 /// Prettier is on the left: if it doesn't fit, the line after the decorators breaks first. oxfmt is on the right.
-fn decorators_of_parameter_are_a_group_of_their_own(f: &Formatter<'_>) -> bool {
+fn parameter_decorators_get_their_own_group(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

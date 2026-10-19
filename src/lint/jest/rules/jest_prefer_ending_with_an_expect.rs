@@ -36,7 +36,7 @@ impl<const RUNNER: u8> Rule for PreferEndingWithAnExpect<RUNNER> {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         jest::run_on_jest_nodes(&ctx, &|node, ctx| self.0.run(node, ctx));
-        jest::calls_of_own_test_blocks(&ctx, &self.0.additional_test_block_functions).for_each(|it| self.0.run(it, &ctx));
+        jest::custom_test_block_calls(&ctx, &self.0.additional_test_block_functions).for_each(|it| self.0.run(it, &ctx));
     }
 }
 

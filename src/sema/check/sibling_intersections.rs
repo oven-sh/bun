@@ -65,10 +65,10 @@ pub(super) struct TypeOfProp {
 struct Fact {
     /// The result of `instantiation_of_prop`.
     instantiation: PropInstantiation,
-    of_instantiation: Effects,
+    instantiation_effects: Effects,
     /// The first type `types_of_instantiated_prop` returns.
     ty: TypeId,
-    of_type: Effects,
+    type_effects: Effects,
     /// 1 + the `PropOfConstituent`'s number, or 0 if it has no number yet.
     symbol: u32,
     /// `SiblingIntersections::generation` when the calls ran. In any other generation their effects are unknown.
@@ -82,9 +82,9 @@ const _: () = assert!(size_of::<Fact>() == 32);
 impl Fact {
     const NONE: Fact = Fact {
         instantiation: PropInstantiation::Type(TypeId::NEVER),
-        of_instantiation: Effects::Unknown,
+        instantiation_effects: Effects::Unknown,
         ty: TypeId::NEVER,
-        of_type: Effects::Unknown,
+        type_effects: Effects::Unknown,
         symbol: 0,
         generation: 0,
         is_literal: false,
@@ -110,7 +110,7 @@ pub(in super::super) struct SiblingIntersections<'p> {
     /// Counts the commits that invalidated facts.
     generation: u16,
     /// This task has hit a cycle or a limit since the facts were created.
-    is_given_up: bool,
+    is_abandoned: bool,
 }
 
 impl<'p> SiblingIntersections<'p> {
@@ -136,7 +136,8 @@ impl<'p> SiblingIntersections<'p> {
         // After a wraparound, facts from 65,536 generations ago would look current.
         if self.generation == 0 {
             for fact in self.facts.iter_mut().flat_map(|it| it.iter_mut()) {
-                (fact.of_instantiation, fact.of_type) = (Effects::Unknown, Effects::Unknown);
+                (fact.instantiation_effects, fact.type_effects) =
+                    (Effects::Unknown, Effects::Unknown);
             }
         }
     }
@@ -174,7 +175,7 @@ impl<'a, 'p> FactsOfName<'a, 'p> {
         let fact = of_member.get_mut(position as usize)?;
         if fact.generation != self.all.generation {
             fact.generation = self.all.generation;
-            (fact.of_instantiation, fact.of_type) = (Effects::Unknown, Effects::Unknown);
+            (fact.instantiation_effects, fact.type_effects) = (Effects::Unknown, Effects::Unknown);
         }
         Some(fact)
     }
@@ -261,14 +262,14 @@ impl<'p, 's> Checker<'p, 's> {
         after_commits_only[COMMITS] = now[COMMITS];
         match after_commits_only == *now {
             true => facts.begin_generation(now),
-            false => facts.is_given_up = true,
+            false => facts.is_abandoned = true,
         }
     }
 
     /// Call this before reading the facts. Returns false if they've been given up.
-    pub(super) fn may_still_use(&self, facts: &mut SiblingIntersections<'p>) -> bool {
+    pub(super) fn are_facts_usable(&self, facts: &mut SiblingIntersections<'p>) -> bool {
         Self::note_disturbances(facts, &self.disturbances_for_siblings());
-        !facts.is_given_up
+        !facts.is_abandoned
     }
 
     fn readings_for_siblings(&self) -> Readings {
@@ -361,18 +362,18 @@ impl<'p, 's> Checker<'p, 's> {
         prop: &Prop,
         mapper: MapperId,
     ) -> PropInstantiation {
-        let Some(facts) = facts.filter(|it| !it.all.is_given_up) else {
+        let Some(facts) = facts.filter(|it| !it.all.is_abandoned) else {
             return self.instantiation_of_prop(prop, mapper);
         };
         if let Some(&mut fact) = facts.fact(nth)
-            && self.replay(fact.of_instantiation)
+            && self.replay(fact.instantiation_effects)
         {
             return fact.instantiation;
         }
         let (instantiation, effects) =
             self.run_for_a_fact(facts.all, |c| c.instantiation_of_prop(prop, mapper));
         if let Some(fact) = facts.fact(nth) {
-            (fact.instantiation, fact.of_instantiation) = (instantiation, effects);
+            (fact.instantiation, fact.instantiation_effects) = (instantiation, effects);
         }
         instantiation
     }
@@ -387,26 +388,26 @@ impl<'p, 's> Checker<'p, 's> {
         prop: &Prop,
         instantiation: Option<PropInstantiation>,
     ) -> TypeOfProp {
-        let ask = |c: &mut Self| {
+        let compute = |c: &mut Self| {
             let (ty, _) = c.types_of_instantiated_prop(prop, instantiation);
             let is_literal =
                 c.is_boolean(ty) || c.is_pattern_literal(ty) || c.is_every_type_unit(ty);
             TypeOfProp { ty, is_literal }
         };
-        let Some(facts) = facts.filter(|it| !it.all.is_given_up) else {
-            return ask(self);
+        let Some(facts) = facts.filter(|it| !it.all.is_abandoned) else {
+            return compute(self);
         };
         if let Some(&mut fact) = facts.fact(nth)
-            && self.replay(fact.of_type)
+            && self.replay(fact.type_effects)
         {
             return TypeOfProp {
                 ty: fact.ty,
                 is_literal: fact.is_literal,
             };
         }
-        let (found, effects) = self.run_for_a_fact(facts.all, ask);
+        let (found, effects) = self.run_for_a_fact(facts.all, compute);
         if let Some(fact) = facts.fact(nth) {
-            (fact.ty, fact.of_type) = (found.ty, effects);
+            (fact.ty, fact.type_effects) = (found.ty, effects);
             fact.is_literal = found.is_literal;
         }
         found

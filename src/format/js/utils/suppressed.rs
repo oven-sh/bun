@@ -9,13 +9,13 @@ pub(crate) struct FormatSuppressedNode(pub(crate) Span);
 
 /// In oxfmt any multi-line text breaks the groups around it. In Prettier unformatted code is one string, which breaks
 /// nothing.
-fn text_over_several_lines_breaks_groups(f: &Formatter<'_>) -> bool {
+fn multiline_text_breaks_groups(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
 impl<'a> Format<'a> for FormatSuppressedNode {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        write_source(self.0, !text_over_several_lines_breaks_groups(f), f);
+        write_source(self.0, !multiline_text_breaks_groups(f), f);
         f.comments_mut().mark_printed_in(self.0);
     }
 }

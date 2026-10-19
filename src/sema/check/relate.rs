@@ -100,10 +100,10 @@ const REPORTS_UNMEASURABLE: u8 = 8;
 const REPORTS_UNRELIABLE: u8 = 16;
 pub(super) const COMPLEXITY_OVERFLOW: u8 = 32;
 
-/// A comparison shares its first entries right away (`Task::may_write_at_once`). Once it has stored this many, the rest
-/// wait for the commit. If the comparison then exceeds its budget (2859), the task is discarded, and they are discarded
-/// with it. The task that rechecks the file has to exceed the budget too, and an entry that it finds doesn't count
-/// toward it.
+/// A comparison shares its first entries right away (`Task::may_write_immediately`). Once it has stored this many, the
+/// rest wait for the commit. If the comparison then exceeds its budget (2859), the task is discarded, and they are
+/// discarded with it. The task that rechecks the file has to exceed the budget too, and an entry that it finds doesn't
+/// count toward it.
 const ENTRIES_SHARED_RIGHT_AWAY: i32 = 1024;
 
 // VarianceFlags
@@ -232,7 +232,7 @@ pub(super) struct Relater {
     /// there are none. Otherwise it's empty, because most comparisons are only a few levels deep,
     /// and searching the list is cheaper than adding a key here and removing it.
     maybe_keys_set: FxHashSet<Key>,
-    /// Each type with its push number. See `is_created_no_earlier`.
+    /// Each type with its push number. See `is_at_least_as_new`.
     pub(super) source_stack: Vec<(TypeId, u32)>,
     pub(super) target_stack: Vec<(TypeId, u32)>,
     /// An `OnStack` for each entry in a prefix of each stack, filled in by `is_last_deeply_nested`.
@@ -256,7 +256,7 @@ pub(super) struct Relater {
     /// True if failures are recorded in `failed` instead of the relation cache. That's the case in
     /// the non-reporting run that precedes a reporting run where tsgo has no such run
     /// (`check_type_related_to_ex`). It must leave the cache as tsgo's run would find it.
-    pub(super) caches_failures: bool,
+    pub(super) stores_failures_locally: bool,
     failed: FxHashSet<Key>,
     /// True if `compareTypes` of `compareSignaturesRelated` is `compareTypesAssignable`. Each pair
     /// of types is then a separate check, and nothing else in this relater is used.
@@ -292,7 +292,7 @@ impl Relater {
             relation_count: 2_000_000,
             waits_for_commit_below: 2_000_000 - ENTRIES_SHARED_RIGHT_AWAY,
             cycles,
-            caches_failures: false,
+            stores_failures_locally: false,
             failed: FxHashSet::default(),
             compares_types_assignable: false,
             error_node: (FileId(0), 0, 0),
@@ -322,7 +322,7 @@ impl Relater {
         self.maybe_keys.push(key);
         if !self.maybe_keys_set.is_empty() {
             self.maybe_keys_set.insert(key);
-        } else if self.maybe_keys.len() > shortcuts::MAYBE_KEYS_SEARCHED_AS_A_LIST {
+        } else if self.maybe_keys.len() > shortcuts::MAYBE_KEYS_LINEAR_LIMIT {
             self.maybe_keys_set.extend(self.maybe_keys.iter().copied());
         }
     }
@@ -858,7 +858,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `ObjectFlagsIsUnknownLikeUnionComputed`: the first answer sticks, no matter what's resolved later.
         let known = self.task_facts.get(ty);
-        if known & task_fact::KNOWS_UNKNOWN_LIKE_UNION != 0 {
+        if known & task_fact::UNKNOWN_LIKE_UNION_COMPUTED != 0 {
             return known & task_fact::IS_UNKNOWN_LIKE_UNION != 0;
         }
         let before = self.non_cacheable_mark();
@@ -866,10 +866,10 @@ impl<'p, 's> Checker<'p, 's> {
             .iter()
             .any(|&p| self.is_empty_anonymous_object_type(p));
         if before == self.non_cacheable_mark() {
-            let all = task_fact::KNOWS_UNKNOWN_LIKE_UNION | task_fact::IS_UNKNOWN_LIKE_UNION;
+            let all = task_fact::UNKNOWN_LIKE_UNION_COMPUTED | task_fact::IS_UNKNOWN_LIKE_UNION;
             let facts = match is_unknown_like {
                 true => all,
-                false => task_fact::KNOWS_UNKNOWN_LIKE_UNION,
+                false => task_fact::UNKNOWN_LIKE_UNION_COMPUTED,
             };
             self.task_facts.replace(ty, all, facts);
         }
@@ -1188,7 +1188,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `checkTypeRelatedToEx` without an `errorNode`, so an overflow is reported at `c.currentNode`.
     /// `related` has found no simple rule for the two types. `missed` is the key of its cache miss,
-    /// if it did a lookup. For `is_trial`, see `Relater::caches_failures`. In that case the caller
+    /// if it did a lookup. For `is_trial`, see `Relater::stores_failures_locally`. In that case the caller
     /// has the `errorNode`, and `relation_too_complex` tells it to report 2859 there.
     fn check_type_related_to(
         &mut self,
@@ -1224,7 +1224,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Under the identity relation `related` uses other rules.
         r.is_from_related = relation != Relation::Identity;
         r.top_key = missed;
-        r.caches_failures = is_trial;
+        r.stores_failures_locally = is_trial;
         let result = self.is_related_to_ex::<false>(&mut r, source, target, REC_BOTH, STATE_NONE);
         let overflow = r.overflow;
         // `relationCount <= 0`. Running out of native stack isn't a complexity overflow.
@@ -1242,7 +1242,7 @@ impl<'p, 's> Checker<'p, 's> {
         r.overflow = false;
         r.hit_cached_overflow = false;
         if is_trial {
-            r.caches_failures = false;
+            r.stores_failures_locally = false;
             r.failed.clear();
         }
         self.free_relaters.push(r);
@@ -1951,14 +1951,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `checkType`, `extendsType`, `resolvedTrueType` or `resolvedFalseType` of the conditional type `t`.
     pub(super) fn cond_piece(&mut self, t: TypeId, which: usize) -> TypeId {
-        if let Some(kept) = self.kept_part(t, links::Kind::Conditional, which) {
-            return kept;
+        if let Some(cached_value) = self.cached_part(t, links::Kind::Conditional, which) {
+            return cached_value;
         }
-        self.derive_and_keep_cond_piece(t, which)
+        self.derive_and_cache_cond_piece(t, which)
     }
 
     #[inline(never)]
-    fn derive_and_keep_cond_piece(&mut self, t: TypeId, which: usize) -> TypeId {
+    fn derive_and_cache_cond_piece(&mut self, t: TypeId, which: usize) -> TypeId {
         let (file, _, mapper, nodes) = self.cond_origin(t);
         self.derive_part(
             (t, links::Kind::Conditional, which),
@@ -1993,11 +1993,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `root.inferTypeParameters`
     pub(super) fn cond_infer_params(&mut self, t: TypeId) -> SmallVec<[TypeId; 4]> {
-        if let Some(kept) = self.links.infer_type_parameters(t) {
-            return kept;
+        if let Some(cached_value) = self.links.infer_type_parameters(t) {
+            return cached_value;
         }
         let params = self.derive_cond_infer_params(t);
-        self.links.keep_infer_type_parameters(t, &params);
+        self.links.cache_infer_type_parameters(t, &params);
         params
     }
 
@@ -2061,28 +2061,28 @@ impl<'p, 's> Checker<'p, 's> {
         // The flag is true if `t` has `infer` type parameters. The skipped derivation then runs an
         // inference, which gives the same result as long as nothing in progress can change it.
         let cell = (links::Kind::Conditional, links::DEFAULT_CONSTRAINT);
-        if let Some((kept, infers)) = self.kept_part::<(TypeId, bool)>(t, cell.0, cell.1)
+        if let Some((cached_value, infers)) = self.cached_part::<(TypeId, bool)>(t, cell.0, cell.1)
             && (!infers
-                || self.has_stack_for_kept_part() && self.obstacle_to_leaving_out().is_none())
+                || self.has_stack_for_cached_part() && self.obstacle_to_skipping().is_none())
         {
-            return kept;
+            return cached_value;
         }
-        self.derive_and_keep_default_constraint_of_conditional(t)
+        self.derive_and_cache_default_constraint_of_conditional(t)
     }
 
     /// This is the only reader of `resolvedInferredTrueType`, so that part doesn't have its own cell.
     #[inline(never)]
-    fn derive_and_keep_default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
+    fn derive_and_cache_default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
         let (file, _, _, nodes) = self.cond_origin(t);
         // Without `infer` it's the union of two parts.
         let infers = !self.cond_infer_params(t).is_empty();
-        let is_at_rest =
-            !infers || self.obstacle_to_leaving_out().is_none() && self.is_settled_for_inference();
+        let is_idle =
+            !infers || self.obstacle_to_skipping().is_none() && self.is_settled_for_inference();
         let ((constraint, _), stored) = self.derive_settled(
             |c| c.derive_with_inference(|c| c.derive_default_constraint_of_conditional(t)),
-            |c, &(_, leaves_nothing)| {
-                is_at_rest
-                    && leaves_nothing
+            |c, &(_, has_no_side_effects)| {
+                is_idle
+                    && has_no_side_effects
                     && (!infers
                         || c.is_type_node_settled(file, nodes[0])
                             && c.is_type_node_settled(file, nodes[2]))
@@ -2090,7 +2090,7 @@ impl<'p, 's> Checker<'p, 's> {
         );
         if let Some(stored) = stored {
             let cell = (t, links::Kind::Conditional, links::DEFAULT_CONSTRAINT);
-            self.keep_part(cell, (constraint, infers), stored);
+            self.cache_part(cell, (constraint, infers), stored);
         }
         constraint
     }
@@ -2182,7 +2182,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// True if `mapped_mapper(t)` is cached and `is_mapper_idle`.
     fn is_mapped_mapper_idle(&self, t: TypeId) -> bool {
-        self.kept_part::<MapperId>(t, links::Kind::Mapped, MappedPart::Mapper as usize)
+        self.cached_part::<MapperId>(t, links::Kind::Mapped, MappedPart::Mapper as usize)
             .is_some_and(|mapper| self.is_mapper_idle(mapper))
     }
 
@@ -2190,8 +2190,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// properties optional.
     pub(super) fn mapped_template(&mut self, t: TypeId) -> TypeId {
         let part = MappedPart::TemplateType;
-        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
-            return kept;
+        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
+            return cached_value;
         }
         let Some((file, node, _)) = self.mapped_origin(t) else {
             return TypeId::UNRESOLVED;
@@ -2226,12 +2226,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// which ranges over the instantiated keys (`instantiateAnonymousType`).
     pub(super) fn mapped_type_param(&mut self, t: TypeId) -> TypeId {
         let part = MappedPart::TypeParameter;
-        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
-            return kept;
+        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
+            return cached_value;
         }
         let param = self.derive_mapped_type_param(t);
         if self.mapped_origin(t).is_some() {
-            self.keep_interned_part(t, links::Kind::Mapped, part as usize, param);
+            self.cache_interned_part(t, links::Kind::Mapped, part as usize, param);
         }
         param
     }
@@ -2248,12 +2248,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// declared type parameter to `t`'s own.
     fn mapped_mapper(&mut self, t: TypeId) -> MapperId {
         let part = MappedPart::Mapper;
-        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
-            return kept;
+        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
+            return cached_value;
         }
         let mapper = self.derive_mapped_mapper(t);
         if self.mapped_origin(t).is_some() {
-            self.keep_interned_part(t, links::Kind::Mapped, part as usize, mapper);
+            self.cache_interned_part(t, links::Kind::Mapped, part as usize, mapper);
         }
         mapper
     }
@@ -2281,12 +2281,12 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.mapped_constraints_in_progress.is_empty()
             || self.links.has_found_circular_mapped_constraint()
         {
-            self.links.note_left_open();
+            self.links.note_uncached_derivation();
             return self.derive_mapped_keys(t);
         }
         let part = MappedPart::ConstraintType;
-        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
-            return kept;
+        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
+            return cached_value;
         }
         let Some((_, _, mapper)) = self.mapped_origin(t) else {
             return TypeId::UNRESOLVED;
@@ -2310,13 +2310,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getNameTypeFromMappedType`
     pub(super) fn mapped_name_type(&mut self, t: TypeId) -> Option<TypeId> {
         let part = MappedPart::NameType;
-        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
-            return kept;
+        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
+            return cached_value;
         }
         let (file, node, _) = self.mapped_origin(t)?;
         let declared = self.mapped_decl(file, node).name_ty;
         if declared.is_none() {
-            self.keep_interned_part(t, links::Kind::Mapped, part as usize, None::<TypeId>);
+            self.cache_interned_part(t, links::Kind::Mapped, part as usize, None::<TypeId>);
             return None;
         }
         self.derive_part(
@@ -2346,8 +2346,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getModifiersTypeFromMappedType`. `None` means `unknown`.
     pub(super) fn mapped_modifiers_type(&mut self, t: TypeId) -> Option<TypeId> {
         let part = MappedPart::ModifiersType;
-        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
-            return kept;
+        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
+            return cached_value;
         }
         let (file, node, mapper) = self.mapped_origin(t)?;
         self.derive_part(
@@ -2369,12 +2369,12 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.mapped_constraints_in_progress.is_empty()
             || self.links.has_found_circular_mapped_constraint()
         {
-            self.links.note_left_open();
+            self.links.note_uncached_derivation();
             return self.derive_apparent_type_of_mapped(t).0;
         }
         let part = MappedPart::ApparentType;
-        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
-            return kept;
+        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
+            return cached_value;
         }
         let Some((file, node, mapper)) = self.mapped_origin(t) else {
             return t;
@@ -2393,7 +2393,7 @@ impl<'p, 's> Checker<'p, 's> {
             },
         );
         if let Some(stored) = stored {
-            self.keep_part((t, links::Kind::Mapped, part as usize), apparent, stored);
+            self.cache_part((t, links::Kind::Mapped, part as usize), apparent, stored);
         }
         apparent
     }
@@ -2718,7 +2718,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// replaced, so until the next commit the task keeps what it stores in its own buffer.
     fn note_variance_cycle(&mut self) {
         self.in_progress_variance_reads += 1;
-        self.task.stop_writing_at_once();
+        self.task.stop_writing_immediately();
     }
 
     /// `getVariancesWorker`. The caller's cache lookup of `sym` missed.
@@ -2752,7 +2752,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // Not enough native stack to nest a restart (typescript-go's stack grows). Fall back to 7.0's
                 // order-dependent result.
                 let cycle = std::iter::once(crate::util::fx_hash(&first));
-                self.task.close_ring(|| false, cycle);
+                self.task.close_cycle(|| false, cycle);
             } else if first != sym {
                 let in_progress = std::mem::take(&mut self.variances_in_progress);
                 let resolution_start =
@@ -2804,7 +2804,7 @@ impl<'p, 's> Checker<'p, 's> {
                 VarianceClaim::Unclaimed => {}
             }
         }
-        let before = self.what_forbids_sharing();
+        let before = self.sharing_blockers();
         self.variances_in_progress.push(sym);
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
         if !was_computing {
@@ -2902,7 +2902,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         debug_assert_eq!(variances.len(), params.len());
         if !was_computing && self.task.commits() {
-            self.share_what_was_measured((sym, has_claim), before, is_open);
+            self.share_measured_variances((sym, has_claim), before, is_open);
         }
         variances
     }
@@ -2920,7 +2920,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns the counters that a measurement must leave unchanged to be shared immediately: the
     /// diagnostics reported, the diagnostics settled, and the uses of order-dependent variances.
-    fn what_forbids_sharing(&self) -> (usize, usize, u64) {
+    fn sharing_blockers(&self) -> (usize, usize, u64) {
         (
             self.reported.len(),
             self.task.diagnostics.len(),
@@ -2929,7 +2929,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Call in a task that commits, when an outermost measurement, of `sym`, has ended. `has_claim`
-    /// means this thread holds the claim on `sym`. `before` is `what_forbids_sharing` when the
+    /// means this thread holds the claim on `sym`. `before` is `sharing_blockers` when the
     /// measurement began. `is_open` means its result wasn't stored.
     ///
     /// `variances_measured` has what was stored since it began: the variances of `sym` and of the symbols
@@ -2955,16 +2955,16 @@ impl<'p, 's> Checker<'p, 's> {
     ///   compared during a measurement, and `checkTypeParameterDeferred` has its own markers.
     /// - `instantiation_count` and `relation_sizes` are lower. They only matter at a limit (2589,
     ///   2859), where the task is discarded.
-    fn share_what_was_measured(
+    fn share_measured_variances(
         &mut self,
         (sym, has_claim): (Sym, bool),
         before: (usize, usize, u64),
         is_open: bool,
     ) {
-        let now = self.what_forbids_sharing();
+        let now = self.sharing_blockers();
         let reason = match () {
             _ if (now.0, now.1) != (before.0, before.1) => Some(NotShared::Diagnostic),
-            _ if now.2 != before.2 || self.task.may_be_thrown_away() => Some(NotShared::Notes),
+            _ if now.2 != before.2 || self.task.may_be_discarded() => Some(NotShared::Notes),
             _ => None,
         };
         let measured = &self.variances_measured[..];
@@ -3011,7 +3011,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.order_dependent_uses += 1;
             self.task.hold_back();
-            self.task.stop_writing_at_once();
+            self.task.stop_writing_immediately();
             // How many pairs were compared.
             let count = match holds {
                 true => sources.len().min(targets.len()),
@@ -3045,7 +3045,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.order_dependent_uses += 1;
             self.task.hold_back();
-            self.task.stop_writing_at_once();
+            self.task.stop_writing_immediately();
             let all = u32::MAX.checked_shr(32 - count.min(32) as u32).unwrap_or(0);
             self.task.order_dependent_variances[at as usize].inferred |= all;
         }
@@ -3634,17 +3634,17 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(matching);
         }
         let sm = self.members(source)?;
-        let telling: SmallVec<[&Prop; 4]> = sm
+        let discriminants: SmallVec<[&Prop; 4]> = sm
             .shape()
             .props
             .iter()
             .filter(|p| self.is_discriminant_property(target, p.name))
             .collect();
-        if telling.is_empty() {
+        if discriminants.is_empty() {
             return None;
         }
         let mut items: SmallVec<[(Atom, TypeId); 8]> = SmallVec::new();
-        for prop in telling {
+        for prop in discriminants {
             items.push((prop.name, self.type_of_prop(prop, sm.mapper)));
         }
         let discriminated = self.discriminate_by_items(target, &items, is_related_to);
@@ -3909,7 +3909,7 @@ impl<'p, 's> Checker<'p, 's> {
             // A literal is related to a union of primitives only if the union contains it, in its
             // fresh or its regular form, or contains its primitive type.
             let sd = self.data(source);
-            let is_such_a_literal = match sd {
+            let is_plain_literal = match sd {
                 TypeData::StringLit { .. }
                 | TypeData::BoolLit { .. }
                 | TypeData::BigIntLit { .. } => true,
@@ -3917,7 +3917,7 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => false,
             };
             if r.relation != Relation::Comparable
-                && is_such_a_literal
+                && is_plain_literal
                 && self.is_union_of_primitives(target)
             {
                 let alternate = self.with_freshness(source, !is_fresh_literal_kind(sd));
@@ -4264,7 +4264,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return Ternary::of(entry & SUCCEEDED != 0);
         }
-        if !REPORT && r.caches_failures && r.failed.contains(&key) {
+        if !REPORT && r.stores_failures_locally && r.failed.contains(&key) {
             return Ternary::FALSE;
         }
         if r.relation_count <= 0 {
@@ -4288,7 +4288,7 @@ impl<'p, 's> Checker<'p, 's> {
         // those of `REC_BOTH` below.
         if r.source_stack.len() == 100 || r.target_stack.len() == 100 {
             self.note_gave_up("the depth of a comparison");
-            if self.task.is_lost() {
+            if self.task.was_discarded() {
                 r.overflow = true;
                 return Ternary::FALSE;
             }
@@ -4367,7 +4367,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // Where two types count as deeply nested depends on the comparisons around this one.
                 let is_cut = self.comparisons_of_deeply_nested_types != cuts;
                 let around = std::mem::replace(
-                    &mut self.keeps_relations_for_this_file,
+                    &mut self.stores_relations_per_file,
                     is_cut && self.task.commits(),
                 );
                 let keys = match result == Ternary::TRUE || result == Ternary::MAYBE {
@@ -4376,13 +4376,13 @@ impl<'p, 's> Checker<'p, 's> {
                     false => MaybeKeys::Forgotten,
                 };
                 self.reset_maybe_stack(r, maybe_start, propagating, keys, stored);
-                self.keeps_relations_for_this_file = around;
+                self.stores_relations_per_file = around;
             }
         } else {
             // A result that's false under assumptions is false without them, and so is one that an overflow cut
             // off. That doesn't hold if the native stack ran low, which isn't an overflow in typescript-go.
             let is_cut_short = r.overflow && r.relation_count > 0;
-            if r.caches_failures {
+            if r.stores_failures_locally {
                 if !is_cut_short {
                     r.failed.insert(key);
                 }
@@ -4436,7 +4436,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)`
     fn set_relation(&mut self, key: Key, entry: u8, stored: Stored) {
-        if self.keeps_relations_for_this_file || self.p.relations.get(&self.task, &key).is_none() {
+        if self.stores_relations_per_file || self.p.relations.get(&self.task, &key).is_none() {
             self.insert_relation(key, entry, stored);
         } else {
             (self.p.relations).rewrite(&self.task, key, entry, stored);
@@ -4446,7 +4446,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `relation.set(key, entry)` for a key that has no entry.
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
-        if self.keeps_relations_for_this_file {
+        if self.stores_relations_per_file {
             self.relations_of_this_file.entry(key).or_insert(entry);
             return;
         }
@@ -4461,10 +4461,10 @@ impl<'p, 's> Checker<'p, 's> {
         if known.is_some() || self.relations_of_this_file.is_empty() {
             return known;
         }
-        let kept = self.relations_of_this_file.get(key).copied()?;
+        let cached_value = self.relations_of_this_file.get(key).copied()?;
         self.comparisons_of_deeply_nested_types += 1;
         self.task.hold_back();
-        Some(kept)
+        Some(cached_value)
     }
 
     /// `(16_000_000 - relation.size()) / 8`, see `Checker::relation_sizes`.
@@ -4543,7 +4543,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             if self.has_matching_recursion_identity(on_stack, identity) {
-                if last.is_none_or(|last| self.is_created_no_earlier(on_stack, last, stacks)) {
+                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
@@ -4561,12 +4561,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
     /// numbers grow with every level, and a level's target has a lower one than its source. No two entries share one,
     /// so this is a total order: of two different types, exactly one is newer.
-    fn is_created_no_earlier(
-        &self,
-        t: TypeId,
-        last: TypeId,
-        stacks: [&[(TypeId, u32)]; 2],
-    ) -> bool {
+    fn is_at_least_as_new(&self, t: TypeId, last: TypeId, stacks: [&[(TypeId, u32)]; 2]) -> bool {
         let pushed = |t: TypeId| {
             let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
             stacks.into_iter().filter_map(first).min()
@@ -4596,15 +4591,20 @@ impl<'p, 's> Checker<'p, 's> {
                 may_match: self.identities_that_may_match(on_stack),
             });
         }
-        let (Some(&(t, _)), Some(&OnStack { identity: kept, .. })) =
-            (stack.last(), identities.last())
+        let (
+            Some(&(t, _)),
+            Some(&OnStack {
+                identity: cached_value,
+                ..
+            }),
+        ) = (stack.last(), identities.last())
         else {
             return false;
         };
-        if kept == NOT_PLAIN {
+        if cached_value == NOT_PLAIN {
             return self.is_deeply_nested_among(t, stacks, is_source, identities, max_depth);
         }
-        let identity = self.recursion_identity_by_now(t, kept);
+        let identity = self.current_recursion_identity(t, cached_value);
         let bit = identity_bit(identity);
         let mut count = 0;
         let mut last = None;
@@ -4612,15 +4612,15 @@ impl<'p, 's> Checker<'p, 's> {
             if known.may_match & bit == 0 {
                 continue;
             }
-            let kept = known.identity;
-            let matches = if kept == NOT_PLAIN {
+            let cached_value = known.identity;
+            let matches = if cached_value == NOT_PLAIN {
                 self.has_matching_recursion_identity(on_stack, identity)
             } else {
-                (kept == identity || identity == (0, on_stack.0, 0))
-                    && self.recursion_identity_by_now(on_stack, kept) == identity
+                (cached_value == identity || identity == (0, on_stack.0, 0))
+                    && self.current_recursion_identity(on_stack, cached_value) == identity
             };
             if matches {
-                if last.is_none_or(|last| self.is_created_no_earlier(on_stack, last, stacks)) {
+                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
@@ -4644,7 +4644,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Intersection(parts) => parts
                 .iter()
                 .fold(0, |bits, &part| bits | self.identities_that_may_match(part)),
-            // See `recursion_identity_by_now`.
+            // See `current_recursion_identity`.
             TypeData::Ref { .. } | TypeData::Tuple { .. } => {
                 identity_bit(self.recursion_identity_as(of, data)) | identity_bit((0, of.0, 0))
             }
@@ -4663,14 +4663,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `recursion_identity` of `t`, given the identity `kept` computed earlier. `mark_from_type_node`
+    /// `recursion_identity` of `t`, given the identity `cached_value` computed earlier. `mark_from_type_node`
     /// may have run since then, and a reference or tuple with the flag is its own identity.
     #[inline]
-    fn recursion_identity_by_now(&self, t: TypeId, kept: RecursionId) -> RecursionId {
-        if matches!(kept.0, 1 | 5) && self.types().is_from_type_node(t) {
+    fn current_recursion_identity(&self, t: TypeId, cached_value: RecursionId) -> RecursionId {
+        if matches!(cached_value.0, 1 | 5) && self.types().is_from_type_node(t) {
             (0, t.0, 0)
         } else {
-            kept
+            cached_value
         }
     }
 
@@ -4750,7 +4750,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// True for the type of an array literal that contains object literals, widened or not. Here an object
     /// literal's members are resolved lazily. tsgo resolves them eagerly, so its `isDeeplyNestedType` never
     /// treats the inner array type as newer than the enclosing one. `data` is the `TypeData` of `t`.
-    fn holds_object_literals(&self, t: TypeId, data: &TypeData) -> bool {
+    fn contains_object_literals(&self, t: TypeId, data: &TypeData) -> bool {
         let inside: &[TypeId] = match data {
             // A type declared by a type node isn't the type of an array literal.
             TypeData::Tuple {
@@ -4796,7 +4796,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Ref { .. } | TypeData::Tuple { .. }
                 if self.types().is_from_type_node(t)
                     || self.types().is_array_literal(t)
-                    || self.holds_object_literals(t, data) =>
+                    || self.contains_object_literals(t, data) =>
             {
                 (0, t.0, 0)
             }
@@ -4952,7 +4952,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(_) => apparent,
                 None => self.synth(Shape::new_in(self.arena)),
             };
-            return self.properties_related_to_noting::<REPORT>(
+            return self.properties_related_to_ex::<REPORT>(
                 r,
                 source,
                 Some(properties),
@@ -4972,7 +4972,7 @@ impl<'p, 's> Checker<'p, 's> {
             true => self.object_of_apparent_union(apparent, &members),
             false => apparent,
         };
-        self.properties_related_to_noting::<REPORT>(
+        self.properties_related_to_ex::<REPORT>(
             r,
             source,
             Some(properties),
@@ -5527,13 +5527,13 @@ impl<'p, 's> Checker<'p, 's> {
                         } else {
                             None
                         };
-                        let keys_do = match filtered {
+                        let keys_match = match filtered {
                             Some(filtered) => !filtered.is_never(),
                             None => self
                                 .is_related_to(r, target_keys, source_keys, REC_BOTH)
                                 .holds(),
                         };
-                        if keys_do {
+                        if keys_match {
                             // For a template `Obj[P]`, comparing `S` with `Obj` is enough and doesn't create new types.
                             let non_null =
                                 self.filter(template, |_, m| !m.is_null() && !m.is_undefined());
@@ -5988,7 +5988,7 @@ impl<'p, 's> Checker<'p, 's> {
         source_is_primitive: bool,
     ) -> Ternary {
         let mut both = None;
-        let mut result = self.properties_related_to_noting::<REPORT>(
+        let mut result = self.properties_related_to_ex::<REPORT>(
             r,
             source,
             None,
@@ -6185,24 +6185,24 @@ impl<'p, 's> Checker<'p, 's> {
         // `findDiscriminantProperties`. It runs over all the properties before anything is counted,
         // because the test resolves the property's type in every member of `target`. Each property
         // is paired with its type in the source.
-        let mut telling: Vec<(&Prop, TypeId)> = Vec::new();
+        let mut discriminants: Vec<(&Prop, TypeId)> = Vec::new();
         for prop in &sm.shape().props {
             if self.is_discriminant_property(target, prop.name) {
-                telling.push((prop, TypeId::NEVER));
+                discriminants.push((prop, TypeId::NEVER));
             }
         }
-        if telling.is_empty() {
+        if discriminants.is_empty() {
             return Ternary::FALSE;
         }
         let mut combinations = 1usize;
-        for (prop, ty) in &mut telling {
+        for (prop, ty) in &mut discriminants {
             *ty = self.type_of_prop_as_read(prop, sm.mapper);
             combinations *= self.parts(*ty).len();
             if combinations > 25 || combinations == 0 {
                 return Ternary::FALSE;
             }
         }
-        let excluded: Vec<Atom> = telling.iter().map(|(p, _)| p.name).collect();
+        let excluded: Vec<Atom> = discriminants.iter().map(|(p, _)| p.name).collect();
         // Every query on a member uses `getReducedApparentType`.
         let types: SmallVec<[TypeId; 8]> = self
             .parts(target)
@@ -6214,10 +6214,10 @@ impl<'p, 's> Checker<'p, 's> {
         let skip_optional =
             self.p.files.options.strict_null_checks || r.relation == Relation::Comparable;
         let mut combination: SmallVec<[TypeId; 4]> =
-            SmallVec::from_elem(TypeId::NEVER, telling.len());
+            SmallVec::from_elem(TypeId::NEVER, discriminants.len());
         for i in 0..combinations {
             let mut n = i;
-            for (chosen, (_, ty)) in combination.iter_mut().zip(&telling).rev() {
+            for (chosen, (_, ty)) in combination.iter_mut().zip(&discriminants).rev() {
                 let source_types = self.parts(*ty);
                 *chosen = source_types[n % source_types.len()];
                 n /= source_types.len();
@@ -6225,7 +6225,7 @@ impl<'p, 's> Checker<'p, 's> {
             let mut has_match = false;
             'members: for &t in &types {
                 let Some(tm) = self.members(t) else { continue };
-                for (&(prop, _), &chosen) in telling.iter().zip(&combination) {
+                for (&(prop, _), &chosen) in discriminants.iter().zip(&combination) {
                     let Some((target_prop, target_mapper)) =
                         self.property_in_type(t, &tm, prop.name)
                     else {
@@ -6293,7 +6293,7 @@ impl<'p, 's> Checker<'p, 's> {
         optionals_only: bool,
         state: u8,
     ) -> Ternary {
-        self.properties_related_to_noting::<REPORT>(
+        self.properties_related_to_ex::<REPORT>(
             r,
             source,
             None,
@@ -6308,7 +6308,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `propertiesRelatedTo`. `properties` is an object type with the properties that `getPropertiesOfType(source)`
     /// returns, for when `members(source)` lacks them, or a union in which each property is looked up by name.
     /// `both` is set to the `members` of `source` and `target`, if they were requested and are final.
-    fn properties_related_to_noting<const REPORT: bool>(
+    fn properties_related_to_ex<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -6629,7 +6629,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         if (a.0.mapper, a.1) == (b.0.mapper, b.1)
-            && self.types().key_apart(a.0) == self.types().key_apart(b.0)
+            && self.types().separate_key(a.0) == self.types().separate_key(b.0)
         {
             return true;
         }
@@ -7148,8 +7148,8 @@ impl<'p, 's> Checker<'p, 's> {
         which: DerivedSig,
         derive: impl FnOnce(&mut Self) -> SigId,
     ) -> SigId {
-        if let Some(kept) = self.recent_derived_sigs.get(sig.0, which as u32) {
-            return SigId(kept);
+        if let Some(cached_value) = self.recent_derived_sigs.get(sig.0, which as u32) {
+            return SigId(cached_value);
         }
         let mark = self.non_cacheable_mark();
         let derived = derive(self);
@@ -7407,11 +7407,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getMinArgumentCount`
     pub(super) fn min_argument_count(&mut self, params: &[SigParam]) -> usize {
-        self.min_argument_count_asked(None, params)
+        self.min_argument_count_for(None, params)
     }
 
     /// `getMinArgumentCount`. If `sig` is given, `params` is its list from `sig_params_with_first`.
-    pub(super) fn min_argument_count_asked(
+    pub(super) fn min_argument_count_for(
         &mut self,
         sig: Option<SigId>,
         params: &[SigParam],

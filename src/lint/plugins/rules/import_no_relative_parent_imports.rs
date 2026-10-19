@@ -19,7 +19,7 @@ const FROM_PARENT: Message = Message::new(
 const OXLINT: Message = Message::new("", "Relative imports from parent directories are not allowed");
 
 /// The module systems oxlint checks, regardless of the options.
-const OF_OXLINT: Systems = Systems { esmodule: true, commonjs: true, amd: false };
+const OXLINT_SYSTEMS: Systems = Systems { esmodule: true, commonjs: true, amd: false };
 
 /// oxlint's `is_parent_import`
 fn is_parent_import(path: &[u8]) -> bool {
@@ -50,7 +50,7 @@ impl Rule for NoRelativeParentImports {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         // oxlint never touches the disk.
         if file.language().is_oxlint {
-            return Visitor::of(OF_OXLINT).may_visit(file).then_some(());
+            return Visitor::of(OXLINT_SYSTEMS).may_visit(file).then_some(());
         }
         let is_on_the_disk = file.modules().is_some() && file.path() != b"<text>";
         (is_on_the_disk && self.visitor.may_visit(file)).then_some(())
@@ -61,7 +61,7 @@ impl Rule for NoRelativeParentImports {
         if file.language().is_oxlint {
             // oxlint uses the specifier as written. It rejects a parenthesized one, and finds `require` inside
             // TypeScript wrappers.
-            let visited = Visitor::of(Systems { commonjs: false, ..OF_OXLINT }).visit(file);
+            let visited = Visitor::of(Systems { commonjs: false, ..OXLINT_SYSTEMS }).visit(file);
             let declared = visited.iter().filter(|it| !has_parentheses(it.importer));
             let declared = declared.map(|it| (it.specifier, it.source));
             let calls = file.mentions("require").then(|| file.exprs_of_kind(ExprTag::Call)).into_iter().flatten();

@@ -50,7 +50,7 @@ pub(crate) fn comments_of_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Owne
 /// `e`'s.
 pub(crate) fn is_chain_expression_without_comments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     e.is_chain_root()
-        && !f.context().has_tree_of_babel()
+        && !f.context().has_babel_tree()
         && !f.options().flavor.is_oxfmt()
         && !is_cast_target(e, f)
 }

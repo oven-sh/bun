@@ -15,7 +15,7 @@ pub(crate) fn write_ts_intersection_type<'a>(
         return super::flow::write_interface_type(types, f);
     }
     match types.len() {
-        1 if lone_type_of_intersection_is_a_group(f) => write!(f, group(&types.first())),
+        1 if groups_single_type_intersection(f) => write!(f, group(&types.first())),
         1 => write!(f, types.first()),
         _ => write!(
             f,
@@ -26,7 +26,7 @@ pub(crate) fn write_ts_intersection_type<'a>(
 
 /// oxfmt treats `& A` as an intersection, so it's a group: a block comment after the `&` that ends its line moves onto
 /// `A`'s line if that fits. Prettier treats it as plain `A`.
-pub(crate) fn lone_type_of_intersection_is_a_group(f: &Formatter<'_>) -> bool {
+pub(crate) fn groups_single_type_intersection(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

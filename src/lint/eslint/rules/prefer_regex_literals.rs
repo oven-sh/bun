@@ -111,13 +111,13 @@ fn is_valid_preceding_token(token: &[u8]) -> bool {
 }
 
 /// Returns the `value.raw` of a `TemplateElement`, where every line break is normalized to a line feed.
-fn template_raw_value(written: &[u8]) -> Cow<'_, [u8]> {
-    if !strings::contains_char(written, b'\r') {
-        return Cow::Borrowed(written);
+fn template_raw_value(source_text: &[u8]) -> Cow<'_, [u8]> {
+    if !strings::contains_char(source_text, b'\r') {
+        return Cow::Borrowed(source_text);
     }
-    let mut raw = Vec::with_capacity(written.len());
+    let mut raw = Vec::with_capacity(source_text.len());
     let mut previous = 0;
-    for &byte in written {
+    for &byte in source_text {
         match byte {
             b'\r' => raw.push(b'\n'),
             b'\n' if previous == b'\r' => {}

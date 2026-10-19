@@ -1,4 +1,4 @@
-use crate::bun::{CALLED, Exports, calls_of_modules, each_call_of_exports, exports_option};
+use crate::bun::{CALLED, Exports, module_calls, for_each_export_call, exports_option};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::eslint_utils::TraceMap;
@@ -66,12 +66,12 @@ fn has_listener(variable: Symbol) -> bool {
     let is_exported = |it: Declaration| matches!(it.parent(), Some(Node::Stmt(statement)) if statement.is_exported());
     // A reference that isn't an expression, as in `export { a }`, can't be followed.
     let mut uses = variable.references().filter(|it| !it.is_init()).map(Reference::expr);
-    variable.declarations().any(is_exported) || uses.any(|it| it.is_none_or(|e| is_taken_care_of(e, None)))
+    variable.declarations().any(is_exported) || uses.any(|it| it.is_none_or(|e| is_handled_or_escapes(e, None)))
 }
 
 /// True if the emitter `e` gets an `error` listener, or escapes to where we can't tell. `known` is passed if `e` isn't
 /// itself a reference to a variable. In that case, a variable that `e` is assigned to is checked too.
-fn is_taken_care_of(mut e: Expr, mut known: Option<&mut Known>) -> bool {
+fn is_handled_or_escapes(mut e: Expr, mut known: Option<&mut Known>) -> bool {
     let mut is_emitter = true;
     loop {
         if let Node::Expr(wrapper) = e.parent()
@@ -94,7 +94,7 @@ fn is_taken_care_of(mut e: Expr, mut known: Option<&mut Known>) -> bool {
         is_emitter &= listens;
         e = whole;
     }
-    let mut of_variable = |variable: Option<Symbol>| match (variable, known.as_deref_mut()) {
+    let mut variable_has_listener = |variable: Option<Symbol>| match (variable, known.as_deref_mut()) {
         (Some(variable), Some(known)) if is_emitter => {
             *known.entry(variable.key()).or_insert_with(|| has_listener(variable))
         }
@@ -103,10 +103,10 @@ fn is_taken_care_of(mut e: Expr, mut known: Option<&mut Known>) -> bool {
     match e.parent() {
         Node::Stmt(statement) => statement.tag() != StmtTag::Expr,
         // A destructured property isn't the emitter.
-        Node::VarDecl(declaration) => declaration.pat().symbol().is_some_and(|it| of_variable(Some(it))),
+        Node::VarDecl(declaration) => declaration.pat().symbol().is_some_and(|it| variable_has_listener(Some(it))),
         Node::Expr(parent) => match parent.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj != e,
-            ExprKind::Assign { target, value, .. } => value == e && of_variable(target.symbol()),
+            ExprKind::Assign { target, value, .. } => value == e && variable_has_listener(target.symbol()),
             _ => true,
         },
         _ => true,
@@ -131,16 +131,16 @@ impl Rule for NoUnhandledEmitterErrors {
         let mut known = Known::default();
         let mut check = |e: Expr<'a>, name: &str| {
             if let Some(callee) = e.callee()
-                && !is_taken_care_of(e, Some(&mut known))
+                && !is_handled_or_escapes(e, Some(&mut known))
             {
                 cx.report(callee, NO_LISTENER).data("name", name.to_owned());
             }
         };
         if NODE.members.iter().any(|it| file.mentions(it.0)) {
-            for (e, name) in calls_of_modules(file, &NODE) {
+            for (e, name) in module_calls(file, &NODE) {
                 check(e, name);
             }
         }
-        each_call_of_exports(file, &self.factories, CALLED, &mut check);
+        for_each_export_call(file, &self.factories, CALLED, &mut check);
     }
 }

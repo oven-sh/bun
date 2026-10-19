@@ -18,27 +18,27 @@ const FIRST: u32 = 64;
 pub(super) struct Instances<R> {
     /// Nothing in it ever moves, so it can be read while another thread adds to it.
     chunks: [OnceLock<Box<[OnceLock<R>]>>; 26],
-    made: Guarded<Made>,
+    made: Guarded<InstanceIndex>,
 }
 
 #[derive(Default)]
-struct Made {
+struct InstanceIndex {
     /// Indexed by a rule's index in the registry: the rule's instances so far, with their options.
     by_rule: Vec<Vec<(Arc<[Json]>, Instance)>>,
     len: u32,
 }
 
 /// An [`Instance`]'s location.
-struct Place {
+struct Slot {
     chunk: usize,
     /// The index within the chunk.
     at: usize,
 }
 
 impl Instance {
-    fn place(self) -> Place {
+    fn slot(self) -> Slot {
         let chunk = (self.0 / FIRST + 1).ilog2();
-        Place {
+        Slot {
             chunk: chunk as usize,
             at: (self.0 - FIRST * ((1 << chunk) - 1)) as usize,
         }
@@ -49,12 +49,12 @@ impl<R> Instances<R> {
     pub(super) fn new() -> Instances<R> {
         Instances {
             chunks: std::array::from_fn(|_| OnceLock::new()),
-            made: Guarded::new(Made::default()),
+            made: Guarded::new(InstanceIndex::default()),
         }
     }
 
     pub(super) fn get(&self, it: Instance) -> Option<&R> {
-        let Place { chunk, at } = it.place();
+        let Slot { chunk, at } = it.slot();
         self.chunks.get(chunk)?.get()?.get(at)?.get()
     }
 
@@ -75,11 +75,11 @@ impl<R> Instances<R> {
         }
         let rule = make()?;
         let it = Instance(made.len);
-        let Place { chunk, at } = it.place();
-        let places = self.chunks[chunk]
+        let Slot { chunk, at } = it.slot();
+        let slots = self.chunks[chunk]
             .get_or_init(|| (0..FIRST << chunk).map(|_| OnceLock::new()).collect());
         // No other thread has this slot.
-        let _ = places[at].set(rule);
+        let _ = slots[at].set(rule);
         made.len += 1;
         made.by_rule[index].push((Arc::clone(options), it));
         Some(it)

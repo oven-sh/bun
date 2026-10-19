@@ -6,7 +6,7 @@ use super::function_type::{
 };
 use super::object_like::ObjectLike;
 use super::type_parameters::{FormatDanglingCommentsForInline, type_arguments};
-use super::union_type::union_writes_comments_behind_colon;
+use super::union_type::union_prints_comments_after_colon;
 use crate::cursor::extend_node;
 use crate::js::format::{FormatTypeOfPredicate, format_node, identifier};
 use crate::js::utils::conditional::ConditionalLike;
@@ -266,7 +266,7 @@ fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &m
 }
 
 /// oxfmt prints `a: string; /* comment */` as `a: string /* comment */;`.
-fn separator_is_behind_comments(f: &Formatter<'_>) -> bool {
+fn separator_goes_after_comments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -292,7 +292,7 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
                 return;
             }
             // Flow's `,` goes after the member's trailing comments.
-            if (f.file().is_flow() && !self.is_interface) || separator_is_behind_comments(f) {
+            if (f.file().is_flow() && !self.is_interface) || separator_goes_after_comments(f) {
                 write!(f, signature);
                 return self.write_separator(f);
             }
@@ -393,9 +393,9 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
             }
             write!(f, [":", space()]);
             // oxfmt leaves `a: // comment ⏎ B` as is. The comment dangles from the signature.
-            if !f.is_quiet() && !union_writes_comments_behind_colon(without_lone_operator(ty), f) {
-                let comments_behind_colon = f.comments().of_node(node).dangling;
-                write!(f, FormatLeadingComments::Comments(comments_behind_colon));
+            if !f.is_quiet() && !union_prints_comments_after_colon(without_lone_operator(ty), f) {
+                let comments_after_colon = f.comments().of_node(node).dangling;
+                write!(f, FormatLeadingComments::Comments(comments_after_colon));
             }
             write!(f, ty);
         }
@@ -554,10 +554,10 @@ impl<'a> ImportTypeComments<'a> {
                 ..
             }
         );
-        let behind_typeof = (of_source.leading.iter())
+        let after_typeof = (of_source.leading.iter())
             .take_while(|comment| is_typeof && comment.prev_token_end() == end_of_typeof)
             .count();
-        let (leading_import, leading_source) = of_source.leading.split_at(behind_typeof);
+        let (leading_import, leading_source) = of_source.leading.split_at(after_typeof);
         let Some(options) = options else {
             return ImportTypeComments {
                 leading_import,
@@ -651,7 +651,7 @@ fn has_ignore_comment<'a>(
 /// ```
 ///
 /// Prettier is on the left: the options are the last argument of a call. oxfmt is on the right.
-fn options_of_import_type_are_on_a_line_of_their_own(f: &Formatter<'_>) -> bool {
+fn import_type_options_get_their_own_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -710,7 +710,7 @@ fn write_import_type_arguments<'a>(
     if does_source_break || has_empty_line {
         return write!(f, all_broken_out(true));
     }
-    if !do_options_break && options_of_import_type_are_on_a_line_of_their_own(f) {
+    if !do_options_break && import_type_options_get_their_own_line(f) {
         return write!(
             f,
             best_fitting!(

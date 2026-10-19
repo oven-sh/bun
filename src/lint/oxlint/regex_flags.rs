@@ -2,7 +2,7 @@
 //! oxlint's `ast_util.rs`, and `is_regexp_callee` from its `utils/regex.rs`.
 //!
 //! Also the regular expressions that oxlint compiles from options with the `regex` crate: [`rust_regex`],
-//! [`regex_of_option`].
+//! [`option_regex`].
 
 use crate::ast_util::{
     get_inner_expression, get_member_expr, is_global_reference, is_global_reference_name,
@@ -122,7 +122,7 @@ pub fn rust_regex(pattern: &str, ignores_case: bool) -> Option<Regex> {
 
 /// Compiles an option's pattern that oxlint compiles with the `regex` crate. `None` if it isn't a valid JavaScript
 /// pattern.
-pub fn regex_of_option(pattern: &str) -> Option<Regex> {
+pub fn option_regex(pattern: &str) -> Option<Regex> {
     // The crate supports `(?i)`, but JavaScript doesn't.
     match pattern.strip_prefix("(?i)") {
         Some(pattern) => rust_regex(pattern, true),

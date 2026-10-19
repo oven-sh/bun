@@ -3,7 +3,7 @@
 
 use super::Meta;
 use super::info::{Position, Source};
-use super::oxlint::{code, is_error, page_of};
+use super::oxlint::{code, docs_page, is_error};
 use crate::results::FileResult;
 use bun_core::printer::json_stringify;
 use bun_core::strings;
@@ -15,7 +15,7 @@ fn url(message: &LintMessage) -> Option<Vec<u8>> {
     let Some(RuleId::Known(rule)) = &message.rule_id else {
         return None;
     };
-    page_of(rule.plugin, rule.name.as_bytes())
+    docs_page(rule.plugin, rule.name.as_bytes())
 }
 
 /// Writes a span that oxlint labels, from byte `start` to byte `end`, with the label's text. There's no end line or end
@@ -59,7 +59,7 @@ fn write_diagnostic(out: &mut Vec<u8>, source: &Source, message: &LintMessage) {
             json_stringify(text.as_bytes(), out);
         }
     }
-    if source.is_of_a_file {
+    if source.is_about_a_file {
         out.extend_from_slice(b",\"filename\": ");
         json_stringify(&source.name, out);
     }

@@ -40,7 +40,7 @@ fn literal_type(e: Expr) -> Option<&'static str> {
 }
 
 /// The kinds of literals that oxlint distinguishes, by syntax. A template can have substitutions.
-fn literal_type_of_oxlint(e: Expr) -> Option<&'static str> {
+fn oxlint_literal_type(e: Expr) -> Option<&'static str> {
     match e.kind() {
         _ if e.is_parenthesized() => None,
         ExprKind::Template(_) => Some("template"),
@@ -65,7 +65,7 @@ impl Eqeqeq {
             .into_iter()
             .any(|it| is_typeof(it) && is_seen(it));
         let literal_type: fn(Expr<'a>) -> Option<&'static str> = if is_oxlint {
-            literal_type_of_oxlint
+            oxlint_literal_type
         } else {
             literal_type
         };

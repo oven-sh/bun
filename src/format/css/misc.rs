@@ -244,9 +244,9 @@ pub(crate) fn quote_attribute_value(value: Cow<'_, [u8]>, single_quote: bool) ->
             let before = &value[..value.len() - 1];
             let unflagged = bun_core::strings::trim_js_whitespace_end(before);
             // Prettier turns `b\ c` into `"b\" c`. It turns `b\31 c`, which means `b1c`, into `"b\31" c`.
-            let is_escaped = ends_before_escaped_blank(unflagged);
-            let blank_of_escape = usize::from(is_escaped || ends_with_hex_escape(unflagged));
-            let is_match = unflagged.len() + blank_of_escape < before.len()
+            let is_escaped = ends_with_unescaped_backslash(unflagged);
+            let escape_whitespace_len = usize::from(is_escaped || ends_with_hex_escape(unflagged));
+            let is_match = unflagged.len() + escape_whitespace_len < before.len()
                 && !unflagged.is_empty()
                 && bun_core::strings::index_of_any(unflagged, b"\n\r").is_none();
             is_match.then_some((unflagged.len() + usize::from(is_escaped), flag))
@@ -299,7 +299,7 @@ pub(crate) fn maybe_to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
 /// True if `text` ends with a backslash that isn't escaped itself. If `text` is a whole value or all of an at-rule's
 /// parameters, the backslash escapes whitespace that `postcss` split off as trailing whitespace, because anything else
 /// would still be in `text`. That doesn't hold for a word of a value: `\@a` is split into `\` and `@a`.
-pub(crate) fn ends_before_escaped_blank(text: &[u8]) -> bool {
+pub(crate) fn ends_with_unescaped_backslash(text: &[u8]) -> bool {
     text.ends_with(b"\\") && text.iter().rev().take_while(|byte| **byte == b'\\').count() % 2 == 1
 }
 
@@ -309,7 +309,7 @@ pub(crate) fn ends_with_hex_escape(text: &[u8]) -> bool {
     let digits = (text.iter().rev())
         .take_while(|byte| byte.is_ascii_hexdigit())
         .count();
-    (1..=6).contains(&digits) && ends_before_escaped_blank(&text[..text.len() - digits])
+    (1..=6).contains(&digits) && ends_with_unescaped_backslash(&text[..text.len() - digits])
 }
 
 /// Returns the offset of the first SCSS or Less `//` comment in `text` at or after `at`. Skips strings, `/* */`

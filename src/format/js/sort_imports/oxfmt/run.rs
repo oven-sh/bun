@@ -9,8 +9,8 @@ use crate::pragma::{has_ignore_pragma, has_pragma};
 use crate::prelude::*;
 use crate::write;
 use bun_core::strings;
-use bun_lint::fix::is_comment_about_the_file;
-use bun_lint::linter::goes_to_flow;
+use bun_lint::fix::is_file_level_comment;
+use bun_lint::linter::is_flow_file;
 use std::sync::Arc;
 
 impl SortImports {
@@ -444,14 +444,14 @@ fn transform<'a>(
     out.pop();
 }
 
-/// Wraps [`is_comment_about_the_file`]. `// eslint-disable-next-line`, `// @ts-ignore` and `// @ts-expect-error` apply
+/// Wraps [`is_file_level_comment`]. `// eslint-disable-next-line`, `// @ts-ignore` and `// @ts-expect-error` apply
 /// to the next statement, so they don't count.
 fn is_about_the_file(comment: Comment<'_>) -> bool {
     let text = comment.text();
-    is_comment_about_the_file(text, comment.content())
+    is_file_level_comment(text, comment.content())
         // These pragmas decide how Prettier parses the file. It matches them loosely: `// @flow.` counts too.
         || (strings::contains_char(text, b'@')
-            && (goes_to_flow(text, b"") || has_pragma(text) || has_ignore_pragma(text)))
+            && (is_flow_file(text, b"") || has_pragma(text) || has_ignore_pragma(text)))
 }
 
 /// Sorts the runs of imports in a list of statements. The caller that prints the list announces each thing it's about

@@ -32,7 +32,7 @@ pub(crate) struct Input<'i, 'a> {
     pub(crate) has_skipped_rules: &'i dyn Fn() -> bool,
     /// True if Bun knows what the rule named in a comment reports. It doesn't for a rule that oxlint has and Bun lacks,
     /// so a comment that disables such a rule is never reported.
-    pub(crate) can_tell: &'i dyn Fn(&[u8]) -> bool,
+    pub(crate) knows_rule: &'i dyn Fn(&[u8]) -> bool,
 }
 
 /// `eslint` or `oxlint`
@@ -60,7 +60,7 @@ struct Range<'a> {
     /// range, if there is one.
     comment: Span,
     /// `-line` or `-next-line`
-    is_about_a_line: bool,
+    is_single_line: bool,
     justification: &'a [u8],
     is_used: bool,
 }
@@ -106,7 +106,7 @@ fn names(text: &[u8], offset: u32) -> Names<'_> {
 }
 
 /// True if a comment that lists `name` applies to the rule `id`.
-fn is_name_of(name: &[u8], id: &RuleId) -> bool {
+fn name_matches_rule(name: &[u8], id: &RuleId) -> bool {
     match id {
         RuleId::Known(meta) if !strings::contains_char(meta.name.as_bytes(), b'/') => {
             let short = strings::last_index_of_char(name, b'/').map_or(name, |it| &name[it + 1..]);
@@ -211,7 +211,7 @@ fn ranges<'a>(
                 name_span,
                 prefix,
                 comment: comment.span,
-                is_about_a_line: true,
+                is_single_line: true,
                 justification: file.slice(comment.justification),
                 is_used: false,
             };
@@ -256,7 +256,7 @@ fn ranges<'a>(
                         name_span,
                         prefix: it.prefix,
                         comment: comment.span,
-                        is_about_a_line: false,
+                        is_single_line: false,
                         justification: it.justification,
                         is_used: false,
                     });
@@ -287,7 +287,7 @@ fn ranges<'a>(
         name_span: it.name_span,
         prefix: it.prefix,
         comment: it.comment,
-        is_about_a_line: false,
+        is_single_line: false,
         justification: it.justification,
         is_used: false,
     }));
@@ -296,7 +296,7 @@ fn ranges<'a>(
 }
 
 /// A line and a column.
-type Place = (u32, u32);
+type Position = (u32, u32);
 
 /// The part of a rule's name after the last `/`. Names that match the same rule share it.
 fn last_part(name: &[u8]) -> &[u8] {
@@ -310,11 +310,11 @@ struct Index<'a> {
     /// ordered by start, and form a balanced search tree whose root is the middle one.
     entries: Vec<(&'a [u8], u32)>,
     /// For each entry: the last position where a range in its subtree stops.
-    last_stop: Vec<Place>,
+    last_stop: Vec<Position>,
 }
 
 impl<'a> Index<'a> {
-    fn new(ranges: &[Range<'a>], places: &[(Place, Place)]) -> Self {
+    fn new(ranges: &[Range<'a>], positions: &[(Position, Position)]) -> Self {
         let numbered = ranges.iter().zip(0u32..);
         let mut entries: Vec<_> = numbered
             .map(|(it, i)| (it.name.map_or(&b""[..], last_part), i))
@@ -327,21 +327,26 @@ impl<'a> Index<'a> {
         let mut start = 0;
         while let Some(&(name, _)) = index.entries.get(start) {
             let len = index.entries[start..].partition_point(|it| it.0 == name);
-            index.note_stops(places, start, start + len);
+            index.note_stops(positions, start, start + len);
             start += len;
         }
         index
     }
 
-    fn note_stops(&mut self, places: &[(Place, Place)], start: usize, end: usize) -> Place {
+    fn note_stops(
+        &mut self,
+        positions: &[(Position, Position)],
+        start: usize,
+        end: usize,
+    ) -> Position {
         if start >= end {
             return (0, 0);
         }
         let middle = start + (end - start) / 2;
-        let own = places[self.entries[middle].1 as usize].1;
+        let own = positions[self.entries[middle].1 as usize].1;
         let last = own
-            .max(self.note_stops(places, start, middle))
-            .max(self.note_stops(places, middle + 1, end));
+            .max(self.note_stops(positions, start, middle))
+            .max(self.note_stops(positions, middle + 1, end));
         self.last_stop[middle] = last;
         last
     }
@@ -350,20 +355,20 @@ impl<'a> Index<'a> {
     fn overlapping(
         &self,
         name: &[u8],
-        places: &[(Place, Place)],
-        (start, end): (Place, Place),
+        positions: &[(Position, Position)],
+        (start, end): (Position, Position),
         found: &mut SmallVec<[u32; 8]>,
     ) {
         let first = self.entries.partition_point(|it| it.0 < name);
         let len = self.entries[first..].partition_point(|it| it.0 == name);
-        self.search(places, (first, first + len), (start, end), found);
+        self.search(positions, (first, first + len), (start, end), found);
     }
 
     fn search(
         &self,
-        places: &[(Place, Place)],
+        positions: &[(Position, Position)],
         (first, last): (usize, usize),
-        (start, end): (Place, Place),
+        (start, end): (Position, Position),
         found: &mut SmallVec<[u32; 8]>,
     ) {
         if first >= last {
@@ -373,14 +378,14 @@ impl<'a> Index<'a> {
         if self.last_stop[middle] <= start {
             return;
         }
-        self.search(places, (first, middle), (start, end), found);
+        self.search(positions, (first, middle), (start, end), found);
         let number = self.entries[middle].1;
-        let (from, to) = places[number as usize];
+        let (from, to) = positions[number as usize];
         if from < end {
             if to > start {
                 found.push(number);
             }
-            self.search(places, (middle + 1, last), (start, end), found);
+            self.search(positions, (middle + 1, last), (start, end), found);
         }
     }
 }
@@ -397,11 +402,11 @@ pub(crate) fn apply<'a>(
     if ranges.is_empty() && unused_enables.is_empty() {
         return;
     }
-    let places: Vec<(Place, Place)> = (ranges
+    let positions: Vec<(Position, Position)> = (ranges
         .iter()
         .map(|it| (locator.position(it.start), locator.position(it.stop))))
     .collect();
-    let index = Index::new(&ranges, &places);
+    let index = Index::new(&ranges, &positions);
     let mut overlapping = SmallVec::new();
     for problem in problems.iter_mut().filter(|it| !it.is_fatal) {
         let Some(id) = &problem.rule_id else {
@@ -411,20 +416,23 @@ pub(crate) fn apply<'a>(
         let (start, end) =
             (problem.comments_apply_at).unwrap_or_else(|| (shown, problem.end.unwrap_or(shown)));
         overlapping.clear();
-        index.overlapping(b"", &places, (start, end), &mut overlapping);
+        index.overlapping(b"", &positions, (start, end), &mut overlapping);
         let for_all_rules = overlapping.len();
         match id {
             RuleId::Known(meta) => index.overlapping(
                 last_part(meta.name.as_bytes()),
-                &places,
+                &positions,
                 (start, end),
                 &mut overlapping,
             ),
-            RuleId::Js(rule) => {
-                index.overlapping(last_part(&rule.id), &places, (start, end), &mut overlapping)
-            }
+            RuleId::Js(rule) => index.overlapping(
+                last_part(&rule.id),
+                &positions,
+                (start, end),
+                &mut overlapping,
+            ),
             RuleId::Named(_, id) => {
-                index.overlapping(last_part(id), &places, (start, end), &mut overlapping)
+                index.overlapping(last_part(id), &positions, (start, end), &mut overlapping)
             }
             RuleId::Unknown(_) => {}
         }
@@ -432,9 +440,9 @@ pub(crate) fn apply<'a>(
             overlapping.sort_unstable();
         }
         for &number in &overlapping {
-            let (range, (from, to)) = (&mut ranges[number as usize], places[number as usize]);
-            if (!range.is_about_a_line || from <= start && start < to)
-                && range.name.is_none_or(|name| is_name_of(name, id))
+            let (range, (from, to)) = (&mut ranges[number as usize], positions[number as usize]);
+            if (!range.is_single_line || from <= start && start < to)
+                && range.name.is_none_or(|name| name_matches_rule(name, id))
             {
                 range.is_used = true;
                 problem
@@ -451,8 +459,11 @@ pub(crate) fn apply<'a>(
             && match it.name {
                 None => input.rules_to_ignore.is_empty() && !(input.has_skipped_rules)(),
                 Some(name) => {
-                    (input.can_tell)(name)
-                        && !input.rules_to_ignore.iter().any(|id| is_name_of(name, id))
+                    (input.knows_rule)(name)
+                        && !input
+                            .rules_to_ignore
+                            .iter()
+                            .any(|id| name_matches_rule(name, id))
                 }
             }
     };

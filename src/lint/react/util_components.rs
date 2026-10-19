@@ -183,11 +183,11 @@ fn get_wrapper_functions<'a>(file: &'a File<'a>, pragma: &'a [u8]) -> Vec<Wrappe
             let object = object.map(|it| if it == b"<pragma>" { pragma } else { it });
             Some(WrapperFunction { object, property })
         });
-    let of_the_pragma = ["forwardRef", "memo"].map(|property| WrapperFunction {
+    let pragma_wrappers = ["forwardRef", "memo"].map(|property| WrapperFunction {
         object: Some(pragma),
         property: Some(property.as_bytes()),
     });
-    configured.chain(of_the_pragma).collect()
+    configured.chain(pragma_wrappers).collect()
 }
 
 /// `getComponentNameFromJSXElement`
@@ -837,7 +837,7 @@ impl<'a> Components<'a> {
     /// True if `node` is passed to a call whose callee has a wrapper function's name. Only then
     /// does `get_stateless_component`'s result depend on how far the walk is, and only then does it
     /// call `list()`.
-    fn is_given_to_wrapper(&self, node: Node<'a>) -> bool {
+    fn is_passed_to_wrapper(&self, node: Node<'a>) -> bool {
         let Parent::CallExpression(call) = Parent::of(normalize(node)) else {
             return false;
         };
@@ -862,7 +862,7 @@ impl<'a> Components<'a> {
             }
             passed.push(it);
             let node = it.node();
-            if self.is_given_to_wrapper(node) || self.get_stateless_component(node).is_some() {
+            if self.is_passed_to_wrapper(node) || self.get_stateless_component(node).is_some() {
                 break Some(it);
             }
             current = it.parent();

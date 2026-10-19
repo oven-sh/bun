@@ -160,7 +160,7 @@ pub(crate) struct Element<'a> {
     pub(crate) this: Option<Expression>,
     /// The span of the `this` attribute, if its value has several parts and `this` above is only the first:
     /// `this="h{level}"`.
-    pub(crate) this_with_more: Option<Span>,
+    pub(crate) multipart_this_attribute: Option<Span>,
     /// Offset of the start tag's `>` or `/>`.
     pub(crate) start_tag_end: u32,
 }
@@ -273,7 +273,7 @@ pub(crate) struct Tree<'a> {
     /// Only the comments between attributes.
     pub(crate) comments: Vec<Comment>,
     /// The plugin's `_svelte_ts` (a `<script>` or `<style>` has `lang="ts"`), or Svelte's `ts`.
-    pub(crate) says_typescript: bool,
+    pub(crate) uses_typescript: bool,
 }
 
 impl<'a> Tree<'a> {

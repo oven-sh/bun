@@ -49,7 +49,7 @@ fn find(id: &[u8]) -> Option<Json> {
 /// Options that only `bun lint` has, as `(rule, option)`. Each is a boolean in the rule's first options object. They're
 /// valid only when there's no ESLint or oxlint config file. With one, the original schema applies and rejects them with
 /// the original error.
-const OPTIONS_OF_BUN: [(&[u8], &[u8]); 4] = [
+const BUN_ONLY_OPTIONS: [(&[u8], &[u8]); 4] = [
     (
         b"@typescript-eslint/no-loss-of-precision",
         b"ignoreDecimals",
@@ -59,10 +59,10 @@ const OPTIONS_OF_BUN: [(&[u8], &[u8]); 4] = [
     (b"react/jsx-key", b"checkArraysOutsideJSX"),
 ];
 
-/// [`find`], with [`OPTIONS_OF_BUN`] added to the schema.
-fn find_standing_alone(id: &[u8]) -> Option<Json> {
+/// [`find`], with [`BUN_ONLY_OPTIONS`] added to the schema.
+fn find_with_bun_options(id: &[u8]) -> Option<Json> {
     let found = find(id);
-    let mut own = OPTIONS_OF_BUN.iter().filter(|it| it.0 == id).peekable();
+    let mut own = BUN_ONLY_OPTIONS.iter().filter(|it| it.0 == id).peekable();
     if own.peek().is_none() {
         return found;
     }
@@ -128,7 +128,7 @@ pub fn schema_and_defaults(meta: &'static Meta, options: &[Json]) -> Option<(Jso
     if meta.follows_oxlint {
         return None;
     }
-    let found = find_standing_alone(&RuleId::Known(meta).to_vec())?;
+    let found = find_with_bun_options(&RuleId::Known(meta).to_vec())?;
     let [schema, defaults @ ..] = found.as_array()? else {
         return None;
     };
@@ -139,18 +139,19 @@ pub fn schema_and_defaults(meta: &'static Meta, options: &[Json]) -> Option<(Jso
 }
 
 /// Validates `options` (without the severity) like ESLint's `validateRulesConfig`. Returns `Err` with the lines of
-/// ESLint's message that follow `Key "rules": Key "<rule>":`. With `stands_alone`, [`OPTIONS_OF_BUN`] are valid too.
+/// ESLint's message that follow `Key "rules": Key "<rule>":`. With `has_no_foreign_config`, [`BUN_ONLY_OPTIONS`] are
+/// valid too.
 pub(crate) fn validate(
     meta: &'static Meta,
     options: &[Json],
-    stands_alone: bool,
+    has_no_foreign_config: bool,
 ) -> Result<(), Vec<u8>> {
     // Rules ported from oxlint have no schema. They ignore options they don't know.
     if meta.follows_oxlint {
         return Ok(());
     }
-    let find = if stands_alone {
-        find_standing_alone
+    let find = if has_no_foreign_config {
+        find_with_bun_options
     } else {
         find
     };
@@ -165,11 +166,11 @@ pub fn mistake_in_options(
     options: &[Json],
 ) -> Option<OptionMistake> {
     let id = RuleId::Known(meta).to_vec();
-    let needs_some = || data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id);
-    if meta.follows_oxlint || options.is_empty() && !needs_some() {
+    let requires_options = || data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id);
+    if meta.follows_oxlint || options.is_empty() && !requires_options() {
         return None;
     }
-    let found = find_standing_alone(&id);
+    let found = find_with_bun_options(&id);
     let parts = found.as_ref().and_then(Json::as_array).unwrap_or_default();
     let defaults = parts.get(1).and_then(Json::as_array).unwrap_or_default();
     let errors = errors_of(parts.first(), defaults, options).err()?;

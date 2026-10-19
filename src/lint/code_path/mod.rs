@@ -146,7 +146,7 @@ pub(crate) struct Store {
 }
 
 impl Store {
-    fn what_matters_to_nobody<'a>(&self, file: &'a File<'a>) -> &matters::Matters {
+    fn matters_without_listeners<'a>(&self, file: &'a File<'a>) -> &matters::Matters {
         self.matters
             .get_or_init(|| matters::Matters::new(file, NodeTags::EMPTY))
     }

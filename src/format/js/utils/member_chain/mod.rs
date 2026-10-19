@@ -33,7 +33,7 @@ pub(crate) fn write_member_chain<'a>(call_expression: Expr<'a>, f: &mut Formatte
     let mut members = Members::new();
     let has_inner_call = push_chain_members(call_expression, &mut members, f);
     if !is_one_group_after_the_head(has_inner_call, f)
-        || (goes_by_position_of_comments(f)
+        || (lays_out_by_comment_position(f)
             && (members.iter())
                 .any(|member| needs_empty_line_before_for_oxfmt(std::slice::from_ref(member), f)))
     {
@@ -67,7 +67,7 @@ pub(crate) fn head_of_member_chain<'a>(
 
 /// The code is parsed as a statement here, but Prettier has no such node: its root is a `JsExpressionRoot` or an
 /// `NGRoot`.
-fn is_all_of_expression_in_html(f: &Formatter<'_>) -> bool {
+fn is_whole_expression_in_html(f: &Formatter<'_>) -> bool {
     !matches!(
         f.options().in_html.root,
         HtmlRoot::None | HtmlRoot::Program | HtmlRoot::VueEventBinding
@@ -133,7 +133,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
         let Some(first_member) = self.group(1).first() else {
             return false;
         };
-        if match goes_by_position_of_comments(f) {
+        if match lays_out_by_comment_position(f) {
             true => !f.is_quiet() && has_comment_in_member_for_oxfmt(first_member, f),
             false => has_leading_comment(first_member, f) || has_trailing_comment(first_member, f),
         } {
@@ -150,7 +150,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                         // A name that's shorter than the indentation: the `.` wouldn't even be to the right of it.
                         || (name.len() <= f.options().indent_width.value() as usize
                             && matches!(self.root.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr)
-                            && !is_all_of_expression_in_html(f))
+                            && !is_whole_expression_in_html(f))
                 }
                 ExprTag::This => true,
                 _ => false,
@@ -183,7 +183,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
     /// which forces the chain to break. An empty line after the head, if the head doesn't end with a call, is only kept
     /// if the chain breaks.
     fn find_empty_lines(&self, f: &Formatter<'a>) -> (SmallVec<[bool; 8]>, bool) {
-        if goes_by_position_of_comments(f) {
+        if lays_out_by_comment_position(f) {
             let needs_empty_line: SmallVec<[bool; 8]> = (self.groups().skip(1))
                 .map(|group| needs_empty_line_before_for_oxfmt(group, f))
                 .collect();
@@ -270,7 +270,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
         if f.is_quiet() {
             return false;
         }
-        if goes_by_position_of_comments(f) {
+        if lays_out_by_comment_position(f) {
             return (self.members.iter()).any(|member| has_comment_in_member_for_oxfmt(member, f));
         }
         let Some((_, all_but_last)) = self.members.split_last() else {
@@ -368,12 +368,12 @@ fn has_trailing_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool
 }
 
 /// oxfmt lays out a chain by where the comments are, not by which nodes own them.
-fn goes_by_position_of_comments(f: &Formatter<'_>) -> bool {
+fn lays_out_by_comment_position(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
 /// True if only whitespace and comments are between `expression` and `comment`, which comes after it.
-fn is_directly_behind(comment: Comment<'_>, expression: Expr<'_>) -> bool {
+fn is_directly_after(comment: Comment<'_>, expression: Expr<'_>) -> bool {
     comment.prev_token_end() == expression.span().end
 }
 
@@ -390,7 +390,7 @@ fn has_comment_in_member_for_oxfmt<'a>(member: &ChainMember<'a>, f: &Formatter<'
     (f.comments()).has_comment_in_span(Span::after(object.span(), name_start))
         || (member.comments(f).trailing.iter())
             .take_while(|comment| {
-                !comment.has_newline_before() && is_directly_behind(*comment, expression)
+                !comment.has_newline_before() && is_directly_after(*comment, expression)
             })
             .any(|comment| comment.is_line() || comment.has_newline_after())
 }
@@ -437,7 +437,7 @@ fn is_followed_by_comment<'a>(
     next: Option<&ChainMember<'a>>,
     f: &Formatter<'a>,
 ) -> bool {
-    if !goes_by_position_of_comments(f) {
+    if !lays_out_by_comment_position(f) {
         return has_trailing_comment(member, f);
     }
     let first_before_next = next.and_then(|next| match next {
@@ -447,7 +447,7 @@ fn is_followed_by_comment<'a>(
     });
     (member.comments(f).trailing.first().into_iter())
         .chain(first_before_next)
-        .any(|comment| is_directly_behind(comment, member.expr()))
+        .any(|comment| is_directly_after(comment, member.expr()))
 }
 
 fn is_computed_array_member_access(member: &ChainMember<'_>) -> bool {

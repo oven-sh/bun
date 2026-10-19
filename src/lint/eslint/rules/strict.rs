@@ -107,7 +107,7 @@ type Containers<'a> = AncestorMemo<'a, Node<'a>>;
 
 impl Surroundings {
     fn of<'a>(func: Func<'a>, containers: &mut Containers<'a>) -> Surroundings {
-        let mut around = Surroundings::default();
+        let mut surroundings = Surroundings::default();
         let mut inner = Node::Func(func);
         while let Some(container) = containers.find(inner, |child, ancestor| match ancestor {
             Node::Func(outer) => ast_utils::is_function_with_body(outer).then_some(ancestor),
@@ -116,14 +116,14 @@ impl Surroundings {
         }) {
             match container {
                 Node::Func(outer) => {
-                    around.is_in_function = true;
-                    around.is_in_strict_function |= has_use_strict_directive(outer);
+                    surroundings.is_in_function = true;
+                    surroundings.is_in_strict_function |= has_use_strict_directive(outer);
                 }
-                _ => around.is_in_class = true,
+                _ => surroundings.is_in_class = true,
             }
             inner = container;
         }
-        around
+        surroundings
     }
 }
 
@@ -147,8 +147,8 @@ impl Strict {
         if func.enclosing().is_some_and(Func::has_body) {
             return;
         }
-        let around = Surroundings::of(func, &mut cx.state.containers);
-        if around.is_in_function || around.is_in_class {
+        let surroundings = Surroundings::of(func, &mut cx.state.containers);
+        if surroundings.is_in_function || surroundings.is_in_class {
             return;
         }
         if is_simple_parameter_list(func) {
@@ -212,10 +212,10 @@ impl Rule for Strict {
             directives.for_each(|it| report_directive(cx, it, mode.message(), mode.should_fix()));
             return;
         } else {
-            let around = Surroundings::of(func, &mut cx.state.containers);
-            if around.is_in_strict_function {
+            let surroundings = Surroundings::of(func, &mut cx.state.containers);
+            if surroundings.is_in_strict_function {
                 report_directive(cx, first, UNNECESSARY, true);
-            } else if around.is_in_class {
+            } else if surroundings.is_in_class {
                 report_directive(cx, first, UNNECESSARY_IN_CLASSES, true);
             }
         }

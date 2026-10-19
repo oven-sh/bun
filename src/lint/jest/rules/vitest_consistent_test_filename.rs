@@ -36,7 +36,7 @@ fn matcher_pattern(configured: Option<&str>) -> Matcher {
 }
 
 /// Returns `test` or `spec` if the path matches `\.(test|spec)\.[tj]sx?$`.
-fn kind_of_test(path: &[u8]) -> Option<&'static [u8]> {
+fn test_file_kind(path: &[u8]) -> Option<&'static [u8]> {
     let extensions: [&[u8]; 4] = [b".ts", b".tsx", b".js", b".jsx"];
     let rest = extensions.iter().find_map(|it| path.strip_suffix(*it))?;
     let kinds: [&'static [u8]; 2] = [b"test", b"spec"];
@@ -60,7 +60,7 @@ impl<const RUNNER: u8> Rule for ConsistentTestFilename<RUNNER> {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let path = file.path();
         let is_match = |matcher: &Matcher, is_default: fn(&[u8]) -> bool| match matcher {
-            Matcher::Default => kind_of_test(path).is_some_and(is_default),
+            Matcher::Default => test_file_kind(path).is_some_and(is_default),
             Matcher::Pattern(pattern) => pattern.as_ref().is_some_and(|it| it.test(path)),
         };
         (is_match(&self.all_test_pattern, |_| true) && !is_match(&self.pattern, |kind| kind == b"test") && jest::is_for(file, RUNNER)).then_some(())

@@ -81,7 +81,7 @@ enum ImportKind {
 
 /// An entry's `type`.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Written {
+enum EntryType {
     Import,
     /// `import a = b.c`
     ImportObject,
@@ -106,7 +106,7 @@ struct Entry<'a> {
     value: Cow<'a, [u8]>,
     display_name: Cow<'a, [u8]>,
     alias: Option<&'a [u8]>,
-    written: Written,
+    written: EntryType,
     /// `node.importKind`
     import_kind: ImportKind,
     /// `node.exportKind === "type"`
@@ -468,8 +468,8 @@ fn find_out_of_order(ranks: &[f64]) -> Vec<usize> {
 /// `makeImportDescription`
 fn description_of(entry: &Entry) -> &'static str {
     match (entry.written, entry.is_type_export, entry.import_kind) {
-        (Written::Export, true, _) => "type export",
-        (Written::Export, false, _) => "export",
+        (EntryType::Export, true, _) => "type export",
+        (EntryType::Export, false, _) => "export",
         (_, _, ImportKind::Type) => "type import",
         _ => "import",
     }
@@ -565,16 +565,16 @@ impl Order {
     fn rank_of(
         &self,
         value: &[u8],
-        written: Written,
+        written: EntryType,
         is_type_only: bool,
         types: &ImportTypes,
     ) -> Option<f64> {
         let is_excluded = |it: ImportType| self.excluded & (1 << (it as u16)) != 0;
         let is_of_types = is_type_only && self.is_type_in_groups;
         let import_type = match written {
-            Written::ImportObject => ImportType::Object,
+            EntryType::ImportObject => ImportType::Object,
             _ if is_of_types && !self.sorts_types_group => ImportType::Type,
-            _ => types.of_name(value, written == Written::Require),
+            _ => types.of_name(value, written == EntryType::Require),
         };
         let of_path = || {
             let group = self.path_groups.iter().find(|it| it.glob.matches(value))?;
@@ -587,7 +587,7 @@ impl Order {
         if is_type_only && self.sorts_types_group {
             rank = self.groups[ImportType::Type as usize] + rank / 10.0;
         }
-        if written == Written::Require {
+        if written == EntryType::Require {
             rank += 100.0;
         }
         (rank != -1.0).then_some(rank)
@@ -625,9 +625,9 @@ impl Order {
             // `whole`: the span that decides whether the entry is multiline.
             let mut register = |(node, whole): (Span, Span),
                                 name: &'a [u8],
-                                written: Written,
+                                written: EntryType,
                                 kind: ImportKind| {
-                let value = if written == Written::ImportObject {
+                let value = if written == EntryType::ImportObject {
                     &b""[..]
                 } else {
                     name
@@ -656,7 +656,7 @@ impl Order {
                     register(
                         (root, root),
                         name,
-                        Written::Import,
+                        EntryType::Import,
                         Self::kind_of(cx, import.is_type_only()),
                     );
                     if self.named.import {
@@ -666,7 +666,7 @@ impl Order {
                             self.named_entry(
                                 it.span(),
                                 (name_of(it.imported()), alias),
-                                Written::Import,
+                                EntryType::Import,
                                 kind,
                             )
                         });
@@ -677,14 +677,14 @@ impl Order {
                     let kind = Self::kind_of(cx, import.flags().contains(Flags::TYPE_ONLY));
                     match import.target() {
                         ImportEqualsTarget::Require(Some(name)) => {
-                            register((root, root), name.bytes(), Written::Import, kind);
+                            register((root, root), name.bytes(), EntryType::Import, kind);
                         }
                         ImportEqualsTarget::Entity(entity) => {
                             if let Some((first, last)) =
                                 entity.parts().next().zip(entity.parts().next_back())
                             {
                                 let entity = file.slice(Span::new(first.start(), last.span().end));
-                                register((root, root), entity, Written::ImportObject, kind);
+                                register((root, root), entity, EntryType::ImportObject, kind);
                             }
                         }
                         ImportEqualsTarget::Require(None) => {}
@@ -698,7 +698,7 @@ impl Order {
                             register(
                                 (call.span(), whole),
                                 name.bytes(),
-                                Written::Require,
+                                EntryType::Require,
                                 ImportKind::Undefined,
                             );
                         }
@@ -1103,7 +1103,7 @@ impl Order {
         &self,
         node: Span,
         (name, alias): (&'a [u8], Option<&'a [u8]>),
-        written: Written,
+        written: EntryType,
         kind: ImportKind,
     ) -> Entry<'a> {
         let is_type = kind == ImportKind::Type;
@@ -1115,12 +1115,12 @@ impl Order {
             display_name: Cow::Borrowed(name),
             alias,
             written,
-            import_kind: if written == Written::Import {
+            import_kind: if written == EntryType::Import {
                 kind
             } else {
                 ImportKind::Undefined
             },
-            is_type_export: written == Written::Export && is_type,
+            is_type_export: written == EntryType::Export && is_type,
             rank: match self.named.types {
                 NamedTypes::Mixed => 0.0,
                 NamedTypes::First => f64::from(!is_type),
@@ -1157,7 +1157,7 @@ impl Order {
             Some(self.named_entry(
                 it.span(),
                 (name, alias),
-                Written::Require,
+                EntryType::Require,
                 ImportKind::Undefined,
             ))
         });
@@ -1178,7 +1178,7 @@ impl Order {
             self.named_entry(
                 it.span(),
                 (name_of(it.local()), alias),
-                Written::Export,
+                EntryType::Export,
                 kind,
             )
         });
@@ -1208,7 +1208,7 @@ impl Order {
                     Some(self.named_entry(
                         it.span(),
                         (name, alias),
-                        Written::Export,
+                        EntryType::Export,
                         ImportKind::Undefined,
                     ))
                 });
@@ -1229,7 +1229,7 @@ impl Order {
                     value: Cow::Owned(name.clone()),
                     display_name: Cow::Owned(name),
                     alias: None,
-                    written: Written::Export,
+                    written: EntryType::Export,
                     import_kind: ImportKind::Undefined,
                     is_type_export: false,
                     rank: 0.0,
@@ -1240,7 +1240,7 @@ impl Order {
         if self.alphabetize.order == Direction::Ignore {
             return;
         }
-        for (_, mut exported) in utils::sort::in_order_of(blocks, |it| it.0) {
+        for (_, mut exported) in utils::sort::collect_sorted_by_key(blocks, |it| it.0) {
             utils::sort::sort_by_key(&mut exported, |it| it.node.start);
             self.alphabetize(&mut exported);
             self.report_out_of_order(exported, Category::Exports, None, cx);

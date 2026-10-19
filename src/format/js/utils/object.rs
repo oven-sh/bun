@@ -12,7 +12,7 @@ use crate::ir::width::string_width;
 use crate::js::format::format_name;
 use crate::prelude::*;
 use crate::write;
-use bun_lint::linter::goes_to_flow;
+use bun_lint::linter::is_flow_file;
 use std::borrow::Cow;
 
 /// Prettier's `printKey`, without a computed key's brackets, with the comments around it. Quotes are added and removed
@@ -174,7 +174,7 @@ fn printed_key<'a>(
             let printed = format_trimmed_number(source);
             // Prettier's `isKeySafeToQuote`: not in TypeScript, where it changes the type, and only if the number is
             // written the same way it converts to a string.
-            let is_safe_to_quote = (f.context().has_tree_of_babel() || f.file().is_flow())
+            let is_safe_to_quote = (f.context().has_babel_tree() || f.file().is_flow())
                 && is_simple_number(&printed)
                 && name.bytes() == &*printed;
             match is_safe_to_quote && should_quote_keys(parent, f) {
@@ -222,7 +222,7 @@ fn unquoted<'a>(
                     && is_canonical_simple_number(content)
                     && !f.file().is_flow()
                     && (f.options().flavor.is_oxfmt()
-                        || !goes_to_flow(
+                        || !is_flow_file(
                             bun_core::strings::without_utf8_bom(f.file().text()),
                             f.filepath(),
                         )))

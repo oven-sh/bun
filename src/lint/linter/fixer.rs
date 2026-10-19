@@ -19,7 +19,7 @@ pub struct Fixed {
 }
 
 /// The byte order mark.
-const MARK: &[u8] = b"\xEF\xBB\xBF";
+const BYTE_ORDER_MARK: &[u8] = b"\xEF\xBB\xBF";
 
 /// ESLint's `SourceCodeFixer.applyFixes`. A fix that overlaps or touches an already applied fix
 /// waits for the next pass. `should_fix` is ESLint's `fix` option as a function. Unlike ESLint,
@@ -67,7 +67,10 @@ pub fn apply_fixes(
         // A range can extend past the text, as with `String.prototype.slice`.
         output.extend_from_slice(&text[last.unwrap_or(0).min(text.len())..start.min(text.len())]);
         // ESLint's "Remove BOM": the mark in the fix replaces the existing one.
-        if start == MARK.len() && text.starts_with(MARK) && fix.text.starts_with(MARK) {
+        if start == BYTE_ORDER_MARK.len()
+            && text.starts_with(BYTE_ORDER_MARK)
+            && fix.text.starts_with(BYTE_ORDER_MARK)
+        {
             output.clear();
         }
         output.extend_from_slice(&fix.text);
@@ -133,7 +136,7 @@ pub fn is_redeclaration(message: &LintMessage) -> bool {
 
 /// The report to return when a pass's fixes are rolled back. `before` is the text before that pass. `was_fixed` tells
 /// whether earlier passes had already changed it, and `fixes` is how many fixes they applied.
-fn without_the_last_pass(
+fn rolled_back_report(
     before: Vec<u8>,
     (rules, was_fixed, fixes): (Vec<RuleId>, bool, usize),
     lint: &mut dyn FnMut(&[u8], bool) -> LintResult,
@@ -171,7 +174,7 @@ pub fn verify_and_fix(
         if breaks_syntax(&result, tolerated_before)
             && let (Some(before), Some(pass)) = (previous.take(), last_pass.take())
         {
-            return without_the_last_pass(before, pass, lint);
+            return rolled_back_report(before, pass, lint);
         }
         tolerated_before = result.tolerated_errors;
         let fixed = apply_fixes(&current, std::mem::take(&mut result.messages), should_fix);
@@ -201,7 +204,7 @@ pub fn verify_and_fix(
                 if breaks_syntax(&result, tolerated_before)
                     && let (Some(before), Some(pass)) = (previous.take(), last_pass.take())
                 {
-                    return without_the_last_pass(before, pass, lint);
+                    return rolled_back_report(before, pass, lint);
                 }
             }
             return FixReport {

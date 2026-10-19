@@ -502,13 +502,13 @@ impl Builder<'_> {
             };
             let has_comment_on_operand = element.kind == Kind::Unary
                 && self.has_comment(Owner::node(index + 1), |_, _, _| true);
-            let has_line_comment_behind =
+            let has_line_comment_after =
                 self.has_comment(Owner::node(index), |this, placement, comment| {
                     placement == Placement::Trailing
                         && !comment.is_block
                         && !has_newline_backwards(this.text, comment.start as usize)
                 });
-            if has_comment_on_operand || has_line_comment_behind {
+            if has_comment_on_operand || has_line_comment_after {
                 return false;
             }
             index = element.next;

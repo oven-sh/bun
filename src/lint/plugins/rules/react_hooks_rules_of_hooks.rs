@@ -80,7 +80,7 @@ fn is_hook(e: Expr) -> bool {
 
 /// True if `callee` is a `use` that the file declares itself, other than by importing it from React. Playwright passes
 /// a function with that name to every fixture: `async ({ page }, use) => { await use(page); }`.
-fn is_use_of_the_file(callee: Expr) -> bool {
+fn is_locally_declared_use(callee: Expr) -> bool {
     let is_from_react =
         |it| matches!(it, Declaration::ImportSpec(spec) if spec.import().spec().is("react"));
     callee.is_ident("use")
@@ -92,13 +92,14 @@ fn is_use_of_the_file(callee: Expr) -> bool {
 /// [`is_hook`], minus things that only have a hook's name. With an ESLint or oxlint config only the name counts, as in
 /// the plugin.
 fn calls_hook(callee: Expr) -> bool {
-    is_hook(callee) && !(callee.file().language().stands_alone && is_use_of_the_file(callee))
+    is_hook(callee)
+        && !(callee.file().language().has_no_foreign_config && is_locally_declared_use(callee))
 }
 
 /// Storybook renders a story's `render` function as a component, so it can call hooks.
-fn is_render_of_story(name: FunctionName, file: &File) -> bool {
+fn is_story_render(name: FunctionName, file: &File) -> bool {
     matches!(name, FunctionName::Ident(name, _) if name.is("render"))
-        && file.language().stands_alone
+        && file.language().has_no_foreign_config
         && strings::contains(paths::basename(file.path()), b".stories.")
 }
 
@@ -446,7 +447,7 @@ impl Zeros {
     }
 
     /// Invalidates the groups in `owned`, because the frame that owns them was popped with a nonzero count.
-    fn forget(&mut self, owned: &[usize]) {
+    fn invalidate(&mut self, owned: &[usize]) {
         for &it in owned {
             let root = self.find(it);
             if let Some(root) = self.groups.get_mut(root) {
@@ -582,11 +583,11 @@ impl<'a> Paths<'a> {
                                     frame.owned.push(group);
                                 }
                             }
-                            None => zeros.forget(&top.owned),
+                            None => zeros.invalidate(&top.owned),
                         }
                     } else {
                         self.from_start.insert(segment.id(), sum);
-                        zeros.forget(&top.owned);
+                        zeros.invalidate(&top.owned);
                     }
                     if let Some(below) = stack.last_mut() {
                         below.met.append(&mut top.met);
@@ -720,8 +721,8 @@ impl Rule for RulesOfHooks {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let mut state = State::default();
         // Cache by name, because a file has many times more calls than names.
-        let mut is_name_of_hook = ByName::default();
-        let may_call_a_hook = file.mentions_name_of_hook();
+        let mut hook_name_cache = ByName::default();
+        let may_call_a_hook = file.mentions_hook_name();
         for e in file
             .exprs_of_kind(ExprTag::Call)
             .filter(|_| may_call_a_hook)
@@ -735,7 +736,7 @@ impl Rule for RulesOfHooks {
             else {
                 continue;
             };
-            if is_name_of_hook.get_or_insert_with(name, || is_hook_name(name.bytes()))
+            if hook_name_cache.get_or_insert_with(name, || is_hook_name(name.bytes()))
                 && calls_hook(callee)
             {
                 state.calls.push(e);
@@ -762,7 +763,7 @@ fn checks_effect_events(file: &File) -> bool {
 }
 
 /// A call in a top-level statement of a code path, in a part of the statement that's always evaluated.
-struct AtTheTop<'a> {
+struct TopLevelCall<'a> {
     /// The node that starts the code path.
     root: Node<'a>,
     /// From the start of the code path to the statement. Empty in an arrow function's expression body.
@@ -770,7 +771,7 @@ struct AtTheTop<'a> {
 }
 
 /// `steps`: the remaining budget of levels to climb.
-fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<AtTheTop<'a>> {
+fn as_top_level_call<'a>(call: Expr<'a>, steps: &mut usize) -> Option<TopLevelCall<'a>> {
     let mut child = call;
     let statement = loop {
         *steps = steps.checked_sub(1)?;
@@ -820,7 +821,7 @@ fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<
             }
             // An arrow function's expression body.
             Node::Func(func) => {
-                return Some(AtTheTop {
+                return Some(TopLevelCall {
                     root: Node::Func(func),
                     before: Span::empty(0),
                 });
@@ -834,7 +835,7 @@ fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<
         Node::File(_) => 0,
         _ => return None,
     };
-    Some(AtTheTop {
+    Some(TopLevelCall {
         root,
         before: Span::new(start, statement.span().start),
     })
@@ -848,9 +849,9 @@ fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<
 fn roots_if_always_called<'a>(file: &'a File<'a>, calls: &[Expr<'a>]) -> Option<Vec<Node<'a>>> {
     const STEPS_FOR_EACH: usize = 32;
     let mut steps = STEPS_FOR_EACH * (calls.len() + 8);
-    let calls: Vec<AtTheTop<'a>> = calls
+    let calls: Vec<TopLevelCall<'a>> = calls
         .iter()
-        .map(|it| at_the_top_of_its_code_path(*it, &mut steps))
+        .map(|it| as_top_level_call(*it, &mut steps))
         .collect::<Option<_>>()?;
     // For each code path, the start of the last of those statements.
     let mut last: FxHashMap<Node<'a>, u32> = FxHashMap::default();
@@ -991,7 +992,7 @@ impl RulesOfHooks {
             _ => None,
         };
         let is_directly_inside_component_or_hook = match function_name {
-            Some(name) => name.is_component_or_hook() || is_render_of_story(name, cx.file()),
+            Some(name) => name.is_component_or_hook() || is_story_render(name, cx.file()),
             None => function_expr.is_some_and(is_forward_ref_or_memo_callback),
         };
         // True if it's the value of a class method or property.

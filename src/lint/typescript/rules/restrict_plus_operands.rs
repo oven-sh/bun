@@ -49,8 +49,8 @@ fn is_named_reg_exp(ty: Type) -> bool {
 impl RestrictPlusOperands {
     fn report_invalid<'a>(&self, cx: &Cx<'a, Self>, base_node: Expr<'a>, ty: Type<'a>) {
         // tsgolint's span includes the parentheses.
-        let place = if cx.language().is_oxlint { base_node.outer_span() } else { base_node.span() };
-        cx.report(place, INVALID)
+        let report_span = if cx.language().is_oxlint { base_node.outer_span() } else { base_node.span() };
+        cx.report(report_span, INVALID)
             .data("type", ty.to_text())
             .data("stringLike", self.string_like.clone());
     }
@@ -113,7 +113,7 @@ impl RestrictPlusOperands {
         }
 
         // oxlint reports the left side.
-        let place = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
+        let report_span = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
         let labels = |labels: &mut Details| {
             labels.first(format!("Type: {}", bstr::BStr::new(&left_type.to_text())));
             labels.push(right.outer_span(), format!("Type: {}", bstr::BStr::new(&right_type.to_text())));
@@ -124,7 +124,7 @@ impl RestrictPlusOperands {
                 && is_type_flag_set(base_type, TypeFlags::STRING_LIKE)
                 && is_type_flag_set(other_type, TypeFlags::NUMBER_LIKE | TypeFlags::BIG_INT_LIKE)
             {
-                cx.report(place, MISMATCHED)
+                cx.report(report_span, MISMATCHED)
                     .comments_apply_at(node.span())
                     .data("left", left_type.to_text())
                     .data("right", right_type.to_text())
@@ -135,7 +135,7 @@ impl RestrictPlusOperands {
             if is_type_flag_set(base_type, TypeFlags::NUMBER_LIKE)
                 && is_type_flag_set(other_type, TypeFlags::BIG_INT_LIKE)
             {
-                cx.report(place, BIGINT_AND_NUMBER)
+                cx.report(report_span, BIGINT_AND_NUMBER)
                     .comments_apply_at(node.span())
                     .data("left", left_type.to_text())
                     .data("right", right_type.to_text())

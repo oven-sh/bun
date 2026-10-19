@@ -38,7 +38,7 @@ fn use_state_declaration(e: Expr<'_>) -> Option<VarDecl<'_>> {
 }
 
 /// `setRows` and `rows`
-fn are_named_as_a_pair(setter: &[u8], state: &[u8]) -> bool {
+fn names_form_state_pair(setter: &[u8], state: &[u8]) -> bool {
     match (setter.strip_prefix(b"set"), state) {
         (Some([first, rest @ ..]), [state_first, state_rest @ ..]) => {
             first.is_ascii_uppercase() && first.to_ascii_lowercase() == *state_first && rest == state_rest
@@ -51,7 +51,7 @@ fn are_named_as_a_pair(setter: &[u8], state: &[u8]) -> bool {
 fn is_setter_of<'a>(setter: Expr<'a>, state: Expr<'a>) -> bool {
     match (use_state_declaration(setter), use_state_declaration(state)) {
         (Some(of_setter), Some(of_state)) => of_setter == of_state && setter.symbol() != state.symbol(),
-        (None, None) => are_named_as_a_pair(setter.text(), state.text()),
+        (None, None) => names_form_state_pair(setter.text(), state.text()),
         _ => false,
     }
 }

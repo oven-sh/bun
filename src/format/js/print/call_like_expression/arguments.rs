@@ -330,10 +330,10 @@ fn as_expression(argument: Expr<'_>) -> Option<Expr<'_>> {
 
 /// True if `e` is a template that's formatted as its embedded language.
 pub(super) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    has_embed_label_of_other_than_html(e, f) || crate::html::in_js::label(e, f).is_some()
+    has_non_html_embed_label(e, f) || crate::html::in_js::label(e, f).is_some()
 }
 
-fn has_embed_label_of_other_than_html<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+fn has_non_html_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     crate::css::embed::has_embed_label(e, f)
         || crate::graphql::embed::has_embed_label(e, f)
         || crate::markdown::embed::has_embed_label(e, f)
@@ -341,7 +341,7 @@ fn has_embed_label_of_other_than_html<'a>(e: Expr<'a>, f: &Formatter<'a>) -> boo
 
 /// `label?.embed && label?.hug !== false`
 fn has_embed_label_with_hug<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    has_embed_label_of_other_than_html(e, f)
+    has_non_html_embed_label(e, f)
         || crate::html::in_js::label(e, f) == Some(crate::html::in_js::Label::Embed)
 }
 
@@ -596,7 +596,7 @@ fn can_group_arrow_function_expression_argument<'a>(
 
 /// `new A(b, function (c, d) {})`: for Prettier the parameters can break while the function is hugged. For oxfmt they
 /// can't, as in a call.
-fn new_is_a_call_like_another(f: &Formatter<'_>) -> bool {
+fn treats_new_like_call(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -609,7 +609,7 @@ fn write_grouped_arguments<'a>(
     let last_index = node.len().saturating_sub(1);
     // Prettier's `shouldExpandParameters` in `printFunction`. Not for `new A(function () {})`.
     let is_call = matches!(node.parent, AstNodes::CallExpression(_))
-        || (matches!(node.parent, AstNodes::NewExpression(_)) && new_is_a_call_like_another(f));
+        || (matches!(node.parent, AstNodes::NewExpression(_)) && treats_new_like_call(f));
     let expands_parameters_of = |function: Func<'a>| {
         is_call && (last_index != 0 || has_only_simple_parameters(function, false))
     };
@@ -641,7 +641,7 @@ fn write_grouped_arguments<'a>(
             Some(function)
                 if is_grouped_argument
                     && function.is_arrow()
-                    && !is_written_the_same_when_grouped(function, f) =>
+                    && !is_printed_the_same_when_grouped(function, f) =>
             {
                 Some(ExprOptions::Arrow(FormatJsArrowFunctionExpressionOptions {
                     cache_mode: FunctionCacheMode::Cache,
@@ -798,7 +798,7 @@ fn write_grouped_arguments<'a>(
 
 /// `() => {}`, without comments: there's no signature to keep on one line, and only an expression body depends on the
 /// arrow function's position.
-fn is_written_the_same_when_grouped<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
+fn is_printed_the_same_when_grouped<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
     f.is_quiet()
         && matches!(arrow.body(), FnBody::Block(_))
         && arrow.params().is_empty()

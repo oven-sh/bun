@@ -363,11 +363,11 @@ impl<'a> Serializer<'a> {
             Kind::InlineCode => {
                 let value = self.str(node.value);
                 let delimiter_len = min_not_present_backtick_run(value);
-                let is_blank_at = |byte: Option<&u8>| matches!(byte, Some(b' ' | b'\n'));
+                let is_space_or_newline = |byte: Option<&u8>| matches!(byte, Some(b' ' | b'\n'));
                 let needs_padding = value.starts_with(b"`")
                     || value.ends_with(b"`")
-                    || (is_blank_at(value.first())
-                        && is_blank_at(value.last())
+                    || (is_space_or_newline(value.first())
+                        && is_space_or_newline(value.last())
                         && value.iter().any(|byte| !matches!(byte, b' ' | b'\n')));
                 out.resize(out.len() + delimiter_len, b'`');
                 if needs_padding {

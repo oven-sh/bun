@@ -114,7 +114,7 @@ fn is_name_in_through<'a>(scope: Scope<'a>, name: Name<'a>, is_global: bool) -> 
 
 /// Per-file caches about variables, scopes and assignments.
 #[derive(Default)]
-struct Known<'a> {
+struct Caches<'a> {
     /// True if `scope.through` has a reference to a variable with that name.
     through: FxHashMap<(Scope<'a>, Name<'a>), bool>,
     /// True if an assignment to a pattern prevents a scope's variables from being `const`.
@@ -125,7 +125,7 @@ struct Known<'a> {
     patterns: Patterns<'a>,
 }
 
-impl<'a> Known<'a> {
+impl<'a> Caches<'a> {
     fn is_outer_variable_in_destructing(&mut self, name: Name<'a>, init_scope: Scope<'a>, file: &'a File<'a>) -> bool {
         // ESLint resolves a reference to a configured global, which also removes it from the global scope's `through`.
         let is_global =
@@ -158,7 +158,7 @@ impl<'a> Known<'a> {
 
     /// True if `host`, which assigns to `left`, also assigns to something that can't be declared together with
     /// `scope`'s variables. Cached, because it's checked once for every variable that `host` writes to.
-    fn assigns_to_others(&mut self, host: Expr<'a>, left: Expr<'a>, scope: Scope<'a>) -> bool {
+    fn has_undeclarable_targets(&mut self, host: Expr<'a>, left: Expr<'a>, scope: Scope<'a>) -> bool {
         if left.tag() == ExprTag::Ident {
             return false;
         }
@@ -298,7 +298,7 @@ impl PreferConst {
     fn get_identifier_if_should_be_const<'a>(
         &self,
         variable: Symbol<'a>,
-        known: &mut Known<'a>,
+        known: &mut Caches<'a>,
     ) -> Option<Node<'a>> {
         let scope = variable.scope();
         if scope.kind() == ScopeKind::Global && variable.is_marked_used() {
@@ -313,7 +313,7 @@ impl PreferConst {
                 }
                 if let Some(Node::Expr(host)) = get_destructuring_host(reference, &mut known.patterns)
                     && let ExprKind::Assign { target, .. } = host.kind()
-                    && known.assigns_to_others(host, target, scope)
+                    && known.has_undeclarable_targets(host, target, scope)
                 {
                     return None;
                 }
@@ -343,7 +343,7 @@ impl PreferConst {
     }
 
     /// ESLint's `groupByDestructuring`, for one variable.
-    fn group<'a>(&self, variable: Symbol<'a>, groups: &mut Groups<'a>, known: &mut Known<'a>) {
+    fn group<'a>(&self, variable: Symbol<'a>, groups: &mut Groups<'a>, known: &mut Caches<'a>) {
         let is_redeclared = variable.declarations().len() > 1;
         if is_redeclared && let Some((identifier, hosts)) = known.redeclared.get(variable) {
             for &host in hosts {
@@ -439,8 +439,8 @@ impl PreferConst {
                 }
                 _ => None,
             };
-            let place = declared.unwrap_or_else(|| utils::estree_span(node));
-            let report = cx.report(place, USE_CONST).data("name", name);
+            let location = declared.unwrap_or_else(|| utils::estree_span(node));
+            let report = cx.report(location, USE_CONST).data("name", name);
             if should_fix && let Some((statement, _)) = parent {
                 report.fix_where_safe(|| !is_exported_from_namespace(statement), |fixer| {
                     let range = statement.span_without_export();
@@ -487,7 +487,7 @@ impl Rule for PreferConst {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut statements = std::mem::take(&mut cx.state);
         utils::sort::sort_unstable_by_key(&mut statements, |it| it.span().start);
-        let (mut groups, mut known) = (Groups::default(), Known::default());
+        let (mut groups, mut known) = (Groups::default(), Caches::default());
         for statement in statements {
             let StmtKind::Var(declarations) = statement.kind() else {
                 continue;

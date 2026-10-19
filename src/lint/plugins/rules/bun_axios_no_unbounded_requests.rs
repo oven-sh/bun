@@ -1,4 +1,4 @@
-use crate::bun::{CALLED, Exports, calls_of_modules, each_call_of_exports, exports_option};
+use crate::bun::{CALLED, Exports, exports_option, for_each_export_call, module_calls};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::eslint_utils::TraceMap;
@@ -38,7 +38,7 @@ const AXIOS: TraceMap<'static, ()> = TraceMap::new(&[
 const MODULES: TraceMap<'static, ()> = TraceMap::new(&[("axios", AXIOS)]);
 
 /// The index of the config in `arguments`, if it can be determined.
-fn position_of_configuration<'a>(method: &str, arguments: List<'a, Expr<'a>>) -> Option<usize> {
+fn config_index<'a>(method: &str, arguments: List<'a, Expr<'a>>) -> Option<usize> {
     match method {
         "create" | "request" => Some(0),
         "delete" | "get" | "head" | "options" => Some(1),
@@ -77,7 +77,7 @@ fn check_request<'a>(e: Expr<'a>, method: &str, cx: &Cx<'a, AxiosNoUnboundedRequ
     if arguments.iter().any(|it| it.tag() == ExprTag::Spread) {
         return;
     }
-    let Some(position) = position_of_configuration(method, arguments) else {
+    let Some(position) = config_index(method, arguments) else {
         return;
     };
     let properties = match arguments
@@ -137,11 +137,11 @@ impl Rule for AxiosNoUnboundedRequests {
             return;
         }
         if file.mentions("axios") {
-            for (e, method) in calls_of_modules(file, &MODULES) {
+            for (e, method) in module_calls(file, &MODULES) {
                 check_request(e, method, cx);
             }
         }
-        each_call_of_exports(file, &self.clients, AXIOS, &mut |e, method| {
+        for_each_export_call(file, &self.clients, AXIOS, &mut |e, method| {
             check_request(e, method, cx)
         });
     }

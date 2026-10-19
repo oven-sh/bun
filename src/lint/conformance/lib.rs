@@ -23,7 +23,7 @@ mod test_only_rules;
 
 use bun_format_conformance::write_file;
 pub use bun_format_conformance::{Bundle, read_file, write_line};
-use compare::problem_of_oxlint;
+use compare::oxlint_problem;
 pub use compare::{
     Counts, Edit, Outcome, Problem, Reported, Suggested, expected_messages, problem_of, string_of,
 };
@@ -445,7 +445,7 @@ fn run_case(
         }
     };
     if fixture.plugin_of_oxlint().is_some() {
-        return Ok(problem_of_oxlint(entry, code, &messages, case, counts));
+        return Ok(oxlint_problem(entry, code, &messages, case, counts));
     }
     Ok(problem_of(
         Some(Outcome::new(entry, code, &messages)),
@@ -662,13 +662,18 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     for (fixture, failures) in fixtures.iter().zip(&failures) {
         let (id, tally) = (&fixture.id, fixture.tally);
         perfect += usize::from(tally.failed == 0);
-        let mut at_length = String::new();
+        let mut full_descriptions = String::new();
         for (index, problem) in failures {
             if !flags.table {
                 output_line!("FAIL {id}#{index} {}", problem.summary);
             }
             if flags.verbose || flags.report.is_some() {
-                describe(*index, &fixture.cases()[*index], problem, &mut at_length);
+                describe(
+                    *index,
+                    &fixture.cases()[*index],
+                    problem,
+                    &mut full_descriptions,
+                );
             }
         }
         if flags.table {
@@ -680,13 +685,13 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
                 tally.skipped
             );
         }
-        if flags.verbose && !at_length.is_empty() {
-            output_line!("{}", at_length.trim_end_matches('\n'));
+        if flags.verbose && !full_descriptions.is_empty() {
+            output_line!("{}", full_descriptions.trim_end_matches('\n'));
         }
         if let Some(report) = flags.report {
             write_file(
                 &[report, b"/", id.as_bytes(), b".txt"].concat(),
-                at_length.as_bytes(),
+                full_descriptions.as_bytes(),
             );
         }
         total.passed += tally.passed;
@@ -696,16 +701,16 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     if fixtures.iter().any(|it| it.plugin_of_oxlint().is_some()) {
         output_line!(
             "\n{} messages lack the help that oxlint has",
-            counts.lacking_help.load(Ordering::Relaxed)
+            counts.missing_help.load(Ordering::Relaxed)
         );
     }
     output_line!(
         "\n{} cases have their messages in another order",
-        counts.in_another_order.load(Ordering::Relaxed)
+        counts.reordered_cases.load(Ordering::Relaxed)
     );
     output_line!(
         "\n{} cases have a fix that --fix holds back",
-        counts.holding_back_a_fix.load(Ordering::Relaxed)
+        counts.cases_with_held_back_fix.load(Ordering::Relaxed)
     );
     output_line!(
         "\n{} rules, {perfect} without failures, {missing} not implemented\n{} cases passed, {} failed, {} skipped",

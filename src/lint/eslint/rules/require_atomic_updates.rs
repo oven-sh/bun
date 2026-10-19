@@ -229,13 +229,13 @@ impl RequireAtomicUpdates {
             return;
         }
         // Walk the scope chain, which is shorter than the ancestor chain.
-        let is_in_another = func.scope().is_some_and(|scope| {
+        let is_nested_in_checked_function = func.scope().is_some_and(|scope| {
             scope.chain().any(|it| match it.node() {
                 Node::Func(outer) => outer != func && (outer.is_async() || outer.is_generator()),
                 _ => false,
             })
         });
-        if is_in_another {
+        if is_nested_in_checked_function {
             return;
         }
         // ESLint exits the `ChainExpression` around an optional chain after the paths through it have joined, which is

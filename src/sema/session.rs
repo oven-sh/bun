@@ -294,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn what_is_kept_is_dropped_with_the_session() {
+    fn kept_values_are_dropped_with_the_session() {
         let counted = std::sync::Arc::new(());
         let session = Session::new();
         let lists: Vec<&Vec<std::sync::Arc<()>>> = std::thread::scope(|scope| {
@@ -348,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn a_vector_grows_on_another_thread_than_the_one_that_created_it() {
+    fn vector_grows_on_a_different_thread() {
         let session = Session::new();
         let mut list: Vec<u32, &Session> = Vec::new_in(&session);
         list.extend(0..100);
@@ -360,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn a_block_is_freed_on_another_thread_than_the_one_that_allocated_it() {
+    fn block_is_freed_on_a_different_thread() {
         let session = Session::new();
         let mut list = ArenaVec::new_in(session.arena());
         list.extend(0..1_000u32);

@@ -737,7 +737,7 @@ pub(crate) fn parse<'a>(
     errors.append(&mut builder.errors);
     let ended = builder.eof.span.start;
     if (ended as usize) < text.len() {
-        errors.push(SyntaxError::new(ended, ErrorKind::TextBehindNul, b""));
+        errors.push(SyntaxError::new(ended, ErrorKind::TextAfterNul, b""));
     }
     ParseResult {
         root,

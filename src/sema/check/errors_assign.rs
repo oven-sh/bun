@@ -119,7 +119,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `checkReferenceExpression`: only the invalid target is reported.
-        if super::errors_operators::why_no_reference(hir, target, 2364, 2779).is_some() {
+        if super::errors_operators::invalid_reference_code(hir, target, 2364, 2779).is_some() {
             return;
         }
         if self.is_assignment_element_with_initializer(file, assignment) {
@@ -715,7 +715,7 @@ impl Checker<'_, '_> {
     }
 
     /// FOR SPEED: true if `check_type_reference_or_import` has run for `node` since `check_file` began, reported
-    /// nothing, and read nothing provisional. A type node in an expression is checked by `look_at_type_node` and again
+    /// nothing, and read nothing provisional. A type node in an expression is checked by `precheck_type_node` and again
     /// by the walk.
     #[inline]
     fn is_type_reference_checked(&self, file: FileId, node: TypeNodeId) -> bool {
@@ -1265,7 +1265,7 @@ impl Checker<'_, '_> {
             head,
             output,
         );
-        self.put_out(diags);
+        self.add_diagnostics(diags);
         is_assignable
     }
 
@@ -1331,7 +1331,7 @@ impl Checker<'_, '_> {
     }
 
     /// Reports the diagnostics collected in a `diagnosticOutput`.
-    fn put_out(&mut self, reported: Vec<Reported>) {
+    fn add_diagnostics(&mut self, reported: Vec<Reported>) {
         for diagnostic in reported {
             self.add_diagnostic(diagnostic);
         }
@@ -1909,7 +1909,7 @@ impl Checker<'_, '_> {
         let diagnostic = match diagnostic {
             // The caller used a different relation, so there's no elaboration to give.
             None if is_related && self.related(source, target, relation) => {
-                self.relation_error_without_reasons(source, target, relation, place, head)
+                self.relation_error_without_elaboration(source, target, relation, place, head)
             }
             diagnostic => diagnostic?,
         };

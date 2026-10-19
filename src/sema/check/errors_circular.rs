@@ -320,7 +320,7 @@ impl Checker<'_, '_> {
         let no_implicit_any = self.p.files.options.no_implicit_any;
         let fn_owner = bound.fns[func.idx()].owner;
         // `printed` is the position of the name shown in the message, if it isn't `of`'s name.
-        let named = |c: &mut Self, of: FnId, code: u32, printed: Option<u32>| {
+        let report_at_name = |c: &mut Self, of: FnId, code: u32, printed: Option<u32>| {
             if let Some(start) = c.name_of_function(file, of) {
                 let end = c.end_of_name_at(file, start);
                 let printed = printed.unwrap_or(start);
@@ -354,10 +354,12 @@ impl Checker<'_, '_> {
                 });
                 match (getter, setter) {
                     (Some(getter), _) if hir[getter].ret.is_some() => {
-                        named(self, getter, 2502, symbol)
+                        report_at_name(self, getter, 2502, symbol)
                     }
-                    (_, Some(setter)) => named(self, setter, 2502, symbol),
-                    (Some(getter), None) => no_implicit_any && named(self, getter, 7023, symbol),
+                    (_, Some(setter)) => report_at_name(self, setter, 2502, symbol),
+                    (Some(getter), None) => {
+                        no_implicit_any && report_at_name(self, getter, 7023, symbol)
+                    }
                     (None, None) => false,
                 };
             }
@@ -369,7 +371,7 @@ impl Checker<'_, '_> {
             self.add_diagnostic_of(owner, err);
         } else if no_implicit_any
             && !matches!(hir[func].body, FnBody::None)
-            && !named(self, func, 7023, None)
+            && !report_at_name(self, func, 7023, None)
         {
             let (start, end) = self.error_range_of_fn(file, func);
             let err = self.new_diagnostic((file, start, end), 7024, &[]);

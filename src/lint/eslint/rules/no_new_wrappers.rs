@@ -42,12 +42,12 @@ impl Rule for NoNewWrappers {
             && Node::Expr(e).scope().resolve_name(name).is_none()
         {
             // For a long expression, oxlint points only at `new String`.
-            let place = match cx.language().is_oxlint && e.span().len() > 24 {
+            let location = match cx.language().is_oxlint && e.span().len() > 24 {
                 true => e.span().to(call.callee().span()),
                 false => e.span(),
             };
             let message = if is_symbol { NOT_A_CONSTRUCTOR } else { NO_CONSTRUCTOR };
-            let report = cx.report(place, message).data("fn", name);
+            let report = cx.report(location, message).data("fn", name);
             // oxlint's fix removes the `new`, or keeps only the argument if it's already a literal of that type.
             if cx.language().is_oxlint {
                 report.fix(|fixer| {

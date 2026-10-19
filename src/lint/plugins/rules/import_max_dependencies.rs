@@ -45,12 +45,12 @@ impl Rule for MaxDependencies {
         }
         // Upper bound: a file can't depend on more modules than it has statements and calls that can load one.
         let declarations = [StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar];
-        let mut places = declarations.iter().map(|it| file.stmts_of_kind(*it).count()).sum::<usize>();
-        places += file.exprs_of_kind(ExprTag::ImportCall).count();
+        let mut candidates = declarations.iter().map(|it| file.stmts_of_kind(*it).count()).sum::<usize>();
+        candidates += file.exprs_of_kind(ExprTag::ImportCall).count();
         if file.mentions("require") {
-            places += file.exprs_of_kind(ExprTag::Call).count();
+            candidates += file.exprs_of_kind(ExprTag::Call).count();
         }
-        (places as f64 > self.written_max?).then_some(())
+        (candidates as f64 > self.written_max?).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

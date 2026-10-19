@@ -405,7 +405,7 @@ impl Declaration {
     }
 
     /// `getCompilerOptionValueTypeString`
-    pub(crate) fn takes(self) -> &'static [u8] {
+    pub(crate) fn value_type_name(self) -> &'static [u8] {
         match self {
             Declaration::Root | Declaration::Of(_, Kind::Object) => b"object",
             Declaration::Of(_, Kind::Boolean) => b"boolean",
@@ -494,12 +494,12 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
             });
             continue;
         };
-        let mut wrong = |takes: &[u8]| {
+        let mut wrong = |value_type_name: &[u8]| {
             out.push(Problem {
                 property,
                 index: None,
                 code: 5024,
-                args: vec![name.clone(), takes.to_vec()],
+                args: vec![name.clone(), value_type_name.to_vec()],
                 span: value_span,
             });
         };
@@ -527,17 +527,17 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
                 Some(items) => {
                     let elements: Vec<ExprId> = file.elements(file.initializer(property)).collect();
                     // `commandLineOptionElements`
-                    let of_element = match &name[..] {
+                    let element_name = match &name[..] {
                         b"customConditions" => b"condition".to_vec(),
                         b"plugins" => b"plugin".to_vec(),
                         _ => name.clone(),
                     };
                     // `convertArrayLiteralExpressionToJson` drops `null`s, so an element's index only counts the other
                     // elements. TypeScript still looks up its node with it.
-                    let mut among_others = 0;
+                    let mut non_null_index = 0;
                     for (index, item) in items.iter().enumerate() {
-                        let at = among_others;
-                        among_others += usize::from(*item != Json::Null);
+                        let at = non_null_index;
+                        non_null_index += usize::from(*item != Json::Null);
                         let (code, args) = match (element, item) {
                             (_, Json::Null)
                             | (Element::String | Element::FilePath, Json::String(_))
@@ -552,12 +552,14 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
                                 (6046, not_one_of(&mut crate::resolve::LIBS.iter()))
                             }
                             (Element::String | Element::FilePath, _) => {
-                                (5024, vec![of_element.clone(), b"string".to_vec()])
+                                (5024, vec![element_name.clone(), b"string".to_vec()])
                             }
                             (Element::Object, _) => {
-                                (5024, vec![of_element.clone(), b"object".to_vec()])
+                                (5024, vec![element_name.clone(), b"object".to_vec()])
                             }
-                            (Element::Lib, _) => (5024, vec![of_element.clone(), b"enum".to_vec()]),
+                            (Element::Lib, _) => {
+                                (5024, vec![element_name.clone(), b"enum".to_vec()])
+                            }
                         };
                         out.push(Problem {
                             property,

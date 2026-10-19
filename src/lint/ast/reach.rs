@@ -135,7 +135,7 @@ impl File<'_> {
             .get(id.idx())
             .is_some_and(|scope| scope.is_some())
             && self.is_written::<MAY_BE_SYNTHETIC>(raw.pos)
-            && !self.is_in_type_that_is_an_error(id);
+            && !self.is_in_error_type(id);
         is_node.then(|| TypeTag::of(&raw.kind))
     }
 

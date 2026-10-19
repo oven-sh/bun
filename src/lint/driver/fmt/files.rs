@@ -2,14 +2,14 @@
 //! configuration file, it's oxfmt's `ScopedWalker` instead.
 
 use super::cli::Options;
-use super::config::{Configs, Flavor, Scope, glob_of_oxc, glob_of_prettier};
-use crate::gitignore::{self, Chain, OfGit};
+use super::config::{Configs, Flavor, Scope, oxc_glob, prettier_glob};
+use crate::gitignore::{self, Chain, GitIgnores};
 use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
 use bun_collections::index_sort;
 use bun_core::strings;
 use bun_lint::glob::Picomatch;
-use bun_lint::linter::config::glob_refusal;
+use bun_lint::linter::config::glob_error;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
 use std::cell::LazyCell;
@@ -50,7 +50,7 @@ pub(crate) enum Language {
 }
 
 /// oxfmt's `EXCLUDE_FILENAMES`: files that a tool generated, which are never formatted.
-fn is_left_alone_by_oxfmt(path: &[u8]) -> bool {
+fn is_excluded_by_oxfmt(path: &[u8]) -> bool {
     matches!(
         paths::basename(path),
         b"package-lock.json"
@@ -80,7 +80,7 @@ pub(crate) fn is_generated(path: &[u8]) -> bool {
             .iter()
             .any(|ending| name.ends_with(ending))
     };
-    is_left_alone_by_oxfmt(path)
+    is_excluded_by_oxfmt(path)
         || matches!(name, b"npm-shrinkwrap.json" | b"glide.lock" | b"pixi.lock")
         || is_minified()
 }
@@ -163,7 +163,7 @@ impl Kind {
             b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx"
         ) || name.ends_with(b".js.flow")
             || extension == b"wxs"
-            || is_javascript_by_another_name(name, extension)
+            || is_other_javascript_name(name, extension)
             || name == b"jakefile"
         {
             return Some(Kind::Script);
@@ -190,7 +190,7 @@ impl Kind {
 }
 
 /// Other names that Prettier and oxfmt treat as JavaScript, which they take from GitHub's linguist.
-fn is_javascript_by_another_name(name: &[u8], extension: &[u8]) -> bool {
+fn is_other_javascript_name(name: &[u8], extension: &[u8]) -> bool {
     matches!(
         extension,
         b"_js"
@@ -239,10 +239,10 @@ fn classify_for_oxfmt(path: &[u8]) -> Option<Kind> {
         extension,
         b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx"
     );
-    if !is_script && is_left_alone_by_oxfmt(path) {
+    if !is_script && is_excluded_by_oxfmt(path) {
         return None;
     }
-    if is_script || is_javascript_by_another_name(name, extension) {
+    if is_script || is_other_javascript_name(name, extension) {
         return Some(Kind::Script);
     }
     if is_toml(path) {
@@ -429,7 +429,7 @@ impl Negative {
     /// `pattern` is an argument without its `!`.
     pub(crate) fn push(&mut self, pattern: &[u8]) {
         let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
-        self.0.push(glob_of_prettier(pattern, Picomatch::FastGlob));
+        self.0.push(prettier_glob(pattern, Picomatch::FastGlob));
     }
 
     /// `path` is a file or a directory. Patterns are relative to `cwd`.
@@ -450,10 +450,10 @@ pub(crate) struct Ignored {
     files: Vec<Chain>,
     /// `Some` if every `.gitignore` applies, as in Git. Then none of them is in `files`. Caches the ones already read,
     /// keyed by directory.
-    of_git: Option<Guarded<FxHashMap<Vec<u8>, OfGit>>>,
+    git_ignores: Option<Guarded<FxHashMap<Vec<u8>, GitIgnores>>>,
     cwd: Vec<u8>,
     /// Set when a search skips a matching file, or a directory it would enter, because of an ignore file.
-    has_left_out: AtomicBool,
+    skipped_a_match: AtomicBool,
 }
 
 impl Ignored {
@@ -491,7 +491,7 @@ impl Ignored {
                 .map_err(|(file, error)| cannot_read(&file, &error))?,
         };
         if follows_git {
-            // `OfGit` reads both files. It skips a file it can't read, but that's an error here.
+            // `GitIgnores` reads both files. It skips a file it can't read, but that's an error here.
             excludes = None;
             let file = paths::join(cwd, b".gitignore");
             if let Err(error) = fs::read(&file)
@@ -524,9 +524,10 @@ impl Ignored {
             }
         }
         let all = &options.ignore_pattern;
-        let (of_bunfig, of_flags) = all.split_at(options.ignore_patterns_of_bunfig.min(all.len()));
+        let (of_bunfig, of_flags) =
+            all.split_at(options.bunfig_ignore_pattern_count.min(all.len()));
         for (start, lines) in [
-            (&options.start_of_bunfig(cwd)[..], of_bunfig),
+            (&options.bunfig_base_directory(cwd)[..], of_bunfig),
             (cwd, of_flags),
         ] {
             if !lines.is_empty() {
@@ -538,9 +539,9 @@ impl Ignored {
             directories,
             negative: Negative::default(),
             files,
-            of_git: follows_git.then(Guarded::default),
+            git_ignores: follows_git.then(Guarded::default),
             cwd: cwd.to_vec(),
-            has_left_out: AtomicBool::new(false),
+            skipped_a_match: AtomicBool::new(false),
         })
     }
 
@@ -562,7 +563,7 @@ impl Ignored {
     }
 
     /// True for entries that `fast-glob` never visits.
-    fn is_not_searched(&self, path: &[u8], name: &[u8], is_directory: bool) -> bool {
+    fn is_never_visited(&self, path: &[u8], name: &[u8], is_directory: bool) -> bool {
         (is_directory && self.directories.contains(&name)) || self.is_negated(path)
     }
 
@@ -574,12 +575,12 @@ impl Ignored {
     }
 
     /// Returns Git's ignore files that apply in `directory`, or `None` if they aren't read.
-    fn of_git_in(&self, directory: &[u8]) -> Option<OfGit> {
-        let known = self.of_git.as_ref()?;
+    fn git_ignores_in(&self, directory: &[u8]) -> Option<GitIgnores> {
+        let known = self.git_ignores.as_ref()?;
         if let Some(found) = known.lock().get(directory) {
             return Some(found.clone());
         }
-        let read = OfGit::above_and_in_for_fmt(directory, &self.cwd);
+        let read = GitIgnores::above_and_in_for_fmt(directory, &self.cwd);
         known.lock().insert(directory.to_vec(), read.clone());
         Some(read)
     }
@@ -590,7 +591,8 @@ impl Ignored {
         self.files
             .iter()
             .any(|chain| gitignore::is_directory_ignored_anywhere(chain, path))
-            || (self.of_git_in(path)).is_some_and(|git| git.is_directory_ignored_anywhere(path))
+            || (self.git_ignores_in(path))
+                .is_some_and(|git| git.is_directory_ignored_anywhere(path))
     }
 
     /// Prettier's `isIgnored`, for any file.
@@ -599,7 +601,7 @@ impl Ignored {
             .iter()
             .chain([config])
             .any(|chain| gitignore::is_file_ignored_anywhere(chain, path))
-            || (self.of_git_in(paths::dirname(path)))
+            || (self.git_ignores_in(paths::dirname(path)))
                 .is_some_and(|git| git.is_file_ignored_anywhere(path))
     }
 }
@@ -610,7 +612,7 @@ struct Directory {
     above: Arc<Scope>,
     is_first: bool,
     /// Git's ignore files in its parent directories and, for the directory being searched, also its own.
-    git: OfGit,
+    git: GitIgnores,
     /// True if the `ignorePatterns` of the configuration above it match it. It's still listed, because a configuration
     /// file in it starts over.
     is_ignored_by_configuration: bool,
@@ -625,7 +627,7 @@ fn search(
     matches: &(dyn Fn(&[u8]) -> bool + Sync),
     enters: &(dyn Fn(&[u8]) -> bool + Sync),
     // Git's ignore files that apply in `base`, or `None` if they aren't read.
-    git: Option<OfGit>,
+    git: Option<GitIgnores>,
 ) -> Result<Vec<Target>, Fatal> {
     let (mut found, mut failure) = (Guarded::new(Vec::new()), Guarded::new(None::<Fatal>));
     let reads_gitignore = git.is_some();
@@ -636,7 +638,7 @@ fn search(
         is_first: true,
         git,
         is_ignored_by_configuration: gitignore::is_directory_ignored_anywhere(
-            configs.ignores_of(&above),
+            configs.config_ignores(&above),
             base,
         ),
         above,
@@ -664,9 +666,9 @@ fn search(
                     return;
                 }
             };
-            let of_config = configs.ignores_of(&scope);
+            let of_config = configs.config_ignores(&scope);
             let starts_over = !directory.is_first
-                && !std::ptr::eq(configs.ignores_of(&directory.above), of_config);
+                && !std::ptr::eq(configs.config_ignores(&directory.above), of_config);
             let is_ignored_by_configuration = directory.is_ignored_by_configuration && !starts_over;
             let mut git = directory.git.clone();
             if reads_gitignore && !directory.is_first {
@@ -678,7 +680,7 @@ fn search(
             // Links are neither followed nor formatted.
             for entry in entries.iter().filter(|it| !it.is_link) {
                 let path = paths::join(&directory.path, &entry.name);
-                if ignored.is_not_searched(&path, &entry.name, entry.is_directory) {
+                if ignored.is_never_visited(&path, &entry.name, entry.is_directory) {
                     continue;
                 }
                 let relative = paths::relative(&ignored.cwd, &path);
@@ -689,7 +691,7 @@ fn search(
                         true => enters(&relative),
                         false => matches(&relative),
                     } {
-                        ignored.has_left_out.store(true, Ordering::Relaxed);
+                        ignored.skipped_a_match.store(true, Ordering::Relaxed);
                     }
                     continue;
                 }
@@ -820,7 +822,7 @@ pub(crate) fn expand(
                     is_anything_ignored = true;
                     continue;
                 }
-                let git = ignored.of_git_in(&path);
+                let git = ignored.git_ignores_in(&path);
                 let mut found = search(configs, pool, ignored, &path, &|_| true, &|_| true, git)?;
                 found.iter_mut().for_each(|it| it.ignores_unknown = true);
                 written_base = (paths::relative(&cwd, &path), path);
@@ -829,7 +831,7 @@ pub(crate) fn expand(
             Entry::Pattern => {
                 // `fast-glob`'s `removeLeadingDotSegment`
                 let pattern = input.strip_prefix(b"./").unwrap_or(&input);
-                let glob = glob_of_prettier(pattern, Picomatch::FastGlob);
+                let glob = prettier_glob(pattern, Picomatch::FastGlob);
                 let parent = bun_glob::scan::glob_parent(pattern);
                 let base = paths::resolve(&cwd, &parent);
                 if parent != b"." {
@@ -862,17 +864,17 @@ pub(crate) fn expand(
                             true => glob.may_match_inside(&absolute(relative)),
                             false => glob.may_match_inside(relative),
                         },
-                        ignored.of_git_in(&base),
+                        ignored.git_ignores_in(&base),
                     )?,
                     _ => Vec::new(),
                 };
                 (found, b"No files matching the pattern were found")
             }
         };
-        let has_left_out = ignored.has_left_out.swap(false, Ordering::Relaxed);
+        let skipped_a_match = ignored.skipped_a_match.swap(false, Ordering::Relaxed);
         if found.is_empty() {
             // Prettier finds the files and then skips each one, so this isn't an error.
-            if has_left_out {
+            if skipped_a_match {
                 is_anything_ignored = true;
             } else if error_on_unmatched_pattern {
                 expanded.push(Expanded::Error(
@@ -927,9 +929,9 @@ pub(crate) fn expand_as_oxfmt(
         let path = paths::resolve(&cwd, normalized);
         // Something that exists isn't a pattern, whatever it looks like.
         match strings::index_of_any(normalized, b"*?[{").is_some() && !bun_sys::exists(&path) {
-            true => match glob_refusal(normalized) {
+            true => match glob_error(normalized) {
                 Some(refusal) => return Err(Fatal(refusal)),
-                None => globs.push(glob_of_oxc(normalized)),
+                None => globs.push(oxc_glob(normalized)),
             },
             false => targets.push(path),
         }
@@ -972,7 +974,7 @@ pub(crate) fn expand_as_oxfmt(
         if *kind == fs::Kind::Directory {
             let matches =
                 |relative: &[u8]| globs.is_empty() || globs.iter().any(|it| it.matches(relative));
-            let Some(git) = OfGit::for_search(path, true, || *are_all_in_repositories) else {
+            let Some(git) = GitIgnores::for_search(path, true, || *are_all_in_repositories) else {
                 continue;
             };
             found.append(&mut search(
@@ -987,7 +989,7 @@ pub(crate) fn expand_as_oxfmt(
             continue;
         }
         let scope = configs.for_directory(paths::dirname(path))?;
-        if !is_ignored(configs.ignores_of(&scope), path, *kind) {
+        if !is_ignored(configs.config_ignores(&scope), path, *kind) {
             found.push(Target {
                 path: path.clone(),
                 size: *size,

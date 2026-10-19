@@ -117,7 +117,7 @@ pub(crate) struct Attached<'a> {
 #[derive(Copy, Clone)]
 pub(crate) struct Options {
     /// Prettier would parse this file with Babel instead of typescript-estree. Their trees differ in a few places.
-    pub(crate) has_tree_of_babel: bool,
+    pub(crate) has_babel_tree: bool,
     pub(crate) experimental_ternaries: bool,
     pub(crate) flavor: Flavor,
 }
@@ -159,7 +159,7 @@ struct TextPositions {
 }
 
 impl TextPositions {
-    const NONE_ASKED_YET: TextPositions = TextPositions {
+    const NOTHING_CACHED: TextPositions = TextPositions {
         with_same_preceding_node: (1, 0),
         with_same_following_node: (1, 0),
     };
@@ -307,7 +307,7 @@ pub(crate) fn attach<'a>(
         ..Attached::default()
     };
     let mut ties: Vec<usize> = Vec::new();
-    let mut text_positions = TextPositions::NONE_ASKED_YET;
+    let mut text_positions = TextPositions::NOTHING_CACHED;
     for (id, comment) in file.comments_by_id().enumerate() {
         // The common case. See `AttachContext::list_elements_around`.
         if nodes[id].is_before_list_element

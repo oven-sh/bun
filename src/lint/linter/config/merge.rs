@@ -46,7 +46,7 @@ pub(crate) struct RuleSetting {
     pub(crate) plugin: Box<[u8]>,
     /// The built-in plugin that the written name belongs to, under any of the plugin's aliases. `None` for a JavaScript
     /// plugin's rule.
-    pub(crate) written_for: Option<Plugin>,
+    pub(crate) builtin_plugin: Option<Plugin>,
     pub(crate) severity: Severity,
     pub(crate) options: Vec<Json>,
     /// It has no options, so it keeps those of the setting it overrides.
@@ -68,7 +68,7 @@ impl RuleSetting {
         Some(RuleSetting {
             id: id.into(),
             plugin: Box::default(),
-            written_for: None,
+            builtin_plugin: None,
             severity: severity_of(value.first()?)?,
             options: value[1..].to_vec(),
             has_only_severity: value.len() == 1,
@@ -89,7 +89,7 @@ pub(crate) fn merge_rules(
         // A JavaScript plugin's rule and a built-in rule can share a name: `n/..` with oxlint, which calls the built-in
         // one `node/..`.
         let is_same = |it: &&mut RuleSetting| {
-            it.id == setting.id && it.written_for.is_some() == setting.written_for.is_some()
+            it.id == setting.id && it.builtin_plugin.is_some() == setting.builtin_plugin.is_some()
         };
         match first.iter_mut().find(is_same) {
             Some(_) if setting.yields => {}

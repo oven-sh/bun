@@ -74,7 +74,7 @@ static TABLE: &clap::ConvertedTable =
 
 /// True if `args` has `--build` in any form `clap` accepts: `--build`, `-b`, or a `b` in a group of
 /// short flags before `p`, which takes a value.
-fn names_build(args: &[&ZStr]) -> bool {
+fn has_build_flag(args: &[&ZStr]) -> bool {
     (args.iter().map(|arg| arg.as_bytes()))
         .take_while(|arg| *arg != b"--")
         .any(|arg| match arg {
@@ -157,7 +157,7 @@ fn parse(args: &[&ZStr]) -> Options {
         command_line.project = Some(project.to_vec());
     }
     // Before `check`, `-b` is `--bun`.
-    command_line.build |= parsed.flag(b"--build") && names_build(args);
+    command_line.build |= parsed.flag(b"--build") && has_build_flag(args);
     let projects = usize::from(command_line.project.is_some()) + command_line.paths.len();
     if command_line.build && projects > 1 {
         usage_error(format_args!("--build takes one project"));
@@ -203,7 +203,7 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
     const BETWEEN: Duration = Duration::from_millis(80);
     // `Output`'s writers are per-thread state, and this thread isn't from Bun's pool.
     Output::Source::configure_thread_no_js();
-    let before_the_first = Duration::from_millis(
+    let initial_delay = Duration::from_millis(
         env_var::BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS
             .get()
             .unwrap_or(300),
@@ -211,7 +211,7 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
     let began = std::time::Instant::now();
     let mut tick = 0;
     while !is_done.load(Ordering::Acquire) {
-        if began.elapsed() >= before_the_first {
+        if began.elapsed() >= initial_delay {
             let mut line = Vec::new();
             format::write_progress(&mut line, progress, style, tick);
             let _ = Output::error_writer().write_all(&line);
@@ -474,7 +474,7 @@ impl CheckCommand {
 
 /// Prints the report. Returns the exit code.
 fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
-    let shown_from = bun_sema_driver::host::from_native(cwd);
+    let display_cwd = bun_sema_driver::host::from_native(cwd);
     // Errors go to stdout, like `tsc`'s. The summary goes to stderr.
     let mut out = Vec::new();
     format::write_diagnostics(
@@ -483,7 +483,7 @@ fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
         &Style {
             is_case_sensitive: report.is_case_sensitive,
             ..style_for(
-                &shown_from,
+                &display_cwd,
                 options.pretty,
                 Destination::stdout(),
                 options.all,
@@ -498,7 +498,7 @@ fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
             color: Output::enable_ansi_colors_stderr(),
             is_case_sensitive: report.is_case_sensitive,
             ..style_for(
-                &shown_from,
+                &display_cwd,
                 options.pretty,
                 Destination::stderr(),
                 options.all,
@@ -516,11 +516,11 @@ fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
             report.check_time.as_secs_f64() * 1000.0,
             report.deepest_stack / 1024,
         );
-        if report.files_parsed_for_all > 0 {
+        if report.shared_parses > 0 {
             let _ = writeln!(
                 summary,
                 "  {} files parsed for all projects",
-                report.files_parsed_for_all,
+                report.shared_parses,
             );
         }
     }
@@ -556,7 +556,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     let loaders = args.and_then(|args| args.loaders.as_ref());
     let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun);
     let by_extension = script_kinds_by_extension(&loaders.unwrap_or_default());
-    let Some((paths, script_kinds)) = what_to_check(&cwd, entry_points, &by_extension) else {
+    let Some((paths, script_kinds)) = paths_to_check(&cwd, entry_points, &by_extension) else {
         return true;
     };
     let mut in_memory = (entry_points.iter()).filter_map(|it| Some((it.path, it.text?)));
@@ -756,7 +756,7 @@ pub(crate) fn has_types(path: &[u8]) -> bool {
 
 /// Returns the paths to check for `entry_points` (relative to `cwd`) and `Request::script_kinds`,
 /// or `None` if no entry point has types to check.
-fn what_to_check(
+fn paths_to_check(
     cwd: &[u8],
     entry_points: &[EntryPoint],
     by_extension: &[(Vec<u8>, ScriptKind)],
@@ -865,10 +865,10 @@ fn check_and_report(paths: &Paths, provided: Provided) -> bool {
     if report.diagnostics.is_empty() && report.incomplete.is_empty() {
         return report.is_ok();
     }
-    let shown_from = bun_sema_driver::host::from_native(&cwd);
+    let display_cwd = bun_sema_driver::host::from_native(&cwd);
     let style = Style {
         is_case_sensitive: report.is_case_sensitive,
-        ..style_for(&shown_from, None, Destination::stderr(), false)
+        ..style_for(&display_cwd, None, Destination::stderr(), false)
     };
     let mut out = Vec::new();
     format::write_diagnostics(&mut out, &report, &style);

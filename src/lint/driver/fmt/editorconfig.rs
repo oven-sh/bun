@@ -20,7 +20,7 @@ enum Value {
     /// For oxfmt: `unset`.
     Unset,
     /// For oxfmt: an invalid value for the property. It replaces the section's earlier value.
-    Nothing,
+    Invalid,
 }
 
 /// `[*.js]` and the properties under it.
@@ -123,7 +123,7 @@ fn full_glob(directory: &[u8], pattern: &[u8]) -> Vec<u8> {
 
 /// globset's `Glob::new(written)`, where `*` and `?` also match `/`. `None` if globset rejects the pattern. The section
 /// then applies to no file.
-fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
+fn globset_glob(written: &[u8]) -> Option<Pattern> {
     let mut glob = Vec::with_capacity(written.len() + ANYTHING.len());
     if written.starts_with(b"!") {
         glob.push(b'\\');
@@ -267,7 +267,7 @@ impl Value {
             Value::Text(text) => !text.is_empty(),
             Value::Number(number) => *number != 0.0,
             Value::Bool(value) => *value,
-            Value::Whole(_) | Value::Unset | Value::Nothing => false,
+            Value::Whole(_) | Value::Unset | Value::Invalid => false,
         }
     }
 
@@ -307,7 +307,7 @@ impl Value {
             match words.iter().find(|it| it.eq_ignore_ascii_case(written)) {
                 Some(word) => Value::Text(word.to_vec()),
                 None if written.eq_ignore_ascii_case(b"unset") => Value::Unset,
-                None => number().map_or(Value::Nothing, Value::Whole),
+                None => number().map_or(Value::Invalid, Value::Whole),
             },
         )
     }
@@ -374,8 +374,7 @@ impl File {
                 continue;
             }
             if let [b'[', name @ .., b']'] = line {
-                file.sections
-                    .push(Section::new(name, glob_of_globset(name)));
+                file.sections.push(Section::new(name, globset_glob(name)));
             }
             // Lines after an unclosed section header belong to the previous section.
             if let Some(section) = file.sections.last_mut()
@@ -456,7 +455,7 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
     options.extend(use_tabs.map(|it| (&b"useTabs"[..], text_of(it))));
     let shown = |number: u64| match u32::try_from(number) {
         Ok(number) => number.to_string().into_bytes(),
-        Err(_) => super::config::NO_END.to_vec(),
+        Err(_) => super::config::UNLIMITED_WIDTH.to_vec(),
     };
     let size = indent_size.filter(|_| use_tabs == Some(false));
     let width = (size.and_then(Value::positive_integer))
@@ -525,10 +524,10 @@ pub(crate) fn options_for_oxfmt(file: &File, path: &[u8], use_tabs: Option<bool>
     let mut properties: Vec<(&[u8], &Value)> = Vec::new();
     for section in file.sections.iter().filter(is_for_it) {
         for (key, value) in &section.properties {
-            if *value != Value::Nothing {
+            if *value != Value::Invalid {
                 properties.retain(|it| it.0 != &key[..]);
             }
-            if !matches!(value, Value::Nothing | Value::Unset) {
+            if !matches!(value, Value::Invalid | Value::Unset) {
                 properties.push((key, value));
             }
         }
@@ -538,7 +537,7 @@ pub(crate) fn options_for_oxfmt(file: &File, path: &[u8], use_tabs: Option<bool>
 }
 
 /// The options from `root_properties`: the first `[*]` section, which oxfmt reads before it looks at any file.
-pub(crate) fn options_of_root_for_oxfmt(file: &File, use_tabs: Option<bool>) -> Found {
+pub(crate) fn root_options_for_oxfmt(file: &File, use_tabs: Option<bool>) -> Found {
     let root = file.sections.iter().find(|it| it.name == b"*");
     let get = |key: &[u8]| {
         let mut properties = root.into_iter().flat_map(|it| &it.properties);

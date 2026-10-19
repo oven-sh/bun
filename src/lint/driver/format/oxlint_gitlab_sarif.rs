@@ -3,7 +3,7 @@
 
 use super::Meta;
 use super::info::{Info, Source};
-use super::oxlint::{is_error, number, page_of, plugin};
+use super::oxlint::{docs_page, is_error, number, plugin};
 use super::oxlint_fixes::FIXES;
 use crate::paths;
 use crate::print_config::{object, text, write_indented};
@@ -137,12 +137,12 @@ fn fix_of(scope: &[u8], name: &[u8]) -> &'static str {
 fn rule_descriptor(code: &[u8]) -> Option<Json> {
     let (scope, rest) = strings::split_once_char(code, b'(')?;
     let name = rest.strip_suffix(b")")?;
-    let of = Plugin::of_oxlint_prefix(scope)?;
+    let of = Plugin::from_oxlint_prefix(scope)?;
     if plugin(of.prefix().as_bytes()) != scope {
         return None;
     }
     let category = oxlint_category(of, std::str::from_utf8(name).ok()?)?;
-    let url = page_of(of, name)?;
+    let url = docs_page(of, name)?;
     Some(object(vec![
         (b"id", text(code)),
         (b"name", text(name)),

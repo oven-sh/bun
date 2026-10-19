@@ -18,7 +18,7 @@ use bun_lint::rule::Plugin;
 use bun_lint::source::mention_bit;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{
-    scope_made_by, static_property_info, static_property_name, static_string,
+    scope_owner, static_property_info, static_property_name, static_string,
 };
 use bun_lint_oxlint::codegen::Codegen;
 use bun_lint_oxlint::hash_order::UnresolvedOrder;
@@ -35,11 +35,11 @@ pub(crate) struct Ctx<'a, 'r> {
     pub(crate) report: &'r dyn Fn(Span, Message) -> Report<'a>,
 }
 
-/// Call this before reporting from a rule that oxlint runs on Jest calls. See [`File::calls_in_turns`].
+/// Call this before reporting from a rule that oxlint runs on Jest calls. See [`File::jest_calls_in_oxlint_order`].
 #[inline]
 pub(crate) fn note_turns<'a>(file: &'a File<'a>, runner: Runner) {
     if file.language().is_oxlint {
-        file.calls_in_turns(|| OxlintOrder::turns(file, runner));
+        file.jest_calls_in_oxlint_order(|| OxlintOrder::turns(file, runner));
     }
 }
 
@@ -54,8 +54,8 @@ impl<'a> Ctx<'a, '_> {
         match self.runner {
             Runner::Jest | Runner::Vitest => report.fix(|fixer| fixer.replace(at, text)),
             Runner::Bun => {
-                let said = text.clone();
-                report.suggest_with(message, &[("code", said.as_bytes())], |fixer| {
+                let code_text = text.clone();
+                report.suggest_with(message, &[("code", code_text.as_bytes())], |fixer| {
                     fixer.replace(at, text)
                 })
             }
@@ -84,16 +84,19 @@ impl<'a> Ctx<'a, '_> {
         let Some(symbol) = Node::Expr(at).scope().resolve_bytes(name) else {
             return !is_bun;
         };
-        let is_of_runner = |source: &[u8]| match is_bun {
+        let is_runner_module = |source: &[u8]| match is_bun {
             true => source == BUN_TEST,
             false => source == b"@jest/globals" || is_vitest_import_source(source),
         };
         let is_required = || {
-            let properties =
-                all_required(self.file).filter_map(|(pattern, source)| match pattern.kind() {
-                    PatKind::Object(properties) if is_of_runner(source.bytes()) => Some(properties),
+            let properties = top_level_requires(self.file).filter_map(|(pattern, source)| {
+                match pattern.kind() {
+                    PatKind::Object(properties) if is_runner_module(source.bytes()) => {
+                        Some(properties)
+                    }
                     _ => None,
-                });
+                }
+            });
             properties.flatten().any(|it| {
                 it.value().symbol() == Some(symbol)
                     && (it.key().and_then(|it| it.name())).is_some_and(|it| it.bytes() == name)
@@ -102,7 +105,7 @@ impl<'a> Ctx<'a, '_> {
         symbol.declarations().all(|it| match it {
             Declaration::ImportSpec(it) => {
                 it.imported().bytes() == name
-                    && is_of_runner(it.import().spec().bytes())
+                    && is_runner_module(it.import().spec().bytes())
                     && !it.is_type_only()
                     && !it.import().is_type_only()
             }
@@ -209,7 +212,7 @@ const SOURCE_BITS: [u32; 4] = mention_bits([
     "@jest/globals",
 ]);
 const BUN_TEST: &[u8] = b"bun:test";
-const MODIFIERS_OF_BUN: [&str; 13] = [
+const BUN_MODIFIERS: [&str; 13] = [
     "concurrent",
     "concurrentIf",
     "each",
@@ -225,7 +228,7 @@ const MODIFIERS_OF_BUN: [&str; 13] = [
     "todoIf",
 ];
 /// The globals that `bun test` declares in a test file that doesn't import them.
-const GLOBALS_OF_BUN: [&str; 14] = [
+const BUN_GLOBALS: [&str; 14] = [
     "afterAll",
     "afterEach",
     "beforeAll",
@@ -296,14 +299,14 @@ struct PerFile {
     /// The IDs of the identifiers named like one of [`JEST_METHOD_NAMES`], whatever they refer to.
     named_like_jest: OnceCell<Vec<u32>>,
     /// One for the `jest` and `vitest` rules, and one for the `bun:test` rules.
-    seen: [Seen; 2],
+    seen: [PerRunner; 2],
 }
 
 /// The caches that depend on the runner.
 #[derive(Default)]
-struct Seen {
-    /// [`tests_as_written`]
-    tests_as_written: OnceCell<Vec<Span>>,
+struct PerRunner {
+    /// [`tests_by_name`]
+    tests_by_name: OnceCell<Vec<Span>>,
     possible_jest_nodes: OnceCell<PossibleJestNodes>,
 }
 
@@ -399,7 +402,7 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
 
 /// Returns the pattern and the module specifier: `{ test: t }` and `a` for `const { test: t } = require("a")` or
 /// `.. = await import("a")`.
-fn required(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
+fn require_binding(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
     let init = declarator.init()?;
     let source = match init.kind() {
         ExprKind::Call(call) => common_js_require(call),
@@ -412,25 +415,25 @@ fn required(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
     Some((declarator.pat(), static_string(source?)?))
 }
 
-/// Runs [`required`] on every top-level variable declaration.
-fn all_required<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Pat<'a>, Name<'a>)> {
+/// Runs [`require_binding`] on every top-level variable declaration.
+fn top_level_requires<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Pat<'a>, Name<'a>)> {
     let declarators = file.body().iter().filter_map(Stmt::as_var).flatten();
-    declarators.filter_map(required)
+    declarators.filter_map(require_binding)
 }
 
-fn all_required_from_bun_test<'a>(file: &'a File<'a>) -> impl Iterator<Item = Pat<'a>> {
-    all_required(file)
+fn top_level_requires_of_bun_test<'a>(file: &'a File<'a>) -> impl Iterator<Item = Pat<'a>> {
+    top_level_requires(file)
         .filter_map(|(pattern, source)| (source.bytes() == BUN_TEST).then_some(pattern))
 }
 
 fn imports_bun_test<'a>(file: &'a File<'a>) -> bool {
     let imports = |it: Import| it.spec().bytes() == BUN_TEST && !it.is_type_only();
     file.body().iter().filter_map(Stmt::as_import).any(imports)
-        || all_required_from_bun_test(file).next().is_some()
+        || top_level_requires_of_bun_test(file).next().is_some()
 }
 
 impl PerFile {
-    fn seen(&self, runner: Runner) -> &Seen {
+    fn seen(&self, runner: Runner) -> &PerRunner {
         &self.seen[usize::from(runner == Runner::Bun)]
     }
 
@@ -630,7 +633,7 @@ fn collect_possible_jest_call_node<'a>(
         let references = symbol.references().filter_map(Reference::expr);
         references.for_each(|it| found.add_calls_of(it, original, import_index as u32, frameworks));
     }
-    for property in all_required_from_bun_test(file)
+    for property in top_level_requires_of_bun_test(file)
         .take_while(|_| frameworks.is_bun)
         .filter_map(|it| match it.kind() {
             PatKind::Object(properties) => Some(properties),
@@ -652,7 +655,7 @@ fn collect_possible_jest_call_node<'a>(
         parent_expression(*e).is_some_and(|it| {
             matches!(it.tag(), ExprTag::Call | ExprTag::TaggedTemplate) || is_member(it)
         }) && e.symbol().is_none()
-            && (!frameworks.is_bun || e.as_ident().is_some_and(|it| it.is_any(&GLOBALS_OF_BUN)))
+            && (!frameworks.is_bun || e.as_ident().is_some_and(|it| it.is_any(&BUN_GLOBALS)))
     };
     (per_file.named_like_jest(file).iter())
         .map(|id| Expr::from_raw(file, *id))
@@ -726,7 +729,7 @@ pub(crate) fn for_each_call_named_like<'a>(
 
 /// Calls that look like tests by name, whatever `it` and `test` actually refer to. Only the outermost ones, in source order.
 /// For `bun:test` each span is the test's callback, so `a || b` in `test.skipIf(a || b)(..)` isn't a condition in the test.
-pub(crate) fn tests_as_written<'a>(file: &'a File<'a>, runner: Runner) -> &'a [Span] {
+pub(crate) fn tests_by_name<'a>(file: &'a File<'a>, runner: Runner) -> &'a [Span] {
     let find = || {
         let mut tests: Vec<Span> = Vec::new();
         for_each_call_named_like(file, &[JestGeneralFnKind::Test], &mut |call_expr| {
@@ -747,14 +750,14 @@ pub(crate) fn tests_as_written<'a>(file: &'a File<'a>, runner: Runner) -> &'a [S
         utils::sort::sort_unstable_by_key(&mut tests, |it| (it.start, std::cmp::Reverse(it.end)));
         let mut end = 0;
         tests.retain(|it| {
-            let is_in_no_other = it.end > end;
+            let is_outermost = it.end > end;
             end = end.max(it.end);
-            is_in_no_other
+            is_outermost
         });
         tests
     };
     per_file(file).map_or(&[][..], |it| {
-        it.seen(runner).tests_as_written.get_or_init(find)
+        it.seen(runner).tests_by_name.get_or_init(find)
     })
 }
 
@@ -1101,7 +1104,8 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         .filter(|it| it.id == call_expr.id().0);
     let call_expr = call_expr.as_call()?;
     let callee = call_expr.callee();
-    let is_part = || known.map_or_else(|| is_in_call_or_member(node), |it| it.is_in_call_or_member);
+    let is_nested_in_chain =
+        || known.map_or_else(|| is_in_call_or_member(node), |it| it.is_in_call_or_member);
 
     // `it(..)`, `expect(..)`
     if let Some(local) = callee.as_ident()
@@ -1132,7 +1136,7 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         };
         let is_call = match known.and_then(|it| it.without_members) {
             Some(is_call) => is_call,
-            None => !is_part() && is_valid(),
+            None => !is_nested_in_chain() && is_valid(),
         };
         return is_call.then(|| {
             ParsedJestFnCall::GeneralJest(ParsedGeneralJestFnCall {
@@ -1169,7 +1173,7 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
     }
 
     // Only the whole of `x().y.z()` is a Jest call, not the `x()`.
-    if is_part() {
+    if is_nested_in_chain() {
         return None;
     }
 
@@ -1407,7 +1411,7 @@ fn is_valid_bun_call(name: &[u8], members: &[KnownMemberExpressionProperty]) -> 
     match name {
         b"afterAll" | b"afterEach" | b"beforeAll" | b"beforeEach" => members.is_empty(),
         b"describe" | b"it" | b"test" | b"xdescribe" | b"xit" | b"xtest" => {
-            members.iter().all(|it| it.is_any_of(&MODIFIERS_OF_BUN))
+            members.iter().all(|it| it.is_any_of(&BUN_MODIFIERS))
         }
         _ => false,
     }
@@ -1553,7 +1557,7 @@ pub(crate) fn parse_expect_and_typeof_vitest_fn_call<'a>(
 /// Returns the names in a chain: `expect` and `toBe` for `expect(foo).toBe(bar)`, `Foo` and `bar` for `new Foo().bar`.
 pub(crate) fn get_node_name_vec(expr: Expr<'_>) -> SmallVec<[&[u8]; 4]> {
     let mut chain = SmallVec::new();
-    for_each_node_name_from_the_last(expr, |name| chain.push(name.bytes()));
+    for_each_node_name_reversed(expr, |name| chain.push(name.bytes()));
     chain.reverse();
     chain
 }
@@ -1561,11 +1565,11 @@ pub(crate) fn get_node_name_vec(expr: Expr<'_>) -> SmallVec<[&[u8]; 4]> {
 /// Returns the first name of [`get_node_name_vec`].
 pub(crate) fn get_first_node_name(expr: Expr<'_>) -> Option<Name<'_>> {
     let mut first = None;
-    for_each_node_name_from_the_last(expr, |name| first = Some(name));
+    for_each_node_name_reversed(expr, |name| first = Some(name));
     first
 }
 
-fn for_each_node_name_from_the_last<'a>(expr: Expr<'a>, mut visit: impl FnMut(Name<'a>)) {
+fn for_each_node_name_reversed<'a>(expr: Expr<'a>, mut visit: impl FnMut(Name<'a>)) {
     let mut at = Some(expr);
     while let Some(link) = at.filter(|it| !it.is_parenthesized() && !it.is_chain_root()) {
         at = match link.tag() {
@@ -1607,7 +1611,7 @@ pub(crate) fn run_on_jest_nodes<'a>(
 
 /// For `bun:test`: calls to the functions in `names` that [`iter_possible_jest_call_node`] doesn't return. Those are the user's
 /// own wrappers around `test`. oxlint only compares `additionalTestBlockFunctions` with the names the runner declares.
-pub(crate) fn calls_of_own_test_blocks<'a>(
+pub(crate) fn custom_test_block_calls<'a>(
     ctx: &Ctx<'a, '_>,
     names: &[String],
 ) -> impl Iterator<Item = PossibleJestNode<'a>> {
@@ -1809,7 +1813,7 @@ pub(crate) struct Scopes<'a>(AncestorMemo<'a, Node<'a>>);
 
 impl<'a> Scopes<'a> {
     pub(crate) fn of(&mut self, node: Node<'a>) -> Option<Node<'a>> {
-        self.0.find(node, scope_made_by)
+        self.0.find(node, scope_owner)
     }
 }
 
@@ -1909,7 +1913,7 @@ impl<'a> OxlintOrder<'a> {
         nodes.iter().copied().min_by_key(|it| order.key(*it))
     }
 
-    /// Computes the argument for [`File::calls_in_turns`].
+    /// Computes the argument for [`File::jest_calls_in_oxlint_order`].
     #[cold]
     fn turns(file: &'a File<'a>, runner: Runner) -> Box<[(Span, u32)]> {
         let order = OxlintOrder::new(file);

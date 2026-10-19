@@ -340,7 +340,7 @@ pub struct JSDocScannerState {
     /// `HasPrecedingLineBreak`
     pub has_preceding_line_break: bool,
     /// The token came from `Scan`, not `ScanJSDocToken`.
-    pub is_of_scan: bool,
+    pub is_from_scan: bool,
 }
 
 /// `propertyLikeParse`
@@ -568,7 +568,7 @@ struct Reader<'a, 's> {
     flavor: Flavor,
     /// If set, `links` is filled and `tags` isn't. Otherwise, without `syntax`, it's the other way
     /// around.
-    keeps_links: bool,
+    collects_links: bool,
     /// `Checker::is_stack_low`
     is_stack_low: &'s dyn Fn() -> bool,
     /// With `None`, types and default values are skipped by matching their brackets, and nothing is
@@ -607,12 +607,12 @@ impl<'a, 's> Reader<'a, 's> {
         start: usize,
         end: usize,
         flavor: Flavor,
-        keeps_links: bool,
+        collects_links: bool,
         is_stack_low: &'s dyn Fn() -> bool,
     ) -> Self {
         Reader {
             flavor,
-            keeps_links,
+            collects_links,
             is_stack_low,
             syntax: None,
             is_out_of_stack: false,
@@ -624,7 +624,7 @@ impl<'a, 's> Reader<'a, 's> {
                 stale_start: start + 3,
                 pos: start + 3,
                 has_preceding_line_break: false,
-                is_of_scan: false,
+                is_from_scan: false,
             },
             links: Vec::new(),
             nested_tag: None,
@@ -651,14 +651,14 @@ impl<'a, 's> Reader<'a, 's> {
     }
 
     /// Reports `'{0}' tag already specified.` from the tag name `tag_name` up to the current token.
-    fn tag_already_specified(&mut self, tag_name: &Name<'a>) {
+    fn report_tag_already_specified(&mut self, tag_name: &Name<'a>) {
         let (start, end) = (tag_name.start as usize, self.scanner.stale_start);
         self.error(1223, start, end, &[&*tag_name.text]);
     }
 
     /// Reports that a `@template` tag, whose name is at `name_pos`, can't follow a `@typedef`,
     /// `@callback` or `@overload` tag.
-    fn template_tag_may_not_follow(&mut self, name_pos: u32) {
+    fn report_misplaced_template_tag(&mut self, name_pos: u32) {
         let start = name_pos as usize;
         self.error(8039, start, start + b"template".len(), &[]);
     }
@@ -736,7 +736,7 @@ impl<'a, 's> Reader<'a, 's> {
             },
             pos,
             has_preceding_line_break: token == JSDocToken::NewLineTrivia,
-            is_of_scan: false,
+            is_from_scan: false,
         };
         token
     }
@@ -779,7 +779,7 @@ impl<'a, 's> Reader<'a, 's> {
             stale_start: start,
             pos,
             has_preceding_line_break: false,
-            is_of_scan: false,
+            is_from_scan: false,
         };
         JSDocToken::CommentText
     }
@@ -837,7 +837,7 @@ impl<'a, 's> Reader<'a, 's> {
             pos,
             has_preceding_line_break: (full_start..start)
                 .any(|at| super::spans::line_break_len(text, at) != 0),
-            is_of_scan: true,
+            is_from_scan: true,
         };
         token
     }
@@ -848,7 +848,7 @@ impl<'a, 's> Reader<'a, 's> {
         self.scanner.start = pos;
         self.scanner.stale_start = pos;
         self.scanner.pos = pos;
-        self.scanner.is_of_scan = false;
+        self.scanner.is_from_scan = false;
     }
 
     /// `TokenText`
@@ -888,7 +888,7 @@ impl<'a, 's> Reader<'a, 's> {
     /// Starts the tag whose `@` is at `at`. Returns the enclosing tag's `row`, for `close_row`.
     fn open_row(&mut self, at: usize) -> usize {
         let outer = std::mem::replace(&mut self.row, self.tags.len());
-        if !self.keeps_links && self.syntax.is_none() {
+        if !self.collects_links && self.syntax.is_none() {
             self.tags.push(Tag {
                 at: at as u32,
                 name_end: at as u32 + 1,
@@ -1088,7 +1088,7 @@ impl<'a, 's> Reader<'a, 's> {
         let start = self.scanner.start;
         let outer = self.open_row(start);
         if self.flavor == Flavor::Oxc {
-            self.parse_tag_of_oxc(start);
+            self.parse_oxc_tag(start);
             self.close_row(outer);
             return self.finish_tag(TagKind::Other, start, &Name::missing(start as u32 + 1));
         }
@@ -1142,7 +1142,7 @@ impl<'a, 's> Reader<'a, 's> {
 
     /// oxc_jsdoc's `parse_jsdoc_tag` for the tag whose `@` is at `at`, plus what its
     /// `type_name_comment` finds in the tag.
-    fn parse_tag_of_oxc(&mut self, at: usize) {
+    fn parse_oxc_tag(&mut self, at: usize) {
         let text = self.text;
         let written = |from: usize, to: usize| text.get(from..to).unwrap_or_default();
         let name_end = at + find_token_range(written(at, text.len())).map_or(1, |name| name.end);
@@ -1292,7 +1292,7 @@ impl<'a, 's> Reader<'a, 's> {
     /// `parseJSDocTypeExpression`. Without `syntax` it's only called at a `{`.
     fn parse_jsdoc_type_expression(&mut self, may_omit_braces: bool) -> TypeExpr {
         if self.syntax.is_none() {
-            return self.pass_over_jsdoc_type_expression();
+            return self.skip_jsdoc_type_expression();
         }
         let has_brace = match may_omit_braces {
             true => self.parse_optional(JSDocToken::OpenBrace),
@@ -1307,7 +1307,7 @@ impl<'a, 's> Reader<'a, 's> {
 
     /// `parseJSDocTypeExpression` at a `{`. The type is skipped, not parsed, so its shape is
     /// `OBJECT_OR_OBJECT_ARRAY` or empty.
-    fn pass_over_jsdoc_type_expression(&mut self) -> TypeExpr {
+    fn skip_jsdoc_type_expression(&mut self) -> TypeExpr {
         let entry = self.scanner;
         let (open, inside) = (entry.start, entry.pos);
         // No type starts with `@`, and `parseTagComments` ends at it because it starts a tag.
@@ -1483,7 +1483,7 @@ impl<'a, 's> Reader<'a, 's> {
                 TagKind::Param(_) | TagKind::Property(_) if self.syntax.is_some() => {
                     properties.push(child);
                 }
-                TagKind::Template(_) => self.template_tag_may_not_follow(child.name_pos),
+                TagKind::Template(_) => self.report_misplaced_template_tag(child.name_pos),
                 _ => {}
             }
         }
@@ -1510,7 +1510,7 @@ impl<'a, 's> Reader<'a, 's> {
             .iter()
             .any(|tag| matches!(tag.kind, TagKind::Return(_)))
         {
-            self.tag_already_specified(tag_name);
+            self.report_tag_already_specified(tag_name);
         }
         let type_expression = self.try_parse_type_expression();
         self.parse_trailing_tag_comments(start, self.scanner.full_start, indent, indent_text);
@@ -1531,7 +1531,7 @@ impl<'a, 's> Reader<'a, 's> {
             .iter()
             .any(|tag| matches!(tag.kind, TagKind::Type(_)))
         {
-            self.tag_already_specified(tag_name);
+            self.report_tag_already_specified(tag_name);
         }
         let type_expression = self.parse_jsdoc_type_expression(true);
         if let Some(indent) = indent {
@@ -1676,7 +1676,7 @@ impl<'a, 's> Reader<'a, 's> {
             {
                 has_children = true;
                 match child.kind {
-                    TagKind::Template(_) => self.template_tag_may_not_follow(child.name_pos),
+                    TagKind::Template(_) => self.report_misplaced_template_tag(child.name_pos),
                     TagKind::Type(written) if child_type_tag.is_none() => {
                         child_type_tag = Some((written, child.end as usize));
                     }
@@ -1714,7 +1714,7 @@ impl<'a, 's> Reader<'a, 's> {
             self.parse_child_parameter_or_property_tag(CALLBACK_PARAMETER, indent, None)
         {
             match child.kind {
-                TagKind::Template(_) => self.template_tag_may_not_follow(child.name_pos),
+                TagKind::Template(_) => self.report_misplaced_template_tag(child.name_pos),
                 _ if self.syntax.is_some() => params.push(child),
                 _ => {}
             }
@@ -2104,7 +2104,7 @@ impl<'a, 's> Reader<'a, 's> {
         self.next_token_jsdoc();
         self.skip_whitespace();
         let name = self.parse_jsdoc_link_name();
-        if self.keeps_links && !name.is_empty() {
+        if self.collects_links && !name.is_empty() {
             let nested_tag = self.nested_tag;
             self.links.push(Link { name, nested_tag });
         }

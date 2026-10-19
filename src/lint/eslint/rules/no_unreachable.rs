@@ -34,7 +34,7 @@ fn is_more_than_hoisted<'a>(declarations: List<'a, VarDecl<'a>>) -> bool {
 }
 
 /// True if the rule listens for `stmt`, or for the `ExportNamedDeclaration` or `ExportDefaultDeclaration` around it.
-fn is_listened(stmt: Stmt) -> bool {
+fn is_listened_for(stmt: Stmt) -> bool {
     match stmt.kind() {
         StmtKind::Var(declarations) => is_more_than_hoisted(declarations) || stmt.is_exported(),
         StmtKind::Fn(_)
@@ -49,7 +49,7 @@ fn is_listened(stmt: Stmt) -> bool {
 
 /// True if oxlint doesn't treat `stmt` as a statement: a declaration of anything but variables, and every export but
 /// `export default`. In `export const a = 1`, the declaration is a statement.
-fn is_no_statement_for_oxlint(stmt: Stmt) -> bool {
+fn is_not_a_statement_in_oxlint(stmt: Stmt) -> bool {
     match stmt.kind() {
         _ if stmt.is_default_export() => false,
         StmtKind::Var(declarations) => !is_more_than_hoisted(declarations),
@@ -75,7 +75,7 @@ fn has_constructor_without_super_call<'a>(file: &'a File<'a>) -> bool {
     if constructors.peek().is_none() {
         return false;
     }
-    let constructor_around = |e: Expr<'a>| {
+    let enclosing_constructor = |e: Expr<'a>| {
         Node::Expr(e).ancestors().find_map(|it| match it {
             Node::Member(member) if is_constructor(member) => Some(member),
             _ => None,
@@ -83,7 +83,7 @@ fn has_constructor_without_super_call<'a>(file: &'a File<'a>) -> bool {
     };
     let with_call: FxHashSet<Member> = (file.exprs_of_kind(ExprTag::Super))
         .filter(|&e| matches!(e.parent(), Node::Expr(parent) if parent.as_call().is_some_and(|call| call.callee() == e)))
-        .filter_map(constructor_around)
+        .filter_map(enclosing_constructor)
         .collect();
     constructors.any(|member| !with_call.contains(&member))
 }
@@ -163,7 +163,7 @@ impl<'a> State<'a> {
 
     /// True for unreachable code that oxlint doesn't report: anything it doesn't treat as a statement, and a `catch`
     /// block, which it considers reachable whatever the `try` block does.
-    fn oxlint_passes_over(&mut self, stmt: Stmt<'a>) -> bool {
+    fn oxlint_skips(&mut self, stmt: Stmt<'a>) -> bool {
         if self.catch_block.is_some_and(|it| it.contains(stmt.span())) {
             return true;
         }
@@ -172,16 +172,16 @@ impl<'a> State<'a> {
         if is_catch_block {
             self.catch_block = Some(stmt.span());
         }
-        is_catch_block || is_no_statement_for_oxlint(stmt)
+        is_catch_block || is_not_a_statement_in_oxlint(stmt)
     }
 
     fn enter_statement(&mut self, stmt: Stmt<'a>) {
         let is_reachable = stmt.is_reachable();
-        if is_reachable && self.range.is_none() || !is_listened(stmt) {
+        if is_reachable && self.range.is_none() || !is_listened_for(stmt) {
             return;
         }
         let is_oxlint = stmt.file().language().is_oxlint;
-        if !is_reachable && is_oxlint && self.oxlint_passes_over(stmt) {
+        if !is_reachable && is_oxlint && self.oxlint_skips(stmt) {
             return;
         }
         match is_reachable {
@@ -241,7 +241,7 @@ impl<'a> State<'a> {
     /// Enters only the nodes in `self.unreachable`. That's enough: a node entered between a range and a statement only
     /// matters if the statement is in the range or immediately follows it, and then that node is in the range too.
     #[inline(never)]
-    fn enter_what_is_unreachable(&mut self) {
+    fn enter_unreachable_statements(&mut self) {
         let mut unreachable = std::mem::take(&mut self.unreachable);
         utils::sort::sort_unstable_by_key(&mut unreachable, |it| (it.span().start, Reverse(it.span().end)));
         let (mut entered, mut end) = (Entered(Vec::new()), 0);
@@ -257,7 +257,7 @@ impl<'a> State<'a> {
 }
 
 /// Returns the ranges found by entering every statement and function of `file`.
-fn found_in_all<'a>(file: &'a File<'a>) -> Vec<Span> {
+fn find_by_entering_all<'a>(file: &'a File<'a>) -> Vec<Span> {
     let statements = KINDS.iter().flat_map(|&kind| file.stmts_of_kind(kind)).map(Node::Stmt);
     let mut all: Vec<Node<'a>> = statements.chain(file.funcs().map(Node::Func)).collect();
     sort_as_entered(&mut all);
@@ -358,10 +358,10 @@ impl Rule for NoUnreachable {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let is_entered_in_part = !cx.state.unreachable.is_empty();
-        cx.state.enter_what_is_unreachable();
+        let entered_only_unreachable = !cx.state.unreachable.is_empty();
+        cx.state.enter_unreachable_statements();
         cx.state.report_range(None);
-        debug_assert!(!is_entered_in_part || cx.state.found == found_in_all(cx.file()));
+        debug_assert!(!entered_only_unreachable || cx.state.found == find_by_entering_all(cx.file()));
         for &range in &cx.state.found {
             cx.report(range, UNREACHABLE_CODE).hint_with(|| hint(range, cx.file()));
         }

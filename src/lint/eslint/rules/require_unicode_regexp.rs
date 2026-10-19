@@ -33,7 +33,7 @@ fn resolve_flags<'a>(e: Expr<'a>, seen: &mut SmallVec<[Expr<'a>; 4]>) -> Option<
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
     }
-    let of_text = |text: &[u8]| -> SmallVec<[u8; 2]> {
+    let flags_in = |text: &[u8]| -> SmallVec<[u8; 2]> {
         b"uv".iter().copied().filter(|it| strings::contains_char(text, *it)).collect()
     };
     let e = get_inner_expression(e);
@@ -45,18 +45,18 @@ fn resolve_flags<'a>(e: Expr<'a>, seen: &mut SmallVec<[Expr<'a>; 4]>) -> Option<
             seen.push(e);
             resolve_flags(get_const_variable_initializer(e)?, seen)
         }
-        ExprKind::String(value) => Some(of_text(value.bytes())),
+        ExprKind::String(value) => Some(flags_in(value.bytes())),
         ExprKind::Template(template) => {
             let mut flags: SmallVec<[u8; 2]> = SmallVec::new();
             for i in 0..template.quasi_count() {
-                flags.extend(of_text(template.cooked(i)?.bytes()));
+                flags.extend(flags_in(template.cooked(i)?.bytes()));
                 if let Some(substitution) = template.exprs().get(i) {
                     flags.extend(resolve_flags(substitution, seen)?);
                 }
             }
             Some(flags)
         }
-        ExprKind::True | ExprKind::Null => Some(of_text(b"u")),
+        ExprKind::True | ExprKind::Null => Some(flags_in(b"u")),
         ExprKind::False | ExprKind::Number(_) => Some(SmallVec::new()),
         ExprKind::Binary { op: BinOp::Add, left, right } => {
             let mut flags = resolve_flags(left, seen)?;
@@ -74,7 +74,7 @@ fn resolve_flags<'a>(e: Expr<'a>, seen: &mut SmallVec<[Expr<'a>; 4]>) -> Option<
             };
             let is_index = index.is_finite() && index >= 0.0 && index.fract() == 0.0;
             let (_, character) = strings::wtf8_codepoints(static_string(object)?.bytes()).nth(index as usize)?;
-            is_index.then(|| of_text(&[u8::try_from(character).unwrap_or(0)]))
+            is_index.then(|| flags_in(&[u8::try_from(character).unwrap_or(0)]))
         }
         ExprKind::Binary { op: BinOp::Comma, right, .. } => resolve_flags(right, seen),
         ExprKind::Assign { op: None, value, .. } => resolve_flags(value, seen),

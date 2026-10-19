@@ -52,7 +52,7 @@ impl<'a> StaticallyNamed<'a> for IdentifierLike<'a> {
 pub struct Deprecations<'a> {
     /// Set for tsgolint, which checks each declaration itself, so a member doesn't inherit the tag of what it
     /// implements or overrides.
-    is_nothing_inherited: bool,
+    ignores_inherited_tags: bool,
     of_symbols: IdMap<TsSymbol<'a>, Option<&'a [u8]>>,
     of_signatures: IdMap<Signature<'a>, Option<&'a [u8]>>,
 }
@@ -61,8 +61,8 @@ impl<'a> Deprecations<'a> {
     /// `getJsDocDeprecation(symbol)`
     fn of_symbol(&mut self, symbol: Option<TsSymbol<'a>>) -> Option<&'a [u8]> {
         let symbol = symbol?;
-        let is_nothing_inherited = self.is_nothing_inherited;
-        *self.of_symbols.get_or_insert_with(symbol, || match is_nothing_inherited {
+        let ignores_inherited_tags = self.ignores_inherited_tags;
+        *self.of_symbols.get_or_insert_with(symbol, || match ignores_inherited_tags {
             true => symbol.declarations().find_map(deprecation_of_declaration),
             false => symbol.deprecation(),
         })
@@ -71,8 +71,8 @@ impl<'a> Deprecations<'a> {
     /// `getJsDocDeprecation(signature)`
     fn of_signature(&mut self, signature: Option<Signature<'a>>) -> Option<&'a [u8]> {
         let signature = signature?;
-        let is_nothing_inherited = self.is_nothing_inherited;
-        *self.of_signatures.get_or_insert_with(signature, || match is_nothing_inherited {
+        let ignores_inherited_tags = self.ignores_inherited_tags;
+        *self.of_signatures.get_or_insert_with(signature, || match ignores_inherited_tags {
             true => signature.declaration().and_then(deprecation_of_declaration),
             false => signature.deprecation(),
         })
@@ -109,7 +109,7 @@ impl<'a> Deprecations<'a> {
 
     /// `getCallLikeDeprecation(node)`, where `call` is `node.parent`.
     fn of_call_like(&mut self, node: TsNode<'a>, call: TsNode<'a>) -> Option<&'a [u8]> {
-        if self.is_nothing_inherited {
+        if self.ignores_inherited_tags {
             return self.of_call_like_as_tsgolint(node, call);
         }
         let symbol = node.get_symbol_at_location();
@@ -359,7 +359,7 @@ fn with_number_as_string<R>(n: f64, then: impl FnOnce(&[u8]) -> R) -> R {
 }
 
 /// tsgolint's version of a reason: `{@link a.b text}` is reduced to `text`.
-fn without_names_of_links(reason: &[u8]) -> Vec<u8> {
+fn without_link_targets(reason: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(reason.len());
     let mut rest = reason;
     while let Some(at) = strings::index_of(rest, b"{@link") {
@@ -397,7 +397,7 @@ impl NoDeprecated {
     fn report_at<'a>(at: Span, name: Cow<'a, [u8]>, reason: &'a [u8], cx: &Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
         let reason = match is_oxlint && strings::contains(reason, b"{@link") {
-            true => Cow::Owned(without_names_of_links(reason)),
+            true => Cow::Owned(without_link_targets(reason)),
             false => Cow::Borrowed(reason),
         };
         // tsgolint trims it after checking that it isn't empty.
@@ -727,7 +727,7 @@ impl Rule for NoDeprecated {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Deprecations<'a>> {
         let is_oxlint = file.language().is_oxlint;
-        Some(Deprecations { is_nothing_inherited: is_oxlint, ..Deprecations::default() })
+        Some(Deprecations { ignores_inherited_tags: is_oxlint, ..Deprecations::default() })
     }
 
     /// For tsgolint the name of a parameter, a `catch` clause, `namespace A.B {}` or an abstract member is a

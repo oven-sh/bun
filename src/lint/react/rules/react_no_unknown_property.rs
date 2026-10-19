@@ -357,7 +357,7 @@ fn get<T: Copy>(table: &[(&str, T)], key: &[u8]) -> Option<T> {
 }
 
 /// Returns the name in `table` that equals `name`, ignoring ASCII case.
-fn find_in_any_case(table: &[&'static str], name: &[u8]) -> Option<&'static str> {
+fn find_ignoring_case(table: &[&'static str], name: &[u8]) -> Option<&'static str> {
     let name = || name.iter().map(u8::to_ascii_lowercase);
     let at = table.binary_search_by(|it| it.bytes().map(|byte| byte.to_ascii_lowercase()).cmp(name())).ok()?;
     table.get(at).copied()
@@ -373,7 +373,7 @@ fn allowed_tags(name: &[u8], is_oxlint: bool) -> Option<&'static [&'static str]>
 }
 
 /// True if React `version` has `name`, which is in one of the tables: upstream's `getDOMPropertyNames`.
-fn is_in_react(name: &[u8], version: &mut dyn FnMut() -> Version) -> bool {
+fn exists_in_react_version(name: &[u8], version: &mut dyn FnMut() -> Version) -> bool {
     match name {
         b"allowTransparency" => version() < (16, 1, 0),
         b"precedence" => version() >= (19, 0, 0),
@@ -389,8 +389,8 @@ fn get_standard_name(
     version: &mut dyn FnMut() -> Version,
 ) -> Option<&'static str> {
     // oxlint doesn't check the React version.
-    let mut exists = |it: &&'static str| is_oxlint || is_in_react(it.as_bytes(), version);
-    let shared = find_in_any_case(&DOM_PROPERTIES_NAMES, folded).filter(&mut exists);
+    let mut exists = |it: &&'static str| is_oxlint || exists_in_react_version(it.as_bytes(), version);
+    let shared = find_ignoring_case(&DOM_PROPERTIES_NAMES, folded).filter(&mut exists);
     if shared.is_some_and(|it| it.as_bytes() == name) {
         return shared;
     }
@@ -400,7 +400,7 @@ fn get_standard_name(
         return camel;
     }
     let own: &[&'static str] = if is_oxlint { &OXLINT_NAMES } else { &ESLINT_NAMES };
-    let own = find_in_any_case(own, folded).filter(exists);
+    let own = find_ignoring_case(own, folded).filter(exists);
     if own.is_some_and(|it| it.as_bytes() == name) {
         return own;
     }

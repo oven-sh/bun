@@ -80,12 +80,12 @@ fn is_in_render(statement: Stmt<'_>) -> bool {
         let block = Some(scope.node()).filter(|it| matches!(it, Node::Func(_) | Node::Class(_)))?;
         let parent = estree_parent(block);
         // ESTree has a `Decorator` or an `AssignmentPattern` in between.
-        let is_apart = match (parent, block.as_written().as_expr()) {
+        let has_node_between = match (parent, block.as_written().as_expr()) {
             (Node::Member(member), Some(e)) => member.decorators().any(|it| it == e),
             (Node::PatProp(property), e) => property.default() == e,
             _ => false,
         };
-        (!is_apart && matches!(estree_type_name(parent), "MethodDefinition" | "Property")).then_some(parent)
+        (!has_node_between && matches!(estree_type_name(parent), "MethodDefinition" | "Property")).then_some(parent)
     });
     block_node.and_then(get_property_name).is_some_and(|it| it == b"render")
 }

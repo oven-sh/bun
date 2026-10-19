@@ -82,7 +82,7 @@ fn is_callback_with_lexical_this<'a>(function: Expr<'a>, values: &mut Values<'a>
 }
 
 /// oxlint's `ScopeScanner`: it only scans the body, and skips any class in it.
-fn own_keywords_as_oxlint(func: Func) -> OwnKeywords {
+fn oxlint_own_keywords(func: Func) -> OwnKeywords {
     let mut found = OwnKeywords::default();
     let mut pending: Vec<Node> = func.body_statements().into_iter().flatten().map(Node::Stmt).collect();
     while let Some(node) = pending.pop() {
@@ -249,7 +249,7 @@ impl Rule for PreferArrowCallback {
         let file = cx.file();
         let own = match cx.state.has_keyword_in(file, e.span()) {
             false => OwnKeywords::default(),
-            true if is_oxlint => own_keywords_as_oxlint(func),
+            true if is_oxlint => oxlint_own_keywords(func),
             true => own_keywords(func, false),
         };
         if own.has_super

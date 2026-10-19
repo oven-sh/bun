@@ -124,7 +124,7 @@ fn is_consecutive_comment<'a>(file: &'a File<'a>, comment: Token<'a>) -> bool {
 
 impl CapitalizedComments {
     /// Fast path: true if `comment` obviously starts with a non-letter, or with an ASCII letter in the expected case.
-    fn is_plainly_right(&self, comment: Token) -> bool {
+    fn is_obviously_valid(&self, comment: Token) -> bool {
         let [b'/', b'/' | b'*', rest @ ..] = comment.text() else {
             return false;
         };
@@ -136,7 +136,7 @@ impl CapitalizedComments {
     }
 
     fn process_comment<'a>(&self, comment: Token<'a>, cx: &Cx<'a, Self>) {
-        if self.is_plainly_right(comment) {
+        if self.is_obviously_valid(comment) {
             return;
         }
         let options = match comment.kind() {
@@ -171,7 +171,7 @@ impl CapitalizedComments {
         let is_directive = match cx.language().is_oxlint {
             true => oxlint_is_directive(comment, value),
             // Without a config, both tools' directive comments count.
-            false if cx.language().stands_alone && oxlint_is_directive(comment, value) => true,
+            false if cx.language().has_no_foreign_config && oxlint_is_directive(comment, value) => true,
             false => ast_utils::matches_comments_ignore_pattern(value) || is_maybe_url(value),
         };
         if is_directive

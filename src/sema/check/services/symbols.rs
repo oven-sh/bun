@@ -200,7 +200,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     /// `symbol.name`, spelled the way TypeScript spells it.
-    fn name_as_in_typescript(&self, name: Atom) -> &'c [u8] {
+    fn typescript_symbol_name(&self, name: Atom) -> &'c [u8] {
         let internal: &'static [u8] = match name {
             Atom::NONE => b"",
             known::anonymous_function => b"__function",
@@ -257,7 +257,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         match key {
             Key::Symbol(sym) | Key::Instantiated(sym, _) => {
                 let files = self.c.files();
-                info.name = self.name_as_in_typescript(match prop {
+                info.name = self.typescript_symbol_name(match prop {
                     // A late-bound member takes the property's name.
                     Some((prop, _)) if prop.name.is_some() => prop.name,
                     _ => files.symbol(sym).name,
@@ -303,7 +303,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Key::Property(source, name, _) => {
                 info.name = match name {
                     Atom::NONE => b"__computed",
-                    name => self.name_as_in_typescript(name),
+                    name => self.typescript_symbol_name(name),
                 };
                 info.flags = SymbolFlags::PROPERTY;
                 match source {
@@ -337,7 +337,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let member = &self.c.hir(file)[p];
                 info.flags = flags_of_literal_member(member.kind);
                 info.name = match self.c.declared_member_name(file, member.key) {
-                    Some(name) => self.name_as_in_typescript(name),
+                    Some(name) => self.typescript_symbol_name(name),
                     None => b"__computed",
                 };
             }
@@ -367,7 +367,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     info.name = match parameter.name {
                         // `bindParameter`'s name for a parameter whose name is a pattern.
                         Atom::NONE => self.list(format!("__{index}").as_bytes()),
-                        name => self.name_as_in_typescript(name),
+                        name => self.typescript_symbol_name(name),
                     };
                     if parameter.declaration.is_none() {
                         info.flags |= SymbolFlags::TRANSIENT;
@@ -385,7 +385,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 info.name = b"default";
                 info.flags = SymbolFlags::PROPERTY | SymbolFlags::TRANSIENT;
             }
-            Key::Undeclared(name) => info.name = self.name_as_in_typescript(name),
+            Key::Undeclared(name) => info.name = self.typescript_symbol_name(name),
             Key::Unique(_) => {
                 info.name = b"__index";
                 info.flags = SymbolFlags::SIGNATURE | SymbolFlags::TRANSIENT;
@@ -397,7 +397,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             .map(|entry| entry.name)
             .filter(|name| name.is_some())
         {
-            info.name = self.name_as_in_typescript(name);
+            info.name = self.typescript_symbol_name(name);
             // `getUnresolvedSymbolForEntityName`
             if matches!(key, Key::Undeclared(_)) {
                 info.flags = SymbolFlags::TYPE_ALIAS | SymbolFlags::TRANSIENT;

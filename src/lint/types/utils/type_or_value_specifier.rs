@@ -164,13 +164,13 @@ fn type_declared_in_lib<'a>(mut declaration_files: impl Iterator<Item = SourceFi
 /// Returns the `declare module "name" {}` that contains the node, looking through `namespace a {}` and `global {}`.
 /// tsgolint only looks through `namespace a {}`, so inside `global {}` it finds nothing.
 fn find_parent_module_declaration(node: TsNode<'_>, is_oxlint: bool) -> Option<TsNode<'_>> {
-    let looked_through = match is_oxlint {
+    let transparent = match is_oxlint {
         true => NodeFlags::NAMESPACE,
         false => NodeFlags::NAMESPACE | NodeFlags::GLOBAL_AUGMENTATION,
     };
     for node in std::iter::once(node).chain(node.ancestors()) {
         match node.kind() {
-            SyntaxKind::ModuleDeclaration if !node.flags().intersects(looked_through) => {
+            SyntaxKind::ModuleDeclaration if !node.flags().intersects(transparent) => {
                 return node
                     .name()
                     .is_some_and(|name| name.kind() == SyntaxKind::StringLiteral)

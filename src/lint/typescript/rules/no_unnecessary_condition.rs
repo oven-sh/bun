@@ -892,7 +892,7 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     }
     let is_no_unchecked_indexed_access = cx.state.is_no_unchecked_indexed_access;
     // The type tsgolint 7.0 uses, where it differs.
-    let goes_by = |node_to_check: Expr<'a>| match node_to_check.kind() {
+    let tsgolint_type_of = |node_to_check: Expr<'a>| match node_to_check.kind() {
         // `a?.b?.c`: `b`'s declared type, whatever is known about `a?.b` here.
         ExprKind::Dot { obj, name, .. } if node_to_check.is_optional() => {
             let base_type = get_constrained_type_at_location(obj).get_non_nullable_type();
@@ -931,7 +931,7 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     if cx.language().is_oxlint {
         let is_property_of_call =
             matches!(node_to_check.kind(), ExprKind::Dot { obj, .. } if obj.tag() == ExprTag::Call);
-        match goes_by(node_to_check) {
+        match tsgolint_type_of(node_to_check) {
             Some(ty) if is_nullable_type(ty) => return,
             // It finds no type for `f().b` if `b` isn't a property of `f`'s return type, and reports nothing.
             None if is_property_of_call => return,
@@ -959,7 +959,7 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
         .comments_apply_at(question_dot_operator)
         .labels_with(|labels| {
             // The type it uses, without the `undefined` from a `?.` further left.
-            let ty = goes_by(node_to_check).unwrap_or_else(|| get_constrained_type_at_location(node_to_check));
+            let ty = tsgolint_type_of(node_to_check).unwrap_or_else(|| get_constrained_type_at_location(node_to_check));
             labels.first(format!("Type: {}", tsgolint_distinct_type_names(ty.get_non_nullable_type())));
             labels.push(question_dot_operator, "");
         })

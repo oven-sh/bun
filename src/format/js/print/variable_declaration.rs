@@ -16,7 +16,7 @@ fn var_kind_text(kind: VarKind) -> &'static str {
 }
 
 /// `for (;;) var a = 1, b = 2;`: oxfmt doesn't put each variable on its own line.
-fn body_of_for_loop_is_written_like_its_head(f: &Formatter<'_>) -> bool {
+fn for_loop_body_is_printed_like_its_head(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -45,7 +45,7 @@ pub(crate) fn write_variable_declaration<'a>(
         _ => (true, false),
     };
     let is_parent_for_loop =
-        is_in_for_loop && (!semicolon || body_of_for_loop_is_written_like_its_head(f));
+        is_in_for_loop && (!semicolon || for_loop_body_is_printed_like_its_head(f));
 
     if statement
         .modifiers()

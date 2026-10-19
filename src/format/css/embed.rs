@@ -62,7 +62,10 @@ fn count_placeholders(doc: &Doc<'_>, count: usize) -> Option<usize> {
                 flat_contents,
                 ..
             } => rest.extend([&**break_contents, &**flat_contents]),
-            Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_) | Doc::KeepBlanks => {}
+            Doc::LineSuffixBoundary
+            | Doc::BreakParent
+            | Doc::Line(_)
+            | Doc::KeepTrailingWhitespace => {}
         }
     }
     Some(found)
@@ -99,7 +102,7 @@ fn has_break_parent_outside_of_groups(doc: &Doc<'_>) -> bool {
             | Doc::LineSuffix(_)
             | Doc::LineSuffixBoundary
             | Doc::Line(_)
-            | Doc::KeepBlanks => {}
+            | Doc::KeepTrailingWhitespace => {}
         }
     }
     false
@@ -287,7 +290,7 @@ impl<'a> Writer<'a> {
             Doc::Line(Line::Hard) => f.write_element(FormatElement::Line(LineMode::Hard)),
             Doc::Line(Line::Literal) => f.write_text(b"\n", None),
             // Style sheets never produce it.
-            Doc::KeepBlanks => {}
+            Doc::KeepTrailingWhitespace => {}
         }
     }
 }
@@ -541,12 +544,12 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         return false;
     };
     is_candidate(quasi, template, f.options())
-        && (tag_alone_decides_what_is_around_a_template(f)
+        && (tag_alone_decides_template_layout(f)
             || (!is_blank(template) && print_embed_css(template, f.options(), Action::Check)))
 }
 
 /// oxc's `embed_hug`: oxfmt lays out a template with a language's tag in a call or after `=>` as if it were formatted
 /// as that language, even when it doesn't parse and is printed verbatim.
-pub(crate) fn tag_alone_decides_what_is_around_a_template(f: &Formatter<'_>) -> bool {
+pub(crate) fn tag_alone_decides_template_layout(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }

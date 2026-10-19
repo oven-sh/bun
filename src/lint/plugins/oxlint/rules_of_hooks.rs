@@ -124,7 +124,7 @@ fn is_memo_or_forward_ref_callback<'a>(func: Func<'a>, memo: &mut Memo<'a>) -> b
         .is_some()
 }
 
-fn has_name_of_component_or_hook(func: Func) -> bool {
+fn is_named_like_component_or_hook(func: Func) -> bool {
     let name = if func.is_arrow() {
         get_declaration_identifier(func)
     } else {
@@ -140,7 +140,7 @@ fn is_somewhere_inside_component_or_hook<'a>(node: Node<'a>, memo: &mut Memo<'a>
         return false;
     };
     let is_one = |it: Node<'a>| match it.as_func().filter(is_function_like) {
-        Some(func) => has_name_of_component_or_hook(func),
+        Some(func) => is_named_like_component_or_hook(func),
         None => is_memo_or_forward_ref_call(it),
     };
     memo.inside_component_or_hook
@@ -323,7 +323,8 @@ pub(crate) fn check<'a, R: Rule>(
             }
         }
         _ if func.is_async() => {
-            if has_name_of_component_or_hook(func) || is_memo_or_forward_ref_callback(func, memo) {
+            if is_named_like_component_or_hook(func) || is_memo_or_forward_ref_callback(func, memo)
+            {
                 let start = func.estree_span().start;
                 report(ASYNC, CALLED_HERE)
                     .label(Span::new(start, start + 5), "This function is async.");

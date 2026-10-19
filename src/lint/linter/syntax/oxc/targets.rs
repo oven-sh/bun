@@ -313,7 +313,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     }
     // oxc converts a target once it has read the operator after it. If TypeScript's parser has an error before that
     // point, the tree has a hole and oxc's parser has already given up at that error.
-    let gives_up_at = super::super::error_of_parser(file).map(|it| it.map_or(0, |it| it.start));
+    let gives_up_at = super::super::first_parser_error(file).map(|it| it.map_or(0, |it| it.start));
     (targets.found.into_iter())
         .filter(|it| gives_up_at.is_none_or(|at| skip_trivia(file.text(), it.noticed) < at))
         .map(|it| {

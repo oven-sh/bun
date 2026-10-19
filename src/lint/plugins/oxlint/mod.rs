@@ -17,7 +17,7 @@ pub(crate) fn is_followed(file: &File) -> bool {
     file.language().is_oxlint
 }
 
-pub(crate) fn flavor_of_modules(file: &File) -> Flavor {
+pub(crate) fn module_flavor(file: &File) -> Flavor {
     if is_followed(file) {
         Flavor::Oxlint
     } else {

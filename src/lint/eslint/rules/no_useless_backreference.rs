@@ -55,16 +55,16 @@ fn as_lookaround(node: regex::Node<'_>) -> Option<Lookaround> {
 /// Returns the reason why `group` can't have captured anything when `bref`, which refers to it, is matched.
 fn problem_of<'r>(bref: regex::Node<'r>, group: regex::Node<'r>) -> Option<Message> {
     // Only `bref`'s ancestors span its whole range.
-    let is_around_bref =
+    let contains_bref =
         |node: regex::Node<'r>| node.start() <= bref.start() && bref.end() <= node.end() && node != bref;
-    if is_around_bref(group) {
+    if contains_bref(group) {
         return Some(NESTED);
     }
     // Walk up from the group to the lowest common ancestor. `below_common` is the last node before it.
     let mut below_common = group;
     let mut is_in_negative_lookaround = false;
     let common = group.ancestors().find(|&ancestor| {
-        if is_around_bref(ancestor) {
+        if contains_bref(ancestor) {
             return true;
         }
         is_in_negative_lookaround |= as_lookaround(ancestor).is_some_and(|it| it.is_negative);
@@ -102,13 +102,13 @@ fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoU
     check_pattern(pattern, Mode::of_flags(flags), &|_| node.span(), &|it| it.raw().to_vec(), cx);
 }
 
-/// `place` returns the span to report for a backreference. `shown` returns the text that the message shows for a
-/// backreference or a group.
+/// `report_span` returns the span to report for a backreference. `display_text` returns the text that the message shows
+/// for a backreference or a group.
 fn check_pattern<'a>(
     pattern: &[u8],
     mode: Mode,
-    place: &dyn Fn(regex::Node<'_>) -> Span,
-    shown: &dyn Fn(regex::Node<'_>) -> Vec<u8>,
+    report_span: &dyn Fn(regex::Node<'_>) -> Span,
+    display_text: &dyn Fn(regex::Node<'_>) -> Vec<u8>,
     cx: &Cx<'a, NoUselessBackreference>,
 ) {
     if !may_have_backreference(pattern) {
@@ -138,9 +138,9 @@ fn check_pattern<'a>(
             1 => " and another group".to_owned(),
             count => format!(" and other {count} groups"),
         };
-        cx.report(place(bref), message)
-            .data("bref", shown(bref))
-            .data("group", shown(group))
+        cx.report(report_span(bref), message)
+            .data("bref", display_text(bref))
+            .data("group", display_text(group))
             .data("otherGroups", other_groups);
     }
 }
@@ -168,8 +168,8 @@ impl Rule for NoUselessBackreference {
         // oxlint only reads a pattern written directly in the `RegExp` call, and points at the backreference.
         if cx.language().is_oxlint {
             if let Some(pattern) = run_on_regex_node(e) {
-                let place = |it: regex::Node<'_>| pattern.span(it.start(), it.end());
-                check_pattern(pattern.text(), pattern.mode, &place, &|it| cx.slice(place(it)).to_vec(), cx);
+                let report_span = |it: regex::Node<'_>| pattern.span(it.start(), it.end());
+                check_pattern(pattern.text(), pattern.mode, &report_span, &|it| cx.slice(report_span(it)).to_vec(), cx);
             }
             return;
         }

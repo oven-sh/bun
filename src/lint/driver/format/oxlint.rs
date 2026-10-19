@@ -11,7 +11,7 @@ use std::cell::OnceCell;
 /// The run statistics that oxlint prints.
 pub(crate) struct Run {
     pub(crate) files: usize,
-    /// [`Config::number_of_rules_of_oxlint`](bun_lint::linter::Config::number_of_rules_of_oxlint). `None` if oxlint
+    /// [`Config::oxlint_number_of_rules`](bun_lint::linter::Config::oxlint_number_of_rules). `None` if oxlint
     /// doesn't print it, as with nested configs.
     pub(crate) rules: Option<usize>,
     pub(crate) threads: usize,
@@ -195,7 +195,7 @@ pub(crate) fn plugin(prefix: &[u8]) -> &[u8] {
 }
 
 /// Returns oxlint's docs page for a rule. `None` for Bun's own rules.
-pub(crate) fn page_of(of: Plugin, name: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn docs_page(of: Plugin, name: &[u8]) -> Option<Vec<u8>> {
     let page = [
         b"https://oxc.rs/docs/guide/usage/linter/rules/",
         plugin(of.prefix().as_bytes()),

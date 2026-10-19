@@ -5,7 +5,7 @@
 //! The record only covers the file's top level. It doesn't include the contents of a `declare module "m" { .. }` or a
 //! namespace.
 
-use crate::ast_util::{is_specific_id, scope_made_by};
+use crate::ast_util::{is_specific_id, scope_owner};
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 pub use bun_lint::utils::oxlint::{has_module_syntax, is_script};
@@ -15,10 +15,8 @@ use smallvec::{SmallVec, smallvec};
 /// `node.scope_id() == ctx.scoping().root_scope_id()`: true if no ancestor of `node` creates a scope in `oxc_semantic`.
 /// `memo` must only be used for this function.
 pub fn is_in_root_scope<'a>(node: Node<'a>, memo: &mut AncestorMemo<'a, ()>) -> bool {
-    memo.find(node, |child, parent| {
-        scope_made_by(child, parent).map(|_| ())
-    })
-    .is_none()
+    memo.find(node, |child, parent| scope_owner(child, parent).map(|_| ()))
+        .is_none()
 }
 
 /// For [`is_assignment_target`].

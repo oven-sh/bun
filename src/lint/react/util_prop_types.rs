@@ -158,7 +158,7 @@ enum PropTypes<'a> {
 impl<'a> PropTypes<'a> {
     /// For an expression reached from its parent: a node's `value`, `init`, `argument` or `right`,
     /// or one of its `arguments`.
-    fn from_above(e: Option<Expr<'a>>) -> PropTypes<'a> {
+    fn from_child(e: Option<Expr<'a>>) -> PropTypes<'a> {
         match e {
             None => PropTypes::Null,
             Some(e) if e.is_chain_root() => PropTypes::Other,
@@ -181,7 +181,7 @@ impl<'a> PropTypes<'a> {
                         op: BinOp::Comma, ..
                     } => PropTypes::Other,
                     ExprKind::Binary { right, .. } | ExprKind::Assign { value: right, .. } => {
-                        PropTypes::from_above(Some(right))
+                        PropTypes::from_child(Some(right))
                     }
                     _ => PropTypes::Expr(parent),
                 };
@@ -189,7 +189,7 @@ impl<'a> PropTypes<'a> {
             Node::Stmt(parent) => {
                 return match parent.kind() {
                     StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. } => {
-                        PropTypes::from_above(Some(expr))
+                        PropTypes::from_child(Some(expr))
                     }
                     _ => PropTypes::Other,
                 };
@@ -388,13 +388,13 @@ impl<'a> PropTypesInstructions<'a> {
                         // A `catch` parameter's `node` is the `CatchClause`.
                         .filter(|it| it.kind() == Some(DeclarationKind::Variable));
                     match def_in_scope.and_then(Declaration::node) {
-                        Some(Node::VarDecl(it)) => PropTypes::from_above(it.init()),
+                        Some(Node::VarDecl(it)) => PropTypes::from_child(it.init()),
                         _ => PropTypes::Other,
                     }
                 }
                 ExprKind::Call(call) => match call.args().first() {
                     Some(argument) if is_prop_wrapper_function(e.file(), call.callee().text()) => {
-                        PropTypes::from_above(Some(argument))
+                        PropTypes::from_child(Some(argument))
                     }
                     _ => return Ok(ignore_props_validation),
                 },
@@ -534,7 +534,7 @@ impl<'a> PropTypesInstructions<'a> {
         let annotation = member.ty();
         let prop_types = match annotation.filter(|_| is_props(member.file(), member.span().start)) {
             Some(annotation) => PropTypes::Type(annotation),
-            None if is_prop_types_declaration(node) => PropTypes::from_above(member.init()),
+            None if is_prop_types_declaration(node) => PropTypes::from_child(member.init()),
             None => return,
         };
         self.mark_prop_types_as_declared(components, node, prop_types, Some(node));
@@ -554,7 +554,7 @@ impl<'a> PropTypesInstructions<'a> {
             _ => None,
         });
         if let Some(argument) = returned {
-            let prop_types = PropTypes::from_above(argument);
+            let prop_types = PropTypes::from_child(argument);
             self.mark_prop_types_as_declared(components, node, prop_types, Some(node));
         }
     }
@@ -568,7 +568,7 @@ impl<'a> PropTypesInstructions<'a> {
         // Search for the proptypes declaration
         for property in properties {
             if is_prop_types_declaration(Node::Prop(property)) {
-                let prop_types = PropTypes::from_above(property.value());
+                let prop_types = PropTypes::from_child(property.value());
                 self.mark_prop_types_as_declared(components, node, prop_types, Some(node));
             }
         }

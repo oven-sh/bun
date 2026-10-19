@@ -69,12 +69,12 @@ impl Texts<'_> {
         } else if a.end == b.start {
             Range::new(a.start, b.end)
         } else {
-            self.join_apart(a, b)
+            self.join_non_adjacent(a, b)
         }
     }
 
     /// `a + b`, for non-empty ranges that aren't adjacent.
-    fn join_apart(&mut self, a: Range, b: Range) -> Range {
+    fn join_non_adjacent(&mut self, a: Range, b: Range) -> Range {
         {
             let offset = extra_start(self.css);
             // If `a` is the last thing added to `extra`, extend it in place.

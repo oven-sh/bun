@@ -62,7 +62,7 @@ pub(crate) struct References {
     moved: Vec<(u32, u32)>,
     /// Indices into `all` in the order the scope manager creates the references. `None` means the
     /// same as `visiting_order`. Computed on demand.
-    as_made: OnceCell<Option<Vec<u32>>>,
+    in_creation_order: OnceCell<Option<Vec<u32>>>,
     /// Indices into `all`, variable by variable, in `visiting_order` order. The unresolved
     /// references come after the last variable.
     by_variable: Vec<u32>,
@@ -74,7 +74,7 @@ pub(crate) struct References {
     /// For each identifier expression, the index in `Variables::list` of the value that the name
     /// resolves to at that position.
     of_expr: Vec<u32>,
-    /// Indices into `all`, scope by scope, in `as_made` order, and the start of each scope's
+    /// Indices into `all`, scope by scope, in `in_creation_order` order, and the start of each scope's
     /// references. Computed on demand.
     by_scope: OnceCell<(Vec<u32>, Vec<u32>)>,
     /// The same in `visiting_order` order, used as long as nothing has requested `by_scope`.
@@ -128,7 +128,7 @@ fn sort_by_pos(found: &mut [RawReference]) {
 
 /// Sorts numbers that are each close to their final position, with an insertion sort. If that turns
 /// out to take many moves, it falls back to the standard library's sort.
-pub(super) fn sort_what_is_nearly_in_order(numbers: &mut [u64]) {
+pub(super) fn sort_nearly_sorted(numbers: &mut [u64]) {
     let mut moves = 0;
     for at in 1..numbers.len() {
         let (number, mut to) = (numbers[at], at);
@@ -175,12 +175,12 @@ impl Visible<'_> {
             // Half of the scopes declare nothing.
             Step::Enter(scope) | Step::Leave(scope)
                 if self.variables.range_of_scope(scope).is_empty() => {}
-            _ => self.take_what_changes_something(step),
+            _ => self.take_effective_step(step),
         }
     }
 
     #[inline(never)]
-    fn take_what_changes_something(&mut self, step: Step) {
+    fn take_effective_step(&mut self, step: Step) {
         match step {
             // `WithScope#__close` passes every reference on to the enclosing scope.
             Step::Enter(scope) | Step::Leave(scope)
@@ -260,7 +260,7 @@ struct Resolver<'t> {
     last_moved_to: u32,
     /// True if the references so far are visited in `all`'s order.
     is_visiting_order: bool,
-    /// Like `moved`, for the ones that only `References::as_made` moves.
+    /// Like `moved`, for the ones that only `References::in_creation_order` moves.
     moved_on_demand: Vec<(u32, u32)>,
 }
 
@@ -684,7 +684,7 @@ impl<'f> Collector<'f, '_> {
     fn unvisited_tags(&self) -> Vec<ExprId> {
         let hir = &self.file.hir;
         let mut skipped: Vec<ExprId> = Vec::new();
-        if self.is_javascript && !self.file.has_scopes_of_oxc() {
+        if self.is_javascript && !self.file.has_oxc_scopes() {
             let skips_opening_tags = self.file.language().eslint_major < 10;
             for jsx in hir.jsx {
                 let tags = [Some(jsx.close_tag), skips_opening_tags.then_some(jsx.tag)];
@@ -964,7 +964,7 @@ impl<'f> Collector<'f, '_> {
         // They're already grouped if the groups are built from these kinds. Where the binder didn't
         // record them, any expression could be one.
         let is_grouped =
-            self.file.groups_exprs_as_the_binder() && exprs.len() == self.file.hir.exprs.len();
+            self.file.uses_binder_expr_kinds() && exprs.len() == self.file.hir.exprs.len();
         let not_grouped: Vec<u32> = match is_grouped {
             true => Vec::new(),
             false => (0..exprs.len() as u32)
@@ -1180,7 +1180,7 @@ impl<'f> Collector<'f, '_> {
         }
         // A type is stored after its parts.
         sort_by_pos(&mut self.found[start..]);
-        sort_what_is_nearly_in_order(&mut self.type_names);
+        sort_nearly_sorted(&mut self.type_names);
         for &id in &tree.namespace_exports {
             if let Some(stmt) = hir.stmts.get(id.idx())
                 && let StmtKind::ExportAsNamespace(name) = stmt.kind
@@ -1521,7 +1521,7 @@ impl References {
             all,
             visiting_order,
             moved,
-            as_made: OnceCell::new(),
+            in_creation_order: OnceCell::new(),
             by_variable,
             variable_starts,
             marks,
@@ -1567,10 +1567,10 @@ impl References {
     }
 
     /// Indices into `all` in the order the scope manager creates the references. Empty if that's `all`'s order.
-    pub(crate) fn as_made<'a>(&self, file: &'a File<'a>) -> &[u32] {
+    pub(crate) fn in_creation_order<'a>(&self, file: &'a File<'a>) -> &[u32] {
         let made = self
-            .as_made
-            .get_or_init(|| order::as_made(file, &self.all, &self.moved));
+            .in_creation_order
+            .get_or_init(|| order::in_creation_order(file, &self.all, &self.moved));
         made.as_deref().unwrap_or(&self.visiting_order)
     }
 
@@ -1622,7 +1622,7 @@ impl References {
     pub(crate) fn in_scopes<'a>(&self, file: &'a File<'a>, first: u32, last: u32) -> &[u32] {
         let (by_scope, starts) = self
             .by_scope
-            .get_or_init(|| self.group_by_scope(self.as_made(file)));
+            .get_or_init(|| self.group_by_scope(self.in_creation_order(file)));
         Self::group(by_scope, starts, first as usize, last as usize)
     }
 

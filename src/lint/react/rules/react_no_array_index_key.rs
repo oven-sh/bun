@@ -29,7 +29,7 @@ impl<'a> State<'a> {
         *self.pragma.get_or_insert_with(|| get_from_context(file))
     }
 
-    fn keep(&mut self, keys: &mut dyn Iterator<Item = Prop<'a>>) {
+    fn add_candidate_keys(&mut self, keys: &mut dyn Iterator<Item = Prop<'a>>) {
         let can_use_index = |it: &Prop<'a>| {
             it.value().is_some_and(|value| {
                 !matches!(value.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::String | ExprTag::Number)
@@ -40,7 +40,7 @@ impl<'a> State<'a> {
 }
 
 /// oxlint only recognizes `React.cloneElement`. For upstream a named import from `react` can also create elements.
-fn may_call_what_makes_elements(file: &File) -> bool {
+fn may_create_elements(file: &File) -> bool {
     file.mentions("cloneElement")
         || (!file.language().is_oxlint
             && file.mentions_any(&["createElement", "react", "#createElement", "#cloneElement"]))
@@ -57,11 +57,11 @@ impl Rule for NoArrayIndexKey {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Jsx]).finish();
-        if may_call_what_makes_elements(file) { on.exprs(&[ExprTag::Call]) } else { on }
+        if may_create_elements(file) { on.exprs(&[ExprTag::Call]) } else { on }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        (file.mentions("key") && (file.has_exprs([ExprTag::Jsx]) || may_call_what_makes_elements(file))).then(State::default)
+        (file.mentions("key") && (file.has_exprs([ExprTag::Jsx]) || may_create_elements(file))).then(State::default)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -75,7 +75,7 @@ impl Rule for NoArrayIndexKey {
                     it.key().is_some_and(|key| key.is("key"))
                         && get_prop_value(*it).is_some_and(|value| value.as_expression().is_some())
                 };
-                cx.state.keep(&mut jsx.attrs().iter().filter(is_key));
+                cx.state.add_candidate_keys(&mut jsx.attrs().iter().filter(is_key));
             }
             ExprTag::Call => {
                 let Some(call) = e.as_call() else {
@@ -99,7 +99,7 @@ impl Rule for NoArrayIndexKey {
                         false => is_create_clone_element(call.callee(), cx),
                     };
                 if is_creation {
-                    cx.state.keep(&mut properties.iter().filter(is_key));
+                    cx.state.add_candidate_keys(&mut properties.iter().filter(is_key));
                 }
             }
             _ => {}
@@ -123,22 +123,22 @@ impl Rule for NoArrayIndexKey {
         utils::sort::sort_by_key(&mut calls, |it| (it.span.start, Reverse(it.span.end)));
         utils::sort::sort_by_key(&mut keys, |it| it.span().start);
         let mut calls = calls.into_iter().peekable();
-        let mut open = Open::default();
+        let mut enclosing_calls = EnclosingCalls::default();
         for key in keys {
             let Some(value) = key.value() else {
                 continue;
             };
             let at = value.span().start;
             while let Some(call) = calls.next_if(|it| it.span.start < at) {
-                open.close_until(call.span.start);
-                open.push(call);
+                enclosing_calls.close_until(call.span.start);
+                enclosing_calls.push(call);
             }
-            open.close_until(at);
-            let innermost = open.calls.last().filter(|_| is_oxlint).and_then(|it| it.index?.symbol());
+            enclosing_calls.close_until(at);
+            let innermost = enclosing_calls.calls.last().filter(|_| is_oxlint).and_then(|it| it.index?.symbol());
             let is_array_index = |it: Expr<'a>| match is_oxlint {
                 // oxlint only accepts the innermost call's parameter, and looks through TypeScript wrappers.
                 true => innermost.is_some() && get_inner_expression(it).symbol() == innermost,
-                false => it.as_ident().is_some_and(|name| open.names.contains_key(&name)),
+                false => it.as_ident().is_some_and(|name| enclosing_calls.names.contains_key(&name)),
             };
             let mut is_reported = false;
             check_prop_value(value, is_oxlint, &is_array_index, &mut |node| {
@@ -217,14 +217,14 @@ fn is_using_react_children(callee: Expr<'_>, method: Name<'_>, pragma: &[u8]) ->
 
 /// upstream's `indexParamNames`
 #[derive(Default)]
-struct Open<'a> {
+struct EnclosingCalls<'a> {
     /// The enclosing calls at the current position, innermost last.
     calls: Vec<IteratorCall<'a>>,
     /// For each name, how many of them use it as their index.
     names: FxHashMap<Name<'a>, u32>,
 }
 
-impl<'a> Open<'a> {
+impl<'a> EnclosingCalls<'a> {
     fn push(&mut self, call: IteratorCall<'a>) {
         if let Some(name) = call.index.and_then(Pat::as_ident) {
             *self.names.entry(name).or_default() += 1;

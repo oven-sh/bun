@@ -2,7 +2,7 @@
 
 use super::block_statement::is_empty_block;
 use super::import_declaration::FormatStringLiteral;
-use super::intersection_type::lone_type_of_intersection_is_a_group;
+use super::intersection_type::groups_single_type_intersection;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::ts_types::{entity_name, write_ts_interface_signatures};
@@ -216,14 +216,14 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
     alias: Alias<'a>,
     f: &mut Formatter<'a>,
 ) {
-    if f.file().is_flow() && super::flow::write_what_is_no_type_alias(statement, alias, f) {
+    if f.file().is_flow() && super::flow::write_pseudo_type_alias(statement, alias, f) {
         return;
     }
     let ty = without_lone_operator(alias.ty());
     let right_node = ty.as_ast_nodes();
 
-    let comments_behind_operator = comments_behind_type_alias_operator(statement, f);
-    let has_line_comment_on_operator_line = !comments_behind_operator.is_empty()
+    let comments_after_operator = comments_after_type_alias_operator(statement, f);
+    let has_line_comment_on_operator_line = !comments_after_operator.is_empty()
         || (type_alias_comments_stay_around_operator(f)
             && (comments_trailing_type_alias_left_side(statement, f).last())
                 .is_some_and(|comment| comment.is_line()));
@@ -262,7 +262,7 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
         }
         _ if ty != alias.ty()
             && matches!(alias.ty().kind(), TypeKind::Intersection(_))
-            && lone_type_of_intersection_is_a_group(f) =>
+            && groups_single_type_intersection(f) =>
         {
             write!(f, group(&ty))
         }
@@ -278,7 +278,7 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
             [
                 space(),
                 "=",
-                FormatTrailingComments::Comments(comments_behind_operator)
+                FormatTrailingComments::Comments(comments_after_operator)
             ]
         );
         match layout {
@@ -342,7 +342,7 @@ pub(super) fn comments_trailing_type_alias_left_side<'a>(
 
 /// See [`type_alias_comments_stay_around_operator`]: the comments that stay after the `=` are dangling comments of the
 /// type alias `statement`.
-pub(super) fn comments_behind_type_alias_operator<'a>(
+pub(super) fn comments_after_type_alias_operator<'a>(
     statement: Stmt<'a>,
     f: &Formatter<'a>,
 ) -> CommentList<'a> {

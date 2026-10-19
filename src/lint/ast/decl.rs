@@ -537,19 +537,19 @@ impl<'a> Key<'a> {
     ) -> Option<Key<'a>> {
         match (key, name_kind, file.text().get(start as usize)) {
             (_, _, None | Some(b'"' | b'\'' | b'0'..=b'9')) => {
-                Key::new_in_general(file, key, name_kind, start)
+                Key::new_slow(file, key, name_kind, start)
             }
             (hir::PropKey::Name(name), NameKind::Identifier, _) => Some(Key {
                 kind: KeyKind::Ident(file.name(name)),
                 start,
                 is_jsx: false,
             }),
-            _ => Key::new_in_general(file, key, name_kind, start),
+            _ => Key::new_slow(file, key, name_kind, start),
         }
     }
 
     #[inline(never)]
-    fn new_in_general(
+    fn new_slow(
         file: &'a File<'a>,
         key: hir::PropKey,
         name_kind: NameKind,
@@ -654,12 +654,12 @@ impl<'a> Key<'a> {
     pub fn inner_span(self, file: &File<'a>) -> Span {
         match self.span_of_ascii_name(file) {
             Some(span) => span,
-            None => self.inner_span_in_general(file),
+            None => self.inner_span_slow(file),
         }
     }
 
     #[inline(never)]
-    fn inner_span_in_general(self, file: &File<'a>) -> Span {
+    fn inner_span_slow(self, file: &File<'a>) -> Span {
         let text = file.text();
         match self.kind {
             KeyKind::Computed(e) => e.span(),
@@ -668,7 +668,7 @@ impl<'a> Key<'a> {
                 let rest = text.get(literal as usize..).unwrap_or_default();
                 Span::new(literal, literal + crate::tokens::token_len(rest) as u32)
             }
-            _ => self.span_in_general(file),
+            _ => self.span_slow(file),
         }
     }
 
@@ -677,12 +677,12 @@ impl<'a> Key<'a> {
     pub fn span(self, file: &File<'a>) -> Span {
         match self.span_of_ascii_name(file) {
             Some(span) => span,
-            None => self.span_in_general(file),
+            None => self.span_slow(file),
         }
     }
 
     #[inline(never)]
-    fn span_in_general(self, file: &File<'a>) -> Span {
+    fn span_slow(self, file: &File<'a>) -> Span {
         let text = file.text();
         let end = match self.kind {
             KeyKind::Computed(e) => skip_trivia(text, e.outer_span().end) + 1,
@@ -1091,7 +1091,7 @@ impl<'a> Member<'a> {
         match self.file.bound.member_owner.get(self.id.idx()) {
             Some(&MemberOwner::Class(class)) => Node::Class(Class::new(self.file, class)),
             Some(&MemberOwner::TypeLiteral(ty)) => Node::Type(TypeNode::new(self.file, ty)),
-            _ => Node::Member(self).parent_of_neither_expr_nor_stmt(),
+            _ => Node::Member(self).parent_of_other_node(),
         }
     }
 }
@@ -1249,7 +1249,7 @@ impl<'a> Prop<'a> {
             Some(&owner) if owner.is_some() && self.file.hir.import_attributes.is_empty() => {
                 Node::Expr(Expr::new(self.file, owner))
             }
-            _ => Node::Prop(self).parent_of_neither_expr_nor_stmt(),
+            _ => Node::Prop(self).parent_of_other_node(),
         }
     }
 }

@@ -2,7 +2,7 @@
 //! and from `--rule`. Every built-in rule is available under any of its names, and an unknown name is an error.
 //! `react/*` is a wildcard that turns off every rule of a plugin. See [`expand_wildcards`].
 
-use crate::bunfig::RuleOfBunfig;
+use crate::bunfig::BunfigRule;
 use crate::cli::{Options, Wildcard};
 use crate::configs::{CATEGORIES, is_category, plugin_longhand, severity_name};
 use crate::print_config::object;
@@ -67,7 +67,7 @@ impl Mistake {
 
 /// Error message for `id`, which is `name` with `plugin`'s prefix, when the plugin has no such rule. It's printed after
 /// `error: `.
-fn unknown_rule_of(plugin: &JsPlugin, id: &[u8], name: &[u8]) -> Vec<u8> {
+fn unknown_plugin_rule(plugin: &JsPlugin, id: &[u8], name: &[u8]) -> Vec<u8> {
     let skipped = plugin.name.len() + 1;
     let closest = (plugin.rules.iter())
         .map(|it| {
@@ -98,14 +98,14 @@ fn unknown_rule_of(plugin: &JsPlugin, id: &[u8], name: &[u8]) -> Vec<u8> {
 
 /// Where an unknown rule name came from.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum NamedBy {
+pub(crate) enum NameSource {
     Bunfig,
     Flag,
     Explain,
 }
 
 /// Error message for `id`, which isn't the name of any rule. Goes after `error: `.
-pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) -> Vec<u8> {
+pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], name_source: NameSource) -> Vec<u8> {
     let prefix = parse_rule_id(id).0;
     // A rule for JSON or Markdown. `--rules` lists it, but only an ESLint config can assign its language to files.
     if let Some(language) = registry.find(id).and_then(|it| it.meta.languages.first()) {
@@ -122,7 +122,7 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) ->
         Missing::Formatting => {
             [b"\"", id, b"\" is a formatting rule\n  bun fmt does that"].concat()
         }
-        Missing::OfPluginWithoutRules(plugin) => [
+        Missing::PluginHasNoRules(plugin) => [
             b"\"",
             id,
             b"\" is not supported\n  bun lint has no ",
@@ -134,15 +134,15 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) ->
         .concat(),
         Missing::Unknown(None) => {
             // `react` is also a name for the rules of react-hooks.
-            let is_its_own = |it: &Plugin| it.prefix().as_bytes() == prefix;
-            let built_in = (Plugin::spelled(prefix).find(is_its_own))
+            let has_exact_prefix = |it: &Plugin| it.prefix().as_bytes() == prefix;
+            let built_in = (Plugin::spelled(prefix).find(has_exact_prefix))
                 .or_else(|| Plugin::spelled(prefix).next());
-            let hint: Vec<u8> = match (built_in, named_by) {
+            let hint: Vec<u8> = match (built_in, name_source) {
                 _ if prefix.is_empty() => Vec::new(),
                 // These rules don't come from a package.
                 (Some(Plugin::Eslint | Plugin::Oxc), _) => Vec::new(),
-                (Some(plugin), _) if plugin.is_always_there() => Vec::new(),
-                (Some(_), NamedBy::Explain) => Vec::new(),
+                (Some(plugin), _) if plugin.is_always_available() => Vec::new(),
+                (Some(_), NameSource::Explain) => Vec::new(),
                 (Some(plugin), _) => {
                     let package = plugin.prefix().as_bytes();
                     let package = plugin_longhand(package).unwrap_or_else(|| package.to_vec());
@@ -157,14 +157,14 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) ->
                     ];
                     parts.concat()
                 }
-                (None, NamedBy::Bunfig) => {
+                (None, NameSource::Bunfig) => {
                     b"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]".to_vec()
                 }
-                (None, NamedBy::Flag) => {
+                (None, NameSource::Flag) => {
                     b"\n  To use a rule from an ESLint plugin, load the plugin with --plugin".to_vec()
                 }
                 // Loaded or not, a plugin's rules are documented by the plugin itself.
-                (None, NamedBy::Explain) => {
+                (None, NameSource::Explain) => {
                     b"\n  --explain has the built-in rules. For a rule from a plugin, see the plugin's docs".to_vec()
                 }
             };
@@ -193,28 +193,28 @@ pub(crate) fn invalid_severity(rule: &[u8], written: &Json) -> Vec<u8> {
 
 /// Returns the first mistake in `[lint.rules]`, `--rule`, `-A` / `-W` / `-D` or the `rules` of `[[lint.overrides]]`: an
 /// unknown rule, an invalid severity, or options the rule doesn't accept. Turning off a rule that Bun left out on
-/// purpose is fine. `plugins` holds the loaded JavaScript plugins. `only_of_plugins` is set if there's a config file,
+/// purpose is fine. `plugins` holds the loaded JavaScript plugins. `only_plugin_rules` is set if there's a config file,
 /// whose tool has its own messages for the other rules. `Some(true)` means the tool is ESLint, which doesn't validate a
 /// rule that's off.
 pub(crate) fn check_rules(
     linter: &Linter,
     options: &Options,
     plugins: &[NamedPlugin],
-    only_of_plugins: Option<bool>,
+    only_plugin_rules: Option<bool>,
 ) -> Result<(), Mistake> {
-    let check = |rules: &[(Vec<u8>, Json)], places: &[RuleOfBunfig]| {
-        check(linter, plugins, rules, places, only_of_plugins)
+    let check = |rules: &[(Vec<u8>, Json)], places: &[BunfigRule]| {
+        check(linter, plugins, rules, places, only_plugin_rules)
     };
     let filters = options.filters.iter().filter(|it| !is_category(&it.1));
     let filters: Vec<(Vec<u8>, Json)> = filters
         .map(|(severity, rule)| (rule.clone(), severity_name(*severity)))
         .collect();
     check(&filters, &[])?;
-    check(&options.rule, &options.rules_of_bunfig)?;
+    check(&options.rule, &options.bunfig_rules)?;
     for it in &options.overrides {
         check(&it.rules, &it.places)?;
     }
-    if only_of_plugins.is_some() {
+    if only_plugin_rules.is_some() {
         return Ok(());
     }
     let of_overrides = options.overrides.iter().flat_map(|it| &it.wildcards);
@@ -240,8 +240,10 @@ fn check_wildcard(
             [b"Unknown plugin \"", plugin, b"\"\n  ", &hint].concat()
         }
         None => {
-            let named_by = wildcard.key_at.map_or(NamedBy::Flag, |_| NamedBy::Bunfig);
-            unknown_rule(registry, id, named_by)
+            let name_source = wildcard
+                .key_at
+                .map_or(NameSource::Flag, |_| NameSource::Bunfig);
+            unknown_rule(registry, id, name_source)
         }
     };
     Err(Mistake::new(message, wildcard.key_at))
@@ -252,8 +254,8 @@ fn check(
     linter: &Linter,
     plugins: &[NamedPlugin],
     rules: &[(Vec<u8>, Json)],
-    places: &[RuleOfBunfig],
-    only_of_plugins: Option<bool>,
+    places: &[BunfigRule],
+    only_plugin_rules: Option<bool>,
 ) -> Result<(), Mistake> {
     let registry = linter.registry();
     for (at, (id, setting)) in rules.iter().enumerate() {
@@ -275,11 +277,11 @@ fn check(
         let (prefix, name) = parse_rule_id(id);
         if let Some((plugin, _)) = plugins.iter().find(|it| *it.0.name == *prefix) {
             let Some(rule) = plugin.rule(name) else {
-                if only_of_plugins == Some(true) && severity == Some(Severity::Off) {
+                if only_plugin_rules == Some(true) && severity == Some(Severity::Off) {
                     continue;
                 }
                 return Err(Mistake {
-                    message: unknown_rule_of(plugin, id, name),
+                    message: unknown_plugin_rule(plugin, id, name),
                     at: written.map(|it| it.key_at),
                 });
             };
@@ -309,7 +311,7 @@ fn check(
                 },
             }
         }
-        if only_of_plugins.is_some() {
+        if only_plugin_rules.is_some() {
             continue;
         }
         let found = registry.find_by_any_name(id);
@@ -322,7 +324,7 @@ fn check(
                 message: unknown_rule(
                     registry,
                     id,
-                    written.map_or(NamedBy::Flag, |_| NamedBy::Bunfig),
+                    written.map_or(NameSource::Flag, |_| NameSource::Bunfig),
                 ),
                 at: written.map(|it| it.key_at),
             });

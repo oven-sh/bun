@@ -321,7 +321,7 @@ struct Constituents<'a> {
     /// `Union` or `Intersection`
     tag: TypeTag,
     /// True if the union is an optional parameter's type.
-    is_of_optional_parameter: bool,
+    is_optional_parameter_type: bool,
     unique_constituents: Vec<TypeNode<'a>>,
     cached_type_map: IdMap<Type<'a>, TypeNode<'a>>,
 }
@@ -362,7 +362,7 @@ impl<'a> Constituents<'a> {
             return;
         }
 
-        if self.is_of_optional_parameter && ty.has_flags(TypeFlags::UNDEFINED) {
+        if self.is_optional_parameter_type && ty.has_flags(TypeFlags::UNDEFINED) {
             report(cx, UNNECESSARY, constituent_node, None);
         }
         self.unique_constituents.push(constituent_node);
@@ -387,7 +387,7 @@ impl NoDuplicateTypeConstituents {
             return;
         }
         // tsgolint only checks for the question token, and only a constructor has parameter properties.
-        let is_of_optional_parameter = tag == TypeTag::Union
+        let is_optional_parameter_type = tag == TypeTag::Union
             && matches!(parent, Node::Param(param) if param.is_optional()
                 && match cx.language().is_oxlint {
                     true => {
@@ -404,7 +404,7 @@ impl NoDuplicateTypeConstituents {
                 });
         let mut constituents = Constituents {
             tag,
-            is_of_optional_parameter,
+            is_optional_parameter_type,
             unique_constituents: Vec::new(),
             cached_type_map: IdMap::new(),
         };

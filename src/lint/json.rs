@@ -18,12 +18,12 @@ use std::borrow::Cow;
 /// the stack, with different frame sizes and possibly on another thread. So the code that builds the value only gets a
 /// quarter of the smallest stack.
 #[derive(Copy, Clone)]
-pub(crate) struct RoomToNest(bun_core::StackCheck);
+pub(crate) struct NestingLimit(bun_core::StackCheck);
 
-impl RoomToNest {
-    pub(crate) fn new() -> RoomToNest {
+impl NestingLimit {
+    pub(crate) fn new() -> NestingLimit {
         let smallest = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
-        RoomToNest(bun_core::StackCheck::init().with_at_most(smallest / 4))
+        NestingLimit(bun_core::StackCheck::init().with_at_most(smallest / 4))
     }
 
     #[inline]
@@ -53,11 +53,11 @@ pub fn parse(text: &[u8]) -> Option<Json> {
         _ => return None,
     };
     // The parser warns about a duplicate key.
-    convert(&root, RoomToNest::new(), log.warnings > 0)
+    convert(&root, NestingLimit::new(), log.warnings > 0)
 }
 
 /// Returns `None` if the value is nested too deeply.
-fn convert(value: &JsonValue, room: RoomToNest, has_repeats: bool) -> Option<Json> {
+fn convert(value: &JsonValue, room: NestingLimit, has_duplicate_keys: bool) -> Option<Json> {
     if !room.has_more() {
         return None;
     }
@@ -69,17 +69,17 @@ fn convert(value: &JsonValue, room: RoomToNest, has_repeats: bool) -> Option<Jso
         JsonValue::Array(it) => {
             let mut items = Vec::with_capacity(it.get().items().len());
             for item in it.get().items() {
-                items.push(convert(item, room, has_repeats)?);
+                items.push(convert(item, room, has_duplicate_keys)?);
             }
             Json::Array(items)
         }
         JsonValue::Object(it) => {
             let mut entries = Vec::with_capacity(it.get().properties().len());
             for property in it.get().properties() {
-                let value = convert(&property.value, room, has_repeats)?;
+                let value = convert(&property.value, room, has_duplicate_keys)?;
                 entries.push((property.key.slice().to_vec(), value));
             }
-            match has_repeats {
+            match has_duplicate_keys {
                 true => Json::object(entries),
                 false => Json::Object(entries),
             }
@@ -223,10 +223,10 @@ pub fn with_parsed<T>(
 /// Converts a value from one of Bun's parsers, or part of one, the way [`parse_as`] does. Returns `None` if it's nested
 /// too deeply.
 pub fn from_parsed(expr: &Expr) -> Option<Json> {
-    from_expr(expr, RoomToNest::new())
+    from_expr(expr, NestingLimit::new())
 }
 
-fn from_expr(expr: &Expr, room: RoomToNest) -> Option<Json> {
+fn from_expr(expr: &Expr, room: NestingLimit) -> Option<Json> {
     if !room.has_more() {
         return None;
     }

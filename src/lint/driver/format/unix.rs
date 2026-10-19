@@ -69,7 +69,7 @@ struct Ends {
     text: Vec<u8>,
     /// Keyed by the address of the rule's `Meta`, plus 1 for an error. The value is the output's start and end in
     /// `text`.
-    places: FxHashMap<usize, (u32, u32)>,
+    ranges: FxHashMap<usize, (u32, u32)>,
 }
 
 impl Ends {
@@ -78,14 +78,14 @@ impl Ends {
             return write_end(out, message);
         };
         let key = std::ptr::from_ref(*meta).addr() + usize::from(is_error(message));
-        let (start, end) = match self.places.get(&key) {
-            Some(place) => *place,
+        let (start, end) = match self.ranges.get(&key) {
+            Some(range) => *range,
             None => {
                 let start = self.text.len() as u32;
                 write_end(&mut self.text, message);
-                let place = (start, self.text.len() as u32);
-                self.places.insert(key, place);
-                place
+                let range = (start, self.text.len() as u32);
+                self.ranges.insert(key, range);
+                range
             }
         };
         out.extend_from_slice(

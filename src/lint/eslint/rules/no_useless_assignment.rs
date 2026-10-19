@@ -54,7 +54,7 @@ pub struct State<'a> {
     /// Debug builds only: the root nodes of all code paths with a checked variable, and true while a code path is
     /// analyzed only to verify that nothing is reported in it.
     all_roots: FxHashSet<Node<'a>>,
-    is_only_checked: bool,
+    is_verifying_skipped: bool,
     stack: Vec<ScopeStack<'a>>,
     /// Only the reachable ones.
     current_segments: CurrentSegments<'a>,
@@ -144,7 +144,7 @@ fn oxlint_declarator(variable: Symbol<'_>) -> Option<VarDecl<'_>> {
 /// oxlint 1.87 doesn't report a variable whose first declaration isn't a `var`, `let` or `using`: a parameter (of a
 /// `catch` too), a function, a class, a function's `arguments`, a `const`. It doesn't report a variable initialized
 /// with a function either.
-fn oxlint_passes_over(variable: Symbol) -> bool {
+fn oxlint_skips(variable: Symbol) -> bool {
     variable.file().language().is_oxlint
         && oxlint_declarator(variable).is_none_or(|it| {
             it.var_kind() == VarKind::Const
@@ -155,7 +155,7 @@ fn oxlint_passes_over(variable: Symbol) -> bool {
 }
 
 /// oxlint 1.87 treats a variable in any scope as exported if the module exports something under its name.
-fn oxlint_takes_for_exported<'a>(
+fn oxlint_treats_as_exported<'a>(
     variable: Symbol<'a>,
     exported: &mut Option<FxHashMap<Name<'a>, Span>>,
 ) -> bool {
@@ -167,7 +167,7 @@ fn oxlint_takes_for_exported<'a>(
 /// For oxlint 1.87, only the first declarator of `var a = 1; var a = 2;` assigns to `a`. `at` is the name's offset in a
 /// declarator with an initializer.
 #[inline(never)]
-fn oxlint_does_not_see(variable: Symbol, at: u32) -> bool {
+fn oxlint_ignores_declarator(variable: Symbol, at: u32) -> bool {
     variable.file().language().is_oxlint
         && oxlint_declarator(variable).is_none_or(|it| !it.span().contains_offset(at))
 }
@@ -238,7 +238,7 @@ impl<'a> Binding<'a> {
                 || Binding::of(symbol, reference) == self)
             && !(reference.is_init()
                 && symbol.declaration_count() > 1
-                && oxlint_does_not_see(symbol, reference.ident().start()))
+                && oxlint_ignores_declarator(symbol, reference.ident().start()))
     }
 
     fn references(self) -> impl Iterator<Item = Reference<'a>> {
@@ -375,7 +375,7 @@ impl<'a, 'v> Variable<'a, 'v> {
 
     /// True if the variable is read after `target` in one of `target`'s segments and, if `next` is given, before
     /// `next`.
-    fn is_read_at_once(&self, target: &Assignment<'a>, next: Option<&Assignment<'a>>) -> bool {
+    fn is_read_in_own_segments(&self, target: &Assignment<'a>, next: Option<&Assignment<'a>>) -> bool {
         let after = self.reads_before(target.identifier.end)..self.reads.len();
         // `x = id`: `id` is evaluated before the assignment.
         let before = target.expression.map_or(0..0, |it| self.reads_in(it));
@@ -387,15 +387,15 @@ impl<'a, 'v> Variable<'a, 'v> {
             .segments
             .iter()
             .map(|it| self.reads_in_segment(it.id()));
-        std::iter::once(0..between).chain(in_segments).any(|place| {
-            let place = intersection(place, after.clone());
+        std::iter::once(0..between).chain(in_segments).any(|candidates| {
+            let candidates = intersection(candidates, after.clone());
             let Some(next) = next else {
-                return is_any_outside(&place, &before);
+                return is_any_outside(&candidates, &before);
             };
-            let until_next = place.start..place.end.min(self.reads_before(next.identifier.end));
+            let until_next = candidates.start..candidates.end.min(self.reads_before(next.identifier.end));
             is_any_outside(&until_next, &before)
                 || (next.expression).is_some_and(|it| {
-                    is_any_outside(&intersection(place, self.reads_in(it)), &before)
+                    is_any_outside(&intersection(candidates, self.reads_in(it)), &before)
                 })
         })
     }
@@ -456,7 +456,7 @@ impl<'a, 'v> Variable<'a, 'v> {
         }
         lines.sort_unstable();
         lines.dedup();
-        let places = match lines[..] {
+        let line_list = match lines[..] {
             [] => return Some("Nothing reads it after this.".to_owned()),
             [line] => format!("line {line}"),
             [first, second] => format!("line {first} and line {second}"),
@@ -465,7 +465,7 @@ impl<'a, 'v> Variable<'a, 'v> {
                 format!("lines {first}, {second}, {third} and {} more", others.len())
             }
         };
-        Some(format!("It is overwritten on {places} before it is read."))
+        Some(format!("It is overwritten on {line_list} before it is read."))
     }
 
     /// True if nothing reads the value that `assignments[index]` assigns. `next` is its entry in `next_assignments`.
@@ -475,7 +475,7 @@ impl<'a, 'v> Variable<'a, 'v> {
             return false;
         };
         let next = assignments.get(next as usize);
-        !self.is_read_at_once(target, next)
+        !self.is_read_in_own_segments(target, next)
             && (next.is_some() || !self.is_read_later(target, |_| {}))
     }
 }
@@ -500,7 +500,7 @@ enum Flow<'a> {
     /// Its end can be reached without the variable being used.
     Through,
     /// This `break` or `continue` can be reached without the variable being used.
-    Leaves(Stmt<'a>),
+    Jumps(Stmt<'a>),
     /// None of the above could be proven.
     Unknown,
 }
@@ -696,7 +696,7 @@ struct Uses<'a> {
 
 impl<'a> Uses<'a> {
     /// `references` are the references to `variable` in its code path.
-    fn look_at(&mut self, variable: Binding<'a>, references: impl Iterator<Item = Reference<'a>>) {
+    fn load(&mut self, variable: Binding<'a>, references: impl Iterator<Item = Reference<'a>>) {
         self.all.clear();
         self.all.extend(references);
         if !self.all.is_sorted_by_key(start_of) {
@@ -730,7 +730,7 @@ impl<'a> Uses<'a> {
     }
 
     /// True if the only uses in `span` are `written` and reads in the expression it evaluates first.
-    fn is_alone_in(&self, written: &Written<'a>, span: Span) -> bool {
+    fn is_only_use_in(&self, written: &Written<'a>, span: Span) -> bool {
         let identifier = start_of(&written.identifier);
         self.within(span).iter().all(|it| {
             start_of(it) == identifier
@@ -742,14 +742,14 @@ impl<'a> Uses<'a> {
     }
 
     /// Spends one step of the budget. Returns false once it's used up.
-    fn spends(&mut self) -> bool {
+    fn spend_step(&mut self) -> bool {
         self.budget = self.budget.saturating_sub(1);
         self.budget > 0
     }
 
     /// Walks from `start` to `end`, both in one expression or list of declarators. ESLint's code path follows source
     /// order there, except for code that isn't evaluated: the `c` of `a ? b : c` when coming from `b` (`after`, if
-    /// given, is the node the walk comes from), and what [`Uses::way_around`] skips.
+    /// given, is the node the walk comes from), and what [`Uses::path_around`] skips.
     ///
     /// `counts_in_type` takes a start offset and returns true if a name in a type there, which isn't evaluated, counts
     /// as a read.
@@ -759,7 +759,7 @@ impl<'a> Uses<'a> {
         (start, end): (u32, u32),
         counts_in_type: &dyn Fn(u32) -> bool,
     ) -> Flow<'a> {
-        let condition_around = |child: Node<'a>, parent: Node<'a>| match parent {
+        let enclosing_condition = |child: Node<'a>, parent: Node<'a>| match parent {
             Node::Expr(it) => it
                 .as_cond()
                 .filter(|it| Node::Expr(it.1) == child)
@@ -774,7 +774,7 @@ impl<'a> Uses<'a> {
                 return Flow::Through;
             };
             while let Some(inner) = after
-                && let Some(condition) = self.conditions.find(inner, condition_around).flatten()
+                && let Some(condition) = self.conditions.find(inner, enclosing_condition).flatten()
                 && let Some((_, yes, _)) = condition.as_cond()
                 && start_of(&next) >= yes.span().end
             {
@@ -802,8 +802,8 @@ impl<'a> Uses<'a> {
             {
                 return Flow::Read;
             }
-            match self.way_around(next.node(), floor) {
-                Some(way) => (offset, floor) = way,
+            match self.path_around(next.node(), floor) {
+                Some(detour) => (offset, floor) = detour,
                 None => return Flow::Unknown,
             }
         }
@@ -818,9 +818,9 @@ impl<'a> Uses<'a> {
     /// Finds a path that doesn't evaluate `node`. There is one if `node` is in the `b` of `a && b` or in a branch of
     /// `a ? b : c` that starts at `floor` or later. Returns where the path continues and the new `floor`, which rules
     /// out skipping code that this path has to run.
-    fn way_around(&mut self, node: Node<'a>, floor: u32) -> Option<(u32, u32)> {
+    fn path_around(&mut self, node: Node<'a>, floor: u32) -> Option<(u32, u32)> {
         let mut child = node;
-        while child.span().start >= floor && self.spends() {
+        while child.span().start >= floor && self.spend_step() {
             let parent = child.parent();
             match parent {
                 Node::Expr(e) => {
@@ -834,7 +834,7 @@ impl<'a> Uses<'a> {
                     } else if Self::logical_operator(e).is_some()
                         && e.right().map(Node::Expr) == Some(child)
                     {
-                        return self.way_after_left_operand(e, floor);
+                        return self.path_after_left_operand(e, floor);
                     }
                 }
                 Node::Prop(_) | Node::VarDecl(_) => {}
@@ -845,13 +845,13 @@ impl<'a> Uses<'a> {
         None
     }
 
-    /// [`Uses::way_around`] for skipping the right operand of `logical`. ESLint tracks what that implies for the
+    /// [`Uses::path_around`] for skipping the right operand of `logical`. ESLint tracks what that implies for the
     /// enclosing operators: skipping the `b` of `(a || b) || c` also skips `c`, but in `(a || b) && c` the `c` is
     /// evaluated.
-    fn way_after_left_operand(&mut self, logical: Expr<'a>, floor: u32) -> Option<(u32, u32)> {
+    fn path_after_left_operand(&mut self, logical: Expr<'a>, floor: u32) -> Option<(u32, u32)> {
         let is_and = |e: Expr<'a>| Self::logical_operator(e).map(|it| it == BinOp::And);
         let (mut decided, is_false) = (logical, is_and(logical)?);
-        while self.spends() {
+        while self.spend_step() {
             match decided.parent() {
                 Node::Expr(around) => match (is_and(around), around.right()) {
                     (Some(skips_if_false), Some(right)) => {
@@ -933,7 +933,7 @@ impl<'a> Uses<'a> {
                 return match last.tag() {
                     _ if next.is_some_and(|next| next < last.span().end) => Flow::Unknown,
                     _ if last.is_known_to_complete() => Flow::Through,
-                    StmtTag::Break | StmtTag::Continue if is_reached(last) => Flow::Leaves(last),
+                    StmtTag::Break | StmtTag::Continue if is_reached(last) => Flow::Jumps(last),
                     _ => Flow::Unknown,
                 };
             };
@@ -1057,7 +1057,7 @@ impl<'a> Uses<'a> {
                 for case in cases.iter().rev() {
                     next = match self.statements(case.body(), None) {
                         Flow::Through => next,
-                        Flow::Leaves(jump) if matches!(jump.kind(), StmtKind::Break(None)) => {
+                        Flow::Jumps(jump) if matches!(jump.kind(), StmtKind::Break(None)) => {
                             Flow::Through
                         }
                         flow => flow.or(Flow::Unknown),
@@ -1292,7 +1292,7 @@ impl<'a> Uses<'a> {
                 }
                 match (flow, around) {
                     (Flow::Read, _) => return true,
-                    (Flow::Leaves(jump), _) => return self.is_read_after_jump(jump),
+                    (Flow::Jumps(jump), _) => return self.is_read_after_jump(jump),
                     (Flow::Through, Node::Stmt(around)) => statement = around,
                     _ => return false,
                 }
@@ -1394,7 +1394,7 @@ impl<'a> Uses<'a> {
             }
             _ => return false,
         };
-        if !self.is_alone_in(written, written.node.span()) {
+        if !self.is_only_use_in(written, written.node.span()) {
             return false;
         }
         match self.part(
@@ -1430,7 +1430,7 @@ impl<'a> Uses<'a> {
 
 /// Returns the end of the outermost of `blocks` that contains `identifier`. The blocks are in source order, and each
 /// one's end has been raised to the largest end so far.
-fn end_of_block_around(blocks: &[Span], identifier: Span) -> Option<u32> {
+fn end_of_enclosing_block(blocks: &[Span], identifier: Span) -> Option<u32> {
     let before = blocks.partition_point(|block| block.start <= identifier.start);
     let block = blocks.get(before.checked_sub(1)?)?;
     (identifier.end <= block.end).then_some(block.end)
@@ -1440,8 +1440,8 @@ impl NoUselessAssignment {
     fn check_variable<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
         if !variable.has_writes()
             || !variable.has_reads()
-            || oxlint_passes_over(variable)
-            || oxlint_takes_for_exported(variable, &mut cx.state.exported)
+            || oxlint_skips(variable)
+            || oxlint_treats_as_exported(variable, &mut cx.state.exported)
         {
             return;
         }
@@ -1485,14 +1485,14 @@ impl NoUselessAssignment {
         } = &mut cx.state;
         let home = variable.scope().variable_scope();
         // True if the reference is in a different code path than the variable.
-        let is_elsewhere = |it: Reference<'a>| {
+        let is_in_other_code_path = |it: Reference<'a>| {
             it.scope().variable_scope() != home
                 && code_path_scope(it.scope()) != code_path_scope(variable.scope())
         };
         // Assignments that a nested function makes to an outer variable aren't checked.
         let (mut writes, mut written) = (0, None);
         for reference in variable.symbol.references() {
-            if reference.is_write() && variable.has(reference) && !is_elsewhere(reference) {
+            if reference.is_write() && variable.has(reference) && !is_in_other_code_path(reference) {
                 writes += 1;
                 written = Some(reference);
             }
@@ -1509,13 +1509,13 @@ impl NoUselessAssignment {
         // A function can run at any time, so anything it reads may be read.
         if writes == 0
             || (variable.symbol.references())
-                .any(|it| it.is_read() && is_elsewhere(it) && variable.has(it))
+                .any(|it| it.is_read() && is_in_other_code_path(it) && variable.has(it))
         {
             return;
         }
-        uses.look_at(
+        uses.load(
             variable,
-            variable.references().filter(|&it| !is_elsewhere(it)),
+            variable.references().filter(|&it| !is_in_other_code_path(it)),
         );
         // The variable's code path scope, computed on first use.
         let mut scope = None;
@@ -1605,26 +1605,26 @@ impl NoUselessAssignment {
             }
         }
         let is_in_try_statement_block = |identifier: Span| {
-            end_of_block_around(&target.try_statement_blocks, identifier).is_some()
+            end_of_enclosing_block(&target.try_statement_blocks, identifier).is_some()
         };
         // oxlint assumes that any statement of a `try` block with a `finally` can be the last one to run before the
         // code after the `try` statement, as if there were a `catch`. So in
         // `let a = 0; try { a = f(); } finally { g(); } return a;` the 0 is used.
-        let oxlint_takes_for_used = |following: Option<&Assignment<'a>>,
+        let oxlint_treats_as_used = |following: Option<&Assignment<'a>>,
                                      last_read: Option<&Span>| {
             following
-                .and_then(|it| end_of_block_around(&target.finalized_blocks, it.identifier))
+                .and_then(|it| end_of_enclosing_block(&target.finalized_blocks, it.identifier))
                 .is_some_and(|end| last_read.is_some_and(|it| it.start >= end))
         };
         // oxlint assumes that every loop can exit at its test, even if that's `true` or missing. So in
         // `let a = 0; while (true) { a = f(); if (a) break; } return a;` the 0 is used.
-        let oxlint_takes_for_read_after_loop =
+        let oxlint_treats_as_read_after_loop =
             |assignments: &[Assignment<'a>], index: usize, reads: &[Span]| {
-                let loop_around = |index: usize| {
-                    end_of_block_around(&target.endless_loops, assignments.get(index)?.identifier)
+                let enclosing_loop_end = |index: usize| {
+                    end_of_enclosing_block(&target.endless_loops, assignments.get(index)?.identifier)
                 };
                 let Some(end) =
-                    loop_around(index + 1).filter(|&end| loop_around(index) != Some(end))
+                    enclosing_loop_end(index + 1).filter(|&end| enclosing_loop_end(index) != Some(end))
                 else {
                     return false;
                 };
@@ -1643,7 +1643,7 @@ impl NoUselessAssignment {
             };
         let by_variable = |it: &(Binding<'a>, _)| (it.0.symbol.key(), it.0.class.is_some());
         'variables: for (variable, assignments) in
-            utils::sort::in_order_of(target.assignments, by_variable)
+            utils::sort::collect_sorted_by_key(target.assignments, by_variable)
         {
             let Some(mut assignments) = assignments else {
                 continue;
@@ -1674,12 +1674,12 @@ impl NoUselessAssignment {
                 let identifier = assignment.identifier;
                 if !is_in_try_statement_block(identifier)
                     && uses.is_assignment_unused(index, next)
-                    && !oxlint_takes_for_used(assignments.get(index + 1), read_references.last())
-                    && !oxlint_takes_for_read_after_loop(&assignments, index, &read_references)
+                    && !oxlint_treats_as_used(assignments.get(index + 1), read_references.last())
+                    && !oxlint_treats_as_read_after_loop(&assignments, index, &read_references)
                 {
                     // Only a debug build gets here with a variable that was skipped. The one accepted reason is a name
                     // in a type: types aren't walked, so its segment is unknown.
-                    if cx.state.is_only_checked || !cx.state.unknown.contains(&variable) {
+                    if cx.state.is_verifying_skipped || !cx.state.unknown.contains(&variable) {
                         debug_assert!(
                             variable
                                 .references()
@@ -1718,8 +1718,8 @@ impl NoUselessAssignment {
             Entry::Vacant(entry) => {
                 let scope = variable.scope();
                 let is_ignored = !cfg!(debug_assertions) && !state.unknown.contains(&variable)
-                    || oxlint_passes_over(variable.symbol)
-                    || oxlint_takes_for_exported(variable.symbol, &mut state.exported)
+                    || oxlint_skips(variable.symbol)
+                    || oxlint_treats_as_exported(variable.symbol, &mut state.exported)
                     || get_code_path_start_scope(scope, &state.code_path_start_scopes)
                         != Some(top.scope)
                     || variable.class.is_none() && variable.symbol.is_marked_used()
@@ -1847,7 +1847,7 @@ impl NoUselessAssignment {
                             .map(Binding::outer)
                             .filter(|it| {
                                 it.symbol.declaration_count() <= 1
-                                    || !oxlint_does_not_see(it.symbol, pat.span().start)
+                                    || !oxlint_ignores_declarator(it.symbol, pat.span().start)
                             });
                     Self::add_assignment(variable, identifier, Some(init.span()), cx);
                 });
@@ -1913,12 +1913,12 @@ impl Rule for NoUselessAssignment {
         }
         let as_entered = |it: &&Node<'_>| (it.span().start, std::cmp::Reverse(it.span().end));
         let roots = std::mem::take(&mut cx.state.roots);
-        for &root in utils::sort::in_order_of(&roots, as_entered) {
+        for &root in utils::sort::collect_sorted_by_key(&roots, as_entered) {
             self.check_code_path(root, cx);
         }
-        cx.state.is_only_checked = true;
+        cx.state.is_verifying_skipped = true;
         let all_roots = std::mem::take(&mut cx.state.all_roots);
-        for root in utils::sort::in_order_of(all_roots.difference(&roots), as_entered) {
+        for root in utils::sort::collect_sorted_by_key(all_roots.difference(&roots), as_entered) {
             self.check_code_path(*root, cx);
         }
     }

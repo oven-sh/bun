@@ -73,7 +73,7 @@ fn has_cjs_export_reference<'a>(file: &'a File<'a>, identifier: Name<'a>) -> boo
 
 impl NoImportModuleExports {
     /// Records a `MemberExpression` that starts at `start`, if `object` is `module` or `exports`.
-    fn see<'a>(object: Name<'a>, start: u32, cx: &mut Cx<'a, Self>) {
+    fn record_member<'a>(object: Name<'a>, start: u32, cx: &mut Cx<'a, Self>) {
         for (keyword, first) in &mut cx.state {
             if *keyword == object {
                 *first = start.min(*first);
@@ -82,12 +82,12 @@ impl NoImportModuleExports {
     }
 
     /// `implements a.b`, and an interface's `extends a.b`: ESTree has a `MemberExpression` there.
-    fn see_heritage<'a>(ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+    fn record_heritage<'a>(ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         if let TypeKind::Ref { name, .. } = ty.kind()
             && name.len() > 1
             && let Some(object) = name.first()
         {
-            Self::see(object.name(), object.start(), cx);
+            Self::record_member(object.name(), object.start(), cx);
         }
     }
 }
@@ -130,21 +130,21 @@ impl Rule for NoImportModuleExports {
             && cx.state.iter().any(|it| it.0 == object)
             && ast_utils::is_member_expression(e)
         {
-            Self::see(object, e.span().start, cx);
+            Self::record_member(object, e.span().start, cx);
         }
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if let StmtKind::Interface(interface) = statement.kind() {
             for ty in interface.extends() {
-                Self::see_heritage(ty, cx);
+                Self::record_heritage(ty, cx);
             }
         }
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         for ty in class.implements() {
-            Self::see_heritage(ty, cx);
+            Self::record_heritage(ty, cx);
         }
     }
 

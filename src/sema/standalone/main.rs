@@ -1,7 +1,7 @@
 use bun_sema::atom::Interner;
 use bun_sema::messages::text;
 use bun_sema::resolve::Host;
-use bun_sema_baselines::{error_line, lines, output_line, read_file, write_file_to_look_at};
+use bun_sema_baselines::{error_line, lines, output_line, read_file, write_debug_file};
 use bun_threading::Guarded;
 use std::io::Write;
 use std::sync::Arc;
@@ -46,7 +46,7 @@ fn list_loaded(program: &bun_sema::check::Program) {
             .iter()
             .map(|m| m.file_name())
             .collect();
-        write_file_to_look_at(&to, &paths.join(&b"\n"[..]));
+        write_debug_file(&to, &paths.join(&b"\n"[..]));
     }
 }
 
@@ -245,7 +245,7 @@ fn run(args: &[String]) {
                     declarations_out.unwrap(),
                     bun_sema::messages::text(path)
                 );
-                write_file_to_look_at(&path, text);
+                write_debug_file(&path, text);
             };
             let number = |name: &str, default: usize| {
                 let actual = args.iter().find_map(|a| a.strip_prefix(name));
@@ -253,7 +253,10 @@ fn run(args: &[String]) {
             };
             let defaults = bun_sema_driver::PlanOptions::default();
             let plan_options = bun_sema_driver::PlanOptions {
-                projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
+                max_concurrent_projects: number(
+                    "--projects-at-once=",
+                    defaults.max_concurrent_projects,
+                ),
                 ..defaults
             };
             let request = bun_sema_driver::Request {
@@ -468,7 +471,7 @@ fn run(args: &[String]) {
                 } else {
                     format!("signal {}", libc::WTERMSIG(status))
                 };
-                write_file_to_look_at(&format!("{out}/{number}.status"), status.as_bytes());
+                write_debug_file(&format!("{out}/{number}.status"), status.as_bytes());
             };
             // No thread has been started yet, so a fork is a complete copy of the process.
             for (number, line) in std::io::stdin().lines().map_while(Result::ok).enumerate() {

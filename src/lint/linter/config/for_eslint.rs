@@ -2,7 +2,7 @@
 
 use super::merge::RuleSetting;
 use crate::context::Severity;
-use crate::js_plugin::{self, Configuration, has_what_json_lacks};
+use crate::js_plugin::{self, Configuration, has_non_json_value};
 use crate::linter::registry::parse_rule_id;
 use crate::linter::resolved::{LinterOptions, find_js_rule};
 use crate::options::Json;
@@ -42,9 +42,9 @@ pub(super) fn build(parts: &Parts) -> Option<Configuration> {
     let has_object = |key: &[u8]| parser_options.is_some_and(|it| it.get(key).is_some());
     if has_object(b"parser")
         || has_object(b"programs")
-        || has_what_json_lacks(parts.language_options)
-        || has_what_json_lacks(parts.settings)
-        || on().any(|it| it.options.iter().any(has_what_json_lacks))
+        || has_non_json_value(parts.language_options)
+        || has_non_json_value(parts.settings)
+        || on().any(|it| it.options.iter().any(has_non_json_value))
     {
         return None;
     }

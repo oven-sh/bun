@@ -98,7 +98,7 @@ fn without_front_matter(text: &[u8]) -> (Cow<'_, [u8]>, usize) {
 
 /// `--debug-check`: true if `after`, the output of `format` for `before`, still means the same as `before`. See
 /// `verify.rs`.
-pub fn says_the_same(
+pub fn has_same_meaning(
     before: &[u8],
     after: &[u8],
     options: &FormatOptions,

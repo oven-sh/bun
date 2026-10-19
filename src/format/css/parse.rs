@@ -149,7 +149,7 @@ fn after_name_prefix_len(after_name: &[u8]) -> usize {
 }
 
 /// `params.replace(/^(?!if)([^"'\s(]+)(\s+)\(/, "$1($2")`
-fn move_space_behind_parenthesis(params: &[u8]) -> Option<Vec<u8>> {
+fn move_space_after_parenthesis(params: &[u8]) -> Option<Vec<u8>> {
     if params.starts_with(b"if") {
         return None;
     }
@@ -171,7 +171,7 @@ fn move_space_behind_parenthesis(params: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// `params.replace(/(\$\S+?)(\s+)?\.{3}/, "$1...$2")`
-fn move_space_behind_dots(params: &[u8]) -> Option<Vec<u8>> {
+fn move_space_after_dots(params: &[u8]) -> Option<Vec<u8>> {
     let mut from = 0;
     while let Some(dollar) = bun_core::strings::index_of_char_pos(params, b'$', from) {
         // `\S+?` is lazy and doesn't match whitespace.
@@ -201,7 +201,7 @@ fn move_space_behind_dots(params: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// True for the at-rules whose params Prettier parses into `node.value`.
-fn has_value_for_parameters(name: &[u8]) -> bool {
+fn parses_params_as_value(name: &[u8]) -> bool {
     matches!(
         name,
         b"namespace"
@@ -227,7 +227,7 @@ fn value_root_offset(node: &CssNode<'_>) -> u32 {
 }
 
 /// oxfmt prints `.a-#{ $b }` as `.a-#{$b}` in selectors as well as in values. Prettier leaves selectors alone.
-fn without_blanks_at_the_ends_of_interpolations(selector: &[u8]) -> Vec<u8> {
+fn trim_interpolation_whitespace(selector: &[u8]) -> Vec<u8> {
     let mut result: Vec<u8> = Vec::with_capacity(selector.len());
     // The number of open `{` in the interpolation, or 0 outside of one.
     let mut depth = 0u32;
@@ -308,11 +308,11 @@ impl<'a> Context<'a> {
     /// Like [`written`](Self::written), but only widens the end of `range`. Use it when `range` already starts at the
     /// right byte, like a `//` comment's range.
     fn written_from(&self, range: Range) -> &'a [u8] {
-        let behind = self.text.get(range.end as usize..);
-        let Some(behind) = behind.filter(|_| !self.is_original_text) else {
+        let text_after = self.text.get(range.end as usize..);
+        let Some(text_after) = text_after.filter(|_| !self.is_original_text) else {
             return strings::trim_js_whitespace(self.of(range));
         };
-        let blanks = behind.iter().take_while(|it| **it == b' ').count();
+        let blanks = text_after.iter().take_while(|it| **it == b' ').count();
         let written = (self.original_text).get(range.start as usize..range.end as usize + blanks);
         strings::trim_js_whitespace(written.unwrap_or_default())
     }
@@ -337,17 +337,17 @@ impl<'a> Context<'a> {
     }
 
     /// Splits `text` at the `//` comment it ends with. Returns the text before the comment, and the comment as written
-    /// in the original file. `start` is the offset of `text` in the file. `behind` is everything between `text` and the
-    /// `{` or the `;`. Returns `None` unless `behind` has a line break.
+    /// in the original file. `start` is the offset of `text` in the file. `text_after` is everything between `text` and
+    /// the `{` or the `;`. Returns `None` unless `text_after` has a line break.
     fn split_line_comment(
         &self,
         text: &'a [u8],
         start: u32,
-        behind: &[u8],
+        text_after: &[u8],
     ) -> Option<BeforeLineComment<'a>> {
         if self.syntax == Syntax::Css
             || !strings::contains(text, b"//")
-            || strings::index_of_any(behind, b"\n\r").is_none()
+            || strings::index_of_any(text_after, b"\n\r").is_none()
         {
             return None;
         }
@@ -411,9 +411,12 @@ impl<'a> Context<'a> {
             // `@a: b d  c */ d f`.
             let mut value = match raw.value_skips {
                 0 => {
-                    let colon_and_blanks = after_name_prefix_len(node.after_name) as u32;
+                    let colon_and_whitespace_len = after_name_prefix_len(node.after_name) as u32;
                     self.concat(&[
-                        Range::new(raw.after_name.start + colon_and_blanks, raw.after_name.end),
+                        Range::new(
+                            raw.after_name.start + colon_and_whitespace_len,
+                            raw.after_name.end,
+                        ),
                         raw.params,
                     ])
                 }
@@ -460,12 +463,12 @@ impl<'a> Context<'a> {
             // Prettier joins `rest` and the params without `raws.afterName`, so `@a:1px solid` becomes `@a: 1pxsolid`.
             // To compute the value's offset in the file it also counts `raws.afterName` instead of the colon. Comment
             // text is read from that offset, so `@a:b(c)/* d */e` becomes `@a: b(c) )/* d * e`.
-            let behind_colon = raw.name.start + colon as u32 + 1;
+            let after_colon = raw.name.start + colon as u32 + 1;
             let value = match clean_params.is_empty() {
                 true => rest,
-                false => self.of(Range::new(behind_colon, raw.params.end)),
+                false => self.of(Range::new(after_colon, raw.params.end)),
             };
-            node.value = parse(Cow::Borrowed(value), behind_colon, parsed)?;
+            node.value = parse(Cow::Borrowed(value), after_colon, parsed)?;
         }
         // `@color :blue;`
         if !matches!(node.name, b"page" | b"nest" | b"keyframes") && clean_params.starts_with(b":")
@@ -588,9 +591,8 @@ impl<'a> Context<'a> {
                     && self.syntax == Syntax::Scss
                     && bun_core::strings::contains(&node.raw_selector, b"#{")
                 {
-                    node.raw_selector = Cow::Owned(without_blanks_at_the_ends_of_interpolations(
-                        &node.raw_selector,
-                    ));
+                    node.raw_selector =
+                        Cow::Owned(trim_interpolation_whitespace(&node.raw_selector));
                 }
                 // Prettier can't print a selector that's still a string.
                 if bun_core::strings::trim_js_whitespace(&node.raw_selector).is_empty()
@@ -839,15 +841,15 @@ impl<'a> Context<'a> {
         // `@if $a// b {`, `@else  { // ` and `@extend .a // b;`. It gets two cases right: a comment it finds while
         // parsing a value, which needs whitespace before it, and a comment before the `{` of an at-rule whose params it
         // doesn't parse.
-        let is_right_behind = |head: &[u8]| !head.last().is_some_and(u8::is_ascii_whitespace);
+        let is_comment_attached = |head: &[u8]| !head.last().is_some_and(u8::is_ascii_whitespace);
         let mut params = params;
         if let Cow::Borrowed(text) = params
             && let Some(BeforeLineComment { head, comment }) =
                 self.split_line_comment(text, root_offset, self.of(raw.between))
             && match &*name.to_ascii_lowercase() {
                 b"media" | b"custom-media" => true,
-                b"import" | b"use" | b"forward" => is_right_behind(head),
-                _ if has_value_for_parameters(name) => is_right_behind(head),
+                b"import" | b"use" | b"forward" => is_comment_attached(head),
+                _ if parses_params_as_value(name) => is_comment_attached(head),
                 _ => !raw.has_block,
             }
         {
@@ -886,12 +888,12 @@ impl<'a> Context<'a> {
             }
         } else if matches!(&*name.to_ascii_lowercase(), b"import" | b"use" | b"forward") {
             node.params = Params::Value(value(&params, values, selectors)?);
-        } else if has_value_for_parameters(name) {
+        } else if parses_params_as_value(name) {
             let mut text = params.clone();
-            if let Some(moved) = move_space_behind_dots(&text) {
+            if let Some(moved) = move_space_after_dots(&text) {
                 text = Cow::Owned(moved);
             }
-            if let Some(moved) = move_space_behind_parenthesis(&text) {
+            if let Some(moved) = move_space_after_parenthesis(&text) {
                 text = Cow::Owned(moved);
             }
             node.value = Value::Parsed(value(&text, values, selectors)?);

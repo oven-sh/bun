@@ -1,7 +1,7 @@
 use bun_core::strings;
 use crate::a11y::{LabelSearch, search_for_accessible_label};
 use crate::jsx::{
-    AttributeValue, Child, as_jsx_element, children, get_attribute_names_of_settings, get_element_type, get_jsx_attribute_name,
+    AttributeValue, Child, as_jsx_element, children, get_attribute_names_from_settings, get_element_type, get_jsx_attribute_name,
     get_prop_value, has_jsx_prop, is_zero_bigint,
 };
 use bun_lint::prelude::*;
@@ -72,7 +72,7 @@ impl Rule for LabelHasAssociatedControl {
         }
         // The first of these names that the element has decides.
         let has_html_for = || {
-            let html_for_attribute = match get_attribute_names_of_settings(cx.file(), "for") {
+            let html_for_attribute = match get_attribute_names_from_settings(cx.file(), "for") {
                 Some(attributes) => (attributes.iter().filter_map(|it| std::str::from_utf8(it.as_str()?).ok()))
                     .find_map(|attr| has_jsx_prop(element, attr)),
                 None => has_jsx_prop(element, "htmlFor"),

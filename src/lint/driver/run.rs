@@ -113,7 +113,7 @@ pub struct Outcome {
 }
 
 /// Environment variables that tell oxlint an agent is running it. Any non-empty value counts.
-const AGENTS_FOR_OXLINT: [&[u8]; 12] = [
+const OXLINT_AGENT_VARIABLES: [&[u8]; 12] = [
     b"AI_AGENT",
     b"CLAUDECODE",
     b"CLAUDE_CODE",
@@ -134,7 +134,7 @@ fn is_agent_for_oxlint() -> bool {
     let has = |name: &[u8], part: &[u8]| get(name).is_some_and(|it| strings::contains(it, part));
     let is_set = |&name: &&[u8]| get(name).is_some_and(|it| !it.is_empty());
     get(b"AGENT").is_none()
-        && (AGENTS_FOR_OXLINT.iter().any(is_set)
+        && (OXLINT_AGENT_VARIABLES.iter().any(is_set)
             || has(b"PATH", b".pi/agent")
             || has(b"PATH", b".pi\\agent")
             || has(b"EDITOR", b"devin")
@@ -145,7 +145,9 @@ fn is_agent_for_oxlint() -> bool {
 /// message goes to stdout and has to match oxlint's, so it isn't changed.
 fn invalid_config(loader: &Loader, loaded: &Loaded, error: &[u8]) -> Vec<u8> {
     match loaded.flavor {
-        Flavor::Eslint | Flavor::EslintRc => loader.name_place(loaded.file.as_deref(), error),
+        Flavor::Eslint | Flavor::EslintRc => {
+            loader.prefix_with_source(loaded.file.as_deref(), error)
+        }
         Flavor::Oxlint | Flavor::BuiltIn => error.to_vec(),
     }
 }
@@ -242,11 +244,9 @@ fn needs(target: &Target) -> Needs {
         .processor_location
         .as_ref()
         .filter(|_| route == Route::Processor);
-    if processor.is_some_and(|it| it.needs_the_configuration)
+    if processor.is_some_and(|it| it.needs_config_file)
         || (route == Route::Eslint && config.for_eslint.is_none())
-        || on
-            .clone()
-            .any(|it| it.configured.rule.needs_the_configuration)
+        || on.clone().any(|it| it.configured.rule.needs_config_file)
     {
         Needs::Configuration.or_heavy(target)
     } else if on.next().is_some() || route != Route::Native {
@@ -273,14 +273,14 @@ impl Needs {
 impl Pool {
     /// The maximum size of Bun's pool (`get_thread_count`). Per-thread state is allocated for every requested thread,
     /// and a `bunfig.toml` can request any number.
-    const MOST: usize = 1024;
+    const MAX_THREADS: usize = 1024;
 
     pub(crate) fn new(threads: usize) -> Pool {
         Pool {
             caches: Default::default(),
             threads: match threads {
                 0 => usize::from(bun_core::get_thread_count()),
-                threads => threads.min(Pool::MOST),
+                threads => threads.min(Pool::MAX_THREADS),
             },
         }
     }
@@ -337,7 +337,7 @@ struct Run<'r> {
     out: Outcome,
     began: Instant,
     /// True if the run emulates oxlint. `None` until that's known.
-    is_for_oxlint: Option<bool>,
+    emulates_oxlint: Option<bool>,
     /// `--doctor`
     modules: Option<&'r Modules>,
 }
@@ -382,7 +382,7 @@ impl Run<'_> {
 
     /// Prints the error and sets the exit code.
     fn failed(&mut self, text: &[u8]) {
-        match self.is_for_oxlint() {
+        match self.emulates_oxlint() {
             true => {
                 let colors = (self.options.color).unwrap_or(self.environment.stdout.colors);
                 format::summary::write_error(&mut self.out.stdout, colors, text);
@@ -407,9 +407,9 @@ impl Run<'_> {
     }
 
     /// Rejects the command line. Both tools print that to standard error.
-    fn refuse(mut self, text: &[u8]) -> Outcome {
+    fn reject(mut self, text: &[u8]) -> Outcome {
         self.error(text);
-        self.out.exit_code = match self.is_for_oxlint() {
+        self.out.exit_code = match self.emulates_oxlint() {
             true => 1,
             false => 2,
         };
@@ -417,15 +417,15 @@ impl Run<'_> {
     }
 
     /// Rejects flags of a tool this run isn't emulating.
-    fn refuse_flag(mut self, text: &[u8]) -> Outcome {
+    fn reject_flag(mut self, text: &[u8]) -> Outcome {
         self.error(text);
         self.out.exit_code = 2;
         self.out
     }
 
-    fn is_for_oxlint(&self) -> bool {
-        self.is_for_oxlint
-            .unwrap_or_else(|| configs::is_for_oxlint(self.options.flavor, &self.environment.cwd))
+    fn emulates_oxlint(&self) -> bool {
+        self.emulates_oxlint
+            .unwrap_or_else(|| configs::emulates_oxlint(self.options.flavor, &self.environment.cwd))
     }
 
     /// `is_oxlint` means the working directory's config is oxlint's. `is_native` means it has no config.
@@ -439,11 +439,11 @@ impl Run<'_> {
             None if is_oxlint || is_native => b"default",
             None => b"stylish",
         };
-        Format::by_name(name, is_oxlint).ok_or_else(|| Format::is_missing(name))
+        Format::by_name(name, is_oxlint).ok_or_else(|| Format::unknown_format_error(name))
     }
 
     /// Returns the error for an option combination that ESLint's `cli.execute` rejects.
-    fn refusal(&self) -> Option<Vec<u8>> {
+    fn rejection(&self) -> Option<Vec<u8>> {
         let options = self.options;
         let text: &[u8] = if options.print_config.is_some() && !options.patterns.is_empty() {
             b"The --print-config option must be used with exactly one file name."
@@ -496,7 +496,7 @@ impl Run<'_> {
             );
         } else {
             let flag = options
-                .without_effect
+                .ignored_flags
                 .iter()
                 .find(|flag| **flag != b"cache")?;
             return Some([b"bun lint does not support --", *flag].concat());
@@ -523,7 +523,7 @@ impl Run<'_> {
         );
         loader.name(paths::dirname(&path));
         let loaded = loader.for_directory(paths::dirname(&path))?;
-        let status: Status = match loader.is_ignored_by_the_run(&path, &loaded) {
+        let status: Status = match loader.is_ignored_by_flags(&path, &loaded) {
             true => Status::Ignored,
             false => loader.config_of(&loaded, &path).into(),
         };
@@ -543,7 +543,7 @@ impl Run<'_> {
         if let Some(error) = config.error.as_ref().filter(|_| route != Route::Eslint) {
             return Err(Fatal(invalid_config(loader, &loaded, error)));
         }
-        if route == Route::Unsupported && config.route_as_it_is(&path) == Route::Eslint {
+        if route == Route::Unsupported && config.route_without_processor(&path) == Route::Eslint {
             context.needs_eslint.lock().push((path, loaded.flavor));
             return Ok(Linted {
                 results: Vec::new(),
@@ -596,7 +596,7 @@ impl Run<'_> {
         if let Some(inferred) = context.inferred.filter(|_| infers) {
             inferred.files(vec![path.clone()]);
         }
-        let has_rules_with_types = config.has_enabled(|it| it.asks_types());
+        let has_rules_with_types = config.has_enabled(|it| it.triggers_type_check());
         let needs_types = name.is_some()
             && loader.wants_types(&loaded, config)
             && (has_rules_with_types || context.checks_types);
@@ -703,7 +703,9 @@ impl Run<'_> {
                 });
         let (for_eslint, with_processor): (Vec<Target>, Vec<Target>) = (unsupported.into_iter())
             .partition(|it| match &it.status {
-                Status::Matched(config) => config.route_as_it_is(&it.path) == Route::Eslint,
+                Status::Matched(config) => {
+                    config.route_without_processor(&it.path) == Route::Eslint
+                }
                 _ => false,
             });
         let because: &[u8] = b"only an ESLint config can have a processor";
@@ -756,7 +758,7 @@ impl Run<'_> {
                 .configured()
                 .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
             if loader.wants_types(&target.loaded, config) {
-                match config.has_enabled(|it| it.asks_types()) || context.checks_types {
+                match config.has_enabled(|it| it.triggers_type_check()) || context.checks_types {
                     true => with_types.push((
                         target,
                         Typed {
@@ -787,11 +789,11 @@ impl Run<'_> {
                 1 => (b" rule that needs type information\n  ", b" to run it."),
                 _ => (b" rules that need type information\n  ", b" to run them."),
             };
-            let way_out: &[u8] = match self.options.type_aware {
+            let remedy: &[u8] = match self.options.type_aware {
                 Some(false) => b"Remove typeAware = false or --no-type-aware",
                 _ => b"Use --type-aware",
             };
-            loader.warn(&[b"Skipped ", &count, rules, way_out, them]);
+            loader.warn(&[b"Skipped ", &count, rules, remedy, them]);
         }
         let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
         let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
@@ -905,11 +907,11 @@ impl Run<'_> {
             );
             return self.out;
         }
-        if let Some(refusal) = self.refusal() {
-            return self.refuse(&refusal);
+        if let Some(rejection) = self.rejection() {
+            return self.reject(&rejection);
         }
         if let Some(only) = options.only.as_ref().filter(|_| options.stdin) {
-            return self.refuse_flag(&only.refusal_of_stdin("--stdin"));
+            return self.reject_flag(&only.stdin_conflict_error("--stdin"));
         }
         let registry = Registry::new(&[
             bun_lint_eslint::RULES,
@@ -932,8 +934,8 @@ impl Run<'_> {
             }
             return self.out;
         }
-        let linter = Linter::new(registry.answering_for(options.native_plugin_rules.clone()));
-        bun_sema_driver::use_a_pool_of_their_own("Bun Lint");
+        let linter = Linter::new(registry.with_native_plugins(options.native_plugin_rules.clone()));
+        bun_sema_driver::use_dedicated_pool("Bun Lint");
         let pool = Pool::new(options.threads);
         // Nothing starts unless a config has a JavaScript plugin.
         let js_plugins = Host::with_engine(
@@ -944,7 +946,7 @@ impl Run<'_> {
         let loader = Loader::new(&linter, options, environment, &js_plugins);
         // `--rules` prints the same list either way, and `--doctor` has this in its report.
         let is_told = !options.rules && !options.doctor && !options.silent;
-        if let Some((of_eslint, of_oxlint)) = loader.passed_over().filter(|_| is_told) {
+        if let Some((of_eslint, of_oxlint)) = loader.ignored_eslint_config().filter(|_| is_told) {
             self.note_ignored_config(of_eslint, of_oxlint);
         }
         if options.init {
@@ -958,22 +960,22 @@ impl Run<'_> {
             };
         }
         // An unreadable config is reported when a file is linted with it.
-        let of_cwd = loader.for_directory(&environment.cwd).ok();
-        let is_oxlint = of_cwd
+        let cwd_config = loader.for_directory(&environment.cwd).ok();
+        let is_oxlint = cwd_config
             .as_ref()
             .is_some_and(|it| it.flavor == Flavor::Oxlint);
-        self.is_for_oxlint = Some(is_oxlint || of_cwd.is_none() && loader.is_for_oxlint());
-        if let Some(refusal) = loader.refused() {
-            return self.refuse_flag(refusal);
+        self.emulates_oxlint = Some(is_oxlint || cwd_config.is_none() && loader.emulates_oxlint());
+        if let Some(rejection) = loader.refused() {
+            return self.reject_flag(rejection);
         }
         // Recorded as the loader's mistake, which is printed next.
-        let _ = of_cwd.as_ref().map(|it| loader.check_wildcards(it));
+        let _ = cwd_config.as_ref().map(|it| loader.check_wildcards(it));
         if let Some(mistake) = loader.mistake() {
             self.out.stderr.extend_from_slice(mistake);
             self.out.exit_code = 2;
             return self.out;
         }
-        let is_native = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
+        let is_native = (cwd_config.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
         let store = bun_lint_graph::Store::new(&environment.cwd);
         let store = if is_native { store.by_file() } else { store };
         let store = match &options.tsconfig {
@@ -987,10 +989,11 @@ impl Run<'_> {
         }));
         let format = match self.format(is_oxlint, is_native) {
             Ok(format) => format,
-            Err(error) => return self.refuse(&error),
+            Err(error) => return self.reject(&error),
         };
-        let checks_types = options.type_check || of_cwd.as_ref().is_some_and(|it| it.checks_types);
-        let of_file = of_cwd.as_ref().and_then(|it| it.wants_types);
+        let checks_types =
+            options.type_check || cwd_config.as_ref().is_some_and(|it| it.checks_types);
+        let of_file = cwd_config.as_ref().and_then(|it| it.wants_types);
         if checks_types && options.type_aware.or(of_file) != Some(true) {
             return self.fail(
                 b"The `--type-check` option requires type-aware linting.\nUse `--type-aware --type-check` or enable `options.typeAware` in your config.",
@@ -1036,17 +1039,18 @@ impl Run<'_> {
         let broken_fixes = Guarded::new(Vec::new());
         let handed_back = Guarded::new(Vec::new());
         let (unread, needs_eslint) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
-        let formatter = crate::fmt::ForRules::new(environment, options.of_bun_format.as_deref());
+        let formatter =
+            crate::fmt::ForRules::new(environment, options.bun_format_defaults.as_deref());
         let only = (options.only.as_ref()).map(|it| git::Files::read(it, environment, true));
         let only = match only.transpose() {
             Ok(only) => only,
-            Err(Fatal(error)) => return self.refuse_flag(&error),
+            Err(Fatal(error)) => return self.reject_flag(&error),
         };
         if let Some(only) = &only {
             store.provide(only.already_read(false));
         }
         // Opt-in, because loading the libraries and types takes longer than linting a small project. A file that's
-        // linted with types has them anyway. See `typed::OfFile`.
+        // linted with types has them anyway. See `typed::FileGlobals`.
         let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
         let inferred = (options.infer_globals == Some(true) || by_options)
             .then(|| Inferred::new(environment, pool.threads(), by_options));
@@ -1066,11 +1070,11 @@ impl Run<'_> {
             options,
             cwd: &environment.cwd,
             only: only.as_ref(),
-            of_oxlint: (of_cwd.as_deref()).filter(|it| it.flavor == Flavor::Oxlint),
+            of_oxlint: (cwd_config.as_deref()).filter(|it| it.flavor == Flavor::Oxlint),
             checks_types,
             keeps_text: format.reads_text() && !options.silent,
             reads_fixes: format.reads_fixes() && !options.silent,
-            reads_texts_of_fixes: format.reads_texts_of_fixes() && !options.silent,
+            reads_fix_texts: format.reads_fix_texts() && !options.silent,
             reads_help: format.reads_help() && !options.silent,
             help_on_demand: format.groups() && !options.all,
             reads_suppressions: format.reads_suppressions() && !options.silent,
@@ -1089,7 +1093,7 @@ impl Run<'_> {
             loader.name(paths::dirname(&path));
             let config = match loader.for_directory(paths::dirname(&path)) {
                 Ok(loaded) if loaded.flavor == Flavor::Oxlint => {
-                    let printed = loaded.config.printed_for_oxlint();
+                    let printed = loaded.config.oxlint_print_config();
                     crate::print_config::write_indented(&mut self.out.stdout, &printed, 0);
                     self.out.stdout.push(b'\n');
                     return self.out;
@@ -1099,7 +1103,7 @@ impl Run<'_> {
                         && matches!(loaded.flavor, Flavor::Eslint | Flavor::EslintRc) =>
                 {
                     let message = b"Value for 'print-config' of type 'path' required.";
-                    return refuse_command_line(message, environment);
+                    return reject_command_line(message, environment);
                 }
                 Ok(loaded) => loader.config_of(&loaded, &path),
                 Err(Fatal(error)) => return self.fail(&error),
@@ -1138,8 +1142,8 @@ impl Run<'_> {
         for warning in warnings.iter().filter(|_| !(is_native && options.silent)) {
             self.warn(warning);
         }
-        let passed_over = loader.passed_over_below();
-        for (of_eslint, of_oxlint) in passed_over.iter().filter(|_| !options.silent) {
+        let ignored_eslint_config = loader.ignored_eslint_configs_below();
+        for (of_eslint, of_oxlint) in ignored_eslint_config.iter().filter(|_| !options.silent) {
             self.note_ignored_config(of_eslint, of_oxlint);
         }
         let without_types = js_plugins.rules_that_asked_for_types();
@@ -1149,12 +1153,12 @@ impl Run<'_> {
                 1 => b" rule",
                 _ => b" rules",
             };
-            loader.cannot_do(&[
+            loader.add_unsupported(&[
                 ids.len().to_string().as_bytes(),
                 noun,
                 b" did not run because rules that run in JavaScript cannot use type information: ",
                 &ids.join(&b", "[..]),
-                match linter.registry().answers_for(b"@typescript-eslint") {
+                match linter.registry().replaces_plugin(b"@typescript-eslint") {
                     true => &b""[..],
                     false => {
                         b"\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions."
@@ -1186,7 +1190,7 @@ impl Run<'_> {
                     of,
                     &rules.join(&b", "[..])[..],
                     b" were not applied to ",
-                    &paths::relative_shown(&environment.cwd, &paths::from_native(path))[..],
+                    &paths::relative_escaped(&environment.cwd, &paths::from_native(path))[..],
                     b" because they would cause a syntax error",
                 ]
                 .concat(),
@@ -1197,7 +1201,7 @@ impl Run<'_> {
             bun_lint::utils::sort::sort_by(&mut incomplete, |a, b| a.cmp(b));
             incomplete.dedup();
             let shown: Vec<Vec<u8>> = (incomplete.iter().take(3))
-                .map(|it| paths::relative_shown(&environment.cwd, &paths::from_native(it)))
+                .map(|it| paths::relative_escaped(&environment.cwd, &paths::from_native(it)))
                 .collect();
             let more: &[u8] = if incomplete.len() > 3 { b", .." } else { b"" };
             self.warn(
@@ -1224,9 +1228,9 @@ impl Run<'_> {
                 false => format!("{:.0}ms", seconds * 1e3),
             };
             let relative =
-                |path: &[u8]| paths::relative_shown(&environment.cwd, &paths::from_native(path));
+                |path: &[u8]| paths::relative_escaped(&environment.cwd, &paths::from_native(path));
             let (config, example) = (relative(&program.config_path), relative(&program.example));
-            let linted = match program.asked_for {
+            let linted = match program.requested_files {
                 1 => example,
                 many => [
                     &plural(many, b"file", b"files")[..],
@@ -1268,8 +1272,8 @@ impl Run<'_> {
                 _ => b" rules enabled in comments",
             };
             // With no config file there's no plugin package these rules could come from, so skip the advice.
-            let is_native = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
-            loader.cannot_do(&[
+            let is_native = (cwd_config.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
+            loader.add_unsupported(&[
                 in_comments.len().to_string().as_bytes(),
                 noun,
                 b" did not run: ",
@@ -1291,9 +1295,9 @@ impl Run<'_> {
                 }
             };
             let first: Vec<Vec<u8>> = (unread.iter().take(3))
-                .map(|it| paths::relative_shown(&environment.cwd, it))
+                .map(|it| paths::relative_escaped(&environment.cwd, it))
                 .collect();
-            loader.cannot_do(&[
+            loader.add_unsupported(&[
                 unread.len().to_string().as_bytes(),
                 noun,
                 &first.join(&b", "[..]),
@@ -1335,8 +1339,8 @@ impl Run<'_> {
                 self.warn(&line);
             }
         }
-        if let Some(refusal) = loader.refused() {
-            return self.refuse_flag(refusal);
+        if let Some(rejection) = loader.refused() {
+            return self.reject_flag(rejection);
         }
         if let Some(mistake) = loader.mistake() {
             self.out.stderr.extend_from_slice(mistake);
@@ -1433,7 +1437,7 @@ impl Run<'_> {
                     .filter(|it| only.is_partly_staged(it))
                     .collect();
                 if !refused.is_empty() {
-                    not_staged.push(only.refusal_to_write(&mut refused, "fixed"));
+                    not_staged.push(only.partly_staged_error(&mut refused, "fixed"));
                 }
                 not_staged.extend(only.stage(written.get_mut()).err().map(|it| it.0));
             }
@@ -1457,24 +1461,27 @@ impl Run<'_> {
         }
         let has_unused = suppressed.has_unused && !options.pass_on_unpruned_suppressions;
         // oxlint reports these like problems, after every file's problems.
-        let about_suppressions = match is_oxlint {
-            true => format::summary::about_suppressions(has_unused, suppressed.has_new),
+        let suppression_errors = match is_oxlint {
+            true => format::summary::suppression_errors(has_unused, suppressed.has_new),
             false => None,
         };
 
         let mut counts = Counts::default();
-        (results.iter().chain(&about_suppressions)).for_each(|it| counts.add(it.counts));
+        (results.iter().chain(&suppression_errors)).for_each(|it| counts.add(it.counts));
         if options.quiet {
             results.iter_mut().for_each(FileResult::keep_errors_only);
             results.retain(|it| !it.messages.is_empty());
         }
         // The `options` of an `.oxlintrc.json` fill in what the command line doesn't set.
         let max_warnings = match options.max_warnings {
-            -1 => of_cwd.as_ref().and_then(|it| it.max_warnings).unwrap_or(-1),
+            -1 => cwd_config
+                .as_ref()
+                .and_then(|it| it.max_warnings)
+                .unwrap_or(-1),
             given => given,
         };
         let denies_warnings =
-            options.deny_warnings || of_cwd.as_ref().is_some_and(|it| it.denies_warnings);
+            options.deny_warnings || cwd_config.as_ref().is_some_and(|it| it.denies_warnings);
         // Outside oxlint mode, `--deny-warnings` is `--max-warnings 0`.
         let max_warnings = match denies_warnings && !is_oxlint {
             true => 0,
@@ -1491,7 +1498,7 @@ impl Run<'_> {
                 strings::order_utf16(&a.path, &b.path)
             }),
         }
-        results.extend(about_suppressions);
+        results.extend(suppression_errors);
         // oxlint prints its parser's message without ESLint's `Parsing error: ` prefix.
         if is_oxlint {
             let messages = results.iter_mut().flat_map(|it| &mut it.messages);
@@ -1532,13 +1539,13 @@ impl Run<'_> {
             updated_suppressions: suppressed.updated,
             run: format::oxlint::Run {
                 files,
-                rules: of_cwd
+                rules: cwd_config
                     .as_ref()
                     .filter(|_| is_oxlint && !loader.has_nested_configurations())
                     .map(|it| {
                         let with_types = options.type_aware.or(of_file) == Some(true);
                         it.config
-                            .number_of_rules_of_oxlint(linter.registry(), with_types)
+                            .oxlint_number_of_rules(linter.registry(), with_types)
                     }),
                 threads: pool.threads(),
                 seconds: self.began.elapsed().as_secs_f64(),
@@ -1551,7 +1558,7 @@ impl Run<'_> {
         let output = if has_no_files {
             format::summary::without_files(format, &meta, options.error_on_unmatched_pattern)
         } else if (options.silent && !is_oxlint)
-            || (only.is_some() && files == 0 && format.is_for_people())
+            || (only.is_some() && files == 0 && format.is_human_readable())
         {
             Vec::new()
         } else {
@@ -1597,7 +1604,7 @@ impl Run<'_> {
             format::summary::write_fixed(&mut self.out.stderr, colors, fixes, fixed);
         }
         if let Some(only) = (only.as_ref()).filter(|_| files == 0 && !options.silent) {
-            let _ = writeln!(self.out.stderr, "{}", only.nothing_left("lint"));
+            let _ = writeln!(self.out.stderr, "{}", only.no_files_message("lint"));
         } else if !is_oxlint && !options.stdin && !options.silent {
             format::summary::write(
                 &mut self.out.stderr,
@@ -1608,7 +1615,7 @@ impl Run<'_> {
                 self.began.elapsed().as_secs_f64() * 1000.0,
             );
         }
-        if format.is_for_people() && !options.quiet && !options.silent {
+        if format.is_human_readable() && !options.quiet && !options.silent {
             for line in std::mem::take(&mut *loader.advice.lock()) {
                 pretty!(
                     &mut self.out.stderr,
@@ -1686,7 +1693,7 @@ impl Run<'_> {
             .as_deref()
             .map(paths::from_native);
         let default = if is_oxlint {
-            suppressions::FILE_NAME_OF_OXLINT
+            suppressions::OXLINT_FILE_NAME
         } else {
             suppressions::DEFAULT_FILE_NAME
         };
@@ -1694,9 +1701,9 @@ impl Run<'_> {
         // If no location is configured, the nearest file between the working directory and that directory is used, and
         // its paths are relative to its own directory. With an ESLint or oxlint config, a new file is created where
         // that tool would look for it.
-        let project = options.start_of_bunfig(cwd);
+        let project = options.bunfig_base_directory(cwd);
         let start = match &location {
-            Some(_) if options.is_suppressions_location_of_flag => cwd.clone(),
+            Some(_) if options.suppressions_location_is_from_flag => cwd.clone(),
             Some(_) => project,
             None => paths::ancestors(cwd)
                 .take_while(|it| it.starts_with(&project))
@@ -1777,7 +1784,7 @@ impl Run<'_> {
             loading.bytes as f64 / 1e6,
             loading.milliseconds,
         );
-        for (i, plugin) in loading.need_the_configuration.iter().enumerate() {
+        for (i, plugin) in loading.need_config_file.iter().enumerate() {
             let before = match i {
                 0 => "; loaded the whole config file for ",
                 _ => ", ",
@@ -1910,9 +1917,9 @@ fn not_linted(loader: &Loader, cwd: &[u8], paths: &[Vec<u8>], because: [&[u8]; 2
         .map(|it| [format!("{} *", it.1).as_bytes(), &paths::shown(it.0)].concat())
         .collect();
     let first: Vec<Vec<u8>> = (paths.iter().take(3))
-        .map(|it| paths::relative_shown(cwd, it))
+        .map(|it| paths::relative_escaped(cwd, it))
         .collect();
-    loader.cannot_do(&[
+    loader.add_unsupported(&[
         paths.len().to_string().as_bytes(),
         if is_one { b" file was" } else { b" files were" },
         b" not linted because ",
@@ -1935,16 +1942,16 @@ fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {
 }
 
 /// The outcome for a command line that can't be parsed. `message` is the error.
-pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome {
+pub fn reject_command_line(message: &[u8], environment: &Environment) -> Outcome {
     let run = Run {
         options: &Options::default(),
         environment,
         out: Outcome::default(),
         began: Instant::now(),
-        is_for_oxlint: None,
+        emulates_oxlint: None,
         modules: None,
     };
-    let mut out = run.refuse(message);
+    let mut out = run.reject(message);
     pretty!(
         &mut out.stderr,
         environment.stderr.colors,
@@ -1963,12 +1970,12 @@ pub fn run(options: &Options, environment: &Environment) -> Outcome {
             environment,
             out: Outcome::default(),
             began: Instant::now(),
-            is_for_oxlint: None,
+            emulates_oxlint: None,
             modules,
         };
         match &loaded {
             Ok(()) => run.execute(),
-            Err(why) => run.refuse_flag(why),
+            Err(why) => run.reject_flag(why),
         }
     };
     match options.doctor {

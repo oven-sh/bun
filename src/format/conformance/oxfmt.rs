@@ -74,7 +74,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
         .step_by(flags.every)
     {
         let name = &snapshot[..snapshot.len() - b".prettier.snap".len()];
-        let (Some(input), true) = (bundle.read(name), flags.wants(name)) else {
+        let (Some(input), true) = (bundle.read(name), flags.matches_filter(name)) else {
             continue;
         };
         let judges = [

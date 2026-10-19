@@ -13,19 +13,19 @@ use std::cell::Cell;
 /// True if Prettier parses the code with a parser that has no `ChainExpression` around an optional chain. That's Babel,
 /// which parses JavaScript and every expression in HTML (even TypeScript ones), or `angular-estree-parser`. Prettier's
 /// `flow` parser produces ESTree's tree, with the `ChainExpression`.
-pub(crate) fn has_tree_of_babel(file: &File<'_>, options: &FormatOptions) -> bool {
+pub(crate) fn has_babel_tree(file: &File<'_>, options: &FormatOptions) -> bool {
     let is_read_by_flow_parser =
-        file.is_flow() && !super::print::flow::goes_to_babel(options, file.path());
+        file.is_flow() && !super::print::flow::is_parsed_by_babel_flow(options, file.path());
     (file.is_javascript() && !is_read_by_flow_parser)
-        || options.in_html.has_tree_of_babel
+        || options.in_html.has_babel_tree
         || !matches!(options.in_html.root, HtmlRoot::None | HtmlRoot::Program)
 }
 
 pub(crate) struct JsFormatContext<'a> {
     /// `None` for a document that isn't JavaScript.
     file: Option<&'a File<'a>>,
-    /// See [`JsFormatContext::has_tree_of_babel`].
-    has_tree_of_babel: bool,
+    /// See [`JsFormatContext::has_babel_tree`].
+    has_babel_tree: bool,
     options: FormatOptions,
     comments: Comments<'a>,
     /// The next node written skips its trailing comments, because the caller prints them. See
@@ -66,7 +66,7 @@ impl<'a> JsFormatContext<'a> {
     ) -> Self {
         Self {
             file: Some(file),
-            has_tree_of_babel: has_tree_of_babel(file, &options),
+            has_babel_tree: has_babel_tree(file, &options),
             comments: Comments::new(Some(file), options.flavor, comments),
             ..Self::without_file(options, comments)
         }
@@ -78,7 +78,7 @@ impl<'a> JsFormatContext<'a> {
         let of_plugin = (tailwind.filter(|it| it.follows_plugin)).map(TailwindContext::of_plugin);
         Self {
             file: None,
-            has_tree_of_babel: false,
+            has_babel_tree: false,
             comments: Comments::new(None, options.flavor, comments),
             options,
             skip_trailing_comments: false,
@@ -103,10 +103,10 @@ impl<'a> JsFormatContext<'a> {
             .expect("only JavaScript printers call `file()`, and they always have a file")
     }
 
-    /// See [`has_tree_of_babel`].
+    /// See [`has_babel_tree`].
     #[inline]
-    pub(crate) fn has_tree_of_babel(&self) -> bool {
-        self.has_tree_of_babel
+    pub(crate) fn has_babel_tree(&self) -> bool {
+        self.has_babel_tree
     }
 
     /// True if there's enough stack left to write one more nested expression, statement or type. If not, this sets

@@ -79,15 +79,15 @@ pub(crate) struct State {
 }
 
 impl State {
-    /// `of_typescript` is the result of `read_by_checker` for a file that's being parsed a second time.
-    pub(crate) fn new(options: &Options, has_interner: bool, of_typescript: u8) -> State {
+    /// `typescript_flags` is the result of `read_by_checker` for a file that's being parsed a second time.
+    pub(crate) fn new(options: &Options, has_interner: bool, typescript_flags: u8) -> State {
         let is_script = options.is_javascript && !options.is_json;
         let is_other_dialect = is_script && (options.dialect.ecmascript || options.dialect.flow);
         let reads = options.reads_jsdoc && has_interner && !options.is_json && !is_other_dialect;
         let wanted = match reads {
             false => 0,
             true if is_script => flags::JSDOC_LIKE,
-            true => of_typescript,
+            true => typescript_flags,
         };
         State {
             wanted,
@@ -171,7 +171,7 @@ fn full_start_before(comments: &[Comment], token: u32) -> u32 {
 }
 
 /// `finish_jsdoc`, for the file with the text `src` and the comments `comments`.
-fn finish_lists_of_jsdoc(file: &mut FileBuilder, src: &[u8], comments: &[Comment]) {
+fn finish_jsdoc_lists(file: &mut FileBuilder, src: &[u8], comments: &[Comment]) {
     for &Comment {
         pos: start, end, ..
     } in comments
@@ -214,7 +214,7 @@ struct Outer<'a> {
     errors_at: (u32, u32),
     unclaimed_nullable_types: u32,
     last_nullable_type: (TypeNodeId, u32),
-    question_of_parameter: u32,
+    parameter_question_pos: u32,
     has_top_level_await: bool,
     /// `saveDiagnosticsLength`
     diagnostics: usize,
@@ -324,8 +324,8 @@ fn token_of(token: T) -> JSDocToken {
 
 /// True for a `ScanJSDocToken` token that `Scan` wouldn't return at that position. No type or expression starts with
 /// it.
-fn is_only_of_jsdoc(at: JSDocScannerState) -> bool {
-    !at.is_of_scan
+fn is_jsdoc_only_token(at: JSDocScannerState) -> bool {
+    !at.is_from_scan
         && matches!(
             at.token,
             JSDocToken::Unknown
@@ -344,7 +344,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, C
             return self.given_up();
         }
         self.scan_from(from);
-        self.take_errors_of_scanner();
+        self.take_scanner_errors();
         self.state()
     }
 
@@ -399,7 +399,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, C
         self.resume(at);
         let base = self.s.modifiers.len();
         self.modifiers(ModifiersOf::TypeParameter);
-        self.take_errors_of_scanner();
+        self.take_scanner_errors();
         let written = self.s.modifiers.get(base..).unwrap_or_default();
         let has_any = !written.is_empty();
         for modifier in written {
@@ -416,7 +416,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, C
 
     fn parse_import_tag(&mut self, at: JSDocScannerState) -> (syntax::Import, JSDocScannerState) {
         // `parseModuleSpecifier` reports it without consuming the token.
-        if is_only_of_jsdoc(at) {
+        if is_jsdoc_only_token(at) {
             self.parse_error_at(1109, at.stale_start, at.pos, &[]);
             let import = syntax::Import {
                 has_clause: false,
@@ -457,7 +457,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, C
     }
 
     fn mark(&mut self) -> usize {
-        self.take_errors_of_scanner();
+        self.take_scanner_errors();
         self.f.diagnostics.len()
     }
 
@@ -480,7 +480,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             stale_start: self.lx.start as usize,
             pos: self.lx.end as usize,
             has_preceding_line_break: self.lx.newline_before,
-            is_of_scan: true,
+            is_from_scan: true,
         }
     }
 
@@ -494,7 +494,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             stale_start: end,
             pos: end,
             has_preceding_line_break: false,
-            is_of_scan: true,
+            is_from_scan: true,
         }
     }
 
@@ -515,7 +515,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.scan_from(at.start);
         self.lx.full_start = at.full_start as u32;
         self.lx.newline_before = at.has_preceding_line_break;
-        if at.is_of_scan || self.has_failed() || self.lx.end as usize == at.pos {
+        if at.is_from_scan || self.has_failed() || self.lx.end as usize == at.pos {
             return;
         }
         // Keep the token that `ScanJSDocToken` returned. Its words can contain `-`, and such a word isn't a keyword.
@@ -547,7 +547,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     /// Drops what was built since `begin_first_parse`. Returns the lexer's state at the end of the parse.
     fn end_first_parse(&mut self, first: &FirstParse) -> JSDocScannerState {
         self.lx.skips_jsdoc_asterisks = false;
-        self.take_errors_of_scanner();
+        self.take_scanner_errors();
         let after = self.state();
         let from = first.diagnostics.min(self.f.diagnostics.len());
         let mut reported = self.f.diagnostics.split_off(from);
@@ -564,8 +564,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     /// Filters the diagnostics reported since the file had `from` of them, which are about reparsed nodes. Keeps only
     /// the ones the checker reports.
-    fn keep_errors_of_checker(&mut self, from: usize, reach: Reach) {
-        self.take_errors_of_scanner();
+    fn keep_checker_errors(&mut self, from: usize, reach: Reach) {
+        self.take_scanner_errors();
         if self.f.diagnostics.len() <= from {
             return;
         }
@@ -591,8 +591,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     fn jsdoc_type(&mut self, at: JSDocScannerState) -> JsDocType {
         // `parseTypeReference` at a token that can't start a type, or at the end: the name is missing
         // (`createIdentifierWithDiagnostic`), and the token isn't consumed.
-        let is_at_end = !at.is_of_scan && at.token == JSDocToken::EndOfFile;
-        if is_only_of_jsdoc(at) || is_at_end {
+        let is_at_end = !at.is_from_scan && at.token == JSDocToken::EndOfFile;
+        if is_jsdoc_only_token(at) || is_at_end {
             match is_at_end {
                 true => self.parse_error_at(1110, at.full_start, at.full_start, &[]),
                 false => self.parse_error_at(1110, at.stale_start, at.pos, &[]),
@@ -785,7 +785,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 });
             }
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::ImportOrExportSpecifiers, element)
+                && !self.continues_without_comma(ListKind::ImportOrExportSpecifiers, element)
             {
                 break;
             }
@@ -799,7 +799,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     /// The first half of `parseJSDocComment`. `cut` is the position of the comment's `*/`.
     fn enter_comment(&mut self, cut: u32) -> Outer<'a> {
         // An error about the file's current token doesn't belong to the comment.
-        self.take_errors_of_scanner();
+        self.take_scanner_errors();
         let outer = Outer {
             mark: self.lx.mark(),
             src: self.lx.src,
@@ -812,7 +812,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             errors_at: self.errors_at,
             unclaimed_nullable_types: self.unclaimed_nullable_types,
             last_nullable_type: self.last_nullable_type,
-            question_of_parameter: self.question_of_parameter,
+            parameter_question_pos: self.parameter_question_pos,
             has_top_level_await: self.has_top_level_await,
             diagnostics: self.f.diagnostics.len(),
         };
@@ -849,7 +849,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.errors_at = outer.errors_at;
         self.unclaimed_nullable_types = outer.unclaimed_nullable_types;
         self.last_nullable_type = outer.last_nullable_type;
-        self.question_of_parameter = outer.question_of_parameter;
+        self.parameter_question_pos = outer.parameter_question_pos;
         self.has_top_level_await = outer.has_top_level_await;
         self.jsdoc.is_in_comment = false;
         match self.lx.refusal {
@@ -863,7 +863,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// `enter_comment` for the comment that contains `pos`. Returns `None` if the file is rejected.
-    fn enter_comment_around(&mut self, pos: usize) -> Option<Outer<'a>> {
+    fn enter_comment_containing(&mut self, pos: usize) -> Option<Outer<'a>> {
         if self.has_failed() {
             return None;
         }
@@ -915,12 +915,12 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     // ───────────────────────────── reparsing ─────────────────────────────
 
     /// `addDeepCloneReparse` for a type expression's type. Returns `NONE` only if the file is rejected.
-    pub(super) fn parse_type_again(&mut self, expr: TypeExpr, reach: Reach) -> TypeNodeId {
-        let Some(outer) = self.enter_comment_around(expr.entry.start) else {
+    pub(super) fn reparse_jsdoc_type(&mut self, expr: TypeExpr, reach: Reach) -> TypeNodeId {
+        let Some(outer) = self.enter_comment_containing(expr.entry.start) else {
             return TypeNodeId::NONE;
         };
         let parsed = self.jsdoc_type(expr.entry);
-        self.keep_errors_of_checker(outer.diagnostics, reach);
+        self.keep_checker_errors(outer.diagnostics, reach);
         self.leave_comment(outer);
         let mut ty = parsed.ty;
         let Some(&TypeNode { end, .. }) = self.f.types.get(ty.idx()) else {
@@ -950,29 +950,32 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// The same for the type arguments after a class name.
-    pub(super) fn parse_type_arguments_again(&mut self, args: TypeArguments) -> IdList<TypeNodeId> {
-        let Some(outer) = self.enter_comment_around(args.entry.start) else {
+    pub(super) fn reparse_jsdoc_type_arguments(
+        &mut self,
+        args: TypeArguments,
+    ) -> IdList<TypeNodeId> {
+        let Some(outer) = self.enter_comment_containing(args.entry.start) else {
             return IdList::EMPTY;
         };
         let list = self.jsdoc_type_arguments(args.entry);
-        self.keep_errors_of_checker(outer.diagnostics, Reach::Checked);
+        self.keep_checker_errors(outer.diagnostics, Reach::Checked);
         self.leave_comment(outer);
         list
     }
 
     /// `NewJSImportDeclaration` for an `@import` tag that has a clause. `tag` is `node.Loc`. Returns `NONE` only if the
     /// file is rejected.
-    pub(super) fn parse_import_again(
+    pub(super) fn reparse_jsdoc_import(
         &mut self,
         import: syntax::Import,
         tag: TextRange,
         reach: Reach,
     ) -> StmtId {
-        let Some(outer) = self.enter_comment_around(import.entry.start) else {
+        let Some(outer) = self.enter_comment_containing(import.entry.start) else {
             return StmtId::NONE;
         };
         let (declaration, ..) = self.jsdoc_import(import.entry);
-        self.keep_errors_of_checker(outer.diagnostics, reach);
+        self.keep_checker_errors(outer.diagnostics, reach);
         self.leave_comment(outer);
         if self.has_failed() {
             return StmtId::NONE;
@@ -1346,7 +1349,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     pub(crate) fn finish_jsdoc(&mut self) {
         if self.f.is_js {
             self.f.jsdoc_asterisks = std::mem::take(&mut self.lx.jsdoc_asterisks);
-            finish_lists_of_jsdoc(&mut self.f, self.lx.src, &self.lx.comments);
+            finish_jsdoc_lists(&mut self.f, self.lx.src, &self.lx.comments);
         }
     }
 }

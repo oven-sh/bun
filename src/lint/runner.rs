@@ -161,7 +161,7 @@ impl Exprs {
     /// where a template without substitutions is a string.
     fn from_binder(file: &File) -> Option<Exprs> {
         let (kinds, counted) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
-        if !file.groups_exprs_as_the_binder() {
+        if !file.uses_binder_expr_kinds() {
             return None;
         }
         let mut counts = [0u32; 2 * ExprTag::COUNT + 1];
@@ -411,7 +411,7 @@ impl ByName {
         }
         // With this many, scanning the whole list is cheaper than sorting the matches.
         if count > 1 && 4 * total > all.len() {
-            found.extend(self.those_of(groups, all));
+            found.extend(self.filter_by_group(groups, all));
             return;
         }
         for (word, (wanted, present)) in groups.iter().zip(&self.present).enumerate() {
@@ -429,11 +429,11 @@ impl ByName {
         for place in found.iter_mut() {
             *place = all.get(*place as usize).map_or(u32::MAX, |&id| id);
         }
-        debug_assert!(self.those_of(groups, all).eq(found.iter().copied()));
+        debug_assert!(self.filter_by_group(groups, all).eq(found.iter().copied()));
     }
 
     /// The items of `all` (the list that was grouped) that are in one of `groups`, found by checking each one's group.
-    fn those_of(&self, groups: [u64; 4], all: &[u32]) -> impl Iterator<Item = u32> {
+    fn filter_by_group(&self, groups: [u64; 4], all: &[u32]) -> impl Iterator<Item = u32> {
         let is_wanted = move |group: u8| groups[group as usize / 64] >> (group % 64) & 1 != 0;
         let wanted = all
             .iter()
@@ -484,7 +484,7 @@ pub(crate) struct ByKind {
 
 impl File<'_> {
     /// True if the expression groups are built from the kinds that the binder recorded (`Bound::expr_kinds`).
-    pub(crate) fn groups_exprs_as_the_binder(&self) -> bool {
+    pub(crate) fn uses_binder_expr_kinds(&self) -> bool {
         self.bound.expr_kinds.len() == self.hir.exprs.len()
             && !self.has_synthetic_nodes()
             && self.hir.import_attributes.is_empty()
@@ -527,7 +527,7 @@ impl File<'_> {
     /// a `for` head that's an expression, a `with` object, or the `B` in `namespace A.B`.
     fn counted_stmts(&self) -> Option<[u32; StmtTag::COUNT + 1]> {
         let counts = self.counted(kind_counts::STMTS)?;
-        let heads = *(self.bound.kind_counts).get(kind_counts::HEADS_THAT_ARE_EXPRESSIONS)?;
+        let heads = *(self.bound.kind_counts).get(kind_counts::EXPRESSION_LOOP_HEADS)?;
         (heads == 0 && self.hir.with_bodies.is_empty() && counts[StmtTag::Module as usize + 1] < 2)
             .then_some(counts)
     }
@@ -828,7 +828,7 @@ impl<'a> File<'a> {
             }
         };
         debug_assert!(
-            made.those_of([0, 0, 0, 1], self.exprs_of(kind))
+            made.filter_by_group([0, 0, 0, 1], self.exprs_of(kind))
                 .eq(self.others(kind).iter().copied())
         );
         made
@@ -918,7 +918,7 @@ impl<'a> File<'a> {
     /// for a rule that looks at calls from [`Rule::start`] or [`Rule::finish`]:
     /// `file.calls_on(&On::new().method_calls(&["then"]))`.
     pub fn calls_on(&'a self, on: &On) -> impl Iterator<Item = Expr<'a>> + use<'a> {
-        let (kind, groups) = (ExprTag::Call, on.groups_of_calls());
+        let (kind, groups) = (ExprTag::Call, on.call_name_groups());
         let found = match (groups[3] != 0, on.exprs & (1 << kind as u32) != 0) {
             (true, _) => self.named(kind, groups, self.may_have_names_of(on)),
             (false, true) => self.exprs_of(kind).to_vec(),
@@ -1160,7 +1160,7 @@ fn has_any_of<'a>(file: &'a File<'a>, on: &On) -> bool {
         types present_types;
         pats present_pats;
     }
-    let (calls, members) = (on.groups_of_calls(), on.groups_of_members());
+    let (calls, members) = (on.call_name_groups(), on.member_name_groups());
     let may_have_names = (calls[3] | members[3]) != 0 && file.may_have_names_of(on);
     has_any = has_any || calls[3] != 0 && file.may_have_named(ExprTag::Call, calls, may_have_names);
     has_any =
@@ -1197,7 +1197,7 @@ const CHAINED: [ExprTag; 3] = [ExprTag::Dot, ExprTag::Index, ExprTag::Call];
 #[inline]
 fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut Cx<'a, R>) {
     // Calls and members selected by name take the slot where the whole kind would be.
-    let (calls, members) = (on.groups_of_calls(), on.groups_of_members());
+    let (calls, members) = (on.call_name_groups(), on.member_name_groups());
     let named = (calls[3] << ExprTag::Call as u32) | (members[3] << ExprTag::Dot as u32);
     let may_have_names = named != 0 && file.may_have_names_of(on);
     each_bit(on.exprs | named, |kind| {
@@ -1396,7 +1396,7 @@ impl ByTag {
 struct Walk<'w, T, const MIXED: bool> {
     running: &'w mut [T],
     /// For each of `running`, if `MIXED`: true if it sees typescript-eslint's scopes.
-    of_eslint: &'w [bool],
+    sees_eslint_scopes: &'w [bool],
     enter: ByTag,
     exit: ByTag,
 }
@@ -1411,7 +1411,7 @@ impl<T, const MIXED: bool> Walk<'_, T, MIXED> {
         for &rule in self.enter.of(kind) {
             if MIXED {
                 node.file()
-                    .ask_scopes_of_eslint(self.of_eslint[rule as usize]);
+                    .use_eslint_scopes(self.sees_eslint_scopes[rule as usize]);
             }
             self.running[rule as usize].enter(node);
         }
@@ -1425,7 +1425,7 @@ impl<T, const MIXED: bool> Walk<'_, T, MIXED> {
         for &rule in self.exit.of(kind) {
             if MIXED {
                 node.file()
-                    .ask_scopes_of_eslint(self.of_eslint[rule as usize]);
+                    .use_eslint_scopes(self.sees_eslint_scopes[rule as usize]);
             }
             self.running[rule as usize].exit(node);
         }
@@ -1624,7 +1624,7 @@ pub(crate) fn run<'a, S: RuleSet>(
 ) -> Vec<Diagnostic> {
     file.sink.wants_fixes.set(wants_fixes);
     file.sink.thrown.take();
-    match file.language().rules_that_oxlint_lacks.is_empty() {
+    match file.language().rules_missing_in_oxlint.is_empty() {
         true => run_rules::<S, false>(file, rules),
         false => run_rules::<S, true>(file, rules),
     }
@@ -1665,18 +1665,18 @@ pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
         .map(|(it, at)| (u64::from(it.span.start) << 32) | at)
         .collect();
     order.sort_unstable();
-    let mut at_one_start: Vec<u128> = Vec::new();
+    let mut same_start: Vec<u128> = Vec::new();
     for places in order.chunk_by_mut(|a, b| a >> 32 == b >> 32) {
         if places.len() < 2 {
             continue;
         }
-        at_one_start.clear();
-        at_one_start.extend(places.iter().filter_map(|&place| {
+        same_start.clear();
+        same_start.extend(places.iter().filter_map(|&place| {
             let it = diagnostics.get(place as u32 as usize)?;
             Some((u128::from(within_start(it)) << 32) | u128::from(place as u32))
         }));
-        at_one_start.sort();
-        for (place, sorted) in places.iter_mut().zip(&at_one_start) {
+        same_start.sort();
+        for (place, sorted) in places.iter_mut().zip(&same_start) {
             *place = u64::from(*sorted as u32);
         }
     }
@@ -1869,16 +1869,16 @@ impl Listeners {
 }
 
 /// `MIXED` means that, with an oxlint config, some of the rules are ones that oxlint lacks. Those see
-/// typescript-eslint's scopes and the others see oxc's, so the file is told [which](File::ask_scopes_of_eslint) before
+/// typescript-eslint's scopes and the others see oxc's, so the file is told [which](File::use_eslint_scopes) before
 /// each rule is called.
 fn run_rules<'r, 'a: 'r, S: RuleSet, const MIXED: bool>(
     file: &'a File<'a>,
     rules: &'r [Enabled<'r, S>],
 ) {
     let mut running: Vec<S::Run<'r, 'a>> = Vec::with_capacity(rules.len());
-    let mut of_eslint: Vec<bool> = Vec::new();
+    let mut sees_eslint_scopes: Vec<bool> = Vec::new();
     let is_lacking = |rule: &S| {
-        let lacking = &file.language().rules_that_oxlint_lacks;
+        let lacking = &file.language().rules_missing_in_oxlint;
         let meta = S::METAS.get(rule.number() as usize).copied().flatten();
         meta.is_some_and(|meta| {
             (lacking.iter()).any(|it| it.plugin == meta.plugin && it.name == meta.name)
@@ -1888,9 +1888,9 @@ fn run_rules<'r, 'a: 'r, S: RuleSet, const MIXED: bool>(
         if enabled.severity == Severity::Off {
             continue;
         }
-        let asks_eslint = MIXED && is_lacking(enabled.rule);
+        let uses_eslint_scopes = MIXED && is_lacking(enabled.rule);
         if MIXED {
-            file.ask_scopes_of_eslint(asks_eslint);
+            file.use_eslint_scopes(uses_eslint_scopes);
         }
         let run = enabled.rule.start(Start {
             file,
@@ -1900,7 +1900,7 @@ fn run_rules<'r, 'a: 'r, S: RuleSet, const MIXED: bool>(
         if let Some(run) = run {
             running.push(run);
             if MIXED {
-                of_eslint.push(asks_eslint);
+                sees_eslint_scopes.push(uses_eslint_scopes);
             }
         }
     }
@@ -1920,7 +1920,7 @@ fn run_rules<'r, 'a: 'r, S: RuleSet, const MIXED: bool>(
         exit.finish();
         let mut listeners = Walk::<_, MIXED> {
             running: &mut running,
-            of_eslint: &of_eslint,
+            sees_eslint_scopes: &sees_eslint_scopes,
             enter,
             exit,
         };
@@ -1929,12 +1929,12 @@ fn run_rules<'r, 'a: 'r, S: RuleSet, const MIXED: bool>(
 
     for (i, rule) in running.iter_mut().enumerate() {
         if MIXED {
-            file.ask_scopes_of_eslint(of_eslint[i]);
+            file.use_eslint_scopes(sees_eslint_scopes[i]);
         }
         rule.finish();
     }
     if MIXED {
-        file.ask_scopes_of_eslint(false);
+        file.use_eslint_scopes(false);
     }
 }
 

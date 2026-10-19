@@ -226,10 +226,10 @@ fn is_valid_element_name(name: &[u8]) -> bool {
         return true;
     }
     // `/^[a-zA-Z][a-zA-Z0-9]*:[a-zA-Z][a-zA-Z0-9-]*[a-zA-Z0-9]$/`
-    if let Some((before, behind)) = strings::split_once_char(name, b':')
+    if let Some((before, following)) = strings::split_once_char(name, b':')
         && before.first().is_some_and(is_letter)
         && before.iter().all(is_letter_or_digit)
-        && let [first, middle @ .., last] = behind
+        && let [first, middle @ .., last] = following
         && is_letter(first)
         && is_letter_or_digit(last)
         && middle
@@ -327,7 +327,7 @@ fn directive_kind(name: &[u8]) -> Option<std::result::Result<DirectiveKind, ()>>
 
 /// Where a sequence of text and expression tags ends.
 #[derive(Copy, Clone)]
-enum Done {
+enum SequenceEnd {
     /// At this quote.
     Quote(u8),
     /// `regex_invalid_unquoted_attribute_value`
@@ -346,7 +346,7 @@ struct Parser<'a, 'j> {
     /// `stack`, without the root.
     stack: Vec<Id>,
     /// For each entry of `stack`, the `parent_is_head` and `parent_is_shadowroot_template` that its children see.
-    is_in: Vec<(bool, bool)>,
+    ancestor_flags: Vec<(bool, bool)>,
     /// A cache: where the last search for a `>` started, and where it found one. The text's length means there's
     /// none.
     next_end_of_tag: Cell<(usize, usize)>,
@@ -465,9 +465,9 @@ impl<'a> Parser<'a, '_> {
     }
 
     fn push(&mut self, id: Id, fragment: FragmentId) {
-        let (is_in_head, is_in_template) = self.is_in.last().copied().unwrap_or_default();
+        let (is_in_head, is_in_template) = self.ancestor_flags.last().copied().unwrap_or_default();
         let element = self.element(id);
-        self.is_in.push((
+        self.ancestor_flags.push((
             match element.map(|it| it.kind) {
                 Some(ElementKind::SvelteHead) => true,
                 Some(ElementKind::RegularElement | ElementKind::Component) => false,
@@ -494,7 +494,7 @@ impl<'a> Parser<'a, '_> {
     fn pop(&mut self) {
         self.fragments.pop();
         self.stack.pop();
-        self.is_in.pop();
+        self.ancestor_flags.pop();
     }
 
     fn element(&self, id: Id) -> Option<&Element<'a>> {
@@ -507,7 +507,7 @@ impl<'a> Parser<'a, '_> {
     // ───────────── read/expression.js ─────────────
 
     /// Skips the comments that follow. The JavaScript parser already skipped them when it read the next token.
-    fn pass_comments(&mut self) {
+    fn skip_comments(&mut self) {
         let mut at = self.index;
         loop {
             let Some(rest) = self.text.get(at..self.len) else {
@@ -535,7 +535,7 @@ impl<'a> Parser<'a, '_> {
         match self.js.expression_at(template, index) {
             Ok(mut parsed) => {
                 self.index = parsed.end as usize;
-                self.pass_comments();
+                self.skip_comments();
                 parsed.expression.outer = Span::new(index, self.index);
                 Ok(parsed)
             }
@@ -566,9 +566,9 @@ impl<'a> Parser<'a, '_> {
 
     // ───────────── utils/bracket.js ─────────────
 
-    /// `match_bracket`. `is_pointed` means the brackets are `<` and `>`. Returns the end of the pair that opens at
+    /// `match_bracket`. `is_angle` means the brackets are `<` and `>`. Returns the end of the pair that opens at
     /// `start`.
-    fn match_bracket(&self, start: usize, is_pointed: bool) -> Result<usize> {
+    fn match_bracket(&self, start: usize, is_angle: bool) -> Result<usize> {
         // The brackets that are currently open.
         let mut open: Vec<u8> = Vec::new();
         let text = self.template();
@@ -585,7 +585,7 @@ impl<'a> Parser<'a, '_> {
                 }
                 continue;
             }
-            let (is_open, is_close) = match floors.len() > 1 || !is_pointed {
+            let (is_open, is_close) = match floors.len() > 1 || !is_angle {
                 true => (
                     matches!(char, b'{' | b'(' | b'['),
                     matches!(char, b'}' | b')' | b']'),
@@ -730,12 +730,12 @@ impl<'a> Parser<'a, '_> {
 
     /// `parent_is_head`
     fn parent_is_head(&self) -> bool {
-        self.is_in.last().is_some_and(|it| it.0)
+        self.ancestor_flags.last().is_some_and(|it| it.0)
     }
 
     /// `parent_is_shadowroot_template`
     fn parent_is_shadowroot_template(&self) -> bool {
-        self.is_in.last().is_some_and(|it| it.1)
+        self.ancestor_flags.last().is_some_and(|it| it.1)
     }
 
     /// Reads `</name>`, starting just after the `/`. `start` is the offset of the `<`.
@@ -870,7 +870,7 @@ impl<'a> Parser<'a, '_> {
             attributes.push(attribute);
             self.allow_whitespace();
         }
-        let (mut this, mut this_with_more) = (None, None);
+        let (mut this, mut multipart_this_attribute) = (None, None);
         if matches!(
             kind,
             ElementKind::SvelteComponent | ElementKind::SvelteElement
@@ -899,7 +899,7 @@ impl<'a> Parser<'a, '_> {
                 },
             };
             if !first.1 {
-                this_with_more = Some(Span {
+                multipart_this_attribute = Some(Span {
                     start: self.tree[definition].start,
                     end: self.tree[definition].end,
                 });
@@ -920,11 +920,11 @@ impl<'a> Parser<'a, '_> {
         }
         if matches!(name, b"script" | b"style") {
             // `/\slang=["']?ts["']?/`
-            self.tree.says_typescript |= attributes.iter().any(|&it| match &self.tree[it].kind {
+            self.tree.uses_typescript |= attributes.iter().any(|&it| match &self.tree[it].kind {
                 Kind::Attribute {
                     name: b"lang",
                     value,
-                } => (self.text_of_attribute(value)).is_some_and(|it| it.starts_with(b"ts")),
+                } => (self.attribute_text(value)).is_some_and(|it| it.starts_with(b"ts")),
                 _ => false,
             });
         }
@@ -942,7 +942,7 @@ impl<'a> Parser<'a, '_> {
             attributes,
             fragment,
             this,
-            this_with_more,
+            multipart_this_attribute,
             start_tag_end: self.index as u32,
         };
         let id = self
@@ -954,7 +954,7 @@ impl<'a> Parser<'a, '_> {
         if is_self_closing {
             // It's never pushed onto the stack.
         } else if name == b"textarea" {
-            let nodes = self.read_sequence(Done::Textarea)?;
+            let nodes = self.read_sequence(SequenceEnd::Textarea)?;
             self.tree.fragments[fragment as usize] = nodes;
             self.index += self.closing_textarea_tag_len().unwrap_or(0);
         } else if matches!(name, b"script" | b"style") {
@@ -983,12 +983,12 @@ impl<'a> Parser<'a, '_> {
         }
         match &rest[10..] {
             [b'>', ..] => Some(11),
-            behind if strings::js_whitespace_len(behind) > 0 => {
+            following if strings::js_whitespace_len(following) > 0 => {
                 let from = self.index + 10;
-                let (looked_from, mut end) = self.next_end_of_tag.get();
-                if !(looked_from..=end).contains(&from) {
-                    end =
-                        strings::index_of_char_usize(behind, b'>').map_or(self.len, |it| from + it);
+                let (searched_from, mut end) = self.next_end_of_tag.get();
+                if !(searched_from..=end).contains(&from) {
+                    end = strings::index_of_char_usize(following, b'>')
+                        .map_or(self.len, |it| from + it);
                     self.next_end_of_tag.set((from, end));
                 }
                 (end < self.len).then(|| end + 1 - self.index)
@@ -1003,7 +1003,7 @@ impl<'a> Parser<'a, '_> {
     }
 
     /// The source text of node `id`.
-    fn written(&self, id: Id) -> &'a [u8] {
+    fn source_text(&self, id: Id) -> &'a [u8] {
         &self.text[self.tree[id].start as usize..self.tree[id].end as usize]
     }
 
@@ -1204,7 +1204,7 @@ impl<'a> Parser<'a, '_> {
                 ]));
             }
         }
-        let value = self.read_sequence(quote.map_or(Done::Unquoted, Done::Quote))?;
+        let value = self.read_sequence(quote.map_or(SequenceEnd::Unquoted, SequenceEnd::Quote))?;
         if value.is_empty() && quote.is_none() {
             return fail(Message::ExpectedValue, self.index);
         }
@@ -1220,22 +1220,22 @@ impl<'a> Parser<'a, '_> {
         Ok(only.map_or_else(|| Value::Parts(value), Value::Tag))
     }
 
-    fn is_done(&self, done: Done) -> bool {
+    fn is_done(&self, done: SequenceEnd) -> bool {
         match done {
-            Done::Quote(quote) => self.rest().first() == Some(&quote),
+            SequenceEnd::Quote(quote) => self.rest().first() == Some(&quote),
             // `/(\/>|[\s"'=<>`])/y`
-            Done::Unquoted => {
+            SequenceEnd::Unquoted => {
                 let rest = self.rest();
                 rest.starts_with(b"/>")
                     || matches!(rest, [b'"' | b'\'' | b'=' | b'<' | b'>' | b'`', ..])
                     || strings::js_whitespace_len(rest) > 0
             }
-            Done::Textarea => self.closing_textarea_tag_len().is_some(),
+            SequenceEnd::Textarea => self.closing_textarea_tag_len().is_some(),
         }
     }
 
     /// `read_sequence`
-    fn read_sequence(&mut self, done: Done) -> Result<Vec<Id>> {
+    fn read_sequence(&mut self, done: SequenceEnd) -> Result<Vec<Id>> {
         let mut chunks = Vec::new();
         let mut chunk_start = self.index;
         while self.index < self.len {
@@ -1272,11 +1272,11 @@ impl<'a> Parser<'a, '_> {
     // ───────────── read/script.js, read/style.js ─────────────
 
     /// The attribute value's text, if the value is a single `Text` node.
-    fn text_of_attribute(&self, value: &Value) -> Option<&'a [u8]> {
+    fn attribute_text(&self, value: &Value) -> Option<&'a [u8]> {
         match value {
             Value::Parts(parts) => match parts[..] {
                 [only] => match self.tree[only].kind {
-                    Kind::Text { .. } => Some(self.written(only)),
+                    Kind::Text { .. } => Some(self.source_text(only)),
                     _ => None,
                 },
                 _ => None,
@@ -1300,9 +1300,9 @@ impl<'a> Parser<'a, '_> {
             };
             let content_end = search + found;
             search = content_end + end_tag.len();
-            let behind = strings::trim_js_whitespace_start(&self.text[search..self.len]);
-            if behind.first() == Some(&b'>') {
-                self.index = self.len - behind.len() + 1;
+            let following = strings::trim_js_whitespace_start(&self.text[search..self.len]);
+            if following.first() == Some(&b'>') {
+                self.index = self.len - following.len() + 1;
                 return Ok(Span::new(from, content_end));
             }
         }
@@ -1328,7 +1328,7 @@ impl<'a> Parser<'a, '_> {
                     is_module = true;
                 }
                 b"context" => {
-                    if self.text_of_attribute(value) != Some(&b"module"[..]) {
+                    if self.attribute_text(value) != Some(&b"module"[..]) {
                         return fail(Message::InvalidScriptContext, at);
                     }
                     is_module = true;
@@ -1413,7 +1413,7 @@ impl<'a> Parser<'a, '_> {
                 }
                 b';' | b'{' | b'}' if !is_in_url && quote.is_none() => return Some(at),
                 b'/' if !is_in_url && quote.is_none() && text.get(at + 1) == Some(&b'*') => {
-                    at += len_of_css_comment(&text[at..])? - 1;
+                    at += css_comment_len(&text[at..])? - 1;
                 }
                 _ => {}
             }
@@ -1433,7 +1433,7 @@ impl<'a> Parser<'a, '_> {
             let rest = strings::trim_js_whitespace_start(text.get(at..)?);
             at = text.len() - rest.len();
             if rest.starts_with(b"/*") {
-                at += len_of_css_comment(rest)?;
+                at += css_comment_len(rest)?;
                 continue;
             }
             match rest.first()? {
@@ -1471,7 +1471,7 @@ impl<'a> Parser<'a, '_> {
     fn read_style(&mut self, start: usize, attributes: Vec<Id>) -> Result<()> {
         let is_css = attributes.iter().all(|&it| match &self.tree[it].kind {
             Kind::Attribute { name, value } if matches!(*name, b"lang" | b"type") => {
-                matches!(self.text_of_attribute(value), Some(b"css" | b"text/css"))
+                matches!(self.attribute_text(value), Some(b"css" | b"text/css"))
             }
             _ => true,
         });
@@ -1497,8 +1497,8 @@ impl<'a> Parser<'a, '_> {
 
     /// True if `word` is next and isn't followed by a word character: `/word\b/y`.
     fn matches_word(&self, word: &[u8]) -> bool {
-        (self.rest().strip_prefix(word)).is_some_and(|behind| {
-            behind
+        (self.rest().strip_prefix(word)).is_some_and(|following| {
+            following
                 .first()
                 .is_none_or(|&it| !strings::is_regexp_word_byte(it))
         })
@@ -1561,7 +1561,7 @@ impl<'a> Parser<'a, '_> {
             Err(at) => return fail(Message::UnexpectedToken, at),
         };
         // The declaration includes its `;`.
-        let semicolon = behind_trivia(template, end);
+        let semicolon = skip_trivia(template, end);
         let end = match template.get(semicolon) {
             Some(b';') => semicolon + 1,
             _ => end,
@@ -1580,7 +1580,7 @@ impl<'a> Parser<'a, '_> {
     }
 
     /// Reads the expression of `{#each`.
-    fn read_expression_of_each(&mut self) -> Result<ParsedExpression> {
+    fn read_each_expression(&mut self) -> Result<ParsedExpression> {
         let index = self.index;
         let error = match self.read_whole_expression() {
             Ok(parsed) => return Ok(parsed),
@@ -1592,7 +1592,7 @@ impl<'a> Parser<'a, '_> {
         let (template, until) = (self.template(), error.1 as usize);
         let ends = self.js.ends_of_expressions(template, index, until);
         let end = ends.into_iter().filter_map(|it| {
-            let word = behind_trivia(&template[..until], it);
+            let word = skip_trivia(&template[..until], it);
             (template[word..until].starts_with(b"as")).then_some(word)
         });
         let Some(end) = end.max() else {
@@ -1623,7 +1623,7 @@ impl<'a> Parser<'a, '_> {
         }
         if self.eat(b"each") {
             self.require_whitespace()?;
-            let parsed = self.read_expression_of_each()?;
+            let parsed = self.read_each_expression()?;
             let mut expression = parsed.expression;
             self.allow_whitespace();
             // A context should follow: `{#each list as item}`.
@@ -1647,8 +1647,8 @@ impl<'a> Parser<'a, '_> {
                     }
                     self.index = at;
                     // `outer` includes the comments before the `as`.
-                    let behind = self.text.get(end as usize..at).unwrap_or_default();
-                    expression.outer.end = end + behind.trim_ascii_end().len() as u32;
+                    let following = self.text.get(end as usize..at).unwrap_or_default();
+                    expression.outer.end = end + following.trim_ascii_end().len() as u32;
                 }
             }
             let mut context = None;
@@ -1909,7 +1909,7 @@ impl<'a> Parser<'a, '_> {
             self.tree[block].end = self.index as u32;
             // An `{:else if}` replaced a fragment when it was pushed, so there's no fragment to pop.
             self.stack.pop();
-            self.is_in.pop();
+            self.ancestor_flags.pop();
             match self.current() {
                 Some(outer) => block = outer,
                 None => break,
@@ -2048,7 +2048,7 @@ impl<'a> Parser<'a, '_> {
         };
         match self.tree[chunk].kind {
             _ if count > 1 => Err(()),
-            Kind::Text { .. } => Ok(Some(self.written(chunk))),
+            Kind::Text { .. } => Ok(Some(self.source_text(chunk))),
             Kind::ExpressionTag(Expression {
                 span,
                 kind: ExpressionKind::StringLiteral,
@@ -2062,11 +2062,11 @@ impl<'a> Parser<'a, '_> {
     }
 
     /// The first part of `value`, if it's text.
-    fn text_of_first_part(&self, value: &Value) -> Option<&'a [u8]> {
+    fn first_part_text(&self, value: &Value) -> Option<&'a [u8]> {
         match value {
             Value::Parts(parts) => (parts.first().copied())
                 .filter(|&it| matches!(self.tree[it].kind, Kind::Text { .. }))
-                .map(|it| self.written(it)),
+                .map(|it| self.source_text(it)),
             _ => None,
         }
     }
@@ -2120,7 +2120,7 @@ impl<'a> Parser<'a, '_> {
                         return fail(Message::InvalidCustomElementOption, at);
                     }
                     // `validate_tag`
-                    if let Some(tag) = self.text_of_first_part(value).filter(|it| !it.is_empty()) {
+                    if let Some(tag) = self.first_part_text(value).filter(|it| !it.is_empty()) {
                         if !is_valid_custom_element_name(tag) {
                             return fail(Message::InvalidCustomElementName, at);
                         }
@@ -2174,7 +2174,7 @@ fn lang_at(text: &[u8], at: usize, last_end: usize) -> Option<&[u8]> {
 }
 
 /// `\s+`: the end of the whitespace at `at`, or `None` if there isn't any.
-fn behind_white_space(text: &[u8], mut at: usize) -> Option<usize> {
+fn end_of_whitespace(text: &[u8], mut at: usize) -> Option<usize> {
     let start = at;
     while let len @ 1.. = strings::js_whitespace_len(text.get(at..)?) {
         at += len;
@@ -2184,28 +2184,28 @@ fn behind_white_space(text: &[u8], mut at: usize) -> Option<usize> {
 
 /// Finds the first of `bytes` at or after an offset. The last result is cached and reused for any offset between
 /// where that search started and what it found.
-struct Next<'a> {
+struct CachedSearch<'a> {
     text: &'a [u8],
     bytes: &'static [u8],
-    looked_from: usize,
+    searched_from: usize,
     /// The text's length if nothing was found.
     found: usize,
 }
 
-impl<'a> Next<'a> {
-    fn new(text: &'a [u8], bytes: &'static [u8]) -> Next<'a> {
-        Next {
+impl<'a> CachedSearch<'a> {
+    fn new(text: &'a [u8], bytes: &'static [u8]) -> CachedSearch<'a> {
+        CachedSearch {
             text,
             bytes,
-            looked_from: 0,
+            searched_from: 0,
             found: strings::index_of_any(text, bytes).unwrap_or(text.len()),
         }
     }
 
     fn from(&mut self, at: usize) -> usize {
-        if !(self.looked_from..=self.found).contains(&at) {
+        if !(self.searched_from..=self.found).contains(&at) {
             let found = strings::index_of_any(&self.text[at..], self.bytes);
-            (self.looked_from, self.found) = (at, found.map_or(self.text.len(), |it| at + it));
+            (self.searched_from, self.found) = (at, found.map_or(self.text.len(), |it| at + it));
         }
         self.found
     }
@@ -2214,10 +2214,10 @@ impl<'a> Next<'a> {
 /// Matches `(?:[^=>'"/]+=(?:"[^"]*"|'[^']*'|[^>\s]+)\s+)*lang=..` at `start`. Returns the value of a `lang` that
 /// comes after attributes with values, which can contain a `>`. `failed` collects the offsets, across the whole text,
 /// where no match starts. `end_of_name` finds the end of `[^=>'"/]+`.
-fn lang_behind_attributes<'a>(
+fn lang_after_attributes<'a>(
     text: &'a [u8],
     (start, last_end): (usize, usize),
-    (failed, end_of_name): (&mut FxHashSet<usize>, &mut Next<'a>),
+    (failed, end_of_name): (&mut FxHashSet<usize>, &mut CachedSearch<'a>),
 ) -> Option<&'a [u8]> {
     // A backtracking stack. Each entry is an offset where an attribute may start and what to try there next: 0 is a
     // quoted value, 1 an unquoted value, 2 no more attributes.
@@ -2255,7 +2255,7 @@ fn lang_behind_attributes<'a>(
                 (end > value).then_some(end)
             }
         };
-        if let Some(next) = end.and_then(|it| behind_white_space(text, it)) {
+        if let Some(next) = end.and_then(|it| end_of_whitespace(text, it)) {
             stack.push((next, 0));
         }
     }
@@ -2270,7 +2270,10 @@ fn is_typescript(text: &[u8]) -> bool {
     // without a match.
     let mut checked_until = 0;
     let mut failed = FxHashSet::default();
-    let (mut end_of_tag, mut end_of_name) = (Next::new(text, b">"), Next::new(text, b"=>'\"/"));
+    let (mut end_of_tag, mut end_of_name) = (
+        CachedSearch::new(text, b">"),
+        CachedSearch::new(text, b"=>'\"/"),
+    );
     let Some(last_end) = strings::last_index_of_char(text, b'>') else {
         return false;
     };
@@ -2285,7 +2288,7 @@ fn is_typescript(text: &[u8]) -> bool {
             continue;
         }
         let Some(attributes) = (rest.starts_with(b"script"))
-            .then(|| behind_white_space(text, at + 6))
+            .then(|| end_of_whitespace(text, at + 6))
             .flatten()
         else {
             continue;
@@ -2309,7 +2312,7 @@ fn is_typescript(text: &[u8]) -> bool {
         }
         checked_until = checked_until.max(attributes + end);
         let known = (&mut failed, &mut end_of_name);
-        if let Some(lang) = lang_behind_attributes(text, (attributes, last_end), known) {
+        if let Some(lang) = lang_after_attributes(text, (attributes, last_end), known) {
             return lang == b"ts";
         }
     }
@@ -2324,7 +2327,7 @@ fn is_in_css_name(byte: u8) -> bool {
 /// Length of the comment at the start of `text`. Also returns `None` for a comment that contains a `</style` and then
 /// a `<style`. That comment is really unclosed, and the `*/` belongs to the second style sheet. Svelte reads on
 /// there.
-fn len_of_css_comment(text: &[u8]) -> Option<usize> {
+fn css_comment_len(text: &[u8]) -> Option<usize> {
     let len = 2 + strings::index_of(text.get(2..)?, b"*/")? + 2;
     let end_tag = strings::index_of(&text[..len], b"</style");
     match end_tag.is_some_and(|at| strings::contains(&text[at..len], b"<style")) {
@@ -2334,7 +2337,7 @@ fn len_of_css_comment(text: &[u8]) -> Option<usize> {
 }
 
 /// Skips the whitespace and comments at `at` and returns the offset after them.
-fn behind_trivia(text: &[u8], mut at: usize) -> usize {
+fn skip_trivia(text: &[u8], mut at: usize) -> usize {
     loop {
         let rest = strings::trim_js_whitespace_start(&text[at..]);
         at = text.len() - rest.len();
@@ -2363,7 +2366,7 @@ pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
         is_typescript: is_typescript(text),
         tree,
         stack: Vec::new(),
-        is_in: Vec::new(),
+        ancestor_flags: Vec::new(),
         next_end_of_tag: Cell::new((0, 0)),
         fragments: vec![fragment],
         seen_meta_tags: Vec::new(),
@@ -2373,6 +2376,6 @@ pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
     parser.run()?;
     // Code that was parsed as TypeScript is printed as TypeScript. Svelte also accepts `data-lang="ts"`, but the
     // plugin doesn't, and it turns `f<T>(a)` into `f < T > a`.
-    parser.tree.says_typescript |= parser.is_typescript;
+    parser.tree.uses_typescript |= parser.is_typescript;
     Ok(parser.tree)
 }

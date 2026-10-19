@@ -1,7 +1,7 @@
 //! `levn.parse("Object", text)`: the lenient notation that ESLint tries on an `/* eslint .. */` comment before it tries
 //! JSON.
 
-use crate::json::RoomToNest;
+use crate::json::NestingLimit;
 use crate::options::Json;
 
 fn is_special(byte: u8) -> bool {
@@ -99,7 +99,7 @@ enum Node {
 struct Tokens<'t> {
     tokens: Vec<&'t [u8]>,
     at: usize,
-    room: RoomToNest,
+    room: NestingLimit,
 }
 
 impl<'t> Tokens<'t> {
@@ -226,7 +226,7 @@ fn unquote(text: &[u8]) -> Vec<u8> {
 
 /// The `*` cast. `None` where levn throws, and for a regular expression, which JSON can't represent. A date stays a
 /// string.
-fn cast(node: &Node, room: RoomToNest) -> Option<Json> {
+fn cast(node: &Node, room: NestingLimit) -> Option<Json> {
     if !room.has_more() {
         return None;
     }
@@ -261,7 +261,7 @@ fn cast(node: &Node, room: RoomToNest) -> Option<Json> {
     })
 }
 
-fn cast_fields(fields: &[(Vec<u8>, Node)], room: RoomToNest) -> Option<Vec<(Vec<u8>, Json)>> {
+fn cast_fields(fields: &[(Vec<u8>, Node)], room: NestingLimit) -> Option<Vec<(Vec<u8>, Json)>> {
     let mut out = Vec::with_capacity(fields.len());
     for (key, value) in fields {
         let (key, value) = (unquote(key), cast(value, room)?);
@@ -273,11 +273,11 @@ fn cast_fields(fields: &[(Vec<u8>, Node)], room: RoomToNest) -> Option<Vec<(Vec<
     Json::object(out).into_object()
 }
 
-fn parse_fields(text: &[u8]) -> Option<(Vec<(Vec<u8>, Node)>, RoomToNest)> {
+fn parse_fields(text: &[u8]) -> Option<(Vec<(Vec<u8>, Node)>, NestingLimit)> {
     let mut tokens = Tokens {
         tokens: tokenize(text),
         at: 0,
-        room: RoomToNest::new(),
+        room: NestingLimit::new(),
     };
     let has_delimiters = tokens.peek() == Some(b"{");
     let Node::Fields(fields) = tokens.fields(has_delimiters)? else {

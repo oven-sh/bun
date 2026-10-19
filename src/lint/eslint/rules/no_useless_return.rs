@@ -35,7 +35,7 @@ enum Filtered {
     /// Everything in it has been marked as used.
     Used,
     /// The set that remained when the rest was marked as used, and the `age` at that time.
-    Left(u32, u32),
+    Remaining(u32, u32),
 }
 
 const EMPTY: u32 = 0;
@@ -47,7 +47,7 @@ struct ReturnSets {
     /// Index 0 is a placeholder for the empty set.
     sets: Vec<(ReturnSet, Filtered)>,
     /// Incremented whenever `mark_as_used` could leave less in a set than it did before, which invalidates the cached
-    /// `Filtered::Left` results.
+    /// `Filtered::Remaining` results.
     age: u32,
 }
 
@@ -70,10 +70,10 @@ impl ReturnSets {
     }
 
     /// Returns what remains of `set`, if that's cached for the current age.
-    fn left_of(&self, set: u32) -> Option<u32> {
+    fn remaining_of(&self, set: u32) -> Option<u32> {
         match self.sets.get(set as usize)?.1 {
             Filtered::Used => Some(EMPTY),
-            Filtered::Left(left, age) if age == self.age => Some(left),
+            Filtered::Remaining(remaining, age) if age == self.age => Some(remaining),
             _ => None,
         }
     }
@@ -86,36 +86,42 @@ impl ReturnSets {
             let Some(&(kind, _)) = self
                 .sets
                 .get(at as usize)
-                .filter(|_| self.left_of(at).is_none())
+                .filter(|_| self.remaining_of(at).is_none())
             else {
                 pending.pop();
                 continue;
             };
-            let left = match kind {
+            let remaining = match kind {
                 ReturnSet::One(number) if uses(number) => EMPTY,
                 ReturnSet::One(_) => at,
-                ReturnSet::Union(a, b) => match (self.left_of(a), self.left_of(b)) {
-                    (Some(left_of_a), Some(left_of_b)) if (left_of_a, left_of_b) == (a, b) => at,
-                    (Some(left_of_a), Some(left_of_b)) => self.union(left_of_a, left_of_b),
-                    (left_of_a, left_of_b) => {
-                        pending.extend(left_of_a.is_none().then_some(a));
-                        pending.extend(left_of_b.is_none().then_some(b));
+                ReturnSet::Union(a, b) => match (self.remaining_of(a), self.remaining_of(b)) {
+                    (Some(remaining_of_a), Some(remaining_of_b))
+                        if (remaining_of_a, remaining_of_b) == (a, b) =>
+                    {
+                        at
+                    }
+                    (Some(remaining_of_a), Some(remaining_of_b)) => {
+                        self.union(remaining_of_a, remaining_of_b)
+                    }
+                    (remaining_of_a, remaining_of_b) => {
+                        pending.extend(remaining_of_a.is_none().then_some(a));
+                        pending.extend(remaining_of_b.is_none().then_some(b));
                         continue;
                     }
                 },
             };
-            let filtered = match left {
+            let filtered = match remaining {
                 EMPTY => Filtered::Used,
-                _ => Filtered::Left(left, self.age),
+                _ => Filtered::Remaining(remaining, self.age),
             };
-            for it in [at, left] {
+            for it in [at, remaining] {
                 if let Some(entry) = self.sets.get_mut(it as usize) {
                     entry.1 = filtered;
                 }
             }
             pending.pop();
         }
-        self.left_of(set).unwrap_or(EMPTY)
+        self.remaining_of(set).unwrap_or(EMPTY)
     }
 }
 
@@ -131,7 +137,7 @@ struct ScopeInfo<'a> {
 pub struct State<'a> {
     /// The root nodes of the code paths to analyze.
     roots: FxHashSet<Node<'a>>,
-    /// Memo for [`what_is_known`].
+    /// Memo for [`known_from_parent`].
     known: AncestorMemo<'a, Known>,
     /// The `return` statements at the end of their function, each with the function.
     at_the_end: Vec<(Node<'a>, Stmt<'a>)>,
@@ -189,11 +195,11 @@ impl<'a> State<'a> {
         let mut pending = segment.all_prev_segments();
         while let Some(prev) = pending.pop() {
             if prev.is_reachable() {
-                let of_prev = self
+                let prev_returns = self
                     .segments
                     .get(&prev.id())
                     .map_or(EMPTY, |info| info.useless_returns);
-                useless_returns = self.sets.union(useless_returns, of_prev);
+                useless_returns = self.sets.union(useless_returns, prev_returns);
             } else if traversed.insert(prev.id()) {
                 let before = prev.all_prev_segments();
                 pending.extend(
@@ -324,7 +330,7 @@ enum Known {
 /// Without the `return`, execution would continue with the statement after it, or after the `if` statements and blocks
 /// that it ends. This is one step of that search: `current` is the `return` statement or one of those enclosing
 /// statements, and `parent` is its parent.
-fn what_is_known<'a>(current: Node<'a>, parent: Node<'a>) -> Option<Known> {
+fn known_from_parent<'a>(current: Node<'a>, parent: Node<'a>) -> Option<Known> {
     let list = match parent {
         Node::Func(func) => func.body_statements(),
         Node::Stmt(parent) => parent.as_block(),
@@ -436,7 +442,7 @@ fn oxlint_executes_after<'a>(child: Node<'a>, case: Case<'a>) -> Option<bool> {
 
 impl NoUselessReturn {
     /// oxlint doesn't analyze code paths. It only looks at the statements after the `return`.
-    fn is_useless_for_oxlint<'a>(statement: Stmt<'a>, state: &mut State<'a>) -> bool {
+    fn oxlint_is_useless<'a>(statement: Stmt<'a>, state: &mut State<'a>) -> bool {
         let at_the_end = &mut state.oxlint_at_the_end;
         let is_useless =
             state
@@ -598,12 +604,12 @@ impl Rule for NoUselessReturn {
             return;
         }
         if cx.language().is_oxlint {
-            if Self::is_useless_for_oxlint(statement, &mut cx.state) {
+            if Self::oxlint_is_useless(statement, &mut cx.state) {
                 self.report(statement, cx);
             }
             return;
         }
-        let known = cx.state.known.find(statement.into(), what_is_known);
+        let known = cx.state.known.find(statement.into(), known_from_parent);
         if matches!(known, Some(Known::Useful)) {
             return;
         }
@@ -628,7 +634,9 @@ impl Rule for NoUselessReturn {
             }
         }
         let as_entered = |it: &Node<'_>| (it.span().start, std::cmp::Reverse(it.span().end));
-        for root in utils::sort::in_order_of(std::mem::take(&mut cx.state.roots), as_entered) {
+        for root in
+            utils::sort::collect_sorted_by_key(std::mem::take(&mut cx.state.roots), as_entered)
+        {
             self.check_code_path(root, cx);
         }
     }

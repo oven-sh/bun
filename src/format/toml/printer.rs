@@ -472,7 +472,7 @@ impl Printer<'_> {
 
     /// Writes the entry at `node`, which is in an inline table, straight to `out`. The output is the same as
     /// [`Printer::write_entry`] of [`Printer::entry`].
-    fn entry_in_place(&self, node: usize, context: Context, out: &mut Vec<u8>) {
+    fn entry_with_comment(&self, node: usize, context: Context, out: &mut Vec<u8>) {
         if let Some(comment) = self.entry_without_comment(node, context, out) {
             out.push(b' ');
             self.write_comment(comment, out);
@@ -567,7 +567,7 @@ impl Printer<'_> {
                         keeps_flat: context.keeps_flat || Some(index) != last_entry,
                         ..context
                     };
-                    self.entry_in_place(index, context, out);
+                    self.entry_with_comment(index, context, out);
                     is_first = false;
                     is_after_comment = false;
                 }
@@ -614,7 +614,7 @@ impl Printer<'_> {
             ..context
         });
         // On one line, the `]` follows the last value.
-        let of_values = inner.unwrap_or(Context {
+        let value_context = inner.unwrap_or(Context {
             after: context.after + 1,
             ..context
         });
@@ -628,7 +628,7 @@ impl Printer<'_> {
         // times. Only the comment after the last value depends on what follows. `values` is the number of values that
         // oxc-toml would have buffered.
         let mut values = 0usize;
-        let mut comment_behind_last: Option<Span> = None;
+        let mut comment_after_last: Option<Span> = None;
         let write_comment = |comment: &mut Option<Span>, out: &mut Vec<u8>| {
             if let Some(comment) = comment.take().filter(|_| is_multiline) {
                 out.push(b' ');
@@ -650,7 +650,7 @@ impl Printer<'_> {
                     if is_multiline && out.last() == Some(&open) {
                         out.extend_from_slice(self.newline);
                     }
-                    write_comment(&mut comment_behind_last, out);
+                    write_comment(&mut comment_after_last, out);
                     match inner {
                         // On one line.
                         None if values != 0 => out.push(b' '),
@@ -662,9 +662,9 @@ impl Printer<'_> {
                             self.write_indent(inner, out);
                         }
                     }
-                    comment_behind_last = match element.kind {
-                        Kind::Entry => self.entry_without_comment(index, of_values, out),
-                        _ => self.value(index, of_values, out),
+                    comment_after_last = match element.kind {
+                        Kind::Entry => self.entry_without_comment(index, value_context, out),
+                        _ => self.value(index, value_context, out),
                     };
                     value_index += 1;
                     if value_index < value_count || (is_multiline && self.array_trailing_comma) {
@@ -675,7 +675,7 @@ impl Printer<'_> {
                 }
                 Kind::Open => out.push(open),
                 Kind::Close => {
-                    add_values(&mut values, &mut comment_behind_last, out);
+                    add_values(&mut values, &mut comment_after_last, out);
                     if is_multiline {
                         if out.last() != Some(&b'\n') {
                             out.extend_from_slice(self.newline);
@@ -698,7 +698,7 @@ impl Printer<'_> {
                 Kind::LineBreaks if is_multiline => {
                     let count = self.line_breaks(element);
                     if count > 1 {
-                        add_values(&mut values, &mut comment_behind_last, out);
+                        add_values(&mut values, &mut comment_after_last, out);
                         skip_newlines = 0;
                     }
                     self.write_newlines(count.saturating_sub(skip_newlines), out);
@@ -707,16 +707,16 @@ impl Printer<'_> {
                     let comment = (element.start, element.end);
                     // It follows the last value on the same line.
                     if values != 0 && previous != Kind::LineBreaks {
-                        comment_behind_last = Some(comment);
+                        comment_after_last = Some(comment);
                     } else {
-                        if add_values(&mut values, &mut comment_behind_last, out) {
+                        if add_values(&mut values, &mut comment_after_last, out) {
                             out.extend_from_slice(self.newline);
                             skip_newlines = 0;
                         }
                         if out.last() == Some(&open) {
                             out.push(b' ');
                         } else {
-                            self.write_indent(of_values, out);
+                            self.write_indent(value_context, out);
                         }
                         self.write_comment(comment, out);
                     }

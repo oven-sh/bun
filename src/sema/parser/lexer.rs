@@ -57,8 +57,8 @@ pub(crate) struct Lexer<'a> {
     /// `Dialect::oxc`
     pub(crate) is_oxc: bool,
     /// Records `<!--` positions in `html_opens`. The caller may reparse a text that has one as a script.
-    pub(crate) notes_html_opens: bool,
-    /// Only filled in if `notes_html_opens` is set.
+    pub(crate) records_html_opens: bool,
+    /// Only filled in if `records_html_opens` is set.
     pub(crate) html_opens: HtmlOpens,
     /// Every scanned private name that wasn't declared by a class that has ended since, for
     /// `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE` marks one after `super.`.
@@ -83,7 +83,7 @@ pub(crate) struct Lexer<'a> {
     pub(crate) flagged: Vec<(u32, u32, u32)>,
     /// `Options::recovers`
     pub(crate) recovers: bool,
-    /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_errors_of_scanner`), in
+    /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_scanner_errors`), in
     /// the order they were reported.
     pub(crate) errors: Vec<Diagnostic>,
     /// `skipJSDocLeadingAsterisks`: the lexer is inside a type in a JSDoc comment.
@@ -125,7 +125,7 @@ enum CommentForm {
     Line,
     /// `/* comment */` on one line
     Block,
-    BlockOfSeveralLines,
+    MultilineBlock,
 }
 
 /// The class of a token's first byte, or of a byte between tokens.
@@ -281,7 +281,7 @@ impl<'a> Lexer<'a> {
             is_typescript_5: false,
             is_babel: false,
             is_oxc: false,
-            notes_html_opens: false,
+            records_html_opens: false,
             html_opens: HtmlOpens::default(),
             private_names: Vec::new(),
             atoms,
@@ -584,7 +584,9 @@ impl<'a> Lexer<'a> {
                 },
                 First::Equals => match at(next) {
                     b'=' if at(next + 1) != b'=' => self.set(T::EqualsEquals, pos, pos + 2),
-                    b'=' if at(pos + 3) == b'=' => return self.same_four_times(pos),
+                    b'=' if at(pos + 3) == b'=' => {
+                        return self.scan_at_possible_conflict_marker(pos);
+                    }
                     b'=' => self.set(T::EqualsEqualsEquals, pos, pos + 3),
                     b'>' => self.set(T::EqualsGreaterThan, pos, pos + 2),
                     _ => self.set(T::Equals, pos, next),
@@ -610,7 +612,9 @@ impl<'a> Lexer<'a> {
                     _ => self.set(T::Question, pos, next),
                 },
                 First::LessThan => match (at(next), at(next + 1)) {
-                    (b'<', b'<') if at(pos + 3) == b'<' => return self.same_four_times(pos),
+                    (b'<', b'<') if at(pos + 3) == b'<' => {
+                        return self.scan_at_possible_conflict_marker(pos);
+                    }
                     (b'<', b'=') => self.set(T::LessThanLessThanEquals, pos, pos + 3),
                     (b'<', _) => self.set(T::LessThanLessThan, pos, pos + 2),
                     (b'=', _) => self.set(T::LessThanEquals, pos, pos + 2),
@@ -618,7 +622,7 @@ impl<'a> Lexer<'a> {
                         self.set(T::LessThanSlash, pos, pos + 2);
                     }
                     (b'!', b'-')
-                        if (self.is_script || self.notes_html_opens) && at(pos + 3) == b'-' =>
+                        if (self.is_script || self.records_html_opens) && at(pos + 3) == b'-' =>
                     {
                         return self.scan_at_html_open(pos);
                     }
@@ -627,7 +631,7 @@ impl<'a> Lexer<'a> {
                 // The parser rescans for `>=`, `>>` and so on where they're allowed.
                 First::GreaterThan => {
                     if at(next) == b'>' && src.get(pos..pos + 4) == Some(b">>>>") {
-                        return self.same_four_times(pos);
+                        return self.scan_at_possible_conflict_marker(pos);
                     }
                     self.set(T::GreaterThan, pos, next);
                 }
@@ -667,7 +671,9 @@ impl<'a> Lexer<'a> {
                     _ => self.set(T::Ampersand, pos, next),
                 },
                 First::Bar => match (at(next), at(next + 1)) {
-                    (b'|', b'|') if at(pos + 3) == b'|' => return self.same_four_times(pos),
+                    (b'|', b'|') if at(pos + 3) == b'|' => {
+                        return self.scan_at_possible_conflict_marker(pos);
+                    }
                     (b'|', b'=') => self.set(T::BarBarEquals, pos, pos + 3),
                     (b'|', _) => self.set(T::BarBar, pos, pos + 2),
                     (b'=', _) => self.set(T::BarEquals, pos, pos + 2),
@@ -679,7 +685,7 @@ impl<'a> Lexer<'a> {
                 },
                 First::Backtick => return self.template(pos, true),
                 First::Hash => return self.hash(pos),
-                First::Backslash => return self.name_slowly(pos, pos),
+                First::Backslash => return self.name_slow(pos, pos),
                 First::NotAscii => return self.scan_after_comments(pos),
                 First::Invalid => return self.invalid_character(Refusal::UnexpectedCharacter, pos),
             }
@@ -743,7 +749,7 @@ impl<'a> Lexer<'a> {
         let first = self.comments.len();
         // The start of the file counts as a line break.
         self.newline_since_comment = self.newline_before || self.full_start == 0;
-        self.pass_over_comments_and_scan(pos);
+        self.skip_comments_and_scan(pos);
         let next_token_start = self.start;
         let comments = self.comments.get_mut(first..).unwrap_or_default();
         for comment in comments.iter_mut() {
@@ -756,7 +762,7 @@ impl<'a> Lexer<'a> {
 
     /// Skips the comments in a loop instead of recursing, because not every build turns a tail call into a jump and a
     /// file can start with thousands of comments.
-    fn pass_over_comments_and_scan(&mut self, mut pos: usize) {
+    fn skip_comments_and_scan(&mut self, mut pos: usize) {
         if self.is_too_deep() {
             return;
         }
@@ -778,7 +784,7 @@ impl<'a> Lexer<'a> {
                     Some(pos + 1)
                 }
                 b' ' | b'\t' | 0x0B | 0x0C => Some(pos + 1),
-                b'<' | b'-' | b'#' => match self.end_of_unusual_comment(pos) {
+                b'<' | b'-' | b'#' => match self.end_of_html_or_hashbang_comment(pos) {
                     Some(end) => {
                         // A formatter has to print `<!-- comment` and `--> comment` too.
                         if self.attach_comments && self.at(pos) != b'#' {
@@ -799,7 +805,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Scans at a `<!--`, in a script or with `notes_html_opens` set. In a script it starts a comment. Otherwise its
+    /// Scans at a `<!--`, in a script or with `records_html_opens` set. In a script it starts a comment. Otherwise its
     /// position is recorded and it's scanned as `<`.
     #[cold]
     #[inline(never)]
@@ -845,7 +851,7 @@ impl<'a> Lexer<'a> {
             self.newline_before = true;
             self.newline_since_comment = true;
         } else if !is_white_space_single_line(c as i32) {
-            self.name_slowly(pos, pos);
+            self.name_slow(pos, pos);
             return None;
         }
         Some(pos + len)
@@ -854,7 +860,7 @@ impl<'a> Lexer<'a> {
     /// Returns the end of the line at `pos` if a `<!--`, `-->` or `#!` there makes the rest of the line a comment.
     #[cold]
     #[inline(never)]
-    fn end_of_unusual_comment(&self, pos: usize) -> Option<usize> {
+    fn end_of_html_or_hashbang_comment(&self, pos: usize) -> Option<usize> {
         let rest = &self.src[pos..];
         let is_comment = match self.is_script {
             true if rest.starts_with(b"<!--") => true,
@@ -908,7 +914,7 @@ impl<'a> Lexer<'a> {
     /// At `====`, `<<<<`, `>>>>` or `||||`.
     #[cold]
     #[inline(never)]
-    fn same_four_times(&mut self, pos: usize) {
+    fn scan_at_possible_conflict_marker(&mut self, pos: usize) {
         if self.is_conflict_marker(pos) {
             if !self.recovers {
                 return self.refuse(Refusal::ConflictMarker);
@@ -944,7 +950,7 @@ impl<'a> Lexer<'a> {
         }
         let after = chunk[(len & 15) as usize];
         if after >= 0x80 || after == b'\\' {
-            return self.name_slowly(start, start + len as usize);
+            return self.name_slow(start, start + len as usize);
         }
         let words = crate::names::short_words(chunk, len);
         match self.names.find_short(words) {
@@ -965,7 +971,7 @@ impl<'a> Lexer<'a> {
             return self.name_of_any_length(start);
         };
         let words = crate::names::short_words(chunk, len);
-        let (atom, kind) = (self.names).short_name_elsewhere(words, src, (start, len), self.atoms);
+        let (atom, kind) = (self.names).short_name_slow(words, src, (start, len), self.atoms);
         self.atom = atom;
         self.set(kind, start, start + len as usize);
     }
@@ -983,7 +989,7 @@ impl<'a> Lexer<'a> {
         }
         let after = chunk[len & 15];
         if after >= 0x80 || after == b'\\' {
-            return self.name_slowly(start, start + len);
+            return self.name_slow(start, start + len);
         }
         let text = Text::of_source(src, start, start + len);
         self.atom = self.names.long(text, self.atoms);
@@ -998,7 +1004,7 @@ impl<'a> Lexer<'a> {
         let src = self.src;
         let end = self.stops.after_name.next(start).min(src.len());
         if matches!(src.get(end), Some(b'\\' | 0x80..)) {
-            return self.name_slowly(start, end);
+            return self.name_slow(start, end);
         }
         let text = src.get(start..end).unwrap_or_default();
         self.atom = (self.names).atom(Text::of_source(src, start, end), self.atoms);
@@ -1008,7 +1014,7 @@ impl<'a> Lexer<'a> {
     /// Scans a name that starts at `start` and has a non-ASCII character or an escape at `from` or later.
     #[cold]
     #[inline(never)]
-    fn name_slowly(&mut self, start: usize, from: usize) {
+    fn name_slow(&mut self, start: usize, from: usize) {
         let src = self.src;
         let mut text = std::mem::take(&mut self.buffer);
         text.clear();
@@ -1156,7 +1162,7 @@ impl<'a> Lexer<'a> {
             end += 1;
         }
         if end == start + 1 || matches!(src.get(end), Some(b'\\' | 0x80..)) {
-            return self.name_slowly(start, end);
+            return self.name_slow(start, end);
         }
         self.has_escape = false;
         self.atom = (self.names).atom(Text::of_source(src, start, end), self.atoms);
@@ -1206,7 +1212,7 @@ impl<'a> Lexer<'a> {
             match src.get(pos) {
                 None => return src.len(),
                 Some(b'\n' | b'\r') => return pos,
-                Some(0x80..) => return self.end_of_line_that_is_not_ascii(pos),
+                Some(0x80..) => return self.end_of_non_ascii_line(pos),
                 Some(_) => pos += 1,
             }
         }
@@ -1215,7 +1221,7 @@ impl<'a> Lexer<'a> {
     /// `end_of_line` for a line with non-ASCII text, where every byte is a stop in `ScannerStops::in_string`.
     #[cold]
     #[inline(never)]
-    fn end_of_line_that_is_not_ascii(&self, mut pos: usize) -> usize {
+    fn end_of_non_ascii_line(&self, mut pos: usize) -> usize {
         let src = self.src;
         while let Some(len) = strings::index_of_any(src.get(pos..).unwrap_or_default(), b"\n\r\xE2")
         {
@@ -1245,7 +1251,7 @@ impl<'a> Lexer<'a> {
             prev_token_end: self.full_start,
             next_token_start: end as u32,
             is_block: form != CommentForm::Line,
-            is_multiline: form == CommentForm::BlockOfSeveralLines,
+            is_multiline: form == CommentForm::MultilineBlock,
             has_newline_before,
             has_newline_after: false,
             enclosing_node: NodeOrName::None,
@@ -1311,7 +1317,7 @@ impl<'a> Lexer<'a> {
             self.leading_comments.push((start as u32, end as u32));
         }
         let form = match last_line != start {
-            true => CommentForm::BlockOfSeveralLines,
+            true => CommentForm::MultilineBlock,
             false => CommentForm::Block,
         };
         self.note_comment(start, end, form);
@@ -1373,7 +1379,7 @@ impl<'a> Lexer<'a> {
                 Some(&c) if c == quote => break,
                 Some(b'"' | b'\'' | b'`' | b'$') => end += 1,
                 // A backslash, a control character, or anything non-ASCII.
-                _ => return self.string_slowly(start, quote),
+                _ => return self.string_slow(start, quote),
             }
         }
         self.atom = self.atom_of_source(start + 1, end);
@@ -1424,7 +1430,7 @@ impl<'a> Lexer<'a> {
         let words = crate::names::short_words(chunk, len as u32);
         match self.names.find_short(words) {
             Some((atom, _)) => atom,
-            None => self.names.short_elsewhere(words, text, self.atoms).0,
+            None => self.names.short_slow(words, text, self.atoms).0,
         }
     }
 
@@ -1539,7 +1545,7 @@ impl<'a> Lexer<'a> {
 
     #[cold]
     #[inline(never)]
-    fn string_slowly(&mut self, start: usize, quote: u8) {
+    fn string_slow(&mut self, start: usize, quote: u8) {
         let src = self.src;
         let mut text = std::mem::take(&mut self.buffer);
         text.clear();
@@ -1668,13 +1674,13 @@ impl<'a> Lexer<'a> {
     /// Scans a template piece that starts at `start` with a `` ` `` (`is_head`) or a `}`.
     #[inline(never)]
     fn template(&mut self, start: usize, is_head: bool) {
-        self.piece_of_template(start, is_head, false);
+        self.template_piece(start, is_head, false);
     }
 
     /// `scanTemplateAndSetTokenValue`. `reports` is `shouldEmitInvalidEscapeError`.
     #[inline(always)]
     #[track_caller]
-    fn piece_of_template(&mut self, start: usize, is_head: bool, reports: bool) {
+    fn template_piece(&mut self, start: usize, is_head: bool, reports: bool) {
         let src = self.src;
         let mut text = std::mem::take(&mut self.buffer);
         text.clear();
@@ -1754,7 +1760,7 @@ impl<'a> Lexer<'a> {
         // TypeScript only scans the text after a `}` once.
         self.forget_errors_from(self.start.saturating_add(1));
         let start = self.start as usize;
-        self.piece_of_template(start, self.at(start) == b'`', true);
+        self.template_piece(start, self.at(start) == b'`', true);
     }
 
     // ───────────────────────────── numbers ─────────────────────────────
@@ -1801,12 +1807,12 @@ impl<'a> Lexer<'a> {
             self.number = value as f64;
             return self.set(T::Number, start, pos);
         }
-        self.number_in_general(start)
+        self.number_slow(start)
     }
 
     /// The slow path of `number`, for anything but a few plain digits.
     #[inline(never)]
-    fn number_in_general(&mut self, start: usize) {
+    fn number_slow(&mut self, start: usize) {
         match self.unusual_number(start) {
             Some((token, end)) => self.set(token, start, end),
             None => self.invalid_number(start),
@@ -2311,7 +2317,7 @@ impl Lexer<'_> {
         };
         // What looked like an escape isn't one in JSX.
         self.forget_flagged_from(start as u32);
-        if !self.errors.is_empty() && self.is_string_of_javascript(before, start) {
+        if !self.errors.is_empty() && self.is_javascript_string(before, start) {
             return;
         }
         let quote = src[start];
@@ -2342,7 +2348,7 @@ impl Lexer<'_> {
             self.refuse(Refusal::Unsupported);
             return true;
         }
-        self.is_string_of_javascript(before, start)
+        self.is_javascript_string(before, start)
     }
 
     /// In TypeScript 5 and 6, which typescript-estree runs on, whitespace before the quote is enough for
@@ -2360,7 +2366,7 @@ impl Lexer<'_> {
     /// `ScanJsxAttributeValue`: true if the string at `start` is left to `Scan`, which happens after a comment.
     #[cold]
     #[inline(never)]
-    fn is_string_of_javascript(&mut self, before: usize, start: usize) -> bool {
+    fn is_javascript_string(&mut self, before: usize, start: usize) -> bool {
         let mut pos = before;
         while let Some((c, len)) = decode(self.src.get(pos..start).unwrap_or_default())
             && is_white_space_like(c as i32)
@@ -2459,7 +2465,7 @@ impl Lexer<'_> {
             }
             self.newline_before = newline_before;
             let Ok(valid) = core::str::from_utf8(text) else {
-                return self.jsx_text_of_bytes(start, text);
+                return self.jsx_text_with_invalid_utf8(start, text);
             };
             let needs_fixing = text
                 .iter()
@@ -2523,7 +2529,7 @@ impl Lexer<'_> {
     #[cold]
     #[inline(never)]
     #[track_caller]
-    fn jsx_text_of_bytes(&mut self, start: usize, text: &[u8]) {
+    fn jsx_text_with_invalid_utf8(&mut self, start: usize, text: &[u8]) {
         if !self.recovers {
             return self.refuse(Refusal::NotUtf8);
         }
@@ -2553,7 +2559,7 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
     // Leading whitespace on the first line is kept.
     let mut first_non_whitespace = Some(0);
     for (at, c) in text.char_indices() {
-        let (is_line_break, is_blank) = match c {
+        let (is_line_break, is_whitespace) = match c {
             '!'..='~' => (false, false),
             ' ' | '\t' => (false, true),
             c => (
@@ -2569,7 +2575,7 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
                 decode_jsx_entities(&text[start..end], &mut decoded);
             }
             first_non_whitespace = None;
-        } else if !is_blank {
+        } else if !is_whitespace {
             after_last_non_whitespace = Some(at + c.len_utf8());
             first_non_whitespace.get_or_insert(at);
         }

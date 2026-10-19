@@ -16,7 +16,7 @@ pub(crate) fn describe(error: &bun_sys::Error) -> Vec<u8> {
 
 /// Returns `path` with a trailing NUL. A path that's too long for any system becomes the empty path, where nothing
 /// exists.
-fn terminated<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
+fn null_terminated<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
     match path.len() < MAX_PATH_BYTES {
         true => z(path, buffer),
         false => ZStr::EMPTY,
@@ -28,8 +28,8 @@ fn terminated<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
 /// every path.
 fn for_libuv<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
     match cfg!(windows) && path.len() >= 240 {
-        true => terminated(&paths::namespaced(path), buffer),
-        false => terminated(path, buffer),
+        true => null_terminated(&paths::namespaced(path), buffer),
+        false => null_terminated(path, buffer),
     }
 }
 
@@ -87,7 +87,7 @@ pub(crate) fn link_kind_and_size(path: &[u8]) -> Option<(LinkKind, u64)> {
 }
 
 /// Returns what the symlink at `path` resolves to. `Ok(None)` if that's neither a file nor a directory.
-pub(crate) fn end_of_link(path: &[u8]) -> bun_sys::Result<Option<Kind>> {
+pub(crate) fn link_target_kind(path: &[u8]) -> bun_sys::Result<Option<Kind>> {
     let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get()))?;
     Ok(match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File => Some(Kind::File),
@@ -109,12 +109,12 @@ fn too_large() -> bun_sys::Error {
 }
 
 /// Opens `path` for reading without blocking. A blocking open of a named pipe waits for a writer that may never come.
-fn open_without_waiting(path: &[u8]) -> bun_sys::Result<File> {
-    let without_waiting = if cfg!(unix) { O::NONBLOCK } else { 0 };
-    File::openat(Fd::cwd(), path, O::RDONLY | without_waiting, 0)
+fn open_nonblocking(path: &[u8]) -> bun_sys::Result<File> {
+    let nonblocking = if cfg!(unix) { O::NONBLOCK } else { 0 };
+    File::openat(Fd::cwd(), path, O::RDONLY | nonblocking, 0)
 }
 
-/// Reads `file` to the end. `file` isn't a regular file and was opened by [`open_without_waiting`].
+/// Reads `file` to the end. `file` isn't a regular file and was opened by [`open_nonblocking`].
 fn read_stream(file: &File) -> bun_sys::Result<Vec<u8>> {
     // Reads do block while a writer is connected, e.g. `--config <(..)`.
     bun_sys::update_nonblocking(file.handle(), false)?;
@@ -134,7 +134,7 @@ fn read_stream(file: &File) -> bun_sys::Result<Vec<u8>> {
 /// error in Node too, or after 64 MB of anything else. `/dev/null` and pipes have to be readable, but a symlink in a
 /// repository can also point to `/dev/zero`. A named pipe with no writer reads as empty.
 pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
-    let file = open_without_waiting(path)?;
+    let file = open_nonblocking(path)?;
     let found = file.stat()?;
     if matches!(bun_sys::kind_from_mode(found.st_mode as _), EntryKind::File) {
         let size = found.st_size as u64;
@@ -166,7 +166,7 @@ impl NamedPipes {
                 continue;
             }
             // The code that reads the file later reports the error.
-            let Ok(file) = open_without_waiting(&path) else {
+            let Ok(file) = open_nonblocking(&path) else {
                 continue;
             };
             let is_pipe = file.stat().is_ok_and(|found| {
@@ -307,9 +307,9 @@ fn rename(from: &[u8], to: &[u8]) -> bun_sys::Result<()> {
     // On Windows, this call can also replace a file that's open for reading. Not every file system supports it.
     bun_sys::renameat(
         Fd::cwd(),
-        terminated(&from, &mut path_buffer_pool::get()),
+        null_terminated(&from, &mut path_buffer_pool::get()),
         Fd::cwd(),
-        terminated(&to, &mut path_buffer_pool::get()),
+        null_terminated(&to, &mut path_buffer_pool::get()),
     )
     .or_else(|error| match cfg!(windows) {
         true => bun_sys::rename(
@@ -322,7 +322,10 @@ fn rename(from: &[u8], to: &[u8]) -> bun_sys::Result<()> {
 
 fn remove(path: &[u8]) {
     let path = paths::to_native(path.to_vec());
-    let _ = bun_sys::unlinkat(Fd::cwd(), terminated(&path, &mut path_buffer_pool::get()));
+    let _ = bun_sys::unlinkat(
+        Fd::cwd(),
+        null_terminated(&path, &mut path_buffer_pool::get()),
+    );
 }
 
 /// Returns a file's extended attributes: tags, ACL, security label. A file renamed over it doesn't inherit them. `None`
@@ -403,9 +406,9 @@ fn overwrite(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     let (file, old) = File::openat(Fd::cwd(), real, flags, 0)
         .and_then(|file| file.read_to_end().map(|old| (file, old)))
         .map_err(|error| describe(&error))?;
-    let cut_to = |length: usize| bun_sys::ftruncate(file.handle(), length as i64);
+    let truncate_to = |length: usize| bun_sys::ftruncate(file.handle(), length as i64);
     let (error, written) = match write_at_start(&file, text) {
-        Ok(()) => match cut_to(text.len()) {
+        Ok(()) => match truncate_to(text.len()) {
             Ok(()) => return Ok(()),
             Err(error) => (error, text.len()),
         },
@@ -416,7 +419,7 @@ fn overwrite(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     let restored = write_at_start(&file, &old[..written.min(old.len())])
         .map_err(|(error, _)| error)
         .and_then(|()| match written > old.len() {
-            true => cut_to(old.len()),
+            true => truncate_to(old.len()),
             false => Ok(()),
         });
     let mut why = describe(&error);
@@ -452,7 +455,7 @@ fn write_through(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
 
 /// Returns the nearest directory, starting at `directory` and walking up, that contains `.git` or `.jj`. Ignore files
 /// use the same rule.
-fn root_above(directory: &[u8]) -> Option<&[u8]> {
+fn find_repository_root(directory: &[u8]) -> Option<&[u8]> {
     let is_root = |it: &&[u8]| {
         [&b".git"[..], b".jj"]
             .iter()
@@ -464,14 +467,14 @@ fn root_above(directory: &[u8]) -> Option<&[u8]> {
 /// Returns the real path of the repository that contains `cwd`, or of `cwd` if it isn't in a repository.
 fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
     let cwd = real_path(cwd)?;
-    let found = root_above(&cwd).map(<[u8]>::to_vec);
+    let found = find_repository_root(&cwd).map(<[u8]>::to_vec);
     Some(found.unwrap_or(cwd))
 }
 
-const LEADS_OUT: &[u8] = b"it is a symlink to a file outside the repository";
+const ESCAPES_REPOSITORY: &[u8] = b"it is a symlink to a file outside the repository";
 
 /// True if `path` is inside `cwd` but its symlinks lead outside the repository. `real` is the real path of `path`.
-fn leads_out(cwd: &[u8], path: &[u8], real: &[u8]) -> bool {
+fn escapes_repository(cwd: &[u8], path: &[u8], real: &[u8]) -> bool {
     // `bun lint` passes native paths.
     let (portable, real) = (paths::from_native(path), paths::from_native(real));
     real != portable
@@ -504,11 +507,11 @@ pub(crate) fn write_atomically(
     // When an open file is renamed over, NTFS moves it to a special directory. The real path points there if another
     // thread, which reached the file by a different path, replaced it after it was opened here. Resolving again finds
     // the new file.
-    if cfg!(windows) && leads_out(cwd, path, &real) {
+    if cfg!(windows) && escapes_repository(cwd, path, &real) {
         real = resolve()?;
     }
-    if leads_out(cwd, path, &real) {
-        return Err(LEADS_OUT.to_vec());
+    if escapes_repository(cwd, path, &real) {
+        return Err(ESCAPES_REPOSITORY.to_vec());
     }
     if !written.0.lock().insert(real.clone()) {
         return Ok(());
@@ -558,15 +561,15 @@ fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Re
     // `/dev/stdout` has no real path when it's a pipe, but everything in a repository has one. So a path inside `cwd`
     // with no real path is rejected only if `cwd` is in a repository. `/dev/stdout` still works from `/` and `/dev`.
     let real = real_path(path);
-    let is_refused = match &real {
-        Some(real) => leads_out(cwd, path, real),
+    let is_rejected = match &real {
+        Some(real) => escapes_repository(cwd, path, real),
         None => {
             paths::inside(cwd, &paths::from_native(path)).is_some()
-                && real_path(cwd).is_none_or(|cwd| root_above(&cwd).is_some())
+                && real_path(cwd).is_none_or(|cwd| find_repository_root(&cwd).is_some())
         }
     };
-    if is_refused {
-        return Err(LEADS_OUT.to_vec());
+    if is_rejected {
+        return Err(ESCAPES_REPOSITORY.to_vec());
     }
     let (checked, last_link) = match &real {
         Some(real) => (&real[..], O::NOFOLLOW),
@@ -595,8 +598,8 @@ pub(crate) fn write_new(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(), Vec<
         return write_to_stream(cwd, path, stream, text);
     }
     let real = real_path_of_new(path).map_err(|error| describe(&error))?;
-    if leads_out(cwd, path, &real) {
-        return Err(LEADS_OUT.to_vec());
+    if escapes_repository(cwd, path, &real) {
+        return Err(ESCAPES_REPOSITORY.to_vec());
     }
     // Open the path that was checked, not `path`, and don't follow a symlink that was created there since the check.
     let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC | O::NOFOLLOW;

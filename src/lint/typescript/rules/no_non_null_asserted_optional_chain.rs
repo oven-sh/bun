@@ -53,7 +53,7 @@ fn check_as_oxlint<'a>(e: Expr<'a>, operand: Expr<'a>, cx: &mut Cx<'a, NoNonNull
                     labels.push(Span::new(link, link + 1), "optional chain used");
                 }
             })
-            .suggest_change_of_behavior(SUGGEST_REMOVING_NON_NULL, &[], |fixer| fixer.remove(mark));
+            .suggest_behavior_change(SUGGEST_REMOVING_NON_NULL, &[], |fixer| fixer.remove(mark));
     }
 }
 
@@ -78,7 +78,7 @@ impl Rule for NoNonNullAssertedOptionalChain {
         let remove_assertion = |at: Expr<'a>, assertion: Span| {
             let end = assertion.end;
             cx.report(at, NO_NON_NULL_OPTIONAL_CHAIN)
-                .suggest_change_of_behavior(SUGGEST_REMOVING_NON_NULL, &[], |fixer| fixer.remove(Span::new(end.saturating_sub(1), end)));
+                .suggest_behavior_change(SUGGEST_REMOVING_NON_NULL, &[], |fixer| fixer.remove(Span::new(end.saturating_sub(1), end)));
         };
         // `(x?.y)!` is reported at the chain, `x?.y!` at the assertion. `(x?.y!)!` gets both reports at the same
         // location, the outer one first.

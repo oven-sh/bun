@@ -65,10 +65,11 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().mapper_of(&pairs)
     }
 
-    /// Returns `Prop::mapper`, with the key added if `prop` stores its key separately (`Types::key_apart`). Use this to
-    /// read the mapper of any property that may belong to a mapped type, except to compare two properties.
+    /// Returns `Prop::mapper`, with the key added if `prop` stores its key separately (`Types::separate_key`). Use this
+    /// to read the mapper of any property that may belong to a mapped type, except to compare two properties.
     pub(super) fn mapper_of_prop(&self, prop: &Prop) -> MapperId {
-        let (Some(key), PropSource::Mapped(of, ..)) = (self.types().key_apart(prop), &prop.source)
+        let (Some(key), PropSource::Mapped(of, ..)) =
+            (self.types().separate_key(prop), &prop.source)
         else {
             return prop.mapper;
         };
@@ -86,7 +87,7 @@ impl<'p, 's> Checker<'p, 's> {
         prop: &Prop,
         outer: MapperId,
     ) -> (MapperId, bool) {
-        if self.types().key_apart(prop).is_none() {
+        if self.types().separate_key(prop).is_none() {
             return (self.compose(prop.mapper, outer), false);
         }
         if outer == MapperId::IDENTITY {
@@ -102,17 +103,17 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Sets `prop.mapper` to `compose(prop.mapper, outer)`.
     pub(super) fn compose_mapper_of_prop(&mut self, prop: &mut Prop, outer: MapperId) {
-        let had_key_apart = self.types().key_apart(prop).is_some();
-        let (composed, has_key_apart) = self.composed_mapper_of_prop(prop, outer);
+        let had_separate_key = self.types().separate_key(prop).is_some();
+        let (composed, has_separate_key) = self.composed_mapper_of_prop(prop, outer);
         prop.mapper = composed;
-        if had_key_apart && !has_key_apart {
+        if had_separate_key && !has_separate_key {
             prop.name_type = TypeId::UNRESOLVED;
         }
     }
 
     /// Call before changing `prop.source`. Clears a separately stored key, which is only valid for the current source.
-    pub(super) fn forget_key_apart(&self, prop: &mut Prop) {
-        if self.types().key_apart(prop).is_some() {
+    pub(super) fn forget_separate_key(&self, prop: &mut Prop) {
+        if self.types().separate_key(prop).is_some() {
             prop.name_type = TypeId::UNRESOLVED;
         }
     }
@@ -153,14 +154,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getGenericObjectFlags`: `ObjectFlagsIsGenericObjectType`, `ObjectFlagsIsGenericIndexType`.
     /// A mapped type resolves its constraint type no matter which flag is requested.
     fn get_generic_object_flags(&mut self, ty: TypeId) -> (bool, bool) {
-        let (object, index, _) = self.generic_object_flags_and_whether_resolved(ty);
+        let (object, index, _) = self.generic_object_flags_and_is_resolved(ty);
         (object, index)
     }
 
     /// `getGenericObjectFlags`, plus a third flag that is true if the answer depends on a mapped type, whether it was
     /// computed now or cached earlier. If the flag is false, nothing was resolved and the answer depends only on the
     /// structure of the types.
-    fn generic_object_flags_and_whether_resolved(&mut self, ty: TypeId) -> (bool, bool, bool) {
+    fn generic_object_flags_and_is_resolved(&mut self, ty: TypeId) -> (bool, bool, bool) {
         match *self.data(ty) {
             TypeData::Union(ref parts) | TypeData::Intersection(ref parts) => {
                 let known = if self.types().member_flags(ty) & (tf::INSTANTIABLE | tf::OBJECT) == 0
@@ -175,7 +176,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 // `ObjectFlagsIsGenericTypeComputed`
                 let known = self.task_facts.get(ty);
-                if known & task_fact::KNOWS_GENERIC_OBJECT_FLAGS != 0 {
+                if known & task_fact::GENERIC_OBJECT_FLAGS_COMPUTED != 0 {
                     return (
                         known & task_fact::IS_GENERIC_OBJECT_TYPE != 0,
                         known & task_fact::IS_GENERIC_INDEX_TYPE != 0,
@@ -186,14 +187,14 @@ impl<'p, 's> Checker<'p, 's> {
                 if !is_resolved {
                     (self.types()).set_generic_object_flags(ty, (object, index));
                 } else {
-                    let mut facts = task_fact::KNOWS_GENERIC_OBJECT_FLAGS;
+                    let mut facts = task_fact::GENERIC_OBJECT_FLAGS_COMPUTED;
                     if object {
                         facts |= task_fact::IS_GENERIC_OBJECT_TYPE;
                     }
                     if index {
                         facts |= task_fact::IS_GENERIC_INDEX_TYPE;
                     }
-                    let all = task_fact::KNOWS_GENERIC_OBJECT_FLAGS
+                    let all = task_fact::GENERIC_OBJECT_FLAGS_COMPUTED
                         | task_fact::IS_GENERIC_OBJECT_TYPE
                         | task_fact::IS_GENERIC_INDEX_TYPE;
                     self.task_facts.replace(ty, all, facts);
@@ -217,11 +218,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// ORs together `generic_object_flags_and_whether_resolved` for each of `types`.
+    /// ORs together `generic_object_flags_and_is_resolved` for each of `types`.
     fn generic_object_flags_of_all(&mut self, types: &[TypeId]) -> (bool, bool, bool) {
         let mut all = (false, false, false);
         for &ty in types {
-            let one = self.generic_object_flags_and_whether_resolved(ty);
+            let one = self.generic_object_flags_and_is_resolved(ty);
             all = (all.0 | one.0, all.1 | one.1, all.2 | one.2);
         }
         all
@@ -255,8 +256,8 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         // FOR SPEED. tsgo instantiates the name on every request.
-        let kept = self.links.has_generic_name(ty);
-        if let Some((is_generic, repeated)) = &kept
+        let cached_entry = self.links.has_generic_name(ty);
+        if let Some((is_generic, repeated)) = &cached_entry
             && self.repeat(repeated)
         {
             return *is_generic;
@@ -264,15 +265,15 @@ impl<'p, 's> Checker<'p, 's> {
         let constraint_type = links::MappedPart::ConstraintType as usize;
         let ((is_generic, _), stored, repeated) = self.derive_measured(
             |c| c.derive_has_generic_name(ty, (file, node, mapper), constraint),
-            |c, &(_, stays)| {
-                stays
+            |c, &(_, is_final)| {
+                is_final
                     && c.is_type_node_settled(file, mapped.name_ty)
-                    && c.kept_part::<TypeId>(ty, links::Kind::Mapped, constraint_type)
+                    && c.cached_part::<TypeId>(ty, links::Kind::Mapped, constraint_type)
                         .is_some()
             },
         );
-        if let (None, Some(stored), Some(repeated)) = (kept, stored, repeated) {
-            (self.links).keep_has_generic_name(ty, (is_generic, repeated), stored);
+        if let (None, Some(stored), Some(repeated)) = (cached_entry, stored, repeated) {
+            (self.links).cache_has_generic_name(ty, (is_generic, repeated), stored);
         }
         is_generic
     }
@@ -299,7 +300,7 @@ impl<'p, 's> Checker<'p, 's> {
         // In `{ [K in "a" as Z<T[]>]: 1 }`, every level is a different type from the same declaration.
         let is_in_progress = (self.generic_mapped_types_in_progress).contains(&(file, node));
         self.generic_mapped_types_in_progress.push((file, node));
-        let stays = !is_in_progress && self.is_mapper_idle(with_keys);
+        let is_final = !is_in_progress && self.is_mapper_idle(with_keys);
         let name = if is_in_progress && self.is_half_of_stack_in_use() {
             self.generic_mapped_types_cut_short.push(ty);
             self.instantiation_count = 5_000_000;
@@ -309,7 +310,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let is_generic = self.is_generic_index_type(name);
         self.generic_mapped_types_in_progress.pop();
-        (is_generic, stays)
+        (is_generic, is_final)
     }
 
     // ───────────────────────────── keyof ─────────────────────────────
@@ -394,8 +395,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // FOR SPEED. `keyof` of an intersection requests this again for every instantiation that
         // contains the mapped type.
-        let kept = self.links.index_type(ty);
-        if let Some((keys, repeated)) = &kept
+        let cached_entry = self.links.index_type(ty);
+        if let Some((keys, repeated)) = &cached_entry
             && self.repeat(repeated)
         {
             return *keys;
@@ -405,12 +406,12 @@ impl<'p, 's> Checker<'p, 's> {
             |c, &(_, is_idle)| {
                 is_idle
                     && c.is_type_node_settled(file, decl.name_ty)
-                    && c.kept_part::<TypeId>(ty, links::Kind::Mapped, constraint_type)
+                    && c.cached_part::<TypeId>(ty, links::Kind::Mapped, constraint_type)
                         .is_some()
             },
         );
-        if let (None, Some(stored), Some(repeated)) = (kept, stored, repeated) {
-            self.links.keep_index_type(ty, (keys, repeated), stored);
+        if let (None, Some(stored), Some(repeated)) = (cached_entry, stored, repeated) {
+            self.links.cache_index_type(ty, (keys, repeated), stored);
         }
         keys
     }
@@ -642,7 +643,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `key_type_of_prop` without the `t.flags&include` test.
     fn name_type_or_key_type_of_prop(&mut self, owner: TypeId, prop: &Prop) -> Option<TypeId> {
-        // A separately stored key (`Types::key_apart`) is also the `nameType`, because there is no `as` clause.
+        // A separately stored key (`Types::separate_key`) is also the `nameType`, because there is no `as` clause.
         if prop.name_type != TypeId::UNRESOLVED {
             return Some(prop.name_type);
         }
@@ -711,7 +712,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns `Prop::name_type` for a symbol created from `prop`, a property of `owner`.
     pub(super) fn name_type_of_copy(&mut self, owner: TypeId, prop: &Prop) -> TypeId {
-        if prop.name_type != TypeId::UNRESOLVED && self.types().key_apart(prop).is_none() {
+        if prop.name_type != TypeId::UNRESOLVED && self.types().separate_key(prop).is_none() {
             return prop.name_type;
         }
         // A `nameType` is stored for a late-bound name (`lateBindMember`), for a computed name in an
@@ -758,16 +759,16 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             key
         };
-        let mut spelling_it: SmallVec<[TypeId; 2]> = SmallVec::new();
+        let mut matching_names: SmallVec<[TypeId; 2]> = SmallVec::new();
         for &name in self.parts(names) {
             if self.property_name_of_type(name) == Some(prop.name) {
-                spelling_it.push(name);
+                matching_names.push(name);
             }
         }
-        match spelling_it[..] {
+        match matching_names[..] {
             [] => None,
             [one] => Some(one),
-            _ => Some(self.union(&spelling_it)),
+            _ => Some(self.union(&matching_names)),
         }
     }
 
@@ -2999,7 +3000,7 @@ impl<'p, 's> Checker<'p, 's> {
         let of = self.containing_type_of_mapped_prop(of, prop);
         let (file, node, mapper) = self.mapped_origin(of)?;
         let param = self.type_param(file, self.mapped_decl(file, node).param);
-        let key_type = match self.types().key_apart(prop) {
+        let key_type = match self.types().separate_key(prop) {
             Some(key_type) => key_type,
             None => self.types().map(prop.mapper, param)?,
         };
@@ -3007,8 +3008,10 @@ impl<'p, 's> Checker<'p, 's> {
         let key = if self.is_union(key_type) {
             let constraint = self.mapped_constraint(file, node, mapper);
             let (keys, _) = self.mapped_key_types(file, node, mapper, constraint);
-            let named_alike = self.parts(key_type);
-            keys.iter().copied().find(|key| named_alike.contains(key))?
+            let keys_with_same_name = self.parts(key_type);
+            keys.iter()
+                .copied()
+                .find(|key| keys_with_same_name.contains(key))?
         } else {
             key_type
         };
@@ -3041,14 +3044,14 @@ impl<'p, 's> Checker<'p, 's> {
         let of = self.containing_type_of_mapped_prop(created_for, prop);
         // The `created_for` entry is read first and wins if its type is `any`. While that entry is missing, a later
         // call may find one, so the result isn't cached here.
-        let reads_the_same_entry_from_now_on = of == created_for || known.is_some();
+        let always_reads_this_entry = of == created_for || known.is_some();
         let known = if of == created_for {
             known
         } else {
             (self.p.mapped_prop_types).get(&self.task, &(of, prop.name))
         };
         if let Some(known) = known {
-            if reads_the_same_entry_from_now_on {
+            if always_reads_this_entry {
                 self.known_mapped_prop_types.insert(key, known);
             }
             return known;
@@ -3106,7 +3109,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return TypeId::ERROR;
             }
             let stored = self.cycle_result();
-            let kept = (self.p.mapped_prop_types).insert(
+            let cached_entry = (self.p.mapped_prop_types).insert(
                 &self.task,
                 (of, prop.name),
                 TypeId::ERROR,
@@ -3115,7 +3118,7 @@ impl<'p, 's> Checker<'p, 's> {
             // Reported after `links.resolvedType = c.errorType`, because the message prints `of`,
             // which has this property.
             self.circular_mapped_property(of, prop.name, reentered_through_members);
-            return kept;
+            return cached_entry;
         }
         match left {
             Ok(stored) => {
@@ -3163,12 +3166,15 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(declared) => self.is_assignable(declared, param),
                 None => true,
             };
-        // See `Types::key_apart`. An `as` clause is instantiated for every key, using the mapper that includes the key.
-        let keeps_keys_apart = name_declared.is_none() && self.types().map(mapper, param).is_none();
+        // See `Types::separate_key`. An `as` clause is instantiated for every key, using the mapper that includes the
+        // key.
+        let stores_keys_separately =
+            name_declared.is_none() && self.types().map(mapper, param).is_none();
         // Maps each name to its index in `shape.props`. Only filled once there are 16 properties.
-        let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
+        let mut prop_indexes: FxHashMap<Atom, usize> = FxHashMap::default();
         for key in keys {
-            let created = (!keeps_keys_apart).then(|| self.mapper_with_pair(mapper, param, key));
+            let created =
+                (!stores_keys_separately).then(|| self.mapper_with_pair(mapper, param, key));
             let with_key =
                 |c: &Self| created.unwrap_or_else(|| c.mapper_with_pair(mapper, param, key));
             let names = match name_declared {
@@ -3201,10 +3207,11 @@ impl<'p, 's> Checker<'p, 's> {
                         shape.props.iter().position(|p| p.name == name)
                     }
                     Some(name) => {
-                        if places.is_empty() {
-                            places.extend(shape.props.iter().enumerate().map(|(i, p)| (p.name, i)));
+                        if prop_indexes.is_empty() {
+                            prop_indexes
+                                .extend(shape.props.iter().enumerate().map(|(i, p)| (p.name, i)));
                         }
-                        places.get(&name).copied()
+                        prop_indexes.get(&name).copied()
                     }
                     None => None,
                 };
@@ -3214,7 +3221,7 @@ impl<'p, 's> Checker<'p, 's> {
                         // their union. The first key determines the modifiers.
                         Some(i) => {
                             let types = self.types();
-                            let so_far = (types.key_apart(&shape.props[i]))
+                            let so_far = (types.separate_key(&shape.props[i]))
                                 .or_else(|| types.map(shape.props[i].mapper, param))
                                 .unwrap_or(key);
                             let all = self.union(&[so_far, key]);
@@ -3251,8 +3258,8 @@ impl<'p, 's> Checker<'p, 's> {
                             if self.is_string_like(name_ty) && self.is_numeric_name(name) {
                                 flags |= PropFlags::STRING_NAME;
                             }
-                            if !places.is_empty() {
-                                places.insert(name, shape.props.len());
+                            if !prop_indexes.is_empty() {
+                                prop_indexes.insert(name, shape.props.len());
                             }
                             // `prop.Declarations = modifiersProp.Declarations`
                             let declared = match source_prop {
@@ -3262,9 +3269,10 @@ impl<'p, 's> Checker<'p, 's> {
                                 _ => SmallVec::new(),
                             };
                             let declared = (!declared.is_empty()).then(|| self.list_of(declared));
-                            let is_key_apart =
-                                keeps_keys_apart && name_ty == key && key != TypeId::UNRESOLVED;
-                            let (own_mapper, name_type) = match is_key_apart {
+                            let is_separate_key = stores_keys_separately
+                                && name_ty == key
+                                && key != TypeId::UNRESOLVED;
+                            let (own_mapper, name_type) = match is_separate_key {
                                 true => (mapper, key),
                                 false => (with_key(self), TypeId::UNRESOLVED),
                             };
@@ -3313,21 +3321,22 @@ impl<'p, 's> Checker<'p, 's> {
                         };
                         // `getApplicableIndexInfo(modifiersType, propNameType)` runs before the `templateModifiers`
                         // test, so it resolves a union's members even under `readonly` and `-readonly`.
-                        let is_readonly_there = modifiers.as_ref().is_some_and(|modifiers| {
-                            let members = match *modifiers {
-                                Modifiers::Object(_, members) => Some(members),
-                                // `resolveUnionTypeMembers` doesn't create properties.
-                                Modifiers::Union(union) => self.members_for_index_infos(union),
-                            };
-                            members.is_some_and(|m| {
-                                let m = self.structured(m);
-                                self.applicable_index_info(&m, name_ty)
-                                    .is_some_and(|info| info.readonly)
-                            })
-                        });
+                        let is_source_index_readonly =
+                            modifiers.as_ref().is_some_and(|modifiers| {
+                                let members = match *modifiers {
+                                    Modifiers::Object(_, members) => Some(members),
+                                    // `resolveUnionTypeMembers` doesn't create properties.
+                                    Modifiers::Union(union) => self.members_for_index_infos(union),
+                                };
+                                members.is_some_and(|m| {
+                                    let m = self.structured(m);
+                                    self.applicable_index_info(&m, name_ty)
+                                        .is_some_and(|info| info.readonly)
+                                })
+                            });
                         let readonly = match mapped.readonly {
                             MappedModifier::Add => true,
-                            MappedModifier::None => is_readonly_there,
+                            MappedModifier::None => is_source_index_readonly,
                             MappedModifier::Remove => false,
                         };
                         // `appendIndexInfo`

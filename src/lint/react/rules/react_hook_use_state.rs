@@ -37,13 +37,13 @@ pub struct ReactImports<'a> {
     use_memo: Option<ImportSpec<'a>>,
     /// `reactHookImportNames`, keyed by local name.
     hooks: FxHashMap<Name<'a>, ImportSpec<'a>>,
-    first_references: FxHashMap<Asked<'a>, Option<Reference<'a>>>,
+    first_references: FxHashMap<FirstReferenceKey<'a>, Option<Reference<'a>>>,
 }
 
 /// Cache key for the first reference in `scope` to `react`, or to any hook if `react` is `None`, with `imports` imports
 /// above the call.
 #[derive(PartialEq, Eq, Hash)]
-struct Asked<'a> {
+struct FirstReferenceKey<'a> {
     scope: Scope<'a>,
     imports: usize,
     react: Option<Name<'a>>,
@@ -215,12 +215,12 @@ impl<'a> ReactImports<'a> {
             None => return false,
         };
         let scope = Node::Expr(e).scope();
-        let is_asked_for = |it: &Reference<'a>| match react {
+        let is_match = |it: &Reference<'a>| match react {
             Some(react) => it.name() == react,
             None => imported_hook(it.name()).is_some() || is_in_object_prototype(it.name().bytes()),
         };
-        let asked = Asked { scope, imports: starts.partition_point(|it| *it < at), react };
-        let first = first_references.entry(asked).or_insert_with(|| scope.references().find(is_asked_for));
+        let cache_key = FirstReferenceKey { scope, imports: starts.partition_point(|it| *it < at), react };
+        let first = first_references.entry(cache_key).or_insert_with(|| scope.references().find(is_match));
         let Some(first) = *first else {
             return false;
         };

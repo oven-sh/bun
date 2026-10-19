@@ -28,7 +28,7 @@ impl<'s> Program<'s> {
     /// True if a walk that the task made while visiting the file contains an earlier walk or is
     /// nested in one. `walked` is the task's `Task::assignments_walked`. `earlier` lists the walks
     /// of earlier commits.
-    pub(super) fn has_walked_across_earlier_walk(
+    pub(super) fn overlaps_earlier_walk(
         &self,
         walked: &[(FileId, Node, bool)],
         earlier: &[(FileId, Node)],
@@ -85,7 +85,7 @@ impl<'s> Checker<'_, 's> {
         let mut modifiers = hir.modifiers.iter();
         self.has_ambient_context = hir.kind == FileKind::Declaration
             || modifiers.any(|modifier| modifier.kind.flag() == Flags::AMBIENT);
-        self.parsed_again_for_await = None;
+        self.reparsed_for_await = None;
         // The kinds that `type_of_expr_uncached` defers. Sorted by position, because a single
         // evaluation reaches them in that order.
         let index = self.exprs_by_kind(file);
@@ -116,7 +116,7 @@ impl<'s> Checker<'_, 's> {
     /// because it reports no semantic errors (`// @ts-nocheck`, JavaScript without `checkJs`), when lint rules are
     /// about to request its types out of source order. A diagnostic that belongs to a query stays with that query's
     /// entry.
-    pub(super) fn check_source_file_and_report_nothing(&mut self, file: FileId) {
+    pub(super) fn check_source_file_silently(&mut self, file: FileId) {
         let (reported, logged) = (self.reported.len(), self.task.diagnostics.len());
         self.is_type_checked = false;
         self.save_deferred_diagnostics = true;
@@ -186,8 +186,8 @@ impl<'s> Checker<'_, 's> {
     /// `checkSourceElements`
     fn check_source_elements(&mut self, file: FileId, statements: IdList<StmtId>) {
         for s in self.hir(file).ids(statements) {
-            self.rest_between_statements();
-            if self.task.is_lost() {
+            self.idle_between_statements();
+            if self.task.was_discarded() {
                 return;
             }
             self.check_source_element(file, s);
@@ -239,8 +239,8 @@ impl<'s> Checker<'_, 's> {
     /// `checkDeferredNodes`: nodes deferred in the meantime are appended to the queue.
     fn check_deferred_nodes(&mut self, file: FileId) {
         while let Some(e) = self.deferred_nodes.pop_front() {
-            self.rest_between_statements();
-            if self.task.is_lost() {
+            self.idle_between_statements();
+            if self.task.was_discarded() {
                 return;
             }
             let saved = self.enter_source_element(CurrentNode::Expr(file, e));
@@ -374,7 +374,7 @@ impl<'s> Checker<'_, 's> {
 
     /// `checkDecorators` returns before it checks the decorators of a node that can't be decorated.
     fn check_decorator_expression(&mut self, file: FileId, e: ExprId) {
-        if self.bound(file).refused_decorators.contains(&e) {
+        if self.bound(file).rejected_decorators.contains(&e) {
             self.never_check(self.start_of(file, e), self.end_of_expr(file, e));
         } else {
             self.check_expression(file, e);
@@ -1737,7 +1737,8 @@ impl<'s> Checker<'_, 's> {
             // `resolveCall`: the type arguments of `super<T>()` are those of the `extends` clause.
             ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
                 let serialization_level = self.serialization_level;
-                if self.task.file == Some(file) && self.signatures_resolved_discarding.contains(&e)
+                if self.task.file == Some(file)
+                    && self.signatures_resolved_with_errors_discarded.contains(&e)
                 {
                     self.serialization_level = serialization_level.max(MAX_SERIALIZATION_LEVEL);
                 }

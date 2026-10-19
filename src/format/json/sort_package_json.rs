@@ -42,7 +42,7 @@ pub struct Plugin {
     /// `packageSortOrder`: these keys come before all others.
     pub first: Vec<Vec<u8>>,
     /// The working directory has `yarn.lock`, `.yarn/`, `.yarnrc.yml`, `pnpm-lock.yaml` or `pnpm-workspace.yaml`.
-    pub has_files_of_yarn_or_pnpm: bool,
+    pub has_yarn_or_pnpm_files: bool,
 }
 
 /// How to handle a key's value.
@@ -68,7 +68,7 @@ enum Over {
     /// Sort like the top level.
     Fields,
     /// Sort by name, with oxfmt's `sortScripts`.
-    ScriptsOfOxfmt,
+    OxfmtScripts,
     // The rest is in `npm.rs`.
     Dependencies,
     DependenciesMeta,
@@ -337,8 +337,8 @@ impl Plan {
                 sort_fields(members, context);
                 properties = context.fields;
             }
-            Over::ScriptsOfOxfmt if context.sorts_scripts => sort_keys(members, &[], context),
-            Over::ScriptsOfOxfmt => {}
+            Over::OxfmtScripts if context.sorts_scripts => sort_keys(members, &[], context),
+            Over::OxfmtScripts => {}
             Over::Dependencies => npm::sort_dependencies(members, context),
             Over::DependenciesMeta => {
                 npm::sort_by_package_name(members);

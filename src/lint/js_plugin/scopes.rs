@@ -5,7 +5,7 @@
 //! `src/jsc/bindings/LintScopes.cpp` only builds objects from the arrays.
 //!
 //! oxlint analyzes every file with typescript-eslint's scope manager, without TypeScript's libraries, and adds the
-//! globals itself: [`Builder::add_globals_of_oxlint`].
+//! globals itself: [`Builder::add_oxlint_globals`].
 //!
 //! # The message
 //!
@@ -87,7 +87,7 @@ const LACKS_PARENT: u32 = 1 << 1;
 const SETTING_UNDEFINED: u32 = 3;
 const IS_WRITEABLE: u32 = 1 << 2;
 /// The config or a comment lists the variable, so it also has `eslintExplicitGlobal`.
-const IS_NAMED: u32 = 1 << 3;
+const IS_LISTED: u32 = 1 << 3;
 const IS_EXPLICIT: u32 = 1 << 4;
 /// ESLint has set something on the variable.
 const HAS_SETTING: u32 = 1 << 5;
@@ -101,14 +101,14 @@ const SHAPE_LIB: u32 = 1 << 1;
 const SHAPE_USED: u32 = 1 << 2;
 const SHAPE_EXPORTED: u32 = 1 << 3;
 
-/// The first ESTree node made from `base` that `is_it` accepts.
+/// The first ESTree node made from `base` that `predicate` accepts.
 fn find<'a>(
     base: Node<'a>,
-    mut is_it: impl FnMut(VNode<'a>, NodeType) -> bool,
+    mut predicate: impl FnMut(VNode<'a>, NodeType) -> bool,
 ) -> Option<VNode<'a>> {
     let mut found = None;
     VNode::for_each_with_type_at(base, &mut |node, node_type| {
-        if found.is_none() && is_it(node, node_type) {
+        if found.is_none() && predicate(node, node_type) {
             found = Some(node);
         }
     });
@@ -249,7 +249,7 @@ struct DefinitionRecord {
 struct ReferenceRecord<'t> {
     identifier: u32,
     /// The node at which the scope manager creates it. That's the identifier, except for JSX's implicit use of `React`.
-    made_at: u32,
+    created_at: u32,
     flags: u32,
     written: u32,
     variable: u32,
@@ -855,7 +855,7 @@ struct Builder<'t, 'a> {
     definitions: Vec<DefinitionRecord>,
     references: Vec<ReferenceRecord<'t>>,
     /// For each global variable that's referenced but not declared: a reference to it, and its flags.
-    referred: Vec<(u32, u32)>,
+    referenced_globals: Vec<(u32, u32)>,
     /// Keyed by a class scope's index: the second variable for the class name.
     inner_class_names: FxHashMap<u32, u32>,
     /// For each scope: the list of the variables in `scope.taints`.
@@ -900,7 +900,7 @@ fn is_strict_for_oxlint(scope: Scope, known: &mut Vec<Option<bool>>) -> bool {
 
 /// True if `scope` is the top level of a CommonJS file under oxlint. oxlint treats it as a function, so it gets an
 /// `arguments` variable. A `var arguments` is that same variable.
-fn gets_arguments_of_file<'a>(file: &'a File<'a>, scope: Scope<'a>) -> bool {
+fn has_file_level_arguments<'a>(file: &'a File<'a>, scope: Scope<'a>) -> bool {
     scope.kind() == ScopeKind::Module
         && file.language().is_oxlint
         && crate::utils::oxlint::source_type(file) == SourceType::CommonJs
@@ -921,14 +921,14 @@ impl<'t, 'a> Builder<'t, 'a> {
         // scope, and a CommonJS file's top level is in a function scope, which has `arguments`.
         let of_oxlint =
             (file.language().is_oxlint).then(|| crate::utils::oxlint::source_type(file));
-        let is_no_module = of_oxlint.is_some_and(|it| it != SourceType::Module);
+        let is_not_module = of_oxlint.is_some_and(|it| it != SourceType::Module);
         let (is_script, is_commonjs) = (
             of_oxlint == Some(SourceType::Script),
             of_oxlint == Some(SourceType::CommonJs),
         );
         // The module scope is the second scope, and a script doesn't have it.
         let place = |scope: Scope| scope.id().0 - u32::from(is_script && scope.id().0 > 0);
-        let mut arguments_of_file = NONE;
+        let mut file_arguments = NONE;
         let mut known_strict = Vec::new();
         for scope in file.scopes() {
             let is_top = scope.kind() == ScopeKind::Module;
@@ -936,7 +936,7 @@ impl<'t, 'a> Builder<'t, 'a> {
                 true => 0,
                 false => self.scopes.len() as u32,
             };
-            let is_strict = match is_no_module {
+            let is_strict = match is_not_module {
                 // The directive is in the function.
                 true if is_commonjs && scope.kind() == ScopeKind::Global => false,
                 true => is_strict_for_oxlint(scope, &mut known_strict),
@@ -956,8 +956,8 @@ impl<'t, 'a> Builder<'t, 'a> {
                     first_variable: self.variables.len() as u32,
                 });
             }
-            if gets_arguments_of_file(file, scope) {
-                arguments_of_file = self.variables.len() as u32;
+            if has_file_level_arguments(file, scope) {
+                file_arguments = self.variables.len() as u32;
                 let first_definition = self.definitions.len() as u32;
                 self.variables.push(VariableRecord {
                     name: Name::Arguments,
@@ -1022,7 +1022,7 @@ impl<'t, 'a> Builder<'t, 'a> {
             }
         }
 
-        // The references still to be added, sorted by `made_at`.
+        // The references still to be added, sorted by `created_at`.
         let mut late = VecDeque::from(self.references_to_const());
         let mut is_first_to_const = true;
         let mut seen = FxHashSet::default();
@@ -1032,10 +1032,10 @@ impl<'t, 'a> Builder<'t, 'a> {
             if identifier == NONE {
                 continue;
             }
-            while let Some(it) = late.pop_front_if(|it| it.made_at < identifier) {
+            while let Some(it) = late.pop_front_if(|it| it.created_at < identifier) {
                 self.add_late(it, &mut is_first_to_const);
             }
-            // oxlint matches globals by name. See `add_globals_of_oxlint`.
+            // oxlint matches globals by name. See `add_oxlint_globals`.
             let global = match self.is_oxlint {
                 true => None,
                 false => reference.global(),
@@ -1049,7 +1049,8 @@ impl<'t, 'a> Builder<'t, 'a> {
                     | (u32::from(global.is_writable) * IS_WRITABLE)
                     | (u32::from(global.is_in_lib) * IS_IN_LIB)
                     | (u32::from(!global.is_only_in_lib) * IS_CONFIGURED);
-                self.referred.push((self.references.len() as u32, flags));
+                self.referenced_globals
+                    .push((self.references.len() as u32, flags));
             }
             let written = id(reference.write_expr().and_then(expression));
             let is_partial = self.is_espree
@@ -1060,7 +1061,7 @@ impl<'t, 'a> Builder<'t, 'a> {
                 self.maybe_implicit_global(identifier, reference.flags(), from);
             let record = ReferenceRecord {
                 identifier,
-                made_at: match reference.is_jsx_pragma() {
+                created_at: match reference.is_jsx_pragma() {
                     true => self.tree.first_jsx_after(identifier),
                     false => identifier,
                 },
@@ -1072,18 +1073,18 @@ impl<'t, 'a> Builder<'t, 'a> {
                 variable: match reference.symbol() {
                     Some(it) => index_of.get(it.key()).copied().unwrap_or(NONE),
                     // In a function it has a symbol.
-                    None if reference.name().bytes() == b"arguments" => arguments_of_file,
+                    None if reference.name().bytes() == b"arguments" => file_arguments,
                     None => NONE,
                 },
                 from,
                 assigning,
                 name: reference.name().bytes(),
             };
-            match record.made_at == identifier {
+            match record.created_at == identifier {
                 true => self.references.push(record),
                 false => {
                     late.insert(
-                        late.partition_point(|it| it.made_at < record.made_at),
+                        late.partition_point(|it| it.created_at < record.created_at),
                         record,
                     );
                 }
@@ -1144,7 +1145,7 @@ impl<'t, 'a> Builder<'t, 'a> {
             }
             found.push(ReferenceRecord {
                 identifier,
-                made_at: identifier,
+                created_at: identifier,
                 flags: u32::from((ReferenceFlags::READ | ReferenceFlags::TYPE).bits())
                     | TO_GLOBAL
                     | HAS_NULL_IMPLICIT_GLOBAL,
@@ -1162,7 +1163,8 @@ impl<'t, 'a> Builder<'t, 'a> {
         let is_to_const = reference.flags & TO_GLOBAL != 0;
         if is_to_const && std::mem::take(is_first_to_const) {
             let flags = IS_TYPE | IS_IN_LIB;
-            self.referred.push((self.references.len() as u32, flags));
+            self.referenced_globals
+                .push((self.references.len() as u32, flags));
         }
         self.references.push(reference);
     }
@@ -1174,8 +1176,8 @@ impl<'t, 'a> Builder<'t, 'a> {
             return (0..self.scopes.len() as u32).collect();
         }
         let node_count = self.tree.nodes.len();
-        let made_at = self.references.iter().map(|it| it.made_at).collect();
-        let mut references = Order::new(made_at, node_count);
+        let created_at = self.references.iter().map(|it| it.created_at).collect();
+        let mut references = Order::new(created_at, node_count);
         let mut scopes = Order::new(self.scopes.iter().map(|it| it.block).collect(), node_count);
         let mut order = TypeScriptOrder {
             tree: &self.tree,
@@ -1190,7 +1192,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         if references.has_moved {
             let moved = references.order.iter();
             self.references = moved.map(|&it| self.references[it as usize]).collect();
-            for (reference, _) in &mut self.referred {
+            for (reference, _) in &mut self.referenced_globals {
                 *reference = references.place[*reference as usize];
             }
         }
@@ -1198,7 +1200,7 @@ impl<'t, 'a> Builder<'t, 'a> {
     }
 
     /// The variables below this index are the ones the file declares.
-    fn declared_until(&self) -> u32 {
+    fn declared_end(&self) -> u32 {
         self.declared + self.inner_class_names.len() as u32
     }
 
@@ -1449,7 +1451,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         variables: &mut Vec<u32>,
     ) {
         if self.is_oxlint {
-            return self.add_globals_of_oxlint(configured, variables);
+            return self.add_oxlint_globals(configured, variables);
         }
         // Each name's variable so far. Configured names are found by index, so a file only hashes the names that it
         // mentions.
@@ -1467,7 +1469,7 @@ impl<'t, 'a> Builder<'t, 'a> {
             of_configured: vec![0; configured.list.len()],
             others: FxHashMap::default(),
         };
-        for &(reference, flags) in &self.referred {
+        for &(reference, flags) in &self.referenced_globals {
             *flags_of.slot(self.references[reference as usize].name) = flags;
         }
         let mut comment_of = vec![None; configured.list.len()];
@@ -1498,7 +1500,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         };
 
         let mut settings = Vec::with_capacity(configured.list.len());
-        for &(reference, flags) in &self.referred {
+        for &(reference, flags) in &self.referenced_globals {
             if flags & IS_CONFIGURED == 0 {
                 let ReferenceRecord {
                     identifier, name, ..
@@ -1530,7 +1532,7 @@ impl<'t, 'a> Builder<'t, 'a> {
             settings.push(GlobalSetting {
                 variable: define(slot, name, Name::Configured(index as u32), flags),
                 bits: setting_bits(*implicit)
-                    | IS_NAMED
+                    | IS_LISTED
                     | (u32::from(setting == Global::Writable) * IS_WRITEABLE)
                     | (u32::from(comment.is_some()) * IS_EXPLICIT),
                 comments: comment.map_or(0, |it| push_list(lists, &starts_of(&it.comments))),
@@ -1551,7 +1553,7 @@ impl<'t, 'a> Builder<'t, 'a> {
             settings.push(GlobalSetting {
                 variable: define(named.slot(name), name, written, flags),
                 bits: setting_bits(implicit)
-                    | IS_NAMED
+                    | IS_LISTED
                     | (u32::from(setting == Global::Writable) * IS_WRITEABLE)
                     | (u32::from(comment.is_some()) * IS_EXPLICIT),
                 comments: comment.map_or(0, |it| push_list(lists, &starts_of(&it.comments))),
@@ -1573,7 +1575,7 @@ impl<'t, 'a> Builder<'t, 'a> {
             settings.push(GlobalSetting {
                 variable: define(named.slot(&comment.name), &comment.name, name, flags),
                 bits: SETTING_UNDEFINED
-                    | IS_NAMED
+                    | IS_LISTED
                     | IS_EXPLICIT
                     | (u32::from(comment.setting == Global::Writable) * IS_WRITEABLE),
                 comments,
@@ -1596,11 +1598,7 @@ impl<'t, 'a> Builder<'t, 'a> {
     /// `const`, before the file's declarations. oxlint defines the entries of `configured`, and comments don't change
     /// them. Then it resolves what's left over in the global scope by name only, so a type reference can resolve to a
     /// value.
-    fn add_globals_of_oxlint(
-        &mut self,
-        configured: &'t ConfiguredGlobals,
-        variables: &mut Vec<u32>,
-    ) {
+    fn add_oxlint_globals(&mut self, configured: &'t ConfiguredGlobals, variables: &mut Vec<u32>) {
         let mut named = GlobalNames {
             configured,
             of_configured: vec![NONE; configured.list.len()],
@@ -1642,7 +1640,7 @@ impl<'t, 'a> Builder<'t, 'a> {
                     .push(global(Name::Configured(index as u32), name, 0));
             }
             self.variables[*slot as usize].settings = setting_bits(*setting)
-                | IS_NAMED
+                | IS_LISTED
                 | HAS_SETTING
                 | (u32::from(*setting == Global::Writable) * IS_WRITEABLE);
         }
@@ -1667,13 +1665,13 @@ impl<'t, 'a> Builder<'t, 'a> {
     fn references_by_variable(&mut self) -> Vec<u32> {
         // A reference that only resolves to a declared variable by name isn't in that variable's references. With
         // oxlint it is.
-        let declared_until = match self.is_oxlint {
+        let declared_end = match self.is_oxlint {
             true => 0,
-            false => self.declared_until(),
+            false => self.declared_end(),
         };
         let keys: Vec<u32> = (self.references.iter())
             .map(
-                |it| match it.flags & TO_GLOBAL != 0 && it.variable < declared_until {
+                |it| match it.flags & TO_GLOBAL != 0 && it.variable < declared_end {
                     true => NONE,
                     false => it.variable,
                 },
@@ -1684,7 +1682,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         // references when that scope ends. JSX's implicit use of `React` goes straight to the scope that declares
         // `React`, so it gets there before the references of the scopes that are still open.
         let for_jsx: Vec<(ReferenceRecord, u32)> = (self.references.iter().copied().zip(0..))
-            .filter(|(it, _)| it.made_at != it.identifier)
+            .filter(|(it, _)| it.created_at != it.identifier)
             .collect();
         // For each scope: the last reference created before it ends.
         let mut last_in = vec![0; self.scopes.len() * usize::from(!for_jsx.is_empty())];
@@ -1711,7 +1709,7 @@ impl<'t, 'a> Builder<'t, 'a> {
                     if upper == home {
                         // A scope that contains the JSX ends later, whether or not it has another reference.
                         let block = self.scopes[scope as usize].block;
-                        let is_open = (block..=self.tree.last(block)).contains(&for_jsx.made_at);
+                        let is_open = (block..=self.tree.last(block)).contains(&for_jsx.created_at);
                         let last = last_in[scope as usize].max(index * u32::from(is_open));
                         return 2 * last + 1;
                     }
@@ -1798,14 +1796,14 @@ impl<'t, 'a> Builder<'t, 'a> {
         // `eslint-scope` also creates one for a global from the config. ESLint removes it from `globalScope.implicit`
         // again, but `getDeclaredVariables()` still finds it.
         // typescript-eslint doesn't create one for a name that the file declares in the global scope.
-        let declared_until = match self.is_oxlint {
-            true => self.declared_until(),
+        let declared_end = match self.is_oxlint {
+            true => self.declared_end(),
             false => 0,
         };
         let to_globals = (0..self.references.len() as u32)
             .filter(|&it| {
                 let reference = &self.references[it as usize];
-                reference.flags & TO_GLOBAL != 0 && reference.variable >= declared_until
+                reference.flags & TO_GLOBAL != 0 && reference.variable >= declared_end
             })
             .collect::<Vec<u32>>();
         let removed = self.implicit_globals_among(to_globals.into_iter());
@@ -1986,7 +1984,7 @@ pub(super) fn write<'t, 'a>(
     out: &mut Vec<u8>,
 ) {
     // oxlint's own rules see oxc's scopes.
-    let _scopes = file.with_scopes_of_eslint();
+    let _scopes = file.with_eslint_scopes();
     let mut builder = Builder {
         tree: Tree::new(numbered),
         is_espree: Dialect::of(file) == Dialect::Espree,
@@ -1996,7 +1994,7 @@ pub(super) fn write<'t, 'a>(
         variables: Vec::new(),
         definitions: Vec::new(),
         references: Vec::new(),
-        referred: Vec::new(),
+        referenced_globals: Vec::new(),
         inner_class_names: FxHashMap::default(),
         taints: Vec::new(),
         lists: vec![0],
@@ -2132,11 +2130,11 @@ pub(super) fn mark_used<'a>(file: &'a File<'a>, indices: impl Iterator<Item = u3
     if indices.peek().is_none() {
         return;
     }
-    let _scopes = file.with_scopes_of_eslint();
+    let _scopes = file.with_eslint_scopes();
     let mut index = 0u32;
     for scope in file.scopes() {
         // It's counted, but it isn't a symbol.
-        if gets_arguments_of_file(file, scope) {
+        if has_file_level_arguments(file, scope) {
             let _ = indices.next_if_eq(&index);
             index += 1;
         }

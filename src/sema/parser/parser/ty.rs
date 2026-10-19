@@ -77,7 +77,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return TypeNodeId::NONE;
         }
         if self.token().is_identifier_or_keyword()
-            && let Some(word) = self.type_of_one_word()
+            && let Some(word) = self.single_word_type()
         {
             return word;
         }
@@ -91,7 +91,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// continue. Most types are like that. Returns `None` if the type might continue, or if the
     /// word isn't a plain identifier or a keyword type.
     #[inline(never)]
-    fn type_of_one_word(&mut self) -> Option<TypeNodeId> {
+    fn single_word_type(&mut self) -> Option<TypeNodeId> {
         let follows = self.lx.first_byte_of_next();
         if !matches!(
             follows,
@@ -167,17 +167,17 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         // types asks this question again, twice. So an answer that took a long scan is cached. Otherwise each level of
         // `({[a as ({[b as ..` takes three times as long as the level inside it.
         let at = (self.pos(), self.context);
-        let mut place = 0;
+        let mut insert_at = 0;
         if !self.function_type_starts.is_empty() {
             // Outside speculation, nothing before the current token is read again, so drop those entries.
             if self.speculations == 0 {
                 let read = self.function_type_starts.partition_point(|it| it.0 < at.0);
                 self.function_type_starts.drain(..read);
             }
-            let kept = &self.function_type_starts;
-            match kept.binary_search_by_key(&at, |it| (it.0, it.1)) {
-                Ok(known) => return kept.get(known).is_some_and(|it| it.2),
-                Err(free) => place = free,
+            let cache = &self.function_type_starts;
+            match cache.binary_search_by_key(&at, |it| (it.0, it.1)) {
+                Ok(known) => return cache.get(known).is_some_and(|it| it.2),
+                Err(free) => insert_at = free,
             }
         }
         let mut end = at.0;
@@ -186,10 +186,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             end = p.pos();
             answer
         });
-        // Entries cached during the lookahead sort after this one, so `place` is still right.
+        // Entries cached during the lookahead sort after this one, so `insert_at` is still right.
         if end.saturating_sub(at.0) > 64 {
             self.function_type_starts
-                .insert(place, (at.0, at.1, answer));
+                .insert(insert_at, (at.0, at.1, answer));
         }
         answer
     }
@@ -245,9 +245,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn count_errors(&mut self) -> usize {
         // A scanner error that starts where the last error starts is dropped, so it doesn't count.
-        self.take_errors_of_scanner();
-        let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
-        self.f.diagnostics.iter().filter(is_of_parser).count()
+        self.take_scanner_errors();
+        let is_parse_error = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
+        self.f.diagnostics.iter().filter(is_parse_error).count()
     }
 
     /// `parseFunctionOrConstructorType`
@@ -528,7 +528,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         return ty;
                     }
                     // A `JSDocNullableType`, which the checker reports unless it's an element of a
-                    // tuple: see `take_back_nullable_type`.
+                    // tuple: see `unwrap_nullable_type`.
                     self.next();
                     self.f.rare_syntax |= rare::JSDOC_TYPE;
                     let kind = TypeNodeKind::JSDoc {
@@ -656,7 +656,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // `parseLiteralExpression` doesn't rescan it, so an invalid escape is accepted.
             T::NoSubstitutionTemplate => {
                 if self.lx.has_escape && self.reports_like_oxc() {
-                    self.piece_of_template_without_tag();
+                    self.untagged_template_piece();
                 }
                 return self.token_type(TypeNodeKind::StringLit(self.lx.atom));
             }
@@ -1118,7 +1118,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             comma = (self.token() == T::Comma).then_some((self.lx.start, self.lx.end));
             if self.has_failed()
                 || !self.eat(T::Comma)
-                    && !self.goes_on_without_comma(ListKind::HeritageClauseElement, full)
+                    && !self.continues_without_comma(ListKind::HeritageClauseElement, full)
             {
                 break;
             }
@@ -1238,7 +1238,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     | T::Exclamation
                     | T::NoSubstitutionTemplate
                     | T::TemplateHead
-            ) && self.goes_on_after_type_arguments()
+            ) && self.continues_after_type_arguments()
             {
                 return None;
             }
@@ -1250,7 +1250,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// token and continues with that token (`canFollowTypeArgumentsInExpression`).
     #[cold]
     #[inline(never)]
-    fn goes_on_after_type_arguments(&mut self) -> bool {
+    fn continues_after_type_arguments(&mut self) -> bool {
         if !self.recovers() {
             self.refuse(Refusal::Reported);
             return false;
@@ -1645,7 +1645,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn argument_in_place_of_type_arguments(&mut self, argument: TypeNodeId) -> IdList<TypeNodeId> {
         let before = self.checkpoint();
         self.type_arguments_of_type_reference(false);
-        self.forget_nodes(&before);
+        self.discard_nodes(&before);
         self.f.list(&[argument])
     }
 
@@ -1662,7 +1662,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 let at = (self.pos(), 0);
                 match self.options.dialect.typescript_5 {
                     true => self.flag(DiagnosticKind::Grammar, 2880, at, &[]),
-                    false => self.error_and_go_on(2880, at, &[]),
+                    false => self.error_and_continue(2880, at, &[]),
                 }
                 ImportAttributesToken::Assert
             }
@@ -1697,7 +1697,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let start = self.pos();
         // The first text, then each type and the text after it.
         let base = self.s.ids.len();
-        self.piece_of_template_without_tag();
+        self.untagged_template_piece();
         self.s.ids.push(self.lx.atom.0);
         self.next();
         loop {
@@ -1710,12 +1710,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 break;
             }
             self.lx.rescan_template_continuation();
-            self.piece_of_template_without_tag();
+            self.untagged_template_piece();
             self.s.ids.push(ty.0);
             self.s.ids.push(self.lx.atom.0);
-            let goes_on = self.token() == T::TemplateMiddle;
+            let has_more = self.token() == T::TemplateMiddle;
             self.next();
-            if !goes_on {
+            if !has_more {
                 break;
             }
         }
@@ -1742,7 +1742,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             let element = self.full_start();
             self.tuple_element();
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::TupleElementTypes, element)
+                && !self.continues_without_comma(ListKind::TupleElementTypes, element)
             {
                 break;
             }
@@ -1802,7 +1802,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // `parseTupleElementType`: a `JSDocNullableType` that is the whole type is an
             // optional element.
             element.ty = self.type_in_list();
-            if !has_dots && let Some(ty) = self.take_back_nullable_type(element.ty) {
+            if !has_dots && let Some(ty) = self.unwrap_nullable_type(element.ty) {
                 element.ty = ty;
                 element.optional = true;
             }
@@ -1814,7 +1814,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// If `ty` is the `T?` that ends with the previous token, removes its node and returns `T`.
     #[inline]
-    fn take_back_nullable_type(&mut self, ty: TypeNodeId) -> Option<TypeNodeId> {
+    fn unwrap_nullable_type(&mut self, ty: TypeNodeId) -> Option<TypeNodeId> {
         if self.last_nullable_type != (ty, self.prev_end()) || ty.idx() + 1 != self.f.types.len() {
             return None;
         }
@@ -1860,7 +1860,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             element.member_type = TupleMemberType::Rest;
             self.flag(DiagnosticKind::Grammar, 5087, at, &[]);
             element.ty = self.rest_element_type(element.ty);
-        } else if let Some(operand) = self.take_back_nullable_type(element.ty) {
+        } else if let Some(operand) = self.unwrap_nullable_type(element.ty) {
             element.member_type = TupleMemberType::Optional;
             element.written = operand;
             self.flag(DiagnosticKind::Grammar, 5086, at, &[]);
@@ -2109,7 +2109,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         } else if first.pos != name {
             Some((name, 1018))
         } else if first.flags.contains(Flags::OPTIONAL) {
-            Some((self.question_of_parameter, 1019))
+            Some((self.parameter_question_pos, 1019))
         } else if first.default.is_some() {
             Some((name, 1020))
         } else if first.ty.is_none() {
@@ -2196,7 +2196,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let odd_parameters = self.odd_parameters;
         let (this_param, params) = self.parameters(0);
         let parameters = (odd_parameters, this_param);
-        self.note_parameters_of_accessor(kind, params);
+        self.note_odd_accessor_parameters(kind, params);
         // `shouldParseReturnType`: "This is easy to get backward, especially in type contexts, so
         // parse the type anyway"
         if self.token() == T::EqualsGreaterThan
@@ -2295,7 +2295,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             let is_default = member.flags.contains(Flags::DEFAULT);
             let mut key = declared_key(key, name_token, is_default);
             // `getDeclarationName`: a private name outside a class declares nothing.
-            if self.classes_around == 0 && matches!(key, PropKey::Private(_)) {
+            if self.class_depth == 0 && matches!(key, PropKey::Private(_)) {
                 key = PropKey::None;
             }
             (member.key, member.name_pos) = (key, name_pos);
@@ -2421,7 +2421,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.next();
         // A line break can only get here after `declare type`, and it's an error.
         if self.newline_before() {
-            self.error_and_go_on(1142, self.range_of_token(), &[]);
+            self.error_and_continue(1142, self.range_of_token(), &[]);
         }
         if self.token() != T::Identifier && self.reports_like_oxc() {
             self.check_type_name_like_oxc(oxc::TypeName::TypeAlias);

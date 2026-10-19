@@ -73,7 +73,7 @@ impl Rule for JsxNewline {
                 let (newlines, replacement): (&[u8], &[u8]) =
                     if is_doubled { (b"\n", b"\n\n") } else { (b"\n\n", b"\n") };
                 let raw = file.slice(between);
-                let replaced = with_the_last_replaced(raw, newlines, replacement);
+                let replaced = replace_last_newlines(raw, newlines, replacement);
                 // `{a} and {b}` on one line has no line break to double.
                 (replaced != raw).then(|| fixer.replace(between, replaced))
             });
@@ -112,7 +112,7 @@ fn is_without_new_line(value: &[u8]) -> bool {
 /// `raw.replace(/(newlines)(?!.*\1)/g, replacement)`, where `newlines` is one line feed or two.
 #[cold]
 #[inline(never)]
-fn with_the_last_replaced(raw: &[u8], newlines: &[u8], replacement: &[u8]) -> Vec<u8> {
+fn replace_last_newlines(raw: &[u8], newlines: &[u8], replacement: &[u8]) -> Vec<u8> {
     let mut replaced = Vec::with_capacity(raw.len() + 1);
     let mut rest = raw;
     while let Some(at) = strings::index_of(rest, newlines) {

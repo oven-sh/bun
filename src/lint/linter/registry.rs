@@ -40,8 +40,8 @@ pub enum NativePlugins {
 impl NativePlugins {
     /// The names [`NativePlugins::Only`] accepts.
     pub fn names() -> impl Iterator<Item = &'static str> {
-        let in_place_of_a_package = Plugin::ALL.iter().filter(|it| it.follows().is_some());
-        in_place_of_a_package.map(|it| it.prefix())
+        let replaceable = Plugin::ALL.iter().filter(|it| it.follows().is_some());
+        replaceable.map(|it| it.prefix())
     }
 
     /// Parses `true`, `false`, or a comma-separated list of names. Returns `Err` with the first name that isn't one of
@@ -90,7 +90,7 @@ pub enum Missing {
     /// A formatting rule. `bun fmt` handles those.
     Formatting,
     /// The plugin is known, but [none of its rules are built in](Plugin::has_no_rules).
-    OfPluginWithoutRules(Plugin),
+    PluginHasNoRules(Plugin),
     /// No such rule. Holds the closest rule name, if any is close enough.
     Unknown(Option<Vec<u8>>),
 }
@@ -161,7 +161,7 @@ const TYPESCRIPT_COMPATIBLE_ESLINT_RULES: [&[u8]; 18] = [
 const ONLY_IN_TYPESCRIPT_IN_OXLINT: [&[u8]; 2] = [b"consistent-return", b"dot-notation"];
 
 /// oxlint's plugins under its own names, in the order it searches them for a rule written without a plugin prefix.
-const PLUGINS_OF_OXLINT: [(Plugin, &[u8]); 13] = [
+const OXLINT_PLUGINS: [(Plugin, &[u8]); 13] = [
     (Plugin::Eslint, b"eslint"),
     (Plugin::Import, b"import"),
     (Plugin::Jest, b"jest"),
@@ -206,7 +206,7 @@ pub fn normalize_plugin_name(name: &[u8]) -> Cow<'_, [u8]> {
 
 /// Maps any alias of a built-in oxlint plugin to its canonical name, like oxlint's `LintPlugins::try_from`. Any other
 /// name belongs to a JavaScript plugin and is returned as [`normalize_plugin_name`] normalizes it.
-pub fn plugin_of_oxlint(name: &[u8]) -> Cow<'_, [u8]> {
+pub fn canonical_oxlint_plugin(name: &[u8]) -> Cow<'_, [u8]> {
     let name = match normalize_plugin_name(name) {
         Cow::Borrowed(name) => name,
         owned => return owned,
@@ -224,9 +224,9 @@ pub fn plugin_of_oxlint(name: &[u8]) -> Cow<'_, [u8]> {
     })
 }
 
-/// Builds the key for rule `name` in `plugin`, which must be a name returned by [`plugin_of_oxlint`]. `eslint` rules
-/// get no prefix.
-fn oxlint_key_of(plugin: &[u8], name: &[u8]) -> Vec<u8> {
+/// Builds the key for rule `name` in `plugin`, which must be a name returned by [`canonical_oxlint_plugin`]. `eslint`
+/// rules get no prefix.
+fn oxlint_key(plugin: &[u8], name: &[u8]) -> Vec<u8> {
     match plugin {
         b"eslint" => name.to_vec(),
         plugin => [plugin, b"/", name].concat(),
@@ -244,7 +244,7 @@ pub(crate) fn is_oxlint_rule_key(key: &[u8]) -> bool {
         (b"", name) => (&b"eslint"[..], name),
         other => other,
     };
-    (PLUGINS_OF_OXLINT.iter()).any(|it| it.1 == prefix && is_in_oxlint(it.0, name))
+    (OXLINT_PLUGINS.iter()).any(|it| it.1 == prefix && is_in_oxlint(it.0, name))
 }
 
 /// The canonical key for the rule an `.oxlintrc.json` calls `id`. Mirrors oxlint's `parse_rule_key` and
@@ -256,15 +256,15 @@ pub fn oxlint_rule_key(id: &[u8]) -> Vec<u8> {
     let (prefix, name) = parse_rule_id(id);
     let plugin = match prefix {
         b"" => Cow::Borrowed(
-            (PLUGINS_OF_OXLINT.iter())
+            (OXLINT_PLUGINS.iter())
                 .find(|it| is_in_oxlint(it.0, name))
                 .map_or(&b"eslint"[..], |it| it.1),
         ),
-        prefix => plugin_of_oxlint(prefix),
+        prefix => canonical_oxlint_plugin(prefix),
     };
     match &*plugin {
         b"typescript" if is_eslint_rule_adapted_to_typescript(name) => name.to_vec(),
-        plugin => oxlint_key_of(plugin, name),
+        plugin => oxlint_key(plugin, name),
     }
 }
 
@@ -277,15 +277,15 @@ pub fn oxlint_filter_keys(name: &[u8]) -> Vec<Vec<u8>> {
         None => (&b""[..], name),
     };
     if !prefix.is_empty() {
-        let key = oxlint_key_of(&plugin_of_oxlint(prefix), rule);
+        let key = oxlint_key(&canonical_oxlint_plugin(prefix), rule);
         return match oxlint_rule_key(&key) == key {
             true => vec![key],
             false => Vec::new(),
         };
     }
-    let keys: Vec<Vec<u8>> = (PLUGINS_OF_OXLINT.iter())
+    let keys: Vec<Vec<u8>> = (OXLINT_PLUGINS.iter())
         .filter(|it| is_in_oxlint(it.0, rule))
-        .map(|it| oxlint_key_of(it.1, rule))
+        .map(|it| oxlint_key(it.1, rule))
         .collect();
     match keys.is_empty() {
         true => vec![rule.to_vec()],
@@ -297,7 +297,7 @@ pub fn oxlint_filter_keys(name: &[u8]) -> Vec<Vec<u8>> {
 pub fn oxlint_category_of_key(key: &[u8]) -> Option<&'static str> {
     let (prefix, name) = parse_rule_id(key);
     oxlint_category(
-        Plugin::of_oxlint_prefix(prefix)?,
+        Plugin::from_oxlint_prefix(prefix)?,
         std::str::from_utf8(name).ok()?,
     )
 }
@@ -325,8 +325,8 @@ impl Registry {
                 .filter(|it| it.is_deprecated && !it.follows_oxlint)
                 .all(|it| deprecated_rule(&super::RuleId::Known(it).to_vec()).is_some())
         );
-        let of_typescript = (rules.iter()).filter(|it| it.meta.plugin == Plugin::TypeScript);
-        let mut extensions: Vec<_> = of_typescript
+        let typescript_rules = (rules.iter()).filter(|it| it.meta.plugin == Plugin::TypeScript);
+        let mut extensions: Vec<_> = typescript_rules
             .map(|it| (core_rule_of(it.meta), *it))
             .collect();
         crate::utils::sort::sort_by_key(&mut extensions, |it| it.0);
@@ -347,20 +347,20 @@ impl Registry {
 
     /// The language that `plugin` exports as `name`.
     pub fn language(&self, plugin: Plugin, name: &[u8]) -> Option<&'static dyn Language> {
-        let is_it = |it: &&&dyn Language| {
+        let is_match = |it: &&&dyn Language| {
             it.plugin() == plugin && it.names().iter().any(|it| it.as_bytes() == name)
         };
-        self.languages.iter().find(is_it).copied()
+        self.languages.iter().find(is_match).copied()
     }
 
-    pub fn answering_for(mut self, which: NativePlugins) -> Registry {
+    pub fn with_native_plugins(mut self, which: NativePlugins) -> Registry {
         self.native_plugins = which;
         self
     }
 
     /// True if the built-in rules may replace the plugin an ESLint config registers as `prefix`, even though the config
     /// loads the package. Core rules don't come from a package, so they're always built in.
-    pub fn answers_for(&self, prefix: &[u8]) -> bool {
+    pub fn replaces_plugin(&self, prefix: &[u8]) -> bool {
         matches!(prefix, b"" | b"@")
             || match &self.native_plugins {
                 NativePlugins::All => true,
@@ -437,8 +437,8 @@ impl Registry {
     ) -> Option<&'static RuleEntry> {
         let (prefix, name) = parse_rule_id(id);
         let plugin = match prefers_typescript {
-            true => Plugin::of_oxlint_prefix(prefix),
-            false => Plugin::of_prefix(prefix),
+            true => Plugin::from_oxlint_prefix(prefix),
+            false => Plugin::from_prefix(prefix),
         };
         self.get_preferring(plugin?, name, prefers_typescript)
     }
@@ -497,7 +497,7 @@ impl Registry {
             return Missing::Formatting;
         }
         if let Some(plugin) = Plugin::spelled(prefix).find(|it| it.has_no_rules()) {
-            return Missing::OfPluginWithoutRules(plugin);
+            return Missing::PluginHasNoRules(plugin);
         }
         // The rule name has to be close. Keep the user's plugin prefix if it's close to a real spelling. Otherwise, if
         // the name matches exactly or no prefix was typed, suggest the ID that reports print.
@@ -505,16 +505,16 @@ impl Registry {
         let is_close = |distance: usize, written: &[u8]| distance <= written.len().max(3) / 3;
         let close = self.rules.iter().flat_map(|it| {
             let other = it.meta.name;
-            let of_name = Some(distance(name, other)).filter(|it| is_close(*it, name));
+            let name_distance = Some(distance(name, other)).filter(|it| is_close(*it, name));
             let prefixes = it.meta.plugin.spellings().iter().enumerate();
             prefixes.filter_map(move |(nth, it)| {
-                let of_prefix = match prefix {
+                let from_prefix = match prefix {
                     b"" => 0,
                     prefix => distance(prefix, it),
                 };
-                let is_meant = !prefix.is_empty() && is_close(of_prefix, prefix);
-                let is_usual = nth == 0 && (of_name == Some(0) || prefix.is_empty());
-                (is_meant || is_usual).then_some((of_name? + of_prefix, written(it, other)))
+                let is_meant = !prefix.is_empty() && is_close(from_prefix, prefix);
+                let is_usual = nth == 0 && (name_distance == Some(0) || prefix.is_empty());
+                (is_meant || is_usual).then_some((name_distance? + from_prefix, written(it, other)))
             })
         });
         Missing::Unknown(close.min_by_key(|it| it.0).map(|it| it.1))
@@ -525,7 +525,7 @@ impl Registry {
     /// `typescript-eslint/no-explicit-any`, `react/rules-of-hooks`, `node/no-unsupported-features/es-syntax`.
     pub fn find(&self, id: &[u8]) -> Option<&'static RuleEntry> {
         let (plugin, name) = parse_rule_id(id);
-        self.get(Plugin::of_prefix(plugin)?, name)
+        self.get(Plugin::from_prefix(plugin)?, name)
     }
 }
 

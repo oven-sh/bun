@@ -9,7 +9,10 @@ impl SyntaxError {
     /// Converts the offset from one in `normalizeEndOfLine(original)` to one in `original`.
     #[cold]
     pub(crate) fn before_normalizing_end_of_line(self, original: &[u8]) -> SyntaxError {
-        SyntaxError(self.0, BeforeNormalizing::new(original).place_of(self.1))
+        SyntaxError(
+            self.0,
+            BeforeNormalizing::new(original).original_offset_of(self.1),
+        )
     }
 }
 
@@ -17,7 +20,7 @@ impl SyntaxError {
 /// pass over the text in total.
 pub(crate) struct BeforeNormalizing<'a> {
     original: &'a [u8],
-    has_returns: bool,
+    has_carriage_returns: bool,
     /// The last offset that was looked up, and the matching offset in `original`.
     last: (usize, usize),
 }
@@ -26,27 +29,27 @@ impl<'a> BeforeNormalizing<'a> {
     pub(crate) fn new(original: &'a [u8]) -> BeforeNormalizing<'a> {
         BeforeNormalizing {
             original,
-            has_returns: bun_core::strings::contains_char(original, b'\r'),
+            has_carriage_returns: bun_core::strings::contains_char(original, b'\r'),
             last: (0, 0),
         }
     }
 
-    pub(crate) fn place_of(&mut self, place: u32) -> u32 {
-        if !self.has_returns {
-            return place;
+    pub(crate) fn original_offset_of(&mut self, normalized_offset: u32) -> u32 {
+        if !self.has_carriage_returns {
+            return normalized_offset;
         }
-        if (place as usize) < self.last.0 {
+        if (normalized_offset as usize) < self.last.0 {
             self.last = (0, 0);
         }
-        let (mut left, mut at) = (place as usize - self.last.0, self.last.1);
-        while left > 0 && at < self.original.len() {
+        let (mut remaining, mut at) = (normalized_offset as usize - self.last.0, self.last.1);
+        while remaining > 0 && at < self.original.len() {
             at += match self.original[at..].starts_with(b"\r\n") {
                 true => 2,
                 false => 1,
             };
-            left -= 1;
+            remaining -= 1;
         }
-        self.last = (place as usize - left, at);
+        self.last = (normalized_offset as usize - remaining, at);
         at as u32
     }
 }

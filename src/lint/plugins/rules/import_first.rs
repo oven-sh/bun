@@ -77,13 +77,13 @@ impl<const OLD_NAME: bool> Rule for First<OLD_NAME> {
                 let source = source.bytes();
                 let is_relative = if is_oxlint { is_relative_path(source) } else { source.starts_with(b".") };
                 // oxlint reports the string even in `import a = require("a")`.
-                let place = || match stmt.kind() {
+                let report_span = || match stmt.kind() {
                     StmtKind::ImportEquals(import) if !is_oxlint => import.require_span(),
                     _ => stmt.module_specifier_span(),
                 };
                 if is_relative {
                     any_relative = true;
-                } else if any_relative && let Some(span) = place() {
+                } else if any_relative && let Some(span) = report_span() {
                     cx.report(span, if is_oxlint { ABSOLUTE_FIRST } else { ABSOLUTE_AFTER_RELATIVE });
                 }
             }
@@ -129,7 +129,7 @@ fn end_with_comments<'a>(import: Stmt<'a>, fixer: Fixer<'a>) -> (u32, bool) {
         },
         _ => (import.span().end, false),
     };
-    let end = fixer.end_with_comments_beside(code_end);
+    let end = fixer.end_with_trailing_comments(code_end);
     (end, !has_semicolon || is_end_of_line_comment(file, end))
 }
 
@@ -197,7 +197,7 @@ impl<'a> ErrorInfo<'a> {
         let mut removed: SmallVec<[Span; 4]> = SmallVec::new();
         for info in sort_nodes {
             let (end, ends_open) = end_with_comments(info.node, fixer);
-            let range = Span::new(fixer.end_with_comments_beside(info.range.start), end);
+            let range = Span::new(fixer.end_with_trailing_comments(info.range.start), end);
             let node_source_code = file.slice(range);
             let is_blank_first = strings::js_whitespace_len(node_source_code) > 0;
             match !is_blank_first || is_open && !starts_on_a_new_line(node_source_code) {

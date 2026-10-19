@@ -365,7 +365,7 @@ const SEGMENT_BITS: u32 = 14;
 
 const SEGMENT: usize = 1 << SEGMENT_BITS;
 
-/// Flag in a number passed to `Segmented::of_either`. If set, the number refers to the vector's own
+/// Flag in a number passed to `Segmented::get_layered`. If set, the number refers to the vector's own
 /// elements, not to the shared vector underneath it. Every element index is below `OWN`.
 pub(crate) const OWN: u32 = 1 << 30;
 
@@ -376,26 +376,26 @@ type Segment<T> = AtomicPtr<MaybeUninit<T>>;
 /// and its offset is a mask, so a lookup doesn't count leading zeros like `Chunks::locate`.
 ///
 /// With `L = AtomicU32` the vector is shared between threads, like an `AppendVec`. With
-/// `L = Cell<u32>` it belongs to one thread, like a `LocalVec`, and `lay_over` can layer it over a
-/// shared vector so that `of_either` reads from both.
+/// `L = Cell<u32>` it belongs to one thread, like a `LocalVec`, and `layer_over` can layer it over a
+/// shared vector so that `get_layered` reads from both.
 pub(crate) struct Segmented<'a, T, L: Length, A: Allocator + Clone = Global> {
     /// Segment pointers, in order. A shared vector allocates the directory at its maximum length,
     /// so it's never replaced. A single-threaded vector starts with an empty directory and replaces
     /// it with a longer one as it grows. It's a box from `new_directory`, stored as a raw pointer
     /// because moving a box would invalidate the pointers into it in `directories` and `Elements`.
     directory: Cell<*mut [Segment<T>]>,
-    /// Used by `of_either`, indexed by the top two bits of a number. Each entry is a directory
+    /// Used by `get_layered`, indexed by the top two bits of a number. Each entry is a directory
     /// pointer, biased so that `number >> SEGMENT_BITS` indexes it with the top bits still set.
     /// Entry 0 is the shared vector's directory, entry 1 is this vector's, and entries 2 and 3 are
     /// unused.
     directories: [Cell<*const Segment<T>>; 4],
-    /// Used by `of_either`, indexed like `directories`. A number refers to an element only if it's
+    /// Used by `get_layered`, indexed like `directories`. A number refers to an element only if it's
     /// below its limit. An unused entry's limit is 0, which rejects every number.
     limits: [L; 4],
     /// Same as the `len` field of `Stable`.
     len: L,
     alloc: A,
-    /// Borrow of the shared vector passed to `lay_over`.
+    /// Borrow of the shared vector passed to `layer_over`.
     below: PhantomData<&'a [T]>,
     owns: Owns<T>,
 }
@@ -488,7 +488,7 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
             // SAFETY: as in `segment`.
             let old = unsafe { &*self.directory.get() };
             let longer = Self::new_directory(longer, old, &self.alloc);
-            // Biased by `OWN >> SEGMENT_BITS`, because `of_either` indexes it without clearing the
+            // Biased by `OWN >> SEGMENT_BITS`, because `get_layered` indexes it without clearing the
             // `OWN` bit.
             let first = longer.cast_const().cast::<Segment<T>>();
             self.directories[1].set(first.wrapping_sub(OWN as usize >> SEGMENT_BITS));
@@ -720,15 +720,15 @@ impl<T, A: Allocator + Clone> Segmented<'_, T, AtomicU32, A> {
 }
 
 impl<'a, T, A: Allocator + Clone> Segmented<'a, T, Cell<u32>, A> {
-    /// Layers this vector over `shared`. After this, `of_either` maps a number without `OWN` to an
+    /// Layers this vector over `shared`. After this, `get_layered` maps a number without `OWN` to an
     /// element of `shared`.
-    pub(crate) fn lay_over(&mut self, shared: Elements<'a, T>) {
+    pub(crate) fn layer_over(&mut self, shared: Elements<'a, T>) {
         self.directories[0].set(shared.directory);
         self.limits[0].set(OWN);
     }
 
-    /// True if `shared` was passed to the most recent `lay_over` call.
-    pub(crate) fn is_laid_over(&self, shared: Elements<'_, T>) -> bool {
+    /// True if `shared` was passed to the most recent `layer_over` call.
+    pub(crate) fn is_layered_over(&self, shared: Elements<'_, T>) -> bool {
         std::ptr::eq(self.directories[0].get(), shared.directory)
     }
 
@@ -736,14 +736,14 @@ impl<'a, T, A: Allocator + Clone> Segmented<'a, T, Cell<u32>, A> {
     /// `number` of the shared vector underneath otherwise. A number without `OWN` isn't checked
     /// against the shared vector's length, as in `get`.
     #[inline(always)]
-    pub(crate) fn of_either(&self, number: u32) -> &T {
+    pub(crate) fn get_layered(&self, number: u32) -> &T {
         let which = (number >> 30) as usize;
-        // Before `lay_over`, `limits[0]` is 0, so this rejects every number without `OWN`.
+        // Before `layer_over`, `limits[0]` is 0, so this rejects every number without `OWN`.
         assert!(number < self.limits[which].get());
         let segment =
             (self.directories[which].get()).wrapping_add((number >> SEGMENT_BITS) as usize);
         // SAFETY: the directory that the number selects has an entry for every number below the
-        // limit. The shared vector's directory is still alive, because `lay_over` requires a borrow
+        // limit. The shared vector's directory is still alive, because `layer_over` requires a borrow
         // of it for `'a`, which outlives this vector. The rest is as in `get`.
         unsafe {
             let start = (*segment).load(Ordering::Relaxed);
@@ -802,7 +802,7 @@ zeroed!(AtomicU32, AtomicU64);
 /// page fault. Reading it first would cost a second page fault (see `touch_pages`).
 ///
 /// `index`, here and below, is the index of a cell in the array. An array longer than a page starts at a page boundary.
-trait Written<C: Zeroed> {
+trait WrittenPages<C: Zeroed> {
     fn words(&self) -> &[AtomicU64];
 
     #[inline(always)]
@@ -925,7 +925,7 @@ pub struct Cells<C, A: Allocator + Clone = Global> {
     written: Box<[AtomicU64], A>,
 }
 
-impl<C: Zeroed, A: Allocator + Clone> Written<C> for Cells<C, A> {
+impl<C: Zeroed, A: Allocator + Clone> WrittenPages<C> for Cells<C, A> {
     #[inline(always)]
     fn words(&self) -> &[AtomicU64] {
         &self.written
@@ -956,7 +956,7 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
 
     /// Like `existing`, but may run while other threads call `cell`.
     #[inline]
-    pub fn existing_by_now(&self, index: u32) -> Option<&C> {
+    pub fn existing_acquire(&self, index: u32) -> Option<&C> {
         self.existing_loaded(index, Ordering::Acquire)
     }
 
@@ -1156,7 +1156,7 @@ unsafe impl<C, A: Allocator + Clone> Series<C, A> for Growing<C, A> {
 
 /// Several series of cell slices. Readers get the newest slice of a series without a lock. Each series is a shard of a
 /// table, and a bigger slice replaces the newest one when the shard fills up. Older slices stay allocated until
-/// `forget_older`, because a reader may still be using one.
+/// `free_retired`, because a reader may still be using one.
 pub struct Newest<C, A: Allocator + Clone = Global, S: Series<C, A> = Fixed<C, 1>> {
     newest: S,
     retired: AtomicPtr<Retired<C>>,
@@ -1196,7 +1196,7 @@ impl<C: Zeroed, A: Allocator + Clone, S: Series<C, A>> Newest<C, A, S> {
         if newest.0.is_null() {
             return &[];
         }
-        // SAFETY: `replace` stored this address and length after it initialized that many cells. Only `forget_older`
+        // SAFETY: `replace` stored this address and length after it initialized that many cells. Only `free_retired`
         // frees them, and only after they're retired.
         unsafe { std::slice::from_raw_parts(newest.first(), newest.len()) }
     }
@@ -1245,7 +1245,7 @@ impl<C, A: Allocator + Clone, S: Series<C, A>> Newest<C, A, S> {
 
     /// Frees every slice except the newest of each series.
     #[inline]
-    pub fn forget_older(&mut self) {
+    pub fn free_retired(&mut self) {
         let mut next = std::mem::replace(self.retired.get_mut(), null_mut());
         while !next.is_null() {
             // SAFETY: `retire` made `next` from a box in this allocator, and `replace` allocated the slice from the
@@ -1264,7 +1264,7 @@ impl<C, A: Allocator + Clone, S: Series<C, A>> Newest<C, A, S> {
     pub fn clear(&mut self) {
         (self.newest)
             .for_each(|newest| self.retire(Slice(newest.swap(null_mut(), Ordering::Relaxed))));
-        self.forget_older();
+        self.free_retired();
     }
 }
 
@@ -1383,7 +1383,7 @@ mod tests {
     }
 
     #[test]
-    fn a_panic_during_drain_leaks_and_frees_nothing_twice() {
+    fn panic_during_drain_leaks_but_never_double_frees() {
         let alive = AtomicUsize::new(0);
         let mut vec = LocalVec::<Counted>::new();
         for value in 0..10 {
@@ -1399,7 +1399,7 @@ mod tests {
     }
 
     #[test]
-    fn the_drop_drops_the_elements() {
+    fn drop_drops_the_elements() {
         let alive = AtomicUsize::new(0);
         let shared = AppendVec::<Counted>::new();
         let local = LocalVec::<Counted>::new();
@@ -1414,7 +1414,7 @@ mod tests {
     }
 
     #[test]
-    fn release_frees_the_long_chunks_only() {
+    fn release_frees_only_long_chunks() {
         let blocks = AtomicUsize::new(0);
         let mut chunks = Chunks::<MaybeUninit<u8>, 2, _>::new_in(Counting(&blocks));
         // Chunks of 4, 8, 16 and 32.
@@ -1438,7 +1438,7 @@ mod tests {
     /// 65,537 pushes take a minute under Miri. `release` is tested above.
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn clear_frees_the_long_chunks_only() {
+    fn clear_frees_only_long_chunks() {
         let mut vec = LocalVec::<u8>::new();
         for _ in 0..(1 << 16) + 1 {
             vec.push(7);
@@ -1456,7 +1456,7 @@ mod tests {
     }
 
     #[test]
-    fn threads_push_and_read_what_the_others_pushed() {
+    fn threads_read_each_others_pushes() {
         const THREADS: u32 = 4;
         const EACH: u32 = if cfg!(miri) { 400 } else { 20_000 };
         let alive = AtomicUsize::new(0);
@@ -1489,7 +1489,7 @@ mod tests {
     }
 
     #[test]
-    fn threads_write_what_one_thread_reserved() {
+    fn threads_write_indices_reserved_by_one_thread() {
         const THREADS: u32 = 4;
         const EACH: u32 = if cfg!(miri) { 300 } else { 5_000 };
         let vec = AppendVec::<Box<u32>>::new();
@@ -1580,7 +1580,7 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn a_cell_beyond_the_range_is_refused() {
+    fn out_of_range_cell_panics() {
         Cells::<AtomicU32>::default().cell(u32::MAX);
     }
 
@@ -1658,7 +1658,7 @@ mod tests {
     }
 
     #[test]
-    fn a_segmented_vector_keeps_its_elements_where_they_are() {
+    fn segmented_vector_elements_never_move() {
         let vec = Segmented::<Box<u32>, Cell<u32>>::new_in(Global);
         let first = vec.get(vec.push(Box::new(0)));
         // More than two segments. Miri gets fewer because 131,077 elements took it a minute.
@@ -1707,7 +1707,7 @@ mod tests {
     /// 114,688 pushes take four minutes under Miri. The next test allocates segments without filling them.
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn an_emptied_segmented_vector_keeps_its_first_segment() {
+    fn cleared_segmented_vector_keeps_its_first_segment() {
         let blocks = AtomicUsize::new(0);
         let count = || blocks.load(Ordering::Relaxed);
         let mut vec = Segmented::<u64, Cell<u32>, _>::new_in(Counting(&blocks));
@@ -1728,23 +1728,23 @@ mod tests {
     }
 
     #[test]
-    fn an_element_stays_where_it_is_when_the_directory_grows() {
+    fn elements_do_not_move_when_the_directory_grows() {
         let mut vec = Segmented::<u64, Cell<u32>>::new_in(Global);
         vec.push(7);
-        let first = vec.of_either(OWN);
+        let first = vec.get_layered(OWN);
         // The directory starts with four entries.
         for segment in 1..5 {
             vec.install(segment * SEGMENT as u32);
         }
         assert_eq!(*first, 7);
-        assert!(std::ptr::eq(first, vec.of_either(OWN)) && std::ptr::eq(first, vec.get(0)));
+        assert!(std::ptr::eq(first, vec.get_layered(OWN)) && std::ptr::eq(first, vec.get(0)));
         vec.clear();
         vec.install(SEGMENT as u32);
-        assert_eq!((vec.push(8), *vec.of_either(OWN)), (0, 8));
+        assert_eq!((vec.push(8), *vec.get_layered(OWN)), (0, 8));
     }
 
     #[test]
-    fn threads_fill_a_segmented_vector_that_one_thread_made_room_in() {
+    fn threads_fill_a_segmented_vector_reserved_by_one_thread() {
         const THREADS: u32 = 4;
         const EACH: u32 = if cfg!(miri) { 300 } else { SEGMENT as u32 };
         let blocks = AtomicUsize::new(0);
@@ -1774,12 +1774,12 @@ mod tests {
     }
 
     #[test]
-    fn a_segmented_vector_finds_the_elements_of_the_one_that_it_is_laid_over() {
+    fn layered_vector_reads_the_shared_vectors_elements() {
         let shared = Segmented::<u64, AtomicU32>::new_in(Global);
         let mut own = Segmented::<u64, Cell<u32>>::new_in(Global);
-        assert!(!own.is_laid_over(shared.elements()));
-        own.lay_over(shared.elements());
-        assert!(own.is_laid_over(shared.elements()));
+        assert!(!own.is_layered_over(shared.elements()));
+        own.layer_over(shared.elements());
+        assert!(own.is_layered_over(shared.elements()));
         // Crosses segment boundaries, with enough segments that the directory grows twice.
         let many = if cfg!(miri) {
             300
@@ -1791,11 +1791,11 @@ mod tests {
             own.push(u64::from(value) + 1_000_000_000);
         }
         for number in 0..many {
-            assert!(std::ptr::eq(own.of_either(number), shared.get(number)));
-            assert!(std::ptr::eq(own.of_either(number | OWN), own.get(number)));
-            assert_eq!(*own.of_either(number), u64::from(number));
+            assert!(std::ptr::eq(own.get_layered(number), shared.get(number)));
+            assert!(std::ptr::eq(own.get_layered(number | OWN), own.get(number)));
+            assert_eq!(*own.get_layered(number), u64::from(number));
             assert_eq!(
-                *own.of_either(number | OWN),
+                *own.get_layered(number | OWN),
                 u64::from(number) + 1_000_000_000
             );
         }
@@ -1803,24 +1803,24 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn a_number_of_an_element_that_is_gone_is_refused() {
+    fn number_of_a_cleared_element_panics() {
         let mut own = Segmented::<u64, Cell<u32>>::new_in(Global);
         own.push(1);
-        assert_eq!(*own.of_either(OWN), 1);
+        assert_eq!(*own.get_layered(OWN), 1);
         own.clear();
-        own.of_either(OWN);
+        own.get_layered(OWN);
     }
 
     #[test]
     #[should_panic]
-    fn a_number_of_the_vector_below_is_refused_if_there_is_none() {
+    fn shared_number_panics_without_a_shared_vector() {
         let own = Segmented::<u64, Cell<u32>>::new_in(Global);
         own.push(1);
-        own.of_either(0);
+        own.get_layered(0);
     }
 
     #[test]
-    fn threads_replace_the_placeholders_that_they_add() {
+    fn threads_replace_their_own_placeholders() {
         // Miri needs a minute for 16 rounds.
         const ROUNDS: u32 = if cfg!(miri) { 2 } else { 16 };
         let store = Segmented::<u64, AtomicU32>::new_in(Global);
@@ -1855,7 +1855,7 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn a_placeholder_is_replaced_in_its_own_vector_only() {
+    fn replacing_a_placeholder_in_another_vector_panics() {
         let [one, other] = [(), ()].map(|()| Segmented::<u64, AtomicU32>::new_in(Global));
         other.push(1);
         let placeholder = one.add_placeholders(1, || 0).take_first().unwrap();
@@ -1866,7 +1866,7 @@ mod tests {
     fn is_sync<T: Sync>() {}
 
     #[test]
-    fn what_is_shared_between_threads() {
+    fn containers_are_send_and_sync() {
         is_send::<AppendVec<Box<u32>>>();
         is_sync::<AppendVec<Box<u32>>>();
         is_send::<LocalVec<Box<u32>>>();
@@ -1911,7 +1911,7 @@ mod tests {
     }
 
     #[test]
-    fn every_block_goes_back_to_its_allocator() {
+    fn every_block_is_returned_to_its_allocator() {
         let blocks = AtomicUsize::new(0);
         let alloc = Counting(&blocks);
         let count = || blocks.load(Ordering::Relaxed);
@@ -1953,7 +1953,7 @@ mod tests {
         assert_eq!((first.len(), len(&newest, 1), len(&newest, 0)), (4, 8, 1));
         // One allocation per slice, plus the list node for the retired slice.
         assert_eq!(count(), 4);
-        newest.forget_older();
+        newest.free_retired();
         assert_eq!((len(&newest, 1), len(&newest, 0), count()), (8, 1, 2));
         newest.clear();
         assert_eq!((len(&newest, 1), len(&newest, 0), count()), (0, 0, 0));
@@ -1979,7 +1979,7 @@ mod tests {
         assert_eq!((counter(near), counter(far), counter(other)), (7, 0, 0));
         // Three chunks of heads, four slices, and the list node for the retired slice.
         assert_eq!(count(), 8);
-        newest.forget_older();
+        newest.free_retired();
         assert_eq!((len(&newest, near), count()), (8, 6));
         newest.clear();
         assert_eq!((len(&newest, near), len(&newest, far), count()), (0, 0, 3));

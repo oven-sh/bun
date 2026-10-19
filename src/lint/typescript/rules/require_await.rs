@@ -163,14 +163,14 @@ impl Rule for RequireAwait {
                 continue;
             }
             let name = get_function_name_with_kind(func, false);
-            let place = match cx.language().is_oxlint {
+            let report_span = match cx.language().is_oxlint {
                 true => tsgolint_function_head_loc(func),
                 false => get_function_head_loc(func),
             };
-            cx.report(place, MISSING_AWAIT)
+            cx.report(report_span, MISSING_AWAIT)
                 .claims(func)
                 .data("name", upper_case_first(&name).into_owned())
-                .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| remove_async(fixer, func));
+                .suggest_behavior_change(REMOVE_ASYNC, &[], |fixer| remove_async(fixer, func));
         }
     }
 }

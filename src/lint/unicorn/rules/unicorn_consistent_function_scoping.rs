@@ -84,7 +84,10 @@ fn is_top_or_module_block(scope: Scope) -> bool {
 impl ConsistentFunctionScoping {
     /// Returns the variable `func` is assigned to and the function's expression. Returns `None` if the rule skips the
     /// function because of its position or because it has no name.
-    fn place_of<'a>(&self, func: Func<'a>) -> Option<(Option<Pat<'a>>, Option<Expr<'a>>)> {
+    fn binding_and_expression<'a>(
+        &self,
+        func: Func<'a>,
+    ) -> Option<(Option<Pat<'a>>, Option<Expr<'a>>)> {
         if !func.has_body() {
             return None;
         }
@@ -120,7 +123,7 @@ impl ConsistentFunctionScoping {
     }
 
     fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        let Some((binding, expression)) = self.place_of(func) else {
+        let Some((binding, expression)) = self.binding_and_expression(func) else {
             return;
         };
         let (name, reporter_span) = match (binding, func.name(), expression) {
@@ -157,22 +160,21 @@ impl ConsistentFunctionScoping {
             return;
         }
 
-        let captures = cx
-            .state
-            .captures
-            .get_or_insert_with(|| Captures::of(file, |it| self.place_of(it).is_some()));
+        let captures = cx.state.captures.get_or_insert_with(|| {
+            Captures::of(file, |it| self.binding_and_expression(it).is_some())
+        });
         // A variable declared outside the enclosing function doesn't keep `func` in that function.
         let is_in_plain_function = function_of(parent_scope).is_some()
             && !captures.with_eval.contains(parent_scope)
-            && !captures.is_in_scope_of_oxlint_only(parent_scope, scope.span().start);
-        let is_kept = match is_in_plain_function {
-            true => captures.of_parent.contains(scope),
+            && !captures.is_in_oxlint_only_scope(parent_scope, scope.span().start);
+        let must_stay = match is_in_plain_function {
+            true => captures.captures_from_parent.contains(scope),
             false => (captures.outermost.get(scope)).is_some_and(|it| {
                 it.iter()
                     .any(|it| *it != symbol && Some(*it) != func.symbol())
             }),
         };
-        if is_kept {
+        if must_stay {
             return;
         }
         let with_private_names = &mut cx.state.with_private_names;
@@ -274,25 +276,25 @@ struct Direct<'a> {
 /// The outside variables referenced by the functions the rule checks and by the functions nested in them.
 struct Captures<'a> {
     regions: IdMap<Scope<'a>, Region>,
-    /// [`scopes_of_oxlint_only`]
-    scopes_of_oxlint_only: FxHashMap<Scope<'a>, Vec<Span>>,
+    /// [`oxlint_only_scopes`]
+    oxlint_only_scopes: FxHashMap<Scope<'a>, Vec<Span>>,
     /// [`outermost_captures`]
     outermost: IdMap<Scope<'a>, Outermost<'a>>,
     /// The scopes of functions that refer to a variable tied to their parent scope: the variable is declared there, the
     /// parent scope also refers to it, or it's the name of the function that owns the parent scope or of the class this
     /// function is directly in.
-    of_parent: IdSet<Scope<'a>>,
+    captures_from_parent: IdSet<Scope<'a>>,
     /// [`scopes_with_eval`]
     with_eval: IdSet<Scope<'a>>,
 }
 
 impl<'a> Captures<'a> {
-    fn of(file: &'a File<'a>, is_looked_at: impl Fn(Func<'a>) -> bool) -> Captures<'a> {
+    fn of(file: &'a File<'a>, is_checked: impl Fn(Func<'a>) -> bool) -> Captures<'a> {
         let mut captures = Captures {
             regions: IdMap::new(),
-            scopes_of_oxlint_only: scopes_of_oxlint_only(file),
+            oxlint_only_scopes: oxlint_only_scopes(file),
             outermost: IdMap::new(),
-            of_parent: IdSet::new(),
+            captures_from_parent: IdSet::new(),
             with_eval: scopes_with_eval(file),
         };
         // The scope chain from the global scope to the current one.
@@ -309,7 +311,7 @@ impl<'a> Captures<'a> {
             while path.last().is_some_and(|it| !it.contains(scope)) {
                 path.pop();
             }
-            if !function_of(scope).is_some_and(&is_looked_at) {
+            if !function_of(scope).is_some_and(&is_checked) {
                 path.push(scope);
                 continue;
             }
@@ -318,7 +320,7 @@ impl<'a> Captures<'a> {
                 if let Some(is_around) = is_around.get_mut(it.id().idx()) {
                     *is_around = true;
                 }
-                if is_scope_of_oxlint(it) {
+                if is_oxlint_scope(it) {
                     break;
                 }
             }
@@ -349,7 +351,7 @@ impl<'a> Captures<'a> {
             }
             for reference in scope.references_with_names_of_patterns_first() {
                 let is_of_interest =
-                    |it: &Symbol<'a>| it.scope() != scope && is_reference_of_oxlint(reference, *it);
+                    |it: &Symbol<'a>| it.scope() != scope && is_oxlint_reference(reference, *it);
                 let Some(symbol) = reference.symbol().filter(is_of_interest) else {
                     continue;
                 };
@@ -362,7 +364,7 @@ impl<'a> Captures<'a> {
                     captures.note_reference(&path, entries, symbol, at);
                 }
                 let is_new = entries.last().is_none_or(|it| it.scope != scope);
-                if is_new && !captures.is_in_scope_of_oxlint_only(scope, at) {
+                if is_new && !captures.is_in_oxlint_only_scope(scope, at) {
                     entries.push(Direct { scope, noted: None });
                 }
             }
@@ -372,8 +374,8 @@ impl<'a> Captures<'a> {
     }
 
     /// True if the position `at`, which is directly in `scope`, is in a nested scope that only oxlint has.
-    fn is_in_scope_of_oxlint_only(&self, scope: Scope<'a>, at: u32) -> bool {
-        self.scopes_of_oxlint_only.get(&scope).is_some_and(|spans| {
+    fn is_in_oxlint_only_scope(&self, scope: Scope<'a>, at: u32) -> bool {
+        self.oxlint_only_scopes.get(&scope).is_some_and(|spans| {
             let after = spans.partition_point(|it| it.start <= at);
             after
                 .checked_sub(1)
@@ -391,7 +393,7 @@ impl<'a> Captures<'a> {
         if !region.contains(at) || own_symbols(func).contains(&Some(symbol)) {
             return false;
         }
-        self.of_parent.insert(inner);
+        self.captures_from_parent.insert(inner);
         true
     }
 
@@ -404,7 +406,7 @@ impl<'a> Captures<'a> {
         at: u32,
     ) {
         let in_scope_of_declaration = scope_in(path, symbol.scope());
-        let in_what_it_names = match symbol.declarations().next() {
+        let in_named_scope = match symbol.declarations().next() {
             Some(Declaration::Fn(func)) => func.scope().and_then(|it| scope_in(path, it)),
             Some(Declaration::Class(class)) => class
                 .scope()
@@ -412,7 +414,7 @@ impl<'a> Captures<'a> {
                 .and_then(|it| scope_in(path, it)),
             _ => None,
         };
-        for inner in [in_scope_of_declaration, in_what_it_names]
+        for inner in [in_scope_of_declaration, in_named_scope]
             .into_iter()
             .flatten()
         {
@@ -435,7 +437,7 @@ impl<'a> Captures<'a> {
 }
 
 /// oxlint has no scope for a function expression's name or a field's initializer.
-fn is_scope_of_oxlint(scope: Scope) -> bool {
+fn is_oxlint_scope(scope: Scope) -> bool {
     !matches!(
         scope.kind(),
         ScopeKind::FunctionExpressionName | ScopeKind::ClassFieldInitializer
@@ -452,7 +454,7 @@ fn scope_in<'a>(path: &[Scope<'a>], outer: Scope<'a>) -> Option<Scope<'a>> {
     path.get(after..)?
         .iter()
         .copied()
-        .find(|it| is_scope_of_oxlint(*it))
+        .find(|it| is_oxlint_scope(*it))
 }
 
 /// The scopes that contain an `eval(..)`.
@@ -491,7 +493,7 @@ fn is_called(reference: Reference) -> bool {
 }
 
 /// True if oxlint has this reference and takes it into account.
-fn is_reference_of_oxlint(reference: Reference, referenced: Symbol) -> bool {
+fn is_oxlint_reference(reference: Reference, referenced: Symbol) -> bool {
     !referenced.is_implicit_arguments() && !reference.is_jsx_pragma() && !is_import(referenced)
 }
 
@@ -500,7 +502,7 @@ fn is_jsx_tag_name(reference: Reference) -> bool {
 }
 
 /// `for (let ..` or `for (const ..`, which has a scope here too.
-fn declares_in_its_head(statement: Stmt) -> bool {
+fn declares_in_head(statement: Stmt) -> bool {
     let head = match statement.kind() {
         StmtKind::For { init, .. } => init,
         StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => Some(left),
@@ -513,7 +515,7 @@ fn declares_in_its_head(statement: Stmt) -> bool {
 
 /// Maps a function's scope to the statements directly in it that have a scope only in oxlint, in source order.
 /// Statements nested in another such statement are dropped.
-fn scopes_of_oxlint_only<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Span>> {
+fn oxlint_only_scopes<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Span>> {
     let mut found: FxHashMap<Scope<'a>, Vec<Span>> = FxHashMap::default();
     for tag in [
         StmtTag::For,
@@ -523,7 +525,7 @@ fn scopes_of_oxlint_only<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Spa
         StmtTag::Interface,
     ] {
         for statement in file.stmts_of_kind(tag) {
-            if matches!(statement.parent(), Node::File(_)) || declares_in_its_head(statement) {
+            if matches!(statement.parent(), Node::File(_)) || declares_in_head(statement) {
                 continue;
             }
             let scope = Node::Stmt(statement).scope();
@@ -540,11 +542,11 @@ fn scopes_of_oxlint_only<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Spa
         utils::sort::sort_unstable_by_key(spans, |it| it.start);
         let mut end = 0;
         spans.retain(|it| {
-            let is_in_none = it.start >= end;
-            if is_in_none {
+            let is_outermost = it.start >= end;
+            if is_outermost {
                 end = it.end;
             }
-            is_in_none
+            is_outermost
         });
     }
     found
@@ -658,7 +660,7 @@ fn outermost_captures<'a>(
         for reference in scope.references_with_names_of_patterns_first() {
             let counts = |it: &Symbol<'a>| {
                 it.scope() != scope
-                    && is_reference_of_oxlint(reference, *it)
+                    && is_oxlint_reference(reference, *it)
                     && !is_jsx_tag_name(reference)
             };
             let Some(referenced) = reference.symbol().filter(counts) else {

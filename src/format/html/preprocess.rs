@@ -451,7 +451,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             flags.set(Flags::IS_LEADING_SPACE_SENSITIVE, is_leading);
             flags.set(Flags::IS_TRAILING_SPACE_SENSITIVE, is_trailing);
         }
-        self.keep_what_touches_through_hidden_elements(first);
+        self.keep_inline_content_joined_across_hidden_blocks(first);
         // In order, so each node sees the final flag of its previous sibling and the not yet adjusted flag of its next
         // one.
         let mut next = Some(first);
@@ -494,7 +494,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
     /// and after it is inline and there's no whitespace in between, this marks all of it as whitespace-sensitive so
     /// that none is added. `first` is the first sibling. The siblings must already have the sensitivity flags that
     /// Prettier computes.
-    fn keep_what_touches_through_hidden_elements(&mut self, first: Id) {
+    fn keep_inline_content_joined_across_hidden_blocks(&mut self, first: Id) {
         let is_other = |node: &Node<'_>| {
             !matches!(node.kind, Kind::FrontMatter | Kind::AngularControlFlowBlock)
         };

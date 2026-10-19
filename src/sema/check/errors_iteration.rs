@@ -7,7 +7,9 @@
 //! `checkSignatureDeclaration` for a generator's return type annotation, in TypeScript 7.0.2's checker.go.
 
 use super::errors_access::PropertyAccess;
-use super::errors_operators::{start_of_dots_before, start_of_equals_before, why_no_reference};
+use super::errors_operators::{
+    invalid_reference_code, start_of_dots_before, start_of_equals_before,
+};
 use super::mapped::AccessNode;
 use super::symbols::IterationUse;
 use super::*;
@@ -163,15 +165,15 @@ impl Checker<'_, '_> {
             return false;
         };
         // `checkArrayLiteral`, `getSpreadArgumentType`
-        let asks = matches!(self.hir(file)[parent].kind, ExprKind::Array(_))
+        let tests_array_like = matches!(self.hir(file)[parent].kind, ExprKind::Array(_))
             || !self.is_array_or_tuple(actual)
-                && self.is_spread_left_to_rest_parameter(file, parent, spread);
-        asks && self.is_array_like(actual)
+                && self.is_spread_collected_by_rest_parameter(file, parent, spread);
+        tests_array_like && self.is_array_like(actual)
     }
 
     /// `getSignatureApplicabilityError`, `inferTypeArguments`: true if the argument `spread` of `call` isn't checked
     /// individually, because a rest parameter that isn't a plain array collects it.
-    fn is_spread_left_to_rest_parameter(
+    fn is_spread_collected_by_rest_parameter(
         &mut self,
         file: FileId,
         call: ExprId,
@@ -261,7 +263,7 @@ impl Checker<'_, '_> {
             }
             if self.is_assignment_pattern(file, left) {
                 self.check_destructuring_assignment(file, left, initializer);
-            } else if why_no_reference(hir, left, 2364, 2779).is_none() {
+            } else if invalid_reference_code(hir, left, 2364, 2779).is_none() {
                 let left_type = self.type_of_expr(file, left);
                 let error_node = Some(self.error_range_of(file, left));
                 let right = Some((file, value));
@@ -372,7 +374,7 @@ impl Checker<'_, '_> {
             let keys = self.union(&keys);
             // `objectLiteralType.symbol`
             let assigned_symbol = self.symbol_of_type(object_literal_type);
-            let assigned_symbol = assigned_symbol.and_then(|it| it.of_binder());
+            let assigned_symbol = assigned_symbol.and_then(|it| it.as_binder_symbol());
             let rest =
                 self.rest_of_object(object_literal_type, &names, keys, None, assigned_symbol);
             // `checkGrammarForDisallowedTrailingComma`
@@ -584,11 +586,11 @@ impl Checker<'_, '_> {
     ) {
         let hir = self.hir(file);
         // `needCheckInitializer || needCheckWidenedType`
-        let is_asked_for = hir[func].params.iter().any(|p| {
+        let is_needed = hir[func].params.iter().any(|p| {
             matches!(hir[hir[p].pat].kind, PatKind::Object(_) | PatKind::Array(_))
                 && (hir[p].default.is_some() || Self::is_pattern_without_names(hir, hir[p].pat))
         });
-        if is_asked_for {
+        if is_needed {
             self.contextual_signatures_at_check
                 .push(((file, func), contextual));
         }

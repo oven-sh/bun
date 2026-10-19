@@ -187,7 +187,7 @@ struct Reader<'t, 'c> {
 }
 
 /// oxfmt's `blank_line_after_comma`: line breaks between a value and its comma don't make an empty line.
-fn empty_line_is_behind_the_comma(config: &Config) -> bool {
+fn empty_line_is_after_the_comma(config: &Config) -> bool {
     config.flavor.is_oxfmt()
 }
 
@@ -251,11 +251,11 @@ impl Reader<'_, '_> {
             return Reason(expected, self.at as u32);
         }
         // A sign's width, which includes its operand, is only set once the operand has been read.
-        let is_behind_sign = (self.tree.nodes.iter().rev().take(2))
+        let is_after_sign = (self.tree.nodes.iter().rev().take(2))
             .any(|it| it.kind == Kind::Unary && it.width == 0);
         let message = match *rest {
             [] => Message::UnexpectedEnd,
-            _ if is_behind_sign => Message::UnexpectedToken,
+            _ if is_after_sign => Message::UnexpectedToken,
             [quote @ (b'"' | b'\''), ref string @ ..] => {
                 let mut at = 0;
                 while string
@@ -665,7 +665,7 @@ impl Reader<'_, '_> {
         match self.peek() {
             Some(b',') => {
                 self.at += 1;
-                if empty_line_is_behind_the_comma(self.config) {
+                if empty_line_is_after_the_comma(self.config) {
                     self.line_breaks = 0;
                     self.line_separators = 0;
                 }
@@ -675,15 +675,15 @@ impl Reader<'_, '_> {
                 }
                 // With a comment in between, oxfmt agrees with Prettier in every known case.
                 let has_comment = self.unresolved != self.tree.comments.len();
-                let is_behind_the_comma = empty_line_is_behind_the_comma(self.config);
+                let is_after_the_comma = empty_line_is_after_the_comma(self.config);
                 // The check below skips any number of commas, including those of holes.
                 if (self.line_breaks + self.line_separators > 1
                     || self.peek() == Some(b',')
-                    || (is_behind_the_comma && has_comment))
+                    || (is_after_the_comma && has_comment))
                     && !self.config.is_stringify()
                 {
                     let is_blank = match container {
-                        _ if is_behind_the_comma && !has_comment => {
+                        _ if is_after_the_comma && !has_comment => {
                             self.line_breaks + self.line_separators > 1
                         }
                         Kind::Object => is_next_line_empty(self.text, node.end as usize),

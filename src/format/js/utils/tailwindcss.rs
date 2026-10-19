@@ -23,7 +23,7 @@ pub(crate) struct TailwindContext {
     /// The text before that `${` ends with whitespace.
     has_whitespace_before: bool,
     /// The text after that `}` starts with whitespace.
-    has_whitespace_behind: bool,
+    has_whitespace_after: bool,
     /// Which ends of the current template can lose their whitespace, given the `+`s around it.
     around_template: Collapse,
     /// It's in a call of another function. Strings there aren't sorted.
@@ -76,7 +76,7 @@ impl TailwindContext {
             preserves_whitespace: tailwind.preserves_whitespace,
             is_in_template_expression: false,
             has_whitespace_before: true,
-            has_whitespace_behind: true,
+            has_whitespace_after: true,
             around_template: Collapse::ALL,
             is_disabled: false,
             follows_plugin: false,
@@ -119,12 +119,12 @@ impl TailwindContext {
         }
     }
 
-    /// For the content of a `${}` that has the text `before` in front of it and the text `behind` after it.
-    pub(crate) fn in_template_expression(self, before: &[u8], behind: &[u8]) -> Self {
+    /// For the content of a `${}` that has the text `before` in front of it and the text `following` after it.
+    pub(crate) fn in_template_expression(self, before: &[u8], following: &[u8]) -> Self {
         TailwindContext {
             is_in_template_expression: true,
             has_whitespace_before: ends_with_white_space(before),
-            has_whitespace_behind: starts_with_white_space(behind),
+            has_whitespace_after: starts_with_white_space(following),
             around_template: Collapse::ALL,
             is_disabled: false,
             sorts_template: !self.follows_plugin,
@@ -141,7 +141,7 @@ impl TailwindContext {
     fn collapse(self) -> Collapse {
         Collapse {
             start: !self.is_in_template_expression || self.has_whitespace_before,
-            end: !self.is_in_template_expression || self.has_whitespace_behind,
+            end: !self.is_in_template_expression || self.has_whitespace_after,
         }
     }
 }
@@ -202,19 +202,19 @@ fn has(names: &Names, name: &[u8], tailwind: &Tailwind) -> bool {
 }
 
 /// True if `@prettier/plugin-oxc` parses the code being printed.
-fn is_read_by_oxc(tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
+fn is_parsed_by_oxc(tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
     tailwind.oxc != Oxc::Absent
-        && (!f.context().has_tree_of_babel() || f.options().in_html.root == HtmlRoot::None)
+        && (!f.context().has_babel_tree() || f.options().in_html.root == HtmlRoot::None)
 }
 
 /// True if the plugin sees Babel's tree.
 fn is_babel(tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
-    f.context().has_tree_of_babel() && !is_read_by_oxc(tailwind, f)
+    f.context().has_babel_tree() && !is_parsed_by_oxc(tailwind, f)
 }
 
 /// True if the plugin sees `e`, which is in an optional chain, as a node kind other than a call or a member access. In
 /// Babel that's every link from the `?.` on. In the other parsers it's the node wrapping the whole chain.
-fn is_other_node_to_plugin(e: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
+fn is_opaque_chain_node_to_plugin(e: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
     match is_babel(tailwind, f) {
         true => e.is_in_optional_chain(),
         false => e.is_chain_root(),
@@ -228,7 +228,7 @@ fn is_class_function(callee: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -
     }
     let mut node = callee;
     loop {
-        if tailwind.follows_plugin && is_other_node_to_plugin(node, tailwind, f) {
+        if tailwind.follows_plugin && is_opaque_chain_node_to_plugin(node, tailwind, f) {
             return false;
         }
         node = match node.kind() {
@@ -245,7 +245,7 @@ fn is_class_function(callee: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -
 /// attribute value or a function argument that takes classes, and the template tagged by such a function.
 fn collapse_by_plugin<'a>(leaf: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -> Option<Collapse> {
     let tailwind = f.options().tailwind.as_deref()?;
-    if tailwind.oxc == Oxc::Behind && is_read_by_oxc(tailwind, f) {
+    if tailwind.oxc == Oxc::Behind && is_parsed_by_oxc(tailwind, f) {
         return None;
     }
     let is_in = |span: Span| span.start <= leaf.start && leaf.end <= span.end;
@@ -286,7 +286,7 @@ fn collapse_by_plugin<'a>(leaf: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -
     if !is_sorted {
         return None;
     }
-    let texts = match f.context().has_tree_of_babel() || is_read_by_oxc(tailwind, f) {
+    let texts = match f.context().has_babel_tree() || is_parsed_by_oxc(tailwind, f) {
         true => Texts::Sorted,
         false => Texts::Unseen,
     };
@@ -362,11 +362,11 @@ pub(crate) fn collapse_among(
         }
         // So the plugin removes the space in `` `a${" b"}` ``, which merges `a` and `b` into one class. Here, a string
         // that touches a text keeps its space.
-        let (before, behind) = (template.raw(index), template.raw(index + 1));
+        let (before, following) = (template.raw(index), template.raw(index + 1));
         free = Collapse {
             start: ends_with_white_space(before) || (before.is_empty() && index == 0 && free.start),
-            end: starts_with_white_space(behind)
-                || (behind.is_empty() && index + 2 == count && free.end),
+            end: starts_with_white_space(following)
+                || (following.is_empty() && index + 2 == count && free.end),
         };
     }
     collapse.and(free.start, free.end)

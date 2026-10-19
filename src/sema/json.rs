@@ -342,7 +342,11 @@ enum Pending {
 /// diagnostics.
 pub fn validate_json(hir: &mut File, text: &[u8]) {
     /// `validateJsonValue`, `validateJsonObjectLiteral`
-    fn validate_json_value(spans: Spans<'_, '_>, root: ExprId, refused: &mut Vec<(u32, u32, u32)>) {
+    fn validate_json_value(
+        spans: Spans<'_, '_>,
+        root: ExprId,
+        json_errors: &mut Vec<(u32, u32, u32)>,
+    ) {
         let hir = spans.hir;
         let is_double_quoted = |at: u32| spans.text.get(at as usize) == Some(&b'"');
         let mut pending = vec![Pending::Value(root)];
@@ -352,13 +356,13 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
                 Pending::Property(p) => {
                     let prop = hir[p];
                     if prop.kind != PropKind::Init {
-                        refused.push((prop.start, 1136, spans.prop(p) as u32));
+                        json_errors.push((prop.start, 1136, spans.prop(p) as u32));
                         continue;
                     }
                     if !is_double_quoted(prop.pos) {
                         // `getErrorSpanForNode`: a missing name's position is before the trivia.
                         let start = skip_trivia(spans.text, prop.pos as usize) as u32;
-                        refused.push((start, 1327, spans.prop_name(p) as u32));
+                        json_errors.push((start, 1327, spans.prop_name(p) as u32));
                     }
                     prop.value
                 }
@@ -380,17 +384,17 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
                 }
                 _ => 1328,
             };
-            refused.push((start, code, spans.expr(e) as u32));
+            json_errors.push((start, code, spans.expr(e) as u32));
         }
     }
-    let mut refused = Vec::new();
+    let mut json_errors = Vec::new();
     if let Some(root) = root_expression(hir).filter(|_| !hir.has_errors) {
-        validate_json_value(Spans { hir, text }, root, &mut refused);
+        validate_json_value(Spans { hir, text }, root, &mut json_errors);
     }
-    hir.has_parse_diagnostics |= !refused.is_empty();
+    hir.has_parse_diagnostics |= !json_errors.is_empty();
     hir.diagnostics
         .to_mut()
-        .extend(refused.iter().map(|&(start, code, end)| {
+        .extend(json_errors.iter().map(|&(start, code, end)| {
             // Only a missing node ends at offset 0.
             let end = match end {
                 0 => Diagnostic::NO_LENGTH,
@@ -667,7 +671,10 @@ impl<'s> TsConfigSourceFile<'s> {
                 _ => {}
             }
             let (code, args) = match option {
-                Some(option) => (5024, vec![option.name().to_vec(), option.takes().to_vec()]),
+                Some(option) => (
+                    5024,
+                    vec![option.name().to_vec(), option.value_type_name().to_vec()],
+                ),
                 None => (1328, Vec::new()),
             };
             let end = spans.expr(e);

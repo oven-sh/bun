@@ -223,7 +223,7 @@ pub(crate) type RunKey = (u64, u128);
 
 /// Finds the Jest call around each diagnostic. Diagnostics must be looked up in order of their start.
 struct Turns<'t> {
-    /// `File::calls_in_turns`
+    /// `File::jest_calls_in_oxlint_order`
     calls: &'t [(Span, u32)],
     /// How many of `calls` have been reached.
     seen: usize,
@@ -232,7 +232,7 @@ struct Turns<'t> {
 }
 
 impl Turns<'_> {
-    fn leave_what_ends_by(&mut self, offset: u32) {
+    fn pop_calls_ending_by(&mut self, offset: u32) {
         while self.open.last().is_some_and(|it| it.0 <= offset) {
             self.open.pop();
         }
@@ -243,11 +243,11 @@ impl Turns<'_> {
         while let Some((call, turn)) = self.calls.get(self.seen)
             && call.start <= label.start
         {
-            self.leave_what_ends_by(call.start);
+            self.pop_calls_ending_by(call.start);
             self.open.push((call.end, *turn));
             self.seen += 1;
         }
-        self.leave_what_ends_by(label.start);
+        self.pop_calls_ending_by(label.start);
         let around = self.open.partition_point(|it| it.0 >= label.end);
         let innermost = around.checked_sub(1).and_then(|it| self.open.get(it));
         innermost.map_or(u32::MAX, |it| it.1)
@@ -255,7 +255,7 @@ impl Turns<'_> {
 }
 
 /// A key that sorts spans by start, longer first, which is pre-order.
-fn as_entered(span: Span) -> u64 {
+fn preorder_key(span: Span) -> u64 {
     (u64::from(span.start) << 32) | u64::from(u32::MAX - span.end)
 }
 
@@ -293,7 +293,7 @@ fn merged(a: &[u64], b: &[u64]) -> Vec<u64> {
 /// Sorts `nodes`, which is already sorted by node start, into pre-order, and within one node by rule. Each entry has
 /// the node's start in its high half and the index into `diagnostics` and `found` in its low half. `found` has each
 /// diagnostic's node and the tie-breaker among one rule's reports about that node.
-fn sort_as_entered<'a>(
+fn sort_preorder<'a>(
     file: &'a File<'a>,
     diagnostics: &[Diagnostic],
     found: &[(Place, u32)],
@@ -310,15 +310,15 @@ fn sort_as_entered<'a>(
         )
     };
     let node_of = |key: u128| found.get(key as u32 as usize).and_then(|it| it.0.node);
-    let mut at_one_start: Vec<u128> = Vec::new();
+    let mut same_start_keys: Vec<u128> = Vec::new();
     for places in nodes.chunk_by_mut(|a, b| a >> 32 == b >> 32) {
         if places.len() < 2 {
             continue;
         }
         let level = |it: &Place| it.node.map_or(DEEPEST, |it| it.1.into());
-        at_one_start.clear();
-        at_one_start.extend(places.iter().filter_map(|it| key(*it as u32, &level)));
-        at_one_start.sort_unstable();
+        same_start_keys.clear();
+        same_start_keys.extend(places.iter().filter_map(|it| key(*it as u32, &level)));
+        same_start_keys.sort_unstable();
         // Nested nodes with identical spans.
         let is_other_node = |pair: &[u128]| match pair {
             [a, b] => {
@@ -326,7 +326,7 @@ fn sort_as_entered<'a>(
             }
             _ => false,
         };
-        if at_one_start
+        if same_start_keys
             .array_windows::<2>()
             .any(|it| is_other_node(it))
         {
@@ -334,11 +334,11 @@ fn sort_as_entered<'a>(
                 Some(node) => u128::from(visited::depth(file, node, it.span)).min(DEEPEST - 1),
                 None => DEEPEST,
             };
-            at_one_start.clear();
-            at_one_start.extend(places.iter().filter_map(|it| key(*it as u32, &depth)));
-            at_one_start.sort_unstable();
+            same_start_keys.clear();
+            same_start_keys.extend(places.iter().filter_map(|it| key(*it as u32, &depth)));
+            same_start_keys.sort_unstable();
         }
-        for (place, sorted) in places.iter_mut().zip(&at_one_start) {
+        for (place, sorted) in places.iter_mut().zip(&same_start_keys) {
             *place = u64::from(*sorted as u32);
         }
     }
@@ -355,7 +355,7 @@ pub(crate) fn in_run_order<'a, 'r>(
     let unknown = Ran::unknown(Entering, u16::MAX);
     let mut places = Places::new(file);
     // The four phases of the run. Each entry has the index into `diagnostics` in its low 32 bits.
-    let with_place = |key: u64, at: u32| (u128::from(key) << 32) | u128::from(at);
+    let with_index = |key: u64, at: u32| (u128::from(key) << 32) | u128::from(at);
     let mut once: Vec<u128> = Vec::new();
     let mut nodes: Vec<u64> = Vec::with_capacity(diagnostics.len());
     let mut calls: Vec<u128> = Vec::new();
@@ -371,37 +371,37 @@ pub(crate) fn in_run_order<'a, 'r>(
     let mut numbers: Vec<u16> = Vec::with_capacity(if wants_keys { diagnostics.len() } else { 0 });
     // Each rule's diagnostics are contiguous.
     let mut rest = (0u32..).zip(&mut found);
-    for of_rule in diagnostics.chunk_by(|a, b| a.rule == b.rule) {
-        let ran = of_rule.first().and_then(|it| ran(it.rule));
+    for rule_diagnostics in diagnostics.chunk_by(|a, b| a.rule == b.rule) {
+        let ran = rule_diagnostics.first().and_then(|it| ran(it.rule));
         let ran = ran.unwrap_or(&unknown);
         if wants_keys {
-            numbers.resize(numbers.len() + of_rule.len(), ran.number);
+            numbers.resize(numbers.len() + rule_diagnostics.len(), ran.number);
         }
-        for (it, (at, place)) in of_rule.iter().zip(&mut rest) {
+        for (it, (at, place)) in rule_diagnostics.iter().zip(&mut rest) {
             let details = it.details.as_deref();
             // A diagnostic about the whole file, with no position, comes first in its phase.
             let start = details.and_then(|it| it.start_position.as_ref());
-            let has_place = u64::from(start.is_none_or(|it| it.line != 0));
-            let by_place = (has_place << 32) | u64::from(it.span.start);
+            let has_position = u64::from(start.is_none_or(|it| it.line != 0));
+            let by_position = (has_position << 32) | u64::from(it.span.start);
             match ran.when {
                 // If the diagnostic states its node, the rule also has a `run`, and that's what reports it.
-                When::Once if !it.states_node => {
+                When::Once if !it.has_explicit_node => {
                     let within = match ran.once {
                         Once::AsReported => u64::from(at),
-                        Once::ByEnd => (has_place << 32) | u64::from(it.span.end),
-                        Once::ByStart => by_place,
+                        Once::ByEnd => (has_position << 32) | u64::from(it.span.end),
+                        Once::ByStart => by_position,
                     };
-                    once.push(with_place((u64::from(it.rule) << 33) | within, at));
+                    once.push(with_index((u64::from(it.rule) << 33) | within, at));
                 }
                 // In a chain of calls, oxlint reaches the inner calls first.
                 When::AtTheEnd => {
                     let label = (u64::from(it.span.start) << 32) | u64::from(it.span.end);
-                    calls.push(with_place(label, at));
+                    calls.push(with_index(label, at));
                 }
-                When::Last => last.push(with_place(by_place, at)),
+                When::Last => last.push(with_index(by_position, at)),
                 _ => {
                     // A rule that states its node walks the node the same way oxlint's rule does.
-                    place.1 = match it.states_node || ran.is_port {
+                    place.1 = match it.has_explicit_node || ran.is_port {
                         true => at,
                         false => it.span.start,
                     };
@@ -409,12 +409,12 @@ pub(crate) fn in_run_order<'a, 'r>(
                     let stated = details.and_then(|it| it.listened_on);
                     let label = stated.filter(|_| it.node.is_none()).unwrap_or(it.span);
                     let known = match it.node {
-                        _ if has_place == 0 => Some(nowhere),
-                        Some(node) => (places.at_a_look(called, node, it))
+                        _ if has_position == 0 => Some(nowhere),
+                        Some(node) => (places.by_bit_test(called, node, it))
                             .or_else(|| places.of(it.rule, &called.kinds, label, it.node)),
-                        // `Report::called_with_the_name`: oxlint's node is the reported name, which isn't a node in our
+                        // `Report::called_with_name`: oxlint's node is the reported name, which isn't a node in our
                         // tree.
-                        None if it.states_node && stated.is_none() => Some(Place {
+                        None if it.has_explicit_node && stated.is_none() => Some(Place {
                             span: label,
                             node: None,
                         }),
@@ -425,7 +425,7 @@ pub(crate) fn in_run_order<'a, 'r>(
                             place.0 = known;
                             nodes.push((u64::from(known.span.start) << 32) | u64::from(at));
                         }
-                        None => searched.push(with_place(as_entered(label), at)),
+                        None => searched.push(with_index(preorder_key(label), at)),
                     }
                 }
             }
@@ -460,13 +460,13 @@ pub(crate) fn in_run_order<'a, 'r>(
         late.sort_unstable();
         nodes = merged(&nodes, &late);
     }
-    sort_as_entered(file, diagnostics, &found, &mut nodes);
+    sort_preorder(file, diagnostics, &found, &mut nodes);
     once.sort_unstable();
     last.sort_unstable();
     // oxlint visits each Jest call with the rules in rule-number order.
     calls.sort_unstable();
     let mut turn_of: Vec<u32> = Vec::new();
-    if let Some(in_turns) = file.sink.calls_in_turns.get() {
+    if let Some(in_turns) = file.sink.jest_calls_in_oxlint_order.get() {
         let mut turns = Turns {
             calls: in_turns,
             seen: 0,
@@ -515,10 +515,10 @@ pub(crate) fn in_run_order<'a, 'r>(
         }
         keys.extend(last.iter().map(|it| (part(3, 0), it >> 32)));
     }
-    let places_of = |it: Vec<u128>| it.into_iter().map(|it| it as u32);
-    let order = places_of(once)
+    let indices_of = |it: Vec<u128>| it.into_iter().map(|it| it as u32);
+    let order = indices_of(once)
         .chain(nodes.into_iter().map(|it| it as u32))
-        .chain(places_of(calls))
-        .chain(places_of(last));
+        .chain(indices_of(calls))
+        .chain(indices_of(last));
     (order.collect(), keys)
 }

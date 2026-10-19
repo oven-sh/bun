@@ -52,16 +52,16 @@ impl<const RULE: usize> Rule for CompilerRule<RULE> {
             category,
             ErrorCategory::MemoDependencies | ErrorCategory::EffectExhaustiveDependencies | ErrorCategory::Syntax
         );
-        let of_plugin = Meta::plugin(Plugin::ReactHooks, name, Kind::Problem)
+        let plugin_meta = Meta::plugin(Plugin::ReactHooks, name, Kind::Problem)
             .fixable(Fixable::Code)
             .has_suggestions()
             .never_fixes()
             .reports_on_creation();
-        let of_plugin = if suggests { of_plugin } else { of_plugin.never_suggests() };
+        let plugin_meta = if suggests { plugin_meta } else { plugin_meta.never_suggests() };
         match (Self::FLAVOR, is_recommended) {
             (Flavor::Oxlint, _) => Meta::oxlint(Plugin::React, name, kind),
-            (Flavor::Eslint, true) => of_plugin.recommended(),
-            (Flavor::Eslint, false) => of_plugin,
+            (Flavor::Eslint, true) => plugin_meta.recommended(),
+            (Flavor::Eslint, false) => plugin_meta,
         }
     };
     const ON: On = On::new().finish();

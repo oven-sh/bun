@@ -195,9 +195,9 @@ impl Rule for NoUnnecessaryQualifier {
         utils::sort::sort_unstable_by_key(&mut declarations, |it| (it.start, std::cmp::Reverse(it.end)));
         let mut end = 0;
         declarations.retain(|it| {
-            let is_in_no_other = it.start >= end;
+            let is_outermost = it.start >= end;
             end = end.max(it.end);
-            is_in_no_other
+            is_outermost
         });
         Some(declarations)
     }

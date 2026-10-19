@@ -157,7 +157,7 @@ fn tuple_element_flags(hir: &hir::File, elem: &TupleElem) -> ElemFlags {
 }
 
 impl Checker<'_, '_> {
-    pub(super) fn check_x_typenodes(&mut self, file: FileId) {
+    pub(super) fn check_all_instantiation_expressions(&mut self, file: FileId) {
         let hir = self.hir(file);
         // The default library's text isn't stored.
         if hir.text.is_empty() {
@@ -574,14 +574,14 @@ impl Checker<'_, '_> {
 
     /// `checkIndexedAccessIndexType` for a deferred indexed access type `object[keys]`: the error code (4105 or 2536)
     /// if `keys` can't index `object`.
-    pub(super) fn why_not_a_key_of(&mut self, object: TypeId, keys: TypeId) -> Option<u32> {
-        let object_keys = self.keys_to_look_into(object);
+    pub(super) fn invalid_index_key_code(&mut self, object: TypeId, keys: TypeId) -> Option<u32> {
+        let object_keys = self.object_index_type(object);
         let has_number_index = self.index_type_of_type(object, TypeId::NUMBER).is_some();
-        let fits = self.parts(keys).iter().all(|&key| {
+        let are_valid_keys = self.parts(keys).iter().all(|&key| {
             self.is_assignable(key, object_keys)
                 || has_number_index && self.is_applicable_index_type(key, TypeId::NUMBER)
         });
-        if fits {
+        if are_valid_keys {
             return None;
         }
         if self.is_generic_object_type(object)
@@ -606,7 +606,7 @@ impl Checker<'_, '_> {
     }
 
     /// `objectIndexType` of `checkIndexedAccessIndexType`: "skip index type deferral on remapping mapped types"
-    fn keys_to_look_into(&mut self, object: TypeId) -> TypeId {
+    fn object_index_type(&mut self, object: TypeId) -> TypeId {
         if self.is_generic_mapped_type(object)
             && let Some(name_type) = self.mapped_name_type(object)
         {

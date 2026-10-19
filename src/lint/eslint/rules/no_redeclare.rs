@@ -179,8 +179,8 @@ fn check_declarations<'a, R: Rule<State<'a> = bool>>(config: Config, symbol: Sym
     let global = match is_oxlint {
         true if cx.state => {
             // Globals that an `env` defines don't count.
-            let is_asked = ast_utils::is_builtin_global_of_oxlint(name) || cx.language().is_written_global(name);
-            if is_asked { cx.file().global(name) } else { None }
+            let counts_as_global = ast_utils::is_builtin_global_of_oxlint(name) || cx.language().is_enabled_own_global(name);
+            if counts_as_global { cx.file().global(name) } else { None }
         }
         true => None,
         // In a script, a top-level declaration and a configured global with the same name are the same variable.

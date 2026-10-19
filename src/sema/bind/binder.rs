@@ -101,7 +101,7 @@ enum IsComputedName {
 /// Lists that one binder run leaves for the next run on the thread. They're empty but keep their
 /// capacity.
 #[derive(Default)]
-pub(super) struct Room {
+pub(super) struct Buffers {
     pub(super) b: BoundBuilder,
     tables: Vec<Table>,
     spare_names: Vec<Names>,
@@ -116,15 +116,15 @@ pub(super) struct Room {
 
 thread_local! {
     /// A linter binds one file at a time and is done with it before it starts the next.
-    static ROOM: std::cell::Cell<Option<Box<Room>>> = const { std::cell::Cell::new(None) };
+    static BUFFERS: std::cell::Cell<Option<Box<Buffers>>> = const { std::cell::Cell::new(None) };
 }
 
-pub(super) fn take_room() -> Box<Room> {
-    ROOM.take().unwrap_or_default()
+pub(super) fn take_buffers() -> Box<Buffers> {
+    BUFFERS.take().unwrap_or_default()
 }
 
-pub(super) fn leave_room(room: Box<Room>) {
-    ROOM.set(Some(room));
+pub(super) fn return_buffers(buffers: Box<Buffers>) {
+    BUFFERS.set(Some(buffers));
 }
 
 /// Returns `list` filled with `len` copies of `value`.
@@ -241,7 +241,7 @@ struct InstanceStates {
     /// The modules whose state this query computed.
     answered: Vec<ModuleId>,
     /// The query reached a module that was `InProgress`.
-    met_one_in_progress: bool,
+    reached_in_progress: bool,
     ran_out_of_stack: bool,
 }
 
@@ -258,17 +258,17 @@ impl<'f, 's> Binder<'f, 's> {
         options: BindOptions,
         atoms: &'f dyn crate::atom::Intern,
     ) -> BoundBuilder {
-        Self::run_in(f, options, atoms, &mut Room::default())
+        Self::run_in(f, options, atoms, &mut Buffers::default())
     }
 
     fn run_in(
         f: &'f File<'s>,
         options: BindOptions,
         atoms: &'f dyn crate::atom::Intern,
-        room: &mut Room,
+        buffers: &mut Buffers,
     ) -> BoundBuilder {
-        room.b.clear();
-        let old = std::mem::take(&mut room.b);
+        buffers.b.clear();
+        let old = std::mem::take(&mut buffers.b);
         let mut b = BoundBuilder {
             expr_kinds: filled(old.expr_kinds, 0, NOT_REACHED),
             expr_symbol: filled(old.expr_symbol, f.exprs.len(), SymbolId::NONE),
@@ -351,13 +351,13 @@ impl<'f, 's> Binder<'f, 's> {
             options,
             atoms,
             b,
-            tables: std::mem::take(&mut room.tables),
-            spare_names: std::mem::take(&mut room.spare_names),
+            tables: std::mem::take(&mut buffers.tables),
+            spare_names: std::mem::take(&mut buffers.spare_names),
             scope: ScopeId::NONE,
-            statement_lists: std::mem::take(&mut room.statement_lists),
-            idents: std::mem::take(&mut room.idents),
-            assigned: std::mem::take(&mut room.assigned),
-            expando_assignments: std::mem::take(&mut room.expando_assignments),
+            statement_lists: std::mem::take(&mut buffers.statement_lists),
+            idents: std::mem::take(&mut buffers.idents),
+            assigned: std::mem::take(&mut buffers.assigned),
+            expando_assignments: std::mem::take(&mut buffers.expando_assignments),
             flow: UNREACHABLE,
             is_reached: false,
             is_unchecked: false,
@@ -380,10 +380,10 @@ impl<'f, 's> Binder<'f, 's> {
             cur_member: MemberId::NONE,
             this_member: MemberId::NONE,
             this_property: PropId::NONE,
-            containing_classes: std::mem::take(&mut room.containing_classes),
+            containing_classes: std::mem::take(&mut buffers.containing_classes),
             is_in_class_decorator: false,
-            returns: std::mem::take(&mut room.returns),
-            yields: std::mem::take(&mut room.yields),
+            returns: std::mem::take(&mut buffers.returns),
+            yields: std::mem::take(&mut buffers.yields),
             seen_this: false,
             this_in_name: false,
             flow_after_name: FlowId::NONE,
@@ -418,15 +418,15 @@ impl<'f, 's> Binder<'f, 's> {
         this.containing_classes.clear();
         this.returns.clear();
         this.yields.clear();
-        room.tables = this.tables;
-        room.spare_names = this.spare_names;
-        room.statement_lists = this.statement_lists;
-        room.idents = this.idents;
-        room.assigned = this.assigned;
-        room.expando_assignments = this.expando_assignments;
-        room.containing_classes = this.containing_classes;
-        room.returns = this.returns;
-        room.yields = this.yields;
+        buffers.tables = this.tables;
+        buffers.spare_names = this.spare_names;
+        buffers.statement_lists = this.statement_lists;
+        buffers.idents = this.idents;
+        buffers.assigned = this.assigned;
+        buffers.expando_assignments = this.expando_assignments;
+        buffers.containing_classes = this.containing_classes;
+        buffers.returns = this.returns;
+        buffers.yields = this.yields;
         this.b
     }
 
@@ -510,7 +510,7 @@ impl<'f, 's> Binder<'f, 's> {
     fn set_value_declaration(symbol: &mut GrowingSymbol) {
         let last = symbol.decls.len() - 1;
         let value_declaration = symbol.decls.get(symbol.value_declaration as usize);
-        if takes_over_as_value_declaration(value_declaration.copied(), symbol.decls[last]) {
+        if replaces_value_declaration(value_declaration.copied(), symbol.decls[last]) {
             symbol.value_declaration = last as u32;
         }
     }
@@ -1433,7 +1433,7 @@ impl<'f, 's> Binder<'f, 's> {
 
     fn file(&mut self) {
         // `setCommonJSModuleIndicator`: not in a file that imports or exports.
-        if self.f.is_js && (!self.f.has_module_syntax || self.f.is_module_by_decree) {
+        if self.f.is_js && (!self.f.has_module_syntax || self.f.is_forced_module) {
             self.b.commonjs_indicator = (0..self.f.exprs.len() as u32).map(ExprId).find(|&e| {
                 require_argument(self.f, e).is_some()
                     || matches!(
@@ -1864,7 +1864,7 @@ impl<'f, 's> Binder<'f, 's> {
                 && b.symbols[symbol.idx()]
                     .flags
                     .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
-                && b.is_seen_from(from, b.symbols[symbol.idx()].flags, SymFlags::VALUE)
+                && b.is_visible_from(from, b.symbols[symbol.idx()].flags, SymFlags::VALUE)
             {
                 return Some(b.export_symbol_of_value_symbol_if_exported(symbol));
             }
@@ -2175,7 +2175,7 @@ impl<'f, 's> Binder<'f, 's> {
             self.b.entries[start..].sort_unstable_by_key(|e| e.1);
             self.b.tables.push((start as u32, table.len() as u32));
         }
-        let places = large_table_places(&self.b.tables, &self.b.entries);
+        let places = large_table_entries(&self.b.tables, &self.b.entries);
         self.b.large_tables.extend(places);
         self.b.nested_names = nested_names_of(&self.b.scopes, &self.b.tables, &self.b.entries);
         // Write out the labels' edges.
@@ -3053,7 +3053,7 @@ impl<'f, 's> Binder<'f, 's> {
         let mut states = InstanceStates {
             of: std::mem::take(&mut self.instance_states),
             answered: Vec::new(),
-            met_one_in_progress: false,
+            reached_in_progress: false,
             ran_out_of_stack: false,
         };
         states
@@ -3062,7 +3062,7 @@ impl<'f, 's> Binder<'f, 's> {
         let mut outer = std::mem::take(&mut self.statement_lists);
         let state = self.instance_state_of_module(m, &mut outer, &mut states);
         self.statement_lists = outer;
-        if states.met_one_in_progress {
+        if states.reached_in_progress {
             for &answered in &states.answered {
                 states.of[answered.idx()] = InstanceState::Unknown;
             }
@@ -3088,7 +3088,7 @@ impl<'f, 's> Binder<'f, 's> {
         match visited.of[m.idx()] {
             InstanceState::Known(state) => return state,
             InstanceState::InProgress => {
-                visited.met_one_in_progress = true;
+                visited.reached_in_progress = true;
                 return ModuleInstanceState::NonInstantiated;
             }
             InstanceState::Unknown => {}
@@ -3813,7 +3813,7 @@ impl<'f, 's> Binder<'f, 's> {
             if let ModifierKind::Decorator(e) = self.f[modifier].kind {
                 self.expr(e, of.into());
                 if !self.can_be_decorated(of, class, owner) {
-                    self.b.refused_decorators.push(e);
+                    self.b.rejected_decorators.push(e);
                 }
             }
         }
@@ -3871,7 +3871,7 @@ impl<'f, 's> Binder<'f, 's> {
         for modifier in modifiers.iter() {
             if let ModifierKind::Decorator(e) = self.f[modifier].kind {
                 self.expr(e, Parent::FnBody(func));
-                self.b.refused_decorators.push(e);
+                self.b.rejected_decorators.push(e);
             }
         }
         self.yields.truncate(counted);
@@ -3882,10 +3882,10 @@ impl<'f, 's> Binder<'f, 's> {
     fn can_be_decorated(&self, of: DecoratorOwner, class: ClassId, owner: ClassOwner) -> bool {
         let legacy = self.f.legacy_decorators;
         let is_declaration = matches!(owner, ClassOwner::Stmt(_));
-        let in_a_fitting_class = !legacy || is_declaration;
+        let class_allows_decorators = !legacy || is_declaration;
         let has_body = |func: FnId| func.is_some() && !matches!(self.f[func].body, FnBody::None);
         match of {
-            DecoratorOwner::Class(_) => in_a_fitting_class,
+            DecoratorOwner::Class(_) => class_allows_decorators,
             DecoratorOwner::Member(m) => {
                 let member = &self.f[m];
                 if legacy && matches!(member.key, PropKey::Private(_)) {
@@ -3895,7 +3895,7 @@ impl<'f, 's> Binder<'f, 's> {
                     // `HasAmbientModifier`: the property itself has `declare`. Every member of an
                     // ambient class has `Flags::AMBIENT`.
                     MemberKind::Property => {
-                        in_a_fitting_class
+                        class_allows_decorators
                             && (legacy
                                 || !member.flags.contains(Flags::ABSTRACT)
                                     && self
@@ -3904,7 +3904,7 @@ impl<'f, 's> Binder<'f, 's> {
                                         .is_none())
                     }
                     MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
-                        in_a_fitting_class && has_body(member.func)
+                        class_allows_decorators && has_body(member.func)
                     }
                     _ => false,
                 }

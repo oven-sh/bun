@@ -56,7 +56,7 @@ enum Property<'a> {
 
 impl<'a> Property<'a> {
     /// True if it's the name `left`, or a string with that text.
-    fn is_called(self, left: Option<Name<'a>>) -> bool {
+    fn is_named(self, left: Option<Name<'a>>) -> bool {
         match self {
             Property::Name(name) => left == Some(name),
             Property::Computed(index) => left.is_some() && left == index.as_string(),
@@ -125,7 +125,7 @@ impl Config {
         if !enabled.object || is_port_of_oxlint && is_template {
             return None;
         }
-        let has_same_name = property.is_called(left);
+        let has_same_name = property.is_named(left);
         (self.enforce_for_renamed_properties || has_same_name).then_some("object")
     }
 
@@ -150,15 +150,15 @@ impl Config {
         else {
             return;
         };
-        let has_same_name = property.is_called(left);
+        let has_same_name = property.is_named(left);
         // oxlint's port of ESLint's rule points at the initializer, without its parentheses if the names differ.
-        let place = match declaration.init() {
+        let location = match declaration.init() {
             Some(init) if is_port_of_oxlint && kind == "object" && !has_same_name => init.span(),
             Some(init) if is_port_of_oxlint => init.outer_span(),
             _ => declaration.span(),
         };
         let report = cx
-            .report(place, PREFER_DESTRUCTURING)
+            .report(location, PREFER_DESTRUCTURING)
             .claims(declaration)
             .unless_claimed(declaration)
             .called_with(declaration);
@@ -250,10 +250,12 @@ impl Config {
                 return;
             }
             let arrays = std::iter::repeat_n(("Array", "array"), arrays);
-            for (said, kind) in arrays.chain(std::iter::repeat_n(("Object", "object"), objects)) {
+            for (capitalized, kind) in
+                arrays.chain(std::iter::repeat_n(("Object", "object"), objects))
+            {
                 cx.report(e, PREFER_DESTRUCTURING)
                     .unless_claimed(e)
-                    .data("type", said)
+                    .data("type", capitalized)
                     .data("kind", kind);
             }
             return;

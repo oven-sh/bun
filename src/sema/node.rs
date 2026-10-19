@@ -341,33 +341,33 @@ macro_rules! node_vectors {
                 if node.0.wrapping_sub(bases[1]) < bases[2] - bases[1] {
                     return NodeData::Stmt(StmtId(node.0 - bases[1]));
                 }
-                self.data_of_the_rest(node)
+                self.data_slow(node)
             }
 
             /// Passes the children of every HIR node to `v`, vector by vector, so that each loop is specialized to the
-            /// match arm of its own kind. `at_hand` is set to the node whose children are being passed. `open` is where
-            /// `v` collects the parts that have children.
+            /// match arm of its own kind. `current_node` is set to the node whose children are being passed. `open` is
+            /// where `v` collects the parts that have children.
             fn children_of_all_rows<V: FnMut(Node) -> bool>(
                 &self,
                 v: &mut Children<'_, '_, V>,
-                at_hand: &Cell<Node>,
+                current_node: &Cell<Node>,
                 open: &RefCell<Vec<Node>>,
             ) {
                 let bases = &self.bases.0;
                 $(for i in 0..self.$field.len() as u32 {
                     let (data, node) = (NodeData::$variant($id(i)), Node(bases[$index] + i));
-                    if self.may_have_rows_under_it(data, node) {
-                        at_hand.set(node);
+                    if self.may_have_child_rows(data, node) {
+                        current_node.set(node);
                         v.children(data, node);
-                        v.children_of_parts(at_hand, open);
+                        v.children_of_parts(current_node, open);
                     }
                 })*
-                at_hand.set(Node::FILE);
+                current_node.set(Node::FILE);
                 v.children(NodeData::File, Node::FILE);
-                v.children_of_parts(at_hand, open);
+                v.children_of_parts(current_node, open);
             }
 
-            fn data_of_the_rest(&self, node: Node) -> NodeData {
+            fn data_slow(&self, node: Node) -> NodeData {
                 let bases = &self.bases.0;
                 if node == Node::FILE {
                     return NodeData::File;
@@ -698,9 +698,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
 
     /// `children` for the parts in `open`, and for the parts in those.
     #[inline]
-    fn children_of_parts(&mut self, at_hand: &Cell<Node>, open: &RefCell<Vec<Node>>) {
+    fn children_of_parts(&mut self, current_node: &Cell<Node>, open: &RefCell<Vec<Node>>) {
         while let Some(part) = { open.borrow_mut().pop() } {
-            at_hand.set(part);
+            current_node.set(part);
             if let Some(which) = part.part() {
                 self.part_of(which, part.row());
             }
@@ -1229,7 +1229,7 @@ impl<'s> File<'s> {
 
     #[inline]
     fn parents(&self) -> &Parents {
-        (self.lazy.cells.parents).get_or_init(|| self.parents_of_all())
+        (self.lazy.cells.parents).get_or_init(|| self.compute_parents())
     }
 
     /// `node.Parent`. `NONE` for the file, and for a HIR node that's unreachable from the file.
@@ -1300,7 +1300,7 @@ impl<'s> File<'s> {
 
     /// Half of all nodes are leaves, and the traversal doesn't need to revisit those.
     #[inline]
-    fn may_have_rows_under_it(&self, data: NodeData, node: Node) -> bool {
+    fn may_have_child_rows(&self, data: NodeData, node: Node) -> bool {
         match data {
             NodeData::Expr(e) => !matches!(
                 self[e].kind,
@@ -1363,14 +1363,14 @@ impl<'s> File<'s> {
     /// isn't a tsgo node, or that's unreachable, has the children of the node around it), the later one is the tsgo
     /// node and overwrites the earlier one.
     #[cold]
-    fn parents_of_all(&self) -> Parents {
+    fn compute_parents(&self) -> Parents {
         let total = self.bases.0[VECTORS];
         let mut rows = vec![Node::NONE; total as usize];
         let mut around = Vec::new();
         // The current HIR node or part, and the parts of that HIR node that have children.
-        let (at_hand, open) = (Cell::new(Node::NONE), RefCell::new(Vec::new()));
+        let (current_node, open) = (Cell::new(Node::NONE), RefCell::new(Vec::new()));
         let mut visit = |child: Node| {
-            let node = at_hand.get();
+            let node = current_node.get();
             match child.part() {
                 None => {
                     rows[child.idx()] = node;
@@ -1411,7 +1411,7 @@ impl<'s> File<'s> {
             visit: &mut visit,
             with_parentheses: false,
         };
-        self.children_of_all_rows(&mut v, &at_hand, &open);
+        self.children_of_all_rows(&mut v, &current_node, &open);
         // The parentheses are inserted afterwards, because their list is short, whereas a lookup in it for every
         // expression isn't cheap.
         for p in 0..self.parens.len() as u32 {
@@ -1784,12 +1784,12 @@ impl<'s> File<'s> {
 
     #[inline]
     fn owners(&self) -> &Owners {
-        (self.lazy.cells.owners).get_or_init(|| self.owners_of_all())
+        (self.lazy.cells.owners).get_or_init(|| self.compute_owners())
     }
 
     /// Computed lazily when the first owner is requested. A linter without type information never requests one.
     #[cold]
-    fn owners_of_all(&self) -> Owners {
+    fn compute_owners(&self) -> Owners {
         let mut fn_nodes = vec![Node::NONE; self.fns.len()];
         let mut class_nodes = vec![Node::NONE; self.classes.len()];
         for (i, statement) in self.stmts.iter().enumerate() {
@@ -2661,11 +2661,11 @@ impl File<'_> {
 }
 
 /// Ranges of a file, for answering by position a question that would otherwise require walking up the parents.
-pub struct Places<R = Vec<TextRange>>(R);
+pub struct RangeSet<R = Vec<TextRange>>(R);
 
-impl Places {
+impl RangeSet {
     /// Nested or overlapping ranges are merged.
-    pub fn new(ranges: impl Iterator<Item = TextRange>) -> Places {
+    pub fn new(ranges: impl Iterator<Item = TextRange>) -> RangeSet {
         let mut ranges: Vec<TextRange> = ranges.collect();
         ranges.shared_sort_unstable_by_key(|range| range.pos);
         ranges.dedup_by(|next, kept| {
@@ -2677,15 +2677,15 @@ impl Places {
             };
             is_in_it
         });
-        Places(ranges)
+        RangeSet(ranges)
     }
 
-    pub fn at_its_size(self) -> Places<Box<[TextRange]>> {
-        Places(self.0.into())
+    pub fn into_boxed(self) -> RangeSet<Box<[TextRange]>> {
+        RangeSet(self.0.into())
     }
 }
 
-impl<R: std::ops::Deref<Target = [TextRange]>> Places<R> {
+impl<R: std::ops::Deref<Target = [TextRange]>> RangeSet<R> {
     #[inline]
     pub fn contain(&self, pos: u32) -> bool {
         let after = self.0.partition_point(|range| range.pos <= pos);
@@ -3328,8 +3328,8 @@ impl File<'_> {
 
     /// Returns the ranges in which `isInAmbientOrTypeNode` is true: the interfaces, type aliases and type literals, and
     /// the `declare` declarations.
-    fn ambient_or_type_places(&self) -> &Places<Box<[TextRange]>> {
-        self.lazy.cells.ambient_or_type_places.get_or_init(|| {
+    fn ambient_or_type_ranges(&self) -> &RangeSet<Box<[TextRange]>> {
+        self.lazy.cells.ambient_or_type_ranges.get_or_init(|| {
             let statements = self.stmts.iter().enumerate().filter(|&(s, statement)| {
                 matches!(
                     statement.kind,
@@ -3342,7 +3342,7 @@ impl File<'_> {
             let members = members.filter(|member| member.flags.contains(Flags::AMBIENT));
             let literals = self.types.iter();
             let literals = literals.filter(|node| matches!(node.kind, TypeNodeKind::Object(_)));
-            Places::new(
+            RangeSet::new(
                 statements
                     .map(|(_, statement)| statement.loc)
                     .chain(members.map(|member| member.loc))
@@ -3352,19 +3352,19 @@ impl File<'_> {
                         end: if node.end == 0 { u32::MAX } else { node.end },
                     })),
             )
-            .at_its_size()
+            .into_boxed()
         })
     }
 
     /// True if `e` starts inside an expression that a class extends.
     pub fn is_in_class_extends(&self, e: ExprId) -> bool {
-        let places = self.lazy.cells.class_extends_places.get_or_init(|| {
+        let places = self.lazy.cells.class_extends_ranges.get_or_init(|| {
             let bases = self.classes.iter().flat_map(|class| {
                 std::iter::once(class.extends).chain(self.ids(class.other_extends))
             });
             let bases = bases.filter(|base| base.is_some());
             // A range whose end is unknown extends to the end of the file.
-            Places::new(bases.map(|base| TextRange {
+            RangeSet::new(bases.map(|base| TextRange {
                 pos: self[base].pos,
                 end: if self[base].end == 0 {
                     u32::MAX
@@ -3372,7 +3372,7 @@ impl File<'_> {
                     self[base].end
                 },
             }))
-            .at_its_size()
+            .into_boxed()
         });
         places.contain(self[e].pos)
     }
@@ -3382,7 +3382,7 @@ impl File<'_> {
         if self.kind == FileKind::Declaration {
             return true;
         }
-        if !self.ambient_or_type_places().contain(self.start(node)) {
+        if !self.ambient_or_type_ranges().contain(self.start(node)) {
             return false;
         }
         let mut is_modifier = false;
@@ -3440,15 +3440,15 @@ impl File<'_> {
     /// every `typeof` type needs no walk. That matters because the walk from each link of `a.b.b ..` is as long as the
     /// rest of the chain.
     pub fn is_in_type_query(&self, mut node: Node) -> bool {
-        let places = self.lazy.cells.type_query_places.get_or_init(|| {
+        let places = self.lazy.cells.type_query_ranges.get_or_init(|| {
             let queries = self.types.iter();
             let queries = queries.filter(|node| matches!(node.kind, TypeNodeKind::Typeof { .. }));
             // A range whose end is unknown extends to the end of the file.
-            Places::new(queries.map(|node| TextRange {
+            RangeSet::new(queries.map(|node| TextRange {
                 pos: node.pos,
                 end: if node.end == 0 { u32::MAX } else { node.end },
             }))
-            .at_its_size()
+            .into_boxed()
         });
         // A name's start isn't known without the text, but it's inside the node it names.
         if places.is_empty() || !places.contain(self.start(node.row())) {

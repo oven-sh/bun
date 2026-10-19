@@ -29,7 +29,7 @@ impl Rule for NoBarrelFile {
         match modules_of(file) {
             // The other files' imports are read on demand.
             Some(modules) if !modules.is_complete() => {
-                let flavor = oxlint::flavor_of_modules(file);
+                let flavor = oxlint::module_flavor(file);
                 modules.follow_packages();
                 modules.record(file.path(), &requests_of(file, flavor), true, flavor);
                 None

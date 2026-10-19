@@ -72,7 +72,7 @@ impl Analysis {
             }
             Op::Class {
                 types,
-                is_written_function: true,
+                is_function_class: true,
                 ..
             } => Some(types),
             Op::Class { .. }
@@ -196,7 +196,7 @@ pub(super) fn optimize(program: &mut Program) {
                 if let Some(key) = path
                     .of(&program.keys)
                     .first()
-                    .filter(|it| !it.property.is_of_nodes())
+                    .filter(|it| !it.property.is_node_property())
                 {
                     let first = key.field.map_or(Bound::Missing, Bound::Field);
                     program.ops[id] = Op::Attribute { path, test, first };
@@ -234,7 +234,7 @@ fn bind(program: &mut Program, all: Run) {
     for &id in all {
         if let Some(Op::Attribute { path, first, .. }) = ops.get_mut(id as usize)
             && let Some(key) = path.of(keys).first()
-            && !key.property.is_of_nodes()
+            && !key.property.is_node_property()
         {
             *first = match key.field.and_then(|it| node_type.field(it)) {
                 Some(entry) => Bound::Entry(entry),

@@ -71,7 +71,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// True if the file is parsed the way acorn or Babel parse it. They report as syntax errors
     /// what TypeScript's parser leaves to the checker.
     #[inline]
-    fn is_read_as_by_other_parsers(&self) -> bool {
+    fn parses_like_acorn_or_babel(&self) -> bool {
         self.is_ecmascript || self.options.dialect.babel
     }
 
@@ -110,7 +110,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn expression_as_module_specifier(&mut self, is_export: bool) {
-        if self.is_read_as_by_other_parsers() {
+        if self.parses_like_acorn_or_babel() {
             // oxc's earlier errors still have to be reported, so don't reject the file.
             if self.recovers() && self.options.dialect.oxc {
                 return self.error_at_token(1109, &[]);
@@ -131,7 +131,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         self.string_literal_expected(expression, at);
         self.f.specifier_expressions.push(expression);
-        self.after_expressions_of_declaration(at, declarations);
+        self.check_expressions_of_declaration(at, declarations);
         self.import_attributes_of_declaration(is_export);
         if is_export {
             // The declaration will be the next statement added.
@@ -163,7 +163,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// module block, so this drops what `string_literal_expected` flagged in those.
     #[cold]
     #[inline(never)]
-    pub(crate) fn forget_specifiers_of_misplaced_declarations(&mut self) {
+    pub(crate) fn drop_specifier_errors_in_misplaced_declarations(&mut self) {
         let misplaced = misplaced_declarations(&self.f);
         self.f.diagnostics.retain(|it| {
             it.kind != DiagnosticKind::Checker
@@ -176,7 +176,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// has where strings belong. `declarations`: the file's import and export counts before them.
     #[cold]
     #[inline(never)]
-    fn after_expressions_of_declaration(&mut self, from: u32, declarations: (usize, usize)) {
+    fn check_expressions_of_declaration(&mut self, from: u32, declarations: (usize, usize)) {
         // The declaration's specifiers already store the index it was going to get.
         let has_declarations = declarations != (self.f.imports.len(), self.f.exports.len());
         // If an `await` here is a name, `reparseTopLevelAwait` reparses the import's names too.
@@ -209,7 +209,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     (self.lx.start, self.lx.end),
                     &[],
                 ),
-                false => self.error_and_go_on(2880, self.range_of_token(), &[]),
+                false => self.error_and_continue(2880, self.range_of_token(), &[]),
             }
             return self.import_attributes_after_specifier(is_export);
         }
@@ -256,7 +256,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // `tokenIsIdentifierOrKeyword` is also true for a private name.
             if token != T::String
                 && (!token.is_identifier_or_keyword()
-                    || token == T::PrivateIdentifier && self.is_read_as_by_other_parsers())
+                    || token == T::PrivateIdentifier && self.parses_like_acorn_or_babel())
             {
                 self.fail();
                 break;
@@ -293,7 +293,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 postfix_token: 0,
             });
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::ImportAttributes, element)
+                && !self.continues_without_comma(ListKind::ImportAttributes, element)
             {
                 break;
             }
@@ -309,7 +309,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 true if self.options.dialect.oxc => {}
                 true => self.refuse(Refusal::Reported),
                 false if is_in_type => {}
-                false => self.after_expressions_of_declaration(open, declarations),
+                false => self.check_expressions_of_declaration(open, declarations),
             }
         }
         // `resolution-mode` only counts when it's the only attribute.
@@ -338,7 +338,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `statementHasAwaitIdentifier` after the names an import declares, after `import a = b` and after `export as
     /// namespace a`, so `reparseTopLevelAwait` never reparses a statement for an `await` in them.
     #[inline(always)]
-    fn leave_await_context_of_top_level(&mut self) -> u32 {
+    fn clear_top_level_await_context(&mut self) -> u32 {
         let saved = self.context;
         if saved & ctx::TOP_LEVEL != 0 && !self.is_ecmascript {
             self.context = saved & !ctx::AWAIT;
@@ -455,7 +455,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             token => !token.is_reserved_word(),
         };
         if !is_identifier {
-            self.error_and_go_on(1003, (name.pos, specifier.end), &[]);
+            self.error_and_continue(1003, (name.pos, specifier.end), &[]);
         }
         // See `ImportSpec::is_name_missing`.
         if name.token == T::String && specifier.property_name.is_none() {
@@ -472,7 +472,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.options.dialect.oxc && local.text.is_keyword_identifier() {
             self.f.keyword_identifier_positions.push(local.pos);
         }
-        let is_reported = match self.is_read_as_by_other_parsers() {
+        let is_reported = match self.parses_like_acorn_or_babel() {
             // The local name is an identifier reference.
             true => local.token == T::String || local.token.is_reserved_word(),
             // `checkModuleExportName(node.PropertyName(), hasModuleSpecifier)`
@@ -487,7 +487,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn report_locals_of_export(&mut self, base: usize, has_module_specifier: bool) {
-        if !has_module_specifier && self.is_read_as_by_other_parsers() {
+        if !has_module_specifier && self.parses_like_acorn_or_babel() {
             self.refuse(Refusal::Reported);
         } else if !has_module_specifier {
             for index in (base..self.s.ids.len()).step_by(2) {
@@ -509,7 +509,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         flags: Flags,
     ) -> StmtId {
         self.next();
-        let saved = self.leave_await_context_of_top_level();
+        let saved = self.clear_top_level_await_context();
         let clause_start = self.pos();
         let mut identifier = None;
         if self.is_identifier() || self.token() == T::TypeOf && self.is_flow() {
@@ -606,7 +606,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         self.js_error((specifier.start, specifier.end), 8006, b"import...type");
                         if type_only && self.reports_like_oxc() {
                             let (errors, at) = (&mut self.f.diagnostics, specifier.start);
-                            oxc::type_modifier_twice(errors, at, oxc::Specifier::Import);
+                            oxc::duplicate_type_modifier(errors, at, oxc::Specifier::Import);
                         }
                     }
                     self.s.import_specs.push(ImportSpec {
@@ -620,7 +620,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         import: declaration,
                     });
                     if !self.eat(T::Comma)
-                        && !self.goes_on_without_comma(ListKind::ImportOrExportSpecifiers, element)
+                        && !self
+                            .continues_without_comma(ListKind::ImportOrExportSpecifiers, element)
                     {
                         break;
                     }
@@ -634,7 +635,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.context = saved;
         // `tryParseImportClause`: without a clause there's nothing for the modifier to apply to.
         if is_deferred && !has_clause {
-            match self.is_read_as_by_other_parsers() {
+            match self.parses_like_acorn_or_babel() {
                 true => self.report(),
                 false => is_deferred = false,
             }
@@ -769,7 +770,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn expression_as_required_module(&mut self) -> ExprId {
-        if self.is_read_as_by_other_parsers() {
+        if self.parses_like_acorn_or_babel() {
             self.refuse(Refusal::Reported);
             return ExprId::NONE;
         }
@@ -793,7 +794,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline]
     fn right_side_of_dot_in_module_reference(&mut self) -> Option<(Atom, u32)> {
         if !self.is_identifier() || self.newline_before() {
-            return self.right_side_of_dot_in_module_reference_in_general();
+            return self.right_side_of_dot_in_module_reference_slow();
         }
         let name = (self.lx.atom, self.pos());
         self.note_identifier(name.0, name.1);
@@ -803,7 +804,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     #[cold]
     #[inline(never)]
-    fn right_side_of_dot_in_module_reference_in_general(&mut self) -> Option<(Atom, u32)> {
+    fn right_side_of_dot_in_module_reference_slow(&mut self) -> Option<(Atom, u32)> {
         let token = self.token();
         // "The entity is part of a JSDoc-style generic."
         if token == T::LessThan {
@@ -879,7 +880,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.js_error((specifier.start, specifier.end), 8006, b"export...type");
                 if type_only && self.reports_like_oxc() {
                     let (errors, at) = (&mut self.f.diagnostics, specifier.start);
-                    oxc::type_modifier_twice(errors, at, oxc::Specifier::Export);
+                    oxc::duplicate_type_modifier(errors, at, oxc::Specifier::Export);
                 }
             }
             self.s.export_specs.push(ExportSpec {
@@ -893,7 +894,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 export: declaration,
             });
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::ImportOrExportSpecifiers, element)
+                && !self.continues_without_comma(ListKind::ImportOrExportSpecifiers, element)
             {
                 break;
             }
@@ -967,7 +968,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let modifiers = self.take_modifiers(base);
         self.next();
         self.expect(T::Namespace);
-        let saved = self.leave_await_context_of_top_level();
+        let saved = self.clear_top_level_await_context();
         let (name, _) = self.identifier();
         self.context = saved;
         self.semicolon();

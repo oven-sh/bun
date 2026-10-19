@@ -199,7 +199,7 @@ fn fix_add_type_specifier_to_named_exports<'a>(
 }
 
 /// The location for "everything exported is a type". oxlint points at the `export`.
-fn place_of_all(node: Stmt, cx: &Cx<'_, ConsistentTypeExports>) -> Span {
+fn whole_export_report_span(node: Stmt, cx: &Cx<'_, ConsistentTypeExports>) -> Span {
     let Span { start, end } = node.span();
     Span::new(start, if cx.language().is_oxlint { start + "export".len() as u32 } else { end })
 }
@@ -233,7 +233,7 @@ impl ConsistentTypeExports {
         if is_there_any_exported_value {
             return;
         }
-        cx.report(place_of_all(node, cx), TYPE_OVER_VALUE).fix(|fixer| {
+        cx.report(whole_export_report_span(node, cx), TYPE_OVER_VALUE).fix(|fixer| {
             // tsgolint also fixes an export from a `declare module "name";`, which has no body to tell what it exports.
             if is_oxlint && source_file_type.flags().intersects(TypeFlags::ANY) {
                 return None;
@@ -289,7 +289,7 @@ impl ConsistentTypeExports {
         }
 
         if report.value_specifiers.is_empty() {
-            cx.report(place_of_all(node, cx), TYPE_OVER_VALUE).fix(|fixer| match is_oxlint {
+            cx.report(whole_export_report_span(node, cx), TYPE_OVER_VALUE).fix(|fixer| match is_oxlint {
                 true => fix_replace_named_exports(fixer, export, &report),
                 false => fix_export_insert_type(fixer, export),
             });

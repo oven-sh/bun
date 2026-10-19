@@ -103,12 +103,12 @@ pub(crate) fn can_concisely_print_array_list<'a>(
                 }
                 _ => false,
             };
-            is_number && !has_line_comment_behind_code(element, f)
+            is_number && !has_line_comment_after_code(element, f)
         })
 }
 
 /// True if a line comment trails `element` on its line. For oxfmt, also if one leads it: `[ // comment⏎1, 2]`.
-fn has_line_comment_behind_code<'a>(element: Expr<'a>, f: &Formatter<'a>) -> bool {
+fn has_line_comment_after_code<'a>(element: Expr<'a>, f: &Formatter<'a>) -> bool {
     if f.is_quiet() {
         return false;
     }

@@ -94,7 +94,7 @@ impl<'a> Pat<'a> {
             Some(&PatParent::Param(p)) => Node::Param(super::Param::new(file, p)),
             Some(&PatParent::Prop(_, prop)) => Node::PatProp(PatProp::new(file, prop)),
             Some(&PatParent::Elem(_, elem)) => Node::PatElem(PatElem::new(file, elem)),
-            Some(PatParent::None) | None => Node::Pat(self).parent_of_neither_expr_nor_stmt(),
+            Some(PatParent::None) | None => Node::Pat(self).parent_of_other_node(),
         }
     }
 

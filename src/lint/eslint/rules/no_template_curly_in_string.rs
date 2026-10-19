@@ -101,10 +101,10 @@ fn check_string_key<'a>(key: Key<'a>, value: Name<'a>, cx: &Cx<'a, NoTemplateCur
 #[inline(never)]
 fn check_string<'a>(e: Expr<'a>, cx: &Cx<'a, NoTemplateCurlyInString>) {
     let is_oxlint = cx.language().is_oxlint;
-    let is_as_written = is_oxlint && e.is_jsx_attribute_string();
-    let value = e.as_string().map(|it| if is_as_written { e.text() } else { it.bytes() });
-    let has_one = value.is_some_and(|it| has_placeholder(it, is_oxlint));
-    if has_one && !e.is_jsx_text() && !e.is_jsx_tag_name() {
+    let uses_raw_text = is_oxlint && e.is_jsx_attribute_string();
+    let value = e.as_string().map(|it| if uses_raw_text { e.text() } else { it.bytes() });
+    let has_match = value.is_some_and(|it| has_placeholder(it, is_oxlint));
+    if has_match && !e.is_jsx_text() && !e.is_jsx_tag_name() {
         cx.report(e, UNEXPECTED_TEMPLATE_EXPRESSION);
     }
 }

@@ -53,7 +53,7 @@ impl NoUselessUndefined {
     fn check_identifier<'a>(&self, undefined_literal: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let state = &mut cx.state;
         let end = undefined_literal.span().end;
-        let is_it = |e: Option<Expr<'a>>| e == Some(undefined_literal);
+        let is_this_undefined = |e: Option<Expr<'a>>| e == Some(undefined_literal);
         // In TypeScript, a function that ends in `return;` returns `void`, not `undefined`, and `let a;` has no type.
         let is_untyped = undefined_literal.file().is_javascript();
         // The span to replace, the replacement, and whether the program still behaves the same and type checks
@@ -85,7 +85,7 @@ impl NoUselessUndefined {
             }
             // `let foo = undefined` / `var foo = undefined`
             Node::VarDecl(declarator)
-                if is_it(declarator.init()) && declarator.var_kind() != VarKind::Const =>
+                if is_this_undefined(declarator.init()) && declarator.var_kind() != VarKind::Const =>
             {
                 // A `var` without an initializer keeps its value from the previous loop iteration.
                 (
@@ -95,18 +95,18 @@ impl NoUselessUndefined {
                 )
             }
             // `const {foo = undefined} = {}`
-            Node::PatProp(property) if is_it(property.default()) => (
+            Node::PatProp(property) if is_this_undefined(property.default()) => (
                 Replaced::Span(Span::new(property.value().span().end, end)),
                 "",
                 true,
             ),
-            Node::PatElem(element) if is_it(element.default()) => match element.pat() {
+            Node::PatElem(element) if is_this_undefined(element.default()) => match element.pat() {
                 Some(left) => (Replaced::Span(Span::new(left.span().end, end)), "", true),
                 None => return,
             },
             // `function foo(bar = undefined) {}`
             Node::Param(parameter)
-                if is_it(parameter.default()) && !undefined_literal.is_parenthesized() =>
+                if is_this_undefined(parameter.default()) && !undefined_literal.is_parenthesized() =>
             {
                 // Without the default the parameter is required, which isn't allowed after an optional parameter.
                 let Some(func) = parameter.func() else {

@@ -32,7 +32,7 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     let ends_with_empty_line = (file.body().last()).is_some_and(|last| {
         is_directive_before_empty_line(last, f)
             && (source.get(last.span().end as usize..))
-                .is_some_and(|behind| !behind.trim_ascii().is_empty())
+                .is_some_and(|tail| !tail.trim_ascii().is_empty())
     });
     match ends_with_empty_line {
         true => write!(f, empty_line()),
@@ -141,7 +141,7 @@ impl<'a> Format<'a> for FormatStatements<'a> {
                     match own_line_comment_before_semicolon(previous_statement, f) {
                         Some(comment) => f.lines_before(comment.span()) > 1,
                         None => {
-                            !is_behind_semicolon_and_blanks(statement, f)
+                            !follows_semicolon_and_spaces(statement, f)
                                 && is_next_line_empty_after(previous_statement, f)
                         }
                     };
@@ -184,7 +184,7 @@ fn own_line_comment_before_semicolon<'a>(
 
 /// `a()⏎⏎; [b].c()`: oxfmt looks for an empty line before a statement, and skips over a `;` only if it's right before
 /// the statement.
-fn is_behind_semicolon_and_blanks<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
+fn follows_semicolon_and_spaces<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
     f.options().flavor.is_oxfmt()
         && !f.comments().has_comment_before(statement.span().start)
         && (f.file().text().get(..statement.span().start as usize)).is_some_and(|before| {
@@ -219,7 +219,7 @@ fn write_semicolon_before_type_cast_comment_of<'a>(statement: Stmt<'a>, f: &mut 
     if let Some((_, rest)) = f.comments().of_node(node).leading.split_last()
         && follows_type_cast_comment(statement.span().start, f)
         && (!f.comments().is_ignored(node)
-            || semicolon_is_before_cast_comment_of_ignored_statement(f))
+            || semicolon_goes_before_ignored_statement_cast_comment(f))
         && expression_statement_needs_semicolon(statement, expression, f)
     {
         write!(f, [FormatLeadingComments::Comments(rest), ";"]);
@@ -228,7 +228,7 @@ fn write_semicolon_before_type_cast_comment_of<'a>(statement: Stmt<'a>, f: &mut 
 
 /// `// prettier-ignore ⏎ /** @type {T} */ (a).b()` without semicolons: Prettier prints the `;` right before the copied
 /// text, between the comment and its `(`. oxfmt keeps the two together: `;/** @type {T} */ (a).b()`
-pub(crate) fn semicolon_is_before_cast_comment_of_ignored_statement(f: &Formatter<'_>) -> bool {
+pub(crate) fn semicolon_goes_before_ignored_statement_cast_comment(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

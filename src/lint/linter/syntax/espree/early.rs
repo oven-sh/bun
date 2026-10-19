@@ -69,7 +69,7 @@ impl<'a> Checks<'a, '_> {
         self.meta_properties();
         self.regular_expressions();
         self.functions();
-        self.defaults_that_suspend(false);
+        self.check_yield_await_in_default_params(false);
         self.supers();
         self.private_names();
         self.jumps();
@@ -81,7 +81,7 @@ impl<'a> Checks<'a, '_> {
         self.awaits();
         self.arrows();
         self.object_literals();
-        self.names_in_quotes();
+        self.string_module_names();
         self.async_before_of();
         if self.is_babel {
             self.sequences_in_jsx();
@@ -94,20 +94,20 @@ impl<'a> Checks<'a, '_> {
 
     /// The subset of [`Checks::early_errors`] that oxc is known to have, and to report for the same code. oxc supports
     /// decorators, `accessor` and `import defer`, and it accepts a lot that acorn rejects.
-    pub(super) fn early_errors_of_oxc(&mut self) {
+    pub(super) fn oxc_early_errors(&mut self) {
         // With `only_parser`, skip the checks that only the semantic pass reports.
         let all = !self.only_parser;
         let file = self.file;
         let (kinds, counts) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
         let are_counted = kinds.len() == file.hir.exprs.len();
         let has_none = |tag: ExprTag| are_counted && counts.get(2 * tag as usize) == Some(&0);
-        self.early_errors_of_oxc_parser();
+        self.oxc_parser_early_errors();
         if !self.is_oxfmt && !has_none(ExprTag::Regex) {
             self.regular_expressions();
         }
         if all {
-            self.defaults_that_suspend(true);
-            self.suspensions_in_static_blocks();
+            self.check_yield_await_in_default_params(true);
+            self.await_in_static_blocks();
             self.jumps();
             self.labels();
         }
@@ -136,7 +136,7 @@ impl<'a> Checks<'a, '_> {
     }
 
     /// The ones that oxc's parser reports, as opposed to its semantic pass.
-    fn early_errors_of_oxc_parser(&mut self) {
+    fn oxc_parser_early_errors(&mut self) {
         // TypeScript allows a declaration without an initializer (`declare const a`).
         if self.file.is_javascript() {
             self.declarations();
@@ -144,7 +144,7 @@ impl<'a> Checks<'a, '_> {
     }
 
     /// `parseModuleExportName`: an import or export name written as a string.
-    fn names_in_quotes(&mut self) {
+    fn string_module_names(&mut self) {
         let file = self.file;
         if !strings::contains(file.text(), b"\\u") {
             return;
@@ -910,8 +910,8 @@ impl<'a> Checks<'a, '_> {
     /// `import.meta` and `new.target` are the only meta properties acorn supports.
     fn meta_properties(&mut self) {
         let file = self.file;
-        let of_import = "The only valid meta property for import is 'import.meta'";
-        let of_new = "The only valid meta property for new is 'new.target'";
+        let import_message = "The only valid meta property for import is 'import.meta'";
+        let new_message = "The only valid meta property for new is 'new.target'";
         for it in self.exprs_of(ExprTag::ImportCall) {
             let name = self.after_token(self.after_token(it.span().start));
             // Prettier enables these proposals in Babel, which accepts them only as the proposals spell them.
@@ -923,7 +923,7 @@ impl<'a> Checks<'a, '_> {
                 false => it.is_deferred_import_call(),
             };
             if is_refused {
-                self.fail(name, of_import);
+                self.fail(name, import_message);
             }
         }
         // In `import defer * as a from "a"`, acorn reads `defer` as the default import's name.
@@ -964,8 +964,8 @@ impl<'a> Checks<'a, '_> {
                 b"import" if is_meta && !self.is_babel => {
                     self.fail(keyword, "'import.meta' must not contain escaped characters");
                 }
-                b"import" => self.fail(name, of_import),
-                b"new" => self.fail(name, of_new),
+                b"import" => self.fail(name, import_message),
+                b"new" => self.fail(name, new_message),
                 _ => {}
             }
         }
@@ -977,7 +977,7 @@ impl<'a> Checks<'a, '_> {
         if self.lacks(rare::NEW_TARGET) {
             return;
         }
-        let of_new = "The only valid meta property for new is 'new.target'";
+        let new_message = "The only valid meta property for new is 'new.target'";
         for it in self.exprs_of(ExprTag::NewTarget) {
             // acorn has three checks for a `new.target` and throws at the first that fails, whatever their offsets.
             let name = self.after_token(self.after_token(it.span().start));
@@ -991,7 +991,7 @@ impl<'a> Checks<'a, '_> {
                 continue;
             }
             if !is_target || self.is_babel && self.token_at(name) != b"target" {
-                self.fail(name, of_new);
+                self.fail(name, new_message);
                 continue;
             }
             if self.token_at(name) != b"target" && self.is_oxc {
@@ -1034,7 +1034,7 @@ impl<'a> Checks<'a, '_> {
             };
             let (pattern, flags, at) = (literal.pattern(), literal.flags(), it.span().start + 1);
             if self.is_oxc {
-                self.regular_expression_of_oxc(it.span(), pattern, flags);
+                self.oxc_regular_expression_errors(it.span(), pattern, flags);
                 continue;
             }
             let is_valid = |flag: &u8| strings::contains_char(b"dgimsuvy", *flag);
@@ -1076,7 +1076,7 @@ impl<'a> Checks<'a, '_> {
 
     /// oxc's errors for the regular expression at `literal`. Its lexer reads the flags, and lexer errors are printed
     /// before all parser errors.
-    fn regular_expression_of_oxc(
+    fn oxc_regular_expression_errors(
         &mut self,
         literal: crate::span::Span,
         pattern: &[u8],
@@ -1384,7 +1384,7 @@ impl<'a> Checks<'a, '_> {
 
     /// `checkYieldAwaitInDefaultParams`. With `of_oxc`, reports in oxc's wording. oxc labels the whole expression, and
     /// also reports a computed key in a parameter's type.
-    fn defaults_that_suspend(&mut self, of_oxc: bool) {
+    fn check_yield_await_in_default_params(&mut self, of_oxc: bool) {
         if self.lacks(rare::SUSPENDS_IN_PARAMETERS) {
             return;
         }
@@ -1428,7 +1428,7 @@ impl<'a> Checks<'a, '_> {
     }
 
     /// For oxc: `await` and `await using` in a static block. Code in a function nested in the block doesn't count.
-    fn suspensions_in_static_blocks(&mut self) {
+    fn await_in_static_blocks(&mut self) {
         if self.lacks(rare::SUSPENDS_IN_STATIC_BLOCK) {
             return;
         }
@@ -1662,7 +1662,7 @@ impl<'a> Checks<'a, '_> {
                 }
                 if self.is_oxc {
                     let error = SyntaxError::of_oxc(name.span(), undeclared(name.bytes()));
-                    let help = self.private_name_like(Node::Expr(it), name.bytes());
+                    let help = self.similar_private_name_help(Node::Expr(it), name.bytes());
                     self.report(error.help(help));
                     continue;
                 }
@@ -1702,7 +1702,7 @@ impl<'a> Checks<'a, '_> {
                 }
                 if is_oxc {
                     let error = SyntaxError::of_oxc(it.span(), undeclared(name.bytes()));
-                    let help = self.private_name_like(Node::Expr(it), name.bytes());
+                    let help = self.similar_private_name_help(Node::Expr(it), name.bytes());
                     self.report(error.help(help));
                     continue;
                 }
@@ -1713,7 +1713,7 @@ impl<'a> Checks<'a, '_> {
 
     /// For oxc: "Did you mean '#a'?", if a class enclosing `node` declares a private name similar to `name`. On a tie,
     /// the inner class wins, then the earlier member.
-    fn private_name_like(&mut self, node: Node<'a>, name: &[u8]) -> String {
+    fn similar_private_name_help(&mut self, node: Node<'a>, name: &[u8]) -> String {
         let mut inside = node;
         let classes = self.tops.outward(node).filter_map(|outer| {
             let from = std::mem::replace(&mut inside, outer);
@@ -1752,16 +1752,16 @@ impl<'a> Checks<'a, '_> {
         // oxc lets an ambient member be named `prototype` or be declared twice: `declare class A { static prototype: A
         // }`.
         let is_oxc = self.is_oxc;
-        let is_only_declared = |flags: Flags| is_oxc && flags.contains(Flags::AMBIENT);
+        let is_ambient = |flags: Flags| is_oxc && flags.contains(Flags::AMBIENT);
         for class in file.classes() {
-            let is_class_declared = is_only_declared(class.flags());
+            let is_class_declared = is_ambient(class.flags());
             let mut has_constructor = false;
             let mut constructors = 0;
             let mut first_constructor = crate::span::Span::default();
             private.clear();
             first_private.clear();
             for member in class.members() {
-                let is_declared = is_class_declared || is_only_declared(member.flags());
+                let is_declared = is_class_declared || is_ambient(member.flags());
                 self.as_parser(|checks| checks.class_element(member, is_declared));
                 if is_declared {
                     continue;
@@ -1868,10 +1868,10 @@ impl<'a> Checks<'a, '_> {
         let is_named = |name: &str| matches!(key.kind(), KeyKind::Ident(it) | KeyKind::String(it) if it.is(name));
         let is_field = member.kind() == MemberKind::Property;
         // oxc checks an `accessor`'s name only if it's private.
-        let is_passed_over = self.is_oxc && member.flags().contains(Flags::ACCESSOR);
+        let skips_name_check = self.is_oxc && member.flags().contains(Flags::ACCESSOR);
         if matches!(key.kind(), KeyKind::Private(name) if name.is("#constructor")) {
             self.fail(start, "Classes can't have an element named '#constructor'");
-        } else if is_passed_over || is_declared && !(is_field && is_named("constructor")) {
+        } else if skips_name_check || is_declared && !(is_field && is_named("constructor")) {
             // Its name isn't checked.
         } else if is_field && is_named("constructor") {
             self.fail(start, "Classes can't have a field named 'constructor'");
@@ -2207,7 +2207,7 @@ impl<'a> Checks<'a, '_> {
                     }
                 }
                 if !has_target && self.is_oxc {
-                    self.jump_of_oxc(it, is_break);
+                    self.oxc_jump_error(it, is_break);
                 } else if !has_target {
                     self.fail(
                         it.span().start,
@@ -2223,7 +2223,7 @@ impl<'a> Checks<'a, '_> {
     }
 
     /// oxc's error for a `break` or `continue` without a target.
-    fn jump_of_oxc(&mut self, it: Stmt<'a>, is_break: bool) {
+    fn oxc_jump_error(&mut self, it: Stmt<'a>, is_break: bool) {
         let Some(label) = it.label() else {
             let (message, help) = match is_break {
                 true => (

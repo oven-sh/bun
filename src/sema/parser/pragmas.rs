@@ -48,7 +48,7 @@ fn single_line_pragma(
     if triple_slash {
         pos += 1;
     }
-    pos = skip_blanks(text, pos);
+    pos = skip_spaces_and_tabs(text, pos);
     if text.get(pos) == Some(&b'@') {
         // "_last_ of either nocheck or check in a file is the "winner""
         let name = extract_name(text, pos + 1);
@@ -76,16 +76,16 @@ fn single_line_pragma(
     // `PragmaArgument.TextRange`, relative to the comment. If a name is repeated, the last argument wins.
     let mut args: [Option<(usize, usize)>; 5] = [None; 5];
     loop {
-        pos = skip_blanks(text, pos);
+        pos = skip_spaces_and_tabs(text, pos);
         let name = extract_name(text, pos);
         if name.is_empty() {
             break;
         }
-        pos = skip_blanks(text, pos + name.len());
+        pos = skip_spaces_and_tabs(text, pos + name.len());
         if text.get(pos) != Some(&b'=') {
             break;
         }
-        pos = skip_blanks(text, pos + 1);
+        pos = skip_spaces_and_tabs(text, pos + 1);
         let Some(value) = extract_quoted_string(text, pos) else {
             break;
         };
@@ -149,14 +149,14 @@ fn multi_line_pragmas(
         pos += found;
         // "the '@' must be immediately followed by a non-whitespace pragma name, and the remainder of the line is consumed as that
         // pragma's arguments"
-        let name_end = skip_non_blanks(text, pos + 1);
+        let name_end = skip_non_whitespace(text, pos + 1);
         if name_end == pos + 1 {
             pos += 1;
             continue;
         }
         let name = &text[pos + 1..name_end];
-        let start = skip_blanks(text, name_end);
-        let argument = &text[start..skip_non_blanks(text, start)];
+        let start = skip_spaces_and_tabs(text, name_end);
+        let argument = &text[start..skip_non_whitespace(text, start)];
         let is = |it: &[u8]| !argument.is_empty() && name.eq_ignore_ascii_case(it);
         if is(b"jsx") {
             pragmas.factory = intern(argument);
@@ -176,14 +176,14 @@ fn multi_line_pragmas(
     }
 }
 
-fn skip_blanks(text: &[u8], mut pos: usize) -> usize {
+fn skip_spaces_and_tabs(text: &[u8], mut pos: usize) -> usize {
     while pos < text.len() && matches!(text[pos], b' ' | b'\t') {
         pos += 1;
     }
     pos
 }
 
-fn skip_non_blanks(text: &[u8], mut pos: usize) -> usize {
+fn skip_non_whitespace(text: &[u8], mut pos: usize) -> usize {
     while pos < text.len() && !matches!(text[pos], b' ' | b'\t' | b'\r' | b'\n') {
         pos += 1;
     }

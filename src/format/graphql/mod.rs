@@ -87,7 +87,7 @@ pub fn format(
 }
 
 /// Converts the parser's error.
-fn because_of(error: SyntaxError) -> FormatError {
+fn to_format_error(error: SyntaxError) -> FormatError {
     match error {
         SyntaxError(Message::NestedTooDeeply, _) => FormatError::NestedTooDeeply,
         error => FormatError::SyntaxErrorAt(error),
@@ -103,7 +103,7 @@ fn format_range(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    parser::parse(text, &mut scratch.tree).map_err(because_of)?;
+    parser::parse(text, &mut scratch.tree).map_err(to_format_error)?;
     let range = range::calculate_range(text, &scratch.tree, start, end).unwrap_or_default();
     let (before, rest) = text.split_at((range.start as usize).min(text.len()));
     let (slice, after) = rest.split_at((range.len() as usize).min(rest.len()));
@@ -144,7 +144,7 @@ fn format_normalized(
         attached,
         document,
     } = scratch;
-    parser::parse(text, tree).map_err(because_of)?;
+    parser::parse(text, tree).map_err(to_format_error)?;
     comments::attach(text, tree, attached);
 
     // Prettier's `addAlignmentToDoc`. The line break makes the indentation take effect.

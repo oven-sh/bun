@@ -96,10 +96,10 @@ impl Checker<'_, '_> {
         let error = self.grammar_error_in_modifiers(file, s);
         // `checkInterfaceDeclaration`: `if !c.checkGrammarModifiers(node) { .. }`
         if error.is_some() && matches!(statement.kind, StmtKind::Interface(_)) {
-            self.take_back_grammar_errors_of_heritage_clauses(file, hir.node(s));
+            self.remove_heritage_clause_grammar_errors(file, hir.node(s));
         }
         // `checkImportDeclaration`, `checkExportDeclaration`, `checkExportAssignment`: these don't accept modifiers.
-        let takes_none = match (statement.kind, bound.parent_of_stmt(s)) {
+        let modifiers_not_allowed = match (statement.kind, bound.parent_of_stmt(s)) {
             (StmtKind::Import(_), Parent::File | Parent::Module(_)) => 1191,
             (
                 StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. },
@@ -113,8 +113,10 @@ impl Checker<'_, '_> {
             }
             _ => 0,
         };
-        let takes_none = GrammarError::some(statement.start, 0, takes_none, ["", ""]);
-        if let Some(error) = error.or_else(|| takes_none.filter(|error| error.code != 0)) {
+        let modifiers_not_allowed =
+            GrammarError::some(statement.start, 0, modifiers_not_allowed, ["", ""]);
+        if let Some(error) = error.or_else(|| modifiers_not_allowed.filter(|error| error.code != 0))
+        {
             self.report_grammar_error(file, error);
         }
     }
@@ -127,7 +129,7 @@ impl Checker<'_, '_> {
             return;
         }
         let node = self.hir(file).node(class);
-        self.take_back_grammar_errors_of_heritage_clauses(file, node);
+        self.remove_heritage_clause_grammar_errors(file, node);
         // `.. || c.checkGrammarTypeParameterList(..)`: the front end doesn't report the list after an error in the
         // clauses that ends their check.
         self.check_grammar_type_parameter_list_of_class(file, class);
@@ -136,7 +138,7 @@ impl Checker<'_, '_> {
     /// Removes what the front end reported for `node`, a class or an interface, in place of
     /// `checkGrammarClassDeclarationHeritageClauses` or `checkGrammarInterfaceDeclaration`. Those errors are between
     /// the elements of the clauses, at the first token of an element, and on the base class's type arguments.
-    fn take_back_grammar_errors_of_heritage_clauses(&mut self, file: FileId, node: Node) {
+    fn remove_heritage_clause_grammar_errors(&mut self, file: FileId, node: Node) {
         let hir = self.hir(file);
         // The spans of the children that are checked separately.
         let mut others: SmallVec<[(u32, u32); 16]> = SmallVec::new();
@@ -185,7 +187,7 @@ impl Checker<'_, '_> {
                     .retain(|d| d.file != file || d.code != 8023 || d.start != tag);
                 continue;
             }
-            self.take_back_grammar_errors_of_heritage_clauses(file, node);
+            self.remove_heritage_clause_grammar_errors(file, node);
             // `.. || c.checkGrammarTypeParameterList(..)`
             self.reported
                 .retain(|d| d.file != file || d.code != 1098 || !clauses.contains(&d.start));
@@ -422,7 +424,7 @@ impl Checker<'_, '_> {
                 ModifierKind::Keyword(modifier) => modifier,
                 ModifierKind::Decorator(e) => {
                     // `!NodeCanBeDecorated(..)`
-                    if bound.refused_decorators.contains(&e) {
+                    if bound.rejected_decorators.contains(&e) {
                         let function = hir.fns.get(hir.function_of(location).idx());
                         let is_overload =
                             kind == Kind::MethodDeclaration && !function.is_some_and(has_body);

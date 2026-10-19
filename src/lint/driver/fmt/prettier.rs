@@ -5,7 +5,7 @@
 //! plugins. The result is checked or written like the built-in formatter's output. It's exact, but slow.
 
 use super::cli::{Options, Precedence};
-use super::config::is_option_of_prettier;
+use super::config::is_prettier_option;
 use crate::run::Environment;
 use crate::{fs, git, paths};
 use bun_lint::js_plugin::{Host, Unformatted};
@@ -46,7 +46,7 @@ impl<'e> Prettier<'e> {
             _ => Json::String(text.to_vec()),
         };
         let mut flags: Vec<(Vec<u8>, Json)> = (options.format.iter())
-            .filter(|it| is_option_of_prettier(it.0))
+            .filter(|it| is_prettier_option(it.0))
             .map(|it| (it.0.to_vec(), value(&it.1)))
             .collect();
         if !options.plugins.is_empty() {

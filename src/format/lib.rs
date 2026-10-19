@@ -37,7 +37,9 @@ pub mod yaml;
 
 /// Helpers for callers that handle Flow files.
 pub mod flow {
-    pub use crate::js::print::flow::{goes_to_babel, may_have_comment_types, uncommented};
+    pub use crate::js::print::flow::{
+        is_parsed_by_babel_flow, may_have_comment_types, uncommented,
+    };
 }
 
 /// Import sorting.

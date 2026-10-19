@@ -1210,7 +1210,7 @@ impl<'p, 's> Checker<'p, 's> {
         let place = |symbol: Sym| match self.decls_of(symbol).first() {
             Some(&(file, decl)) => {
                 let start = self.declaration_name_start(file, decl).unwrap_or(0);
-                (0, self.place_in_program_order(file, start))
+                (0, self.position_in_program_order(file, start))
             }
             None => (1, (false, 0, 0)),
         };
@@ -5978,7 +5978,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let is_node = files.options.resolves_like_node;
         // `ExtensionsNotSupportingExtensionlessResolution` say nothing about the preferred ending.
-        let is_telling = |text: &&[u8]| {
+        let is_informative = |text: &&[u8]| {
             !matches!(
                 known_extension(text),
                 b".mts" | b".d.mts" | b".mjs" | b".cts" | b".d.cts" | b".cjs"
@@ -5993,7 +5993,7 @@ impl<'p, 's> Checker<'p, 's> {
             if is_node && mode == ResolutionMode::Require {
                 return Ending::Minimal;
             }
-            let mut telling = specifiers.iter().copied().filter(is_telling);
+            let mut telling = specifiers.iter().copied().filter(is_informative);
             if telling.clone().any(&has_ts_extension) {
                 Ending::Ts
             } else if telling.any(&has_js_extension) {
@@ -6014,7 +6014,7 @@ impl<'p, 's> Checker<'p, 's> {
             return inferred();
         }
         // `usesExtensionsOnImports`
-        match specifiers.iter().copied().find(is_telling) {
+        match specifiers.iter().copied().find(is_informative) {
             Some(first) if has_ts_extension(first) || has_js_extension(first) => Ending::Js,
             _ => Ending::Minimal,
         }

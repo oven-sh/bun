@@ -169,10 +169,10 @@ pub(crate) fn find_formatting_rule(
 ) -> Option<&'static Deprecated> {
     let rule = formatting_rule(id)?;
     let prefix = parse_rule_id(id).0;
-    let is_another = !registry.answers_for(prefix)
+    let is_other_rule = !registry.replaces_plugin(prefix)
         || foreign.iter().any(|it| **it == *prefix)
         || prefix.is_empty() && find_js_rule(js_plugins, id).is_some();
-    (!is_another).then_some(rule)
+    (!is_other_rule).then_some(rule)
 }
 
 pub(crate) fn find_js_rule<'p>(
@@ -292,7 +292,7 @@ pub struct ResolvedConfig {
     /// `language`, if it's configured: `js/js`, `json/json`, ..
     pub language_name: Option<Box<[u8]>>,
     /// `languageOptions`, if the language isn't JavaScript. That language defines their meaning.
-    pub options_of_other_language: Option<Json>,
+    pub other_language_options: Option<Json>,
     /// The language that `language_name` refers to, if it isn't JavaScript and Bun lints the file itself:
     /// [`Route::Language`].
     pub dialect: Option<Dialect>,
@@ -317,10 +317,10 @@ pub struct ResolvedConfig {
 impl ResolvedConfig {
     pub fn rule(&self, entry: &RuleEntry) -> Option<&ConfiguredRule> {
         let (plugin, name) = (entry.meta.plugin, entry.meta.name);
-        let is_it = |it: &&ConfiguredRule| {
+        let is_match = |it: &&ConfiguredRule| {
             it.name.is_none() && it.entry.meta.plugin == plugin && it.entry.meta.name == name
         };
-        self.rules.iter().find(is_it)
+        self.rules.iter().find(is_match)
     }
 
     /// The config's entries for built-in rules, including disabled ones, in config order.
@@ -332,14 +332,14 @@ impl ResolvedConfig {
     pub fn entries(&self) -> impl Iterator<Item = Entry<'_>> {
         let mut native = self.rules.iter().enumerate().peekable();
         let mut js = self.js_rules.iter().enumerate().peekable();
-        let mut about_layout = self.formatting_rules.iter().peekable();
+        let mut formatting = self.formatting_rules.iter().peekable();
         std::iter::from_fn(move || {
             let seen = (
                 native.peek().map_or(self.rules.len(), |it| it.0),
                 js.peek().map_or(self.js_rules.len(), |it| it.0),
             );
             let is_next = |it: &&FormattingRule| it.position.0 <= seen.0 && it.position.1 <= seen.1;
-            if let Some(rule) = about_layout.next_if(is_next) {
+            if let Some(rule) = formatting.next_if(is_next) {
                 return Some(Entry::Formatting(rule));
             }
             if let Some((_, rule)) = js.next_if(|it| it.1.position <= seen.0) {
@@ -349,10 +349,10 @@ impl ResolvedConfig {
         })
     }
 
-    /// True if any enabled rule satisfies `is_it`.
-    pub fn has_enabled(&self, is_it: impl Fn(&Meta) -> bool) -> bool {
+    /// True if any enabled rule satisfies `is_match`.
+    pub fn has_enabled(&self, is_match: impl Fn(&Meta) -> bool) -> bool {
         let mut on = self.rules.iter().filter(|it| it.severity != Severity::Off);
-        on.any(|it| is_it(it.entry.meta))
+        on.any(|it| is_match(it.entry.meta))
     }
 
     /// True if an enabled rule has its [package's rule](ConfiguredRule::or_else) to hand a file back to.
@@ -435,7 +435,7 @@ impl ResolvedConfig {
             .find_preferring(id, self.prefers_typescript_rules)
             .filter(|it| !(self.has_unknown_resolver && needs_resolver(it.meta)));
         if let Some(plugins) = &self.plugins {
-            let has = |plugin: Plugin| plugin.is_always_there() || plugins.contains(&plugin);
+            let has = |plugin: Plugin| plugin.is_always_available() || plugins.contains(&plugin);
             return found.filter(|it| has(it.meta.plugin));
         }
         if found.is_some() || !self.prefers_typescript_rules {
@@ -464,9 +464,9 @@ impl ResolvedConfig {
         self.skip(plugin == Plugin::Jsdoc);
     }
 
-    /// Records that an enabled rule is skipped. `is_of_jsdoc` is true for a rule of oxlint's `jsdoc` plugin.
-    pub(crate) fn skip(&mut self, is_of_jsdoc: bool) {
-        self.skipped = self.skipped.max(match is_of_jsdoc {
+    /// Records that an enabled rule is skipped. `is_jsdoc_rule` is true for a rule of oxlint's `jsdoc` plugin.
+    pub(crate) fn skip(&mut self, is_jsdoc_rule: bool) {
+        self.skipped = self.skipped.max(match is_jsdoc_rule {
             true => Skipped::OnlyJsdoc,
             false => Skipped::Any,
         });
@@ -476,8 +476,8 @@ impl ResolvedConfig {
     /// [`find_formatting_rule`]. oxlint has no such rules.
     pub fn formatting_rule(&self, registry: &Registry, id: &[u8]) -> Option<&'static Deprecated> {
         let rule = find_formatting_rule(registry, id, &self.foreign_plugins, &self.js_plugins)?;
-        let plugin = Plugin::of_prefix(parse_rule_id(id).0)?;
-        let has_plugin = plugin.is_always_there()
+        let plugin = Plugin::from_prefix(parse_rule_id(id).0)?;
+        let has_plugin = plugin.is_always_available()
             || (self.plugins.as_ref()).is_none_or(|all| all.contains(&plugin));
         (has_plugin && !self.prefers_typescript_rules).then_some(rule)
     }
@@ -488,7 +488,7 @@ impl ResolvedConfig {
         let prefix = parse_rule_id(id).0;
         let is_implemented_in_part = match self.has_every_rule {
             true => Plugin::spelled(prefix).any(|plugin| !plugin.is_whole()),
-            false => Plugin::of_prefix(prefix).is_some_and(|plugin| {
+            false => Plugin::from_prefix(prefix).is_some_and(|plugin| {
                 !plugin.is_whole()
                     && (self.plugins.as_ref()).is_none_or(|all| all.contains(&plugin))
             }),
@@ -520,16 +520,16 @@ impl ResolvedConfig {
     }
 
     /// True if some files with this config may take [`Route::Eslint`].
-    pub(crate) fn is_for_eslint(&self) -> bool {
+    pub(crate) fn may_route_to_eslint(&self) -> bool {
         !self.is_javascript() || self.language.parser == Parser::Other || self.changes_linter
     }
 
     /// Returns how the file at `path` is linted, ignoring any processor. This is also the route of a processor's
     /// output.
-    pub fn route_as_it_is(&self, path: &[u8]) -> Route {
-        let is_read_here = (self.language.parser != Parser::Other && !self.changes_linter)
+    pub fn route_without_processor(&self, path: &[u8]) -> Route {
+        let is_parsed_natively = (self.language.parser != Parser::Other && !self.changes_linter)
             || bun_sema::resolve::ScriptKind::from_file_name(path).is_some();
-        match self.is_javascript() && is_read_here {
+        match self.is_javascript() && is_parsed_natively {
             true => Route::Native,
             false if self.dialect.is_some() => Route::Language,
             false => Route::Eslint,
@@ -539,7 +539,7 @@ impl ResolvedConfig {
     /// Returns how the file at `path` is linted. With a processor, neither the language nor the parser reads the file
     /// itself.
     pub fn route(&self, path: &[u8]) -> Route {
-        match (self.route_as_it_is(path), &self.processor) {
+        match (self.route_without_processor(path), &self.processor) {
             (Route::Native | Route::Language | Route::Eslint, Some(_)) => Route::Processor,
             (route, _) => route,
         }

@@ -91,17 +91,17 @@ fn columns(text: &[u8]) -> usize {
 }
 
 /// The longest prefix of `text` that fits in `width` columns.
-fn fitting(text: &[u8], width: usize) -> &[u8] {
+fn truncate_to_width(text: &[u8], width: usize) -> &[u8] {
     let end = strings::visible::width::exclude_ansi_colors::utf8_index_at_width(text, width);
     &text[..end]
 }
 
 /// Converts `d` to input for `bun_ast::Msg::write_format`: the message, its location, and the last `shown` source lines
 /// up to the line it starts on. Only an error includes its code.
-fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_ast::Data {
+fn to_data(d: &Diagnostic, style: &Style, includes_code: bool, shown: usize) -> bun_ast::Data {
     // Bun's own diagnostics have no code.
     let text = match d.code {
-        code if code != 0 && says_code => alloc_print!("TS{code}: {}", d.text.as_bstr()).into(),
+        code if code != 0 && includes_code => alloc_print!("TS{code}: {}", d.text.as_bstr()).into(),
         _ => d.text.clone(),
     };
     // Leading blank lines carry no information.
@@ -452,11 +452,12 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
         &report.diagnostics[..],
         &report.listed_files[..],
     );
-    let of_tasks = |count: fn(&TaskOutput) -> usize| tasks.iter().map(count).sum::<usize>();
+    let sum_over_tasks = |count: fn(&TaskOutput) -> usize| tasks.iter().map(count).sum::<usize>();
     let before_the_tasks = TaskOutput {
-        resolution_trace: trace.len() - of_tasks(|it| it.resolution_trace).min(trace.len()),
-        diagnostics: diagnostics.len() - of_tasks(|it| it.diagnostics).min(diagnostics.len()),
-        listed_files: listed_files.len() - of_tasks(|it| it.listed_files).min(listed_files.len()),
+        resolution_trace: trace.len() - sum_over_tasks(|it| it.resolution_trace).min(trace.len()),
+        diagnostics: diagnostics.len() - sum_over_tasks(|it| it.diagnostics).min(diagnostics.len()),
+        listed_files: listed_files.len()
+            - sum_over_tasks(|it| it.listed_files).min(listed_files.len()),
     };
     for task in std::iter::once(&before_the_tasks).chain(tasks) {
         for line in take(&mut trace, task.resolution_trace) {
@@ -557,18 +558,21 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
                 width
             );
             let reported = summary_line(&first.text);
-            let place = alloc_print!("{}:{}", display_path(&first.path, style), first.line);
+            let first_location =
+                alloc_print!("{}:{}", display_path(&first.path, style), first.line);
             // Truncate the message to the terminal width. Append the first location only if it fits.
             let room = match style.width {
                 0 => usize::MAX,
                 columns => columns.saturating_sub(width + 12),
             };
-            let cut = fitting(reported, room);
-            out.extend_from_slice(cut);
-            if cut.len() < reported.len() {
+            let clipped = truncate_to_width(reported, room);
+            out.extend_from_slice(clipped);
+            if clipped.len() < reported.len() {
                 pretty!(out, style.color, "<d>\u{2026}<r>");
-            } else if !first.path.is_empty() && columns(reported) + columns(&place) + 2 <= room {
-                pretty!(out, style.color, "  <d>{}<r>", place);
+            } else if !first.path.is_empty()
+                && columns(reported) + columns(&first_location) + 2 <= room
+            {
+                pretty!(out, style.color, "  <d>{}<r>", first_location);
             }
             out.push(b'\n');
         }
@@ -702,14 +706,14 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         );
     }
     // A repository can have a hundred fixtures that nobody installs.
-    const NAMED: usize = 3;
-    for it in report.not_installed.iter().take(NAMED) {
+    const MAX_MANIFESTS_LISTED: usize = 3;
+    for it in report.not_installed.iter().take(MAX_MANIFESTS_LISTED) {
         let (verb, count) = match it.names.len() {
             1 => ("is", BString::from("1 dependency")),
             n => ("are", alloc_print!("{n} dependencies")),
         };
         let manifest = relative_path(&it.manifest, style.cwd, style);
-        let elsewhere = match it.is_of_working_directory {
+        let cwd_flag = match it.is_cwd_manifest {
             true => BString::default(),
             false => alloc_print!(" --cwd={}", BStr::new(dirname::<Posix>(&manifest))),
         };
@@ -720,10 +724,13 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             count,
             manifest,
             verb,
-            elsewhere
+            cwd_flag
         );
     }
-    let more = report.not_installed.len().saturating_sub(NAMED);
+    let more = report
+        .not_installed
+        .len()
+        .saturating_sub(MAX_MANIFESTS_LISTED);
     if more == 1 {
         pretty!(
             out,

@@ -22,7 +22,7 @@ pub(crate) struct FormatFunctionOptions {
 
 /// `a = function /* comment */⏎<T>() {}`: Prettier's line break after the comment breaks with the group around the
 /// function. oxfmt drops it if the type parameters fit after the comment.
-fn comments_of_type_parameters_are_in_a_group_with_them(f: &Formatter<'_>) -> bool {
+fn groups_type_parameters_with_their_comments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -58,7 +58,7 @@ pub(crate) fn write_function<'a>(
             ]
         );
         let type_parameters = type_parameters(func.type_params(), Node::Func(func));
-        match comments_of_type_parameters_are_in_a_group_with_them(f) {
+        match groups_type_parameters_with_their_comments(f) {
             true => write!(f, group(&type_parameters)),
             false => write!(f, type_parameters),
         }
@@ -121,7 +121,7 @@ fn is_iife_callee_or_tagged_template_tag(e: Expr<'_>) -> bool {
 
 /// `// comment ⏎ (function () {})()`: oxfmt follows Prettier 3.8, which wraps only the function in the parentheses,
 /// like any other expression.
-fn comments_of_called_function_are_outside_of_its_parentheses(f: &Formatter<'_>) -> bool {
+fn called_function_comments_stay_outside_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -144,7 +144,7 @@ pub(crate) fn write_called_function_with_comments<'a>(
     // Inside a type cast's parentheses, the function isn't the callee.
     if e.as_fn().is_none()
         || !is_iife_callee_or_tagged_template_tag(e)
-        || comments_of_called_function_are_outside_of_its_parentheses(f)
+        || called_function_comments_stay_outside_parentheses(f)
         || is_cast_target(e, f)
     {
         return false;

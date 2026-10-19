@@ -330,7 +330,7 @@ pub(crate) fn write_yield_expression<'a>(
     // nothing. Prettier drops them. A line break after `yield*` is fine.
     if !f.is_quiet()
         && !matches!(argument.kind(), ExprKind::Jsx(_))
-        && match yield_writes_its_argument_as_return_does(f) {
+        && match yield_prints_argument_like_return(f) {
             true => has_argument_leading_comments(argument, f),
             false => !delegate && has_comment_right_after_keyword(argument, f),
         }
@@ -338,7 +338,7 @@ pub(crate) fn write_yield_expression<'a>(
         return write!(f, ["(", block_indent(&argument), ")"]);
     }
     let is_binaryish = matches!(argument.kind(), ExprKind::Binary { op, .. } if op != BinOp::Comma);
-    match is_binaryish && yield_writes_its_argument_as_return_does(f) {
+    match is_binaryish && yield_prints_argument_like_return(f) {
         true => write!(
             f,
             group(&format_args!(
@@ -352,7 +352,7 @@ pub(crate) fn write_yield_expression<'a>(
 }
 
 /// oxfmt, like Prettier 3.8, prints the argument of `yield` like the argument of `return`.
-fn yield_writes_its_argument_as_return_does(f: &Formatter<'_>) -> bool {
+fn yield_prints_argument_like_return(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

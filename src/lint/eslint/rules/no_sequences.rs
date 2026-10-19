@@ -52,13 +52,13 @@ impl Rule for NoSequences {
         };
         let after_first = first.outer_span().end;
         // oxlint points at everything between the first two expressions.
-        let place = match sequence.get(1).filter(|_| cx.language().is_oxlint) {
+        let location = match sequence.get(1).filter(|_| cx.language().is_oxlint) {
             Some(second) => first.outer_span().between(second.outer_span()),
             None => {
                 let comma = skip_trivia(cx.text(), after_first);
                 Span::new(comma, comma + 1)
             }
         };
-        cx.report(place, UNEXPECTED_COMMA_EXPRESSION);
+        cx.report(location, UNEXPECTED_COMMA_EXPRESSION);
     }
 }

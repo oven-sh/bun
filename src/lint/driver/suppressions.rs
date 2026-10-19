@@ -12,7 +12,7 @@ use std::io::Write;
 
 pub(crate) const DEFAULT_FILE_NAME: &[u8] = b"eslint-suppressions.json";
 /// The same file's name with an oxlint config.
-pub(crate) const FILE_NAME_OF_OXLINT: &[u8] = b"oxlint-suppressions.json";
+pub(crate) const OXLINT_FILE_NAME: &[u8] = b"oxlint-suppressions.json";
 
 /// The error count per rule.
 type ByRule = Vec<(Vec<u8>, u64)>;

@@ -1,4 +1,4 @@
-use super::call_like_expression::is_written_as_member_chain;
+use super::call_like_expression::is_printed_as_member_chain;
 use super::semicolon::OptionalSemicolon;
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::utils::member_chain::head_of_member_chain;
@@ -162,7 +162,7 @@ fn left_side(e: Expr<'_>) -> Option<Expr<'_>> {
 
 /// `return !(// comment⏎a) && b;`: Prettier finds the comment because its `getLeftSide` descends into the operand of
 /// `!`, and wraps the argument in parentheses. oxfmt stops at `!a`.
-fn left_edge_goes_on_in_operands(f: &Formatter<'_>) -> bool {
+fn left_edge_descends_into_operands(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
@@ -198,16 +198,16 @@ pub(crate) fn has_comment_right_after_keyword<'a>(argument: Expr<'a>, f: &Format
     has_comment_on_left_edge(argument, false, f)
 }
 
-/// If `as_prettier_does` is set, a comment that ends its line counts even if it isn't printed right after the keyword,
+/// If `matches_prettier` is set, a comment that ends its line counts even if it isn't printed right after the keyword,
 /// like the one in `return a⏎// comment⏎.b();`.
 fn has_comment_on_left_edge<'a>(
     argument: Expr<'a>,
-    as_prettier_does: bool,
+    matches_prettier: bool,
     f: &Formatter<'a>,
 ) -> bool {
     let any_counts = |comments: CommentList<'a>, is_right_after_keyword: bool| {
         comments.iter().any(|comment| {
-            (comment.has_newline_after() && (as_prettier_does || is_right_after_keyword))
+            (comment.has_newline_after() && (matches_prettier || is_right_after_keyword))
                 || (comment.is_multiline_block() && is_right_after_keyword)
         })
     };
@@ -223,7 +223,7 @@ fn has_comment_on_left_edge<'a>(
         return false;
     }
     let looks_at_properties =
-        as_prettier_does && own_line_comment_before_property_counts(argument, f);
+        matches_prettier && own_line_comment_before_property_counts(argument, f);
     let has_comment = |e: Expr<'a>, is_right_after_keyword: bool| {
         let comments = f.comments().of_node(e.as_chain_element()).leading;
         any_counts(comments, is_right_after_keyword)
@@ -249,34 +249,35 @@ fn has_comment_on_left_edge<'a>(
     let mut chain_head = None;
     let mut current = argument;
     while let Some(left) = left_side(current)
-        && (has_naked_left_side(current) || (as_prettier_does && left_edge_goes_on_in_operands(f)))
+        && (has_naked_left_side(current)
+            || (matches_prettier && left_edge_descends_into_operands(f)))
     {
         is_right_after_keyword &= has_naked_left_side(current);
-        if !is_right_after_keyword && !as_prettier_does {
+        if !is_right_after_keyword && !matches_prettier {
             return false;
         }
         if is_right_after_keyword
             && chain_head.is_none()
             && let ExprKind::Call(call) = current.kind()
-            && is_written_as_member_chain(current, call, f)
+            && is_printed_as_member_chain(current, call, f)
         {
             chain_head = head_of_member_chain(current, f);
         }
         if chain_head == Some(left) {
             chain_head = None;
         }
-        let is_written_first = is_right_after_keyword && chain_head.is_none();
+        let is_printed_first = is_right_after_keyword && chain_head.is_none();
         let is_cast = is_cast_target(left, f);
         // Each `ParenthesizedExpression` around it is a separate step.
         let has_comment_before_parentheses = f.comments().has_type_cast_comments()
             && left.parens().any(|parentheses| {
                 let comments = f.comments().of_cast_parens(parentheses.start).leading;
-                any_counts(comments, is_written_first)
+                any_counts(comments, is_printed_first)
             });
         if has_comment_before_parentheses
             || match left.tag() {
                 ExprTag::Jsx => has_leading_own_line_comment(left, f),
-                _ => has_comment(left, is_written_first && !is_cast),
+                _ => has_comment(left, is_printed_first && !is_cast),
             }
         {
             return true;

@@ -95,7 +95,7 @@ pub(super) enum Op {
         /// The `new` and the `target` of `new.target` aren't expressions.
         excludes_names_of_meta_properties: bool,
         /// True if it's spelled `:function`, the only class whose types ESLint knows.
-        is_written_function: bool,
+        is_function_class: bool,
     },
     /// In [`Program::bytes`].
     UnknownClass(Run),
@@ -196,7 +196,7 @@ pub(super) enum Property {
 impl Property {
     /// True if nodes have it, besides their fields.
     #[inline]
-    pub(super) fn is_of_nodes(self) -> bool {
+    pub(super) fn is_node_property(self) -> bool {
         use Property::*;
         matches!(self, Type | Parent | Range | Loc | Start | End)
     }

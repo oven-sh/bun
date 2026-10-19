@@ -36,13 +36,13 @@ pub(crate) fn format_with_marks<'a>(
     write: impl Fn(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<[Option<u32>; 2], FormatError> {
     if options.debug_comments == DebugComments::Owners {
-        let has_tree_of_babel = crate::js::context::has_tree_of_babel(file, options);
+        let has_babel_tree = crate::js::context::has_babel_tree(file, options);
         let attach_options = crate::js::attach::Options {
-            has_tree_of_babel,
+            has_babel_tree,
             experimental_ternaries: options.experimental_ternaries,
             flavor: options.flavor,
         };
-        let cast_parens = comments::cast_parens(file, options.flavor, has_tree_of_babel);
+        let cast_parens = comments::cast_parens(file, options.flavor, has_babel_tree);
         crate::js::attach::list(file, &cast_parens, attach_options, out);
         return Ok([None; 2]);
     }

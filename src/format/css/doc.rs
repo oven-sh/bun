@@ -76,7 +76,7 @@ pub(crate) enum Doc<'a> {
     BreakParent,
     Line(Line),
     /// Stops later line breaks from trimming the spaces and tabs printed before it. Prettier has no equivalent.
-    KeepBlanks,
+    KeepTrailingWhitespace,
 }
 
 impl<'a> Doc<'a> {
@@ -102,7 +102,7 @@ impl<'a> Doc<'a> {
                     | Doc::LineSuffixBoundary
                     | Doc::BreakParent
                     | Doc::Line(_)
-                    | Doc::KeepBlanks
+                    | Doc::KeepTrailingWhitespace
             ) {
                 rest.push(contents.take());
             }
@@ -128,7 +128,7 @@ impl<'a> Doc<'a> {
             | Doc::LineSuffixBoundary
             | Doc::BreakParent
             | Doc::Line(_)
-            | Doc::KeepBlanks => {}
+            | Doc::KeepTrailingWhitespace => {}
         }
     }
 }
@@ -340,7 +340,7 @@ fn clean<'a>(mut doc: Doc<'a>, stack: &Stack) -> Doc<'a> {
         | Doc::Line(_)
         | Doc::LineSuffixBoundary
         | Doc::BreakParent
-        | Doc::KeepBlanks) => leaf.take(),
+        | Doc::KeepTrailingWhitespace) => leaf.take(),
     }
 }
 
@@ -387,7 +387,7 @@ fn strip_trailing_hardline<'a>(mut doc: Doc<'a>, stack: &Stack) -> Doc<'a> {
         | Doc::Line(_)
         | Doc::LineSuffixBoundary
         | Doc::BreakParent
-        | Doc::KeepBlanks => {}
+        | Doc::KeepTrailingWhitespace => {}
     }
     doc
 }
@@ -433,8 +433,8 @@ enum Element {
     LineSuffixBoundary,
     /// A removed element.
     Nothing,
-    /// `Doc::KeepBlanks`
-    KeepBlanks,
+    /// `Doc::KeepTrailingWhitespace`
+    KeepTrailingWhitespace,
     /// A group that contains only the text that follows. It only affects the printer at its start, so it has no end
     /// element.
     TextGroup,
@@ -494,8 +494,8 @@ pub(crate) struct Elements {
     open: Vec<u32>,
     /// The same, for groups only.
     open_groups: Vec<u32>,
-    /// The first `groups_with_lines` entries of `open_groups` are already marked as not plain.
-    groups_with_lines: usize,
+    /// The first `groups_marked_not_plain` entries of `open_groups` are already marked as not plain.
+    groups_marked_not_plain: usize,
     /// The first `settled` elements of `list` can't be merged or moved anymore, because `position` handed out an index
     /// after them.
     settled: usize,
@@ -511,7 +511,7 @@ impl Default for Elements {
             indents: Vec::new(),
             open: Vec::new(),
             open_groups: Vec::new(),
-            groups_with_lines: 0,
+            groups_marked_not_plain: 0,
             settled: 1,
             is_nested_too_deeply: false,
         }
@@ -525,21 +525,21 @@ impl Elements {
         self.indents.clear();
         self.open.clear();
         self.open_groups.clear();
-        self.groups_with_lines = 0;
+        self.groups_marked_not_plain = 0;
         self.settled = 1;
         self.is_nested_too_deeply = false;
     }
 
     /// Marks every open group as not plain. Called before writing anything that prints differently in a broken group.
-    fn mark_groups(&mut self) {
-        for index in self.groups_with_lines..self.open_groups.len() {
+    fn mark_groups_not_plain(&mut self) {
+        for index in self.groups_marked_not_plain..self.open_groups.len() {
             if let Element::StartGroup { is_plain, .. } =
                 &mut self.list[self.open_groups[index] as usize]
             {
                 *is_plain = false;
             }
         }
-        self.groups_with_lines = self.open_groups.len();
+        self.groups_marked_not_plain = self.open_groups.len();
     }
 
     pub(crate) fn text(&mut self, text: &[u8]) {
@@ -598,13 +598,13 @@ impl Elements {
     }
 
     pub(crate) fn line(&mut self, line: Line) {
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.list.push(Element::Line(line));
     }
 
     /// `hardline`
     pub(crate) fn hard_line(&mut self) {
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.list.push(Element::HardLine);
         self.break_groups();
     }
@@ -632,12 +632,12 @@ impl Elements {
         }
     }
 
-    pub(crate) fn keep_blanks(&mut self) {
-        self.list.push(Element::KeepBlanks);
+    pub(crate) fn keep_trailing_whitespace(&mut self) {
+        self.list.push(Element::KeepTrailingWhitespace);
     }
 
     pub(crate) fn line_suffix_boundary(&mut self) {
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.list.push(Element::LineSuffixBoundary);
     }
 
@@ -674,7 +674,7 @@ impl Elements {
         }
         // This group's mode depends on the groups around it, and an `ifBreak` elsewhere depends on this group's mode.
         if id != 0 {
-            self.mark_groups();
+            self.mark_groups_not_plain();
         }
         self.open_groups.push(self.list.len() as u32);
         self.start(Element::StartGroup {
@@ -688,7 +688,7 @@ impl Elements {
 
     pub(crate) fn end_group(&mut self) {
         self.open_groups.pop();
-        self.groups_with_lines = self.groups_with_lines.min(self.open_groups.len());
+        self.groups_marked_not_plain = self.groups_marked_not_plain.min(self.open_groups.len());
         let start = self.open.last().map_or(0, |start| *start as usize);
         let text = match self.list.get(start..) {
             _ if start < self.settled => return self.end(Element::End),
@@ -754,7 +754,7 @@ impl Elements {
 
     /// Starts an `ifBreak`. The contents for a broken group come first.
     pub(crate) fn start_if_break(&mut self, group_id: u32) {
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.start(Element::StartIfBreak {
             otherwise: 0,
             end: 0,
@@ -781,7 +781,7 @@ impl Elements {
     }
 
     pub(crate) fn start_line_suffix(&mut self) {
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.start(Element::StartLineSuffix { end: 0 });
     }
 
@@ -880,7 +880,7 @@ impl Elements {
                 Element::EndItem,
             ],
         );
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.break_groups();
     }
 
@@ -981,7 +981,7 @@ impl Elements {
             Doc::LineSuffixBoundary => self.line_suffix_boundary(),
             Doc::BreakParent => self.break_parent(),
             Doc::Line(line) => self.line(*line),
-            Doc::KeepBlanks => self.keep_blanks(),
+            Doc::KeepTrailingWhitespace => self.keep_trailing_whitespace(),
         }
     }
 
@@ -1016,7 +1016,7 @@ impl Elements {
                 Element::BreakParent => Doc::BreakParent,
                 Element::Line(line) => Doc::Line(line),
                 Element::LineSuffixBoundary => Doc::LineSuffixBoundary,
-                Element::KeepBlanks => Doc::KeepBlanks,
+                Element::KeepTrailingWhitespace => Doc::KeepTrailingWhitespace,
                 Element::TextGroup => match self.list.get(*at) {
                     Some(&Element::Text { start, len, .. }) if *at < end => {
                         *at += 1;
@@ -1116,7 +1116,7 @@ struct Indent {
     /// `value` is `after`'s `value` followed by `last`. Storing the whole string for each indentation would be
     /// quadratic in the depth.
     after: u32,
-    last: Written,
+    last: IndentPart,
     /// Length of `value` in bytes.
     bytes: usize,
     /// Set if `value` is a single byte repeated, which it nearly always is.
@@ -1128,10 +1128,10 @@ struct Indent {
 }
 
 #[derive(Copy, Clone)]
-enum Written {
+enum IndentPart {
     Nothing,
     Tab,
-    Blanks(usize),
+    Padding(usize),
     Text(&'static str),
 }
 
@@ -1214,7 +1214,7 @@ impl<'o> Printer<'o> {
             indents: vec![Indent {
                 before_last: None,
                 after: 0,
-                last: Written::Nothing,
+                last: IndentPart::Nothing,
                 bytes: 0,
                 only: None,
                 length: 0,
@@ -1286,17 +1286,19 @@ impl<'o> Printer<'o> {
         };
         let same = &self.indents[same_queue as usize];
         let (after, last, bytes, width) = match command {
-            IndentCommand::Indent if self.use_tabs => (same_queue, Written::Tab, 1, self.tab_width),
+            IndentCommand::Indent if self.use_tabs => {
+                (same_queue, IndentPart::Tab, 1, self.tab_width)
+            }
             IndentCommand::Indent => {
                 let width = self.tab_width;
-                (same_queue, Written::Blanks(width), width, width)
+                (same_queue, IndentPart::Padding(width), width, width)
             }
             IndentCommand::Align(Alignment::Spaces(width)) => {
                 let width = width as usize;
-                (same_queue, Written::Blanks(width), width, width)
+                (same_queue, IndentPart::Padding(width), width, width)
             }
             IndentCommand::Align(Alignment::Text(text)) => {
-                (same_queue, Written::Text(text), text.len(), text.len())
+                (same_queue, IndentPart::Text(text), text.len(), text.len())
             }
             // `print` has already turned `IfBreak` into `Spaces`.
             IndentCommand::Align(Alignment::IfBreak { .. })
@@ -1306,8 +1308,8 @@ impl<'o> Printer<'o> {
         };
         let only = match last {
             _ if bytes == 0 => same.only,
-            Written::Blanks(_) if same.bytes == 0 || same.only == Some(b' ') => Some(b' '),
-            Written::Tab if same.bytes == 0 || same.only == Some(b'\t') => Some(b'\t'),
+            IndentPart::Padding(_) if same.bytes == 0 || same.only == Some(b' ') => Some(b' '),
+            IndentPart::Tab if same.bytes == 0 || same.only == Some(b'\t') => Some(b'\t'),
             _ => None,
         };
         let (bytes, length) = (same.bytes + bytes, same.length + width);
@@ -1356,13 +1358,13 @@ impl<'o> Printer<'o> {
                 break;
             }
             match last {
-                Written::Nothing => {}
-                Written::Blanks(count) => end -= count,
-                Written::Tab => {
+                IndentPart::Nothing => {}
+                IndentPart::Padding(count) => end -= count,
+                IndentPart::Tab => {
                     end -= 1;
                     self.out[end] = b'\t';
                 }
-                Written::Text(text) => {
+                IndentPart::Text(text) => {
                     end -= text.len();
                     self.out[end..][..text.len()].copy_from_slice(text.as_bytes());
                 }
@@ -1502,7 +1504,7 @@ impl<'o> Printer<'o> {
                 Element::BreakParent
                 | Element::Nothing
                 | Element::TextGroup
-                | Element::KeepBlanks => {}
+                | Element::KeepTrailingWhitespace => {}
             }
         }
         false
@@ -1712,7 +1714,7 @@ impl<'o> Printer<'o> {
                         position = self.write_indent(indent);
                     }
                 }
-                Element::KeepBlanks => self.start = self.out.len(),
+                Element::KeepTrailingWhitespace => self.start = self.out.len(),
                 Element::BreakParent | Element::Nothing => {}
             }
         }

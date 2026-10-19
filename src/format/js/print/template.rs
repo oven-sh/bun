@@ -16,7 +16,7 @@ use crate::prelude::*;
 use crate::{format_args, write};
 
 /// True if Prettier's `embed` could apply to the template `e`. For most templates it can't.
-fn can_be_in_another_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+fn may_have_embedded_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     match e.ast_parent() {
         AstNodes::TaggedTemplateExpression(_)
         | AstNodes::JSXExpressionContainer(_)
@@ -29,7 +29,7 @@ fn can_be_in_another_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         {
             true
         }
-        _ => crate::graphql::embed::is_behind_comment(e, f),
+        _ => crate::graphql::embed::may_have_language_comment(e, f),
     }
 }
 
@@ -53,7 +53,7 @@ pub(crate) fn write_template_literal<'a>(
     }
     let context = f.context().tailwind_context();
     let content = format_with(|f| {
-        if !can_be_in_another_language(e, f)
+        if !may_have_embedded_language(e, f)
             || (!embed::write_template(e, template, f)
                 && !crate::graphql::embed::write_template(e, template, f)
                 && !crate::html::in_js::write_template(e, template, f)

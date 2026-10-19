@@ -15,7 +15,7 @@
 //! of the same members. The third is a few bits per member of the union.
 //!
 //! `getTypeOfPropertyOfContextualType` also looks a name up in every member of a union. It reads these caches
-//! (`members_to_ask_as_context`) but never fills them.
+//! (`members_to_search_for_context`) but never fills them.
 //!
 //! A lookup in a member can resolve types, report errors and hit cycles, so the caches must not change what is resolved
 //! or in which order:
@@ -45,7 +45,7 @@ const MIN_MEMBERS_FOR_SUMMARY: usize = 128;
 /// A name with more holders than this is looked up in every member instead. `holders` lists members of all unions, so
 /// each holder has to be searched for among this union's members. That search costs about 2 instructions per member.
 /// Visiting a member that has facts but not the property costs about 50.
-const MOST_HOLDERS_TO_FIND: usize = 16;
+const MAX_HOLDERS: usize = 16;
 
 /// Flags that, together with `READONLY`, record which accessors a property has.
 const ACCESSOR_KIND: PropFlags = PropFlags::ACCESSOR.union(PropFlags::WRITE_ONLY);
@@ -87,7 +87,7 @@ struct MemberFacts<'p> {
     when_missing: WhenMissing,
     /// Number of misses answered from `WhenMissing::Adds` in unions long enough for a summary. Stops counting once
     /// `is_listed` is set.
-    asked_in_vain: u32,
+    miss_count: u32,
     /// True if the member is in `UnionMembers::holders` under each of its property names. Implies that `when_missing`
     /// is `Adds`.
     is_listed: bool,
@@ -100,7 +100,7 @@ struct UnionSummary {
     /// Each distinct `Missing` value among the listed members, with the members that contribute it.
     missing: SmallVec<[(Missing, PositionSet); 2]>,
     /// `always_visited`, plus the listed members that fail `has_only_its_properties`.
-    always_asked_as_context: PositionSet,
+    always_searched_for_context: PositionSet,
 }
 
 /// Type ids can be task-local, so none of this is shared between tasks.
@@ -137,7 +137,7 @@ impl<'p> UnionMembers<'p> {
         self.facts.get_mut(at)
     }
 
-    fn keep_facts(&mut self, member: TypeId, facts: MemberFacts<'p>) {
+    fn cache_facts(&mut self, member: TypeId, facts: MemberFacts<'p>) {
         if let Some(kept) = self.facts_mut(member) {
             *kept = facts;
             return;
@@ -162,11 +162,11 @@ struct MemberLookup<'p> {
 struct Walk {
     name: Atom,
     /// `skipObjectFunctionPropertyAugment`
-    skips: bool,
+    skips_augment: bool,
     is_late_bound: bool,
     uses_facts: bool,
     /// True if every member of the union has been visited before with `uses_facts` set.
-    is_walked_again: bool,
+    was_walked_before: bool,
     /// True if the union is long enough for a summary.
     is_long: bool,
     /// Memo for `Checker::is_ordinary_name`, filled on first use.
@@ -288,16 +288,16 @@ impl<'p, 's> Checker<'p, 's> {
         self.union_property_ex(union, name, false)
     }
 
-    /// `skips` is `skipObjectFunctionPropertyAugment`, and `union_properties` is `propertyCache`. There's no
+    /// `skips_augment` is `skipObjectFunctionPropertyAugment`, and `union_properties` is `propertyCache`. There's no
     /// `propertyCacheWithoutFunctionPropertyAugment` because only importing a name from a module with `export =` looks
     /// up a union property that way.
     pub(super) fn union_property_ex(
         &mut self,
         union: TypeId,
         name: Atom,
-        skips: bool,
+        skips_augment: bool,
     ) -> Option<&'p Prop<'p>> {
-        let kept = match skips {
+        let kept = match skips_augment {
             true => None,
             false => self.p.union_properties.get(&self.task, &(union, name)),
         };
@@ -305,14 +305,16 @@ impl<'p, 's> Checker<'p, 's> {
             Some(kept) => kept,
             None => {
                 let scope = self.begin_scope();
-                let holder = self.create_union_property(union, name, skips).map(|prop| {
-                    self.synth(Shape {
-                        props: vec_from_iter_in([prop], self.arena),
-                        ..Shape::new_in(self.arena)
-                    })
-                });
+                let holder = self
+                    .create_union_property(union, name, skips_augment)
+                    .map(|prop| {
+                        self.synth(Shape {
+                            props: vec_from_iter_in([prop], self.arena),
+                            ..Shape::new_in(self.arena)
+                        })
+                    });
                 if let Ok(stored) = self.end_scope_by_counters(scope)
-                    && !skips
+                    && !skips_augment
                 {
                     self.p
                         .union_properties
@@ -356,17 +358,17 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
         skip_object_function_property_augment: bool,
     ) -> Option<Prop<'s>> {
-        let skips = skip_object_function_property_augment;
+        let skips_augment = skip_object_function_property_augment;
         let parts = self.parts(containing_type);
         self.tally(MemberCount::UnionPropertiesCreated, 1);
         let uses_facts =
-            parts.len() >= MIN_MEMBERS_FOR_FACTS && !skips && self.do_member_facts_hold();
+            parts.len() >= MIN_MEMBERS_FOR_FACTS && !skips_augment && self.are_member_facts_valid();
         let mut walk = Walk {
             name,
-            skips,
+            skips_augment,
             is_late_bound: self.atoms().is_symbol_name(name),
             uses_facts,
-            is_walked_again: uses_facts,
+            was_walked_before: uses_facts,
             is_long: parts.len() >= MIN_MEMBERS_FOR_SUMMARY,
             is_ordinary_name: None,
             has_literal_type: false,
@@ -377,13 +379,13 @@ impl<'p, 's> Checker<'p, 's> {
             self.visit_some_members(containing_type, &visited, &mut walk, &mut builder);
             return self.finish_union_property(builder, containing_type, name);
         }
-        walk.is_walked_again =
+        walk.was_walked_before =
             uses_facts && !(self.task_facts).add(containing_type, task_fact::IS_WALKED_UNION);
         for (at, &current) in parts.iter().enumerate() {
             self.visit_member(&mut walk, &mut builder, at, current);
         }
         // A summary saves little if more than 1/8 of the members have to be visited for every name.
-        if walk.is_walked_again
+        if walk.was_walked_before
             && walk.is_long
             && walk.always_visited * 8 <= parts.len()
             && !(self.union_members.summaries).contains_key(&containing_type)
@@ -394,7 +396,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// True if a full lookup would match the cached facts, given the computations currently in progress.
-    fn do_member_facts_hold(&self) -> bool {
+    fn are_member_facts_valid(&self) -> bool {
         // Looking a name up in an intersection that is being reduced creates its properties a second time. See
         // `reduce_apparent_type_of_intersection_in_progress`.
         let mut being_reduced = self.never_in_progress.iter();
@@ -439,7 +441,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// So the member doesn't have the property, doesn't inherit it, and doesn't have an applicable index signature.
     /// Checking that only reads the member's stored members and resolves nothing, so skipping the member isn't
     /// observable.
-    pub(super) fn members_to_ask_as_context(
+    pub(super) fn members_to_search_for_context(
         &self,
         union: TypeId,
         name: Atom,
@@ -449,7 +451,7 @@ impl<'p, 's> Checker<'p, 's> {
         // each member's facts isn't worth it.
         if parts.len() < MIN_MEMBERS_FOR_FACTS
             || !self.task_facts.has(union, task_fact::IS_WALKED_UNION)
-            || !self.do_member_facts_hold()
+            || !self.are_member_facts_valid()
             || !self.is_ordinary(name, self.atoms().is_symbol_name(name))
         {
             return None;
@@ -458,27 +460,27 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some(summary) = self.union_members.summaries.get(&union)
             && let holders = self.union_members.holders.get(&name)
             && let holders = holders.map_or(&[][..], |holders| &holders[..])
-            && holders.len() <= MOST_HOLDERS_TO_FIND
+            && holders.len() <= MAX_HOLDERS
         {
-            let mut asked = summary.always_asked_as_context.clone();
+            let mut to_search = summary.always_searched_for_context.clone();
             for holder in holders {
                 if let Some(at) = parts.iter().position(|member| member == holder) {
-                    asked.insert(at);
+                    to_search.insert(at);
                 }
             }
-            return Some(asked);
+            return Some(to_search);
         }
-        let mut asked = PositionSet::new(parts.len());
+        let mut to_search = PositionSet::new(parts.len());
         for (at, member) in parts.iter().enumerate() {
             let lacks_it = self.union_members.facts(*member).is_some_and(|facts| {
                 self.has_only_its_properties(*member, facts)
-                    && facts.members.resolved.prop_past_filter(name).is_none()
+                    && facts.members.resolved.prop_with_filter(name).is_none()
             });
             if !lacks_it {
-                asked.insert(at);
+                to_search.insert(at);
             }
         }
-        Some(asked)
+        Some(to_search)
     }
 
     /// Returns the members of `union` to visit for the property, based on the union's summary and the name's holders,
@@ -493,7 +495,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let holders = self.union_members.holders.get(&walk.name);
         let holders = holders.map_or(&[][..], |holders| &holders[..]);
-        if holders.len() > MOST_HOLDERS_TO_FIND {
+        if holders.len() > MAX_HOLDERS {
             return None;
         }
         let parts = self.parts(union);
@@ -574,15 +576,15 @@ impl<'p, 's> Checker<'p, 's> {
             let lookup = self.add_member(walk, builder, at, current);
             if may_have_facts
                 && let Some(lookup) = lookup
-                && (walk.is_walked_again || self.is_visited_again(current))
+                && (walk.was_walked_before || self.was_recently_visited(current))
             {
-                self.keep_member_facts(walk, current, lookup);
+                self.cache_member_facts(walk, current, lookup);
             }
             return;
         };
         walk.always_visited += usize::from(!facts.is_listed);
         let (t, members) = (facts.apparent_type, facts.members);
-        if let Some(prop) = members.resolved.prop_past_filter(walk.name) {
+        if let Some(prop) = members.resolved.prop_with_filter(walk.name) {
             let symbol = self.identity_of_own_property(facts.reduced_apparent_type, prop);
             self.add_member_property(builder, at, t, (symbol, prop), members.mapper);
             return;
@@ -599,8 +601,8 @@ impl<'p, 's> Checker<'p, 's> {
                     walk.has_literal_type = true;
                 }
                 // Only a union with a summary reads `holders`.
-                if walk.is_long && walk.is_walked_again && !facts.is_listed {
-                    self.count_asked_in_vain(current);
+                if walk.is_long && walk.was_walked_before && !facts.is_listed {
+                    self.count_miss(current);
                 }
                 missing
             }
@@ -621,7 +623,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// True if `current` was already in `UnionMembers::recent`. Inserts it either way.
-    fn is_visited_again(&mut self, current: TypeId) -> bool {
+    fn was_recently_visited(&mut self, current: TypeId) -> bool {
         let recent = &mut self.union_members.recent;
         if recent.is_empty() {
             recent.resize(RECENT_UNION_MEMBERS, TypeId::NEVER);
@@ -631,7 +633,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `lookup` must be the value that `add_member` just returned for `current`.
-    fn keep_member_facts(&mut self, walk: &mut Walk, current: TypeId, lookup: MemberLookup<'p>) {
+    fn cache_member_facts(&mut self, walk: &mut Walk, current: TypeId, lookup: MemberLookup<'p>) {
         let Some(mut facts) = self.facts_of_member(current, lookup) else {
             return;
         };
@@ -645,13 +647,13 @@ impl<'p, 's> Checker<'p, 's> {
                 self.task_facts.add(ty, task_fact::IS_IN_MEMBER_FACTS);
             }
         }
-        self.union_members.keep_facts(current, facts);
+        self.union_members.cache_facts(current, facts);
     }
 
     /// Called when a lookup misses in the member `current`, which has facts but isn't listed. The member is listed once
     /// that has happened a quarter as many times as it has properties. Listing costs about 60 instructions per property
     /// and the facts saved about 250 per miss, so the savings have already paid for it.
-    fn count_asked_in_vain(&mut self, current: TypeId) {
+    fn count_miss(&mut self, current: TypeId) {
         let UnionMembers {
             facts,
             facts_of,
@@ -663,8 +665,8 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         };
         let props = &facts.members.shape().props;
-        facts.asked_in_vain += 1;
-        if (facts.asked_in_vain as usize) * 4 < props.len() {
+        facts.miss_count += 1;
+        if (facts.miss_count as usize) * 4 < props.len() {
             return;
         }
         facts.is_listed = true;
@@ -678,7 +680,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut summary = UnionSummary {
             always_visited: PositionSet::new(parts.len()),
             missing: SmallVec::new(),
-            always_asked_as_context: PositionSet::new(parts.len()),
+            always_searched_for_context: PositionSet::new(parts.len()),
         };
         for (at, current) in parts.iter().enumerate() {
             let Some(
@@ -690,11 +692,11 @@ impl<'p, 's> Checker<'p, 's> {
             ) = self.union_members.facts(*current)
             else {
                 summary.always_visited.insert(at);
-                summary.always_asked_as_context.insert(at);
+                summary.always_searched_for_context.insert(at);
                 continue;
             };
             if !self.has_only_its_properties(*current, facts) {
-                summary.always_asked_as_context.insert(at);
+                summary.always_searched_for_context.insert(at);
             }
             match summary.missing.iter_mut().find(|it| it.0 == missing) {
                 Some((_, members)) => members.insert(at),
@@ -747,9 +749,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let t = self.known_apparent_type(current)?;
         // `is_apparent_type_of_intersection_never` rebuilds this kind of intersection on every call.
-        let is_made_again = matches!(self.data(t), TypeData::Intersection(parts)
+        let is_rebuilt_every_time = matches!(self.data(t), TypeData::Intersection(parts)
             if parts.iter().any(|&part| self.intersection_member_has_other_apparent_type(part)));
-        if !is_covered(t) || is_made_again || self.known_reduced_type(t)? != t {
+        if !is_covered(t) || is_rebuilt_every_time || self.known_reduced_type(t)? != t {
             return None;
         }
         let apparent_type_of_reduced = self.known_apparent_type(t)?;
@@ -782,7 +784,7 @@ impl<'p, 's> Checker<'p, 's> {
             reduced_apparent_type: apparent,
             members,
             when_missing: WhenMissing::Unknown,
-            asked_in_vain: 0,
+            miss_count: 0,
             is_listed: false,
         })
     }
@@ -804,11 +806,11 @@ impl<'p, 's> Checker<'p, 's> {
             members.mapper == MapperId::IDENTITY
                 || self.types().instantiation_class(ty) == InstantiationClass::Unchanged
         };
-        let is_the_same_for_every_name = shape.properties_of().is_none()
+        let is_name_independent = shape.properties_of().is_none()
             && !matches!(self.data(apparent), TypeData::Tuple { .. })
             && (shape.index.iter())
                 .all(|info| info.key == TypeId::STRING && is_unchanged(info.value));
-        match is_the_same_for_every_name {
+        match is_name_independent {
             true => WhenMissing::Adds(missing),
             false => WhenMissing::DependsOnName,
         }
@@ -834,7 +836,7 @@ impl<'p, 's> Checker<'p, 's> {
         let holder = self.apparent_type_or_type_variable(current, t);
         let holder = self.property_holder_of_member(holder, self.union_members.is_listing);
         let is_holder_final = self.non_cacheable_mark() == before;
-        let missing = match self.property_of_holder(holder, walk.name, walk.skips) {
+        let missing = match self.property_of_holder(holder, walk.name, walk.skips_augment) {
             Some((prop, mapper)) => {
                 let symbol = self.identity_of_found_property(holder, prop);
                 self.add_member_property(builder, at, t, (symbol, prop), mapper);

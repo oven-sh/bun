@@ -22,12 +22,12 @@ fn has_dynamic_init(declaration: VarDecl) -> bool {
     declaration.init().is_some_and(|init| !ast_utils::is_literal(init))
 }
 
-/// Returns the declarations in the order of `sorted`, separated by the text between the declarations of `written`.
-fn text_of<'a>(sorted: &[VarDecl<'a>], written: &[VarDecl<'a>], file: &'a File<'a>) -> Vec<u8> {
+/// Returns the declarations in the order of `sorted`, separated by the text between the declarations of `original`.
+fn text_of<'a>(sorted: &[VarDecl<'a>], original: &[VarDecl<'a>], file: &'a File<'a>) -> Vec<u8> {
     let mut out = Vec::new();
     for (i, declaration) in sorted.iter().enumerate() {
         out.extend_from_slice(declaration.text());
-        if let (Some(here), Some(next)) = (written.get(i), written.get(i + 1)) {
+        if let (Some(here), Some(next)) = (original.get(i), original.get(i + 1)) {
             out.extend_from_slice(file.slice(here.span().between(next.span())));
         }
     }

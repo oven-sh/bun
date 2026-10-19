@@ -253,14 +253,14 @@ impl<'e> Inferred<'e> {
             only: None,
             order: 1,
             plan_options: bun_sema_driver::PlanOptions {
-                only_the_globals: true,
+                only_globals: true,
                 // A script next to a project that doesn't include it wasn't written for that project's libraries.
-                only_in_a_project_that_includes: true,
+                requires_including_project: true,
                 reads_sources_of_references: true,
-                current_directory_is_of_the_project: true,
-                reports_nothing_about_files: true,
+                uses_project_directory_as_cwd: true,
+                skips_file_diagnostics: true,
                 shares_every_file: true,
-                prefers_the_library_of_the_project: true,
+                prefers_project_typescript_libs: true,
                 ..Default::default()
             },
             retains_everything: false,

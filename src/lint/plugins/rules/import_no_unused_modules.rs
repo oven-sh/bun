@@ -97,7 +97,7 @@ impl Context {
         }
     }
 
-    fn is_of(&self, language: &LanguageOptions) -> bool {
+    fn matches_language(&self, language: &LanguageOptions) -> bool {
         self.parser == language.parser
             && self.source_type == language.source_type
             && self.ecma_version == language.ecma_version
@@ -328,16 +328,16 @@ impl NoUnusedModules {
 
     /// Returns the state as if `file` were the first file linted.
     fn prepared<'a>(&self, file: &'a File<'a>) -> &Prepared {
-        let (mut place, mut is_new) = (&self.prepared, false);
+        let (mut slot, mut is_new) = (&self.prepared, false);
         loop {
-            let prepared = place.get_or_init(|| {
+            let prepared = slot.get_or_init(|| {
                 is_new = true;
                 Box::new(self.prepare(file))
             });
-            if is_new || prepared.context.is_of(file.configured_language()) {
+            if is_new || prepared.context.matches_language(file.configured_language()) {
                 return prepared;
             }
-            place = &prepared.next;
+            slot = &prepared.next;
         }
     }
 

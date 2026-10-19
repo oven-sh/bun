@@ -1,4 +1,4 @@
-use crate::bun::{list_option, written_start};
+use crate::bun::{list_option, static_prefix};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -41,7 +41,7 @@ impl Rule for NoLiteralTempDir {
             // JSX text is prose, and `a=".."` is more often a URL than a path.
             ExprKind::String(_) if e.is_jsx_text() || e.is_jsx_tag_name() => None,
             ExprKind::String(_) if e.is_jsx_attribute_string() => None,
-            _ => written_start(e).and_then(|(path, is_whole)| self.directory_of(path, is_whole)),
+            _ => static_prefix(e).and_then(|(path, is_whole)| self.directory_of(path, is_whole)),
         };
         if let Some(directory) = found {
             cx.report(e, LITERAL_DIRECTORY).data("directory", directory.to_vec());

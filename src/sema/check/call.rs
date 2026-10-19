@@ -197,24 +197,24 @@ impl<'p, 's> Checker<'p, 's> {
         // tree. A function that only returns another function has that function's answer, unless
         // its own parameters decide, so this loops instead of recursing.
         let times_cut_short = self.times_cut_short.get();
-        let asked_before = self.context_sensitivity_asked.get();
+        let asked_before = self.context_sensitivity_visits.get();
         let (mut at, mut passed) = (f, 0);
         let answer = loop {
-            (self.context_sensitivity_asked).set(self.context_sensitivity_asked.get() + 1);
+            (self.context_sensitivity_visits).set(self.context_sensitivity_visits.get() + 1);
             if let Some(&known) = self.context_sensitive_functions.borrow().get(&(file, at)) {
                 break known;
             }
             if self.has_context_sensitive_parameters(file, at) {
                 break true;
             }
-            let Some(returned) = self.only_function_returned(file, at) else {
+            let Some(returned) = self.sole_returned_function(file, at) else {
                 break self.has_context_sensitive_return_expression(file, at)
                     || self.has_context_sensitive_yield_expression(file, at);
             };
             (at, passed) = (returned, passed + 1);
         };
         // An answer that was cut short by a low stack depends on the caller, so it isn't cached.
-        if self.context_sensitivity_asked.get() - asked_before > MANY
+        if self.context_sensitivity_visits.get() - asked_before > MANY
             && self.times_cut_short.get() == times_cut_short
         {
             let mut known = self.context_sensitive_functions.borrow_mut();
@@ -222,7 +222,7 @@ impl<'p, 's> Checker<'p, 's> {
             for _ in 0..=passed {
                 let Some(it) = at else { break };
                 known.insert((file, it), answer);
-                at = self.only_function_returned(file, it);
+                at = self.sole_returned_function(file, it);
             }
         }
         answer
@@ -231,7 +231,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns the function expression that's the only thing `f` returns, if
     /// `hasContextSensitiveReturnExpression` and `hasContextSensitiveYieldExpression` look at
     /// nothing else.
-    fn only_function_returned(&self, file: FileId, f: FnId) -> Option<FnId> {
+    fn sole_returned_function(&self, file: FileId, f: FnId) -> Option<FnId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let func = &hir[f];
         if !func.type_params.is_empty()
@@ -333,10 +333,11 @@ impl<'p, 's> Checker<'p, 's> {
         let key = (file, call);
         if self.task.file == Some(file) {
             if self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
-                self.signatures_resolved_discarding.push(call);
+                self.signatures_resolved_with_errors_discarded.push(call);
             } else {
                 // An outer resolution, around the one that assigned first, has reported its errors.
-                self.signatures_resolved_discarding.retain(|&it| it != call);
+                self.signatures_resolved_with_errors_discarded
+                    .retain(|&it| it != call);
             }
         }
         ResolvedCall {
@@ -651,7 +652,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `assignParameterType` doesn't push a type resolution, and the arguments are checked with
         // `checkExpression`, so the parameter's resolutions don't hide any loop from them.
         if own.flags.contains(Flags::REST) {
-            return Some(self.with_loops_in_sight(|c| {
+            return Some(self.with_flow_loops_visible(|c| {
                 c.spread_argument_type(file, &args, index, TypeId::ANY, None, CheckMode::empty())
             }));
         }
@@ -660,7 +661,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `links.resolvedSignature = c.anySignature`: the contextual type of the argument is
                 // what is being computed.
                 self.iife_resolving.push((file, call));
-                let ty = self.with_loops_in_sight(|c| c.type_of_expr(file, a));
+                let ty = self.with_flow_loops_visible(|c| c.type_of_expr(file, a));
                 self.iife_resolving.pop();
                 Some(self.widen_literal(ty))
             }
@@ -742,7 +743,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let count = self.parameter_count(params);
-        let least = self.min_argument_count_asked(Some(sig), params);
+        let least = self.min_argument_count_for(Some(sig), params);
         if is_open {
             // `getParameterCount`, then `getMinArgumentCount`: from the last required parameter
             // down to one that doesn't accept `void`.
@@ -816,7 +817,7 @@ impl<'p, 's> Checker<'p, 's> {
                 };
             }
             let type_args = hir.list_at(type_args);
-            self.look_at_type_nodes(file, type_args);
+            self.precheck_type_nodes(file, type_args);
             let type_args = self.types_from_nodes(file, type_args);
             let node = CallLike::Call(c);
             let args = self.effective_call_arguments(file, call, node);
@@ -1020,7 +1021,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         if !matches!(hir[data.callee].kind, ExprKind::Super) {
-            self.look_at_type_nodes(file, hir.list_at(data.type_args));
+            self.precheck_type_nodes(file, hir.list_at(data.type_args));
         }
         let type_args = self.types_from_nodes(file, hir.list_at(data.type_args));
         let args = self.effective_args(file, data.args);
@@ -1467,7 +1468,7 @@ impl<'p, 's> Checker<'p, 's> {
                         self.requested_assignment_target = None;
                         self.contextual_type(file, call, ContextFlags::SKIP_BINDING_PATTERNS)
                             != Some(contextual_type)
-                            || self.is_contextual_type_created_anew(contextual_type)
+                            || self.is_contextual_type_newly_created(contextual_type)
                     };
                     if !is_from_binding_pattern {
                         // `getMapperFromContext(cloneInferenceContext(outerContext, InferenceFlagsNoDefault))`
@@ -1560,7 +1561,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// other call returns an identical type. An assigned value's contextual type is
     /// `getTypeOfExpression(left)`. `checkObjectLiteral` creates a type on every call, and
     /// `flowTypeCache` only caches it if the check needed control flow analysis.
-    fn is_contextual_type_created_anew(&mut self, contextual_type: TypeId) -> bool {
+    fn is_contextual_type_newly_created(&mut self, contextual_type: TypeId) -> bool {
         let Some((file, left)) = self.requested_assignment_target.take() else {
             return false;
         };

@@ -221,8 +221,8 @@ fn cannot_precede(modifier: Flags) -> Flags {
 /// oxc's `check_modifier`: `modifier`, at `pos`, follows the modifiers `seen`.
 #[inline(never)]
 pub(super) fn modifier_after(errors: &mut Errors, seen: Flags, modifier: Flags, pos: u32) {
-    let in_the_way = cannot_precede(modifier) & seen;
-    if in_the_way.is_empty() {
+    let conflicting = cannot_precede(modifier) & seen;
+    if conflicting.is_empty() {
         return;
     }
     let this = (modifier, pos);
@@ -235,7 +235,7 @@ pub(super) fn modifier_after(errors: &mut Errors, seen: Flags, modifier: Flags, 
     if seen.contains(modifier) {
         return errors.push(about_modifier(1030, this, "already seen.", twice));
     }
-    let Some(&other) = MODIFIERS.iter().find(|&&it| in_the_way.contains(it)) else {
+    let Some(&other) = MODIFIERS.iter().find(|&&it| conflicting.contains(it)) else {
         return;
     };
     let both = modifier | other;
@@ -277,8 +277,8 @@ fn verify(modifiers: &[Modifier], allowed: Flags, report: &mut dyn FnMut((Flags,
         let ModifierKind::Keyword(modifier) = it.kind else {
             continue;
         };
-        let is_again = |later: &Modifier| later.kind == it.kind;
-        if !allowed.contains(modifier) && !modifiers[index + 1..].iter().any(is_again) {
+        let is_repeated_later = |later: &Modifier| later.kind == it.kind;
+        if !allowed.contains(modifier) && !modifiers[index + 1..].iter().any(is_repeated_later) {
             report((modifier, it.pos));
         }
     }
@@ -743,7 +743,7 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
         false => postfix.0,
     };
     let exclamation = (exclamation, exclamation + 1);
-    let place_of = |modifier: Flags| {
+    let position_of = |modifier: Flags| {
         let found = written.iter().rfind(|it| it.kind.flag() == modifier);
         found.map_or(0, |it| it.pos)
     };
@@ -905,11 +905,11 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
                 let help = Help::Allowed(others).text();
                 errors.push(noticed_at(error(1243, at, &message, &help), now));
             });
-            let is_refused = is_ambient && !seen.contains(Flags::AMBIENT)
+            let is_disallowed = is_ambient && !seen.contains(Flags::AMBIENT)
                 || is_abstract
                 || seen.contains(Flags::STATIC);
             if member.flags.contains(Flags::DEFINITE) {
-                let found = definite(exclamation, initializer.is_some(), member.ty, is_refused);
+                let found = definite(exclamation, initializer.is_some(), member.ty, is_disallowed);
                 errors.extend(found.map(|it| noticed_at(it, now)));
             }
         }
@@ -919,7 +919,7 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
                 errors.push(noticed_at(found, after_name));
             });
             if is_abstract && is_private {
-                let at = place_of(Flags::ABSTRACT);
+                let at = position_of(Flags::ABSTRACT);
                 errors.push(noticed_at(
                     error(18019, (at, at + 8), ABSTRACT_PRIVATE, ""),
                     now,
@@ -938,8 +938,8 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
                 }
             }
             if member.flags.contains(Flags::DEFINITE) {
-                let is_refused = is_ambient || is_abstract || seen.contains(Flags::STATIC);
-                let found = definite(exclamation, initializer.is_some(), member.ty, is_refused);
+                let is_disallowed = is_ambient || is_abstract || seen.contains(Flags::STATIC);
+                let found = definite(exclamation, initializer.is_some(), member.ty, is_disallowed);
                 errors.extend(found.map(|it| noticed_at(it, now)));
             }
         }
@@ -1002,12 +1002,12 @@ pub(super) fn object_member(f: &mut FileBuilder, modifiers: Span<ModifierId>, is
     });
 }
 
-/// The error for the `!` at `at`, after a variable or property name. `is_refused`: `!` is never allowed there.
+/// The error for the `!` at `at`, after a variable or property name. `is_disallowed`: `!` is never allowed there.
 fn definite(
     at: (u32, u32),
     has_initializer: bool,
     ty: TypeNodeId,
-    is_refused: bool,
+    is_disallowed: bool,
 ) -> Option<Diagnostic> {
     let (code, message) = if has_initializer {
         let message =
@@ -1017,7 +1017,7 @@ fn definite(
         let message =
             "Declarations with definite assignment assertions must also have type annotations.";
         (1264, message)
-    } else if is_refused {
+    } else if is_disallowed {
         let message = "A definite assignment assertion '!' is not permitted in this context.";
         (1255, message)
     } else {
@@ -1184,11 +1184,11 @@ pub(super) fn declaration(f: &mut FileBuilder, src: &[u8], statement: StmtId, pl
     let Some(&statement) = f.stmts.get(statement.idx()) else {
         return;
     };
-    let is_through = decorators_of_declaration(f, src, (&statement, modifiers), place);
+    let is_done = decorators_of_declaration(f, src, (&statement, modifiers), place);
     let (written, errors) = (&f.modifiers, &mut f.diagnostics);
     let written = written.get(modifiers.range()).unwrap_or_default();
     let is_decorated = written.iter().any(|it| decorator(it).is_some());
-    if is_through {
+    if is_done {
         return;
     }
     if place.is_javascript && !is_decorated {
@@ -1454,7 +1454,7 @@ pub(super) enum Specifier {
 /// The `type` at `at` of `import type { type a }` or `export type { type a }`.
 #[cold]
 #[inline(never)]
-pub(super) fn type_modifier_twice(errors: &mut Errors, at: u32, of: Specifier) {
+pub(super) fn duplicate_type_modifier(errors: &mut Errors, at: u32, of: Specifier) {
     let (code, message) = match of {
         Specifier::Import => (
             2206,
@@ -2169,17 +2169,17 @@ fn is_odd_function((kind, flags): (FnKind, Flags), body: &FnBody, context: u32) 
 }
 
 /// Which checks a class member needs.
-struct Oddities {
+struct NeededChecks {
     /// Needs [`class_member`].
-    in_itself: bool,
+    needs_class_member: bool,
     /// Needs [`class_members`].
-    among_members: bool,
+    needs_class_members: bool,
 }
 
-impl Oddities {
+impl NeededChecks {
     /// `func`: the function of `member`. `written`: its modifiers.
     #[inline]
-    fn of(member: &Member, func: Option<&Func>, written: Flags, place: Place) -> Oddities {
+    fn of(member: &Member, func: Option<&Func>, written: Flags, place: Place) -> NeededChecks {
         // A member without a body isn't valid JavaScript, which is reported elsewhere.
         if place.is_javascript {
             let usual = match member.kind {
@@ -2187,11 +2187,11 @@ impl Oddities {
                 _ => Flags::STATIC,
             };
             let is_accessor = matches!(member.kind, MemberKind::Getter | MemberKind::Setter);
-            return Oddities {
-                in_itself: written.intersects(!usual)
+            return NeededChecks {
+                needs_class_member: written.intersects(!usual)
                     || member.flags.contains(Flags::DEFINITE)
                     || is_accessor && member.flags.contains(Flags::OPTIONAL),
-                among_members: false,
+                needs_class_members: false,
             };
         }
         let is_ambient = place.is_ambient;
@@ -2206,7 +2206,7 @@ impl Oddities {
                 }
                 _ => Flags::empty(),
             };
-        let in_itself = written.intersects(!usual)
+        let needs_class_member = written.intersects(!usual)
             || member.flags.contains(Flags::DEFINITE)
             || is_ambient && (has_body || member.init.is_some())
             || written.intersects(ACCESSIBILITY) && matches!(member.key, PropKey::Private(_))
@@ -2221,9 +2221,9 @@ impl Oddities {
                 }
                 _ => false,
             };
-        Oddities {
-            in_itself,
-            among_members: written.contains(Flags::ABSTRACT) || lacks_body && !is_ambient,
+        NeededChecks {
+            needs_class_member,
+            needs_class_members: written.contains(Flags::ABSTRACT) || lacks_body && !is_ambient,
         }
     }
 }
@@ -2261,7 +2261,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     pub(super) fn expected_like_oxc(&mut self, wanted: &str) {
-        let found = super::recover::name_for_oxc(self.token(), self.lx.text());
+        let found = super::recover::oxc_token_name(self.token(), self.lx.text());
         let at = self.range_of_token();
         self.f.diagnostics.push(expected(wanted, &found, at));
     }
@@ -2471,9 +2471,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     ) {
         let place = self.place_in(context);
         let func = self.f.fns.get(member.func.idx());
-        let odd = Oddities::of(member, func, written, place);
-        self.has_odd_members |= odd.among_members;
-        if odd.in_itself {
+        let odd = NeededChecks::of(member, func, written, place);
+        self.has_odd_members |= odd.needs_class_members;
+        if odd.needs_class_member {
             let it = ClassMember {
                 member,
                 name,

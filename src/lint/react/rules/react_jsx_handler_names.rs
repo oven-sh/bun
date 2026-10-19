@@ -18,11 +18,11 @@ pub struct JsxHandlerNames {
     event_handler_prefixes: Vec<Box<[u8]>>,
     ignore_component_names: Vec<Box<[u8]>>,
     /// `None` if [`Rule::validate`] rejected the options, in which case the rule doesn't run.
-    original: Option<Original>,
+    upstream_options: Option<UpstreamOptions>,
 }
 
 /// The options that upstream parses differently from oxlint.
-struct Original {
+struct UpstreamOptions {
     /// Any truthy value counts as `true`.
     check_inline_function: bool,
     check_local: bool,
@@ -40,7 +40,7 @@ struct Regexes {
 
 /// Cached searches of the file's text.
 #[derive(Default)]
-pub struct Known {
+pub struct TextSearchCache {
     /// Each `.` followed by a handler name, with the end of the part that makes it one.
     dots: OnceCell<Vec<(u32, u32)>>,
     /// Each `:` followed by another `:`, with the end of the second.
@@ -70,7 +70,7 @@ enum HandlerName<'a> {
 impl Rule for JsxHandlerNames {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-handler-names", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
-    type State<'a> = Known;
+    type State<'a> = TextSearchCache;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -101,19 +101,19 @@ impl Rule for JsxHandlerNames {
                 .into_iter()
                 .map(|it| it.as_bytes().into())
                 .collect(),
-            original: Original::new(options).ok(),
+            upstream_options: UpstreamOptions::new(options).ok(),
         }
     }
 
     fn validate(options: &Options) -> Result<(), Vec<u8>> {
-        Original::new(options.object(0)).map(|_| ()).map_err(|error| error.message.into_bytes())
+        UpstreamOptions::new(options.object(0)).map(|_| ()).map_err(|error| error.message.into_bytes())
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Known> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<TextSearchCache> {
         // If the prop prefixes are empty, so are the handler prefixes.
         let has_prefixes = !self.event_handler_prop_prefixes.is_empty();
-        let has_regexes = self.original.as_ref()?.regexes.is_some();
-        (has_prefixes || (!file.language().is_oxlint && has_regexes)).then(Known::default)
+        let has_regexes = self.upstream_options.as_ref()?.regexes.is_some();
+        (has_prefixes || (!file.language().is_oxlint && has_regexes)).then(TextSearchCache::default)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -121,9 +121,9 @@ impl Rule for JsxHandlerNames {
     }
 }
 
-impl Original {
+impl UpstreamOptions {
     /// The error is what `new RegExp(..)` throws.
-    fn new(options: Object) -> Result<Original, SyntaxError> {
+    fn new(options: Object) -> Result<UpstreamOptions, SyntaxError> {
         // `isPrefixDisabled(prefix) ? null : prefix || default`, which is then interpolated into a template string.
         let prefix = |key: &str, default: &str| match options.get(key) {
             Some(Json::Bool(false)) => None,
@@ -152,7 +152,7 @@ impl Original {
                 .zip(prop_event_handler)
                 .map(|(event_handler, prop_event_handler)| Regexes { event_handler, prop_event_handler });
         }
-        Ok(Original {
+        Ok(UpstreamOptions {
             check_inline_function: options.get("checkInlineFunction").is_some_and(Json::is_truthy),
             check_local: options.get("checkLocalVariables").is_some_and(Json::is_truthy),
             event_handler_prefix: event_handler_prefix.unwrap_or_default(),
@@ -195,11 +195,11 @@ impl JsxHandlerNames {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return;
         };
-        let Some(original) = &self.original else {
+        let Some(upstream_options) = &self.upstream_options else {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        let regexes = original.regexes.as_ref().filter(|_| !is_oxlint);
+        let regexes = upstream_options.regexes.as_ref().filter(|_| !is_oxlint);
         let mut is_ignored = None;
         for attribute in jsx.attrs() {
             let Some(AttributeValue::ExpressionContainer(value_expr)) = get_prop_value(attribute) else {
@@ -208,7 +208,7 @@ impl JsxHandlerNames {
             let handler = match is_oxlint {
                 true => self.handler(value_expr),
                 // For upstream the name is a node's source text, whatever the node is.
-                false => original.handler(value_expr).map(|span| (HandlerName::Text(span), span, false)),
+                false => upstream_options.handler(value_expr).map(|span| (HandlerName::Text(span), span, false)),
             };
             let Some((handler_name, handler_span, is_props_handler)) = handler else {
                 continue;
@@ -263,11 +263,11 @@ impl JsxHandlerNames {
                     true => cx
                         .report(attribute.span(), BAD_HANDLER_NAME)
                         .data("propKey", prop_key)
-                        .data("handlerPrefix", original.event_handler_prefix.clone()),
+                        .data("handlerPrefix", upstream_options.event_handler_prefix.clone()),
                     false => cx
                         .report(attribute.span(), BAD_PROP_KEY)
                         .data("propValue", normalize_handler_name(cx.slice(handler_span), is_oxlint))
-                        .data("handlerPropPrefix", original.event_handler_prop_prefix.clone()),
+                        .data("handlerPropPrefix", upstream_options.event_handler_prop_prefix.clone()),
                 };
                 continue;
             }
@@ -407,30 +407,30 @@ impl JsxHandlerNames {
             // upstream strips whitespace first, and if there's no `this.` it removes everything up to the last `::`.
             false => end_of_literal(text, span.start, b"this.", is_oxlint)
                 .filter(|end| *end <= span.end)
-                .or_else(|| self.last_followed(b':', span, cx))
+                .or_else(|| self.last_match_end(b':', span, cx))
                 .unwrap_or(span.start),
         };
         let is_name_at = |prefixes: &[Box<[u8]>], at: u32| {
             end_of_handler_name_start(prefixes, text, at, is_oxlint).is_some_and(|end| end <= span.end)
         };
         // For upstream `props.onChange` is a valid name, whatever follows it.
-        let is_of_props = || {
+        let is_props_handler_name = || {
             end_of_literal(text, start, b"props.", is_oxlint)
                 .is_some_and(|at| is_name_at(&self.event_handler_prop_prefixes, at))
         };
         Some(
             is_name_at(&self.event_handler_prefixes, start)
-                || (!is_oxlint && is_of_props())
-                || self.last_followed(b'.', Span::new(start, span.end), cx).is_some(),
+                || (!is_oxlint && is_props_handler_name())
+                || self.last_match_end(b'.', Span::new(start, span.end), cx).is_some(),
         )
     }
 
-    /// Returns the end of the last match that [`JsxHandlerNames::for_each_followed`] finds for `byte` entirely inside
+    /// Returns the end of the last match that [`JsxHandlerNames::for_each_match`] finds for `byte` entirely inside
     /// `within`.
-    fn last_followed(&self, byte: u8, within: Span, cx: &Cx<Self>) -> Option<u32> {
+    fn last_match_end(&self, byte: u8, within: Span, cx: &Cx<Self>) -> Option<u32> {
         if within.len() <= 256 {
             let mut last = None;
-            self.for_each_followed(byte, within, cx.file(), &mut |_, end| {
+            self.for_each_match(byte, within, cx.file(), &mut |_, end| {
                 if end <= within.end {
                     last = Some(end);
                 }
@@ -439,7 +439,7 @@ impl JsxHandlerNames {
         }
         let all = if byte == b'.' { &cx.state.dots } else { &cx.state.colons }.get_or_init(|| {
             let mut all = Vec::new();
-            self.for_each_followed(byte, cx.file().span(), cx.file(), &mut |at, end| all.push((at, end)));
+            self.for_each_match(byte, cx.file().span(), cx.file(), &mut |at, end| all.push((at, end)));
             all
         });
         let first = all.partition_point(|it| it.0 < within.start);
@@ -449,7 +449,7 @@ impl JsxHandlerNames {
 
     /// Calls `visit` with the offset of each `.` in `within` that's followed by a handler name, or each `:` followed by
     /// a `:`, and with the end of that match.
-    fn for_each_followed(&self, byte: u8, within: Span, file: &File, visit: &mut dyn FnMut(u32, u32)) {
+    fn for_each_match(&self, byte: u8, within: Span, file: &File, visit: &mut dyn FnMut(u32, u32)) {
         let (text, is_oxlint) = (file.text(), file.language().is_oxlint);
         let (mut at, end) = (within.start as usize, within.end as usize);
         while let Some(found) = text.get(at..end).and_then(|rest| strings::index_of_char_usize(rest, byte)) {
@@ -469,7 +469,7 @@ impl JsxHandlerNames {
         // upstream uses minimatch, which throws on what upstream passes it for `<a.b>` and `<a:b>`.
         if !is_oxlint {
             let name = get_jsx_element_name(jsx);
-            let mut ignored = self.original.iter().flat_map(|it| &it.ignore_component_names);
+            let mut ignored = self.upstream_options.iter().flat_map(|it| &it.ignore_component_names);
             return strings::index_of_any(&name, b".:").is_none() && ignored.any(|it| it.matches(&name));
         }
         if self.ignore_component_names.is_empty() {

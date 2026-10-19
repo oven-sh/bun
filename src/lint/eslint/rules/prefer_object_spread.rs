@@ -58,7 +58,7 @@ fn message_for(call: Call) -> Option<Message> {
 
 /// Returns the message oxlint reports for `call`. It doesn't follow variables: the callee has to be a literal
 /// `Object.assign` or `globalThis.Object.assign`.
-fn message_for_oxlint(call: Call) -> Option<Message> {
+fn oxlint_message_for(call: Call) -> Option<Message> {
     let args = call.args();
     if get_inner_expression(args.first()?).tag() != ExprTag::Object
         || !is_method_call(call, None, Some(&["assign"]), Some(1), None)
@@ -212,7 +212,7 @@ impl Rule for PreferObjectSpread {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if cx.language().is_oxlint {
             if let Some(call) = e.as_call()
-                && let Some(message) = message_for_oxlint(call)
+                && let Some(message) = oxlint_message_for(call)
             {
                 cx.report(e, message).fix(|fixer| define_fixer(fixer, e, call));
             }

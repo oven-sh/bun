@@ -164,7 +164,7 @@ fn is_single_jsx_statement_in_markdown<'a>(
 
 /// Prettier's `shouldPrintSemicolon` for a statement that's the whole value of an HTML attribute. Returns `None` if it
 /// isn't, so the statement ends like any other.
-fn semicolon_of_only_statement_in_html<'a>(
+fn semicolon_for_only_statement_in_html<'a>(
     statement: Stmt<'a>,
     expression: Expr<'a>,
     f: &Formatter<'a>,
@@ -206,7 +206,7 @@ pub(crate) fn write_expression_statement<'a>(
     if is_single_jsx_statement_in_markdown(statement, expression, f) {
         return write!(f, expression);
     }
-    let semicolon_in_html = semicolon_of_only_statement_in_html(statement, expression, f);
+    let semicolon_in_html = semicolon_for_only_statement_in_html(statement, expression, f);
     // Before a type cast comment, `FormatStatements` has already printed the `;`.
     if f.options().semicolons.is_as_needed()
         && semicolon_in_html.is_none()

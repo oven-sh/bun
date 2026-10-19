@@ -48,7 +48,7 @@ pub enum Reason {
     /// The installed `prettier` isn't a version that `bun fmt` matches, or none was found.
     Version,
     /// The installed `eslint-plugin-prettier` is a version that decides differently what's formatted and how.
-    VersionOfPlugin,
+    PluginVersion,
     /// `eslint-plugin-prettier` wasn't found, so its version is unknown.
     PluginNotFound,
     /// A Prettier plugin that isn't built in may print the file.
@@ -74,7 +74,7 @@ impl Reason {
     pub fn text(self) -> &'static str {
         match self {
             Reason::Version => "the installed prettier is not version 3.9, which bun fmt matches",
-            Reason::VersionOfPlugin => "the installed eslint-plugin-prettier is not version 5",
+            Reason::PluginVersion => "the installed eslint-plugin-prettier is not version 5",
             Reason::PluginNotFound => "eslint-plugin-prettier was not found",
             Reason::Plugin => "the Prettier config uses a plugin that bun fmt does not include",
             Reason::Language => "bun fmt does not support the language",

@@ -199,8 +199,8 @@ impl T {
             T::At => b"@",
             T::Equals => b"=",
             _ => {
-                let is_it = |it: &&(&'static [u8], T)| it.1 == self;
-                KEYWORDS.iter().find(is_it).map_or(b"", |it| it.0)
+                let is_match = |it: &&(&'static [u8], T)| it.1 == self;
+                KEYWORDS.iter().find(is_match).map_or(b"", |it| it.0)
             }
         }
     }

@@ -193,11 +193,11 @@ impl<'a> Walk<'a> {
         statements.iter().all(|it| self.statement(it))
     }
 
-    /// Removes the jumps at index `from` and later that match `is_for_it`. Returns true if any were removed.
-    fn take_jumps(&mut self, from: usize, is_for_it: impl Fn(Jump<'a>) -> bool) -> bool {
+    /// Removes the jumps at index `from` and later that match `is_target`. Returns true if any were removed.
+    fn take_jumps(&mut self, from: usize, is_target: impl Fn(Jump<'a>) -> bool) -> bool {
         let before = self.jumps.len();
         let others: SmallVec<[Jump<'a>; 4]> =
-            self.jumps.drain(from.min(before)..).filter(|it| !is_for_it(*it)).collect();
+            self.jumps.drain(from.min(before)..).filter(|it| !is_target(*it)).collect();
         self.jumps.extend(others);
         self.jumps.len() < before
     }
@@ -213,7 +213,7 @@ impl<'a> Walk<'a> {
             return false;
         }
         let from = self.jumps.len();
-        let is_of_loop = |jump: Jump| matches!(jump, Jump::Break(None) | Jump::Continue(None));
+        let targets_loop = |jump: Jump| matches!(jump, Jump::Break(None) | Jump::Continue(None));
         match statement.kind() {
             StmtKind::Return(Some(_)) => {
                 self.found = true;
@@ -249,10 +249,10 @@ impl<'a> Walk<'a> {
             | StmtKind::ForIn { body, .. }
             | StmtKind::ForOf { body, .. } => {
                 self.statement(body);
-                self.take_jumps(from, is_of_loop);
+                self.take_jumps(from, targets_loop);
                 true
             }
-            StmtKind::DoWhile { body, .. } => self.statement(body) | self.take_jumps(from, is_of_loop),
+            StmtKind::DoWhile { body, .. } => self.statement(body) | self.take_jumps(from, targets_loop),
             StmtKind::Labeled { label, body } => {
                 self.statement(body)
                     | self.take_jumps(

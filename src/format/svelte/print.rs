@@ -31,7 +31,7 @@ const SELF_CLOSING_TAGS: [&[u8]; 14] = [
 
 /// `type` values that mark a script as code, beyond those that `infer_parser_by_type_attribute` knows: the other
 /// names for JavaScript and TypeScript, and Partytown's type, which runs the script in a worker.
-const TYPES_OF_CODE: [&[u8]; 23] = [
+const SCRIPT_CODE_TYPES: [&[u8]; 23] = [
     b"application/ecmascript",
     b"application/typescript",
     b"application/x-ecmascript",
@@ -157,7 +157,7 @@ fn print_whitespace<'a>(text: &[u8]) -> Doc<'a> {
 }
 
 /// `text.split("\n")`, joined with `literalline`.
-fn lines_as_they_are<'a>(text: &Cow<'a, [u8]>) -> Doc<'a> {
+fn verbatim_lines<'a>(text: &Cow<'a, [u8]>) -> Doc<'a> {
     let (mut parts, mut start) = (Vec::new(), 0);
     loop {
         let end = strings::index_of_char_usize(&text[start..], b'\n').map(|at| start + at);
@@ -229,7 +229,7 @@ fn split_text_to_docs<'a>(text: &Cow<'a, [u8]>) -> Vec<Doc<'a>> {
 /// Prints a text node under `<!-- prettier-ignore -->`. The plugin prints the component's source from the node's
 /// start to its end. That includes the whitespace at both ends, which is also printed around it, so it grows with
 /// every run. It also includes any `<style>` in that range, which has already been printed elsewhere.
-fn print_text_as_written<'a>(raw: &Cow<'a, [u8]>) -> Doc<'a> {
+fn print_text_verbatim<'a>(raw: &Cow<'a, [u8]>) -> Doc<'a> {
     let start = raw.len() - raw.trim_ascii_start().len();
     let end = raw.trim_ascii_end().len().max(start);
     // Whitespace at the ends is printed as for any other text.
@@ -237,7 +237,7 @@ fn print_text_as_written<'a>(raw: &Cow<'a, [u8]>) -> Doc<'a> {
     let mut docs = split_text_to_docs(&Cow::Owned(ends));
     for doc in &mut docs {
         if matches!(doc, Doc::Text(_)) {
-            *doc = lines_as_they_are(&slice(raw, start, end));
+            *doc = verbatim_lines(&slice(raw, start, end));
         }
     }
     Doc::Fill(docs)
@@ -245,7 +245,7 @@ fn print_text_as_written<'a>(raw: &Cow<'a, [u8]>) -> Doc<'a> {
 
 /// Normalizes the text of a `class`: spaces and tabs after a word collapse into one space, and those at the end of a
 /// line are removed.
-fn with_collapsed_blanks(raw: &[u8], is_last: bool) -> Vec<u8> {
+fn with_collapsed_spaces(raw: &[u8], is_last: bool) -> Vec<u8> {
     let is_blank = |byte: u8| matches!(byte, b' ' | b'\t');
     let mut out = Vec::with_capacity(raw.len());
     let mut at = 0;
@@ -314,7 +314,7 @@ type LeadingComment = (Id, bool);
 enum Owner {
     Attribute,
     /// A `RegularElement`'s `class` attribute.
-    ClassOfElement,
+    ElementClass,
     StyleDirective,
 }
 
@@ -345,9 +345,9 @@ pub(crate) struct Printer<'a, 'o> {
     /// `comments` of the module, the instance and the style sheet.
     comments: [Vec<LeadingComment>; 3],
     /// Each attribute's `comments`, split into leading and trailing.
-    comments_of_attributes: FxHashMap<Id, [Vec<Comment>; 2]>,
+    attribute_comments: FxHashMap<Id, [Vec<Comment>; 2]>,
     /// The comments in the start tags of elements without attributes.
-    comments_of_elements: FxHashMap<Id, Vec<Comment>>,
+    element_comments: FxHashMap<Id, Vec<Comment>>,
     /// Elements whose start tag ends with a comment that runs to the end of the line or is printed there.
     ends_tag_with_line_comment: FxHashSet<Id>,
 }
@@ -372,8 +372,8 @@ impl<'a, 'o> Printer<'a, 'o> {
             quoted_depth: 0,
             stack,
             comments: Default::default(),
-            comments_of_attributes: FxHashMap::default(),
-            comments_of_elements: FxHashMap::default(),
+            attribute_comments: FxHashMap::default(),
+            element_comments: FxHashMap::default(),
             ends_tag_with_line_comment: FxHashSet::default(),
         }
     }
@@ -469,12 +469,12 @@ impl<'a, 'o> Printer<'a, 'o> {
         let Some(last) = children.len().checked_sub(1) else {
             return;
         };
-        let first_full = children.iter().position(|&it| !self.is_empty_text(it));
-        let last_full = children.iter().rposition(|&it| !self.is_empty_text(it));
-        for &child in &children[..=first_full.unwrap_or(last)] {
+        let first_non_empty = children.iter().position(|&it| !self.is_empty_text(it));
+        let last_non_empty = children.iter().rposition(|&it| !self.is_empty_text(it));
+        for &child in &children[..=first_non_empty.unwrap_or(last)] {
             self.trim_text_left(child);
         }
-        for &child in &children[last_full.unwrap_or(0)..] {
+        for &child in &children[last_non_empty.unwrap_or(0)..] {
             self.trim_text_right(child);
         }
     }
@@ -527,7 +527,7 @@ impl<'a, 'o> Printer<'a, 'o> {
 
     /// The value of the `type` attribute, whose name is matched case-insensitively. It's either text or a string
     /// literal in braces.
-    fn text_of_type(&self, attributes: &[Id]) -> Option<&[u8]> {
+    fn type_attribute_text(&self, attributes: &[Id]) -> Option<&[u8]> {
         let value = attributes
             .iter()
             .find_map(|&it| match &self.tree[it].kind {
@@ -551,10 +551,10 @@ impl<'a, 'o> Printer<'a, 'o> {
 
     /// True if a script with these attributes contains code: it has a `lang`, no `type`, or a `type` that means code.
     /// Anything after a `;` in the `type` is ignored, and so is case.
-    fn has_type_of_code(&self, attributes: &[Id]) -> bool {
+    fn has_code_type(&self, attributes: &[Id]) -> bool {
         let lang = self.attribute_text_value(attributes, b"lang");
         let Some(kind) =
-            (self.text_of_type(attributes)).filter(|_| lang.is_none_or(|it| it.is_empty()))
+            (self.type_attribute_text(attributes)).filter(|_| lang.is_none_or(|it| it.is_empty()))
         else {
             return true;
         };
@@ -565,7 +565,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 infer_parser_by_type_attribute(&kind),
                 Some(b"babel" | b"typescript")
             )
-            || TYPES_OF_CODE.contains(&&kind[..])
+            || SCRIPT_CODE_TYPES.contains(&&kind[..])
     }
 
     /// `isNodeSupportedLanguage`
@@ -788,8 +788,8 @@ impl<'a, 'o> Printer<'a, 'o> {
             kind: JsKind::Expression,
             has_single_quotes: false,
             is_on_one_line: false,
-            is_without_parentheses: false,
-            is_without_comment_behind: false,
+            remove_parentheses: false,
+            forbids_trailing_comment: false,
             follows: None,
         }
     }
@@ -839,14 +839,14 @@ impl<'a, 'o> Printer<'a, 'o> {
             }
             None => pattern.span.end as usize,
         };
-        let written = &self.text[pattern.span.start as usize..end.max(pattern.span.start as usize)];
-        let mut expanded = (self.expand)(written);
+        let source = &self.text[pattern.span.start as usize..end.max(pattern.span.start as usize)];
+        let mut expanded = (self.expand)(source);
         if let Some(annotation) = pattern.annotation {
             expanded.extend_from_slice(b": ");
             expanded.extend_from_slice(annotation.of(self.text));
         }
         match strings::contains_char(&expanded, b'\n') {
-            true => lines_as_they_are(&Cow::Owned(expanded)),
+            true => verbatim_lines(&Cow::Owned(expanded)),
             false => owned(expanded),
         }
     }
@@ -948,7 +948,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             }
             let (Some(&first), Some(&last)) = (attributes.first(), attributes.last()) else {
                 // The plugin drops these.
-                self.comments_of_elements.insert(id, all);
+                self.element_comments.insert(id, all);
                 continue;
             };
             let mut found = vec![(
@@ -956,16 +956,15 @@ impl<'a, 'o> Printer<'a, 'o> {
                 0,
                 between(self.tree[id].start + 2, self.tree[first].start),
             )];
-            for (&before, &behind) in attributes.iter().zip(&attributes[1..]) {
-                let comments = between(self.tree[before].end, self.tree[behind].start);
-                found.push((behind, 0, comments));
+            for (&before, &after) in attributes.iter().zip(&attributes[1..]) {
+                let comments = between(self.tree[before].end, self.tree[after].start);
+                found.push((after, 0, comments));
             }
             // The plugin searches for the next `>`, which can be inside a comment.
             found.push((last, 1, between(self.tree[last].end, tag_end)));
             for (attribute, which, comments) in found {
                 if !comments.is_empty() {
-                    self.comments_of_attributes.entry(attribute).or_default()[which]
-                        .extend(comments);
+                    self.attribute_comments.entry(attribute).or_default()[which].extend(comments);
                 }
             }
         }
@@ -973,16 +972,16 @@ impl<'a, 'o> Printer<'a, 'o> {
 
     /// Prints a comment's text. The plugin's `printComment`.
     fn print_js_comment(&self, comment: Comment) -> Doc<'a> {
-        let written = comment.span.of(self.text);
+        let source = comment.span.of(self.text);
         text(match comment.is_block {
-            true => written,
-            false => written.strip_suffix(b"\r").unwrap_or(written),
+            true => source,
+            false => source.strip_suffix(b"\r").unwrap_or(source),
         })
     }
 
     /// Prettier's `printComments`, for an attribute.
     fn print_comments(&mut self, attribute: Id, printed: Doc<'a>) -> Doc<'a> {
-        let Some([leading, trailing]) = self.comments_of_attributes.remove(&attribute) else {
+        let Some([leading, trailing]) = self.attribute_comments.remove(&attribute) else {
             return printed;
         };
         let mut parts = Vec::new();
@@ -1047,8 +1046,8 @@ impl<'a, 'o> Printer<'a, 'o> {
     }
 
     /// Prints the comments in the start tag of `id`, which has no attributes.
-    fn print_comments_of_element(&mut self, id: Id) -> Vec<Doc<'a>> {
-        let comments = self.comments_of_elements.remove(&id).unwrap_or_default();
+    fn print_element_comments(&mut self, id: Id) -> Vec<Doc<'a>> {
+        let comments = self.element_comments.remove(&id).unwrap_or_default();
         (comments.into_iter())
             .map(|it| {
                 let end = match it.is_block {
@@ -1099,8 +1098,8 @@ impl<'a, 'o> Printer<'a, 'o> {
         let body = match parser.filter(|_| self.is_supported_language(attributes) && !is_ignored) {
             // The plugin parses every script as JavaScript: `<p>{{a}}</p>` in a `text/template` is JSX, which gets a
             // `;`, and `x^2 + y^2` in a `math/tex` becomes `x ^ (2 + y) ^ 2;`.
-            Some(Parser::BabelTs) if !self.has_type_of_code(attributes) => {
-                lines_as_they_are(&Cow::Borrowed(content))
+            Some(Parser::BabelTs) if !self.has_code_type(attributes) => {
+                verbatim_lines(&Cow::Borrowed(content))
             }
             Some(parser) if !strings::trim_js_whitespace(content).is_empty() => {
                 Doc::Code(Box::new(Code::Body {
@@ -1120,7 +1119,7 @@ impl<'a, 'o> Printer<'a, 'o> {
         );
         let mut in_tag = self.print_attributes(id, attributes, false);
         (self.ignore_next, self.ignore_range) = ignored;
-        in_tag.extend(self.print_comments_of_element(id));
+        in_tag.extend(self.print_element_comments(id));
         in_tag.push(self.line_before_end_of_tag(
             id,
             match self.bracket_same_line() {
@@ -1225,29 +1224,29 @@ impl<'a, 'o> Printer<'a, 'o> {
         }
         self.ignore_next = false;
         Some(match (self.raw(id), place) {
-            (Some(raw), _) if self.pre_depth == 0 => print_text_as_written(raw),
-            (None, Some(place)) => self.print_element_as_written(id, place),
-            _ => self.print_as_written(id),
+            (Some(raw), _) if self.pre_depth == 0 => print_text_verbatim(raw),
+            (None, Some(place)) => self.print_element_verbatim(id, place),
+            _ => self.print_verbatim(id),
         })
     }
 
     /// Prints the node's source text unchanged.
-    fn print_as_written(&self, id: Id) -> Doc<'a> {
+    fn print_verbatim(&self, id: Id) -> Doc<'a> {
         let (start, end) = (self.tree[id].start, self.tree[id].end);
-        lines_as_they_are(&Cow::Borrowed(Span { start, end }.of(self.text)))
+        verbatim_lines(&Cow::Borrowed(Span { start, end }.of(self.text)))
     }
 
-    /// Same as `print_as_written`, for a node in a fragment. An element without an end tag extends to the next tag,
+    /// Same as `print_verbatim`, for a node in a fragment. An element without an end tag extends to the next tag,
     /// so it includes the whitespace before that tag. That whitespace is trimmed here and printed as a line, unless
     /// it's insignificant at that position.
-    fn print_element_as_written(&self, id: Id, place: Place) -> Doc<'a> {
+    fn print_element_verbatim(&self, id: Id, place: Place) -> Doc<'a> {
         let (start, end) = (self.tree[id].start, self.tree[id].end);
-        let written = Span { start, end }.of(self.text);
-        let trimmed = written.trim_ascii_end();
-        if self.pre_depth > 0 || trimmed.len() == written.len() {
-            return self.print_as_written(id);
+        let source = Span { start, end }.of(self.text);
+        let trimmed = source.trim_ascii_end();
+        if self.pre_depth > 0 || trimmed.len() == source.len() {
+            return self.print_verbatim(id);
         }
-        let printed = lines_as_they_are(&Cow::Borrowed(trimmed));
+        let printed = verbatim_lines(&Cow::Borrowed(trimmed));
         let is_in_block = match place.element {
             Some(element) => self.is_block_element(element),
             None => place.fragment == self.tree.fragment,
@@ -1296,8 +1295,8 @@ impl<'a, 'o> Printer<'a, 'o> {
         match &self.tree[id].kind {
             Kind::Text { raw } if self.pre_depth == 0 => self.print_text(raw),
             Kind::Text { raw } => match owner {
-                Owner::ClassOfElement => {
-                    replace_end_of_line(&Cow::Owned(with_collapsed_blanks(raw, is_last)))
+                Owner::ElementClass => {
+                    replace_end_of_line(&Cow::Owned(with_collapsed_spaces(raw, is_last)))
                 }
                 Owner::Attribute => replace_end_of_line(raw),
                 Owner::StyleDirective => Doc::Text(raw.clone()),
@@ -1372,7 +1371,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             && (value.parts().iter().filter_map(|&it| self.raw(it)))
                 .any(|it| strings::index_of_any(it, quotes).is_some())
         {
-            return self.print_as_written(id);
+            return self.print_verbatim(id);
         }
         match self.tree[id].kind.clone() {
             Kind::Attribute { name, value } => {
@@ -1385,11 +1384,11 @@ impl<'a, 'o> Printer<'a, 'o> {
                 if value == Value::True {
                     return text(name);
                 }
-                let is_class_of_element = name == b"class"
+                let is_element_class = name == b"class"
                     && (self.element(owner))
                         .is_some_and(|it| it.kind == ElementKind::RegularElement);
-                let owner = match is_class_of_element {
-                    true => Owner::ClassOfElement,
+                let owner = match is_element_class {
+                    true => Owner::ElementClass,
                     false => Owner::Attribute,
                 };
                 self.print_name_and_value(vec![text(name)], &value, owner)
@@ -1460,7 +1459,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             return EMPTY;
         };
         let js = Self::code(Js {
-            is_without_parentheses: expression.kind == ExpressionKind::Sequence,
+            remove_parentheses: expression.kind == ExpressionKind::Sequence,
             follows: Some(Brace::InValue),
             ..self.js(expression)
         });
@@ -1550,8 +1549,8 @@ impl<'a, 'o> Printer<'a, 'o> {
                 self.tree[child].start as usize,
                 self.tree[child].end as usize,
             );
-            let written = self.text.get(start..end).unwrap_or_default();
-            for (index, line) in strings::split(written, b"\n").enumerate() {
+            let source = self.text.get(start..end).unwrap_or_default();
+            for (index, line) in strings::split(source, b"\n").enumerate() {
                 if index > 0 {
                     result.push(Doc::Literalline);
                 }
@@ -1668,25 +1667,25 @@ impl<'a, 'o> Printer<'a, 'o> {
         let (name, kind) = (element.name, element.kind);
         // In `<tr><td>a<tr><td>b`, Svelte lets the second row close the cell but nests it in the first row. The
         // plugin adds every end tag, and then the second row closes the first.
-        let would_end_it = |child: &Id| {
+        let would_close_element = |child: &Id| {
             (self.element(*child)).is_some_and(|it| {
                 it.kind == ElementKind::RegularElement && closing_tag_omitted(name, it.name)
             })
         };
         if kind == ElementKind::RegularElement
-            && (self.tree.fragment(element.fragment).iter()).any(would_end_it)
+            && (self.tree.fragment(element.fragment).iter()).any(would_close_element)
         {
-            return self.print_element_as_written(id, place);
+            return self.print_element_verbatim(id, place);
         }
         let is_pre = kind == ElementKind::RegularElement
             && (name.eq_ignore_ascii_case(b"pre") || name.eq_ignore_ascii_case(b"textarea"));
         self.pre_depth += u32::from(is_pre);
-        let printed = self.print_element_in_place(id, &element, place);
+        let printed = self.print_element_inner(id, &element, place);
         self.pre_depth -= u32::from(is_pre);
         printed
     }
 
-    fn print_element_in_place(&mut self, id: Id, element: &Element<'a>, place: Place) -> Doc<'a> {
+    fn print_element_inner(&mut self, id: Id, element: &Element<'a>, place: Place) -> Doc<'a> {
         let (name, kind) = (element.name, element.kind);
         let bracket_same_line = self.bracket_same_line();
         let is_pre = self.pre_depth > 0;
@@ -1720,14 +1719,14 @@ impl<'a, 'o> Printer<'a, 'o> {
         });
         let attributes = self.print_attributes(id, &element.attributes, this.is_some());
         let mut in_tag = Vec::with_capacity(attributes.len() + 2);
-        if let Some(written) = element.this_with_more.filter(|_| this.is_some()) {
+        if let Some(source) = element.multipart_this_attribute.filter(|_| this.is_some()) {
             // The plugin prints only the first part, which is all that Svelte looks at: `this="h"`.
             let line = self.attribute_line(&element.attributes, true);
-            in_tag.push(Doc::List(vec![line, text(written.of(self.text))]));
+            in_tag.push(Doc::List(vec![line, text(source.of(self.text))]));
         } else if let Some(this) = this {
             let line = self.attribute_line(&element.attributes, true);
             let value = match this.kind {
-                ExpressionKind::Text => self.print_text_of_this(this.span),
+                ExpressionKind::Text => self.print_this_text(this.span),
                 ExpressionKind::StringLiteral
                     if kind == ElementKind::SvelteElement && !self.has_comments(this) =>
                 {
@@ -1738,7 +1737,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             in_tag.push(Doc::List(vec![line, Doc::Token("this="), value]));
         }
         in_tag.extend(attributes);
-        in_tag.extend(self.print_comments_of_element(id));
+        in_tag.extend(self.print_element_comments(id));
         let has_own_line = self.ends_tag_with_line_comment.contains(&id);
         let opening = |last: Doc<'a>, mut in_tag: Vec<Doc<'a>>| {
             in_tag.push(last);
@@ -1878,16 +1877,16 @@ impl<'a, 'o> Printer<'a, 'o> {
     }
 
     /// Prints `this="a"`. The plugin puts every text in double quotes, so `this='a"b'` becomes `this="a"b"`.
-    fn print_text_of_this(&self, written: Span) -> Doc<'a> {
-        let before = (written.start as usize)
+    fn print_this_text(&self, source: Span) -> Doc<'a> {
+        let before = (source.start as usize)
             .checked_sub(1)
             .and_then(|at| self.text.get(at));
-        let quote = Doc::Token(match (before, written.of(self.text)) {
+        let quote = Doc::Token(match (before, source.of(self.text)) {
             (_, value) if !strings::contains_char(value, b'"') => "\"",
             (Some(b'\''), _) => "'",
             _ => "",
         });
-        Doc::List(vec![quote.clone(), text(written.of(self.text)), quote])
+        Doc::List(vec![quote.clone(), text(source.of(self.text)), quote])
     }
 
     /// Prints the value of `<svelte:element this=..>` when it's a string literal. The plugin prints `{"a"}` if the
@@ -1996,8 +1995,8 @@ impl<'a, 'o> Printer<'a, 'o> {
                     kind: JsKind::Expression,
                     has_single_quotes: false,
                     is_on_one_line: false,
-                    is_without_parentheses: true,
-                    is_without_comment_behind: false,
+                    remove_parentheses: true,
+                    forbids_trailing_comment: false,
                     follows: None,
                 }),
             ),
@@ -2008,8 +2007,8 @@ impl<'a, 'o> Printer<'a, 'o> {
                     kind: JsKind::Statement,
                     has_single_quotes: false,
                     is_on_one_line: false,
-                    is_without_parentheses: false,
-                    is_without_comment_behind: true,
+                    remove_parentheses: false,
+                    forbids_trailing_comment: true,
                     follows: None,
                 }),
             ),
@@ -2017,7 +2016,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 // It holds only names, commas and comments, and the plugin drops the comments.
                 let (start, end) = (self.tree[id].start as usize, self.tree[id].end as usize);
                 if (self.text.get(start..end)).is_some_and(|it| strings::contains_char(it, b'/')) {
-                    return self.print_as_written(id);
+                    return self.print_verbatim(id);
                 }
                 let mut parts = vec![Doc::Token("{@debug")];
                 for (index, identifier) in identifiers.iter().enumerate() {
@@ -2057,8 +2056,8 @@ impl<'a, 'o> Printer<'a, 'o> {
                 // plugin prints `{#each (a = 1)}`.
                 let list = Self::code(Js {
                     is_on_one_line: true,
-                    is_without_parentheses: context.is_none(),
-                    is_without_comment_behind: context.is_none(),
+                    remove_parentheses: context.is_none(),
+                    forbids_trailing_comment: context.is_none(),
                     ..self.js(expression)
                 });
                 let mut parts = vec![Doc::Token("{#each "), list];
@@ -2088,7 +2087,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 then,
                 catch,
             } => {
-                let full = |printer: &Self, fragment: Option<FragmentId>| {
+                let non_empty = |printer: &Self, fragment: Option<FragmentId>| {
                     fragment.filter(|&it| {
                         printer
                             .tree
@@ -2101,17 +2100,18 @@ impl<'a, 'o> Printer<'a, 'o> {
                 // The plugin also drops an empty `{:catch}`, but without one Svelte rethrows the error. And dropping
                 // an empty `{:then a /* b */}` would lose the comment.
                 let has_comment = value.is_some_and(|it| it.has_comments);
-                let has_full_then = full(self, then).is_some();
+                let has_non_empty_then = non_empty(self, then).is_some();
                 let (pending, then) = (
-                    full(self, pending),
-                    then.filter(|_| has_full_then || has_comment),
+                    non_empty(self, pending),
+                    then.filter(|_| has_non_empty_then || has_comment),
                 );
-                let has_full_catch = full(self, catch).is_some();
-                let print_if =
-                    |printer: &mut Self, fragment: FragmentId, is_full: bool| match is_full {
+                let has_non_empty_catch = non_empty(self, catch).is_some();
+                let print_if = |printer: &mut Self, fragment: FragmentId, is_non_empty: bool| {
+                    match is_non_empty {
                         true => printer.print_block_fragment(fragment),
                         false => EMPTY,
-                    };
+                    }
+                };
                 let mut block = Vec::new();
                 let head = vec![Doc::Token("{#await "), self.print_block_js(expression)];
                 let clause = |mut head: Vec<Doc<'a>>, word: &'static str, pattern: Doc<'a>| {
@@ -2122,12 +2122,12 @@ impl<'a, 'o> Printer<'a, 'o> {
                     (None, Some(then), _) => {
                         let pattern = self.expand_node(value);
                         block.push(clause(head, " then", pattern));
-                        block.push(print_if(self, then, has_full_then));
+                        block.push(print_if(self, then, has_non_empty_then));
                     }
                     (None, None, Some(catch)) => {
                         let pattern = self.expand_node(error);
                         block.push(clause(head, " catch", pattern));
-                        block.push(print_if(self, catch, has_full_catch));
+                        block.push(print_if(self, catch, has_non_empty_catch));
                     }
                     _ => {
                         block.push(clause(head, "", EMPTY));
@@ -2137,14 +2137,14 @@ impl<'a, 'o> Printer<'a, 'o> {
                         if let Some(then) = then {
                             let pattern = self.expand_node(value);
                             block.push(clause(Vec::new(), "{:then", pattern));
-                            block.push(print_if(self, then, has_full_then));
+                            block.push(print_if(self, then, has_non_empty_then));
                         }
                     }
                 }
                 if let Some(catch) = catch.filter(|_| pending.is_some() || then.is_some()) {
                     let pattern = self.expand_node(error);
                     block.push(clause(Vec::new(), "{:catch", pattern));
-                    block.push(print_if(self, catch, has_full_catch));
+                    block.push(print_if(self, catch, has_non_empty_catch));
                 }
                 block.push(Doc::Token("{/await}"));
                 group(block)
@@ -2174,8 +2174,8 @@ impl<'a, 'o> Printer<'a, 'o> {
                     kind: JsKind::Function,
                     has_single_quotes: false,
                     is_on_one_line: false,
-                    is_without_parentheses: false,
-                    is_without_comment_behind: false,
+                    remove_parentheses: false,
+                    forbids_trailing_comment: false,
                     follows: None,
                 });
                 Doc::List(vec![
@@ -2196,7 +2196,7 @@ impl<'a, 'o> Printer<'a, 'o> {
     fn print_options_tag(&mut self, id: Id) -> Doc<'a> {
         let attributes = (self.element(id).map(|it| it.attributes.clone())).unwrap_or_default();
         let mut in_tag = self.print_attributes(id, &attributes, false);
-        in_tag.extend(self.print_comments_of_element(id));
+        in_tag.extend(self.print_element_comments(id));
         let bracket_same_line =
             self.bracket_same_line() && !self.ends_tag_with_line_comment.contains(&id);
         if !bracket_same_line {
@@ -2250,11 +2250,11 @@ impl<'a, 'o> Printer<'a, 'o> {
             Some(it) => format!("&#x{:X};", it as u32),
             None => return,
         };
-        let behind = raw[text.len()..].to_vec();
+        let after = raw[text.len()..].to_vec();
         let raw = raw.to_mut();
         raw.truncate(at);
         raw.extend_from_slice(entity.as_bytes());
-        raw.extend_from_slice(&behind);
+        raw.extend_from_slice(&after);
     }
 
     /// The `"Fragment"` case of `print`.
@@ -2274,8 +2274,8 @@ impl<'a, 'o> Printer<'a, 'o> {
             element: None,
         };
         let mut output = vec![self.print_children(place)];
-        trim_left(&mut output, Doc::is_white_space_of_fragment);
-        trim_right(&mut output, Doc::is_white_space_of_fragment);
+        trim_left(&mut output, Doc::is_fragment_whitespace);
+        trim_right(&mut output, Doc::is_fragment_whitespace);
         if output.iter().all(Doc::is_empty) {
             return EMPTY;
         }
@@ -2330,7 +2330,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             let Kind::Comment { data } = self.tree[child].kind else {
                 return None;
             };
-            if !says_end_of_region(data) {
+            if !is_endregion_comment(data) {
                 return None;
             }
             // The whitespace stays: see `remove_and_get_leading_comments`.
@@ -2487,16 +2487,16 @@ impl<'a, 'o> Printer<'a, 'o> {
             options.push(self.with_region_end_trail(doc, trails[3]));
         }
         self.merge_adjacent_texts();
-        let is_there = |part: &Part| match part {
+        let is_present = |part: &Part| match part {
             Part::Options => !options.is_empty(),
             Part::Scripts => !scripts.is_empty(),
             Part::Styles => !styles.is_empty(),
             Part::Markup => true,
         };
-        if order.iter().find(|it| is_there(it)) == Some(&Part::Markup) {
+        if order.iter().find(|it| is_present(it)) == Some(&Part::Markup) {
             self.keep_text_at_start_of_file();
         }
-        if order.iter().rfind(|it| is_there(it)) == Some(&Part::Markup) {
+        if order.iter().rfind(|it| is_present(it)) == Some(&Part::Markup) {
             self.keep_text_at_end_of_file();
         }
         let html = self.print_root_fragment();
@@ -2535,7 +2535,7 @@ impl<'a, 'o> Printer<'a, 'o> {
 }
 
 /// `/#\s*endregion\b/i.test(data)`
-fn says_end_of_region(data: &[u8]) -> bool {
+fn is_endregion_comment(data: &[u8]) -> bool {
     let mut rest = data;
     while let Some(at) = strings::index_of_char_usize(rest, b'#') {
         rest = &rest[at + 1..];

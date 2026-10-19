@@ -51,7 +51,7 @@ impl<'a> Reader<'a> {
         // The byte order mark is at -1.
         let at = |it: f64| match it < 0.0 {
             true => Some(0),
-            false => Some(offsets.to_bytes(whole(it)?)),
+            false => Some(offsets.to_bytes(finite_index(it)?)),
         };
         Some(at(start).zip(at(end)).map(|(start, end)| Fix {
             span: Span::new(start, end),
@@ -101,9 +101,9 @@ impl<'a> Reader<'a> {
             rule,
             message,
             message_id,
-            line: place(line),
-            column: place(column),
-            end: place(end.0).zip(place(end.1)),
+            line: line_or_column(line),
+            column: line_or_column(column),
+            end: line_or_column(end.0).zip(line_or_column(end.1)),
             fix,
             suggestions: suggested,
         })
@@ -111,13 +111,13 @@ impl<'a> Reader<'a> {
 }
 
 /// An index. `None` for NaN and infinities, which JSON can't represent either.
-fn whole(number: f64) -> Option<u32> {
+fn finite_index(number: f64) -> Option<u32> {
     number.is_finite().then_some(number as u32)
 }
 
 /// A line or a column. ESLint passes negative ones through, so they're stored as an `i32` in the `u32`. See
 /// [`LintMessage::line`](crate::linter::LintMessage::line).
-fn place(number: f64) -> Option<u32> {
+fn line_or_column(number: f64) -> Option<u32> {
     number.is_finite().then_some(number as i32 as u32)
 }
 

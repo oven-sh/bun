@@ -109,7 +109,7 @@ fn front_matter_between(text: &[u8], marker: u8) -> Option<(usize, usize, usize)
 
 /// The text in the form that the parser expects: every line break is `\n` and every NUL is U+FFFD.
 #[derive(Default)]
-struct AsRead {
+struct NormalizedText {
     bytes: Vec<u8>,
     /// The offset in `bytes` of each replacement that changed the length, and how many more bytes the original text has
     /// up to the end of that replacement.
@@ -118,31 +118,31 @@ struct AsRead {
     replaced: Vec<u32>,
 }
 
-impl AsRead {
+impl NormalizedText {
     const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
 
-    fn push_in_place_of(&mut self, bytes: &[u8], len_in_text: usize) {
+    fn push_replacement(&mut self, bytes: &[u8], len_in_text: usize) {
         let at = self.bytes.len() as u32;
         if bytes.len() != len_in_text {
             let more = self.changes.last().map_or(0, |it| it.1);
             self.changes
                 .push((at, more + len_in_text as i32 - bytes.len() as i32));
         }
-        if bytes == AsRead::REPLACEMENT {
+        if bytes == NormalizedText::REPLACEMENT {
             self.replaced.push(at);
         }
         self.bytes.extend_from_slice(bytes);
     }
 
-    fn new(mut rest: &[u8]) -> AsRead {
-        let mut this = AsRead::default();
+    fn new(mut rest: &[u8]) -> NormalizedText {
+        let mut this = NormalizedText::default();
         this.bytes.reserve(rest.len());
         while let Some(at) = bun_core::strings::index_of_any(rest, b"\r\0") {
             this.bytes.extend_from_slice(&rest[..at]);
             let len = 1 + usize::from(rest[at..].starts_with(b"\r\n"));
             match rest[at] {
-                0 => this.push_in_place_of(AsRead::REPLACEMENT, 1),
-                _ => this.push_in_place_of(b"\n", len),
+                0 => this.push_replacement(NormalizedText::REPLACEMENT, 1),
+                _ => this.push_replacement(b"\n", len),
             }
             rest = &rest[at + len..];
         }
@@ -170,8 +170,8 @@ impl AsRead {
 pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Option<ast::NodeId> {
     let is_changed = bun_core::strings::index_of_any(text, b"\r\0").is_some();
     let as_read = match is_changed {
-        true => AsRead::new(text),
-        false => AsRead::default(),
+        true => NormalizedText::new(text),
+        false => NormalizedText::default(),
     };
     let read: &[u8] = if is_changed { &as_read.bytes } else { text };
 
@@ -261,7 +261,7 @@ pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
 
 /// oxfmt's `route`: the parser for a code block in `language`, and for JavaScript and TypeScript a file name that
 /// identifies the dialect. The names are Shiki's. A block with any other name is left as is.
-pub(crate) fn parser_of_oxfmt(language: &[u8]) -> Option<(&'static [u8], &'static [u8])> {
+pub(crate) fn oxfmt_parser_for(language: &[u8]) -> Option<(&'static [u8], &'static [u8])> {
     Some(match language {
         b"graphql" | b"gql" => (b"graphql", b""),
         b"css" | b"postcss" => (b"css", b""),
@@ -303,14 +303,14 @@ fn format_embedded(
         return Some(Vec::new());
     }
     let is_mdx_jsx = language == MDX_JSX;
-    let mut file_of_oxfmt: &[u8] = b"";
+    let mut oxfmt_file_name: &[u8] = b"";
     let parser: &[u8] = match language {
         _ if is_mdx_jsx || language == MDX_ES_SYNTAX => b"babel",
         // A plugin's language, which oxfmt supports too.
         b"svelte" if options.svelte.is_on => b"svelte",
         _ if options.flavor.is_oxfmt() => {
             let parser;
-            (parser, file_of_oxfmt) = parser_of_oxfmt(language)?;
+            (parser, oxfmt_file_name) = oxfmt_parser_for(language)?;
             parser
         }
         b"angular-html" => b"angular",
@@ -389,7 +389,7 @@ fn format_embedded(
             }
             _ => {
                 let path: &[u8] = match parser {
-                    _ if !file_of_oxfmt.is_empty() => file_of_oxfmt,
+                    _ if !oxfmt_file_name.is_empty() => oxfmt_file_name,
                     b"babel" => b"dummy.jsx",
                     _ if language == b"tsx" => b"dummy.tsx",
                     _ => b"dummy.ts",

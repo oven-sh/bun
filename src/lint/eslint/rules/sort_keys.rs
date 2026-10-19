@@ -63,7 +63,7 @@ fn take_numeric(rest: &mut impl Iterator<Item = u32>, first: u32) -> u32 {
 
 /// oxlint's `compare_keys`: compares UTF-8 bytes, or uses its own `natural_compare`. Case folding only applies to ASCII
 /// letters.
-fn compare_keys_as_oxlint(a: &[u8], b: &[u8], is_natural: bool, is_insensitive: bool) -> Ordering {
+fn oxlint_compare_keys(a: &[u8], b: &[u8], is_natural: bool, is_insensitive: bool) -> Ordering {
     if !is_natural {
         let fold = |it: &u8| if is_insensitive { it.to_ascii_lowercase() } else { *it };
         return a.iter().map(fold).cmp(b.iter().map(fold));
@@ -142,12 +142,12 @@ fn lift_property_span<'a>(file: &'a File<'a>, prop: Prop<'a>, after: Result<Prop
         Err(start) => Some(Span::new(start, start + 1)),
     };
     let token_before = token_before.or_else(|| file.token_before(prop).map(|it| it.span()));
-    let is_on_line_before = |at: u32| {
+    let is_on_line_of_previous_token = |at: u32| {
         token_before.is_some_and(|it| !strings::contains_js_line_break(file.slice(Span::after(it, at))))
     };
-    let follows_on_the_line = is_on_line_before(whole.start);
+    let is_on_previous_token_line = is_on_line_of_previous_token(whole.start);
     for comment in file.comments_before(prop).rev() {
-        if !follows_on_the_line && is_on_line_before(comment.start()) {
+        if !is_on_previous_token_line && is_on_line_of_previous_token(comment.start()) {
             break;
         }
         let value = comment.comment_value();
@@ -179,16 +179,16 @@ impl SortKeys {
     ) -> Option<Vec<FixableProperty<'a, 'k>>> {
         let file = props.first()?.file();
         // Every comment query below is inside the object, so one check up front can skip them all.
-        let is_commented = file.comments_in(whole).next().is_some();
-        let has_comments = |at: Span| is_commented && file.comments_in(at).next().is_some();
-        let (mut has_spread_after, mut is_group_over) = (false, false);
+        let object_has_comments = file.comments_in(whole).next().is_some();
+        let has_comments = |at: Span| object_has_comments && file.comments_in(at).next().is_some();
+        let (mut has_spread_after, mut has_group_ended) = (false, false);
         let mut found: Vec<FixableProperty<'a, 'k>> = Vec::with_capacity(props.len());
         // The span of the previous property, and true if that's a spread.
         let (mut before, mut is_after_spread) = (Span::empty(whole.start), false);
         let mut after = Err(whole.start);
         for (index, prop) in props.iter().enumerate() {
             let next = props.get(index + 1);
-            let span = match is_commented {
+            let span = match object_has_comments {
                 true => lift_property_span(file, prop, after, next.map_or(whole.end, |it| it.span().start)),
                 false => prop.span(),
             };
@@ -203,10 +203,10 @@ impl SortKeys {
                 has_spread_after = !found.is_empty();
                 continue;
             };
-            if has_spread_after || is_group_over {
+            if has_spread_after || has_group_ended {
                 return None;
             }
-            is_group_over = self.allows_line_separated_groups
+            has_group_ended = self.allows_line_separated_groups
                 && next.is_some_and(|next| has_empty_line(file.slice(prop.span().between(next.span()))));
             let value = prop.value().filter(|it| it.tag() == ExprTag::Object && !it.is_parenthesized());
             found.push(FixableProperty {
@@ -230,7 +230,7 @@ impl SortKeys {
         // With `natural` the comparison isn't transitive: `a10` < `a1b` < `a2` < `a10`. After the sort, a key is still
         // never greater than the next one, which is all the rule checks, so fixed code isn't reported again.
         utils::sort::sort_by(&mut sorted, |a, b| {
-            let order = compare_keys_as_oxlint(&a.key, &b.key, self.is_natural, self.is_insensitive);
+            let order = oxlint_compare_keys(&a.key, &b.key, self.is_natural, self.is_insensitive);
             if self.is_descending { order.reverse() } else { order }
         });
         let is_in_order = sorted.iter().zip(&props).all(|(a, b)| a.span == b.span);
@@ -290,7 +290,7 @@ impl SortKeys {
 
     fn is_valid_order(&self, a: &[u8], b: &[u8], is_oxlint: bool) -> bool {
         if is_oxlint {
-            let order = compare_keys_as_oxlint(a, b, self.is_natural, self.is_insensitive);
+            let order = oxlint_compare_keys(a, b, self.is_natural, self.is_insensitive);
             return order != if self.is_descending { Ordering::Less } else { Ordering::Greater };
         }
         let (a, b) = if self.is_descending { (b, a) } else { (a, b) };

@@ -111,12 +111,12 @@ fn check_binding_property<'a>(prop: PatProp<'a>, cx: &mut Context<'a>) {
     while matches!(owner, Node::Pat(_) | Node::PatProp(_) | Node::PatElem(_)) {
         owner = owner.parent();
     }
-    let is_of_event = match owner {
+    let is_event_pattern = match owner {
         Node::VarDecl(declarator) => declarator.init().is_some_and(|init| is_event_parameter(init, owner, cx)),
         Node::Param(param) => find_add_event_listener_callback(Node::Param(param).parent(), &mut cx.state).is_some(),
         _ => false,
     };
-    if is_of_event {
+    if is_event_pattern {
         cx.report(prop.value(), PREFER_KEYBOARD_EVENT_KEY).data("deprecated_prop", value_name.bytes());
     }
 }

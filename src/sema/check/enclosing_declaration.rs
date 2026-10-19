@@ -128,12 +128,12 @@ impl Checker<'_, '_> {
     pub(super) fn enclosing_scope_of_expr(&self, file: FileId, e: ExprId) -> ScopeId {
         // Most expressions reach the node that determines their scope within this many steps, so nothing is cached for
         // them. In a chain like `a + a + ..`, each operand's distance is the length of the rest of the chain.
-        const PLAIN_STEPS: usize = 32;
+        const UNCACHED_STEPS: usize = 32;
         let (mut at, mut steps) = (e, 0);
         let mut passed = Vec::new();
         let scope = loop {
-            if steps >= PLAIN_STEPS {
-                if let Some(&known) = self.scopes_of_what_is_in.borrow().get(&(file, at)) {
+            if steps >= UNCACHED_STEPS {
+                if let Some(&known) = self.scopes_inside_exprs.borrow().get(&(file, at)) {
                     break known;
                 }
                 passed.push(at);
@@ -145,19 +145,19 @@ impl Checker<'_, '_> {
             steps += 1;
         };
         if !passed.is_empty() {
-            let mut known = self.scopes_of_what_is_in.borrow_mut();
+            let mut known = self.scopes_inside_exprs.borrow_mut();
             known.extend(passed.into_iter().map(|it| ((file, it), scope)));
         }
         scope
     }
 
-    /// Returns the scope if `at`'s parent determines it, otherwise the expression enclosing `at`. `is_around` is true
+    /// Returns the scope if `at`'s parent determines it, otherwise the expression enclosing `at`. `is_ancestor` is true
     /// if the query is about an expression inside `at`, not `at` itself.
     fn enclosing_scope_or_outer_expr(
         &self,
         file: FileId,
         at: ExprId,
-        is_around: bool,
+        is_ancestor: bool,
     ) -> Result<ScopeId, ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // The operand of `typeof` in a type.
@@ -203,7 +203,7 @@ impl Checker<'_, '_> {
             // The expression's own `node.Parent` is the `ExpressionWithTypeArguments`, which isn't inside the
             // expression.
             Parent::ClassExtends(c) => or_file_scope(match bound.expr_scope.get(&at) {
-                Some(&base_expression) if is_around => base_expression,
+                Some(&base_expression) if is_ancestor => base_expression,
                 _ => bound.class_scope[c.idx()],
             }),
             Parent::ClassDecorator(c) => or_file_scope(bound.class_scope[c.idx()]),

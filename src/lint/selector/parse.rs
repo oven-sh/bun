@@ -808,7 +808,7 @@ impl<'s> Parser<'s> {
             Some((types, excludes_names_of_meta_properties)) => self.op(Op::Class {
                 types,
                 excludes_names_of_meta_properties,
-                is_written_function: name == b"function",
+                is_function_class: name == b"function",
             }),
             None => {
                 let start = self.program.bytes.len();

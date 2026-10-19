@@ -591,7 +591,7 @@ impl Checker<'_, '_> {
         let (hir, declarations) = (self.hir(file), self.bound(file).symbol(symbol).decls);
         // The declaration kinds that run this check: a class, an interface, an enum, a namespace, a variable, a type
         // alias. Not a function or an import.
-        let asks = |decl: &Decl| {
+        let runs_this_check = |decl: &Decl| {
             matches!(
                 decl,
                 Decl::Class(_)
@@ -602,7 +602,7 @@ impl Checker<'_, '_> {
                     | Decl::Alias(_)
             )
         };
-        if !declarations.iter().any(asks) {
+        if !declarations.iter().any(runs_this_check) {
             return;
         }
         let symbol = self.files().sym(file, symbol);

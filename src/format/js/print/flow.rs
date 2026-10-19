@@ -80,7 +80,7 @@ pub(crate) fn is_flow_declare_export(statement: Stmt<'_>) -> bool {
 
 /// True for the nodes that Prettier's `isJsSourceElement` excludes: Flow's type parameters, and the content of
 /// `declare export`.
-pub(crate) fn is_no_source_element(node: AstNodes<'_>) -> bool {
+pub(crate) fn is_not_js_source_element(node: AstNodes<'_>) -> bool {
     match node {
         AstNodes::TSTypeParameterDeclaration(owner) => owner.file().is_flow(),
         AstNodes::ExportNamedDeclaration(_)
@@ -424,11 +424,11 @@ pub(crate) fn write_declared_predicate<'a>(ty: TypeNode<'a>, f: &mut Formatter<'
         return false;
     };
     write!(f, return_type);
-    let is_of_declared_function = matches!(
+    let belongs_to_declared_function = matches!(
         ty.parent(),
         Node::Func(func) if !func.has_body() && matches!(func.owner(), Node::Stmt(_))
     );
-    if !is_of_declared_function {
+    if !belongs_to_declared_function {
         write!(f, [return_type.map(|_| space()), "%checks(", expr, ")"]);
     }
     true
@@ -545,7 +545,7 @@ pub(crate) fn write_parameter_start<'a>(param: Param<'a>, f: &mut Formatter<'a>)
 
 /// Returns the offset of the `=>` if `func` is a function type with parameters. Prettier has no node between the last
 /// parameter and the type after the `=>`, so a comment before the `=>` trails the parameter.
-pub(crate) fn arrow_behind_parameters(func: Func<'_>) -> Option<u32> {
+pub(crate) fn arrow_after_parameters(func: Func<'_>) -> Option<u32> {
     let is_function_type = func.file().is_flow()
         && func.kind() == FnKind::FunctionType
         && !func.params().is_empty()
@@ -908,7 +908,7 @@ pub(crate) fn write_opaque_type<'a>(
 
 /// `declare module.exports: T`, and the `T` of `declare export default T`. Returns true if the type alias represents
 /// one of them.
-pub(crate) fn write_what_is_no_type_alias<'a>(
+pub(crate) fn write_pseudo_type_alias<'a>(
     statement: Stmt<'a>,
     alias: Alias<'a>,
     f: &mut Formatter<'a>,
@@ -1456,11 +1456,11 @@ fn write_match_pattern<'a>(pattern: Expr<'a>, parent: PatternParent, f: &mut For
         return write!(f, pattern);
     }
     format_node(pattern.as_ast_nodes(), f, |f| {
-        write_match_pattern_that_has_parts(pattern, parent, f)
+        write_compound_match_pattern(pattern, parent, f)
     });
 }
 
-fn write_match_pattern_that_has_parts<'a>(
+fn write_compound_match_pattern<'a>(
     pattern: Expr<'a>,
     parent: PatternParent,
     f: &mut Formatter<'a>,
@@ -1755,7 +1755,7 @@ impl<'a> Format<'a> for FormatRecordProperty<'a> {
 
 /// True if Prettier parses the Flow file at `path` with `babel-flow` instead of `flow`. `flow` has to be requested
 /// explicitly, with the `parser` option or a `.js.flow` extension.
-pub fn goes_to_babel(options: &FormatOptions, path: &[u8]) -> bool {
+pub fn is_parsed_by_babel_flow(options: &FormatOptions, path: &[u8]) -> bool {
     let name = options.filepath.as_deref().filter(|it| !it.is_empty());
     let is_flow_by_name =
         crate::text::ends_with_ignore_ascii_case(name.unwrap_or(path), b".js.flow");
@@ -1767,11 +1767,11 @@ pub fn may_have_comment_types(text: &[u8]) -> bool {
     let mut rest = text;
     while let Some(at) = bun_core::strings::index_of(rest, b"/*") {
         rest = rest.get(at + 2..).unwrap_or_default();
-        let blanks = rest
+        let indent_len = rest
             .iter()
             .take_while(|b| matches!(b, b' ' | b'\t'))
             .count();
-        let code = rest.get(blanks..).unwrap_or_default();
+        let code = rest.get(indent_len..).unwrap_or_default();
         if code.starts_with(b":") || code.starts_with(b"flow-include") {
             return true;
         }
@@ -1795,11 +1795,11 @@ pub fn uncommented<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
         else {
             continue;
         };
-        let blanks = inner
+        let indent_len = inner
             .iter()
             .take_while(|b| matches!(b, b' ' | b'\t'))
             .count();
-        let code = inner.get(blanks..).unwrap_or_default();
+        let code = inner.get(indent_len..).unwrap_or_default();
         let code = match code {
             [b':', b':', code @ ..] => code,
             [b':', ..] => code,
@@ -1810,22 +1810,22 @@ pub fn uncommented<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
         };
         // Returns the length of the line that `rest` starts with, if it contains only spaces and tabs.
         let blank_line = |rest: &[u8]| {
-            let blanks = rest
+            let indent_len = rest
                 .iter()
                 .take_while(|b| matches!(b, b' ' | b'\t'))
                 .count();
-            match rest.get(blanks..) {
-                Some([b'\r', b'\n', ..]) => Some(blanks + 2),
-                Some([b'\r' | b'\n', ..]) => Some(blanks + 1),
+            match rest.get(indent_len..) {
+                Some([b'\r', b'\n', ..]) => Some(indent_len + 2),
+                Some([b'\r' | b'\n', ..]) => Some(indent_len + 1),
                 _ => None,
             }
         };
         let out = out.get_or_insert_with(|| Vec::with_capacity(text.len()));
         out.extend_from_slice(text.get(copied..span.start as usize).unwrap_or_default());
         // A `/*::` that's alone on its line doesn't leave an empty line behind.
-        let blanks_before = out.get(out.trim_ascii_end().len()..).unwrap_or_default();
-        let is_at_start_of_line = blanks_before.len() == out.len()
-            || bun_core::strings::index_of_any(blanks_before, b"\r\n").is_some();
+        let whitespace_before = out.get(out.trim_ascii_end().len()..).unwrap_or_default();
+        let is_at_start_of_line = whitespace_before.len() == out.len()
+            || bun_core::strings::index_of_any(whitespace_before, b"\r\n").is_some();
         let code = match blank_line(code).filter(|_| is_at_start_of_line) {
             Some(line) => code.get(line..).unwrap_or_default(),
             None => code,
@@ -1838,8 +1838,8 @@ pub fn uncommented<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
             continue;
         };
         // A `*/` that starts its line doesn't leave an empty line behind.
-        let blanks_at_the_end = code.get(code.trim_ascii_end().len()..).unwrap_or_default();
-        let starts_line = bun_core::strings::index_of_any(blanks_at_the_end, b"\r\n").is_some();
+        let trailing_whitespace = code.get(code.trim_ascii_end().len()..).unwrap_or_default();
+        let starts_line = bun_core::strings::index_of_any(trailing_whitespace, b"\r\n").is_some();
         if !starts_line {
             out.extend_from_slice(rest.get(..line).unwrap_or_default());
         }

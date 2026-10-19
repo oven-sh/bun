@@ -191,7 +191,7 @@ pub struct ClassMemberUsage<'a> {
     /// One for each of `members`.
     keys: Vec<MemberKey>,
     /// Maps a class and a key to an index in `members`.
-    places: FxHashMap<(u32, MemberKey), u32>,
+    indices: FxHashMap<(u32, MemberKey), u32>,
 }
 
 /// Upstream's `Key`, and which of the class's two maps it belongs to.
@@ -234,7 +234,7 @@ impl<'a> ClassMemberUsage<'a> {
 
     /// `members.static.get(key)` or `members.instance.get(key)`, as an index.
     fn find(&self, class: u32, key: MemberKey) -> Option<usize> {
-        self.places.get(&(class, key)).map(|&it| it as usize)
+        self.indices.get(&(class, key)).map(|&it| it as usize)
     }
 
     /// The constructor of upstream's `ClassScope`. `candidates` is scratch space.
@@ -247,7 +247,7 @@ impl<'a> ClassMemberUsage<'a> {
         let file = class.file();
         candidates.clear();
         // Maps a key to its index in `candidates`.
-        let mut places: FxHashMap<MemberKey, usize> = FxHashMap::default();
+        let mut indices: FxHashMap<MemberKey, usize> = FxHashMap::default();
         let mut add = |node: MemberNode<'a>, flags: Flags| {
             let (name, is_private, extracted) = match plain_name(node) {
                 Some((name, is_private)) => (name.atom(), is_private, None),
@@ -267,8 +267,8 @@ impl<'a> ClassMemberUsage<'a> {
             };
             // As in a `Map`, a later entry with the same key replaces the first one and keeps its
             // position.
-            let place = *places.entry(candidate.key).or_insert(candidates.len());
-            match candidates.get_mut(place) {
+            let candidate_index = *indices.entry(candidate.key).or_insert(candidates.len());
+            match candidates.get_mut(candidate_index) {
                 Some(same) => *same = candidate,
                 None => {
                     candidates.push(candidate);
@@ -322,7 +322,7 @@ impl<'a> ClassMemberUsage<'a> {
             self.classes.len() as u32,
             self.keys.iter().enumerate().skip(first),
         );
-        self.places
+        self.indices
             .extend(keys.map(|(i, &key)| ((id, key), i as u32)));
         self.classes.push(ClassScopeResult {
             class_name: class.name().map(|name| name.name()),

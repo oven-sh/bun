@@ -18,7 +18,7 @@ pub enum VariableKind<'a> {
     Global(Name<'a>),
     /// With an oxlint config, the `arguments` at the top level of a file whose name makes it CommonJS.
     /// typescript-eslint treats that scope as a function scope.
-    ArgumentsOfFile,
+    FileArguments,
 }
 
 /// ESLint's `Variable`. Returned by [`Reference::variable`], [`Scope::variable`] and [`Scope::find_variable`].
@@ -48,13 +48,13 @@ impl std::fmt::Debug for Variable<'_> {
 }
 
 #[inline]
-fn is_name_of_class(symbol: Symbol) -> bool {
+fn is_class_name(symbol: Symbol) -> bool {
     (symbol.declaration_kinds()).contains(DeclarationKinds::CLASS_NAME)
 }
 
 /// Returns the class declaration that declares `symbol` and contains `from`.
 fn class_around<'a>(symbol: Symbol<'a>, from: Scope<'a>) -> Option<Class<'a>> {
-    if !is_name_of_class(symbol) {
+    if !is_class_name(symbol) {
         return None;
     }
     let declared_in = symbol.scope();
@@ -67,7 +67,7 @@ fn class_around<'a>(symbol: Symbol<'a>, from: Scope<'a>) -> Option<Class<'a>> {
     })
 }
 
-fn has_arguments_of_file<'a>(file: &'a File<'a>) -> bool {
+fn has_file_arguments<'a>(file: &'a File<'a>) -> bool {
     file.language().is_oxlint && source_type(file) == SourceType::CommonJs
 }
 
@@ -84,7 +84,7 @@ impl<'a> Variable<'a> {
             VariableKind::Declared(symbol) | VariableKind::NameInClass { outer: symbol, .. } => {
                 Some(symbol)
             }
-            VariableKind::Global(_) | VariableKind::ArgumentsOfFile => None,
+            VariableKind::Global(_) | VariableKind::FileArguments => None,
         }
     }
 
@@ -95,7 +95,7 @@ impl<'a> Variable<'a> {
                 symbol.name()
             }
             VariableKind::Global(name) => name,
-            VariableKind::ArgumentsOfFile => self.file.name(known::arguments),
+            VariableKind::FileArguments => self.file.name(known::arguments),
         }
     }
 
@@ -107,7 +107,7 @@ impl<'a> Variable<'a> {
                 class.scope().unwrap_or_else(|| outer.scope())
             }
             VariableKind::Global(_) => self.file.scope(),
-            VariableKind::ArgumentsOfFile => self.file.top_level_scope(),
+            VariableKind::FileArguments => self.file.top_level_scope(),
         }
     }
 
@@ -131,8 +131,8 @@ impl<'a> Variable<'a> {
         // Every candidate matches, unless the name belongs to a class, or to a global variable that's only a type or
         // only a value.
         let is_all = match self.kind {
-            VariableKind::Declared(symbol) => !is_name_of_class(symbol),
-            VariableKind::ArgumentsOfFile => true,
+            VariableKind::Declared(symbol) => !is_class_name(symbol),
+            VariableKind::FileArguments => true,
             VariableKind::NameInClass { .. } | VariableKind::Global(_) => false,
         };
         Reference::all_at(self.file, candidates)
@@ -166,12 +166,12 @@ impl<'a> Reference<'a> {
     /// `reference.resolved`
     pub fn variable(self) -> Option<Variable<'a>> {
         let kind = match self.symbol() {
-            Some(symbol) if is_name_of_class(symbol) => {
+            Some(symbol) if is_class_name(symbol) => {
                 return Some(symbol.variable_in(self.scope()));
             }
             Some(symbol) => VariableKind::Declared(symbol),
-            None if self.raw().name == known::arguments && has_arguments_of_file(self.file) => {
-                VariableKind::ArgumentsOfFile
+            None if self.raw().name == known::arguments && has_file_arguments(self.file) => {
+                VariableKind::FileArguments
             }
             None => VariableKind::Global(self.global().map(|_| self.name())?),
         };
@@ -184,25 +184,24 @@ impl<'a> Scope<'a> {
     /// `scope.set.get(name)`
     pub fn variable(self, name: Name<'a>) -> Option<Variable<'a>> {
         let file = self.file;
-        let name_of_class = || match self.node() {
+        let class_name = || match self.node() {
             Node::Class(class) => class
                 .symbol()
                 .filter(|outer| outer.name() == name && outer.scope() != self)
                 .map(|outer| VariableKind::NameInClass { class, outer }),
             _ => None,
         };
-        let of_file = || {
-            let is_arguments = name.atom() == known::arguments && has_arguments_of_file(file);
-            (is_arguments && self == file.top_level_scope())
-                .then_some(VariableKind::ArgumentsOfFile)
+        let file_arguments = || {
+            let is_arguments = name.atom() == known::arguments && has_file_arguments(file);
+            (is_arguments && self == file.top_level_scope()).then_some(VariableKind::FileArguments)
         };
         let global = || {
             let is_defined = self.kind() == ScopeKind::Global && file.global_named(name).is_some();
             is_defined.then_some(VariableKind::Global(name))
         };
-        let kind = name_of_class()
+        let kind = class_name()
             .or_else(|| self.get_name(name).map(VariableKind::Declared))
-            .or_else(of_file)
+            .or_else(file_arguments)
             .or_else(global)?;
         Some(Variable { file, kind })
     }

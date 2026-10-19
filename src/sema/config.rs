@@ -51,7 +51,7 @@ impl ConfigError {
 
     /// Converts `problems` in the configuration file at `config_path`, which may not exist. The file is parsed once for
     /// all of them, because each of thousands of `paths` can have one. Its syntax tree stays in `session`.
-    pub fn of_problems<'a>(
+    pub fn from_problems<'a>(
         host: &dyn Host,
         session: &Session,
         config_path: &[u8],
@@ -66,11 +66,11 @@ impl ConfigError {
             .flatten()
             .and_then(|text| TsConfigSourceFile::parse(host, session, text));
         problems
-            .map(|problem| Self::of_problem(file.as_ref(), config_path, problem))
+            .map(|problem| Self::from_problem(file.as_ref(), config_path, problem))
             .collect()
     }
 
-    fn of_problem(
+    fn from_problem(
         file: Option<&TsConfigSourceFile>,
         config_path: &[u8],
         problem: &Problem,
@@ -120,7 +120,7 @@ pub struct Project {
     /// The merged `compilerOptions` of all the files that were read, which `options` is built from. `paths` is omitted,
     /// because there can be thousands and `options.paths` has them.
     pub raw_compiler_options: Vec<(Vec<u8>, Json)>,
-    pub written: Written,
+    pub written: VerbatimSpecs,
 }
 
 /// `files`, `include` and `exclude` exactly as written in the file that sets them. Entries from an extended file aren't
@@ -128,7 +128,7 @@ pub struct Project {
 /// interprets them. `bun lint`'s import graph reads them for oxlint's rule about which files a `tsconfig.json` applies
 /// to.
 #[derive(Clone, Default)]
-pub struct Written {
+pub struct VerbatimSpecs {
     pub files: Option<Vec<Vec<u8>>>,
     pub include: Option<Vec<Vec<u8>>>,
     pub exclude: Option<Vec<Vec<u8>>>,
@@ -227,22 +227,22 @@ pub struct Roots {
 }
 
 /// A path split into its components. It's split once for all the projects it's tested against.
-pub struct Asked<'a> {
+pub struct SplitFilePath<'a> {
     path: &'a [u8],
     names: Vec<&'a [u8]>,
 }
 
-impl<'a> Asked<'a> {
-    pub fn new(path: &'a [u8]) -> Asked<'a> {
+impl<'a> SplitFilePath<'a> {
+    pub fn new(path: &'a [u8]) -> SplitFilePath<'a> {
         let names = PathParts::of_directory(typescript_path(path));
-        Asked { path, names }
+        SplitFilePath { path, names }
     }
 }
 
 impl Roots {
     /// True if `getFileNamesFromConfigSpecs` would find the file, which must exist and not be a JSON file. `is_file` is
     /// called for sibling files with the same name and another extension, because `a.ts` replaces `a.js`.
-    pub fn has(&self, file: &Asked, is_file: &dyn Fn(&[u8]) -> bool) -> bool {
+    pub fn has(&self, file: &SplitFilePath, is_file: &dyn Fn(&[u8]) -> bool) -> bool {
         let path = file.path;
         let is_literal = |path: &[u8]| {
             (self.literal.iter()).any(|it| is_same_path(it, path, self.case_sensitive))
@@ -263,7 +263,8 @@ impl Roots {
                 continue;
             }
             let other = change_extension(path, extension);
-            if (is_literal(&other) || self.matches(&Asked::new(&other))) && is_file(&other) {
+            if (is_literal(&other) || self.matches(&SplitFilePath::new(&other))) && is_file(&other)
+            {
                 return false;
             }
         }
@@ -271,7 +272,7 @@ impl Roots {
     }
 
     /// True if `include` matches the file and `exclude` doesn't.
-    fn matches(&self, file: &Asked) -> bool {
+    fn matches(&self, file: &SplitFilePath) -> bool {
         let (path, directory) = (file.path, &file.names);
         let has_extension = |it: &[u8]| path.len() > it.len() && path.ends_with(it);
         let is_supported = self
@@ -360,7 +361,7 @@ struct List {
     /// `propOfRaw.sliceValue`. `convertArrayLiteralElementsToJson` drops `null` elements, and a list of only `null`s is
     /// nil. Elements of the wrong type stay in it.
     items: Option<Vec<Json>>,
-    /// See [`Written`].
+    /// See [`VerbatimSpecs`].
     written: Option<Vec<Json>>,
 }
 
@@ -465,14 +466,22 @@ fn parse_config(
 ) -> Option<Raw> {
     // The files waiting for the files they extend, outermost first, and `resolutionStack`, which has the path of each.
     // This is a loop instead of recursion because an `extends` chain can be arbitrarily long.
-    let (mut waiting, mut stack): (Vec<Open>, FxHashSet<Vec<u8>>) = Default::default();
-    let mut circles = Circles::default();
+    let (mut waiting, mut stack): (Vec<PendingConfig>, FxHashSet<Vec<u8>>) = Default::default();
+    let mut extends_cycles = ExtendsCycles::default();
     let mut to_read = Some(path.to_vec());
     // A file that has been read, with everything it extends. `Some(None)`: it can't be used.
     let mut read: Option<Option<Raw>> = None;
     loop {
         if let Some(path) = to_read.take() {
-            match open_config(host, session, &path, &stack, &waiting, &mut circles, errors) {
+            match open_config(
+                host,
+                session,
+                &path,
+                &stack,
+                &waiting,
+                &mut extends_cycles,
+                errors,
+            ) {
                 Some(open) if open.extended.is_some() => {
                     stack.insert(open.resolved_path.clone());
                     waiting.push(open);
@@ -483,22 +492,22 @@ fn parse_config(
         let Some(innermost) = waiting.last_mut() else {
             return read.flatten();
         };
-        if let (Some(Some(extended)), Some((path, reported, circles_met))) =
-            (read.take(), innermost.asked.take())
+        if let (Some(Some(extended)), Some((path, reported, cycles_hit))) =
+            (read.take(), innermost.being_read.take())
         {
             // A file with errors isn't cached, so its errors are reported for every file that extends it. The result
             // for a file in an `extends` cycle depends on where the cycle was entered, so it's only cached for this
             // call.
-            if circles.met != circles_met {
-                circles.kept.push((path.clone(), extended.clone()));
+            if extends_cycles.hits != cycles_hit {
+                extends_cycles.kept.push((path.clone(), extended.clone()));
             } else if errors.len() == reported {
-                host.keep_extended_config(&path, &|| std::sync::Arc::new(extended.clone()));
+                host.cache_extended_config(&path, &|| std::sync::Arc::new(extended.clone()));
             }
             innermost.inherit(&path, extended, host.is_case_sensitive());
         }
         while let Some(path) = innermost.extended.as_mut().and_then(Iterator::next) {
-            if let Some((_, kept)) = circles.kept.iter().find(|it| it.0 == path) {
-                circles.met += 1;
+            if let Some((_, kept)) = extends_cycles.kept.iter().find(|it| it.0 == path) {
+                extends_cycles.hits += 1;
                 innermost.inherit(&path, kept.clone(), host.is_case_sensitive());
                 continue;
             }
@@ -506,7 +515,7 @@ fn parse_config(
             match kept.as_ref().and_then(|it| it.downcast_ref::<Raw>()) {
                 Some(kept) => innermost.inherit(&path, kept.clone(), host.is_case_sensitive()),
                 None => {
-                    innermost.asked = Some((path.clone(), errors.len(), circles.met));
+                    innermost.being_read = Some((path.clone(), errors.len(), extends_cycles.hits));
                     to_read = Some(path);
                     break;
                 }
@@ -514,31 +523,31 @@ fn parse_config(
         }
         if to_read.is_none() {
             stack.remove(&innermost.resolved_path);
-            read = Some(waiting.pop().map(Open::merged));
+            read = Some(waiting.pop().map(PendingConfig::merged));
         }
     }
 }
 
 /// A configuration file, and what it has inherited so far.
-struct Open {
+struct PendingConfig {
     path: Vec<u8>,
     resolved_path: Vec<u8>,
     own: Raw,
     inherited: Raw,
     /// The rest of `extendedConfigPath`. `None`: the file has no `extends`.
     extended: Option<std::vec::IntoIter<Vec<u8>>>,
-    /// The extended file that's being read, and the values of `errors.len()` and `Circles::met` before that.
-    asked: Option<(Vec<u8>, usize, usize)>,
+    /// The extended file that's being read, and the values of `errors.len()` and `ExtendsCycles::hits` before that.
+    being_read: Option<(Vec<u8>, usize, usize)>,
 }
 
 /// The `extends` cycles that one `parse_config` call has run into.
 #[derive(Default)]
-struct Circles {
+struct ExtendsCycles {
     /// The files at which a cycle was closed. TS18000 is reported once for each. TypeScript caches such a file the
     /// first time, and the cached result has no errors.
     closed: FxHashSet<Vec<u8>>,
     /// How many times a cycle was hit or an entry of `kept` was used.
-    met: usize,
+    hits: usize,
     /// The files that hit a cycle, with their results for this `parse_config` call. A result depends on where the cycle
     /// was entered.
     kept: Vec<(Vec<u8>, Raw)>,
@@ -550,10 +559,10 @@ fn open_config(
     session: &Session,
     path: &[u8],
     stack: &FxHashSet<Vec<u8>>,
-    waiting: &[Open],
-    circles: &mut Circles,
+    waiting: &[PendingConfig],
+    extends_cycles: &mut ExtendsCycles,
     errors: &mut Vec<ConfigError>,
-) -> Option<Open> {
+) -> Option<PendingConfig> {
     let text = host.read(path);
     let Some(file) = text.and_then(|text| TsConfigSourceFile::parse(host, session, text)) else {
         errors.push(ConfigError::new(5083, &[&displayed_path(path)]));
@@ -584,8 +593,8 @@ fn open_config(
     let is_case_sensitive = host.is_case_sensitive();
     let resolved_path = to_path(path, is_case_sensitive).into_owned();
     if stack.contains(&resolved_path) {
-        circles.met += 1;
-        if circles.closed.insert(resolved_path) {
+        extends_cycles.hits += 1;
+        if extends_cycles.closed.insert(resolved_path) {
             // typescript-go passes no argument, and prints `{0}`. TypeScript 6 prints the files.
             let files = waiting.iter().map(|it| &it.path[..]).chain([path]);
             let files: Vec<_> = files.map(displayed_path).collect();
@@ -622,7 +631,7 @@ fn open_config(
             .map(|property| file.initializer(property.0))
             .collect()
     };
-    let of_problem = |problem: crate::config_options::Problem| ConfigError {
+    let from_problem = |problem: crate::config_options::Problem| ConfigError {
         args: problem.args,
         at: problem.span.map(at),
         ..ConfigError::new(problem.code, &[])
@@ -646,7 +655,7 @@ fn open_config(
         let omitted: Vec<_> = (problems.iter())
             .map(|problem| (problem.property, problem.index))
             .collect();
-        errors.extend(problems.into_iter().map(of_problem));
+        errors.extend(problems.into_iter().map(from_problem));
         for (property, key) in file.properties(written) {
             let is_omitted = |index| omitted.contains(&(property, index));
             let value = file.convert_property_value_to_json(file.initializer(property));
@@ -687,11 +696,11 @@ fn open_config(
     // `convertJsonOption` for the properties outside `compilerOptions`.
     if let Some(root) = file.root {
         let problems = crate::config_options::problems(&file, root, In::Root);
-        errors.extend(problems.into_iter().map(of_problem));
+        errors.extend(problems.into_iter().map(from_problem));
     }
     for written in values_of(b"typeAcquisition") {
         let problems = crate::config_options::problems(&file, written, In::TypeAcquisition);
-        errors.extend(problems.into_iter().map(of_problem));
+        errors.extend(problems.into_iter().map(from_problem));
     }
     own.files = List::of(json.get(b"files"));
     own.include = List::of(json.get(b"include"));
@@ -725,17 +734,17 @@ fn open_config(
         extended_config_path = Some(found);
     }
     // Without `extends` nothing is merged, and a `null` in the file itself doesn't unset anything.
-    Some(Open {
+    Some(PendingConfig {
         path: path.to_vec(),
         resolved_path,
         own,
         inherited: Raw::default(),
         extended: extended_config_path.map(Vec::into_iter),
-        asked: None,
+        being_read: None,
     })
 }
 
-impl Open {
+impl PendingConfig {
     /// `extended`: the file at `extended_path`, which is the next of the files this one extends.
     fn inherit(&mut self, extended_path: &[u8], extended: Raw, is_case_sensitive: bool) {
         let (own, inherited) = (&self.own, &mut self.inherited);
@@ -894,15 +903,15 @@ fn validate_specs(
         .collect()
 }
 
-/// `GetParsedCommandLineOfConfigFilePath`. `over` returns the options that a command line adds, which are applied after
-/// everything in the configuration file and may depend on whether the file has `references`. Returns `Err` if the file
-/// can't be read, so there's no project. A file that the parser gives up on counts as empty, with the error. The result
-/// owns its memory, and `session` only holds data that isn't needed afterwards.
+/// `GetParsedCommandLineOfConfigFilePath`. `overrides` returns the options that a command line adds, which are applied
+/// after everything in the configuration file and may depend on whether the file has `references`. Returns `Err` if the
+/// file can't be read, so there's no project. A file that the parser gives up on counts as empty, with the error. The
+/// result owns its memory, and `session` only holds data that isn't needed afterwards.
 pub fn load_overriding(
     host: &dyn Host,
     session: &Session,
     path: &[u8],
-    over: &dyn Fn(bool) -> Vec<(Vec<u8>, Json)>,
+    overrides: &dyn Fn(bool) -> Vec<(Vec<u8>, Json)>,
 ) -> Result<Project, Vec<ConfigError>> {
     let mut errors = Vec::new();
     let raw = parse_config(host, session, path, &mut errors);
@@ -912,7 +921,7 @@ pub fn load_overriding(
     let base = dirname::<Posix>(path);
     let references = get_project_references(&raw.references, base);
     let has_references = references.is_some_and(|list| !list.is_empty());
-    merge_compiler_options(&mut raw.compiler, over(has_references), &[]);
+    merge_compiler_options(&mut raw.compiler, overrides(has_references), &[]);
     Ok(project_from_raw(host, session, path, base, raw, errors))
 }
 
@@ -998,7 +1007,7 @@ fn project_from_raw(
     options.use_case_sensitive_file_names = host.is_case_sensitive();
     options.verify(&compiler, config_path);
     let about_options = &options.problems;
-    errors.extend(ConfigError::of_problems(
+    errors.extend(ConfigError::from_problems(
         host,
         session,
         config_path,
@@ -1052,7 +1061,7 @@ fn project_from_raw(
         b"exclude",
         &mut problems,
     ));
-    let outside_options = ConfigError::of_problems(host, session, config_path, &problems);
+    let outside_options = ConfigError::from_problems(host, session, config_path, &problems);
     errors.extend(outside_options.into_iter().map(|error| ConfigError {
         is_about_options: false,
         ..error
@@ -1085,7 +1094,7 @@ fn project_from_raw(
         has_references: references.is_some(),
         references: references.unwrap_or_default(),
         errors,
-        written: Written {
+        written: VerbatimSpecs {
             files: raw.files.written(),
             include: raw.include.written(),
             exclude: raw.exclude.written(),
@@ -1154,7 +1163,7 @@ fn file_names_from_specs(
     // `ArrayHashMap::ordered_remove` moves every later entry, and a folder of demos that each exist as `.js` and `.tsx`
     // removes every other file.
     let mut wildcard_files: Vec<Option<Vec<u8>>> = Vec::new();
-    let mut wildcard_places = crate::util::FxHashMap::<Vec<u8>, usize>::default();
+    let mut wildcard_indices = crate::util::FxHashMap::<Vec<u8>, usize>::default();
     let mut wildcard_json_files = OrderedFiles::default();
     // The key is the entry as written. The lookups below use absolute paths, so they only find an entry that's written
     // as one.
@@ -1199,7 +1208,7 @@ fn file_names_from_specs(
                     break;
                 }
                 let other = key(&change_extension(&file, extension));
-                if literal_files.contains_key(&other) || wildcard_places.contains_key(&other) {
+                if literal_files.contains_key(&other) || wildcard_indices.contains_key(&other) {
                     // A declaration file has always been loaded alongside its JavaScript.
                     if extension == b".d.ts" && (file.ends_with(b".js") || file.ends_with(b".jsx"))
                     {
@@ -1218,14 +1227,14 @@ fn file_names_from_specs(
                     break;
                 }
                 let lower = key(&change_extension(&file, extension));
-                let listed = wildcard_places.remove(&lower);
+                let listed = wildcard_indices.remove(&lower);
                 if let Some(listed) = listed.and_then(|at| wildcard_files.get_mut(at)) {
                     *listed = None;
                 }
             }
             let key = key(&file);
-            if !literal_files.contains_key(&key) && !wildcard_places.contains_key(&key) {
-                wildcard_places.insert(key, wildcard_files.len());
+            if !literal_files.contains_key(&key) && !wildcard_indices.contains_key(&key) {
+                wildcard_indices.insert(key, wildcard_files.len());
                 wildcard_files.push(Some(file));
             }
         }
@@ -1392,12 +1401,12 @@ impl GlobPattern {
                     // A `**` that starts inside the previous run ends where that run ends.
                     Component::DoubleAsterisk if next.last().is_some_and(|&last| from <= last) => {}
                     Component::DoubleAsterisk => {
-                        let is_passed = |part: &[u8]| {
+                        let is_traversable = |part: &[u8]| {
                             self.is_exclude || !is_hidden(part) && !is_package_folder(part)
                         };
                         let mut to = from;
                         next.push(to);
-                        while path.get(to).is_some_and(is_passed) {
+                        while path.get(to).is_some_and(is_traversable) {
                             to += 1;
                             next.push(to);
                         }

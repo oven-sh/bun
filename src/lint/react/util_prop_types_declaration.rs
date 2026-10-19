@@ -103,7 +103,7 @@ struct ReactDeclarationTypes<'a, 'b> {
     root_node: Option<Node<'a>>,
     custom_validators: &'b [Box<[u8]>],
     /// The values that are being built right now, further up the stack.
-    on_the_way: IdSet<Expr<'a>>,
+    in_progress: IdSet<Expr<'a>>,
     /// Set when `build` reaches one of those values again, where upstream recurses until its stack
     /// overflows, or when the stack is nearly full here. Nothing more is built after that.
     has_given_up: bool,
@@ -135,14 +135,14 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
     }
 
     fn build(&mut self, value: Option<Expr<'a>>, parent_name: &[u8]) -> DeclaredPropType<'a> {
-        let is_new = value.is_none_or(|it| self.on_the_way.insert(it));
+        let is_new = value.is_none_or(|it| self.in_progress.insert(it));
         self.has_given_up |= !is_new || !bun_core::StackCheck::init().is_safe_to_recurse();
         if self.has_given_up {
             return DeclaredPropType::default();
         }
         let built = self.build_declaration_types(value, parent_name);
         if let Some(it) = value {
-            self.on_the_way.remove(it);
+            self.in_progress.remove(it);
         }
         built
     }
@@ -264,7 +264,7 @@ pub(crate) fn build_react_declaration_types<'a>(
     let mut types = ReactDeclarationTypes {
         root_node,
         custom_validators,
-        on_the_way: IdSet::new(),
+        in_progress: IdSet::new(),
         has_given_up: false,
     };
     let built = types.build(value, parent_name);

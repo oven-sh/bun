@@ -57,7 +57,7 @@ impl Allow {
         }))
     }
 
-    pub fn of_typescript_eslint(options: &Options) -> Allow {
+    pub fn for_typescript_eslint(options: &Options) -> Allow {
         Allow(Allow::new(options).0 | CONSTRUCTORS_AS_METHODS)
     }
 

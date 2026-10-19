@@ -78,7 +78,7 @@
 //!
 //! oxlint analyzes a file twice. Its own rules see oxc's scopes. A JavaScript plugin's rule sees
 //! those of typescript-eslint's scope manager, which differ: see
-//! [`has_scopes_of_oxc`](crate::language::LanguageOptions::has_scopes_of_oxc). The same happens
+//! [`has_oxc_scopes`](crate::language::LanguageOptions::has_oxc_scopes). The same happens
 //! here with an oxlint config. A rule that oxlint has sees oxc's scopes. A JavaScript plugin sees
 //! typescript-eslint's, and so does a rule that's implemented here but missing from oxlint, which
 //! oxlint could only run as part of such a plugin. The runner tells the file which kind of rule is
@@ -97,7 +97,7 @@
 //! options of an import type (`import("m", { with: { .. } })`). They contain no scopes, symbols or
 //! references: [`Func::scope`] and [`Pat::symbol`] are `None` there, and [`Node::scope`] is the
 //! enclosing scope. oxc visits both, so with
-//! [`has_scopes_of_oxc`](crate::language::LanguageOptions::has_scopes_of_oxc) they're like any
+//! [`has_oxc_scopes`](crate::language::LanguageOptions::has_oxc_scopes) they're like any
 //! other type and any other expression.
 //!
 //! # The order of references
@@ -145,7 +145,7 @@ mod variables;
 
 use references::{RawReference, ReferenceSite, References};
 use scopes::{Block, ScopeTree};
-pub use table_of_oxc::{order_in_table, order_in_table_of_oxc};
+pub use table_of_oxc::{hashbrown_table_order, oxc_table_order};
 pub use variable::{Variable, VariableKind};
 use variables::Variables;
 
@@ -156,9 +156,9 @@ pub(crate) struct ReferenceIndex {
     analysis: Analysis,
     /// With an oxlint config: typescript-eslint's analysis, [alongside oxc's](self#two-analyses).
     /// Computed on first use.
-    of_eslint: OnceCell<Box<Analysis>>,
-    /// True if `of_eslint` is the active analysis.
-    asks_eslint: Cell<bool>,
+    lazy_eslint_analysis: OnceCell<Box<Analysis>>,
+    /// True if `lazy_eslint_analysis` is the active analysis.
+    uses_eslint_scopes: Cell<bool>,
     /// A cache of recent `File::global` results, with each name in the slot given by its atom.
     /// Results that depend on the file's comments aren't cached. Empty until the first lookup.
     globals: RefCell<Vec<(Atom, Option<GlobalVariable<'static>>)>>,
@@ -167,8 +167,8 @@ pub(crate) struct ReferenceIndex {
 impl ReferenceIndex {
     #[cold]
     #[inline(never)]
-    fn analysis_of_eslint(&self) -> &Analysis {
-        self.of_eslint.get_or_init(Box::default)
+    fn eslint_analysis(&self) -> &Analysis {
+        self.lazy_eslint_analysis.get_or_init(Box::default)
     }
 }
 
@@ -186,15 +186,15 @@ struct Analysis {
 }
 
 /// While this guard is alive, scope queries on the file use typescript-eslint's analysis:
-/// [`File::with_scopes_of_eslint`].
-pub(crate) struct ScopesOfEslint<'f, 'a> {
+/// [`File::with_eslint_scopes`].
+pub(crate) struct EslintScopesGuard<'f, 'a> {
     file: &'f File<'a>,
-    asked_before: bool,
+    previous: bool,
 }
 
-impl Drop for ScopesOfEslint<'_, '_> {
+impl Drop for EslintScopesGuard<'_, '_> {
     fn drop(&mut self) {
-        self.file.ask_scopes_of_eslint(self.asked_before);
+        self.file.use_eslint_scopes(self.previous);
     }
 }
 
@@ -210,32 +210,32 @@ impl<'a> File<'a> {
     #[inline]
     fn semantic(&self) -> &Analysis {
         let index = self.semantic_index();
-        match index.asks_eslint.get() {
+        match index.uses_eslint_scopes.get() {
             false => &index.analysis,
-            true => index.analysis_of_eslint(),
+            true => index.eslint_analysis(),
         }
     }
 
     /// True if the active scopes are oxc's, where those differ from typescript-eslint's:
-    /// [`LanguageOptions::has_scopes_of_oxc`](crate::language::LanguageOptions::has_scopes_of_oxc).
+    /// [`LanguageOptions::has_oxc_scopes`](crate::language::LanguageOptions::has_oxc_scopes).
     #[inline]
-    pub(crate) fn has_scopes_of_oxc(&self) -> bool {
-        self.language().has_scopes_of_oxc && !self.semantic_index().asks_eslint.get()
+    pub(crate) fn has_oxc_scopes(&self) -> bool {
+        self.language().has_oxc_scopes && !self.semantic_index().uses_eslint_scopes.get()
     }
 
     /// Switches scope queries to typescript-eslint's [analysis](self#two-analyses), or back to
     /// oxc's. The two only differ with an oxlint config. Returns the previous setting.
     #[inline]
-    pub(crate) fn ask_scopes_of_eslint(&self, asks: bool) -> bool {
-        let asks = asks && self.language().has_scopes_of_oxc;
-        self.semantic_index().asks_eslint.replace(asks)
+    pub(crate) fn use_eslint_scopes(&self, asks: bool) -> bool {
+        let asks = asks && self.language().has_oxc_scopes;
+        self.semantic_index().uses_eslint_scopes.replace(asks)
     }
 
-    /// [`File::ask_scopes_of_eslint`] for the lifetime of the returned guard.
-    pub(crate) fn with_scopes_of_eslint(&self) -> ScopesOfEslint<'_, 'a> {
-        ScopesOfEslint {
+    /// [`File::use_eslint_scopes`] for the lifetime of the returned guard.
+    pub(crate) fn with_eslint_scopes(&self) -> EslintScopesGuard<'_, 'a> {
+        EslintScopesGuard {
             file: self,
-            asked_before: self.ask_scopes_of_eslint(true),
+            previous: self.use_eslint_scopes(true),
         }
     }
 
@@ -245,7 +245,7 @@ impl<'a> File<'a> {
     fn scope_tree(&'a self) -> &'a ScopeTree {
         let index = self.semantic_index();
         match index.analysis.scopes.get() {
-            Some(computed) if !index.asks_eslint.get() => computed,
+            Some(computed) if !index.uses_eslint_scopes.get() => computed,
             _ => self.compute_scope_tree(),
         }
     }
@@ -260,7 +260,7 @@ impl<'a> File<'a> {
     fn variables(&'a self) -> &'a Variables {
         let index = self.semantic_index();
         match index.analysis.variables.get() {
-            Some(computed) if !index.asks_eslint.get() => computed,
+            Some(computed) if !index.uses_eslint_scopes.get() => computed,
             _ => self.compute_variables(),
         }
     }
@@ -277,7 +277,7 @@ impl<'a> File<'a> {
     fn reference_list(&'a self) -> &'a References {
         let index = self.semantic_index();
         match index.analysis.references.get() {
-            Some(computed) if !index.asks_eslint.get() => computed,
+            Some(computed) if !index.uses_eslint_scopes.get() => computed,
             _ => self.compute_references(),
         }
     }
@@ -1186,7 +1186,7 @@ impl<'a> Scope<'a> {
         match self.kind() {
             ScopeKind::Module => true,
             ScopeKind::Function => {
-                self.file.language().stands_alone && matches!(self.node(), Node::File(_))
+                self.file.language().has_no_foreign_config && matches!(self.node(), Node::File(_))
             }
             _ => false,
         }
@@ -1268,27 +1268,27 @@ impl<'a> File<'a> {
 
     /// True if some block contains a declaration whose symbol belongs to the enclosing function: a
     /// `var`, or for oxc a function declaration outside strict code.
-    pub(crate) fn has_names_that_leave_blocks(&'a self) -> bool {
-        self.variables().has_names_that_leave_blocks
+    pub(crate) fn has_hoisted_block_declarations(&'a self) -> bool {
+        self.variables().has_hoisted_block_declarations
     }
 
     /// The symbols in scopes that can't hold a `var`, each with its scope, limited to those that
-    /// share their name with another symbol in the file. With `only_of_catch`, only `catch`
+    /// share their name with another symbol in the file. With `only_catch_params`, only `catch`
     /// parameters.
-    pub(crate) fn symbols_of_blocks(
+    pub(crate) fn block_scoped_symbols(
         &'a self,
-        only_of_catch: bool,
+        only_catch_params: bool,
     ) -> impl Iterator<Item = (Scope<'a>, Symbol<'a>)> {
         let (scopes, variables) = (&self.scope_tree().scopes, self.variables());
         let blocks = (scopes.iter().zip(0u32..)).filter(move |(it, id)| {
-            it.variable_scope != *id && (!only_of_catch || it.kind == ScopeKind::Catch)
+            it.variable_scope != *id && (!only_catch_params || it.kind == ScopeKind::Catch)
         });
         blocks.flat_map(move |(_, id)| {
             let scope = Scope::new(self, ScopeId(id));
-            let shares_its_name = move |it: &usize| {
-                (variables.list.get(*it)).is_some_and(|it| variables.shares_its_name(it))
+            let shares_name = move |it: &usize| {
+                (variables.list.get(*it)).is_some_and(|it| variables.shares_name(it))
             };
-            let symbols = variables.range_of_scope(id).filter(shares_its_name);
+            let symbols = variables.range_of_scope(id).filter(shares_name);
             symbols.map(move |it| (scope, Symbol::at(self, it as u32)))
         })
     }
@@ -1342,13 +1342,13 @@ impl<'a> File<'a> {
 
     /// [`File::global`] for a name in the file, with a small cache of recent results.
     pub fn global_named(&'a self, name: Name<'a>) -> Option<GlobalVariable<'a>> {
-        const REMEMBERED: usize = 64;
+        const CACHE_SIZE: usize = 64;
         let atom = name.atom();
-        let mut remembered = self.semantic_index().globals.borrow_mut();
-        if remembered.is_empty() {
-            remembered.resize(REMEMBERED, (Atom::NONE, None));
+        let mut cache = self.semantic_index().globals.borrow_mut();
+        if cache.is_empty() {
+            cache.resize(CACHE_SIZE, (Atom::NONE, None));
         }
-        let slot = &mut remembered[atom.0 as usize % REMEMBERED];
+        let slot = &mut cache[atom.0 as usize % CACHE_SIZE];
         if slot.0 == atom {
             return slot.1;
         }
@@ -1396,7 +1396,7 @@ impl<'a> File<'a> {
     pub fn references_as_visited(
         &'a self,
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        self.references_in(self.reference_list().as_made(self))
+        self.references_in(self.reference_list().in_creation_order(self))
     }
 
     /// Every reference, in source order except that a destructuring pattern's names come before

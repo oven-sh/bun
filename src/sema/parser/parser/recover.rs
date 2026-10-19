@@ -177,7 +177,7 @@ enum ListStep {
 
 /// oxc's name for `token`, whose source text is `text`, as in "Expected `,` but found `Identifier`".
 #[inline(never)]
-pub(super) fn name_for_oxc(token: T, text: &[u8]) -> Vec<u8> {
+pub(super) fn oxc_token_name(token: T, text: &[u8]) -> Vec<u8> {
     let has_any = |of: &[u8]| bun_core::strings::index_of_any(text, of).is_some();
     let number: &[u8] = match text {
         [b'0', b'x' | b'X', ..] => b"hex",
@@ -222,15 +222,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.errors_at.1 > 1 << 17 {
             return self.refuse(Refusal::Unsupported);
         }
-        self.take_errors_of_scanner();
+        self.take_scanner_errors();
         self.add_error(Diagnostic::new(DiagnosticKind::Parse, at, code, args));
     }
 
     /// The tail of `parseErrorAtRange`.
     fn add_error(&mut self, error: Diagnostic) {
         // "Don't report another error if it would just be at the same location as the last error"
-        let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
-        let last = self.f.diagnostics.iter().rfind(is_of_parser);
+        let is_parse_error = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
+        let last = self.f.diagnostics.iter().rfind(is_parse_error);
         if last.is_none_or(|last| last.start != error.start) {
             self.f.diagnostics.push(error);
         }
@@ -273,16 +273,20 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn first_reading_of_oxc(&mut self, before: &Checkpoint, statement: StmtId) -> Option<StmtId> {
-        self.take_errors_of_scanner();
-        let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
-        let said_before = before.file.diagnostics as usize;
-        let said = self.f.diagnostics.get(said_before..).unwrap_or_default();
-        let gives_up =
+        self.take_scanner_errors();
+        let is_parse_error = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
+        let diagnostics_before = before.file.diagnostics as usize;
+        let new_diagnostics = self
+            .f
+            .diagnostics
+            .get(diagnostics_before..)
+            .unwrap_or_default();
+        let is_fatal =
             |it: &&Diagnostic| matches!(it.kind, DiagnosticKind::Parse | DiagnosticKind::OxcFatal);
-        let second: Vec<Diagnostic> = said.iter().filter(gives_up).cloned().collect();
+        let second: Vec<Diagnostic> = new_diagnostics.iter().filter(is_fatal).cloned().collect();
         let start = self.f.stmts.get(statement.idx())?.start;
         let is_import_meta = |it: &Expr| it.pos < start && matches!(it.kind, ExprKind::ImportMeta);
-        if !second.iter().any(|it| is_of_parser(&it))
+        if !second.iter().any(|it| is_parse_error(&it))
             || self.has_failed()
             || self.f.exprs.iter().any(is_import_meta)
         {
@@ -290,16 +294,20 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         self.rollback(before);
         self.has_plain_top_level_await = false;
-        (self.has_await_in_statement, self.was_await_refused) = (false, false);
+        (self.has_await_in_statement, self.recovery_hit_await) = (false, false);
         self.reparses_rest_of_file = false;
         let saved = self.enter_context(0, ctx::AWAIT);
         let statement = self.statement();
         self.context = saved;
-        self.take_errors_of_scanner();
+        self.take_scanner_errors();
         // Makes `file_of` try parsing the file as a script.
         self.has_top_level_await = true;
-        let said = self.f.diagnostics.get(said_before..).unwrap_or_default();
-        if !said.iter().any(|it| is_of_parser(&it)) {
+        let new_diagnostics = self
+            .f
+            .diagnostics
+            .get(diagnostics_before..)
+            .unwrap_or_default();
+        if !new_diagnostics.iter().any(|it| is_parse_error(&it)) {
             let end = self.prev_end();
             let mut found = Diagnostic::new(DiagnosticKind::OxcSecondReading, (start, end), 0, &[]);
             found.related = second;
@@ -310,15 +318,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `scanError`: moves the scanner's errors into the parser's diagnostics, ahead of the parser's next error.
     #[inline(always)]
-    pub(crate) fn take_errors_of_scanner(&mut self) {
+    pub(crate) fn take_scanner_errors(&mut self) {
         if GENERAL && !self.lx.errors.is_empty() {
-            self.take_errors_of_scanner_slowly();
+            self.take_scanner_errors_slow();
         }
     }
 
     #[cold]
     #[inline(never)]
-    fn take_errors_of_scanner_slowly(&mut self) {
+    fn take_scanner_errors_slow(&mut self) {
         for error in self.lx.take_errors() {
             self.add_error(error);
         }
@@ -364,7 +372,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !self.options.dialect.oxc {
             return self.error_at_token(1005, &[token.text()]);
         }
-        let found = name_for_oxc(self.token(), self.lx.text());
+        let found = oxc_token_name(self.token(), self.lx.text());
         match closer {
             b"" => self.error_at_token(1005, &[token.text(), &found]),
             _ => self.error_at_token(1005, &[token.text(), &found, closer]),
@@ -377,7 +385,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[track_caller]
     pub(crate) fn unmatched(&mut self, (open, close): (T, T), open_at: Option<u32>) {
         // Otherwise a scanner error could be mistaken for the error reported here.
-        self.take_errors_of_scanner();
+        self.take_scanner_errors();
         let before = self.f.diagnostics.len();
         self.expected(close);
         if let Some(open_at) = open_at
@@ -406,7 +414,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     #[track_caller]
-    pub(crate) fn error_and_go_on(&mut self, code: u32, at: (u32, u32), args: &[&[u8]]) {
+    pub(crate) fn error_and_continue(&mut self, code: u32, at: (u32, u32), args: &[&[u8]]) {
         match self.recovers() {
             true => self.error(code, at, args),
             false => self.report(),
@@ -616,7 +624,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 return self.token() != T::Eof;
             }
             self.has_await_in_statement = false;
-            self.was_await_refused = false;
+            self.recovery_hit_await = false;
         }
         loop {
             match self.list_step(kind) {
@@ -629,7 +637,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `recover_missing_comma`, which is only needed with recovery.
     #[inline(always)]
-    pub(crate) fn goes_on_without_comma(&mut self, kind: ListKind, element: u32) -> bool {
+    pub(crate) fn continues_without_comma(&mut self, kind: ListKind, element: u32) -> bool {
         self.recovers() && self.recover_missing_comma(kind, element)
     }
 
@@ -732,7 +740,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         {
             self.note_await();
             self.has_await_identifier = true;
-            self.was_await_refused = true;
+            self.recovery_hit_await = true;
         }
         if self.has_await_in_statement {
             open &= !(1 << ListKind::SourceElements as u32);
@@ -744,7 +752,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         // The first parse ended its statement at this token.
         if !is_in_some
             && open != self.lists
-            && !self.was_await_refused
+            && !self.recovery_hit_await
             && self.is_list_element(ListKind::SourceElements, true)
         {
             self.reparses_rest_of_file = true;

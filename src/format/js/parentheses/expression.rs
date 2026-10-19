@@ -225,11 +225,11 @@ fn has_bare_in(e: Expr<'_>) -> bool {
 /// True if `e` itself needs parentheses, not the `ChainExpression` around it.
 #[inline]
 pub(crate) fn needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    may_need_parentheses(e) && needs_parentheses_where_it_is(e, f)
+    may_need_parentheses(e) && needs_parentheses_in_position(e, f)
 }
 
 /// A cheap necessary condition that only looks at the kind of `e`, its direct parent, and the parent's kind. It's false
-/// for nearly every expression. Each `false` here matches what [`needs_parentheses_where_it_is`] returns for that pair.
+/// for nearly every expression. Each `false` here matches what [`needs_parentheses_in_position`] returns for that pair.
 fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
     use bun_sema::hir::ExprTag as T;
     let tag = e.tag();
@@ -320,7 +320,7 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
     }
 }
 
-fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+fn needs_parentheses_in_position<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let kind = e.kind();
     match kind {
         ExprKind::Missing
@@ -339,7 +339,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         | ExprKind::NewTarget => {
             return is_for_in_statement_init(e)
                 && !is_cast_target(e, f)
-                && !few_initializers_of_for_in_get_parentheses(f);
+                && !only_some_for_in_initializers_get_parentheses(f);
         }
         // A pattern isn't an expression.
         ExprKind::Array(_) | ExprKind::Object(_) if e.is_assignment_target() => return false,
@@ -563,7 +563,7 @@ fn parent_needs_parentheses<'a>(
         // Printed by `print/decorators.rs`.
         N::Decorator(_) => Some(false),
         N::VariableDeclarator(_) => (is_for_in_statement_init(e)
-            && (!few_initializers_of_for_in_get_parentheses(f)
+            && (!only_some_for_in_initializers_get_parentheses(f)
                 || matches!(
                     e.kind(),
                     ExprKind::Array(_)
@@ -878,7 +878,7 @@ fn angular_pipe_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool
         N::CallExpression(call) => call.callee() == Some(e),
         // Babel's `MemberExpression`, not its `OptionalMemberExpression`.
         N::ComputedMemberExpression(member) => {
-            member.object() == Some(e) || is_optional_member_expression_of_babel(member)
+            member.object() == Some(e) || is_babel_optional_member_expression(member)
         }
         _ => true,
     }
@@ -886,7 +886,7 @@ fn angular_pipe_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool
 
 /// True if `angular-estree-parser` turns `e` into an `OptionalMemberExpression` or an `OptionalCallExpression`. A
 /// tagged template ends an optional chain there.
-fn is_optional_member_expression_of_babel(mut e: Expr<'_>) -> bool {
+fn is_babel_optional_member_expression(mut e: Expr<'_>) -> bool {
     loop {
         let head = match e.tag() {
             ExprTag::Dot | ExprTag::Index | ExprTag::Call if e.is_optional() => return true,
@@ -940,7 +940,7 @@ fn search_for_initializer_ends_at_statements(f: &Formatter<'_>) -> bool {
 
 /// `for (var a = 1 in b);`: oxfmt prints the parentheses around an array, an object, a function, a class, and anything
 /// with an operator. Prettier prints them around everything.
-fn few_initializers_of_for_in_get_parentheses(f: &Formatter<'_>) -> bool {
+fn only_some_for_in_initializers_get_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -991,7 +991,7 @@ fn has_call_on_left_edge(e: Expr<'_>) -> bool {
 
 /// Prettier lists the parents where JSX needs no parentheses, and oxfmt lists the parents where it needs them. These
 /// are on neither list: `class A { b = (<c />); }`, `` `${(<a />)}` ``, `if ((<a />)) {}`.
-fn lists_what_jsx_needs_parentheses_in(f: &Formatter<'_>) -> bool {
+fn lists_parents_where_jsx_needs_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -1001,7 +1001,7 @@ fn jsx_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a
             binary.binary_op() == Some(BinOp::Lt) && binary.left() == Some(e)
         }
         N::CallExpression(_) | N::NewExpression(_) => parent.is_call_like_callee(e),
-        _ if lists_what_jsx_needs_parentheses_in(f) => matches!(
+        _ if lists_parents_where_jsx_needs_parentheses(f) => matches!(
             parent,
             N::Class(_)
                 | N::TSAsExpression(_)

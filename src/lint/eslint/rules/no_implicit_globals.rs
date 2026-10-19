@@ -70,7 +70,7 @@ impl<'a> StrictScopes<'a> {
 /// In sloppy JavaScript, a plain function declared in a block is also a variable of the enclosing function or file
 /// (Annex B.3.2.1). oxc moves it there, unless something before it already has that name there.
 #[derive(Copy, Clone)]
-struct Moved<'a> {
+struct HoistedFunction<'a> {
     symbol: Symbol<'a>,
     /// The start of its name.
     start: u32,
@@ -80,16 +80,16 @@ struct Moved<'a> {
     around: Scope<'a>,
 }
 
-impl<'a> Moved<'a> {
+impl<'a> HoistedFunction<'a> {
     /// Only used to group entries with the same name. The order of the names means nothing.
     fn key(&self) -> (u32, u32) {
         (self.symbol.name().atom().0, self.to.span().start)
     }
 
-    /// Returns all of them, sorted by [`Moved::key`].
+    /// Returns all of them, sorted by [`HoistedFunction::key`].
     #[inline(never)]
-    fn all_in(file: &'a File<'a>, strict: &StrictScopes<'a>) -> Vec<Moved<'a>> {
-        let mut moved: Vec<Moved<'a>> = Vec::new();
+    fn all_in(file: &'a File<'a>, strict: &StrictScopes<'a>) -> Vec<HoistedFunction<'a>> {
+        let mut hoisted: Vec<HoistedFunction<'a>> = Vec::new();
         for symbol in file.symbols_declared_as(DeclarationKinds::FUNCTION_NAME) {
             let (scope, Some(Declaration::Fn(func))) = (symbol.scope(), symbol.declarations().next()) else {
                 continue;
@@ -101,12 +101,12 @@ impl<'a> Moved<'a> {
                 && !func.is_async()
                 && !func.is_generator()
             {
-                moved.push(Moved { symbol, start: name.span().start, to, around: to });
+                hoisted.push(HoistedFunction { symbol, start: name.span().start, to, around: to });
             }
         }
-        utils::sort::sort_unstable_by_key(&mut moved, |it| (it.key(), it.to.id(), it.start));
-        let mut last: Option<Moved<'a>> = None;
-        moved.retain_mut(|it| {
+        utils::sort::sort_unstable_by_key(&mut hoisted, |it| (it.key(), it.to.id(), it.start));
+        let mut last: Option<HoistedFunction<'a>> = None;
+        hoisted.retain_mut(|it| {
             let (name, start) = (it.symbol.name(), it.start);
             let last_of_name = last.filter(|last| last.symbol.name() == name);
             let is_before = |other: Declaration<'a>| other.name_span().is_some_and(|other| other.start < start);
@@ -122,14 +122,14 @@ impl<'a> Moved<'a> {
             last = Some(*it);
             true
         });
-        moved
+        hoisted
     }
 
-    /// True if, for oxc, the unresolved `reference` refers to one of `moved`.
-    fn is_meant_by(moved: &[Moved<'a>], reference: Reference<'a>) -> bool {
+    /// True if, for oxc, the unresolved `reference` refers to one of `hoisted`.
+    fn resolves_reference(hoisted: &[HoistedFunction<'a>], reference: Reference<'a>) -> bool {
         let (name, start) = (reference.name(), reference.span().start);
-        let after = moved.partition_point(|it| it.key() <= (name.atom().0, start));
-        let before = after.checked_sub(1).and_then(|it| moved.get(it));
+        let after = hoisted.partition_point(|it| it.key() <= (name.atom().0, start));
+        let before = after.checked_sub(1).and_then(|it| hoisted.get(it));
         before.is_some_and(|it| it.symbol.name() == name && it.around.contains(reference.scope()))
     }
 }
@@ -197,8 +197,8 @@ impl NoImplicitGlobals {
         let file = cx.file();
         let for_oxlint = file.language().is_oxlint.then(|| utils::oxlint::source_type(file));
         let strict = StrictScopes { file, scopes: OnceCell::new() };
-        let moved = match for_oxlint {
-            Some(SourceType::Script | SourceType::CommonJs) if file.is_javascript() => Moved::all_in(file, &strict),
+        let hoisted = match for_oxlint {
+            Some(SourceType::Script | SourceType::CommonJs) if file.is_javascript() => HoistedFunction::all_in(file, &strict),
             _ => Vec::new(),
         };
         let global_scope = match for_oxlint {
@@ -209,7 +209,7 @@ impl NoImplicitGlobals {
         for symbol in global_scope.into_iter().flat_map(Scope::symbols) {
             self.check_symbol(symbol, cx);
         }
-        for it in moved.iter().filter(|it| Some(it.to) == global_scope) {
+        for it in hoisted.iter().filter(|it| Some(it.to) == global_scope) {
             self.check_symbol(it.symbol, cx);
         }
         // A target with a default value has two references, as in ESLint. oxc has one.
@@ -228,7 +228,7 @@ impl NoImplicitGlobals {
                 }
                 Some(source_type) => match oxlint_global(file, reference.name()) {
                     Some(Global::Writable) => continue,
-                    _ if Moved::is_meant_by(&moved, reference) => continue,
+                    _ if HoistedFunction::resolves_reference(&hoisted, reference) => continue,
                     Some(Global::Readonly) => false,
                     _ if source_type == SourceType::Module || strict.has(reference.scope()) => continue,
                     _ => true,

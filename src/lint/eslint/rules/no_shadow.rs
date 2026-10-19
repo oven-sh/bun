@@ -58,7 +58,7 @@ struct Variable<'a> {
     /// The range of `identifiers[0]`.
     identifier: Span,
     /// The span to report. For oxlint it's only the name.
-    place: Span,
+    report_span: Span,
     /// `isValueVariable`
     is_value: bool,
     /// ESLint's `isDuplicatedClassNameVariable`: a class declaration's name, in the class's own scope.
@@ -66,18 +66,18 @@ struct Variable<'a> {
 }
 
 /// Per-file caches.
-struct Known<'a> {
+struct Caches<'a> {
     /// The scopes of `declare global { }`.
     global_augmentations: SmallVec<[Scope<'a>; 1]>,
     /// [`functions_without_body`], computed on first use.
     without_body: Option<Vec<Span>>,
     /// For an import: true if the file only uses it as a type.
     only_types: IdMap<Symbol<'a>, bool>,
-    /// [`Known::is_namespace_of_types`]
+    /// [`Caches::is_namespace_of_types`]
     namespaces_of_types: IdMap<Symbol<'a>, bool>,
 }
 
-impl<'a> Known<'a> {
+impl<'a> Caches<'a> {
     /// For oxlint, a namespace that contains only types isn't a value.
     fn is_namespace_of_types(&mut self, symbol: Symbol<'a>) -> bool {
         symbol.file().language().is_oxlint
@@ -92,7 +92,7 @@ impl<'a> Known<'a> {
 
 /// Returns the class of `class A<A> {}`, given the type parameter. In ESLint the two are one variable in the class's
 /// scope. Here the class is only declared in the enclosing scope.
-fn class_declaration_with_the_name_of<'a>(
+fn class_named_like_type_parameter<'a>(
     definition: Declaration<'a>,
     name: Name<'a>,
 ) -> Option<Class<'a>> {
@@ -111,7 +111,7 @@ fn class_declaration_with_the_name_of<'a>(
 }
 
 impl<'a> Variable<'a> {
-    fn new(symbol: Symbol<'a>, known: &mut Known<'a>) -> Option<Self> {
+    fn new(symbol: Symbol<'a>, known: &mut Caches<'a>) -> Option<Self> {
         let mut definition = symbol.declarations().find(|it| it.name_span().is_some())?;
         // A quoted enum member name isn't an identifier. oxlint goes by the symbol, so it counts.
         let is_oxlint = symbol.file().language().is_oxlint;
@@ -124,7 +124,7 @@ impl<'a> Variable<'a> {
             }
             _ => it.name_span().is_some(),
         })?;
-        let class = class_declaration_with_the_name_of(definition, symbol.name());
+        let class = class_named_like_type_parameter(definition, symbol.name());
         if let Some(class) = class {
             definition = Declaration::Class(class);
             with_identifier = definition;
@@ -144,7 +144,7 @@ impl<'a> Variable<'a> {
             scope: symbol.scope(),
             definition,
             identifier,
-            place: match symbol.file().language().is_oxlint {
+            report_span: match symbol.file().language().is_oxlint {
                 true => with_identifier.name_span()?,
                 false => identifier,
             },
@@ -158,12 +158,12 @@ impl<'a> Variable<'a> {
 /// Returns the spans of the file's function types, signatures and functions without a body, in source order, skipping
 /// any that's nested in another one.
 fn functions_without_body<'a>(file: &'a File<'a>) -> Vec<Span> {
-    let is_one = |scope: &Scope| match scope.kind() {
+    let has_no_body = |scope: &Scope| match scope.kind() {
         ScopeKind::FunctionType => true,
         ScopeKind::Function => matches!(scope.node(), Node::Func(func) if !func.has_body()),
         _ => false,
     };
-    let mut all: Vec<Span> = file.scopes().filter(is_one).map(Scope::span).collect();
+    let mut all: Vec<Span> = file.scopes().filter(has_no_body).map(Scope::span).collect();
     utils::sort::sort_unstable_by_key(&mut all, |it| (it.start, u32::MAX - it.end));
     let mut end = 0;
     all.retain(|it| {
@@ -180,8 +180,8 @@ fn is_declared_in_function_without_body(variable: &Variable, all: &[Span]) -> bo
     let at = match variable.definition {
         Declaration::Fn(func) => func
             .scope()
-            .map_or(variable.place.start, |it| it.span().start),
-        _ => variable.place.start,
+            .map_or(variable.report_span.start, |it| it.span().start),
+        _ => variable.report_span.start,
     };
     let after = all.partition_point(|it| it.start < at);
     after
@@ -270,14 +270,14 @@ fn is_function_name_initializer_exception<'a>(
     // For oxlint it can be anywhere in a variable's initializer, with no other scope in between:
     // `const A = wrap(function A() {})`, `const { A } = wrap(function A() {})`.
     if e.file().language().is_oxlint && matches!(shadowed.definition, Declaration::Var(_)) {
-        let of_declarator = || {
+        let declarator_init = || {
             Node::Pat(outer).ancestors().find_map(|it| match it {
                 Node::VarDecl(declarator) => Some(declarator.init()),
                 _ => None,
             })?
         };
         return initializer
-            .or_else(of_declarator)
+            .or_else(declarator_init)
             .is_some_and(|it| it.outer_span().contains(e.span()))
             && variable.scope.parent() == Some(shadowed.scope);
     }
@@ -599,7 +599,7 @@ impl Checker {
         symbol: Symbol<'a>,
         shadowed: Option<Symbol<'a>>,
         is_global_value: bool,
-        known: &mut Known<'a>,
+        known: &mut Caches<'a>,
     ) {
         let name = symbol.name();
         if name.is("this") || self.allow.iter().any(|it| **it == *name.bytes()) {
@@ -639,7 +639,7 @@ impl Checker {
             return;
         }
         let Some(shadowed) = shadowed else {
-            cx.report(variable.place, NO_SHADOW_GLOBAL)
+            cx.report(variable.report_span, NO_SHADOW_GLOBAL)
                 .data("name", name);
             return;
         };
@@ -659,7 +659,7 @@ impl Checker {
                 .contains(DeclarationKinds::TS_ENUM_NAME);
         let position = file.position(shadowed.identifier.start);
         cx.report(
-            variable.place,
+            variable.report_span,
             if is_enum { NO_ENUM_SHADOW } else { NO_SHADOW },
         )
         .data("name", name)
@@ -685,7 +685,7 @@ impl Checker {
                     .filter(|it| is_scope_of_global_augmentation(*it)),
             );
         }
-        let mut known = Known {
+        let mut known = Caches {
             global_augmentations,
             without_body: None,
             only_types: IdMap::default(),
@@ -695,13 +695,13 @@ impl Checker {
         // scope and declares a name with those bits. Scopes come in source order, so a scope that doesn't enclose this
         // one doesn't enclose any later one either. A name without such a scope can't shadow anything the file
         // declares.
-        let places = (file.symbol_key_limit() * 4).next_power_of_two();
-        let place_of = |symbol: Symbol<'a>| symbol.name().atom().0 as usize & (places - 1);
-        let mut declared_in: SmallVec<[Option<Scope<'a>>; 256]> = SmallVec::from_elem(None, places);
+        let slots = (file.symbol_key_limit() * 4).next_power_of_two();
+        let slot_of = |symbol: Symbol<'a>| symbol.name().atom().0 as usize & (slots - 1);
+        let mut declared_in: SmallVec<[Option<Scope<'a>>; 256]> = SmallVec::from_elem(None, slots);
         for scope in file.scopes() {
             let upper = scope.parent();
             for symbol in scope.symbols() {
-                let Some(outermost) = declared_in.get_mut(place_of(symbol)) else {
+                let Some(outermost) = declared_in.get_mut(slot_of(symbol)) else {
                     continue;
                 };
                 let may_shadow = match *outermost {

@@ -22,7 +22,7 @@ use std::sync::atomic::AtomicBool;
 
 /// Identifies a Tailwind to ask: the package in the directory `root`, loaded with one of these files.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct Which {
+struct TailwindId {
     root: Vec<u8>,
     config: Option<Vec<u8>>,
     stylesheet: Option<Vec<u8>>,
@@ -30,7 +30,7 @@ struct Which {
     is_bundled: bool,
 }
 
-impl Which {
+impl TailwindId {
     fn entries(&self) -> Vec<(Vec<u8>, Json)> {
         let path = |path: &Option<Vec<u8>>| path.clone().map_or(Json::Null, Json::String);
         vec![
@@ -133,11 +133,11 @@ fn key_of(class: &[u8]) -> Cow<'_, [u8]> {
 struct Known {
     /// For a package not named `tailwindcss`, the key is the directory, a NUL, and the package name.
     by_directory: FxHashMap<Vec<u8>, Option<Found>>,
-    groups: FxHashMap<Which, Group>,
+    groups: FxHashMap<TailwindId, Group>,
     /// The package that's missing for files with the option on. If there are several, the first in sort order.
     not_installed: Option<Vec<u8>>,
     /// Why the Tailwind for files with classes can't be asked. If there are several reasons, the first in sort order.
-    of_other_version: Option<Vec<u8>>,
+    version_mismatch: Option<Vec<u8>>,
 }
 
 /// Everything a run has learned about class order.
@@ -150,7 +150,7 @@ pub(crate) struct Classes {
 struct OfGroup {
     classes: Arc<Classes>,
     /// `Err` holds the reason it can't be asked.
-    which: Result<Which, Vec<u8>>,
+    which: Result<TailwindId, Vec<u8>>,
 }
 
 impl std::fmt::Debug for OfGroup {
@@ -172,8 +172,8 @@ impl Orders for OfGroup {
         let which = match &self.which {
             Ok(which) => which,
             Err(why) => {
-                if known.of_other_version.as_ref().is_none_or(|it| why < it) {
-                    known.of_other_version = Some(why.clone());
+                if known.version_mismatch.as_ref().is_none_or(|it| why < it) {
+                    known.version_mismatch = Some(why.clone());
                 }
                 return None;
             }
@@ -201,7 +201,7 @@ impl Orders for OfGroup {
 impl Known {
     /// Stores the script's answers, which are in the same order as `asked`. Returns the error for each Tailwind that
     /// failed to load and still has unknown classes.
-    fn take_in(&mut self, asked: Vec<Which>, answer: &Json) -> Vec<Vec<u8>> {
+    fn store_answers(&mut self, asked: Vec<TailwindId>, answer: &Json) -> Vec<Vec<u8>> {
         let mut failures = Vec::new();
         let answers = (answer.get(b"groups").and_then(Json::as_array)).unwrap_or_default();
         for (which, answer) in asked.into_iter().zip(answers) {
@@ -273,7 +273,7 @@ impl<'a> SetBy<'a> {
 
 /// Returns `value`, which is `sortTailwindcss` as JSON, with its paths made absolute. Needed before merging it into a
 /// value from another source, whose paths have a different base.
-pub(crate) fn with_whole_paths(value: &[u8], set_by: SetBy) -> Vec<u8> {
+pub(crate) fn with_absolute_paths(value: &[u8], set_by: SetBy) -> Vec<u8> {
     let Some(mut entries) = bun_lint::json::parse(value).and_then(Json::into_object) else {
         return value.to_vec();
     };
@@ -293,8 +293,8 @@ pub(crate) fn with_whole_paths(value: &[u8], set_by: SetBy) -> Vec<u8> {
 const PLUGIN: &[u8] = b"prettier-plugin-tailwindcss";
 
 /// `prettier-plugin-tailwindcss` options and their names in `sortTailwindcss`: four strings, two string lists, two
-/// booleans. [`option_of_plugin`] relies on that order.
-const OPTIONS_OF_PLUGIN: [(&[u8], &[u8]); 8] = [
+/// booleans. [`plugin_option`] relies on that order.
+const PLUGIN_OPTIONS: [(&[u8], &[u8]); 8] = [
     (b"tailwindConfig", b"config"),
     (b"tailwindStylesheet", b"stylesheet"),
     (b"tailwindEntryPoint", b"entryPoint"),
@@ -307,11 +307,8 @@ const OPTIONS_OF_PLUGIN: [(&[u8], &[u8]); 8] = [
 
 /// Converts the Prettier config option `name`, set to the JSON `value`, to a `sortTailwindcss` entry. `None` if it
 /// isn't one of the plugin's options. `Err` is Prettier's message for a value of the wrong type.
-pub(crate) fn option_of_plugin(
-    name: &[u8],
-    value: &[u8],
-) -> Option<Result<(Vec<u8>, Json), Vec<u8>>> {
-    let at = OPTIONS_OF_PLUGIN.iter().position(|it| it.0 == name)?;
+pub(crate) fn plugin_option(name: &[u8], value: &[u8]) -> Option<Result<(Vec<u8>, Json), Vec<u8>>> {
+    let at = PLUGIN_OPTIONS.iter().position(|it| it.0 == name)?;
     let value = bun_lint::json::parse(value)?;
     let is_string = |it: &Json| matches!(it, Json::String(_));
     let (is_right, expected): (bool, &[u8]) = match at {
@@ -323,7 +320,7 @@ pub(crate) fn option_of_plugin(
         _ => (matches!(value, Json::Bool(_)), b"true or false"),
     };
     if is_right {
-        return Some(Ok((OPTIONS_OF_PLUGIN[at].1.to_vec(), value)));
+        return Some(Ok((PLUGIN_OPTIONS[at].1.to_vec(), value)));
     }
     let mut refusal = [b"Invalid ", name, b" value. Expected ", expected].concat();
     refusal.extend_from_slice(b", but received ");
@@ -333,7 +330,7 @@ pub(crate) fn option_of_plugin(
 }
 
 /// Returns the plugin's warning about its options, given as `sortTailwindcss` `entries`.
-pub(crate) fn warning_of_plugin(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
+pub(crate) fn plugin_warning(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
     let get = |key: &[u8]| {
         let path = entries.iter().find(|it| it.0 == key)?.1.as_str()?;
         (!path.is_empty()).then_some(path)
@@ -399,7 +396,7 @@ pub(crate) fn for_file(
     let follows_plugin = matches!(set_by, SetBy::Plugin(_));
     // The plugin bundles versions 3 and 4, for projects without the package and for options meant for the other
     // version.
-    let of_other_version: Option<&[u8]> = match &found {
+    let version_mismatch: Option<&[u8]> = match &found {
         Some(found) if found.is_version_4 && config.is_some() && stylesheet.is_none() => {
             Some(b"tailwindConfig is for Tailwind CSS 3")
         }
@@ -408,12 +405,12 @@ pub(crate) fn for_file(
         }
         _ => None,
     };
-    let bundled = match follows_plugin && (found.is_none() || of_other_version.is_some()) {
+    let bundled = match follows_plugin && (found.is_none() || version_mismatch.is_some()) {
         true => find(PLUGIN),
         false => None,
     };
     let is_bundled = bundled.is_some();
-    let which = match (bundled.or(found), of_other_version) {
+    let which = match (bundled.or(found), version_mismatch) {
         (Some(found), Some(option)) if follows_plugin && !is_bundled => Err([
             option,
             b", and another version is in ",
@@ -421,7 +418,7 @@ pub(crate) fn for_file(
             b"\n  Run bun add -d prettier-plugin-tailwindcss, which brings its own",
         ]
         .concat()),
-        (Some(found), _) => Ok(Which {
+        (Some(found), _) => Ok(TailwindId {
             root: found.root,
             config: config.or_else(|| found.config.filter(|_| stylesheet.is_none())),
             stylesheet,
@@ -455,7 +452,7 @@ pub(crate) fn for_file(
 
 impl Classes {
     /// True if some files use the Tailwind bundled with the plugin.
-    pub(crate) fn asks_plugin(&self) -> bool {
+    pub(crate) fn uses_bundled_tailwind(&self) -> bool {
         let known = self.known.lock();
         let mut found = known.by_directory.iter().filter(|it| it.1.is_some());
         found.any(|it| it.0.ends_with(PLUGIN))
@@ -480,13 +477,13 @@ impl Classes {
     pub(crate) fn ask(&self, environment: &Environment) -> Result<(), Vec<u8>> {
         let fail = |why: &[u8]| [b"sortTailwindcss: ", why].concat();
         let mut known = self.known.lock();
-        let of_other_version = known.of_other_version.as_deref().map(fail);
+        let version_mismatch = known.version_mismatch.as_deref().map(fail);
         if !known.groups.values().any(|it| !it.missing.is_empty()) {
-            return of_other_version.map_or(Ok(()), Err);
+            return version_mismatch.map_or(Ok(()), Err);
         }
         // Ranks are relative to all the classes in one request, so the known classes are sent again. Sorted, so the
         // request is the same on every machine.
-        let mut asked: Vec<Which> = known.groups.keys().cloned().collect();
+        let mut asked: Vec<TailwindId> = known.groups.keys().cloned().collect();
         bun_collections::index_sort::sort_slice(&mut asked[..]);
         let groups = asked.iter().map(|which| {
             let group = known.groups.get(which);
@@ -508,8 +505,13 @@ impl Classes {
         );
         let answer = evaluate_input(environment, TAILWIND, &environment.cwd, &text)
             .map_err(|why| fail(&why))?;
-        let failures: Vec<Vec<u8>> = (of_other_version.into_iter())
-            .chain(known.take_in(asked, &answer).iter().map(|it| fail(it)))
+        let failures: Vec<Vec<u8>> = (version_mismatch.into_iter())
+            .chain(
+                known
+                    .store_answers(asked, &answer)
+                    .iter()
+                    .map(|it| fail(it)),
+            )
             .collect();
         match failures.is_empty() {
             true => Ok(()),

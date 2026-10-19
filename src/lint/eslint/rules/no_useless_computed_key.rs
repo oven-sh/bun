@@ -60,12 +60,12 @@ impl NoUselessComputedKey {
             Node::Member(member) => member.kind() == MemberKind::Property,
             _ => false,
         };
-        let place = match key.kind() {
+        let location = match key.kind() {
             _ if !(is_property && cx.language().is_oxlint) => node.span(),
             KeyKind::Computed(e) => e.outer_span(),
             _ => literal,
         };
-        cx.report(place, UNNECESSARILY_COMPUTED_PROPERTY)
+        cx.report(location, UNNECESSARILY_COMPUTED_PROPERTY)
             .data("property", file.slice(literal))
             .fix(|fixer| {
                 let left = Span::new(brackets.start, brackets.start + 1);

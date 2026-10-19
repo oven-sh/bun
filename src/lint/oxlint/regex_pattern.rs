@@ -174,7 +174,7 @@ pub fn run_on_regex_node(e: Expr<'_>) -> Option<Pattern<'_>> {
                 outer = it.parent();
             }
             match outer {
-                Node::Expr(it) if is_call_of_regexp(it) => None,
+                Node::Expr(it) if is_regexp_call(it) => None,
                 _ => Pattern::of_literal(e),
             }
         }
@@ -185,7 +185,7 @@ pub fn run_on_regex_node(e: Expr<'_>) -> Option<Pattern<'_>> {
     }
 }
 
-fn is_call_of_regexp(e: Expr) -> bool {
+fn is_regexp_call(e: Expr) -> bool {
     matches!(e.kind(), ExprKind::Call(call) | ExprKind::New(call) if is_regexp_callee(call.callee()))
 }
 

@@ -529,7 +529,7 @@ impl<'a> AssignmentLike<'a> {
                 return AssignmentLikeLayout::BreakAfterOperator;
             }
             if has_leading_comment_that_breaks_after_operator(e, f)
-                || !self.comments_behind_operator(f).is_empty()
+                || !self.comments_after_operator(f).is_empty()
             {
                 return AssignmentLikeLayout::BreakAfterOperator;
             }
@@ -839,8 +839,8 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         let left_may_break = !is_left_text
             && f.elements_from(left_group + 1)
                 .may_directly_break(f.options().flavor);
-        let comments_behind_operator = self.comments_behind_operator(f);
-        let has_line_comment_on_operator_line = !comments_behind_operator.is_empty()
+        let comments_after_operator = self.comments_after_operator(f);
+        let has_line_comment_on_operator_line = !comments_after_operator.is_empty()
             || (!f.is_quiet()
                 && comments_stay_around_operator(f)
                 && f.comments()
@@ -862,10 +862,7 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         }
 
         self.write_operator(f);
-        write!(
-            f,
-            FormatTrailingComments::Comments(comments_behind_operator)
-        );
+        write!(f, FormatTrailingComments::Comments(comments_after_operator));
         // Without its own group, the line break follows the outer group, which the line comment breaks.
         let follows_line_comment =
             has_line_comment_on_operator_line && layout == AssignmentLikeLayout::BreakAfterOperator;
@@ -904,7 +901,7 @@ impl<'a> AssignmentLike<'a> {
     }
 
     /// See [`comments_stay_around_operator`].
-    fn comments_behind_operator(&self, f: &Formatter<'a>) -> CommentList<'a> {
+    fn comments_after_operator(&self, f: &Formatter<'a>) -> CommentList<'a> {
         match !f.is_quiet() && comments_stay_around_operator(f) {
             true => f.comments().of_node(self.node()).dangling,
             false => CommentList::empty(),

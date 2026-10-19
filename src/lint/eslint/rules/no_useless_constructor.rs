@@ -95,7 +95,7 @@ fn check_constructor<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
         }
     };
     // oxlint points at the whole of an empty constructor, and at the name of one that only calls `super`.
-    let place = match (cx.language().is_oxlint, member.constructor_keyword()) {
+    let location = match (cx.language().is_oxlint, member.constructor_keyword()) {
         (true, Some(name)) if has_super_class => name.span(),
         (true, _) => member.span(),
         // Before ESLint 10 it's the whole constructor.
@@ -107,7 +107,7 @@ fn check_constructor<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
         (true, false) => EMPTY_CONSTRUCTOR,
         (true, true) => REDUNDANT_SUPER_CALL,
     };
-    cx.report(place, message)
+    cx.report(location, message)
         .labels_with(|labels| {
             if has_super_class && let Some(StmtKind::Expr(super_call)) = body.first().map(Stmt::kind) {
                 labels.first("This constructor is unnecessary,");

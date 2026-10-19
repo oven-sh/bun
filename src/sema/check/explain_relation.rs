@@ -322,7 +322,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isTypeRelatedTo`. Returns `Err(2859)` if the comparison overflowed (`r.overflow`).
-    /// `is_trial` means tsgo doesn't compare at this point, see `Relater::caches_failures`.
+    /// `is_trial` means tsgo doesn't compare at this point, see `Relater::stores_failures_locally`.
     pub(super) fn try_is_type_related_to(
         &mut self,
         source: TypeId,
@@ -389,7 +389,7 @@ impl<'p, 's> Checker<'p, 's> {
             r.related_info.clear();
             overflow = self.record_overflow(&r, source, target);
             if overflow.is_none() {
-                self.report_error_results_alone(&mut r, source, target, head);
+                self.report_error_results_for_pair(&mut r, source, target, head);
             }
         }
         // "Likely an incorrect import."
@@ -427,7 +427,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns the message `reportErrorResults` reports for the pair itself, without elaboration.
-    pub(super) fn relation_error_without_reasons(
+    pub(super) fn relation_error_without_elaboration(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -438,7 +438,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut r = Relater::new(relation, self.cycles);
         r.error_node = error_node;
         let head = Some(head).filter(|&code| code != 2322 && code != 2678);
-        self.report_error_results_alone(&mut r, source, target, head);
+        self.report_error_results_for_pair(&mut r, source, target, head);
         RelationDiagnostic {
             at: error_node,
             lines: lines_of(&r.error_chain, 0),
@@ -446,7 +446,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn report_error_results_alone(
+    fn report_error_results_for_pair(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -780,7 +780,7 @@ impl<'p, 's> Checker<'p, 's> {
             if is_repeated
                 && let Some(from) = self.stack.iter().position(|&q| q == Query::Bases(target))
             {
-                self.close_ring(from);
+                self.close_cycle(from);
             }
             let bases = if is_repeated {
                 List::default()
@@ -851,7 +851,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else if self.is_reference_to_global(source, known::Object, 0) {
             self.report_error(r, 2696, &[]);
         } else if is_jsx && self.is_intersection(target) {
-            let (file, location) = (r.error_node.0, self.jsx_element_around(r.error_node));
+            let (file, location) = (r.error_node.0, self.enclosing_jsx_element(r.error_node));
             if let TypeData::Intersection(parts) = self.data(target)
                 && let (Some(a), Some(b)) = (
                     self.jsx_type(file, location, known::IntrinsicAttributes),
@@ -870,7 +870,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.report_relation_error(r, head, source, target);
         if let TypeData::TypeParam(file, tp, _) = *self.data(source)
             && self.constraint_of(source).is_none()
-            && self.copy_may_extend(source, (file, tp), target)
+            && self.synthetic_param_has_non_circular_constraint(source, (file, tp), target)
         {
             let constraint = self.type_to_string(target);
             let at = self.place_of_type_parameter_declaration(file, tp);
@@ -881,7 +881,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns the location `getJsxNamespaceAt` resolves names from for `error_node`: the opening
     /// of the innermost enclosing JSX element, or `Node::FILE` if there is none.
-    fn jsx_element_around(&mut self, error_node: Place) -> Node {
+    fn enclosing_jsx_element(&mut self, error_node: Place) -> Node {
         let (file, start, end) = error_node;
         if end == 0 {
             return Node::FILE;
@@ -898,7 +898,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `hasNonCircularBaseConstraint` of `reportErrorResults`'s `syntheticParam`. That's a clone of
     /// the type parameter `source` (declared at `declared`) whose constraint is `target` with
     /// `source` replaced by the clone.
-    fn copy_may_extend(
+    fn synthetic_param_has_non_circular_constraint(
         &mut self,
         source: TypeId,
         declared: (FileId, TypeParamId),

@@ -376,7 +376,7 @@ impl<'a> FormatExpr<'a> {
             true => {
                 print::expressions::write_chain_expression(self.expr, f);
             }
-            false => write_expression_that_has_asked(self.expr, self.options, f),
+            false => write_expression_after_stack_check(self.expr, self.options, f),
         }
         if needs_parentheses {
             ")".fmt(f);
@@ -401,7 +401,7 @@ impl<'a> FormatExpr<'a> {
         // node, so there they're printed outside. oxfmt prints them outside too, because its `ChainExpression` prints
         // them: `(/* comment */ a?.b).c` is `/* comment */ (a?.b).c`.
         let has_chain_expression_node =
-            !f.context().has_tree_of_babel() && !f.options().flavor.is_oxfmt();
+            !f.context().has_babel_tree() && !f.options().flavor.is_oxfmt();
         if match has_chain_expression_node {
             true => is_chain_expression,
             false => self.is_in_chain_expression,
@@ -431,7 +431,7 @@ impl<'a> FormatExpr<'a> {
             "(".fmt(f);
             FormatLeadingComments::Comments(inside).fmt(f);
             f.in_scope(span, |f| {
-                write_expression_that_has_asked(expr, self.options, f);
+                write_expression_after_stack_check(expr, self.options, f);
             });
             ")".fmt(f);
         } else {
@@ -464,7 +464,7 @@ fn type_cast_comment_goes_into_added_parentheses<'a>(
 ///
 /// `a as B // prettier-ignore ⏎ ? c : d`: oxfmt doesn't add parentheses around an operand of a conditional expression
 /// that's ignored by a trailing comment.
-fn adds_parentheses_to_what_is_ignored<'a>(expr: Expr<'a>, f: &Formatter<'a>) -> bool {
+fn adds_parentheses_to_ignored_expression<'a>(expr: Expr<'a>, f: &Formatter<'a>) -> bool {
     let comments = f.comments().of_node(expr.as_chain_element()).trailing;
     !(f.options().flavor.is_oxfmt()
         && matches!(expr.ast_parent(), AstNodes::ConditionalExpression(_))
@@ -489,7 +489,7 @@ fn write_suppressed_expression<'a>(
         ExprKind::Object(_) | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Ident(_)
     );
     let needs_parentheses = (needs_parentheses
-        && (adds_parentheses_to_what_is_ignored(expr, f)
+        && (adds_parentheses_to_ignored_expression(expr, f)
             || expr.is_parenthesized()
             || starts_statement))
         || parentheses::expression::source_text_needs_its_parentheses(expr, f);
@@ -551,7 +551,7 @@ impl<'a> Format<'a> for Expr<'a> {
 /// whole optional chain.
 fn format_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     if !f.is_quiet() {
-        return format_expression_in_general(e, f);
+        return format_expression_slow_path(e, f);
     }
     let tag = e.tag();
     // Nearly half of all expressions are names. The names that can need parentheses have 3 to 9 letters. They're only
@@ -561,7 +561,7 @@ fn format_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
         let may_need_parentheses =
             span.len() >= 3 && (span.len() <= 9 || span.len() >= 35 || !f.is_plain_source(span));
         return match may_need_parentheses && parentheses::expression::needs_parentheses(e, f) {
-            true => format_expression_in_general(e, f),
+            true => format_expression_slow_path(e, f),
             false => write!(f, source_text(span)),
         };
     }
@@ -573,13 +573,13 @@ fn format_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
         ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull
     ) && e.is_chain_root();
     match is_chain_expression || parentheses::expression::needs_parentheses(e, f) {
-        true => format_expression_in_general(e, f),
+        true => format_expression_slow_path(e, f),
         false => write_expression_of(tag, e, ExprOptions::None, f),
     }
 }
 
 #[inline(never)]
-fn format_expression_in_general<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+fn format_expression_slow_path<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     FormatExpr::with_options(e, ExprOptions::None).fmt(f);
 }
 
@@ -616,11 +616,15 @@ impl<'a> Format<'a> for FormatNonNullMarks<'a> {
 /// such as the guard of a Flow `match` case.
 pub(crate) fn write_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
     if f.context_mut().has_stack_left() {
-        write_expression_that_has_asked(e, options, f);
+        write_expression_after_stack_check(e, options, f);
     }
 }
 
-fn write_expression_that_has_asked<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
+fn write_expression_after_stack_check<'a>(
+    e: Expr<'a>,
+    options: ExprOptions,
+    f: &mut Formatter<'a>,
+) {
     write_expression_of(e.tag(), e, options, f);
 }
 
@@ -826,8 +830,8 @@ fn format_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
 #[inline(never)]
 fn format_statement_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     // The `AstNodes` of a function or class declaration is backed by the function or class, not by the statement.
-    let is_made_of_statement = !matches!(statement.tag(), StmtTag::Fn | StmtTag::Class);
-    if is_made_of_statement && !f.comments().is_owner(Node::Stmt(statement)) {
+    let is_backed_by_statement = !matches!(statement.tag(), StmtTag::Fn | StmtTag::Class);
+    if is_backed_by_statement && !f.comments().is_owner(Node::Stmt(statement)) {
         f.context_mut().take_skip_trailing_comments();
         f.in_scope(statement.span(), |f| write_statement(statement, f));
     } else {
@@ -869,7 +873,7 @@ pub(crate) fn is_in_head_of_for(statement: Stmt<'_>) -> bool {
 /// Prettier's `printIgnored` for a statement. `span` is the statement's span without its `;`, which is printed
 /// according to the options.
 fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatter<'a>) {
-    if terminator_of_what_is_ignored_follows_semi(f) {
+    if ignored_node_terminator_follows_semi(f) {
         return write_ignored_statement_without_terminator(statement, span, f);
     }
     let has_semicolon = match statement.kind() {
@@ -911,11 +915,11 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
 ///
 /// The exception is a declaration that's ignored after its `export`, which oxfmt copies along with its `;`. See
 /// `is_ignored_with_its_semicolon` in `print/export_declarations.rs`.
-pub(crate) fn terminator_of_what_is_ignored_follows_semi(f: &Formatter<'_>) -> bool {
+pub(crate) fn ignored_node_terminator_follows_semi(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// See [`terminator_of_what_is_ignored_follows_semi`]. `span` is the same as for [`write_ignored_statement`].
+/// See [`ignored_node_terminator_follows_semi`]. `span` is the same as for [`write_ignored_statement`].
 fn write_ignored_statement_without_terminator<'a>(
     statement: Stmt<'a>,
     span: Span,
@@ -934,7 +938,7 @@ fn write_ignored_statement_without_terminator<'a>(
         });
     }
     // If a type cast comment comes first, the `;` was already printed before it: see
-    // `semicolon_is_before_cast_comment_of_ignored_statement`.
+    // `semicolon_goes_before_ignored_statement_cast_comment`.
     let needs_leading_semicolon =
         print::statements::ignored_statement_needs_semicolon(statement, content.start, f)
             && !print::statements::follows_type_cast_comment(content.start, f);
@@ -1269,7 +1273,7 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
     }
     let node = AstNodes::TSTypeAnnotation(ty);
     if !f.comments().of_node(node).leading.is_empty()
-        && !comment_sticks_to_what_is_before_type_annotation(ty, f)
+        && !omits_space_before_type_annotation_comment(ty, f)
     {
         write!(f, space());
     }
@@ -1280,7 +1284,7 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
 /// `class A { b() /* comment */ : T {} }` has `b()/* comment */ : T {}`. This doesn't apply in
 /// `function a(b /* comment */ : T) /* comment */ : T {}`, that is, after a parameter's name or pattern, or after the
 /// parameters of a function declared with `function`.
-fn comment_sticks_to_what_is_before_type_annotation(ty: TypeNode<'_>, f: &Formatter<'_>) -> bool {
+fn omits_space_before_type_annotation_comment(ty: TypeNode<'_>, f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
         && match ty.parent() {
             // The `a` of `[a: string]: T` is a parameter in the tree.

@@ -130,7 +130,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Some((alias, kept));
         }
         let (_, type_arguments) = self.derive_alias_of_node_type(ty)?;
-        (self.links).keep_alias_type_arguments(ty, &type_arguments);
+        (self.links).cache_alias_type_arguments(ty, &type_arguments);
         Some((alias, type_arguments))
     }
 
@@ -150,7 +150,7 @@ impl<'p, 's> Checker<'p, 's> {
             return kept;
         }
         let alias = self.derive_alias_symbol_of_type(ty);
-        self.links.keep_alias_symbol(ty, alias);
+        self.links.cache_alias_symbol(ty, alias);
         alias
     }
 

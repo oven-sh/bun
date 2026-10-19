@@ -172,13 +172,15 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 })
             }
             // `shouldHugJsExpression` never hugs this.
-            Code::Printed(printed) => self.write_hugged(hug.of_other_kinds(), |printer| {
-                printer.out.foreign(|f| {
-                    js::write_string(ignored.unwrap_or(printed), f);
-                    write_rest(f);
-                });
-                true
-            }),
+            Code::Printed(printed) => {
+                self.write_hugged(hug.should_hug_non_expression(), |printer| {
+                    printer.out.foreign(|f| {
+                        js::write_string(ignored.unwrap_or(printed), f);
+                        write_rest(f);
+                    });
+                    true
+                })
+            }
         }
     }
 
@@ -216,7 +218,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             });
         }
         // An `NGEmptyExpression` or an `NGChainedExpression`.
-        self.write_hugged(hug.of_other_kinds(), |printer| {
+        self.write_hugged(hug.should_hug_non_expression(), |printer| {
             if !is_action {
                 return true;
             }
@@ -307,7 +309,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         {
             return false;
         }
-        self.write_hugged(hug.of_other_kinds(), |printer| {
+        self.write_hugged(hug.should_hug_non_expression(), |printer| {
             let mut is_written = true;
             for (index, part) in body.iter().enumerate() {
                 if is_ng_for_of(part, index) {

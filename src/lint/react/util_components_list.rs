@@ -30,13 +30,13 @@ impl At {
     /// Of nodes that start together, the longer one is entered first. Of nodes with the same range,
     /// the outer one.
     pub(crate) fn enter(node: Node<'_>) -> At {
-        let (span, depth) = At::place(node);
+        let (span, depth) = At::span_and_depth(node);
         At::new(2 * u64::from(span.start) + 1, u32::MAX - span.end, depth)
     }
 
     /// A node that ends where another starts is left before the other is entered.
     pub(crate) fn exit(node: Node<'_>) -> At {
-        let (span, depth) = At::place(node);
+        let (span, depth) = At::span_and_depth(node);
         At::new(
             2 * u64::from(span.end),
             u32::MAX - span.start,
@@ -49,12 +49,12 @@ impl At {
         ((self.0 >> 40) & 1) == 0
     }
 
-    fn new(position: u64, among_equals: u32, depth: u8) -> At {
-        At((u128::from(position) << 40) | (u128::from(among_equals) << 8) | u128::from(depth))
+    fn new(position: u64, tie_break: u32, depth: u8) -> At {
+        At((u128::from(position) << 40) | (u128::from(tie_break) << 8) | u128::from(depth))
     }
 
     /// The range the walk spends inside `node`, and `node`'s depth among nodes with the same range.
-    fn place(node: Node<'_>) -> (Span, u8) {
+    fn span_and_depth(node: Node<'_>) -> (Span, u8) {
         let node = normalize(node);
         let span = match node {
             // ESLint visits decorators as the node's children, even the ones before the node's range.
@@ -354,7 +354,7 @@ pub(crate) struct ComponentList<'a> {
     /// cached path becomes a component or stops being one.
     around: AncestorMemo<'a, ComponentId>,
     /// The highest start of any node looked up in `around`.
-    asked_until: u32,
+    max_queried_start: u32,
 }
 
 impl<'a> ComponentList<'a> {
@@ -389,9 +389,11 @@ impl<'a> ComponentList<'a> {
             }
         };
         // A node that starts before `node` can't be inside it, so the cache stays valid for it.
-        if (before >= 1) != (after >= 1) && At::place(node).0.start <= self.asked_until {
+        if (before >= 1) != (after >= 1)
+            && At::span_and_depth(node).0.start <= self.max_queried_start
+        {
             self.around = AncestorMemo::default();
-            self.asked_until = 0;
+            self.max_queried_start = 0;
         }
         id
     }
@@ -418,7 +420,7 @@ impl<'a> ComponentList<'a> {
     pub(crate) fn set(&mut self, node: Node<'a>) -> Option<ComponentId> {
         let (list, by_id) = (&self.list, &self.by_id);
         let id = ComponentList::get_in(list, by_id, node).or_else(|| {
-            self.asked_until = self.asked_until.max(At::place(node).0.start);
+            self.max_queried_start = self.max_queried_start.max(At::span_and_depth(node).0.start);
             self.around
                 .find_with(normalize(node), estree_parent, |_, parent| {
                     ComponentList::get_in(list, by_id, parent)

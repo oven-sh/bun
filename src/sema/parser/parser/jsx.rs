@@ -163,7 +163,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && before != T::LessThan
             && self.options.dialect == Default::default()
         {
-            self.jsx_child_after_other_token = self.pos();
+            self.jsx_child_with_stale_token = self.pos();
         }
     }
 
@@ -179,11 +179,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             true => self.full_start(),
             false => start,
         };
-        match self.recovers() && !is_in_expression && self.jsx_child_after_other_token == start {
+        match self.recovers() && !is_in_expression && self.jsx_child_with_stale_token == start {
             // `parseExpected(KindLessThanToken)` fails, and `scanJsxIdentifier` finds the `<`, so type arguments start
             // there.
             true => {
-                self.jsx_child_after_other_token = u32::MAX;
+                self.jsx_child_with_stale_token = u32::MAX;
                 self.error_at_token(1005, &[b"<"]);
             }
             false => self.next(),
@@ -283,7 +283,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             if written(name) != written((closing, self.prev_end()))
                 && !self.are_tag_names_equivalent(jsx.tag, jsx.close_tag)
             {
-                return self.jsx_element_with_other_closing_tag(
+                return self.jsx_element_with_mismatched_closing_tag(
                     jsx,
                     start,
                     name,
@@ -387,7 +387,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// which is at `name`.
     #[cold]
     #[inline(never)]
-    fn jsx_element_with_other_closing_tag(
+    fn jsx_element_with_mismatched_closing_tag(
         &mut self,
         mut jsx: Jsx,
         start: u32,
@@ -471,8 +471,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         // For oxc the name is the source text as is: `<X\u0065 />` doesn't refer to `Xe`. It rejects an escape in a
         // keyword.
         let is_escaped_keyword = self.lx.has_escape && self.token() != T::Identifier;
-        let is_as_written = self.options.dialect.oxc && !is_escaped_keyword;
-        if !self.recovers() && !(is_as_written && self.lx.has_escape) {
+        let keeps_source_text = self.options.dialect.oxc && !is_escaped_keyword;
+        if !self.recovers() && !(keeps_source_text && self.lx.has_escape) {
             return self.report();
         }
         let src = self.lx.src;
@@ -496,7 +496,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     is_past_dash = true;
                     (i32::from(b'-'), 1)
                 }
-                Some(b'\\') if is_as_written && is_past_dash => break,
+                Some(b'\\') if keeps_source_text && is_past_dash => break,
                 Some(b'\\') => match peek_unicode_escape(src, end) {
                     Some(escaped) if is_type_script_identifier_part(escaped.0) => {
                         self.lx.has_escape = true;
@@ -516,16 +516,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
             end += len;
         }
-        if is_as_written {
+        if keeps_source_text {
             let written = (self.lx.start as usize)..end;
             text = src.get(written).unwrap_or_default().to_vec();
         }
-        if end > from || is_as_written {
+        if end > from || keeps_source_text {
             self.lx.atom = self.atom(&text);
             self.lx.end = end as u32;
         }
         self.lx.token = T::Identifier;
-        if self.lx.has_escape && !is_as_written {
+        if self.lx.has_escape && !keeps_source_text {
             self.error_at_token(17021, &[]);
         }
     }
@@ -534,7 +534,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// identifier.
     #[cold]
     #[inline(never)]
-    fn jsx_identifier_at_another_token(&mut self) -> Atom {
+    fn jsx_identifier_at_non_identifier(&mut self) -> Atom {
         if !self.recovers() {
             self.fail();
             return Atom::NONE;
@@ -567,7 +567,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let end = self.lx.end;
         self.scan_jsx_identifier();
         if self.token() != T::Identifier {
-            return self.jsx_name_at_another_token();
+            return self.jsx_name_at_non_identifier();
         }
         let (name, start) = (self.lx.atom, self.pos());
         // If so, it's a JavaScript name, which has neither a `-` nor a `:`.
@@ -583,9 +583,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `jsx_name`, at a token that isn't an identifier. A missing name is empty and doesn't count as an identifier.
     #[cold]
     #[inline(never)]
-    fn jsx_name_at_another_token(&mut self) -> (Atom, u32, bool) {
+    fn jsx_name_at_non_identifier(&mut self) -> (Atom, u32, bool) {
         let start = self.pos();
-        let name = self.jsx_identifier_at_another_token();
+        let name = self.jsx_identifier_at_non_identifier();
         if name.is_none() {
             return (name, start, false);
         }
@@ -622,7 +622,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn jsx_name_without_local_name(&mut self, namespace: Atom, start: u32) -> (Atom, u32, bool) {
-        let local = self.jsx_identifier_at_another_token();
+        let local = self.jsx_identifier_at_non_identifier();
         if local.is_none() {
             return (local, start, false);
         }
@@ -671,16 +671,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn jsx_member_name(&mut self) -> (Atom, u32) {
         let token = self.token();
-        let is_of_next_statement = token.is_identifier_or_keyword()
+        let belongs_to_next_statement = token.is_identifier_or_keyword()
             && self.newline_before()
             && self.look_ahead(|p| {
                 p.next();
                 p.token().is_identifier_or_keyword() && !p.newline_before()
             });
-        if token == T::PrivateIdentifier && !is_of_next_statement {
+        if token == T::PrivateIdentifier && !belongs_to_next_statement {
             self.next();
         }
-        if token == T::PrivateIdentifier || is_of_next_statement {
+        if token == T::PrivateIdentifier || belongs_to_next_statement {
             let at = self.full_start();
             self.error(1003, (at, Diagnostic::NO_LENGTH), &[]);
             return (known::empty, at);
@@ -692,7 +692,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.lx.has_escape && !self.options.dialect.oxc {
             self.error_at_token(17021, &[]);
         }
-        if self.is_before(b"-") && self.is_for_oxc() {
+        if self.is_followed_by(b"-") && self.is_for_oxc() {
             self.scan_jsx_identifier();
             let at = (self.lx.start, self.lx.end);
             oxc::hyphen_in_jsx_member_name(&mut self.f.diagnostics, at);
@@ -788,18 +788,18 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `ScanJsxAttributeValue` skips the whitespace after the `=` and leaves anything but a string to `Scan`, so
     /// `TokenFullStart()` is after that whitespace.
-    fn skip_blanks_after_equals(&mut self) {
-        let is_blank =
+    fn skip_whitespace_after_equals(&mut self) {
+        let is_whitespace =
             |c| is_white_space_single_line(c) || matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029);
         let from = self.lx.full_start as usize;
-        self.lx.full_start = end_of_run(self.lx.src, from, is_blank) as u32;
+        self.lx.full_start = end_of_run(self.lx.src, from, is_whitespace) as u32;
     }
 
     /// `parseJsxAttributeValue`, at the `<` of an element.
     #[cold]
     #[inline(never)]
     fn jsx_elements_after_equals(&mut self) -> ExprId {
-        self.skip_blanks_after_equals();
+        self.skip_whitespace_after_equals();
         self.jsx_elements(false)
     }
 
@@ -811,7 +811,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return self.fail();
         }
         self.error_at_token(1145, &[]);
-        self.skip_blanks_after_equals();
+        self.skip_whitespace_after_equals();
     }
 
     /// `parseJsxExpression` for `name={}`, which the checker reports. The missing expression is positioned at the

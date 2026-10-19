@@ -43,7 +43,7 @@ impl Rule for NoNoninteractiveElementInteractions {
                     ("iframe", load_error),
                     ("img", load_error),
                 ]),
-                false => NamesByElement::of_option(config, "handlers"),
+                false => NamesByElement::from_option_except(config, "handlers"),
             },
         }
     }

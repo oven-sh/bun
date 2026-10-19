@@ -68,8 +68,8 @@ enum Cause<'a> {
 /// identifier key wins, only a spread property before it makes the cause unknown, a spread argument does so even after
 /// the options, and options that aren't an object literal have no cause.
 fn get_error_cause<'a>(args: List<'a, Expr<'a>>, options_index: usize, is_oxlint: bool) -> Cause<'a> {
-    let looked_at = if is_oxlint { usize::MAX } else { options_index + 1 };
-    if args.iter().take(looked_at).any(|arg| arg.tag() == ExprTag::Spread) {
+    let checked_count = if is_oxlint { usize::MAX } else { options_index + 1 };
+    if args.iter().take(checked_count).any(|arg| arg.tag() == ExprTag::Spread) {
         return Cause::Unknown;
     }
     let Some(options) = args.get(options_index) else {
@@ -216,7 +216,7 @@ fn include_cause<'a>(
 /// ESLint's suggestion is a fix in oxlint 1.87. It has its own text for `{}`, and there's no fix for `new Error`
 /// without parentheses or for more arguments than it knows. `param` is the `catch` parameter, which the fix rewrites
 /// unchanged so that no other fix renames or removes it in the same pass.
-fn include_cause_as_oxlint<'a>(
+fn oxlint_include_cause<'a>(
     fixer: Fixer<'a>,
     (thrown, call): (Expr<'a>, Call<'a>),
     is_aggregate_error: bool,
@@ -225,7 +225,7 @@ fn include_cause_as_oxlint<'a>(
     let file = fixer.file();
     let args = call.args();
     // The span to insert after, and the text before and after `cause: caught`.
-    let (place, before, after): (Span, &[u8], &[u8]) = match (args.len(), args.last()) {
+    let (location, before, after): (Span, &[u8], &[u8]) = match (args.len(), args.last()) {
         (0, _) => {
             let (after_callee, last) = (file.last_token(call.callee())?, file.last_token(thrown)?);
             let open = file.tokens_between(after_callee, last).find(ast_utils::is_opening_paren_token)?;
@@ -243,7 +243,7 @@ fn include_cause_as_oxlint<'a>(
         _ => return None,
     };
     let text = [before, b"cause: ", caught.bytes(), after].concat();
-    Some([fixer.replace(param, file.slice(param)), fixer.insert_after(place, text)])
+    Some([fixer.replace(param, file.slice(param)), fixer.insert_after(location, text)])
 }
 
 impl PreserveCaughtError {
@@ -325,7 +325,7 @@ impl PreserveCaughtError {
                 });
                 match cx.language().is_oxlint {
                     true => report.fix(|fixer| {
-                        include_cause_as_oxlint(fixer, (thrown, call), options_index == 2, (caught, param_span))
+                        oxlint_include_cause(fixer, (thrown, call), options_index == 2, (caught, param_span))
                     }),
                     false => report.suggest(INCLUDE_CAUSE, |fixer| {
                         include_cause(fixer, thrown, call, options_index, placeholders, caught)
@@ -344,8 +344,8 @@ impl PreserveCaughtError {
         if !(is_plain && value.as_ident() == Some(caught) && !(is_oxlint && value.is_parenthesized())) {
             let value_span = property.func().map_or_else(|| value.span(), Func::span_from_params);
             // oxlint points at the statement.
-            let place = if cx.language().is_oxlint { statement.span() } else { value_span };
-            let report = cx.report(place, INCORRECT_CAUSE);
+            let location = if cx.language().is_oxlint { statement.span() } else { value_span };
+            let report = cx.report(location, INCORRECT_CAUSE);
             // With several definitions of `cause`, a suggestion could be confusing.
             let replace = |fixer: Fixer<'a>| match property.kind() {
                 PropKind::Init => fixer.replace(value, caught),

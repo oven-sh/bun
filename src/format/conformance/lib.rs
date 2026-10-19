@@ -129,7 +129,7 @@ impl<'a> Flags<'a> {
         }
     }
 
-    fn wants(&self, id: &[u8]) -> bool {
+    fn matches_filter(&self, id: &[u8]) -> bool {
         self.filter.is_none_or(|it| strings::contains(id, it))
     }
 
@@ -209,9 +209,9 @@ fn show_cursor(text: &mut Vec<u8>, cursor: Option<u32>) {
     let mut units = 0;
     let at = (0..text.len()).find(|&at| {
         let is_start = text[at] & 0xC0 != 0x80;
-        let is_there = is_start && units >= cursor as usize;
+        let is_at_cursor = is_start && units >= cursor as usize;
         units += usize::from(is_start) + usize::from(text[at] >= 0xF0);
-        is_there
+        is_at_cursor
     });
     let at = at.unwrap_or(text.len());
     text.splice(at..at, *b"<|>");

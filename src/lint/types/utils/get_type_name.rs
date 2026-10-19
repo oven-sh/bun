@@ -9,9 +9,9 @@ pub fn get_type_name(ty: Type) -> Vec<u8> {
     get_type_name_in(ty, &mut IdSet::new())
 }
 
-/// `on_the_way` holds the type parameters whose constraints led to `ty`. Without it, `<T extends U, U extends T>` would
+/// `visiting` holds the type parameters whose constraints led to `ty`. Without it, `<T extends U, U extends T>` would
 /// never terminate.
-fn get_type_name_in<'a>(ty: Type<'a>, on_the_way: &mut IdSet<Type<'a>>) -> Vec<u8> {
+fn get_type_name_in<'a>(ty: Type<'a>, visiting: &mut IdSet<Type<'a>>) -> Vec<u8> {
     if !has_room_on_the_stack() {
         return ty.to_text();
     }
@@ -20,15 +20,15 @@ fn get_type_name_in<'a>(ty: Type<'a>, on_the_way: &mut IdSet<Type<'a>>) -> Vec<u
         return b"string".to_vec();
     }
     if flags.contains(TypeFlags::TYPE_PARAMETER)
-        && !on_the_way.contains(ty)
+        && !visiting.contains(ty)
         && let Some(constraint) = declared_constraint(ty)
     {
-        on_the_way.insert(ty);
-        let name = get_type_name_in(constraint, on_the_way);
-        on_the_way.remove(ty);
+        visiting.insert(ty);
+        let name = get_type_name_in(constraint, visiting);
+        visiting.remove(ty);
         return name;
     }
-    let mut is_string = |value: Type<'a>| get_type_name_in(value, on_the_way) == b"string";
+    let mut is_string = |value: Type<'a>| get_type_name_in(value, visiting) == b"string";
     if flags.contains(TypeFlags::UNION) && ty.types().iter().all(&mut is_string) {
         return b"string".to_vec();
     }

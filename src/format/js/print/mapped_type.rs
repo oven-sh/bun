@@ -4,7 +4,7 @@ use crate::prelude::*;
 use crate::{format_args, write};
 
 /// Before a union with each type on its own line, oxfmt prints `K in // comment` and Prettier `K in  // comment`.
-fn one_blank_before_line_comment_behind_in(f: &Formatter<'_>) -> bool {
+fn one_space_before_line_comment_after_in(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -42,7 +42,7 @@ pub(crate) fn write_ts_mapped_type<'a>(
         let format_key = format_with(|f| {
             // A comment trailing the key ends up after `in` and brings its own space. Prettier keeps the space after
             // `in` too.
-            let comment_brings_its_blank = one_blank_before_line_comment_behind_in(f)
+            let comment_brings_its_space = one_space_before_line_comment_after_in(f)
                 && !f.is_quiet()
                 && (param.constraint())
                     .is_some_and(|constraint| matches!(constraint.kind(), TypeKind::Union(_)))
@@ -52,7 +52,7 @@ pub(crate) fn write_ts_mapped_type<'a>(
                 f,
                 [
                     identifier(key),
-                    match comment_brings_its_blank {
+                    match comment_brings_its_space {
                         true => " in",
                         false => " in ",
                     },

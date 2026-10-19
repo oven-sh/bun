@@ -76,12 +76,13 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
                 .push((argument, span));
         }
     }
-    for (name, spans) in utils::sort::in_order_of(identifiers, |it| it.1.first().map(|it| it.start))
+    for (name, spans) in
+        utils::sort::collect_sorted_by_key(identifiers, |it| it.1.first().map(|it| it.start))
     {
         // oxlint reports the first one, once, and removes all but the last.
         if !is_oxlint {
             // The plugin has no fix, so only fix when there's no plugin to match.
-            let fixes = cx.language().stands_alone;
+            let fixes = cx.language().has_no_foreign_config;
             for (previous, span) in spans.iter().zip(spans.iter().skip(1)) {
                 cx.report(*span, NO_MULTI_SPREADING)
                     .listened_on(jsx.opening_span())
@@ -103,7 +104,7 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
                 });
         }
     }
-    for alike in utils::sort::in_order_of(member_expressions.values(), |it| {
+    for alike in utils::sort::collect_sorted_by_key(member_expressions.values(), |it| {
         it.first().map(|it| it.1.start)
     }) {
         for (i, &(left, left_span)) in alike.iter().enumerate() {

@@ -34,9 +34,9 @@ pub(in super::super) enum MemberCount {
     PropertiesListed,
     IntersectionsLeftUnlisted,
     /// Calls to `property_of_unlisted_intersection`.
-    AskedOfUnlisted,
+    UnlistedLookups,
     /// The subset of those calls that listed the properties because the intersection had been queried often.
-    ListedAfterBeingAsked,
+    ListedAfterLookups,
 }
 
 #[derive(Default)]

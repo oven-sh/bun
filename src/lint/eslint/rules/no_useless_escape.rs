@@ -58,10 +58,10 @@ fn report<'a>(
     // ESLint's suggestion is a fix in oxlint, which also includes the character in the reported span.
     if cx.language().is_oxlint {
         // Escaped the way Rust escapes a `char`.
-        let written: &[u8] = if character == b"'" { b"\\'" } else { character };
+        let shown_character: &[u8] = if character == b"'" { b"\\'" } else { character };
         // The fix covers the character too, so with two adjacent escapes one pass only applies the first fix.
-        let place = Span::new(backslash, range.end + character.len() as u32);
-        cx.report(place, UNNECESSARY_ESCAPE).data("character", written).fix(|fixer| fixer.replace(place, character));
+        let location = Span::new(backslash, range.end + character.len() as u32);
+        cx.report(location, UNNECESSARY_ESCAPE).data("character", shown_character).fix(|fixer| fixer.replace(location, character));
         return;
     }
     let report = cx.report(range, UNNECESSARY_ESCAPE).data("character", character).hint_with(|| {
@@ -81,7 +81,7 @@ fn report<'a>(
 
 /// oxlint 1.87 skips a backslash that follows a backslash in a string, even the third one of `\\\"`, and in a template
 /// a `\$` before a substitution or the end.
-fn oxlint_passes_over(raw: &[u8], index: usize, quoted: Quoted) -> bool {
+fn oxlint_skips(raw: &[u8], index: usize, quoted: Quoted) -> bool {
     match quoted {
         Quoted::Template => matches!(raw.get(index + 1..), Some(b"$${" | b"$`")),
         _ => index > 0 && raw.get(index - 1) == Some(&b'\\'),
@@ -112,7 +112,7 @@ fn validate_string(span: Span, quoted: Quoted, cx: &Cx<'_, NoUselessEscape>) {
             b'"' | b'\'' => quoted != Quoted::Template && raw.first() == Some(&escaped),
             _ => matches!(character, b"\xE2\x80\xA8" | b"\xE2\x80\xA9"),
         };
-        if !is_valid && !(cx.language().is_oxlint && oxlint_passes_over(raw, index, quoted)) {
+        if !is_valid && !(cx.language().is_oxlint && oxlint_skips(raw, index, quoted)) {
             report(span.start + index as u32, character, quoted == Quoted::Directive, true, cx);
         }
     }
@@ -141,7 +141,7 @@ pub struct Backslashes<'a> {
     /// In ascending order.
     at: &'a [u32],
     /// How many come before the start of the last span queried.
-    before_last: Cell<usize>,
+    cached_count: Cell<usize>,
 }
 
 /// True if there's a `\` in `span`.
@@ -149,11 +149,11 @@ pub struct Backslashes<'a> {
 fn has_backslash(span: Span, cx: &Cx<'_, NoUselessEscape>) -> bool {
     let all = cx.state.at;
     // Usually there's no backslash between one span and the next, so the cached count is still right.
-    let mut next = cx.state.before_last.get();
+    let mut next = cx.state.cached_count.get();
     let before = next.checked_sub(1).and_then(|it| all.get(it));
     if before.is_some_and(|&at| at >= span.start) || all.get(next).is_some_and(|&at| at < span.start) {
         next = all.partition_point(|&at| at < span.start);
-        cx.state.before_last.set(next);
+        cx.state.cached_count.set(next);
     }
     all.get(next).is_some_and(|&at| at < span.end)
 }
@@ -232,12 +232,12 @@ impl NoUselessEscape {
     fn useless_escape(&self, node: regex::Node<'_>, unicode_sets: bool) -> Option<(usize, bool)> {
         let value = node.character()?;
         let escaped = node.raw().strip_prefix(b"\\")?;
-        let stands_for_itself = match char::from_u32(value) {
+        let escapes_itself = match char::from_u32(value) {
             Some(value) => escaped == value.encode_utf8(&mut [0; 4]).as_bytes(),
             // Without the `u` and `v` flags, the first half of a character outside the BMP. Not `\ud83d`.
             None => escaped.len() == 2,
         };
-        if !stands_for_itself || self.allow_regex_characters.iter().any(|it| it == escaped) {
+        if !escapes_itself || self.allow_regex_characters.iter().any(|it| it == escaped) {
             return None;
         }
         let class = node.ancestors().find(|it| {
@@ -331,7 +331,7 @@ impl Rule for NoUselessEscape {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Backslashes<'a>> {
-        Some(Backslashes { at: file.backslashes(), before_last: Cell::new(0) })
+        Some(Backslashes { at: file.backslashes(), cached_count: Cell::new(0) })
     }
 
     fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {

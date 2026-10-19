@@ -48,12 +48,12 @@ impl Config {
         if !is_in_loop && decl.init().is_some() != self.is_never {
             return None;
         }
-        self.check_closer(decl, declaration)
+        self.check_slow_path(decl, declaration)
     }
 
     /// `declaration` is `decl`'s parent.
     #[inline(never)]
-    fn check_closer<'a>(&self, decl: VarDecl<'a>, declaration: Stmt<'a>) -> Option<Finding<'a>> {
+    fn check_slow_path<'a>(&self, decl: VarDecl<'a>, declaration: Stmt<'a>) -> Option<Finding<'a>> {
         // `Some` if its parent is a `for`, `for`-`in` or `for`-`of`, and true if it's in that loop's head.
         let in_for_loop = match declaration.parent() {
             Node::Stmt(block) if block.is_loop() => match block.kind() {

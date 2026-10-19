@@ -26,8 +26,8 @@ pub(crate) struct Writer<'w, 'f> {
     pub(crate) f: &'w mut Formatter<'f>,
     /// Consecutive line breaks that haven't been written yet: their combined mode and their count.
     pending_line: Option<(LineMode, u32)>,
-    /// How many of them must each print a space when they don't break. See [`Writer::line_or_blank`].
-    pending_blanks: u32,
+    /// How many of them must each print a space when they don't break. See [`Writer::line_or_literal_space`].
+    pending_spaces: u32,
     empty_line: EmptyLine,
     /// Number of enclosing `indent`s, or `None` if something else also affects where lines start.
     indent_level: Option<u32>,
@@ -43,7 +43,7 @@ impl<'w, 'f> Writer<'w, 'f> {
         Writer {
             f,
             pending_line: None,
-            pending_blanks: 0,
+            pending_spaces: 0,
             empty_line: if is_at_start {
                 EmptyLine::Yes
             } else {
@@ -86,7 +86,7 @@ impl<'w, 'f> Writer<'w, 'f> {
         };
         // `SoftOrSpace` prints the first space, except where the line may be empty, because the `ir` printer drops a
         // space there. The remaining spaces are written as text.
-        let (mode, blanks) = match (mode, std::mem::take(&mut self.pending_blanks)) {
+        let (mode, blanks) = match (mode, std::mem::take(&mut self.pending_spaces)) {
             (LineMode::SoftOrSpace, blanks @ 1..) if self.empty_line != EmptyLine::No => {
                 (LineMode::Soft, blanks)
             }
@@ -373,9 +373,9 @@ impl<'w, 'f> Writer<'w, 'f> {
     /// Prettier's `line`, exactly. When it doesn't break it prints a space, even at the start of a line or after
     /// another space, where the `ir` printer would drop it. [`Writer::line`] is enough for HTML, which never has two in
     /// a row or one at the start of a line.
-    pub(crate) fn line_or_blank(&mut self) {
+    pub(crate) fn line_or_literal_space(&mut self) {
         self.add_line(LineMode::SoftOrSpace);
-        self.pending_blanks += 1;
+        self.pending_spaces += 1;
     }
 
     /// `lineSuffix(..)`
@@ -488,7 +488,7 @@ impl<'w, 'f> Writer<'w, 'f> {
     }
 
     /// Like [`Writer::start_attempt`], for content that goes after a string that hasn't been written yet.
-    pub(crate) fn start_attempt_behind_text(&mut self) -> Attempt {
+    pub(crate) fn start_attempt_after_text(&mut self) -> Attempt {
         let attempt = self.start_attempt();
         self.empty_line = EmptyLine::No;
         attempt
@@ -500,7 +500,7 @@ impl<'w, 'f> Writer<'w, 'f> {
             true => self.flush(),
             false => {
                 self.pending_line = None;
-                self.pending_blanks = 0;
+                self.pending_spaces = 0;
                 self.empty_line = attempt.empty_line;
                 self.indent_level = attempt.indent_level;
             }
@@ -521,7 +521,7 @@ impl<'w, 'f> Writer<'w, 'f> {
     ) -> Option<Interned> {
         match is_kept {
             true => self.flush(),
-            false => (self.pending_line, self.pending_blanks) = (None, 0),
+            false => (self.pending_line, self.pending_spaces) = (None, 0),
         }
         self.empty_line = attempt.empty_line;
         self.indent_level = attempt.indent_level;

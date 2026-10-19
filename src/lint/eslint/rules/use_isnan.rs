@@ -156,12 +156,12 @@ impl UseIsnan {
             return;
         }
         // oxlint points at the `NaN`, without parentheses.
-        let place = match first.kind() {
+        let location = match first.kind() {
             _ if !cx.language().is_oxlint => e.span(),
             ExprKind::Binary { op: BinOp::Comma, right, .. } => right.span(),
             _ => first.span(),
         };
-        let report = cx.report(place, INDEX_OF_NAN).data("methodName", method_name);
+        let report = cx.report(location, INDEX_OF_NAN).data("methodName", method_name);
         // `arr.findIndex(Number.isNaN)` would lose the side effects of what comes before the `NaN`.
         if is_sequence(first) || args.len() > 1 || cx.language().is_oxlint {
             return;

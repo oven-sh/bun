@@ -13,7 +13,7 @@ type Pending<'a> = SmallVec<[(Expr<'a>, Expr<'a>); 8]>;
 
 /// True if the two expressions have kinds that can compare equal.
 #[inline]
-fn are_of_one_kind(left: Expr, right: Expr) -> bool {
+fn have_comparable_kinds(left: Expr, right: Expr) -> bool {
     let kind = |e: Expr| match e.tag() {
         ExprTag::Index => ExprTag::Dot,
         ExprTag::Template => ExprTag::String,
@@ -25,7 +25,7 @@ fn are_of_one_kind(left: Expr, right: Expr) -> bool {
 /// Compares two expressions to see if they are the same.
 #[inline]
 pub fn is_same_expression<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
-    are_of_one_kind(left, right) && are_all_same(smallvec![(left, right)])
+    have_comparable_kinds(left, right) && are_all_same(smallvec![(left, right)])
 }
 
 /// `is_same_expression(left.get_inner_expression(), right.get_inner_expression(), ctx)`
@@ -60,7 +60,7 @@ fn is_member_expression(e: Expr) -> bool {
 
 /// True if `left` and `right` are the same, provided the pairs it adds to `pending` are too.
 fn compare_expressions<'a>(left: Expr<'a>, right: Expr<'a>, pending: &mut Pending<'a>) -> bool {
-    if !are_of_one_kind(left, right) {
+    if !have_comparable_kinds(left, right) {
         return false;
     }
     if is_member_expression(left) && is_member_expression(right) {

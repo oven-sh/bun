@@ -117,18 +117,19 @@ impl FormatCommand {
                 b"fmt",
                 &mut |file, path, is_named| {
                     let section = bun_lint_driver::bunfig::format(file)?;
-                    defaults = section.map(|it| it.of_bunfig_at(path, is_named));
+                    defaults = section.map(|it| it.from_bunfig_at(path, is_named));
                     Ok(match defaults {
                         Some(_) => Above::Unwanted,
                         None => Above::Needed,
                     })
                 },
             );
-            let options = match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
-                None => options,
-                Some(Ok(options)) => options,
-                Some(Err(UsageError(message))) => usage_error("fmt", &message),
-            };
+            let options =
+                match defaults.map(|defaults| Options::parse_with_defaults(defaults, &args)) {
+                    None => options,
+                    Some(Ok(options)) => options,
+                    Some(Err(UsageError(message))) => usage_error("fmt", &message),
+                };
             bun_lint_driver::fmt::run(&options, environment)
         })
     }

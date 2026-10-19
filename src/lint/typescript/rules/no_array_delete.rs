@@ -114,8 +114,8 @@ impl Rule for NoArrayDelete {
                 labels.push(keyword, "");
             });
         match is_oxlint {
-            true => report.suggest_change_of_behavior(USE_SPLICE, &[], |fixer| use_splice_as_tsgolint(fixer, node, keyword, object, argument)),
-            false => report.suggest_change_of_behavior(USE_SPLICE, &[], |fixer| use_splice(fixer, node, object, key, is_sequence)),
+            true => report.suggest_behavior_change(USE_SPLICE, &[], |fixer| use_splice_as_tsgolint(fixer, node, keyword, object, argument)),
+            false => report.suggest_behavior_change(USE_SPLICE, &[], |fixer| use_splice(fixer, node, object, key, is_sequence)),
         };
     }
 }

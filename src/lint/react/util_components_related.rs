@@ -16,7 +16,7 @@ struct ComponentPaths<'a> {
     /// The names in each chain of member accesses, innermost first.
     rows: Vec<Vec<Name<'a>>>,
     /// Which row a member access is in, and how many of that row's names make up its path.
-    places: IdMap<Expr<'a>, (usize, usize)>,
+    positions: IdMap<Expr<'a>, (usize, usize)>,
 }
 
 impl<'a> ComponentPaths<'a> {
@@ -26,7 +26,7 @@ impl<'a> ComponentPaths<'a> {
         let mut known = None;
         let mut node_temp = Some(node);
         while let Some(member) = node_temp {
-            known = self.places.get(member).copied();
+            known = self.positions.get(member).copied();
             if known.is_some() {
                 break;
             }
@@ -57,7 +57,7 @@ impl<'a> ComponentPaths<'a> {
                 _ => None,
             });
             count = names.len();
-            self.places.insert(member, (row, count));
+            self.positions.insert(member, (row, count));
         }
         names.get(..count).unwrap_or_default()
     }

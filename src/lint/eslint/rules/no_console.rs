@@ -46,7 +46,7 @@ fn removable_statement(member: Expr<'_>) -> Option<Stmt<'_>> {
 /// oxlint's `remove_console`, for a `member` that's directly in a call. Returns the span to replace and the
 /// replacement: nothing for a statement, a block where a statement or body is required, and `undefined` where a value
 /// is required.
-fn change_of_oxlint(member: Expr) -> Option<(Span, &'static str)> {
+fn oxlint_replacement(member: Expr) -> Option<(Span, &'static str)> {
     let call = parent_node(member)?.as_expr().filter(|it| it.tag() == ExprTag::Call)?;
     if call.is_chain_root() {
         return Some((call.span(), ""));
@@ -120,7 +120,7 @@ impl Rule for NoConsole {
             false => cx.report(place, LIMITED).data("allowed", self.allowed.join(&b", "[..])),
         };
         if cx.language().is_oxlint {
-            if let Some((at, text)) = change_of_oxlint(member) {
+            if let Some((at, text)) = oxlint_replacement(member) {
                 match text {
                     "undefined" => report.suggest_dangerously(REMOVE_METHOD_CALL, |fixer| fixer.replace(at, text)),
                     _ => report.suggest(REMOVE_METHOD_CALL, |fixer| fixer.replace(at, text)),

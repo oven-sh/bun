@@ -267,9 +267,9 @@ fn tsgolint_fix_test_call<'a>(
     if object.tag() == ExprTag::Ident && !object.symbol().is_some_and(|it| is_always_reg_exp_of(it, &value)) {
         return None;
     }
-    let written_pattern = tsgolint_escape_string(pattern);
-    let escaped = if string_literal_value(&written_pattern).is_some_and(|it| it == value) {
-        written_pattern
+    let pattern_source = tsgolint_escape_string(pattern);
+    let escaped = if string_literal_value(&pattern_source).is_some_and(|it| it == value) {
+        pattern_source
     } else if strings::contains_char(&value, 0) {
         // `\0` before a digit is an octal escape.
         return None;

@@ -1,6 +1,6 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, static_name};
 use crate::jsx::{as_jsx_element, children};
-use crate::react::{FlagsOfVariables, Variables, is_padding_spaces};
+use crate::react::{VariableFlags, Variables, is_padding_spaces};
 use crate::util_ast::name_of_key;
 use crate::util_is_create_element::is_member_called;
 use crate::util_variable::get_variable_from_context;
@@ -22,7 +22,7 @@ const DANGER: u8 = 1 << 1;
 
 #[derive(Default)]
 pub struct State<'a> {
-    props_of_variables: FlagsOfVariables<'a>,
+    props_of_variables: VariableFlags<'a>,
 }
 
 impl Rule for NoDangerWithChildren {
@@ -140,7 +140,7 @@ fn is_line_break<'a>(file: &'a File<'a>, child: JsxChild<'a>) -> bool {
 }
 
 /// Returns the flags for the element's own attributes plus the properties of the variables it spreads.
-fn props_of_element<'a>(e: Expr<'a>, jsx: Jsx<'a>, known: &mut FlagsOfVariables<'a>, is_oxlint: bool) -> u8 {
+fn props_of_element<'a>(e: Expr<'a>, jsx: Jsx<'a>, known: &mut VariableFlags<'a>, is_oxlint: bool) -> u8 {
     jsx.attrs().iter().fold(0, |props, attribute| {
         props
             | match attribute.kind() {
@@ -163,7 +163,7 @@ fn variable<'a>(ident: Expr<'a>, node: Node<'a>, is_oxlint: bool) -> Option<Symb
 
 /// For a variable initialized with an object literal: returns the flags for the object's properties, plus those of the
 /// variables it spreads.
-fn props_of_variable<'a>(variable: Symbol<'a>, known: &mut FlagsOfVariables<'a>, is_oxlint: bool) -> u8 {
+fn props_of_variable<'a>(variable: Symbol<'a>, known: &mut VariableFlags<'a>, is_oxlint: bool) -> u8 {
     known.of_variable(variable, |it| declared_with(it, is_oxlint))
 }
 

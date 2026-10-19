@@ -145,13 +145,9 @@ impl Default for Paths<'_> {
 }
 
 impl<'a> Paths<'a> {
-    /// Returns `dependency`'s path number. Calls `on_the_way` with each path from the variable down to `dependency`
+    /// Returns `dependency`'s path number. Calls `visit` with each path from the variable down to `dependency`
     /// itself.
-    fn number_of(
-        &mut self,
-        dependency: &Dependency<'a>,
-        mut on_the_way: impl FnMut(&mut Path),
-    ) -> u32 {
+    fn number_of(&mut self, dependency: &Dependency<'a>, mut visit: impl FnMut(&mut Path)) -> u32 {
         let mut at = 0;
         for name in std::iter::once(&dependency.name).chain(&dependency.chain) {
             at = *self.properties.entry((at, *name)).or_insert_with(|| {
@@ -161,7 +157,7 @@ impl<'a> Paths<'a> {
                 });
                 self.list.len() as u32 - 1
             });
-            on_the_way(&mut self.list[at as usize]);
+            visit(&mut self.list[at as usize]);
         }
         at
     }
@@ -375,22 +371,22 @@ impl<'a> Found<'a> {
 
     /// The indices into `dependencies` in the iteration order of oxlint's hash table. oxlint lists the missing
     /// dependencies in that order and puts the report at the first. Inserting the same hashes into the same kind of
-    /// table reproduces the order. `symbols` comes from [`places_of_symbols`].
+    /// table reproduces the order. `symbols` comes from [`symbol_sort_keys`].
     fn order_of_oxlint(&self, symbols: &[(u32, u32)]) -> Vec<u32> {
         let dependency = |at: &u32| Some((&self.dependencies.get(*at as usize)?.0, *at));
-        order_in_table(&mut self.inserted.iter().filter_map(dependency), symbols)
+        hashbrown_table_order(&mut self.inserted.iter().filter_map(dependency), symbols)
     }
 }
 
 /// Inserts `inserted` one by one into a model of oxlint's hash table, and returns their numbers in its iteration order.
-fn order_in_table<'d, 'a>(
+fn hashbrown_table_order<'d, 'a>(
     inserted: &mut dyn Iterator<Item = (&'d Dependency<'a>, u32)>,
     symbols: &[(u32, u32)],
 ) -> Vec<u32> {
     let (mut seen, mut table): (FxHashSet<Hashed>, HashOrder<u32>) =
         (FxHashSet::default(), HashOrder::new());
     for (dependency, at) in inserted {
-        let place = dependency.symbol.and_then(place_of_symbol);
+        let place = dependency.symbol.and_then(symbol_sort_key);
         let hashed = Hashed {
             dependency,
             // oxc stores the id XORed with `u32::MAX`, so that `u32::MAX` is stored as 0, and hashes the stored value.
@@ -408,17 +404,17 @@ fn order_in_table<'d, 'a>(
 }
 
 /// The position of each of `declared` in the iteration order of oxlint's hash table.
-fn places_in_table<'a>(
+fn table_positions<'a>(
     declared: &[(Dependency<'a>, u32)],
     file: &'a File<'a>,
     memo: &mut Memo<'a>,
 ) -> Vec<usize> {
     let symbols = memo
-        .places_of_symbols
-        .get_or_insert_with(|| places_of_symbols(file));
+        .symbol_sort_keys
+        .get_or_insert_with(|| symbol_sort_keys(file));
     let mut inserted = (declared.iter().enumerate()).map(|(at, it)| (&it.0, at as u32));
     let mut places = vec![0; declared.len()];
-    for (place, at) in order_in_table(&mut inserted, symbols)
+    for (place, at) in hashbrown_table_order(&mut inserted, symbols)
         .into_iter()
         .enumerate()
     {
@@ -430,14 +426,14 @@ fn places_in_table<'a>(
 }
 
 /// Sorts `positions`, which are indices into `declared`, into the order oxlint visits them.
-fn sort_as_oxlint<'a>(
+fn sort_in_oxlint_order<'a>(
     positions: &mut [usize],
     declared: &[(Dependency<'a>, u32)],
     file: &'a File<'a>,
     memo: &mut Memo<'a>,
 ) {
     if positions.len() > 1 {
-        let places = places_in_table(declared, file, memo);
+        let places = table_positions(declared, file, memo);
         utils::sort::sort_unstable_by_key(positions, |at| places.get(*at).copied());
     }
 }
@@ -475,7 +471,7 @@ impl PartialEq for Hashed<'_, '_> {
 impl Eq for Hashed<'_, '_> {}
 
 /// The start of the node that declares the symbol, and the start of its name. oxc numbers symbols in that order.
-fn place_of_symbol(symbol: Symbol) -> Option<(u32, u32)> {
+fn symbol_sort_key(symbol: Symbol) -> Option<(u32, u32)> {
     let places = symbol.declarations().filter_map(|declaration| {
         let name = declaration.name_span()?.start;
         let node = match declaration {
@@ -498,9 +494,9 @@ fn place_of_symbol(symbol: Symbol) -> Option<(u32, u32)> {
     places.min()
 }
 
-/// The [`place_of_symbol`] of every symbol, sorted. ESLint's scopes have a class's and an enum's name twice.
-fn places_of_symbols<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
-    let mut places: Vec<(u32, u32)> = file.symbols().filter_map(place_of_symbol).collect();
+/// The [`symbol_sort_key`] of every symbol, sorted. ESLint's scopes have a class's and an enum's name twice.
+fn symbol_sort_keys<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
+    let mut places: Vec<(u32, u32)> = file.symbols().filter_map(symbol_sort_key).collect();
     // Add the symbols that ESLint has no variable for: an enum member with a computed name, and the names in `namespace
     // A.B.C`.
     for stmt in file
@@ -675,8 +671,8 @@ pub(crate) struct Memo<'a> {
     is_stable: IdMap<Symbol<'a>, bool>,
     /// True if `variable.current` appears on either side of an assignment.
     is_current_written: IdMap<Symbol<'a>, bool>,
-    /// [`places_of_symbols`]
-    places_of_symbols: Option<Vec<(u32, u32)>>,
+    /// [`symbol_sort_keys`]
+    symbol_sort_keys: Option<Vec<(u32, u32)>>,
     /// Every `a.current` in the file, in source order.
     currents: Option<Vec<Expr<'a>>>,
     /// The enclosing function of a node.
@@ -698,13 +694,13 @@ enum Stability<'a> {
 impl<'a> Component<'a> {
     /// `is_identifier_a_dependency`
     fn is_dependency(&self, dependency: &Dependency<'a>, memo: &mut Memo<'a>) -> bool {
-        self.variable_of_component(dependency)
+        self.component_variable(dependency)
             .is_some_and(|it| !self.is_stable_value(it.0, it.1, memo))
     }
 
     /// Returns `dependency`'s variable if it's declared in the component, which makes it a dependency unless its value
     /// is stable.
-    fn variable_of_component(
+    fn component_variable(
         &self,
         dependency: &Dependency<'a>,
     ) -> Option<(Symbol<'a>, Declared<'a>)> {
@@ -776,7 +772,7 @@ impl<'a> Component<'a> {
             found
                 .dependencies
                 .iter()
-                .filter_map(|it| self.variable_of_component(&it.0))
+                .filter_map(|it| self.component_variable(&it.0))
                 .collect(),
         )
     }
@@ -1246,7 +1242,7 @@ pub(crate) fn run<'a, R: Rule>(
         }
         outer.push(at);
     }
-    sort_as_oxlint(&mut outer, &declared, cx.file(), memo);
+    sort_in_oxlint_order(&mut outer, &declared, cx.file(), memo);
     let first_outer = outer.first().copied();
     for (at, (dependency, _)) in outer
         .iter()
@@ -1276,8 +1272,8 @@ pub(crate) fn run<'a, R: Rule>(
         .collect();
     if undeclared.len() > 1 {
         let symbols = memo
-            .places_of_symbols
-            .get_or_insert_with(|| places_of_symbols(cx.file()));
+            .symbol_sort_keys
+            .get_or_insert_with(|| symbol_sort_keys(cx.file()));
         let mut ranks = vec![0; found.dependencies.len()];
         for (rank, at) in found.order_of_oxlint(symbols).into_iter().enumerate() {
             if let Some(it) = ranks.get_mut(at as usize) {
@@ -1323,7 +1319,7 @@ pub(crate) fn run<'a, R: Rule>(
         .filter(|(_, it)| is_effect_event(&it.0))
         .map(|it| it.0)
         .collect();
-    sort_as_oxlint(&mut effect_events, &declared, cx.file(), memo);
+    sort_in_oxlint_order(&mut effect_events, &declared, cx.file(), memo);
     for (dependency, _) in effect_events.iter().filter_map(|at| declared.get(*at)) {
         cx.report(dependency.span, USE_EFFECT_EVENT)
             .called_with(node);
@@ -1348,7 +1344,7 @@ pub(crate) fn run<'a, R: Rule>(
         }
         // oxlint visits the pairs in its hash table's iteration order.
         if pairs.len() > 1 {
-            let places = places_in_table(&declared, cx.file(), memo);
+            let places = table_positions(&declared, cx.file(), memo);
             let place = |at: usize| places.get(at).copied().unwrap_or(0);
             for it in &mut pairs {
                 let (first, second) = (place(it.0), place(it.1));
@@ -1371,7 +1367,7 @@ pub(crate) fn run<'a, R: Rule>(
             .filter(|(_, it)| !is_needed(it.1))
             .map(|it| it.0)
             .collect();
-        sort_as_oxlint(&mut not_needed, &declared, cx.file(), memo);
+        sort_in_oxlint_order(&mut not_needed, &declared, cx.file(), memo);
         for (dependency, _) in not_needed.iter().filter_map(|at| declared.get(*at)) {
             unnecessary(dependency);
         }
@@ -1384,7 +1380,7 @@ pub(crate) fn run<'a, R: Rule>(
         .filter(|(_, it)| is_unique(&it.0))
         .map(|it| it.0)
         .collect();
-    sort_as_oxlint(&mut changing, &declared, cx.file(), memo);
+    sort_in_oxlint_order(&mut changing, &declared, cx.file(), memo);
     let first_changing =
         (changing.first().copied()).filter(|_| outer.is_empty() && undeclared.is_empty());
     for (at, (dependency, _)) in changing

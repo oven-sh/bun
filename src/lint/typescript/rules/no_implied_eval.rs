@@ -45,7 +45,7 @@ fn is_function_type(node: Expr) -> bool {
     let ty = node.ty();
     ty.is_unresolved()
         // An `any` could be anything. Upstream treats it as a string.
-        || node.file().language().stands_alone && ty.has_flags(TypeFlags::ANY)
+        || node.file().language().has_no_foreign_config && ty.has_flags(TypeFlags::ANY)
         || ty.get_symbol().is_some_and(|symbol| symbol.has_flags(SymbolFlags::FUNCTION | SymbolFlags::METHOD))
         || is_builtin_symbol_like(ty, FUNCTION_CONSTRUCTOR)
         || !ty.get_call_signatures().is_empty()

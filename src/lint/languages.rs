@@ -63,7 +63,7 @@ pub enum Refusal {
     /// The message of the error that `validateLanguageOptions` throws. It ends the run.
     Invalid(Vec<u8>),
     /// The options need something that only the package supports, so these files are handed to `eslint`.
-    OnlyThePackage,
+    NeedsPackage,
 }
 
 pub struct Parsed {

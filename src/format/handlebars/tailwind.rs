@@ -20,7 +20,7 @@ struct Around {
 }
 
 /// True if `id` is a text or a string that starts, or with `is_start: false` ends, with whitespace.
-fn has_blank_at(tree: &Tree, source: &[u8], id: NodeId, is_start: bool) -> bool {
+fn has_whitespace_at(tree: &Tree, source: &[u8], id: NodeId, is_start: bool) -> bool {
     let (Kind::Text { chars: text } | Kind::String { value: text }) = tree.kind(id) else {
         return false;
     };
@@ -40,8 +40,8 @@ fn touches_of(
 ) -> [bool; 2] {
     let before = index.checked_sub(1).and_then(|it| nodes.get(it));
     [
-        before.map_or(outer[0], |it| !has_blank_at(tree, source, *it, false)),
-        (nodes.get(index + 1)).map_or(outer[1], |it| !has_blank_at(tree, source, *it, true)),
+        before.map_or(outer[0], |it| !has_whitespace_at(tree, source, *it, false)),
+        (nodes.get(index + 1)).map_or(outer[1], |it| !has_whitespace_at(tree, source, *it, true)),
     ]
 }
 
@@ -125,12 +125,14 @@ pub(super) fn sort_classes(tree: &mut Tree, source: &[u8], tailwind: &Tailwind) 
             Kind::String { value } => {
                 let old = tree.text(source, value);
                 // `/[^\S\r\n]$/`
-                let ends_with_blank = matches!(old, [.., b' ' | b'\t' | 0x0B | 0x0C]);
+                let ends_with_horizontal_whitespace =
+                    matches!(old, [.., b' ' | b'\t' | 0x0B | 0x0C]);
                 let [touches_start, touches_end] = around.touches;
                 let ends = Ends {
                     ignores_first: touches_start
                         && !old.first().is_some_and(u8::is_ascii_whitespace),
-                    ignores_last: (around.is_in_concat || touches_end) && !ends_with_blank,
+                    ignores_last: (around.is_in_concat || touches_end)
+                        && !ends_with_horizontal_whitespace,
                     collapses_start: false,
                     collapses_end: !around.is_in_concat && !touches_end,
                 };

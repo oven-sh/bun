@@ -234,14 +234,14 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         // `checkSourceElementWorker` has no case for a `JSDocVariadicType` or a `JSDocOptionalType`.
         let wrappers = TypeShape::VARIADIC | TypeShape::OPTIONAL;
         match expr.shape.intersects(wrappers) {
-            true => self.parse_type_again(expr, Reach::Resolved),
-            false => self.parse_type_again(expr, Reach::Checked),
+            true => self.reparse_jsdoc_type(expr, Reach::Resolved),
+            false => self.reparse_jsdoc_type(expr, Reach::Checked),
         }
     }
 
     /// Like `reparse_type`, for a type `checkSourceFile` never reaches. Only `getTypeFromTypeNode` is called for it.
     fn reparse_unchecked_type(&mut self, expr: TypeExpr) -> TypeNodeId {
-        self.parse_type_again(expr, Reach::Resolved)
+        self.reparse_jsdoc_type(expr, Reach::Resolved)
     }
 
     /// `reparseJSDocTypeLiteral`
@@ -519,7 +519,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                     pos: tag.pos,
                     end: tag.end,
                 };
-                let statement = self.parse_import_again(*import, loc, reach);
+                let statement = self.reparse_jsdoc_import(*import, loc, reach);
                 self.jsdoc.reparsed.push(statement);
             }
             TagKind::Overload(signature) => {
@@ -853,7 +853,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     fn reparse_type_arguments(&mut self, class_name: &ClassName<'_>) -> IdList<TypeNodeId> {
         match class_name.type_args {
-            Some(type_args) => self.parse_type_arguments_again(type_args),
+            Some(type_args) => self.reparse_jsdoc_type_arguments(type_args),
             None => IdList::EMPTY,
         }
     }

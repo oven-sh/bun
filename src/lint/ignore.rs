@@ -33,14 +33,14 @@ pub enum Verdict {
 }
 
 struct Rule {
-    /// `None` if an index lookup alone proves a match, or if only `of_package` can decide.
+    /// `None` if an index lookup alone proves a match, or if only `package_rule` can decide.
     pattern: Option<Pattern>,
     /// For the npm flavor, the line without its `!` and the package's regex for it, compiled on first use.
-    of_package: Option<(Box<[u8]>, OnceLock<Option<Regex>>)>,
+    package_rule: Option<(Box<[u8]>, OnceLock<Option<Regex>>)>,
     /// The line also matches the ignore file's own directory, whose relative path is empty. `*/` does.
     matches_empty_path: bool,
     /// `pattern` can't reproduce the package's behavior, so always use the regex.
-    is_only_of_package: bool,
+    needs_package_regex: bool,
     is_negated: bool,
     is_for_directories: bool,
 }
@@ -50,16 +50,16 @@ struct Line {
     /// Matches paths relative to the ignore file's directory.
     pattern: Vec<u8>,
     /// Index in `pattern` where the line's own text starts. It's 3 if a `**/` was added because the line matches in any directory.
-    written_at: usize,
+    text_start: usize,
     /// The line only matches relative to the ignore file's directory.
     is_anchored: bool,
     is_negated: bool,
     is_for_directories: bool,
 }
 
-/// Parses a line for git and the npm package. Only called for lines that [`is_read_the_same`] accepts.
+/// Parses a line for git and the npm package. Only called for lines that [`parses_like_package`] accepts.
 /// Returns `None` for a comment or a blank line.
-fn read_plain(line: &[u8], ignores_case: bool) -> Option<Line> {
+fn parse_plain(line: &[u8], ignores_case: bool) -> Option<Line> {
     let mut written = line.trim_ascii_end();
     if written.starts_with(b"#") {
         return None;
@@ -81,7 +81,7 @@ fn read_plain(line: &[u8], ignores_case: bool) -> Option<Line> {
     if !is_anchored {
         pattern.extend_from_slice(b"**/");
     }
-    let written_at = pattern.len();
+    let text_start = pattern.len();
     for (at, &byte) in written.iter().enumerate() {
         match byte {
             b'{' | b'}' | b'(' => pattern.extend_from_slice(&[b'\\', byte]),
@@ -94,7 +94,7 @@ fn read_plain(line: &[u8], ignores_case: bool) -> Option<Line> {
     }
     Some(Line {
         pattern,
-        written_at,
+        text_start,
         is_anchored,
         is_negated,
         is_for_directories,
@@ -120,7 +120,7 @@ fn one_code_point_per_byte(text: &[u8]) -> Cow<'_, [u8]> {
 /// Parses a line like `GitignoreBuilder::add_line` of the `ignore` crate 0.4 and converts its globset pattern.
 /// Returns `Ok(None)` for a comment or a blank line and `Err` for a line the crate rejects: an unbalanced group, a trailing `\`
 /// or a reversed range like `z-a`.
-fn read_for_crate(line: &[u8], ignores_case: bool) -> Result<Option<Line>, ()> {
+fn parse_for_crate(line: &[u8], ignores_case: bool) -> Result<Option<Line>, ()> {
     if line.starts_with(b"#") {
         return Ok(None);
     }
@@ -160,7 +160,7 @@ fn read_for_crate(line: &[u8], ignores_case: bool) -> Result<Option<Line>, ()> {
     if !is_anchored && written != b"**" {
         pattern.extend_from_slice(b"**/");
     }
-    let written_at = pattern.len();
+    let text_start = pattern.len();
     let (mut at, mut depth, mut has_unclosed_class) = (0, 0_usize, false);
     while let Some(&byte) = written.get(at) {
         at += 1;
@@ -212,7 +212,7 @@ fn read_for_crate(line: &[u8], ignores_case: bool) -> Result<Option<Line>, ()> {
     }
     Ok(Some(Line {
         pattern,
-        written_at,
+        text_start,
         is_anchored,
         is_negated,
         is_for_directories,
@@ -247,7 +247,7 @@ static RANGE: LazyLock<Regex> = LazyLock::new(|| Regex::literal("/([0-z])-([0-z]
 
 /// The package's `makeRegex(pattern, ignoreCase)`. Each replacement runs on the output of the previous one.
 /// Returns `None` where the package throws.
-fn regex_of_package(pattern: &[u8], ignores_case: bool) -> Option<Regex> {
+fn package_regex(pattern: &[u8], ignores_case: bool) -> Option<Regex> {
     let even = |backslashes: &[u8]| backslashes.len() - backslashes.len() % 2;
     let mut source = pattern.to_vec();
     for (step, regex) in REPLACERS.iter().enumerate() {
@@ -319,10 +319,10 @@ fn regex_of_package(pattern: &[u8], ignores_case: bool) -> Option<Regex> {
     Regex::from_bytes(&source, if ignores_case { b"i" } else { b"" }).ok()
 }
 
-/// Returns true if [`read_plain`] and the package agree on `line` (without its `!`). That's the case for ASCII lines
+/// Returns true if [`parse_plain`] and the package agree on `line` (without its `!`). That's the case for ASCII lines
 /// without `\` or trailing whitespace whose classes only contain letters and digits, and whose `**` are interpreted the
 /// same.
-fn is_read_the_same(line: &[u8]) -> bool {
+fn parses_like_package(line: &[u8]) -> bool {
     // In the package, the `**` in `a/**/` can match nothing, so the line also matches `a` itself and every file in it.
     // The package also has its own interpretation of a `**` that isn't a whole segment, as in `a**/**`.
     if line.ends_with(b"/**/")
@@ -354,7 +354,7 @@ fn is_read_the_same(line: &[u8]) -> bool {
 }
 
 /// Indexes into `IgnoreRules::rules`, in ascending order.
-type Places = StringHashMap<Vec<u32>>;
+type RuleIndex = StringHashMap<Vec<u32>>;
 
 /// The rules of one ignore file or one ignore array. It doesn't know its directory and never touches the file system.
 pub struct IgnoreRules {
@@ -363,13 +363,13 @@ pub struct IgnoreRules {
     /// Lines that were rejected.
     refused: Vec<Box<[u8]>>,
     /// Indexes that pick the rules to try: `name` by file name, `/a/b` by path, `*.ext` by extension. Keys are lower case when folding.
-    by_name: Places,
-    by_path: Places,
+    by_name: RuleIndex,
+    by_path: RuleIndex,
     /// Length of the longest key in `by_path`.
     longest_path: usize,
-    by_extension: Places,
+    by_extension: RuleIndex,
     /// Rules that start with a literal segment and a `/`, by that segment.
-    by_first_name: Places,
+    by_first_name: RuleIndex,
     /// Other anchored rules without a `/`. They only apply to entries of the ignore file's own directory.
     at_top: Vec<u32>,
     /// All remaining rules.
@@ -377,10 +377,10 @@ pub struct IgnoreRules {
     /// At least one line starts with `!`.
     has_exceptions: bool,
     /// At least one rule needs the package's regex.
-    has_rules_of_package: bool,
+    has_package_only_rules: bool,
 }
 
-fn places<'m>(map: &'m Places, key: &[u8]) -> Option<&'m [u32]> {
+fn places<'m>(map: &'m RuleIndex, key: &[u8]) -> Option<&'m [u32]> {
     match map.is_empty() {
         true => None,
         false => map.get(key).map(|it| &it[..]),
@@ -398,21 +398,21 @@ impl IgnoreRules {
             options,
             rules: Vec::new(),
             refused: Vec::new(),
-            by_name: Places::new(),
-            by_path: Places::new(),
+            by_name: RuleIndex::new(),
+            by_path: RuleIndex::new(),
             longest_path: 0,
-            by_extension: Places::new(),
-            by_first_name: Places::new(),
+            by_extension: RuleIndex::new(),
+            by_first_name: RuleIndex::new(),
             at_top: Vec::new(),
             others: Vec::new(),
             has_exceptions: false,
-            has_rules_of_package: false,
+            has_package_only_rules: false,
         }
     }
 
     fn add_line(&mut self, line: &[u8]) {
         // `checkPattern`, `createRule`
-        let of_package = (!self.options.has_braces).then(|| {
+        let package_rule = (!self.options.has_braces).then(|| {
             let body = line.strip_prefix(b"!").unwrap_or(line);
             match body {
                 [b'\\', rest @ ..] if matches!(rest, [b'!' | b'#', ..]) => rest,
@@ -420,22 +420,22 @@ impl IgnoreRules {
             }
         });
         // A line made only of `/` matches an empty segment, which only the package's regex handles.
-        let is_read_the_same = |it: &&[u8]| {
-            is_read_the_same(it) && !it.trim_ascii_end().iter().all(|byte| *byte == b'/')
+        let parses_like_package = |it: &&[u8]| {
+            parses_like_package(it) && !it.trim_ascii_end().iter().all(|byte| *byte == b'/')
         };
-        if let Some(body) = of_package.filter(|it| !is_read_the_same(it)) {
-            let says_nothing = strings::trim_js_whitespace(line).is_empty()
+        if let Some(body) = package_rule.filter(|it| !parses_like_package(it)) {
+            let is_skipped = strings::trim_js_whitespace(line).is_empty()
                 || line.starts_with(b"#")
                 || line.ends_with(b"\\") && !line.ends_with(b"\\\\");
-            if !says_nothing {
+            if !is_skipped {
                 self.others.push(self.rules.len() as u32);
-                self.has_rules_of_package = true;
+                self.has_package_only_rules = true;
                 self.has_exceptions |= line.starts_with(b"!");
                 self.rules.push(Rule {
                     pattern: None,
-                    of_package: Some((body.into(), OnceLock::new())),
+                    package_rule: Some((body.into(), OnceLock::new())),
                     matches_empty_path: false,
-                    is_only_of_package: true,
+                    needs_package_regex: true,
                     is_negated: line.starts_with(b"!"),
                     is_for_directories: false,
                 });
@@ -443,8 +443,8 @@ impl IgnoreRules {
             return;
         }
         let read = match self.options.has_braces {
-            true => read_for_crate(line, self.options.ignores_case),
-            false => Ok(read_plain(line, self.options.ignores_case)),
+            true => parse_for_crate(line, self.options.ignores_case),
+            false => Ok(parse_plain(line, self.options.ignores_case)),
         };
         let read = match read {
             Ok(Some(read)) => read,
@@ -452,7 +452,7 @@ impl IgnoreRules {
             Err(()) => return self.refused.push(line.into()),
         };
         let at = self.rules.len() as u32;
-        let (written, is_anchored) = (&read.pattern[read.written_at..], read.is_anchored);
+        let (written, is_anchored) = (&read.pattern[read.text_start..], read.is_anchored);
         let first_len = strings::index_of_char_usize(written, b'/');
         // For these three shapes an index hit is already a match.
         let found_by_key = match written {
@@ -474,11 +474,11 @@ impl IgnoreRules {
             _ => None,
         };
         let is_found_by_key = found_by_key.is_some();
-        let place = found_by_key.or_else(|| {
+        let index_entry = found_by_key.or_else(|| {
             let first = &written[..first_len.filter(|_| is_anchored)?];
             is_literal(first).then_some((&mut self.by_first_name, first))
         });
-        match place {
+        match index_entry {
             Some((places, key)) => {
                 bun_core::handle_oom(places.get_or_put_value(key, Vec::new())).push(at);
             }
@@ -493,8 +493,8 @@ impl IgnoreRules {
             // `may_keep_inside` needs the pattern of every `!` line.
             pattern: (!is_found_by_key || read.is_negated).then(|| Pattern::new(&read.pattern)),
             matches_empty_path: bun_glob::matcher::match_on::<false>(written, b"").matches(),
-            of_package: of_package.map(|it| (it.into(), OnceLock::new())),
-            is_only_of_package: false,
+            package_rule: package_rule.map(|it| (it.into(), OnceLock::new())),
+            needs_package_regex: false,
             is_negated: read.is_negated,
             is_for_directories: read.is_for_directories,
         });
@@ -537,17 +537,17 @@ impl IgnoreRules {
     }
 
     /// Tests the package's regex. `text` is the path, with a trailing `/` for a directory.
-    fn package_says(&self, rule: &Rule, text: &[u8]) -> bool {
-        let Some((line, regex)) = &rule.of_package else {
+    fn package_matches(&self, rule: &Rule, text: &[u8]) -> bool {
+        let Some((line, regex)) = &rule.package_rule else {
             return false;
         };
-        let regex = regex.get_or_init(|| regex_of_package(line, self.options.ignores_case));
+        let regex = regex.get_or_init(|| package_regex(line, self.options.ignores_case));
         regex.as_ref().is_some_and(|it| it.test(text))
     }
 
     /// Returns the last rule in `found` that matches and comes after `best`, otherwise `best`.
     /// With `is_known`, every rule in `found` is already known to match.
-    fn look(
+    fn last_match_in(
         &self,
         (found, is_known): (Option<&[u32]>, bool),
         best: Option<u32>,
@@ -561,14 +561,14 @@ impl IgnoreRules {
             let rule = self.rules.get(**at as usize);
             rule.filter(|it| is_directory || !it.is_for_directories)
                 .is_some_and(|rule| {
-                    let asked = || match rule.is_only_of_package {
-                        true => self.package_says(rule, text),
+                    let is_match = || match rule.needs_package_regex {
+                        true => self.package_matches(rule, text),
                         false => {
                             (rule.pattern.as_ref()).is_none_or(|it| it.matches_candidate(path))
                         }
                     };
-                    debug_assert!(!is_known || asked());
-                    is_known || asked()
+                    debug_assert!(!is_known || is_match());
+                    is_known || is_match()
                 })
         };
         later.find(matches).copied().or(best)
@@ -577,17 +577,17 @@ impl IgnoreRules {
     /// Returns the last matching rule.
     fn last_match(&self, path: &[u8], is_directory: bool) -> Option<&Rule> {
         // The text the package's regex is tested against.
-        let has_empty_name = !self.options.has_braces
+        let has_empty_segment = !self.options.has_braces
             && (matches!(path, [] | [b'/', ..] | [.., b'/']) || strings::contains(path, b"//"));
         let mut text: SmallVec<[u8; 256]> = SmallVec::new();
-        if has_empty_name || self.has_rules_of_package {
+        if has_empty_segment || self.has_package_only_rules {
             text.extend_from_slice(path);
             if is_directory {
                 text.push(b'/');
             }
         }
-        if has_empty_name {
-            return (self.rules.iter().rev()).find(|it| self.package_says(it, &text));
+        if has_empty_segment {
+            return (self.rules.iter().rev()).find(|it| self.package_matches(it, &text));
         }
         if path.is_empty() {
             let applies =
@@ -633,7 +633,7 @@ impl IgnoreRules {
             ),
             (Some(&self.others[..]), false),
         ] {
-            best = self.look(found, best, (&candidate, &text), is_directory);
+            best = self.last_match_in(found, best, (&candidate, &text), is_directory);
         }
         self.rules.get(best? as usize)
     }
@@ -648,7 +648,7 @@ impl IgnoreRules {
     }
 
     /// `Gitignore::matched_path_or_any_parents`. Checks `path`, then each parent directory until a line matches.
-    pub fn verdict_or_of_parents(&self, mut path: &[u8], is_directory: bool) -> Verdict {
+    pub fn verdict_with_parents(&self, mut path: &[u8], is_directory: bool) -> Verdict {
         if self.rules.is_empty() {
             return Verdict::Unmentioned;
         }

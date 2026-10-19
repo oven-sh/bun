@@ -1234,7 +1234,7 @@ impl<'s> Checker<'_, 's> {
         let Some(expr) = hir.exprs.get(e.idx()) else {
             return 0;
         };
-        let is_pointed_at_by_a_token = match expr.kind {
+        let reports_at_single_token = match expr.kind {
             ExprKind::Fn(f) => match hir.fns.get(f.idx()).map(|f| f.kind) {
                 Some(FnKind::Arrow) => return spans.arrow_error_end(e, f) as u32,
                 kind => kind == Some(FnKind::Expr),
@@ -1242,7 +1242,7 @@ impl<'s> Checker<'_, 's> {
             ExprKind::Class(_) | ExprKind::Satisfies { .. } | ExprKind::Yield { .. } => true,
             _ => false,
         };
-        if is_pointed_at_by_a_token {
+        if reports_at_single_token {
             // A name, the keyword, or the first token where there is no name.
             spans.name(self.error_start_inside_parentheses(file, e) as usize) as u32
         } else {

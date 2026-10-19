@@ -40,7 +40,7 @@ pub trait Work: Sync {
 /// Owns the realms.
 pub trait Engine: Sync {
     /// True if the calling thread has a realm.
-    fn is_here(&self) -> bool;
+    fn thread_has_realm(&self) -> bool;
 
     /// Calls `then` on the calling thread with a realm that nothing else uses in the meantime. `then` can request a
     /// realm itself without blocking. `size` is the size of the file the realm is for, or 0 if it isn't for a file.
@@ -94,7 +94,7 @@ pub const HEAVY: usize = 256 << 10;
 /// The fraction of its own cost that another realm has to save. This trades time against memory and work. With 0.5,
 /// openlayers (8 MB) and mermaid (7 MB) get 3 realms and vscode (180 MB) gets 16. With 1 they get 3, 2 and 13, and with
 /// 0.25 they get 4, 4 and 16.
-const SHARE_TO_SAVE: f64 = 0.5;
+const MIN_SAVED_FRACTION: f64 = 0.5;
 
 /// How many bytes a realm lints in the time it takes to start another one, which has to load the plugins and is slow
 /// until its code is compiled. Measured with eight projects' configs, it ranges from under 0.1 to 6 MB, and from 0.4 to
@@ -104,14 +104,14 @@ const SHARE_TO_SAVE: f64 = 0.5;
 /// Timing the run works worse: it would be based on the first files, which are the slow ones, so another realm looks
 /// cheap. The same 300 files got anywhere from 1 to 16 realms that way. The amount of code a realm has loaded doesn't
 /// predict its cost either: it ranges from 0.06 to 2.7 seconds per MB of source.
-const BYTES_IN_THE_COST: f64 = 1e6;
+const REALM_COST_IN_BYTES: f64 = 1e6;
 
 #[derive(Default)]
-struct Left {
+struct Remaining {
     /// The total size of the files still to come.
     bytes: u64,
     /// The total size of the files announced up front.
-    at_first: u64,
+    announced: u64,
     /// The total size of the files that might need a realm and aren't done yet.
     possible: u64,
     /// The total size of such files that did need a realm, and of those that didn't.
@@ -122,16 +122,16 @@ struct Left {
 
 /// Decides how many realms a run has.
 #[derive(Default)]
-pub struct Demand(Guarded<Left>);
+pub struct Demand(Guarded<Remaining>);
 
 impl Demand {
     /// [`Engine::expect`]
     pub fn expect(&self, size: u64, most: usize) {
-        *self.0.lock() = Left {
+        *self.0.lock() = Remaining {
             bytes: size,
-            at_first: size,
+            announced: size,
             most,
-            ..Left::default()
+            ..Remaining::default()
         };
     }
 
@@ -181,27 +181,27 @@ impl Demand {
             return true;
         }
         // The existing realms keep working until the new one is ready. After that there's one more.
-        let (all, realms) = (left.all() / BYTES_IN_THE_COST, realms as f64);
-        (all / realms - 1.0) / (realms + 1.0) >= SHARE_TO_SAVE
+        let (all, realms) = (left.all() / REALM_COST_IN_BYTES, realms as f64);
+        (all / realms - 1.0) / (realms + 1.0) >= MIN_SAVED_FRACTION
     }
 }
 
-impl Left {
+impl Remaining {
     /// Estimates how much of `possible` will need a realm, using the fraction of the finished files that did. The first
-    /// such file is weak evidence, so the estimate starts as if `BYTES_IN_THE_COST` bytes had already finished without
-    /// needing one.
-    fn still_to_show(&self) -> f64 {
+    /// such file is weak evidence, so the estimate starts as if `REALM_COST_IN_BYTES` bytes had already finished
+    /// without needing one.
+    fn expected_from_possible(&self) -> f64 {
         let (come, not) = (self.shown.0 as f64, self.shown.1 as f64);
-        self.possible as f64 * come / (come + not + BYTES_IN_THE_COST)
+        self.possible as f64 * come / (come + not + REALM_COST_IN_BYTES)
     }
 
     /// The estimated total size of the files still to come.
     fn expected(&self) -> f64 {
-        self.bytes as f64 + self.still_to_show()
+        self.bytes as f64 + self.expected_from_possible()
     }
 
     /// The estimated total size of all the files in the run.
     fn all(&self) -> f64 {
-        (self.at_first + self.shown.0) as f64 + self.still_to_show()
+        (self.announced + self.shown.0) as f64 + self.expected_from_possible()
     }
 }

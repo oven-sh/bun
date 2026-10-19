@@ -139,14 +139,14 @@ fn dotfiles_for(argument: &[u8]) -> Dotfiles {
 }
 
 /// A directory on the path from a search's starting directory to a listed directory.
-struct Way {
+struct Trail {
     /// Its real path, with symlinks resolved.
     real: Vec<u8>,
     /// The directory it was found in. `None` if the search starts here.
-    above: Option<Arc<Way>>,
+    above: Option<Arc<Trail>>,
 }
 
-impl Way {
+impl Trail {
     /// True if the directory at the real path `real` is on this path.
     fn has(&self, real: &[u8]) -> bool {
         std::iter::successors(Some(self), |it| it.above.as_deref()).any(|it| it.real == real)
@@ -156,7 +156,7 @@ impl Way {
 /// A directory to list.
 struct Directory {
     path: Vec<u8>,
-    way: Arc<Way>,
+    trail: Arc<Trail>,
     /// Relative to the directory being searched. Empty for that directory.
     relative: Vec<u8>,
     /// Its parent directory's configuration or, for the directory being searched, its own.
@@ -199,7 +199,7 @@ fn cannot_follow(code: &str, label: &str, path: &[u8]) -> Fatal {
 }
 
 /// ESLint 8's `statSafeSync`: `None` if nothing exists at `path`.
-fn thrown_by_eslint_8(error: &bun_sys::Error, path: &[u8]) -> Option<Fatal> {
+fn eslint_8_stat_error(error: &bun_sys::Error, path: &[u8]) -> Option<Fatal> {
     let (code, label) = error.uv_code_label()?;
     (error.get_errno() != bun_sys::E::ENOENT).then(|| cannot_follow(code, label, path))
 }
@@ -263,7 +263,7 @@ fn search(
     let matchers: Vec<Matcher> = (search.patterns.iter())
         .map(|it| Matcher::new(&paths::relative(&search.base_path, &it.pattern)))
         .collect();
-    let takes_everything = (matchers.iter()).all(|it| matches!(it, Matcher::Everything));
+    let matches_everything = (matchers.iter()).all(|it| matches!(it, Matcher::Everything));
     let dotfiles = search.dotfiles;
     let is_matched: Vec<AtomicBool> = matchers.iter().map(|_| AtomicBool::new(false)).collect();
     let registry = loader.linter.registry();
@@ -284,12 +284,12 @@ fn search(
                 loader.ignore_files_at(&search.base_path, &inherited, are_all_in_repositories)
         {
             let real = fs::real_path(&search.base_path);
-            if loader.notes_tsconfigs() {
+            if loader.collects_tsconfigs() {
                 (loader.searched_from.lock()).push(search.base_path.clone());
             }
             level.push(Directory {
                 path: search.base_path.clone(),
-                way: Arc::new(Way {
+                trail: Arc::new(Trail {
                     real: real.unwrap_or_else(|| search.base_path.clone()),
                     above: None,
                 }),
@@ -310,7 +310,7 @@ fn search(
                 return;
             };
             let entries = std::mem::take(&mut listing.entries);
-            if loader.notes_tsconfigs() {
+            if loader.collects_tsconfigs() {
                 // TypeScript reads one even if an ignore file excludes it. The consumer knows whether file names are
                 // case-sensitive here.
                 let names = [&b"tsconfig.json"[..], b"jsconfig.json"];
@@ -339,7 +339,7 @@ fn search(
                 }
             };
             // ESLint looks up the configuration for anything that isn't a directory, whatever its name.
-            let lacks_file = loader.lacks_file_of_eslint(&own);
+            let lacks_file = loader.lacks_eslint_config_file(&own);
             if lacks_file && let Some(file) = entries.iter().find(|it| !it.is_directory) {
                 let path = paths::join(&directory.path, &file.name);
                 failure.lock().get_or_insert(config_file_missing(&path));
@@ -383,12 +383,12 @@ fn search(
                 // resolve the link and follow it. As in the `ignore` crate, which oxlint walks with, a loop is a link
                 // to one of the directories on the path from the search's starting directory.
                 if entry.is_link && own.flavor != Flavor::Eslint {
-                    match fs::end_of_link(&path) {
+                    match fs::link_target_kind(&path) {
                         Ok(Some(fs::Kind::Directory)) => {
                             let Some(end) = fs::real_path(&path) else {
                                 continue;
                             };
-                            is_loop = directory.way.has(&end);
+                            is_loop = directory.trail.has(&end);
                             if is_loop && own.flavor != Flavor::EslintRc {
                                 continue;
                             }
@@ -398,7 +398,7 @@ fn search(
                         Err(error) => {
                             // ESLint 8 throws regardless of the link's name.
                             if own.flavor == Flavor::EslintRc
-                                && let Some(thrown) = thrown_by_eslint_8(&error, &path)
+                                && let Some(thrown) = eslint_8_stat_error(&error, &path)
                             {
                                 failure.lock().get_or_insert(thrown);
                                 return;
@@ -415,7 +415,7 @@ fn search(
                     continue;
                 }
                 let relative = match directory.relative.is_empty() {
-                    _ if !entry.is_directory && takes_everything => Vec::new(),
+                    _ if !entry.is_directory && matches_everything => Vec::new(),
                     true => entry.name.clone(),
                     false => paths::join(&directory.relative, &entry.name),
                 };
@@ -437,13 +437,13 @@ fn search(
                             return;
                         }
                         let real =
-                            real.unwrap_or_else(|| paths::join(&directory.way.real, &entry.name));
+                            real.unwrap_or_else(|| paths::join(&directory.trail.real, &entry.name));
                         directories.push(Directory {
-                            seen: Some(within.see_below(&path)),
+                            seen: Some(within.see_child(&path)),
                             path,
-                            way: Arc::new(Way {
+                            trail: Arc::new(Trail {
                                 real,
-                                above: Some(Arc::clone(&directory.way)),
+                                above: Some(Arc::clone(&directory.trail)),
                             }),
                             relative,
                             inherited: Arc::clone(&own),
@@ -543,7 +543,10 @@ pub(crate) fn list_as_eslint_8(
 /// files if it starts with `!` and no file or directory has that name, as in `bun fmt`. ESLint rejects these arguments
 /// and oxlint ignores them. If every argument is an exclusion, oxfmt searches the working directory, so a run with an
 /// oxlint config does too.
-fn split_negative<'p>(loader: &Loader, patterns: &'p [Vec<u8>]) -> (Cow<'p, [Vec<u8>]>, Negative) {
+fn split_exclusions<'p>(
+    loader: &Loader,
+    patterns: &'p [Vec<u8>],
+) -> (Cow<'p, [Vec<u8>]>, Negative) {
     let mut negative = Negative::default();
     if !patterns.iter().any(|it| it.starts_with(b"!")) {
         return (Cow::Borrowed(patterns), negative);
@@ -574,7 +577,7 @@ pub(crate) fn find_files(
 ) -> Result<Vec<Target>, Fatal> {
     let cwd = &loader.environment().cwd;
     let first = patterns.first();
-    let (patterns, negative) = split_negative(loader, patterns);
+    let (patterns, negative) = split_exclusions(loader, patterns);
     let patterns = &patterns[..];
     if let (true, Some(first)) = (patterns.is_empty() && error_on_unmatched_pattern, first) {
         return Err(no_files_found(first));
@@ -623,8 +626,8 @@ pub(crate) fn find_files(
         let path = paths::resolve(cwd, &pattern);
         let there = fs::kind_and_size(&path);
         if there.is_none()
-            && let Err(error) = fs::end_of_link(&path)
-            && let Some(thrown) = thrown_by_eslint_8(&error, &path)
+            && let Err(error) = fs::link_target_kind(&path)
+            && let Some(thrown) = eslint_8_stat_error(&error, &path)
             && is_for_eslint_8(paths::dirname(&path))
         {
             return Err(thrown);
@@ -635,7 +638,7 @@ pub(crate) fn find_files(
             }
             Some((fs::Kind::File, size)) => {
                 let loaded = loader.for_directory(paths::dirname(&path))?;
-                if loader.lacks_file_of_eslint(&loaded) {
+                if loader.lacks_eslint_config_file(&loaded) {
                     return Err(config_file_missing(&path));
                 }
                 let status = match loader.ignores_named_file(&pattern, &path, &loaded) {
@@ -738,7 +741,7 @@ pub(crate) fn find_files_not_on_disk<'f>(
     files: impl Iterator<Item = (&'f [u8], u64)>,
 ) -> Result<Vec<Target>, Fatal> {
     let cwd = &loader.environment().cwd;
-    let (patterns, negative) = split_negative(loader, patterns);
+    let (patterns, negative) = split_exclusions(loader, patterns);
     // A search doesn't enter an excluded directory.
     let is_left_out = |file: &[u8]| paths::ancestors(file).any(|it| negative.matches(cwd, it));
     let is_wanted = |file: &[u8]| {
@@ -760,7 +763,7 @@ pub(crate) fn find_files_not_on_disk<'f>(
     for (file, size) in files.filter(|it| is_wanted(it.0)) {
         let directory = paths::dirname(file);
         let loaded = loader.for_directory(directory)?;
-        if loader.lacks_file_of_eslint(&loaded) {
+        if loader.lacks_eslint_config_file(&loaded) {
             return Err(config_file_missing(file));
         }
         let is_ignored = (loader.ignore_files_at(directory, &loaded, &|| true)).is_none_or(|it| {

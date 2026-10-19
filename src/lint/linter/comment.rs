@@ -6,7 +6,7 @@ use bun_core::strings;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// A list with fewer names than this gets a linear search.
-const FEW: usize = 16;
+const LINEAR_SEARCH_MAX: usize = 16;
 
 /// `/* label value -- justification */`. All are slices of the text that was parsed.
 #[derive(Copy, Clone, Debug)]
@@ -109,9 +109,9 @@ pub(crate) fn parse_list_config(text: &[u8]) -> Vec<&[u8]> {
             continue;
         }
         let is_new = match names.len() {
-            0..FEW => !names.contains(&name),
+            0..LINEAR_SEARCH_MAX => !names.contains(&name),
             len => {
-                if len == FEW {
+                if len == LINEAR_SEARCH_MAX {
                     seen.extend(&names);
                 }
                 seen.insert(name)
@@ -170,17 +170,17 @@ pub(crate) fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)
         let mut parts = strings::split(name, b":");
         let key = parts.next().unwrap_or_default();
         let value = parts.next().map(<[u8]>::to_vec);
-        if items.len() == FEW && places.is_empty() {
+        if items.len() == LINEAR_SEARCH_MAX && places.is_empty() {
             places.extend(items.iter().enumerate().map(|(i, it)| (it.0.clone(), i)));
         }
         let place = match items.len() {
-            0..FEW => items.iter().position(|it| it.0 == key),
+            0..LINEAR_SEARCH_MAX => items.iter().position(|it| it.0 == key),
             _ => places.get(key).copied(),
         };
         match place.and_then(|it| items.get_mut(it)) {
             Some(item) => item.1 = value,
             None => {
-                if items.len() >= FEW {
+                if items.len() >= LINEAR_SEARCH_MAX {
                     places.insert(key.to_vec(), items.len());
                 }
                 items.push((key.to_vec(), value));

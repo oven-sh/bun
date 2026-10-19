@@ -112,7 +112,7 @@ impl Checker<'_, '_> {
     }
 
     /// Computes `d`'s end if it isn't set yet.
-    pub(super) fn settle_place(&self, d: &mut Reported) {
+    pub(super) fn resolve_span_end(&self, d: &mut Reported) {
         d.was_bare = d.is_bare();
         d.end = super::spans::Spans::of(self.hir(d.file)).diagnostic_end(d.start, d.end);
     }

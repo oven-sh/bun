@@ -48,11 +48,11 @@ pub fn to_native(mut path: Vec<u8>) -> Vec<u8> {
 /// Converts `written`, a path written in the file at `from` or in a file in the directory `from`. If `from` is a
 /// Windows path, `\` is also a separator.
 pub fn portable(from: &[u8], written: &[u8]) -> Vec<u8> {
-    of_node(Style::of(from), written)
+    from_node_path(Style::of(from), written)
 }
 
 /// Converts a result from `bun_node_path`, which uses `\` in Windows paths.
-fn of_node(style: Style, answer: &[u8]) -> Vec<u8> {
+fn from_node_path(style: Style, answer: &[u8]) -> Vec<u8> {
     let mut path = answer.to_vec();
     if style == Style::Windows {
         slashes_to_posix_in_place(&mut path);
@@ -94,7 +94,7 @@ pub fn resolve_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
         Style::Windows => node::resolve_windows_t(&paths, buf, buf2),
     };
     // It only fails for an invalid server name.
-    of_node(style, resolved.unwrap_or(path))
+    from_node_path(style, resolved.unwrap_or(path))
 }
 
 /// `path.relative(base, path)` of two resolved paths. Empty if they are the same.
@@ -110,7 +110,7 @@ pub fn shown(path: &[u8]) -> Vec<u8> {
 }
 
 /// [`relative`], escaped by [`shown`].
-pub fn relative_shown(base: &[u8], path: &[u8]) -> Vec<u8> {
+pub fn relative_escaped(base: &[u8], path: &[u8]) -> Vec<u8> {
     shown(&relative(base, path))
 }
 
@@ -127,7 +127,7 @@ pub fn relative_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
         Style::Posix => node::relative_posix_t(base, path, buf, buf2, buf3),
         Style::Windows => node::relative_windows_t(base, path, buf, buf2, buf3),
     };
-    of_node(style, relative.unwrap_or(path))
+    from_node_path(style, relative.unwrap_or(path))
 }
 
 /// The components of `path`, without `.` and with `..` resolved. The drive, or the server and share, come first, and
@@ -310,7 +310,7 @@ pub fn join_normalized(a: &[u8], b: &[u8]) -> Vec<u8> {
         Style::Posix => node::join_posix_t(&paths, buf, buf2),
         Style::Windows => node::join_windows_t(&paths, buf, buf2),
     };
-    of_node(style, joined)
+    from_node_path(style, joined)
 }
 
 /// `path.normalize(path)`
@@ -321,7 +321,7 @@ pub fn normalize(path: &[u8]) -> Vec<u8> {
         Style::Posix => node::normalize_posix_t(path, &mut buf),
         Style::Windows => node::normalize_windows_t(path, &mut buf),
     };
-    of_node(style, normalized)
+    from_node_path(style, normalized)
 }
 
 /// The package that `name` belongs to. `name` is a package name or a path to a file inside one, because eslint-config-next

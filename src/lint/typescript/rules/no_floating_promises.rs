@@ -163,11 +163,11 @@ impl NoFloatingPromises {
             return;
         }
         if self.ignore_void {
-            report = report.suggest_change_of_behavior(FLOATING_FIX_VOID, &[], |fixer| {
+            report = report.suggest_behavior_change(FLOATING_FIX_VOID, &[], |fixer| {
                 add_operator(fixer, "void", node, expression)
             });
         }
-        report.suggest_change_of_behavior(FLOATING_FIX_AWAIT, &[], |fixer| add_await(fixer, node, expression));
+        report.suggest_behavior_change(FLOATING_FIX_AWAIT, &[], |fixer| add_await(fixer, node, expression));
     }
 
     fn is_known_safe_promise_call(&self, node: Expr) -> bool {

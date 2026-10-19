@@ -285,7 +285,7 @@ impl<'a> File<'a> {
     /// nothing.
     #[inline]
     pub fn modules(&self) -> Option<&'a dyn Modules> {
-        self.sink.asks_about_modules.set(true);
+        self.sink.has_requested_modules.set(true);
         self.modules.get()
     }
 
@@ -327,7 +327,7 @@ pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
             set_lines(file.text(), &mut requests);
         }
         // Nothing reads the lines with this flavor.
-        Flavor::Oxlint => add_static_requests_of_oxlint(file, &mut requests),
+        Flavor::Oxlint => add_oxlint_static_requests(file, &mut requests),
     }
     requests
 }
@@ -378,7 +378,7 @@ fn add_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) 
 /// oxlint's `requested_modules`, in source order. oxlint decides whether only types are imported for all statements
 /// with the same specifier together: they must import or re-export at least one name, and all of those names must be
 /// types. `import "m"`, `import {} from "m"` and `export * from "m"` have no names.
-fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) {
+fn add_oxlint_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) {
     let first = requests.len();
     // For each request: the specifier, whether the statement has names, whether any of them is a value, and whether it
     // exports them.

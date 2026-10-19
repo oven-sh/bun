@@ -120,7 +120,7 @@ impl Settings {
                 uses_configuration: self.uses_configuration,
                 file_info_options: self.file_info_options.as_ref(),
                 package_module: file.package_module(),
-                follows_packages: !file.language().stands_alone,
+                follows_packages: !file.language().has_no_foreign_config,
             }),
             None => Formatted::NotNative(Reason::NoFormatter),
         };
@@ -142,7 +142,9 @@ impl Settings {
         let (formatted, hunks) = match self.compare(like, file, source) {
             Ok(Some(it)) => it,
             Ok(None) | Err(Reason::NoFormatter) => return,
-            Err(reason) if like == Like::InstalledPrettier && !file.language().stands_alone => {
+            Err(reason)
+                if like == Like::InstalledPrettier && !file.language().has_no_foreign_config =>
+            {
                 return file.hand_back(reason);
             }
             // There's no package rule to fall back to, so report that the file wasn't checked.

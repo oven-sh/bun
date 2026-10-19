@@ -296,26 +296,26 @@ fn fix_as_oxlint<'a>(
 ) -> Option<Fix> {
     let var = var_keyword(statement)?;
     // A variable can't escape the file. A parameter's default value is outside the function's body.
-    let around = match statement.parent() {
+    let enclosing_span = match statement.parent() {
         _ if statement.is_exported() => Some(statement.span()),
         Node::Stmt(parent) => Some(parent.span()),
         Node::Case(case) => Some(case.span()),
         Node::Func(func) => func.body_span(),
         _ => None,
     };
-    if let Some(around) = around {
+    if let Some(enclosing_span) = enclosing_span {
         let is_body = matches!(statement.parent(), Node::Func(_));
-        let mut leaves = false;
+        let mut escapes = false;
         for declaration in declarations {
             declaration.pat().for_each_binding(&mut |pat| {
                 // oxlint doesn't count a parameter getting its default value as a reference.
-                leaves |= pat.symbol().is_some_and(|it| {
+                escapes |= pat.symbol().is_some_and(|it| {
                     it.references()
-                        .any(|it| !around.contains(it.span()) && !(is_body && it.is_init()))
+                        .any(|it| !enclosing_span.contains(it.span()) && !(is_body && it.is_init()))
                 });
             });
         }
-        if leaves {
+        if escapes {
             return None;
         }
     }
@@ -375,8 +375,8 @@ impl Rule for NoVar {
         }
         // oxlint reports only the `var` keyword.
         let is_oxlint = cx.language().is_oxlint;
-        let place = var_keyword(statement).filter(|_| is_oxlint).unwrap_or(span);
-        cx.report(place, UNEXPECTED_VAR)
+        let location = var_keyword(statement).filter(|_| is_oxlint).unwrap_or(span);
+        cx.report(location, UNEXPECTED_VAR)
             .called_with(statement)
             .fix(|fixer| {
                 if is_oxlint {

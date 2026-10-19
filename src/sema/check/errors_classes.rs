@@ -148,7 +148,7 @@ impl<'p> Checker<'p, '_> {
         if let Some((declared_in, func, _)) = self.sig_decl(declared)
             && self.hir(declared_in)[func].flags.contains(Flags::PRIVATE)
             // `t.symbol`. tsgo dereferences nil for a type that has none.
-            && let Some(symbol) = self.symbol_of_type(apparent).and_then(|it| it.of_binder())
+            && let Some(symbol) = self.symbol_of_type(apparent).and_then(|it| it.as_binder_symbol())
             // `GetClassLikeDeclarationOfSymbol(t.symbol)` is nil for an interface.
             && !(self.enclosing_classes(file, hir[c].extends).into_iter())
                 .any(|around| self.class_sym(file, around) == symbol)

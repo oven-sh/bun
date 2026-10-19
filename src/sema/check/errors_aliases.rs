@@ -114,7 +114,7 @@ impl Directives {
 }
 
 impl Checker<'_, '_> {
-    pub(super) fn check_x_aliases(&mut self, file: FileId) {
+    pub(super) fn check_alias_errors(&mut self, file: FileId) {
         let hir = self.hir(file);
         // `SkipTypeChecking`: a declaration file is checked like any other file. The default library has no text and
         // isn't checked.
@@ -891,7 +891,7 @@ impl Checker<'_, '_> {
             }
             last = Some(owner);
             // `NodeCanBeDecorated`
-            if bound.is_unchecked(e.idx()) || bound.refused_decorators.contains(&e) {
+            if bound.is_unchecked(e.idx()) || bound.rejected_decorators.contains(&e) {
                 continue;
             }
             // `markLinkedReferences`: among ambient nodes, only a property contributes.
@@ -1473,7 +1473,7 @@ impl Checker<'_, '_> {
             let directive = hir.comment_directives.iter().find(|it| it.start == start);
             let at = (file, start, directive.map_or(0, |it| it.end));
             let mut unused = Reported::new(at, 2578, Default::default());
-            self.settle_place(&mut unused);
+            self.resolve_span_end(&mut unused);
             expected.push(unused);
         }
         expected

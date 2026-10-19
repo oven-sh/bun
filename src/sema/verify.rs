@@ -248,15 +248,17 @@ impl Problem {
             let Place::TopElement(_, specified) = &self.at else {
                 return Some(file.span(list));
             };
-            let is_it = |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(specified);
-            return file.elements(list).find(is_it).map(|e| file.span(e));
+            let is_match =
+                |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(specified);
+            return file.elements(list).find(is_match).map(|e| file.span(e));
         }
         let options = file.property(root, b"compilerOptions", None)?;
         let written = file.initializer(options);
         if let Place::Element(name, specified) = &self.at {
-            let is_it = |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(specified);
+            let is_match =
+                |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(specified);
             let mut elements = file.elements(value_of(written, name)?);
-            return elements.find(is_it).map(|e| file.span(e));
+            return elements.find(is_match).map(|e| file.span(e));
         }
         let in_paths = |key: &[u8], key2| file.property(value_of(written, b"paths")?, key, key2);
         // `createOptionDiagnosticInObjectLiteralSyntax` always passes a second key.
@@ -318,27 +320,27 @@ pub fn verify_project_references<'a>(
         if !seen_ref.insert(path) {
             continue;
         }
-        let mut say = |code, args: &[&[u8]]| {
+        let mut report = |code, args: &[&[u8]]| {
             let problem = Problem::new(code, args, Place::Reference(index));
             out.push((parent.config_path.as_slice(), problem));
         };
         let reference = displayed_path(reference);
         let Some(config) = config else {
-            say(6053, &[&reference]);
+            report(6053, &[&reference]);
             continue;
         };
         if !parent.files.is_empty() {
             if !config.options.composite {
-                say(6306, &[&reference]);
+                report(6306, &[&reference]);
             }
             if config.options.no_emit {
-                say(6310, &[&reference]);
+                report(6310, &[&reference]);
             }
         }
         if !build_info_file_name.is_empty()
             && build_info_file_name == config.get_build_info_file_name()
         {
-            say(6377, &[&displayed_path(&build_info_file_name), &reference]);
+            report(6377, &[&displayed_path(&build_info_file_name), &reference]);
         }
         pending.push((config, 0));
     }

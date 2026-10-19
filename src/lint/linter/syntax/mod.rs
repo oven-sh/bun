@@ -32,13 +32,13 @@ struct SyntaxError {
     /// only report a start position.
     end: u32,
     message: Vec<u8>,
-    of_oxc: OfOxc,
+    of_oxc: OxcDetails,
 }
 
 /// Everything oxlint prints for an error besides the message and the first label's position, plus what determines the
 /// error's order.
 #[derive(Default)]
-struct OfOxc {
+struct OxcDetails {
     /// 1038 for `TS(1038)`. 0 if the error has no code.
     code: u16,
     /// The first label's text.
@@ -84,7 +84,7 @@ impl SyntaxError {
                 false => label.end,
             },
             message: message.to_vec(),
-            of_oxc: OfOxc::default(),
+            of_oxc: OxcDetails::default(),
         }
     }
 
@@ -157,13 +157,13 @@ impl SyntaxError {
         self
     }
 
-    /// [`OfOxc::noticed`]
+    /// [`OxcDetails::noticed`]
     fn noticed_at(mut self, at: u32) -> SyntaxError {
         self.of_oxc.noticed = Some(at);
         self
     }
 
-    /// [`OfOxc::noticed`], or where the last label starts.
+    /// [`OxcDetails::noticed`], or where the last label starts.
     fn order(&self) -> u32 {
         let last = self.of_oxc.labels.last().map_or(self.at, |it| it.0.start);
         self.of_oxc.noticed.unwrap_or(last)
@@ -184,7 +184,7 @@ fn is_tolerated(file: &File, diagnostic: &Diagnostic) -> bool {
         1121 | 1487 | 1488 | 1489 => {
             // oxlint decides by whether the file has `import` or `export`. Don't reject a file that oxlint might
             // accept.
-            !language.refuses_what_parser_refuses
+            !language.rejects_what_parser_rejects
                 || is_espree
                     && language.source_type != SourceType::Module
                     && !language.implied_strict
@@ -199,7 +199,7 @@ fn is_tolerated(file: &File, diagnostic: &Diagnostic) -> bool {
 
 /// The first error from TypeScript's parser that isn't tolerated. `Some(None)` means the parser failed without a
 /// diagnostic.
-fn error_of_parser<'a>(file: &'a File<'a>) -> Option<Option<&'a Diagnostic>> {
+fn first_parser_error<'a>(file: &'a File<'a>) -> Option<Option<&'a Diagnostic>> {
     if !file.has_parse_errors() {
         return None;
     }
@@ -214,16 +214,16 @@ fn error_of_parser<'a>(file: &'a File<'a>) -> Option<Option<&'a Diagnostic>> {
 /// Translates the errors from TypeScript's parser that aren't tolerated into oxc's wording, up to the first one where
 /// oxc's parser gives up. Also returns that one's index in the file's diagnostics and the offset TypeScript's parser
 /// reports it at.
-fn errors_of_parser_for_oxc<'a>(file: &'a File<'a>) -> (Vec<SyntaxError>, Option<(usize, u32)>) {
+fn parser_errors_for_oxc<'a>(file: &'a File<'a>) -> (Vec<SyntaxError>, Option<(usize, u32)>) {
     match file.has_parse_errors() {
-        true => in_words_of_oxc(file, file.hir.diagnostics),
+        true => to_oxc_errors(file, file.hir.diagnostics),
         false => (Vec::new(), None),
     }
 }
 
-/// [`errors_of_parser_for_oxc`] for the given `diagnostics`.
+/// [`parser_errors_for_oxc`] for the given `diagnostics`.
 #[optimize(size)]
-fn in_words_of_oxc<'a>(
+fn to_oxc_errors<'a>(
     file: &'a File<'a>,
     diagnostics: &[Diagnostic],
 ) -> (Vec<SyntaxError>, Option<(usize, u32)>) {
@@ -317,7 +317,7 @@ pub fn redeclarations<'a>(file: &'a File<'a>) -> usize {
 /// error. That parser may accept the file, but our tree has holes that no rule expects.
 pub fn may_be_misread<'a>(file: &'a File<'a>) -> bool {
     file.language().parser == Parser::Other
-        && (error_of_parser(file).is_some()
+        && (first_parser_error(file).is_some()
             || typescript_estree::first_error(file, false).is_some())
 }
 
@@ -338,7 +338,7 @@ pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage
     let parser = file.language().parser;
     // This error has no position.
     if parser == Parser::Espree
-        && let Some(message) = espree::editions::refused_options(file)
+        && let Some(message) = espree::editions::invalid_parser_options(file)
     {
         let refused = LintMessage {
             message: [b"Parsing error: ", &message[..]].concat(),
@@ -347,14 +347,14 @@ pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage
         };
         return (vec![refused], true);
     }
-    if !file.language().refuses_what_parser_refuses {
-        let (of_parser, stop) = errors_of_parser_for_oxc(file);
+    if !file.language().rejects_what_parser_rejects {
+        let (of_parser, stop) = parser_errors_for_oxc(file);
         let all = oxc::errors(file, of_parser, stop.map(|it| it.0), false);
         let is_of_parser = all.iter().any(|it| it.of_oxc.stage != Stage::Semantic);
         let messages = all.into_iter().map(|it| message_of(file, it)).collect();
         return (messages, is_of_parser);
     }
-    let of_parser = error_of_parser(file).map(|diagnostic| {
+    let of_parser = first_parser_error(file).map(|diagnostic| {
         let mut message = Vec::new();
         match diagnostic.and_then(|it| Some((it, bun_sema::messages::message(it.code)?.1))) {
             Some((it, text)) => bun_sema::messages::format(&mut message, text, &it.args),
@@ -389,7 +389,7 @@ pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage
 fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
     let parser = file.language().parser;
     let at = file.position(error.at);
-    let end = (!file.language().refuses_what_parser_refuses).then(|| {
+    let end = (!file.language().rejects_what_parser_rejects).then(|| {
         let rest = file.text().get(error.at as usize..).unwrap_or_default();
         let end = file.position(match error.end {
             Diagnostic::NO_LENGTH => error.at,
@@ -402,7 +402,7 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
         let it = file.position(at);
         (it.line, it.column + 1)
     };
-    let OfOxc {
+    let OxcDetails {
         code,
         first_label,
         labels,
@@ -462,7 +462,7 @@ pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
         return false;
     }
     // oxc recovers from some errors and continues to the end of the file.
-    let gives_up_at = match errors_of_parser_for_oxc(file) {
+    let gives_up_at = match parser_errors_for_oxc(file) {
         (_, Some((_, at))) => Some(at),
         (of_parser, None) if !of_parser.is_empty() => None,
         _ => espree::typescript_in_javascript(file).map(|it| it.at),
@@ -472,7 +472,7 @@ pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
 
 /// Prettier's `isFlowFile`. If true, Prettier parses the file with `babel-flow` instead of `babel`. That's the case if
 /// a comment before the code has `@flow` or `@noflow`, or the file name ends with `.js.flow`.
-pub fn goes_to_flow(text: &[u8], path: &[u8]) -> bool {
+pub fn is_flow_file(text: &[u8], path: &[u8]) -> bool {
     let after_shebang = match text.starts_with(b"#!") {
         true => bun_core::strings::index_of_any(text, b"\n\r").unwrap_or(text.len()),
         false => 0,
@@ -510,7 +510,7 @@ pub enum TypesInJavaScript {
 
 /// True if Prettier refuses to format the file. `types` controls how TypeScript syntax in JavaScript is treated.
 pub fn refused_by_prettier_with<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> bool {
-    refusal_of_prettier(file, types).is_some()
+    prettier_refusal(file, types).is_some()
 }
 
 /// The reason Prettier refuses to format a file.
@@ -523,14 +523,14 @@ pub struct Refusal {
 }
 
 /// Like [`refused_by_prettier_with`], but returns the reason.
-pub fn refusal_of_prettier<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Option<Refusal> {
+pub fn prettier_refusal<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Option<Refusal> {
     refusal(file, types, true)
 }
 
 /// The reason oxfmt refuses to format a file, which is the first error oxc's parser reports. The file must have been
 /// parsed with oxlint's settings. oxfmt doesn't run the semantic pass or parse regular expressions.
-pub fn refusal_of_oxfmt<'a>(file: &'a File<'a>) -> Option<Refusal> {
-    let (of_parser, stop) = errors_of_parser_for_oxc(file);
+pub fn oxfmt_refusal<'a>(file: &'a File<'a>) -> Option<Refusal> {
+    let (of_parser, stop) = parser_errors_for_oxc(file);
     let all = oxc::errors(file, of_parser, stop.map(|it| it.0), true);
     all.into_iter().next().map(|it| Refusal {
         message: it.message,
@@ -578,8 +578,8 @@ fn refusal<'a>(
     if !file.is_javascript() {
         return typescript_estree::first_error(file, true).map(of_check);
     }
-    let of_babel = || espree::refusal_of_babel(file, finds_candidates).map(of_check);
-    if file.is_flow() || goes_to_flow(file.text(), file.path()) {
+    let of_babel = || espree::babel_refusal(file, finds_candidates).map(of_check);
+    if file.is_flow() || is_flow_file(file.text(), file.path()) {
         return of_babel();
     }
     // Rejected even where types are tolerated: `type A = 1`, `a!`, a function without a body, decorators on both sides

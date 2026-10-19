@@ -2,7 +2,7 @@
 //! `react_compiler/entrypoint/suppression.rs`, without Flow suppressions (`flow_suppressions: false`).
 //!
 //! `eslint-plugin-react-hooks` doesn't have the compiler look for any of these. It looks for Flow comments itself and
-//! drops individual diagnostics because of them: [`remove_what_flow_suppresses`].
+//! drops individual diagnostics because of them: [`remove_flow_suppressed`].
 
 use crate::finding::{Detail, Finding, Suggestion};
 use bun_core::strings;
@@ -191,7 +191,7 @@ fn has_flow_suppression(mut comment: &[u8]) -> bool {
 /// The plugin's `getFlowSuppressions` and `hasFlowSuppression`. A diagnostic isn't reported if it starts on the line
 /// after the end of a comment with `$FlowFixMe[react-rule-hook]` or `$FlowFixMe[react-rule-unsafe-ref]`. This applies
 /// to every file, Flow or not.
-pub(crate) fn remove_what_flow_suppresses<'a>(file: &'a File<'a>, diagnostics: &mut Vec<Finding>) {
+pub(crate) fn remove_flow_suppressed<'a>(file: &'a File<'a>, diagnostics: &mut Vec<Finding>) {
     if diagnostics.is_empty() || !strings::contains(file.text(), b"$FlowFixMe[react-rule-") {
         return;
     }

@@ -152,7 +152,7 @@ impl Rule for NumericSeparatorsStyle {
             formatted.extend_from_slice(raw.get(digits.len()..).unwrap_or_default());
             let report = cx
                 .report(number, NUMERIC_SEPARATORS_STYLE)
-                .called_with_the_name();
+                .called_with_name();
             report.fix(|fixer| fixer.replace(number, formatted));
         }
     }

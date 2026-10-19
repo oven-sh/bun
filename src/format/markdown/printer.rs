@@ -144,7 +144,7 @@ fn lines_of<'a>(formatted: &[u8]) -> Doc<'a> {
 
 /// oxfmt's `print_url`, which matches Prettier after 3.9: a backslash that would escape something is doubled, an `&`
 /// that would start a character reference is escaped, and between `<` and `>` those two characters are escaped.
-fn url_of_oxfmt(url: &[u8], is_in_parentheses: bool) -> Vec<u8> {
+fn oxfmt_url(url: &[u8], is_in_parentheses: bool) -> Vec<u8> {
     let is_balanced = || {
         let mut depth = 0i32;
         for &byte in url {
@@ -391,13 +391,13 @@ impl<'a> Printer<'a, '_> {
     ///
     /// If lines aren't indented and nothing has to be trimmed at their ends, the text is printed as is.
     fn lines(&self, text: &'a [u8], is_literal: bool) -> Doc<'a> {
-        let is_as_it_is = self.indentation == 0
+        let is_verbatim = self.indentation == 0
             && !self.is_in_template
             && !self.options.is_in_markdown
             && (is_literal
                 || !(bun_core::strings::contains(text, b" \n")
                     || bun_core::strings::contains(text, b"\t\n")));
-        match (is_as_it_is, is_literal) {
+        match (is_verbatim, is_literal) {
             (true, _) => Doc::from(text),
             (false, false) => replace_end_of_line(text, hardline),
             (false, true) => replace_end_of_line(text, || mark_as_root(literalline())),
@@ -1015,7 +1015,7 @@ impl<'a> Printer<'a, '_> {
         let syntax = match (self.is_mdx, self.options.flavor.is_oxfmt()) {
             (true, _) => Syntax::Mdx,
             (false, true) => Syntax::TwoLines,
-            (false, false) => Syntax::TwoLinesOfMarkdown,
+            (false, false) => Syntax::MarkdownTwoLines,
         };
         if !is_candidate || !leaves_paragraph(None, word, syntax) {
             return false;
@@ -1307,7 +1307,7 @@ impl<'a> Printer<'a, '_> {
             return Doc::from("<>");
         }
         if self.options.flavor.is_oxfmt() {
-            return Doc::from(url_of_oxfmt(url, is_in_parentheses));
+            return Doc::from(oxfmt_url(url, is_in_parentheses));
         }
         let is_dangerous = bun_core::strings::contains_char(url, b' ')
             || (is_in_parentheses && bun_core::strings::contains_char(url, b')'));
@@ -1490,9 +1490,9 @@ impl<'a> Printer<'a, '_> {
     /// `**a**__b__` becomes `**a****b**`.
     fn keeps_marker(&self, mut node: &'a Node) -> bool {
         loop {
-            let is_of_its_kind =
+            let is_same_kind =
                 |id: NodeId| self.node(id).is_some_and(|other| other.kind == node.kind);
-            if is_of_its_kind(node.previous) || is_of_its_kind(node.next) {
+            if is_same_kind(node.previous) || is_same_kind(node.next) {
                 return true;
             }
             match self.node(node.parent) {
@@ -1700,7 +1700,7 @@ impl<'a> Printer<'a, '_> {
             ),
             Kind::EsComment => docs!["{/* ", self.str(node.value), " */}"],
             Kind::ThematicBreak => {
-                let is_of_asterisks = match self.find_ancestor(id, |it| it.kind == Kind::List) {
+                let uses_asterisks = match self.find_ancestor(id, |it| it.kind == Kind::List) {
                     Some(list) => !self.uses_alternate_marker(list),
                     // oxfmt: at the start of a document `---` would start front matter.
                     None => {
@@ -1711,7 +1711,7 @@ impl<'a> Printer<'a, '_> {
                                 .is_none_or(|it| it == Kind::FrontMatter)
                     }
                 };
-                Doc::from(if is_of_asterisks { "***" } else { "---" })
+                Doc::from(if uses_asterisks { "***" } else { "---" })
             }
             Kind::LinkReference => {
                 let is_in_label = node.reference_type != ReferenceType::Full;
@@ -1952,7 +1952,7 @@ impl<'a> Printer<'a, '_> {
 
     /// Prints `code` verbatim. Trailing spaces and tabs are part of the code. Prettier and oxfmt put a `hardline` after
     /// every line, which trims them.
-    fn code_as_written(&self, code: &'a [u8], is_indented: bool) -> Doc<'a> {
+    fn verbatim_code(&self, code: &'a [u8], is_indented: bool) -> Doc<'a> {
         if !is_indented
             && self.indentation == 0
             && !self.is_in_template
@@ -1982,16 +1982,16 @@ impl<'a> Printer<'a, '_> {
             let end = match &value[value.trim_ascii_end().len()..] {
                 b"" => Doc::EMPTY,
                 blanks if bun_core::strings::contains_char(blanks, b'\n') => Doc::EMPTY,
-                _ => Doc::KeepBlanks,
+                _ => Doc::KeepTrailingWhitespace,
             };
-            let code = docs!["    ", self.code_as_written(value, true), end];
+            let code = docs!["    ", self.verbatim_code(value, true), end];
             return align_with_spaces(4, code);
         }
         let style_unit = self.fence_unit(node);
         let (code, run) = match formatted {
             Some(formatted) => formatted,
             None => (
-                docs![self.code_as_written(value, false), line_break_after(value)],
+                docs![self.verbatim_code(value, false), line_break_after(value)],
                 max_continuous_count(value, style_unit),
             ),
         };
@@ -2039,7 +2039,7 @@ impl<'a> Printer<'a, '_> {
             }
             // Only whitespace, in a language that gets formatted: print an empty line.
             if bun_core::strings::trim_js_whitespace_end(code).is_empty()
-                && super::parser_of_oxfmt(language).is_some()
+                && super::oxfmt_parser_for(language).is_some()
             {
                 let style = vec![self.fence_unit(node); 3];
                 return Some(docs![
@@ -2064,11 +2064,11 @@ impl<'a> Printer<'a, '_> {
             true => max_continuous_count(formatted, unit),
             false => max_continuous_count(formatted, unit).max(max_continuous_count(code, unit)),
         };
-        let is_as_it_is = self.indentation == 0
+        let is_verbatim = self.indentation == 0
             && !self.is_in_template
             && !self.options.is_in_markdown
             && !bun_core::strings::contains_char(formatted, b'\r');
-        let formatted = if is_as_it_is {
+        let formatted = if is_verbatim {
             Doc::from(formatted.to_vec())
         } else {
             lines_of(formatted)

@@ -11,7 +11,7 @@ use crate::bind::MemberOwner;
 
 /// The source span of a decorator.
 #[derive(Copy, Clone)]
-pub(super) struct Written {
+pub(super) struct DecoratorSpan {
     /// Its `@`.
     pub(super) at_sign: u32,
     /// Start of its expression, including the opening parenthesis if it's parenthesized.
@@ -116,7 +116,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_of_decorated_member(&mut self, file: FileId, class: ClassId, m: MemberId) -> TypeId {
         let holder = self.get_parent_type_of_class_element(file, class, m);
         // `declareSymbolEx`: a declaration rejected by the symbol that already has its name gets its own symbol.
-        let name = if self.bound(file).is_member_in_no_table(m) {
+        let name = if self.bound(file).is_member_not_in_table(m) {
             None
         } else {
             let key = self.hir(file)[m].key;
@@ -448,10 +448,10 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The span of the decorator whose expression is `e`.
-    pub(super) fn decorator_position(&self, file: FileId, e: ExprId) -> Written {
+    pub(super) fn decorator_position(&self, file: FileId, e: ExprId) -> DecoratorSpan {
         let start = self.start_of(file, e);
         let at_sign = start_of_token_before(&self.hir(file).text, start, b"@");
-        Written {
+        DecoratorSpan {
             at_sign: at_sign.unwrap_or(start),
             start,
             end: self.end_of_expr(file, e),
@@ -477,7 +477,7 @@ impl<'p, 's> Checker<'p, 's> {
             let at_sign = written.at_sign;
             // `checkGrammarModifiers` reports a decorator in an invalid position, and then nothing else is reported
             // between it and the declaration.
-            if bound.refused_decorators.contains(&e) {
+            if bound.rejected_decorators.contains(&e) {
                 let end = match owner {
                     DecoratorOwner::Class(c) => hir[c].name_pos,
                     DecoratorOwner::Member(m) => hir[m].name_pos,
@@ -565,10 +565,10 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         owner: DecoratorOwner,
         e: ExprId,
-        written: Written,
+        written: DecoratorSpan,
     ) {
         let hir = self.hir(file);
-        let Written {
+        let DecoratorSpan {
             at_sign,
             start,
             end,

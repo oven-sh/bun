@@ -84,10 +84,10 @@ pub(crate) fn sort(
     }
     let mut sorted = text.to_vec();
     for (at, classes) in &changes {
-        if let Some(place) = sorted.get_mut(at.start as usize..at.end as usize)
-            && place.len() == classes.len()
+        if let Some(slot) = sorted.get_mut(at.start as usize..at.end as usize)
+            && slot.len() == classes.len()
         {
-            place.copy_from_slice(classes);
+            slot.copy_from_slice(classes);
         }
     }
     Some(sorted)

@@ -116,8 +116,8 @@ fn find_directive_in_comment_for_oxlint(comment: Token<'_>) -> Option<MatchedTsD
         &["expect-error", "ignore", "nocheck", "check"],
     )?;
     // A pragma has two slashes.
-    let is_no_pragma = is_block || strings::trim_unicode_whitespace_start(value).starts_with(b"/");
-    (!(is_no_pragma && matches!(found.directive, "check" | "nocheck"))).then_some(found)
+    let is_not_pragma = is_block || strings::trim_unicode_whitespace_start(value).starts_with(b"/");
+    (!(is_not_pragma && matches!(found.directive, "check" | "nocheck"))).then_some(found)
 }
 
 impl BanTsComment {
@@ -164,7 +164,7 @@ impl BanTsComment {
                     });
                 }
                 DirectiveConfig::Banned if directive == "ignore" => {
-                    cx.report(place, TS_IGNORE_INSTEAD_OF_EXPECT_ERROR).suggest_change_of_behavior(REPLACE_TS_IGNORE_WITH_TS_EXPECT_ERROR, &[],
+                    cx.report(place, TS_IGNORE_INSTEAD_OF_EXPECT_ERROR).suggest_behavior_change(REPLACE_TS_IGNORE_WITH_TS_EXPECT_ERROR, &[],
                         |fixer| {
                             let value = comment.comment_value();
                             let at = strings::index_of(value, TS_IGNORE)?;

@@ -1,5 +1,5 @@
 use bun_lint_oxlint::ast_util::{as_member_expression, static_property_name};
-use bun_lint_oxlint::regex_flags::regex_of_option;
+use bun_lint_oxlint::regex_flags::option_regex;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -93,7 +93,7 @@ impl Rule for CatchErrorName {
         let name = options.str("name").map(str::trim).filter(|it| text::is_identifier_name(it.as_bytes()));
         let name = name.unwrap_or("error");
         CatchErrorName {
-            ignore: options.strings("ignore").into_iter().filter_map(regex_of_option).collect(),
+            ignore: options.strings("ignore").into_iter().filter_map(option_regex).collect(),
             name: name.to_owned(),
             lowercase_name: name.to_lowercase(),
         }

@@ -35,8 +35,8 @@ impl NoUselessRename {
     fn report<'a>(cx: &Cx<'a, Self>, renamed: Renamed<'a>) {
         let Renamed { node, replacement, name, kind, is_fixable, is_type_only } = renamed;
         // For an import or an export, oxlint points at the local name.
-        let place = if cx.language().is_oxlint && kind != "Destructuring assignment" { replacement } else { node };
-        cx.report(place, UNNECESSARILY_RENAMED).data("name", name).data("type", kind).fix(|fixer| {
+        let location = if cx.language().is_oxlint && kind != "Destructuring assignment" { replacement } else { node };
+        cx.report(location, UNNECESSARILY_RENAMED).data("name", name).data("type", kind).fix(|fixer| {
             let file = fixer.file();
             // oxlint doesn't check for comments, and keeps the `type`.
             if file.language().is_oxlint && is_fixable {

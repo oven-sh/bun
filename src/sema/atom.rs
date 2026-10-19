@@ -6,7 +6,7 @@ use crate::local::LOCAL;
 use crate::session::Session;
 use crate::types::{OwnStore, Sharing};
 use crate::util::memory::Cells;
-use crate::util::{AppendVec, GrowingPlaces, SHARDS, spread_hash};
+use crate::util::{AppendVec, GrowingSlots, SHARDS, spread_hash};
 use std::alloc::Global;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -52,7 +52,7 @@ pub const KNOWN_TEXTS: &[&[u8]] = known::ALL_TEXTS;
 
 /// A single-file interner numbers the texts that aren't in its file from here up. A multi-file
 /// interner never reaches this number.
-pub const NOT_IN_THE_FILE: u32 = 1 << 29;
+pub const FIRST_ATOM_NOT_IN_FILE: u32 = 1 << 29;
 
 /// Locations of one file's atom texts, so that code reading many atoms avoids a virtual call for
 /// each.
@@ -151,7 +151,7 @@ pub struct Interner<'s> {
     tables: &'s Tables,
     /// The atoms numbered under `first`. See `over`. Other programs may add to this table
     /// concurrently.
-    below: &'s Tables,
+    base: &'s Tables,
     first: u32,
     /// Sequence number of `tables` among all tables ever created. Every `intern` call reads it. In
     /// `Tables` it would be next to the length of `texts`, which every thread writes when it adds
@@ -161,24 +161,24 @@ pub struct Interner<'s> {
 
 /// Allocated on the regular heap, without a lifetime parameter. They're written through a shared
 /// reference, so a lifetime in them would make `Interner<'s>` invariant in `'s`, and it has to be
-/// covariant (`shortened`). The session owns them (`Session::keep`), so they outlive every program
+/// covariant (`assert_covariant`). The session owns them (`Session::keep`), so they outlive every program
 /// that refers to them.
 struct Tables {
-    places: Box<GrowingPlaces<Global, SHARDS>>,
+    slots: Box<GrowingSlots<Global, SHARDS>>,
     texts: Texts,
     /// Class of each text (`class_of`), packed at `class::BITS` bits per text.
     classes: Cells<AtomicU32>,
     /// `Interner::in_common`
-    is_in_common: bool,
+    is_shared: bool,
 }
 
 impl Tables {
-    fn new(is_in_common: bool) -> Tables {
+    fn new(is_shared: bool) -> Tables {
         Tables {
-            places: Box::default(),
+            slots: Box::default(),
             texts: AppendVec::new(),
             classes: Cells::default(),
-            is_in_common,
+            is_shared,
         }
     }
 
@@ -249,10 +249,10 @@ fn is_numeric_literal_name(text: &[u8]) -> bool {
 
 /// Compiles only if `Interner<'s>` is covariant in `'s`, which lets an interner that outlives a
 /// program serve as that program's interner.
-fn shortened<'short, 'long: 'short>(atoms: Interner<'long>) -> Interner<'short> {
+fn assert_covariant<'short, 'long: 'short>(atoms: Interner<'long>) -> Interner<'short> {
     atoms
 }
-const _: fn(Interner<'static>) -> Interner<'static> = shortened;
+const _: fn(Interner<'static>) -> Interner<'static> = assert_covariant;
 
 macro_rules! known_atoms {
     ($($name:ident = $text:literal,)*) => {
@@ -603,7 +603,7 @@ pub trait Intern: Sync {
     /// See `Interner::number`.
     fn number(&self) -> u64;
     /// Returns the calling thread's interner, which saves the thread lookup on every call.
-    fn of_this_thread(&self) -> &dyn Intern;
+    fn for_current_thread(&self) -> &dyn Intern;
     /// Empty unless this is a single-file interner.
     fn own_texts(&self) -> OwnTexts<'_> {
         OwnTexts::default()
@@ -623,7 +623,7 @@ impl Intern for Interner<'_> {
     fn number(&self) -> u64 {
         Interner::number(self)
     }
-    fn of_this_thread(&self) -> &dyn Intern {
+    fn for_current_thread(&self) -> &dyn Intern {
         self
     }
 }
@@ -691,7 +691,7 @@ impl Intern for InternerPerThread<'_> {
     fn number(&self) -> u64 {
         self.own().number()
     }
-    fn of_this_thread(&self) -> &dyn Intern {
+    fn for_current_thread(&self) -> &dyn Intern {
         self.own()
     }
 }
@@ -710,12 +710,12 @@ impl<'s> Interner<'s> {
         Self::with_known_atoms(session, true)
     }
 
-    fn with_known_atoms(session: &'s Session, is_in_common: bool) -> Self {
-        let tables = session.keep(Tables::new(is_in_common));
+    fn with_known_atoms(session: &'s Session, is_shared: bool) -> Self {
+        let tables = session.keep(Tables::new(is_shared));
         let this = Interner {
             session,
             tables,
-            below: tables,
+            base: tables,
             first: 0,
             number: next_interner_number(),
         };
@@ -733,19 +733,19 @@ impl<'s> Interner<'s> {
         this
     }
 
-    /// Layers a private interner over `below`, which must be `in_common`. It sees the atoms that
-    /// `below` has right now, with the same numbers, and numbers its own after them. No other
+    /// Layers a private interner over `base`, which must be `in_common`. It sees the atoms that
+    /// `base` has right now, with the same numbers, and numbers its own after them. No other
     /// interner sees those.
-    pub fn over(session: &'s Session, below: Interner<'s>) -> Interner<'s> {
-        assert!(below.tables.is_in_common);
-        let Tables { places, texts, .. } = below.tables;
+    pub fn over(session: &'s Session, base: Interner<'s>) -> Interner<'s> {
+        assert!(base.tables.is_shared);
+        let Tables { slots, texts, .. } = base.tables;
         Interner {
             session,
             tables: session.keep(Tables::new(false)),
-            below: below.tables,
+            base: base.tables,
             // Texts are pushed under their shard's lock. With all shards locked, every text before
             // this length is complete.
-            first: places.while_none_grows(|| texts.len()),
+            first: slots.with_all_locked(|| texts.len()),
             number: next_interner_number(),
         }
     }
@@ -791,12 +791,12 @@ impl<'s> Interner<'s> {
     }
 
     fn intern_shared(&self, spread: u64, text: &[u8]) -> Atom {
-        if let Some(atom) = self.find_below(spread, text) {
+        if let Some(atom) = self.find_in_base(spread, text) {
             return atom;
         }
-        let Tables { places, texts, .. } = self.tables;
-        let is_it = |i: u32| &**texts.get(i - self.first) == text;
-        if let Some(atom) = places.find(spread, is_it) {
+        let Tables { slots, texts, .. } = self.tables;
+        let matches = |i: u32| &**texts.get(i - self.first) == text;
+        if let Some(atom) = slots.find(spread, matches) {
             return Atom(atom);
         }
         let add = || {
@@ -804,7 +804,7 @@ impl<'s> Interner<'s> {
             self.tables.set_class(index, text);
             self.first + index
         };
-        Atom(places.find_or_add(spread, is_it, add))
+        Atom(slots.find_or_add(spread, matches, add))
     }
 
     /// Returns the stored class of `atom`'s text.
@@ -812,27 +812,27 @@ impl<'s> Interner<'s> {
     fn class(&self, atom: Atom) -> u32 {
         match atom.0.checked_sub(self.first) {
             Some(own) => self.tables.class(own),
-            None => self.below.class(atom.0),
+            None => self.base.class(atom.0),
         }
     }
 
     #[inline]
-    fn find_below(&self, spread: u64, text: &[u8]) -> Option<Atom> {
+    fn find_in_base(&self, spread: u64, text: &[u8]) -> Option<Atom> {
         if self.first == 0 {
             return None;
         }
-        let Tables { places, texts, .. } = self.below;
-        let is_it = |i: u32| i < self.first && &**texts.get(i) == text;
-        places.find(spread, is_it).map(Atom)
+        let Tables { slots, texts, .. } = self.base;
+        let matches = |i: u32| i < self.first && &**texts.get(i) == text;
+        slots.find(spread, matches).map(Atom)
     }
 
     /// Returns `text`'s atom if it has been interned.
     pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
         let spread = hash_of(text);
-        let Tables { places, texts, .. } = self.tables;
-        let is_it = |i: u32| &**texts.get(i - self.first) == text;
-        let own = || places.find(spread, is_it).map(Atom);
-        self.find_below(spread, text).or_else(own)
+        let Tables { slots, texts, .. } = self.tables;
+        let matches = |i: u32| &**texts.get(i - self.first) == text;
+        let own = || slots.find(spread, matches).map(Atom);
+        self.find_in_base(spread, text).or_else(own)
     }
 
     #[inline]
@@ -840,7 +840,7 @@ impl<'s> Interner<'s> {
         debug_assert!(!atom.is_own(), "only `Atoms` can read a task-local atom");
         match atom.0.checked_sub(self.first) {
             Some(own) => self.tables.texts.get(own),
-            None => self.below.texts.get(atom.0),
+            None => self.base.texts.get(atom.0),
         }
     }
 
@@ -879,11 +879,11 @@ impl<'p, 's> Atoms<'p, 's> {
     #[inline]
     fn find_published(&self, spread: u64, text: &[u8]) -> Option<Atom> {
         let Interner { tables, first, .. } = self.published;
-        let is_it = |i: u32| &**tables.texts.get(i - first) == text;
+        let matches = |i: u32| &**tables.texts.get(i - first) == text;
         // Other tasks may be adding atoms concurrently.
-        let own = || tables.places.find(spread, is_it);
-        let below = self.published.find_below(spread, text);
-        below.or_else(|| own().map(Atom))
+        let own = || tables.slots.find(spread, matches);
+        let base = self.published.find_in_base(spread, text);
+        base.or_else(|| own().map(Atom))
     }
 
     pub fn intern(&self, text: &[u8]) -> Atom {

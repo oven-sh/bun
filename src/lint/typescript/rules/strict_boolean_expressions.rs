@@ -833,12 +833,12 @@ impl StrictBooleanExpressions {
         };
 
         // oxlint reports the call.
-        let place = match predicate_node.parent() {
+        let report_span = match predicate_node.parent() {
             Node::Expr(call) if cx.language().is_oxlint => call.span(),
             _ => predicate_node.span(),
         };
         let mut report = cx
-            .report(place, report_type.message())
+            .report(report_span, report_type.message())
             .data("context", "array predicate return type");
         if let Some(function) = function {
             if let FnBody::Expr(body) = function.body() {

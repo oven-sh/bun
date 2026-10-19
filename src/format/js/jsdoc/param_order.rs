@@ -33,7 +33,8 @@ pub(super) fn reorder_param_tags<'a>(
             _ => return,
         }
     }
-    let function_params = function_behind(file, comment_end).map_or_else(Vec::new, parameter_names);
+    let function_params =
+        function_after_comment(file, comment_end).map_or_else(Vec::new, parameter_names);
     if function_params.len() != names.len()
         || names == function_params
         || !names.iter().all(|name| function_params.contains(name))
@@ -53,7 +54,7 @@ pub(super) fn reorder_param_tags<'a>(
 }
 
 /// Returns the function whose head starts right after the comment that ends at `comment_end`.
-fn function_behind<'a>(file: &'a File<'a>, comment_end: u32) -> Option<Func<'a>> {
+fn function_after_comment<'a>(file: &'a File<'a>, comment_end: u32) -> Option<Func<'a>> {
     let after = file.text().get(comment_end as usize..)?;
     let start = comment_end
         + (after.len() - bun_core::strings::trim_unicode_whitespace_start(after).len()) as u32;
@@ -78,18 +79,20 @@ fn function_behind<'a>(file: &'a File<'a>, comment_end: u32) -> Option<Func<'a>>
 /// parameters, and only finds it after these heads.
 fn function_with_known_head<'a>(node: Node<'a>) -> Option<Func<'a>> {
     match node {
-        Node::Stmt(statement) if are_passed_over(statement.modifiers()) => match statement.kind() {
-            StmtKind::Fn(func) => Some(func),
-            // `const f = (a, b) => {}`
-            StmtKind::Var(declarations) => {
-                let first = declarations.first()?;
-                let has_plain_name = first.pat().as_ident().is_some_and(is_plain_name);
-                arrow_function(first.init()?).filter(|_| has_plain_name && first.ty().is_none())
+        Node::Stmt(statement) if are_skipped_modifiers(statement.modifiers()) => {
+            match statement.kind() {
+                StmtKind::Fn(func) => Some(func),
+                // `const f = (a, b) => {}`
+                StmtKind::Var(declarations) => {
+                    let first = declarations.first()?;
+                    let has_plain_name = first.pat().as_ident().is_some_and(is_plain_name);
+                    arrow_function(first.init()?).filter(|_| has_plain_name && first.ty().is_none())
+                }
+                // `return (a, b) => {}`
+                StmtKind::Return(value) => arrow_function(value?).filter(|it| !it.is_async()),
+                _ => None,
             }
-            // `return (a, b) => {}`
-            StmtKind::Return(value) => arrow_function(value?).filter(|it| !it.is_async()),
-            _ => None,
-        },
+        }
         Node::Expr(e) => match e.kind() {
             ExprKind::Fn(func) => (func.kind() == FnKind::Expr).then_some(func),
             // `f = (a, b) => {}`
@@ -104,7 +107,8 @@ fn function_with_known_head<'a>(node: Node<'a>) -> Option<Func<'a>> {
             _ => None,
         },
         Node::Member(member)
-            if are_passed_over(member.modifiers()) && !member.flags().contains(Flags::OPTIONAL) =>
+            if are_skipped_modifiers(member.modifiers())
+                && !member.flags().contains(Flags::OPTIONAL) =>
         {
             match member.kind() {
                 MemberKind::Constructor | MemberKind::ConstructSignature => member.func(),
@@ -126,7 +130,7 @@ fn function_with_known_head<'a>(node: Node<'a>) -> Option<Func<'a>> {
 }
 
 /// True if the only modifiers are `export`, `default` and `async`, which oxfmt skips.
-fn are_passed_over<'a>(modifiers: List<'a, Modifier<'a>>) -> bool {
+fn are_skipped_modifiers<'a>(modifiers: List<'a, Modifier<'a>>) -> bool {
     modifiers.iter().all(|it| {
         it.flag()
             .intersects(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC)

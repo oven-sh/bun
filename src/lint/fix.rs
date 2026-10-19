@@ -32,7 +32,7 @@ pub struct Around<'t> {
     text: &'t [u8],
     span: Span,
     /// `span` with the spaces and tabs on both sides of it.
-    pub with_blanks: Span,
+    pub with_spaces: Span,
     /// True if nothing comes before it on its first line.
     pub starts_line: bool,
     /// The length of the line break after it. `None` if something else follows on its last line, 0 at the end of the text.
@@ -46,17 +46,17 @@ fn is_blank_line(line: &[u8]) -> bool {
 
 impl<'t> Around<'t> {
     pub fn of(text: &'t [u8], span: Span) -> Around<'t> {
-        let is_blank = |byte: &&u8| matches!(byte, b' ' | b'\t');
+        let is_space_or_tab = |byte: &&u8| matches!(byte, b' ' | b'\t');
         let before = text.get(..span.start as usize).unwrap_or_default();
         let after = text.get(span.end as usize..).unwrap_or_default();
-        let start = before.len() - before.iter().rev().take_while(is_blank).count();
-        let blank_after = after.iter().take_while(is_blank).count();
+        let start = before.len() - before.iter().rev().take_while(is_space_or_tab).count();
+        let spaces_after = after.iter().take_while(is_space_or_tab).count();
         Around {
             text,
             span,
-            with_blanks: Span::new(start as u32, span.end + blank_after as u32),
+            with_spaces: Span::new(start as u32, span.end + spaces_after as u32),
             starts_line: matches!(before.get(..start), Some([] | [.., b'\n' | b'\r'])),
-            line_break: match after.get(blank_after..) {
+            line_break: match after.get(spaces_after..) {
                 Some([b'\r', b'\n', ..]) => Some(2),
                 Some([b'\n' | b'\r', ..]) => Some(1),
                 Some([]) | None => Some(0),
@@ -70,7 +70,7 @@ impl<'t> Around<'t> {
     /// included if it would end up first or last in a block or in the file, or next to another empty line.
     pub fn whole_lines(&self) -> Option<Span> {
         let line_break = self.line_break.filter(|_| self.starts_line)?;
-        let lines = Span::new(self.with_blanks.start, self.with_blanks.end + line_break);
+        let lines = Span::new(self.with_spaces.start, self.with_spaces.end + line_break);
         let (before, after) = (
             self.text.get(..lines.start as usize)?,
             self.text.get(lines.end as usize..)?,
@@ -107,7 +107,7 @@ impl<'t> Around<'t> {
             return lines;
         }
         if self.line_break.is_some() {
-            return self.with_blanks;
+            return self.with_spaces;
         }
         // Remove the spaces after it too, unless they're all that separates two words.
         let before = self
@@ -118,7 +118,7 @@ impl<'t> Around<'t> {
             byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..)
         }) {
             true => self.span,
-            false => Span::new(self.span.start, self.with_blanks.end),
+            false => Span::new(self.span.start, self.with_spaces.end),
         }
     }
 }
@@ -128,7 +128,7 @@ pub const MAX_STRING_LENGTH: u64 = (1 << 29) - 24;
 
 /// True if `content` has a file-level `@tag` such as `@ts-nocheck` or `@license`. The tag must be a whole word, so
 /// `@bun/types` doesn't match.
-fn has_tag_about_the_file(content: &[u8]) -> bool {
+fn has_file_level_tag(content: &[u8]) -> bool {
     const TAGS: [&[u8]; 17] = [
         b"ts-nocheck",
         b"ts-check",
@@ -184,7 +184,7 @@ fn starts_license(content: &[u8]) -> bool {
 
 /// Directives that ignore the whole file. Each one has a next-line directive as a prefix: `biome-ignore-all` starts
 /// with `biome-ignore`.
-const IGNORES_IN_THE_WHOLE_FILE: [&[u8]; 4] = [
+const FILE_IGNORE_DIRECTIVES: [&[u8]; 4] = [
     b"biome-ignore-all",
     b"deno-lint-ignore-file",
     b"deno-fmt-ignore-file",
@@ -195,7 +195,7 @@ const IGNORES_IN_THE_WHOLE_FILE: [&[u8]; 4] = [
 /// above all code (`// @ts-nocheck`, `/// <reference path="a" />`, `/** @jsx h */`), linter directives that apply from
 /// their position on (`/* eslint-disable */`), licenses, and file docs (`/** @module */`). `bun fmt` keeps these
 /// comments above the imports it sorts. `text` is the whole comment and `content` is the part between its delimiters.
-pub fn is_comment_about_the_file(text: &[u8], content: &[u8]) -> bool {
+pub fn is_file_level_comment(text: &[u8], content: &[u8]) -> bool {
     let content = strings::trim_js_whitespace(content);
     let starts_with_word = |word: &[u8]| {
         (content.strip_prefix(word))
@@ -210,18 +210,18 @@ pub fn is_comment_about_the_file(text: &[u8], content: &[u8]) -> bool {
         || match_directives_pattern(content)
             .is_some_and(|it| it.starts_with("eslint") && !it.ends_with("line"))
         || [&b"oxlint-disable"[..], b"oxlint-enable"].into_iter().any(starts_with_word)
-        || IGNORES_IN_THE_WHOLE_FILE.into_iter().any(starts_with_word)
+        || FILE_IGNORE_DIRECTIVES.into_iter().any(starts_with_word)
         || starts_license(content)
-        || has_tag_about_the_file(content)
+        || has_file_level_tag(content)
 }
 
-fn is_about_the_file(comment: &Token) -> bool {
-    is_comment_about_the_file(comment.text(), comment.value())
+fn is_file_level_token(comment: &Token) -> bool {
+    is_file_level_comment(comment.text(), comment.value())
 }
 
 /// True if `comment` is a directive for the next line, statement or expression. The reader can be a compiler, a linter,
 /// a formatter, a coverage tool or a bundler.
-fn is_about_the_next_line(comment: &Token) -> bool {
+fn is_next_line_directive(comment: &Token) -> bool {
     const DIRECTIVES: [&[u8]; 22] = [
         b"@ts-expect-error",
         b"@ts-ignore",
@@ -255,13 +255,13 @@ fn is_about_the_next_line(comment: &Token) -> bool {
     let content = text.get(start..).unwrap_or_default();
     // TypeScript matches by prefix, so `@ts-ignore-next-line` works too.
     let is_at_start = |word: &&[u8]| content.starts_with(word);
-    DIRECTIVES.iter().any(is_at_start) && !IGNORES_IN_THE_WHOLE_FILE.iter().any(is_at_start)
+    DIRECTIVES.iter().any(is_at_start) && !FILE_IGNORE_DIRECTIVES.iter().any(is_at_start)
 }
 
 /// True if tools attach `comment` to the code after it. It's either a next-line directive or a doc comment like
 /// `/** @type {A} */`.
-fn is_about_what_follows(comment: &Token) -> bool {
-    comment.text().starts_with(b"/**") || is_about_the_next_line(comment)
+fn is_attached_to_next_code(comment: &Token) -> bool {
+    comment.text().starts_with(b"/**") || is_next_line_directive(comment)
 }
 
 /// Creates [`Fix`]es, like ESLint's `fixer`. Each method takes a node, a token, a comment or a [`Span`].
@@ -297,13 +297,13 @@ impl<'a> Fixer<'a> {
 
     /// Returns the end of the trailing comments on the same line as `at`, which is the end of a statement. Returns `at`
     /// if code follows them on that line, or if one of them applies to the code after it.
-    pub fn end_with_comments_beside(self, at: u32) -> u32 {
+    pub fn end_with_trailing_comments(self, at: u32) -> u32 {
         let mut end = at;
         for comment in self.file.comments_after(Span::empty(at)) {
             if !is_on_one_line(self.file, Span::empty(end).between(comment.span())) {
                 break;
             }
-            if is_about_what_follows(&comment) {
+            if is_attached_to_next_code(&comment) {
                 return at;
             }
             end = comment.end();
@@ -319,10 +319,10 @@ impl<'a> Fixer<'a> {
     /// comments separated from the first statement by an empty line (TypeScript calls these detached). Every comment
     /// above one of these is included. Comments directly above the first statement belong to that statement and aren't
     /// included. Returns `None` if the file has none of these.
-    fn end_of_head(self) -> Option<u32> {
+    fn end_of_file_header(self) -> Option<u32> {
         let file = self.file;
         let directives = (file.body().iter()).take_while(|it| it.directive().is_some());
-        let mut end = (directives.last()).map(|it| self.end_with_comments_beside(it.span().end));
+        let mut end = (directives.last()).map(|it| self.end_with_trailing_comments(it.span().end));
         let start_of_text = if file.has_bom() { 3 } else { 0 };
         // A license written as `//` lines continues through the last consecutive `//` line.
         let mut end_of_license = None;
@@ -330,25 +330,25 @@ impl<'a> Fixer<'a> {
             .comments_after(Span::empty(end.unwrap_or(start_of_text)))
             .peekable();
         while let Some(comment) = comments.next() {
-            if is_about_the_next_line(&comment) {
+            if is_next_line_directive(&comment) {
                 // `// eslint-disable-next-line` above `/// <reference path="a" />` applies to that comment's line.
                 // Other directives, like `// @ts-ignore` and `// prettier-ignore`, apply to the next line of code.
-                let is_about_any_line = [&b"disable-next-line"[..], b"deno-lint-ignore"]
+                let applies_to_any_line = [&b"disable-next-line"[..], b"deno-lint-ignore"]
                     .iter()
                     .any(|it| strings::contains(comment.text(), it));
                 match comments.peek() {
-                    Some(next) if is_about_any_line && is_about_the_file(next) => continue,
+                    Some(next) if applies_to_any_line && is_file_level_token(next) => continue,
                     _ => break,
                 }
             }
-            let goes_on = end_of_license
+            let continues_license = end_of_license
                 .is_some_and(|end| file.line_of(end) + 1 == file.line_of(comment.start()));
             let is_in_license = comment.kind() == TokenKind::Line
-                && (goes_on || starts_license(comment.value().trim_ascii()));
+                && (continues_license || starts_license(comment.value().trim_ascii()));
             end_of_license = is_in_license.then(|| comment.end());
             let next = self.skip_white_space(comment.end());
             let is_detached = file.line_of(next) > file.line_of(comment.end()) + 1;
-            if is_in_license || is_detached || is_about_the_file(&comment) {
+            if is_in_license || is_detached || is_file_level_token(&comment) {
                 end = Some(comment.end());
             }
         }
@@ -358,7 +358,7 @@ impl<'a> Fixer<'a> {
     /// Returns the offset for a new first statement. It's after the part that must stay at the top, and before the
     /// first statement and the comments attached to it.
     pub fn start_of_first_statement(self) -> u32 {
-        self.skip_white_space(self.end_of_head().unwrap_or(0))
+        self.skip_white_space(self.end_of_file_header().unwrap_or(0))
     }
 
     fn skip_white_space(self, at: u32) -> u32 {
@@ -375,12 +375,12 @@ impl<'a> Fixer<'a> {
             Some([.., b'\r']) => b"\r\n",
             _ => b"\n",
         };
-        let Some(after) = self.end_of_head() else {
+        let Some(after) = self.end_of_file_header() else {
             let start_of_text = Span::empty(if self.file.has_bom() { 3 } else { 0 });
             return self.insert_before(start_of_text, [statement, line_break].concat());
         };
-        let blank = Span::new(after, self.skip_white_space(after));
-        match strings::last_index_of_char(self.file.slice(blank), b'\n') {
+        let whitespace = Span::new(after, self.skip_white_space(after));
+        match strings::last_index_of_char(self.file.slice(whitespace), b'\n') {
             // Both arms produce the same text here. This one makes the same edit as oxlint, and the help message quotes
             // the edit.
             Some(0) | None => {
@@ -398,15 +398,15 @@ impl<'a> Fixer<'a> {
     /// directive apply to other code.
     pub fn has_directive_before(self, at: impl Spanned) -> bool {
         let mut comments = self.file.comments_before(at);
-        comments.any(|it| is_about_the_next_line(&it))
+        comments.any(|it| is_next_line_directive(&it))
     }
 
     /// True if [`Fixer::has_directive_before`] is true, or a `/** .. */` doc comment precedes `at`. Skips the file's
     /// header, like a license or `/** @fileoverview */`, because it isn't attached to `at`.
     pub fn has_directive_or_doc_before(self, at: impl Spanned) -> bool {
-        let end_of_head = self.end_of_head().unwrap_or(0);
+        let end_of_file_header = self.end_of_file_header().unwrap_or(0);
         let mut comments = self.file.comments_before(at);
-        comments.any(|it| it.end() > end_of_head && is_about_what_follows(&it))
+        comments.any(|it| it.end() > end_of_file_header && is_attached_to_next_code(&it))
     }
 
     /// `replaceText`, `replaceTextRange`

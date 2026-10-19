@@ -171,7 +171,7 @@ pub(crate) struct Checkpoint {
     stacks: StackLens,
     context: u32,
     lists: u32,
-    classes_around: u32,
+    class_depth: u32,
     has_top_level_await: bool,
     unclaimed_nullable_types: u32,
     declared: declared::Mark,
@@ -191,7 +191,7 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     /// `ctx`
     pub(crate) context: u32,
     /// Number of enclosing classes.
-    pub(crate) classes_around: u32,
+    pub(crate) class_depth: u32,
     pub(crate) options: Options,
     /// See `recovers()`.
     recovers: bool,
@@ -249,16 +249,16 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     /// True if property names are parsed in the await context too, as when `reparseTopLevelAwait` reparses a statement.
     pub(crate) names_are_in_await_context: bool,
     /// True if error recovery hit an `await` in this statement where a name isn't allowed.
-    pub(crate) was_await_refused: bool,
+    pub(crate) recovery_hit_await: bool,
     /// True once the `reparseTopLevelAwait` reparse has run past the end of its statement. See `skip_to_element`.
     pub(crate) reparses_rest_of_file: bool,
     /// While `reparses_rest_of_file` is set, the start of the previous statement.
     pub(crate) reparsed_at: u32,
     /// The position of a JSX child's `<` for which the native parser still has the token from before the rescan. See
     /// `rescan_jsx_child`.
-    pub(crate) jsx_child_after_other_token: u32,
+    pub(crate) jsx_child_with_stale_token: u32,
     /// The position of the `?` of the last optional parameter.
-    pub(crate) question_of_parameter: u32,
+    pub(crate) parameter_question_pos: u32,
     /// See `private_name_before_in`. The position of the last one.
     pub(crate) private_name_before_in: u32,
     /// `notParenthesizedArrow`: the sorted positions where a speculative parse found that no arrow function starts.
@@ -340,7 +340,7 @@ pub(crate) fn run<'a>(
         return Err(Refused::new(Refusal::TooLarge));
     }
     match (atoms, options.part) {
-        (Some(atoms), _) => scratch.names.belong_to(atoms),
+        (Some(atoms), _) => scratch.names.use_interner(atoms),
         (None, None) => scratch.names.begin_own(text.len()),
         // Size the table for the part, not for the whole text.
         (None, Some(part)) => {
@@ -377,7 +377,8 @@ pub(crate) fn run<'a>(
     lx.is_babel = options.dialect.babel;
     lx.is_oxc = options.dialect.oxc;
     lx.is_script = (is_ecmascript || options.dialect.oxc) && options.dialect.script;
-    lx.notes_html_opens = options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
+    lx.records_html_opens =
+        options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
     let seed = Seed {
@@ -472,7 +473,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             f: file,
             s: stacks,
             context,
-            classes_around: 0,
+            class_depth: 0,
             options,
             recovers: options.recovers,
             reads_jsdoc: jsdoc.wanted != 0,
@@ -511,11 +512,11 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             has_await_in_name: false,
             has_await_identifier: false,
             names_are_in_await_context: false,
-            was_await_refused: false,
+            recovery_hit_await: false,
             reparses_rest_of_file: false,
             reparsed_at: u32::MAX,
-            jsx_child_after_other_token: u32::MAX,
-            question_of_parameter: 0,
+            jsx_child_with_stale_token: u32::MAX,
+            parameter_question_pos: 0,
             private_name_before_in: u32::MAX,
             not_arrows: Vec::new(),
             function_type_starts: Vec::new(),
@@ -533,7 +534,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     fn parse_into(mut self, file: &mut FileBuilder) -> Harvest<'a> {
         self.source_file();
         self.resolve_top_level_comments();
-        self.report_what_the_scanner_flagged();
+        self.report_scanner_flagged_errors();
         if !self.lx.private_names.is_empty() {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
         }
@@ -626,18 +627,18 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             let body = self.f.body;
             oxc::statements_in_ambient_context(&mut self.f, self.lx.src, body);
         }
-        self.take_errors_of_scanner();
+        self.take_scanner_errors();
         if self.reads_jsdoc() {
             self.finish_jsdoc();
         }
         if self.f.diagnostics.iter().any(|it| it.code == 1141) {
-            self.forget_specifiers_of_misplaced_declarations();
+            self.drop_specifier_errors_in_misplaced_declarations();
         }
         if self.unclaimed_nullable_types > 0 {
             self.refuse(Refusal::Reported);
         }
         if self.is_ecmascript && !self.is_flow() && !self.has_failed() {
-            bun_sema::ecmascript::report_syntax_of_typescript(&mut self.f, self.lx.src);
+            bun_sema::ecmascript::report_typescript_only_syntax(&mut self.f, self.lx.src);
         }
         // typescript-estree, acorn and Babel throw the first error reported, which isn't always the first in the text.
         // The scanner reports a malformed token before the parser reports that it expected a different one.
@@ -646,9 +647,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 .diagnostics
                 .shared_sort_by_key(|it| (it.start, it.code));
         }
-        let is_of_parser = |it: &Diagnostic| it.kind == DiagnosticKind::Parse;
+        let is_parse_error = |it: &Diagnostic| it.kind == DiagnosticKind::Parse;
         self.f.has_parse_diagnostics =
-            self.recovers() && self.f.diagnostics.iter().any(is_of_parser);
+            self.recovers() && self.f.diagnostics.iter().any(is_parse_error);
         if !self.f.body_starts.is_sorted_by_key(|body| body.0.0) {
             self.f
                 .body_starts
@@ -779,7 +780,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     /// Returns `ctx::DISALLOW_IN` if brackets, braces, and function parameters and bodies clear it, otherwise 0.
     /// TypeScript's parser doesn't clear it there.
     #[inline(always)]
-    pub(crate) fn disallow_in_if_brackets_end_it(&self) -> u32 {
+    pub(crate) fn disallow_in_if_cleared_by_brackets(&self) -> u32 {
         match self.is_ecmascript {
             true => ctx::DISALLOW_IN,
             false => 0,
@@ -787,7 +788,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// Turns `Lexer::flagged` into diagnostics.
-    fn report_what_the_scanner_flagged(&mut self) {
+    fn report_scanner_flagged_errors(&mut self) {
         for (code, start, end) in std::mem::take(&mut self.lx.flagged) {
             let written = self
                 .lx
@@ -963,7 +964,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     /// True if `text` immediately follows the current token.
     #[inline]
-    pub(crate) fn is_before(&self, text: &[u8]) -> bool {
+    pub(crate) fn is_followed_by(&self, text: &[u8]) -> bool {
         let rest = self.lx.src.get(self.lx.end as usize..);
         rest.is_some_and(|rest| rest.starts_with(text))
     }
@@ -979,7 +980,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     pub(crate) fn checkpoint(&mut self) -> Checkpoint {
         // `rollback` would drop scanner errors taken after this point, and their tokens aren't scanned again.
-        self.take_errors_of_scanner();
+        self.take_scanner_errors();
         // Call this first. After the others, it would keep all their results on the stack during the call.
         let jsdoc = self.jsdoc_lens();
         Checkpoint {
@@ -988,7 +989,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             stacks: self.s.lens(),
             context: self.context,
             lists: self.lists,
-            classes_around: self.classes_around,
+            class_depth: self.class_depth,
             has_top_level_await: self.has_top_level_await,
             unclaimed_nullable_types: self.unclaimed_nullable_types,
             declared: self.declared.mark(),
@@ -1003,7 +1004,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.s.truncate(&to.stacks);
         self.context = to.context;
         self.lists = to.lists;
-        self.classes_around = to.classes_around;
+        self.class_depth = to.class_depth;
         self.has_top_level_await = to.has_top_level_await;
         self.unclaimed_nullable_types = to.unclaimed_nullable_types;
         self.declared.rollback(to.declared);
@@ -1017,7 +1018,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     /// diagnostics and other records about the text are kept.
     #[cold]
     #[inline(never)]
-    pub(crate) fn forget_nodes(&mut self, since: &Checkpoint) {
+    pub(crate) fn discard_nodes(&mut self, since: &Checkpoint) {
         let now = file_lens(&self.f);
         let lens = FileLens {
             specifier_uses: now.specifier_uses,
@@ -1249,13 +1250,13 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     #[inline(always)]
     pub(crate) fn take_stray_decorators(&mut self, base: usize) {
         if GENERAL && self.s.stray_decorators.len() > base {
-            self.take_stray_decorators_slowly(base);
+            self.take_stray_decorators_slow(base);
         }
     }
 
     #[cold]
     #[inline(never)]
-    fn take_stray_decorators_slowly(&mut self, base: usize) {
+    fn take_stray_decorators_slow(&mut self, base: usize) {
         for index in base..self.s.stray_decorators.len() {
             let Some(&(start, decorator)) = self.s.stray_decorators.get(index) else {
                 break;

@@ -1,6 +1,6 @@
 use bun_lint_oxlint::ast_util::{as_function, as_method_definition, get_inner_expression};
 use crate::jsx::get_prop_value;
-use crate::react::{FlagsOfVariables, Variables, is_jsx};
+use crate::react::{VariableFlags, Variables, is_jsx};
 use crate::util_components::Components;
 use crate::util_components_list::At;
 use crate::util_is_create_element::is_member_called;
@@ -37,7 +37,7 @@ const JSX_NO_CONSTRUCTED_CONTEXT_VALUES: Message =
 pub struct State<'a> {
     inside_component: AncestorMemo<'a, ()>,
     /// 1 for a variable that gets a new value every time the function that declares it runs.
-    constructed_variables: FlagsOfVariables<'a>,
+    constructed_variables: VariableFlags<'a>,
     /// For upstream: the construction that such a variable ultimately refers to.
     ends: IdMap<Symbol<'a>, Option<End<'a>>>,
     /// The constructions that upstream reports if the element is in a component.
@@ -67,7 +67,7 @@ struct Step<'a> {
 
 /// An expression on the path from the attribute's value to the construction.
 #[derive(Copy, Clone)]
-struct Way<'a> {
+struct Trace<'a> {
     expr: Expr<'a>,
     /// The outermost variable, member expression object or assignment on the path.
     usage: Option<Expr<'a>>,
@@ -77,14 +77,14 @@ struct Way<'a> {
 
 /// The end of a path.
 struct Found<'a> {
-    way: Way<'a>,
-    /// `way.expr` is this variable, which is constructed on every run.
+    trace: Trace<'a>,
+    /// `trace.expr` is this variable, which is constructed on every run.
     variable: Option<Symbol<'a>>,
 }
 
 /// oxlint checks the attribute's value differently from a variable's initializer.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Place {
+enum Origin {
     Value,
     Init,
 }
@@ -92,7 +92,7 @@ enum Place {
 /// How a variable is declared.
 enum Definition<'a> {
     /// A function or a class.
-    Made(Node<'a>),
+    FunctionOrClass(Node<'a>),
     Init(Expr<'a>),
 }
 
@@ -229,13 +229,13 @@ impl<'a> State<'a> {
     /// upstream's `isConstruction`. For oxlint only `Some` or `None` matters.
     fn is_construction(&mut self, value: Expr<'a>, element: Expr<'a>, is_oxlint: bool) -> Option<Construction<'a>> {
         let mut ask = |it| is_constructed(&mut self.constructed_variables, it, is_oxlint);
-        let (way, scope) = (Way { expr: value, usage: None, kind: None }, Node::Expr(element).scope());
-        let Found { way, variable } = way.find_construction(Place::Value, scope, is_oxlint, &mut ask)?;
+        let (trace, scope) = (Trace { expr: value, usage: None, kind: None }, Node::Expr(element).scope());
+        let Found { trace, variable } = trace.find_construction(Origin::Value, scope, is_oxlint, &mut ask)?;
         let end = match variable.filter(|_| !is_oxlint) {
-            None => End { kind: "", node: normalize(Node::Expr(way.expr)) },
+            None => End { kind: "", node: normalize(Node::Expr(trace.expr)) },
             Some(variable) => self.end_of(variable)?,
         };
-        Some(Construction { element, kind: way.kind.unwrap_or(end.kind), node: end.node, usage: way.usage })
+        Some(Construction { element, kind: trace.kind.unwrap_or(end.kind), node: end.node, usage: trace.usage })
     }
 
     /// Visits each variable once. Returns `None` where upstream would recurse forever.
@@ -254,18 +254,18 @@ impl<'a> State<'a> {
             }
             let init = match definition_of(variable, is_oxlint) {
                 None => break None,
-                Some(Definition::Made(node)) => {
+                Some(Definition::FunctionOrClass(node)) => {
                     path.push(Step { variable, kind: None });
                     break Some(End { kind: "function declaration", node });
                 }
-                Some(Definition::Init(init)) => Way { expr: init, usage: None, kind: None },
+                Some(Definition::Init(init)) => Trace { expr: init, usage: None, kind: None },
             };
-            let Some(found) = init.find_construction(Place::Init, variable.scope(), is_oxlint, &mut ask) else {
+            let Some(found) = init.find_construction(Origin::Init, variable.scope(), is_oxlint, &mut ask) else {
                 break None;
             };
-            path.push(Step { variable, kind: found.way.kind });
+            path.push(Step { variable, kind: found.trace.kind });
             match found.variable {
-                None => break Some(End { kind: "", node: normalize(Node::Expr(found.way.expr)) }),
+                None => break Some(End { kind: "", node: normalize(Node::Expr(found.trace.expr)) }),
                 Some(next) => variable = next,
             }
         };
@@ -277,25 +277,25 @@ impl<'a> State<'a> {
     }
 }
 
-fn is_constructed<'a>(known: &mut FlagsOfVariables<'a>, variable: Symbol<'a>, is_oxlint: bool) -> bool {
+fn is_constructed<'a>(known: &mut VariableFlags<'a>, variable: Symbol<'a>, is_oxlint: bool) -> bool {
     known.of_variable(variable, |it| declared_with(it, is_oxlint)) != 0
 }
 
-impl<'a> Way<'a> {
+impl<'a> Trace<'a> {
     /// upstream's `isConstruction`, oxlint's `is_constructed_expression` and `is_construction_expression`. Stops at the
     /// first expression that creates a new value every time, or at a variable for which `is_constructed` returns true.
     fn find_construction(
         self,
-        place: Place,
+        origin: Origin,
         scope: Scope<'a>,
         is_oxlint: bool,
         is_constructed: &mut dyn FnMut(Symbol<'a>) -> bool,
     ) -> Option<Found<'a>> {
-        let is_value_for_oxlint = is_oxlint && place == Place::Value;
-        let mut pending: SmallVec<[Way<'a>; 8]> = smallvec![self];
-        while let Some(way) = pending.pop() {
+        let is_value_for_oxlint = is_oxlint && origin == Origin::Value;
+        let mut pending: SmallVec<[Trace<'a>; 8]> = smallvec![self];
+        while let Some(trace) = pending.pop() {
             // oxlint looks through every TypeScript wrapper, upstream only through `as`.
-            let expr = if is_oxlint { get_inner_expression(way.expr) } else { way.expr };
+            let expr = if is_oxlint { get_inner_expression(trace.expr) } else { trace.expr };
             let kind = match expr.kind() {
                 ExprKind::Object(_) => "object",
                 ExprKind::Array(_) => "array",
@@ -326,44 +326,44 @@ impl<'a> Way<'a> {
                 }
                 ExprKind::Template(template) if is_value_for_oxlint && !template.exprs().is_empty() => "",
                 ExprKind::Unary { operand, .. } if is_value_for_oxlint => {
-                    pending.push(Way { expr: operand, ..way });
+                    pending.push(Trace { expr: operand, ..trace });
                     continue;
                 }
                 ExprKind::Binary { op, left, right }
                     if matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
                         || (is_value_for_oxlint && left.tag() != ExprTag::PrivateIdentifier) =>
                 {
-                    pending.extend([Way { expr: right, ..way }, Way { expr: left, ..way }]);
+                    pending.extend([Trace { expr: right, ..trace }, Trace { expr: left, ..trace }]);
                     continue;
                 }
                 ExprKind::Cond { yes, no, .. } => {
-                    pending.extend([Way { expr: no, ..way }, Way { expr: yes, ..way }]);
+                    pending.extend([Trace { expr: no, ..trace }, Trace { expr: yes, ..trace }]);
                     continue;
                 }
                 ExprKind::Assign { value, .. } => {
-                    let usage = way.usage.or(Some(expr));
-                    pending.push(Way { expr: value, usage, kind: Some("assignment expression") });
+                    let usage = trace.usage.or(Some(expr));
+                    pending.push(Trace { expr: value, usage, kind: Some("assignment expression") });
                     continue;
                 }
                 ExprKind::As { expr: inner, .. } | ExprKind::AsConst(inner) if !expr.is_angle_bracket_assertion() => {
-                    pending.push(Way { expr: inner, ..way });
+                    pending.push(Trace { expr: inner, ..trace });
                     continue;
                 }
                 ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if !is_oxlint && !expr.is_chain_root() => {
-                    pending.push(Way { expr: obj, usage: way.usage.or(Some(obj)), ..way });
+                    pending.push(Trace { expr: obj, usage: trace.usage.or(Some(obj)), ..trace });
                     continue;
                 }
                 ExprKind::Ident(name) => {
                     // upstream only sees the variables of the element's own scope.
                     let variable = if is_oxlint { expr.symbol() } else { scope.get_name(name) };
                     if variable.is_some_and(&mut *is_constructed) {
-                        return Some(Found { way: Way { expr, usage: way.usage.or(Some(expr)), ..way }, variable });
+                        return Some(Found { trace: Trace { expr, usage: trace.usage.or(Some(expr)), ..trace }, variable });
                     }
                     continue;
                 }
                 _ => continue,
             };
-            return Some(Found { way: Way { expr, kind: way.kind.or(Some(kind)), ..way }, variable: None });
+            return Some(Found { trace: Trace { expr, kind: trace.kind.or(Some(kind)), ..trace }, variable: None });
         }
         None
     }
@@ -379,8 +379,8 @@ fn definition_of(variable: Symbol<'_>, is_oxlint: bool) -> Option<Definition<'_>
     let declaration = if is_oxlint { declarations.next() } else { declarations.next_back() }?;
     match declaration {
         // For upstream a `TSDeclareFunction` isn't a function, and a class isn't handled.
-        Declaration::Fn(function) if is_oxlint || function.has_body() => Some(Definition::Made(Node::Func(function))),
-        Declaration::Class(class) if is_oxlint => Some(Definition::Made(Node::Class(class))),
+        Declaration::Fn(function) if is_oxlint || function.has_body() => Some(Definition::FunctionOrClass(Node::Func(function))),
+        Declaration::Class(class) if is_oxlint => Some(Definition::FunctionOrClass(Node::Class(class))),
         Declaration::Var(_) => match declaration.node() {
             Some(Node::VarDecl(declarator)) => declarator.init().map(Definition::Init),
             _ => None,
@@ -392,17 +392,17 @@ fn definition_of(variable: Symbol<'_>, is_oxlint: bool) -> Option<Definition<'_>
 /// Returns 1 if the variable's declaration creates a new value, plus the variables it can also evaluate to.
 fn declared_with(variable: Symbol<'_>, is_oxlint: bool) -> (u8, Variables<'_>) {
     let mut variables = Variables::new();
-    let is_made = match definition_of(variable, is_oxlint) {
+    let creates_value = match definition_of(variable, is_oxlint) {
         None => false,
-        Some(Definition::Made(_)) => true,
+        Some(Definition::FunctionOrClass(_)) => true,
         Some(Definition::Init(init)) => {
-            let way = Way { expr: init, usage: None, kind: None };
+            let trace = Trace { expr: init, usage: None, kind: None };
             let mut add = |it| {
                 variables.push(it);
                 false
             };
-            way.find_construction(Place::Init, variable.scope(), is_oxlint, &mut add).is_some()
+            trace.find_construction(Origin::Init, variable.scope(), is_oxlint, &mut add).is_some()
         }
     };
-    (u8::from(is_made), variables)
+    (u8::from(creates_value), variables)
 }

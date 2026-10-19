@@ -31,19 +31,19 @@ fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
                 let language = file.language();
                 let tables = match &language.eslint_8 {
                     Some(_) => Tables::Eslint8,
-                    None if language.stands_alone => Tables::Today,
+                    None if language.has_no_foreign_config => Tables::Today,
                     None => continue,
                 };
                 for name in parse_list_config(value) {
-                    let of_plugin = language.eslint_8.iter();
-                    let of_plugin = of_plugin.flat_map(|it| it.globals_of_environment(name));
-                    let of_plugin = of_plugin.map(|it| (Cow::Owned(it.0.to_vec()), it.1));
-                    variables.of_environments.extend(of_plugin);
+                    let plugin_globals = language.eslint_8.iter();
+                    let plugin_globals = plugin_globals.flat_map(|it| it.environment_globals(name));
+                    let plugin_globals = plugin_globals.map(|it| (Cow::Owned(it.0.to_vec()), it.1));
+                    variables.env_comment_globals.extend(plugin_globals);
                     let name: &[u8] = if name == b"es6" { b"es2015" } else { name };
                     let all = super::globals::environment(name, tables);
                     let all = all.into_iter().flatten();
                     let all = all.map(|it| (Cow::Borrowed(it.0), it.1));
-                    variables.of_environments.extend(all);
+                    variables.env_comment_globals.extend(all);
                 }
             }
             Label::Exported => {
@@ -140,7 +140,10 @@ impl<'a> File<'a> {
 
     /// Returns `name`'s setting in the environments listed in the file's `/* eslint-env */` comments.
     pub(crate) fn global_of_environment_in_comments(&'a self, name: &[u8]) -> Option<Global> {
-        self.comment_variables()?.of_environments.get(name).copied()
+        self.comment_variables()?
+            .env_comment_globals
+            .get(name)
+            .copied()
     }
 
     /// Globals from the environments listed in the file's `/* eslint-env */` comments, sorted by name.
@@ -148,7 +151,7 @@ impl<'a> File<'a> {
         let Some(variables) = self.comment_variables() else {
             return Vec::new();
         };
-        let mut all: Vec<(&'a [u8], Global)> = (variables.of_environments.iter())
+        let mut all: Vec<(&'a [u8], Global)> = (variables.env_comment_globals.iter())
             .map(|(name, setting)| (&**name, *setting))
             .collect();
         crate::utils::sort::sort_unstable_by_key(&mut all, |it| it.0);

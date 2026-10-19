@@ -37,7 +37,7 @@ pub struct Rule {
     /// `meta.deprecated`, if it's truthy in JavaScript, and `meta.replacedBy`.
     pub deprecated: Option<Box<(Json, Json)>>,
     /// No module exports the rule or its plugin, so a realm has to run the whole config file to get it.
-    pub needs_the_configuration: bool,
+    pub needs_config_file: bool,
     /// JSON: the module that exports the rule itself, if there is one. A realm loads that instead of the plugin.
     pub(super) location: Option<Box<[u8]>>,
     /// Its plugin's index among the plugins.
@@ -57,7 +57,7 @@ pub struct Plugin {
     /// `meta.name@meta.version`, as ESLint prints a plugin.
     pub id: Option<Box<[u8]>>,
     /// It has none of a plugin's properties: no `meta`, no `rules`.
-    pub has_nothing: bool,
+    pub has_no_plugin_properties: bool,
     /// Sorted by [`Rule::id`].
     pub rules: Vec<Arc<Rule>>,
 }
@@ -141,11 +141,11 @@ pub struct FileSettings {
 }
 
 /// True if `json` contains a value from the config file that JSON can't represent.
-pub(crate) fn has_what_json_lacks(json: &Json) -> bool {
+pub(crate) fn has_non_json_value(json: &Json) -> bool {
     match json {
-        Json::Array(items) => items.iter().any(has_what_json_lacks),
+        Json::Array(items) => items.iter().any(has_non_json_value),
         Json::Object(entries) => {
-            (entries.iter()).any(|it| it.0 == b"$unserializable" || has_what_json_lacks(&it.1))
+            (entries.iter()).any(|it| it.0 == b"$unserializable" || has_non_json_value(&it.1))
         }
         Json::Number(it) => !it.is_finite(),
         _ => false,
@@ -160,7 +160,7 @@ impl FileSettings {
         sources: &[&Json],
         parser: Option<&Json>,
     ) -> Arc<FileSettings> {
-        let sources = has_what_json_lacks(&language.settings).then(|| {
+        let sources = has_non_json_value(&language.settings).then(|| {
             let sources = sources.iter().map(|it| (*it).clone());
             let mut written = Vec::new();
             write_json(&mut written, &Json::Array(sources.collect()));
@@ -211,8 +211,8 @@ impl FileSettings {
             Json::Null => Json::Object(Vec::new()),
             // Keys that begin with `$` are Bun's own.
             Json::Object(entries) => {
-                let of_the_user = entries.iter().filter(|it| !it.0.starts_with(b"$"));
-                Json::Object(of_the_user.cloned().collect())
+                let user_entries = entries.iter().filter(|it| !it.0.starts_with(b"$"));
+                Json::Object(user_entries.cloned().collect())
             }
             settings => settings.clone(),
         };
@@ -225,9 +225,7 @@ impl FileSettings {
             }
         };
         let globals = match language.is_oxlint {
-            true => {
-                ConfiguredGlobals::new(language.globals_of_oxlint_plugins(), std::iter::empty())
-            }
+            true => ConfiguredGlobals::new(language.oxlint_plugin_globals(), std::iter::empty()),
             false => {
                 let globals = config_globals_in_order(language)
                     .into_iter()

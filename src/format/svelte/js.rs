@@ -89,13 +89,13 @@ fn assertion_at_end(e: Expr<'_>) -> Option<(u32, u32)> {
 }
 
 /// Finds the errors that acorn reports and TypeScript's parser leaves to the checker.
-struct Early {
+struct EarlyErrors {
     is_typescript: bool,
     /// Number of non-arrow functions and classes that enclose the current node.
     depth: u32,
     first_error: Option<u32>,
     /// In JavaScript, the offset of the first TypeScript `as`, `satisfies` or `!`. acorn stops before it.
-    first_of_typescript: Option<u32>,
+    first_typescript_operator: Option<u32>,
     /// In JavaScript, the offset of the first `<T>a`, which the parser doesn't report.
     first_assertion: Option<u32>,
 }
@@ -109,7 +109,7 @@ fn scopes_of(node: Node<'_>) -> u32 {
     }
 }
 
-impl<'a> Visitor<'a> for Early {
+impl<'a> Visitor<'a> for EarlyErrors {
     fn enter(&mut self, node: Node<'a>) {
         self.depth += scopes_of(node);
         let Node::Expr(e) = node else {
@@ -152,8 +152,8 @@ impl<'a> Visitor<'a> for Early {
             | ExprKind::AsConst(expr)
             | ExprKind::NonNull(expr) => {
                 let end = expr.outer_span().end;
-                if !self.is_typescript && self.first_of_typescript.is_none_or(|it| end < it) {
-                    self.first_of_typescript = Some(end);
+                if !self.is_typescript && self.first_typescript_operator.is_none_or(|it| end < it) {
+                    self.first_typescript_operator = Some(end);
                 }
                 None
             }
@@ -195,17 +195,17 @@ impl FromParser<'_> {
             };
             let (mut result, mut stops_at, mut typescript_at) = (Err(at), None, None);
             let parsed = (self.parse_part)(part, &mut |file, end| {
-                let mut early = Early {
+                let mut early = EarlyErrors {
                     is_typescript,
                     depth: 0,
                     first_error: None,
-                    first_of_typescript: None,
+                    first_typescript_operator: None,
                     first_assertion: None,
                 };
                 walk(file, &mut early);
-                stops_at = early.first_of_typescript;
+                stops_at = early.first_typescript_operator;
                 // acorn doesn't support any TypeScript syntax.
-                typescript_at = (file.first_of_typescript_in_javascript().into_iter())
+                typescript_at = (file.first_typescript_syntax_in_javascript().into_iter())
                     .chain(early.first_assertion)
                     .min()
                     .filter(|it| {
@@ -246,7 +246,7 @@ impl FromParser<'_> {
     ) -> Result<R, usize> {
         let (mut result, mut typescript_at) = (None, None);
         self.parse.call(self.path(), program, false, &mut |file| {
-            typescript_at = file.first_of_typescript_in_javascript();
+            typescript_at = file.first_typescript_syntax_in_javascript();
             if !file.has_parse_errors() && typescript_at.is_none() {
                 result = (file.body().iter().next()).and_then(|it| read(file, it.kind()));
             }

@@ -124,13 +124,13 @@ fn is_scope(node: Node<'_>, of_blocks: bool, is_oxlint: bool) -> bool {
 struct Scopes<'a> {
     of_blocks: bool,
     is_oxlint: bool,
-    around: AncestorMemo<'a, Node<'a>>,
-    /// Each with its [`number_of`] and its [`extent_of`].
+    enclosing_scopes: AncestorMemo<'a, Node<'a>>,
+    /// Each with its [`scope_id`] and its [`statements_span`].
     open: Vec<(u64, Span, [Seen; 5])>,
 }
 
 /// Returns an ID that's unique to this scope within the file.
-fn number_of(scope: Node<'_>) -> u64 {
+fn scope_id(scope: Node<'_>) -> u64 {
     match scope {
         Node::Func(func) => 1 << 32 | u64::from(func.id().0),
         Node::Stmt(statement) => 2 << 32 | u64::from(statement.id().0),
@@ -139,7 +139,7 @@ fn number_of(scope: Node<'_>) -> u64 {
 }
 
 /// Returns the span from a scope's first statement to its last.
-fn extent_of(scope: Node<'_>) -> Span {
+fn statements_span(scope: Node<'_>) -> Span {
     let body = scope.as_func().and_then(Func::body_statements);
     match body.and_then(|it| it.first().zip(it.last())) {
         Some((first, last)) => first.span().to(last.span()),
@@ -152,7 +152,7 @@ impl<'a> Scopes<'a> {
         Scopes {
             of_blocks,
             is_oxlint,
-            around: AncestorMemo::default(),
+            enclosing_scopes: AncestorMemo::default(),
             open: Vec::new(),
         }
     }
@@ -165,9 +165,9 @@ impl<'a> Scopes<'a> {
         let parent = statement.parent();
         let scope = match is_scope(parent, of_blocks, is_oxlint) {
             true => parent,
-            false => self.around.find(parent, |_, it| is_scope(it, of_blocks, is_oxlint).then_some(it))?,
+            false => self.enclosing_scopes.find(parent, |_, it| is_scope(it, of_blocks, is_oxlint).then_some(it))?,
         };
-        let number = number_of(scope);
+        let number = scope_id(scope);
         if self.open.last().is_none_or(|it| it.0 != number) {
             // Pop the scopes that end before the statement, and the ones nested in it.
             let start = statement.span().start;
@@ -175,7 +175,7 @@ impl<'a> Scopes<'a> {
                 self.open.pop();
             }
             if self.open.last().is_none_or(|it| it.0 != number) {
-                self.open.push((number, extent_of(scope), Default::default()));
+                self.open.push((number, statements_span(scope), Default::default()));
             }
         }
         self.open.last_mut().map(|it| &mut it.2)
@@ -378,9 +378,9 @@ impl OneVar {
         }
         scope.uninitialized |= always_uninitialized && counts.uninitialized > 0;
         if always_initialized {
-            let apart = if self.separate_requires { counts.requires } else { 0 };
-            scope.required |= apart > 0;
-            scope.initialized |= counts.initialized > apart;
+            let separate_count = if self.separate_requires { counts.requires } else { 0 };
+            scope.required |= separate_count > 0;
+            scope.initialized |= counts.initialized > separate_count;
         }
         true
     }
@@ -484,12 +484,12 @@ impl Rule for OneVar {
         let object = options.object(0);
         let mut kinds = [KindOptions::default(); 5];
         if options.get(0).is_some_and(|it| it.as_object().is_some()) {
-            let of_all = |key: &str| object.has(key).then(|| Mode::of(object.str(key)));
+            let shared_mode = |key: &str| object.has(key).then(|| Mode::of(object.str(key)));
             for (kind, key) in kinds.iter_mut().zip(KEYS) {
                 let mode = Mode::of(object.str(key));
                 *kind = KindOptions {
-                    uninitialized: of_all("uninitialized").unwrap_or(mode),
-                    initialized: of_all("initialized").unwrap_or(mode),
+                    uninitialized: shared_mode("uninitialized").unwrap_or(mode),
+                    initialized: shared_mode("initialized").unwrap_or(mode),
                 };
             }
         } else {

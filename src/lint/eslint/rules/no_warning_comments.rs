@@ -76,13 +76,13 @@ fn comment_to_display(comment: &[u8]) -> Vec<u8> {
 }
 
 /// `/^term\b/iu`, with the `\b` if `term` ends with a `\w`.
-fn is_here(term: &[u8], rest: &[u8]) -> bool {
+fn starts_with_term(term: &[u8], rest: &[u8]) -> bool {
     text::strip_prefix_ignoring_case(rest, term)
         .is_some_and(|after| !(is_word_character(term.last()) && text::starts_with_word_ignoring_case(after)))
 }
 
 /// `/\bterm\b/iu`, each `\b` if there is a `\w` on that side of `term`.
-fn is_anywhere(term: &[u8], value: &[u8]) -> bool {
+fn contains_term(term: &[u8], value: &[u8]) -> bool {
     let Some(first) = term.first() else {
         return true;
     };
@@ -94,7 +94,7 @@ fn is_anywhere(term: &[u8], value: &[u8]) -> bool {
         let Some((before, rest)) = value.split_at_checked(at) else {
             return false;
         };
-        if !(is_word_character(Some(first)) && text::ends_with_word_ignoring_case(before)) && is_here(term, rest) {
+        if !(is_word_character(Some(first)) && text::ends_with_word_ignoring_case(before)) && starts_with_term(term, rest) {
             return true;
         }
         at += 1;
@@ -114,7 +114,7 @@ impl NoWarningComments {
     /// `/^[\s<decoration>]*term\b/iu`
     fn starts_with(&self, term: &[u8], value: &[u8]) -> bool {
         let mut rest = value;
-        while !is_here(term, rest) {
+        while !starts_with_term(term, rest) {
             rest = match self.after_space_or_decoration(rest) {
                 Some(rest) => rest,
                 None => return false,
@@ -141,7 +141,7 @@ impl NoWarningComments {
     fn has(&self, term: &Term, value: &[u8]) -> bool {
         match &term.matcher {
             Matcher::Ascii(term) if self.is_at_start => self.starts_with(term, value),
-            Matcher::Ascii(term) => is_anywhere(term, value),
+            Matcher::Ascii(term) => contains_term(term, value),
             Matcher::Pattern(pattern) => pattern.test(value),
         }
     }

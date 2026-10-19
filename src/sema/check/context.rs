@@ -102,7 +102,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `prepare_parent` for the ancestors of `e`. In the file being checked, `e` and its ancestor
     /// expressions are marked on the way up. A descendant of a marked expression is in the same
-    /// function, which has already been through `prepare_from_the_outside`.
+    /// function, which has already been through `prepare_outermost_first`.
     fn prepare_around(&mut self, file: FileId, e: ExprId) {
         let bound = self.bound(file);
         if self.prepared_exprs.0 != file {
@@ -128,13 +128,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn prepare_parent(&mut self, file: FileId, parent: Parent) {
         if let Some(func) = self.enclosing_fn(file, parent) {
-            self.prepare_from_the_outside(file, func);
+            self.prepare_outermost_first(file, func);
         }
     }
 
     /// Prepares the functions enclosing `func` first. If `func` has been through here before, all
     /// of them are already prepared.
-    fn prepare_from_the_outside(&mut self, file: FileId, func: FnId) {
+    fn prepare_outermost_first(&mut self, file: FileId, func: FnId) {
         // Consecutive queries are about the same function.
         if self.last_prepared == (file, func) || !self.prepared.insert((file, func)) {
             self.last_prepared = (file, func);
@@ -143,7 +143,7 @@ impl<'p, 's> Checker<'p, 's> {
         let info = &self.bound(file).fns[func.idx()];
         let (enclosing, owner) = (info.enclosing, info.owner);
         if enclosing.is_some() {
-            self.prepare_from_the_outside(file, enclosing);
+            self.prepare_outermost_first(file, enclosing);
         }
         if let FnOwner::Expr(owner) = owner {
             self.prepare_context(file, owner);
@@ -421,7 +421,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // Maps a name to its property's index in `shape.props`, if the pattern has many
                 // properties.
                 let has_many = props.len() > 16;
-                let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
+                let mut prop_indexes: FxHashMap<Atom, usize> = FxHashMap::default();
                 for p in props.iter() {
                     let prop = &hir[p];
                     if prop.is_rest {
@@ -461,7 +461,7 @@ impl<'p, 's> Checker<'p, 's> {
                         name_type: TypeId::UNRESOLVED,
                     };
                     let earlier = if has_many {
-                        places.get(&name).copied()
+                        prop_indexes.get(&name).copied()
                     } else {
                         shape.props.iter().position(|p| p.name == name)
                     };
@@ -469,7 +469,7 @@ impl<'p, 's> Checker<'p, 's> {
                         Some(earlier) => shape.props[earlier] = implied,
                         None => {
                             if has_many {
-                                places.insert(name, shape.props.len());
+                                prop_indexes.insert(name, shape.props.len());
                             }
                             shape.props.push(implied);
                         }
@@ -1039,7 +1039,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(context);
         }
         let parts = self.parts(context);
-        let asked = self.members_to_ask_as_context(context, name);
+        let asked = self.members_to_search_for_context(context, name);
         let mut types = Parts::new();
         match &asked {
             Some(asked) => {
@@ -1447,7 +1447,7 @@ impl<'p, 's> Checker<'p, 's> {
         let slot = &mut self.inference_contexts[level].context;
         context.return_context = (slot.as_mut()).and_then(|it| it.return_context.take());
         if let Some(mut placeholder) = slot.replace(context) {
-            placeholder.become_empty();
+            placeholder.reset_to_empty();
             self.spare_inferences.push(placeholder);
         }
     }
@@ -1526,8 +1526,8 @@ impl<'p, 's> Checker<'p, 's> {
             return narrowed;
         }
         let before = self.non_cacheable_mark();
-        let (narrowed, is_given_for_good) = self.discriminate_by_members(file, props, context);
-        if is_given_for_good && self.is_cacheable_since(before) {
+        let (narrowed, all_values_are_final) = self.discriminate_by_members(file, props, context);
+        if all_values_are_final && self.is_cacheable_since(before) {
             self.discriminated
                 .insert((file, literal, context), narrowed);
         }
@@ -1561,7 +1561,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Only names the binder knows count. A computed name is skipped.
         let (mut items, mut written) = (Discriminants::new(), SmallVec::<[Atom; 16]>::new());
-        let mut is_given_for_good = true;
+        let mut all_values_are_final = true;
         for p in props.iter() {
             let prop = &hir[p];
             if prop.kind == PropKind::Spread {
@@ -1579,14 +1579,14 @@ impl<'p, 's> Checker<'p, 's> {
                 };
             if counts && self.is_discriminant_property(context, name) {
                 let (actual, is_final) = self.context_free_discriminant_type(file, prop.value);
-                is_given_for_good &= is_final;
+                all_values_are_final &= is_final;
                 items.push((name, actual));
             }
         }
         self.push_omitted_discriminants(context, &written, &mut items);
         (
             self.discriminate_by_items(context, &items, Self::is_assignable),
-            is_given_for_good,
+            all_values_are_final,
         )
     }
 
@@ -1858,7 +1858,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.declared_or_contextual_return_type(file, func, context_flags)?;
                 let is_async = hir[func].flags.contains(Flags::ASYNC);
                 if !star {
-                    let declared = self.alternatives_to_go_through(declared, is_async);
+                    let declared = self.members_with_iteration_return_type(declared, is_async);
                     let types =
                         self.iteration_type_of_generator_function_return_type(declared, is_async);
                     return types.y;
@@ -2632,7 +2632,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getContextualTypeForReturnExpression`, `getContextualTypeForYieldOperand`: returns the
     /// union members of a generator's return type that have an iteration return type.
-    fn alternatives_to_go_through(&mut self, declared: TypeId, is_async: bool) -> TypeId {
+    fn members_with_iteration_return_type(&mut self, declared: TypeId, is_async: bool) -> TypeId {
         if self.is_union(declared) {
             self.filter(declared, |c, t| {
                 let types = c.iteration_type_of_generator_function_return_type(t, is_async);
@@ -2665,7 +2665,7 @@ impl<'p, 's> Checker<'p, 's> {
         if f.flags.contains(Flags::GENERATOR) {
             // Its return value is the last result delivered to the consumer of the iterator.
             let is_async = f.flags.contains(Flags::ASYNC);
-            declared = self.alternatives_to_go_through(declared, is_async);
+            declared = self.members_with_iteration_return_type(declared, is_async);
             let types = self.iteration_type_of_generator_function_return_type(declared, is_async);
             declared = types.r?;
         }

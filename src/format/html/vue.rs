@@ -20,12 +20,12 @@ fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
     let mut at = 0;
     let (alias, operator, right) = loop {
         let rest = value.get(at..).filter(|rest| !rest.is_empty())?;
-        let blank_len = text::leading_white_space_len(rest);
-        if let [b'i', b'n', right @ ..] | [b'o', b'f', right @ ..] = &rest[blank_len..]
-            && blank_len > 0
+        let whitespace_len = text::leading_white_space_len(rest);
+        if let [b'i', b'n', right @ ..] | [b'o', b'f', right @ ..] = &rest[whitespace_len..]
+            && whitespace_len > 0
             && text::starts_with_white_space(right)
         {
-            let operator = &rest[blank_len..blank_len + 2];
+            let operator = &rest[whitespace_len..whitespace_len + 2];
             break (
                 &value[..at],
                 operator,
@@ -33,7 +33,7 @@ fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
             );
         }
         // Skip the whole whitespace run, since a match can't start later in it either.
-        at += blank_len.max(1);
+        at += whitespace_len.max(1);
     };
     if right.is_empty() {
         return None;

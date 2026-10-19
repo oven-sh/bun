@@ -37,7 +37,7 @@ pub(crate) enum Found {
     WithData(&'static str),
     /// The rule has no help text, so oxlint prints its `RuleFixer`'s description of the fix. With `removes`, a
     /// replacement with nothing is described as "Remove `..`." instead of "Delete this code.".
-    OfTheFix {
+    FixDescription {
         removes: bool,
         edits: Edits,
     },
@@ -62,10 +62,12 @@ impl Help {
             return Found::Nothing;
         };
         let line = match (texts, part) {
-            (Texts::OfTheFix { removes, edits, .. }, Part::Help) => {
-                return Found::OfTheFix { removes, edits };
+            (Texts::FixDescription { removes, edits, .. }, Part::Help) => {
+                return Found::FixDescription { removes, edits };
             }
-            (One(line), Part::Help) | (Texts::OfTheFix { note: line, .. }, Part::Note) => line,
+            (One(line), Part::Help) | (Texts::FixDescription { note: line, .. }, Part::Note) => {
+                line
+            }
             (Three(first), part) => first + part as u16,
             _ => 0,
         };
@@ -90,9 +92,9 @@ impl Help {
         self.entry().is_some_and(|it| it.2 != 0)
     }
 
-    /// True if the help is [`Found::OfTheFix`].
-    pub(crate) fn is_of_the_fix(self) -> bool {
-        matches!(self.entry(), Some((_, Texts::OfTheFix { .. }, _)))
+    /// True if the help is [`Found::FixDescription`].
+    pub(crate) fn is_fix_description(self) -> bool {
+        matches!(self.entry(), Some((_, Texts::FixDescription { .. }, _)))
     }
 }
 
@@ -142,8 +144,8 @@ enum Texts {
     /// The help, the first label's text and the note, on three lines starting at this one. An empty line means there's
     /// no such text.
     Three(u16),
-    /// [`Found::OfTheFix`], and the note. 0 means there's no note.
-    OfTheFix {
+    /// [`Found::FixDescription`], and the note. 0 means there's no note.
+    FixDescription {
         removes: bool,
         edits: Edits,
         note: u16,
@@ -151,7 +153,7 @@ enum Texts {
 }
 
 const fn of_the_fix(removes: bool, edits: Edits, note: u16) -> Texts {
-    Texts::OfTheFix {
+    Texts::FixDescription {
         removes,
         edits,
         note,

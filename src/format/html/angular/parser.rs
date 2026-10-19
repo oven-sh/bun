@@ -188,7 +188,7 @@ pub(crate) fn comment_start(input: &[u8]) -> Option<usize> {
 pub(crate) struct Parser<'i> {
     pub(super) input: &'i [u8],
     tokens: Vec<Token>,
-    odd_blanks: Vec<u32>,
+    angular_only_whitespace: Vec<u32>,
     pub(super) index: usize,
     /// `parseFlags & 1`: assignments are allowed and pipes aren't.
     is_action: bool,
@@ -217,16 +217,16 @@ impl<'i> Parser<'i> {
         is_action: bool,
         stack_check: bun_core::StackCheck,
     ) -> Self {
-        let (mut tokens, mut odd_blanks) = (Vec::new(), Vec::new());
+        let (mut tokens, mut angular_only_whitespace) = (Vec::new(), Vec::new());
         tokenize(
             input.get(..len).unwrap_or(input),
             &mut tokens,
-            &mut odd_blanks,
+            &mut angular_only_whitespace,
         );
         Parser {
             input,
             tokens,
-            odd_blanks,
+            angular_only_whitespace,
             index: 0,
             is_action,
             edits: Vec::new(),
@@ -367,7 +367,7 @@ impl<'i> Parser<'i> {
 
     /// Angular accepts a line break and any escape sequence in a string. The parser doesn't care about a string's
     /// contents.
-    fn hide_what_is_in_string(&mut self, string: Token) {
+    fn hide_string_contents(&mut self, string: Token) {
         let text = self.text_of(string);
         let mut at = 0;
         while let Some(found) = text
@@ -387,7 +387,7 @@ impl<'i> Parser<'i> {
     }
 
     /// Angular accepts `1.2.3`, `1e2e3` and `01`.
-    fn hide_what_is_no_number(&mut self, number: Token) {
+    fn hide_invalid_number(&mut self, number: Token) {
         let text = self.text_of(number);
         let exponent = strings::index_of_any(text, b"eE");
         let (mantissa, exponent) = text.split_at(exponent.unwrap_or(text.len()));
@@ -477,9 +477,11 @@ impl<'i> Parser<'i> {
             };
         }
         let (start, end) = (operand.start, operand.end);
-        let first_blank = self.odd_blanks.partition_point(|at| *at < start);
-        for index in first_blank..self.odd_blanks.partition_point(|at| *at < end) {
-            self.edit(self.odd_blanks[index], Change::Put(b' '));
+        let first_blank = self
+            .angular_only_whitespace
+            .partition_point(|at| *at < start);
+        for index in first_blank..self.angular_only_whitespace.partition_point(|at| *at < end) {
+            self.edit(self.angular_only_whitespace[index], Change::Put(b' '));
         }
         crate::sort::sort_by_key(&mut self.edits[..], |edit| {
             let rank = match edit.change {
@@ -801,11 +803,11 @@ impl<'i> Parser<'i> {
                 return self.parse_access_member(start, false);
             }
             Kind::Number => {
-                self.hide_what_is_no_number(next);
+                self.hide_invalid_number(next);
                 self.advance();
             }
             Kind::String => {
-                self.hide_what_is_in_string(next);
+                self.hide_string_contents(next);
                 self.advance();
             }
             Kind::TemplateEnd | Kind::TemplatePart => self.parse_template_literal()?,
@@ -845,7 +847,7 @@ impl<'i> Parser<'i> {
                 self.advance();
                 match key.kind {
                     Kind::String => {
-                        self.hide_what_is_in_string(key);
+                        self.hide_string_contents(key);
                         self.expect_character(b':')?;
                         self.parse_pipe()?;
                     }

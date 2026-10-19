@@ -12,7 +12,7 @@ use crate::ast::{
 use crate::language::SourceType;
 use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
-use crate::utils::oxlint::{is_either, source_type};
+use crate::utils::oxlint::{can_be_script_or_module, source_type};
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{self, DiagnosticKind, PatKind, TypeNodeKind};
 use smallvec::SmallVec;
@@ -32,12 +32,12 @@ struct Checks<'a> {
     /// In a declaration file, only oxc's parser reports errors about these names.
     is_declaration_file: bool,
     /// The offsets the parser recorded, sorted, each with a flag that's set once the name there has been checked.
-    noted: SmallVec<[(u32, bool); 8]>,
-    /// How many of `noted` haven't been checked yet.
-    left: usize,
+    recorded: SmallVec<[(u32, bool); 8]>,
+    /// How many of `recorded` haven't been checked yet.
+    unchecked: usize,
     /// The offsets of names that already have an error from oxc's parser. It reports at most one per name.
-    settled: SmallVec<[u32; 4]>,
-    read_again: OnceCell<Vec<Span>>,
+    reported_by_parser: SmallVec<[u32; 4]>,
+    reparsed: OnceCell<Vec<Span>>,
     errors: Vec<SyntaxError>,
 }
 
@@ -63,13 +63,13 @@ impl<'a> Checks<'a> {
     }
 
     /// Marks the name at `at` as checked.
-    fn look_at(&mut self, at: u32) {
-        if let Ok(index) = self.noted.binary_search_by_key(&at, |it| it.0)
-            && let Some(it) = self.noted.get_mut(index)
+    fn mark_checked(&mut self, at: u32) {
+        if let Ok(index) = self.recorded.binary_search_by_key(&at, |it| it.0)
+            && let Some(it) = self.recorded.get_mut(index)
             && !it.1
         {
             it.1 = true;
-            self.left -= 1;
+            self.unchecked -= 1;
         }
     }
 
@@ -106,7 +106,7 @@ impl<'a> Checks<'a> {
     /// does so because of the file extension, or from the first module-only statement on. It only knows after that
     /// statement, except for an `export`, where it knows from the keyword on.
     fn is_module_at(&self, at: u32) -> bool {
-        if !self.is_module || !is_either(self.file) {
+        if !self.is_module || !can_be_script_or_module(self.file) {
             return self.is_module;
         }
         let file = self.file;
@@ -136,7 +136,7 @@ impl<'a> Checks<'a> {
             if is_after_export {
                 return true;
             }
-            if self.is_read_again(at) {
+            if self.is_in_reparsed_statement(at) {
                 return true;
             }
             start = span.start.min(at);
@@ -160,12 +160,12 @@ impl<'a> Checks<'a> {
         })
     }
 
-    /// True if `at` is in one of the [statements that oxc reparses](super::statements_read_again) with `await` as the
+    /// True if `at` is in one of the [statements that oxc reparses](super::reparsed_statements) with `await` as the
     /// operator. oxc doesn't reparse after a fatal error.
-    fn is_read_again(&self, at: u32) -> bool {
-        let again = || super::statements_read_again(self.file);
+    fn is_in_reparsed_statement(&self, at: u32) -> bool {
+        let again = || super::reparsed_statements(self.file);
         !self.file.has_parse_errors()
-            && (self.read_again.get_or_init(again).iter()).any(|it| it.contains_offset(at))
+            && (self.reparsed.get_or_init(again).iter()).any(|it| it.contains_offset(at))
     }
 
     /// True if oxc's parser is in the await context at `node`, which is at `at`.
@@ -193,7 +193,7 @@ impl<'a> Checks<'a> {
                 Node::Member(member) if member.init().map(Node::Expr) == Some(below) => {
                     return Some(false);
                 }
-                Node::Stmt(it) if is_read_outside_the_await_context(it) => return Some(false),
+                Node::Stmt(it) if leaves_await_context(it) => return Some(false),
                 _ => {}
             }
             below = above;
@@ -210,7 +210,7 @@ impl<'a> Checks<'a> {
         if token != b"=>" || !is_keyword() {
             return false;
         }
-        self.settled.push(at);
+        self.reported_by_parser.push(at);
         let error = SyntaxError::of_oxc(Span::new(arrow, arrow + 2), "Unexpected token");
         self.errors.push(error.stage(Stage::Fatal));
         true
@@ -269,9 +269,9 @@ impl<'a> Checks<'a> {
             return false;
         };
         let pattern = first.pat();
-        self.settled.push(at);
+        self.reported_by_parser.push(at);
         // Another name in the same pattern has already reported this.
-        if self.settled.contains(&pattern.span().start) {
+        if self.reported_by_parser.contains(&pattern.span().start) {
             return true;
         }
         let after_pattern = || {
@@ -283,21 +283,21 @@ impl<'a> Checks<'a> {
             (token != b")").then(|| self.error(next, message).says("`)` expected"))
         };
         let Some(error) = self.pattern_as_type(pattern).or_else(after_pattern) else {
-            self.settled.pop();
+            self.reported_by_parser.pop();
             return false;
         };
-        self.settled.push(pattern.span().start);
+        self.reported_by_parser.push(pattern.span().start);
         self.errors.push(error.stage(Stage::Fatal));
         true
     }
 
     /// `check_identifier` in oxc's parser: `await` or `yield` is used as an identifier where it's a keyword. The parser
     /// continues.
-    fn keyword_in_its_context(&mut self, name: Atom, at: u32) {
-        if self.settled.contains(&at) {
+    fn keyword_as_identifier(&mut self, name: Atom, at: u32) {
+        if self.reported_by_parser.contains(&at) {
             return;
         }
-        self.settled.push(at);
+        self.reported_by_parser.push(at);
         let error = match name == known::r#yield {
             true => {
                 let message = b"Cannot use `yield` as an identifier in a generator context";
@@ -320,8 +320,8 @@ impl<'a> Checks<'a> {
 
     /// oxc's parser accepts any word as an import specifier's local name and checks it afterwards.
     fn reserved_word_in_import(&mut self, name: Atom, at: u32) {
-        self.look_at(at);
-        self.settled.push(at);
+        self.mark_checked(at);
+        self.reported_by_parser.push(at);
         let word = match name == known::r#yield {
             true => "yield",
             false => "await",
@@ -334,13 +334,13 @@ impl<'a> Checks<'a> {
 
     /// oxc's `parse_let`, for the statements that start at one of `lets`, where our parser parsed `let` as an
     /// identifier.
-    fn statements_that_start_with_let(&mut self, lets: &[u32]) {
+    fn let_statements(&mut self, lets: &[u32]) {
         let file = self.file;
         for tag in [StmtTag::Expr, StmtTag::Labeled] {
             for it in file.stmts_of_kind(tag) {
                 let start = it.span().start;
                 if lets.contains(&start) {
-                    self.statement_that_starts_with_let(it, start + 3);
+                    self.let_statement(it, start + 3);
                 }
             }
         }
@@ -348,7 +348,7 @@ impl<'a> Checks<'a> {
 
     /// At the start of a statement `let` begins a declaration, unless the next token is a binary operator, a `.`, a `(`
     /// or a `;`. `after` is the end of the `let`.
-    fn statement_that_starts_with_let(&mut self, statement: Stmt<'a>, after: u32) {
+    fn let_statement(&mut self, statement: Stmt<'a>, after: u32) {
         let (next, token, is_on_line) = self.token_after(after);
         let goes_on = match token {
             b"=>" | b"++" | b"--" | b"||" | b"&&" | b"??" | b"?" | b"!" | b"..." => false,
@@ -361,7 +361,7 @@ impl<'a> Checks<'a> {
         }
         // In a single-statement position, which doesn't allow a declaration, `let` is an identifier and the statement
         // ends after it.
-        let is_alone = matches!(statement.parent(), Node::Stmt(it) if matches!(
+        let is_single_statement_position = matches!(statement.parent(), Node::Stmt(it) if matches!(
             it.kind(),
             StmtKind::If { .. }
                 | StmtKind::For { .. }
@@ -372,7 +372,7 @@ impl<'a> Checks<'a> {
                 | StmtKind::With { .. }
                 | StmtKind::Labeled { .. }
         ));
-        let error = match is_alone {
+        let error = match is_single_statement_position {
             true if !is_on_line || matches!(token, b"" | b"}") => return,
             true => {
                 let message = "Expected a semicolon or an implicit semicolon after a statement, but found none";
@@ -549,7 +549,7 @@ impl<'a> Checks<'a> {
 
     /// `export { static }`, which oxc's parser reports.
     fn exported_without_from(&mut self, spec: &hir::ExportSpec) {
-        self.look_at(spec.local_pos);
+        self.mark_checked(spec.local_pos);
         let local = self
             .file
             .text()
@@ -574,7 +574,7 @@ impl<'a> Checks<'a> {
         if self.file.is_in_jsdoc(at) {
             return;
         }
-        self.look_at(at);
+        self.mark_checked(at);
         if self.is_declaration_file {
             return;
         }
@@ -636,7 +636,7 @@ fn has_own_context(func: Func) -> bool {
 
 /// oxc leaves the await context for a declaration that starts with one of these words. A declaration after `export` or
 /// a decorator doesn't start with one. A type stays in the enclosing context.
-fn is_read_outside_the_await_context(it: Stmt) -> bool {
+fn leaves_await_context(it: Stmt) -> bool {
     let text = it.text();
     matches!(
         it.tag(),
@@ -733,15 +733,15 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let mut positions: SmallVec<[u32; 8]> = positions.copied().collect();
     positions.sort_unstable();
     positions.dedup();
-    let noted: SmallVec<[(u32, bool); 8]> = positions.iter().map(|&at| (at, false)).collect();
+    let recorded: SmallVec<[(u32, bool); 8]> = positions.iter().map(|&at| (at, false)).collect();
     let mut checks = Checks {
         file,
         is_module: source_type(file) == SourceType::Module,
         is_declaration_file: file.is_declaration_file(),
-        left: noted.len(),
-        noted,
-        settled: SmallVec::new(),
-        read_again: OnceCell::new(),
+        unchecked: recorded.len(),
+        recorded,
+        reported_by_parser: SmallVec::new(),
+        reparsed: OnceCell::new(),
         errors: Vec::new(),
     };
     let is_keyword = |name: Atom| name.is_keyword_identifier();
@@ -757,7 +757,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 let it = Expr::from_raw(file, i as u32);
                 if !it.is_jsx_tag_name() {
                     checks.check(Role::Reference, name, raw.pos, Node::Expr(it));
-                    if checks.left == 0 {
+                    if checks.unchecked == 0 {
                         break 'all;
                     }
                 }
@@ -809,12 +809,12 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                     _ => false,
                 };
                 if is_keyword_here {
-                    checks.keyword_in_its_context(name, raw.pos);
+                    checks.keyword_as_identifier(name, raw.pos);
                 }
                 checks.check(Role::Binding, name, raw.pos, node);
             }
         }
-        if checks.left == 0 {
+        if checks.unchecked == 0 {
             break 'all;
         }
         for (i, raw) in hir.fns.iter().enumerate() {
@@ -832,7 +832,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 checks.check(Role::Binding, raw.name, raw.name_pos, node);
             }
         }
-        if checks.left == 0 {
+        if checks.unchecked == 0 {
             break 'all;
         }
         for (i, raw) in hir.type_params.iter().enumerate() {
@@ -850,7 +850,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 checks.check(Role::Reference, first.text, first.pos(), node);
             }
         }
-        if checks.left == 0 {
+        if checks.unchecked == 0 {
             break 'all;
         }
         for raw in hir.imports {
@@ -888,7 +888,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 && matches!(statement(raw.stmt).parent(), Node::File(_))
                 && checks.is_module_at(raw.name_pos)
             {
-                checks.keyword_in_its_context(raw.name, raw.name_pos);
+                checks.keyword_as_identifier(raw.name, raw.name_pos);
             }
             if let hir::ImportEqualsTarget::Entity(names) = raw.target
                 && let Some(first) = hir.names.get(names.start as usize)
@@ -923,7 +923,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 checks.check(Role::Binding, name, at, statement(id));
             }
         }
-        if checks.left == 0 {
+        if checks.unchecked == 0 {
             break 'all;
         }
         for (i, raw) in hir.stmts.iter().enumerate() {
@@ -948,7 +948,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let positions = hir.keyword_identifier_positions.iter();
     let lets: SmallVec<[u32; 4]> = positions.copied().filter(is_let).collect();
     if !lets.is_empty() {
-        checks.statements_that_start_with_let(&lets);
+        checks.let_statements(&lets);
     }
     // The parser records the `a` in `export * as a from "b"` like a declared name, but oxc accepts any word there.
     for it in file.stmts_of_kind(StmtTag::ExportStar) {
@@ -956,19 +956,20 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
             alias: Some(alias), ..
         } = it.kind()
         {
-            checks.settled.push(alias.span().start);
+            checks.reported_by_parser.push(alias.span().start);
         }
     }
     // The diagnostics the parser recorded. See `note_keyword_identifier`. 1262 and 1214 are only reported at the top
     // level.
     for it in hir.diagnostics.iter() {
-        let is_noted = it.kind == DiagnosticKind::Grammar && matches!(it.code, 1359 | 1262 | 1214);
-        if is_noted && (it.code == 1359 || checks.is_module_at(it.start)) {
+        let is_recorded =
+            it.kind == DiagnosticKind::Grammar && matches!(it.code, 1359 | 1262 | 1214);
+        if is_recorded && (it.code == 1359 || checks.is_module_at(it.start)) {
             let name = match file.text().get(it.start as usize) {
                 Some(b'y') => known::r#yield,
                 _ => known::r#await,
             };
-            checks.keyword_in_its_context(name, it.start);
+            checks.keyword_as_identifier(name, it.start);
         }
     }
     checks.errors

@@ -65,7 +65,7 @@ fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
 
 /// State cached for the next problem, which is usually in the same file.
 #[derive(Default)]
-struct Place<'r> {
+struct FileCache<'r> {
     /// The last file looked up, its line starts, and its [`display_path`].
     file: Option<(&'r FileResult, LineStarts, Vec<u8>)>,
     /// The last file that [`with_help`] linted again, and the resulting messages.
@@ -74,7 +74,7 @@ struct Place<'r> {
     written: Option<Vec<&'r RuleId>>,
 }
 
-impl<'r> Place<'r> {
+impl<'r> FileCache<'r> {
     fn of(
         &mut self,
         result: &'r FileResult,
@@ -88,7 +88,11 @@ impl<'r> Place<'r> {
 
 /// Returns `problem`'s message with oxlint's help text added, if that wasn't generated when the file was linted. See
 /// [`Meta::help`]. The help comes from the second lint's message with the same rule, location and text.
-fn with_help<'r>(problem: Problem<'r>, meta: &Meta, place: &mut Place<'r>) -> Option<LintMessage> {
+fn with_help<'r>(
+    problem: Problem<'r>,
+    meta: &Meta,
+    place: &mut FileCache<'r>,
+) -> Option<LintMessage> {
     let (lint, Problem { result, message }) = (meta.help?, problem);
     if !(place.helped.as_ref()).is_some_and(|it| std::ptr::eq(it.0, result)) {
         place.helped = Some((result, lint(result, place.written.as_deref())));
@@ -112,7 +116,7 @@ fn lines<'r>(
     result: &'r FileResult,
     (from, to): (u32, u32),
     meta: &Meta,
-    place: &mut Place<'r>,
+    place: &mut FileCache<'r>,
 ) -> Vec<&'r [u8]> {
     let Some(text) = result.text.as_deref() else {
         return Vec::new();
@@ -294,7 +298,7 @@ fn by_file<'r>(group: &[Problem<'r>]) -> Vec<(Problem<'r>, usize)> {
 }
 
 /// How many columns stay visible to the left of the reported location when the start of its line is cut off.
-const LEFT_OF_THE_PLACE: usize = 30;
+const COLUMNS_LEFT_OF_LOCATION: usize = 30;
 
 /// Fits `lines` into `room` terminal columns. Lines that are too wide are cut down to the part around the reported
 /// location, which is at `column` in the last line. Returns the text and the location's new column. Both columns count
@@ -309,8 +313,8 @@ fn fitted(lines: &[&[u8]], column: u32, room: usize) -> (Vec<u8>, u32) {
     let last = strings::split(&text, b"\n").last().unwrap_or_default();
     let place = strings::wtf8_offset_of_utf16_index(last, column.saturating_sub(1));
     let skipped = match width(&last[..place]) {
-        before if before + LEFT_OF_THE_PLACE / 2 < room => 0,
-        before => before - LEFT_OF_THE_PLACE.min(room / 2),
+        before if before + COLUMNS_LEFT_OF_LOCATION / 2 < room => 0,
+        before => before - COLUMNS_LEFT_OF_LOCATION.min(room / 2),
     };
     let (mut cut, mut column) = (Vec::with_capacity(text.len()), column);
     // Once the start of the line is cut off, the lines above it aren't useful context any more. Only show the last one.
@@ -344,7 +348,7 @@ fn fitted(lines: &[&[u8]], column: u32, room: usize) -> (Vec<u8>, u32) {
 type Spot<'s> = ((&'s [u8], u32, u32), &'s [&'s [u8]]);
 
 /// Prints `text` the way Bun prints its own errors.
-fn write_said(
+fn write_like_bun_error(
     out: &mut Vec<u8>,
     meta: &Meta,
     kind: bun_ast::Kind,
@@ -358,8 +362,8 @@ fn write_said(
     };
     let code = spot.map(|((_, line, column), lines)| {
         let gutter = bun_core::fmt::digit_count(line) + " | ".len();
-        let room =
-            Some(meta.width.saturating_sub(gutter)).filter(|it| *it >= 2 * LEFT_OF_THE_PLACE);
+        let room = Some(meta.width.saturating_sub(gutter))
+            .filter(|it| *it >= 2 * COLUMNS_LEFT_OF_LOCATION);
         // A rule written in JavaScript can give a column far past the end of the line.
         let end = lines.last().map_or(0, |it| strings::wtf8_len_utf16(it));
         let (text, column) = fitted(lines, column.min(end + 1), room.unwrap_or(0));
@@ -397,7 +401,7 @@ fn write_pretty_problem<'r>(
     out: &mut Vec<u8>,
     problem: Problem<'r>,
     meta: &Meta,
-    place: &mut Place<'r>,
+    place: &mut FileCache<'r>,
 ) -> bool {
     let helped = with_help(problem, meta, place);
     let (result, message) = (problem.result, helped.as_ref().unwrap_or(problem.message));
@@ -431,7 +435,7 @@ fn write_pretty_problem<'r>(
     };
     let file = place.of(result, meta).2.clone();
     let at = (&file[..], line, column);
-    write_said(out, meta, kind, text, Some((at, &shown[blank..])));
+    write_like_bun_error(out, meta, kind, text, Some((at, &shown[blank..])));
     let texts = [message.first_label(), message.help(), message.note()];
     let texts = texts.iter().filter(|it| !it.is_empty());
     let labels = message.details.iter().flat_map(|it| &it.labels);
@@ -442,7 +446,7 @@ fn write_pretty_problem<'r>(
     }
     for text in texts {
         out.push(b'\n');
-        write_said(
+        write_like_bun_error(
             out,
             meta,
             bun_ast::Kind::Note,
@@ -458,7 +462,7 @@ fn write_pretty_problem<'r>(
             shown.map_or(&[][..], std::slice::from_ref),
         );
         out.push(b'\n');
-        write_said(
+        write_like_bun_error(
             out,
             meta,
             bun_ast::Kind::Note,
@@ -517,7 +521,7 @@ pub(super) fn write_pretty(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
 
 fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let problems = all(results);
-    let place = &mut Place::default();
+    let place = &mut FileCache::default();
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
         if problems.len() <= GROUP_THRESHOLD {
             place.written = rules_of(problems.iter().copied());
@@ -618,7 +622,7 @@ fn write_agent_problem<'r>(
     out: &mut Vec<u8>,
     group: &[Problem<'r>],
     meta: &Meta,
-    place: &mut Place<'r>,
+    place: &mut FileCache<'r>,
 ) {
     let Some(&problem) = group.first() else {
         return;
@@ -706,7 +710,7 @@ fn write_agent_problem<'r>(
 
 pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let problems = all(results);
-    let place = &mut Place::default();
+    let place = &mut FileCache::default();
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
         if problems.len() <= GROUP_THRESHOLD {
             place.written = rules_of(problems.iter().copied());

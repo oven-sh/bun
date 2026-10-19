@@ -231,11 +231,11 @@ impl Rule for PreferReadonlyParameterTypes {
             });
             if is_mutable {
                 // oxlint's span includes the decorators unless it's a parameter property.
-                let place = match is_oxlint && !is_parameter_property {
+                let report_span = match is_oxlint && !is_parameter_property {
                     true => param.span(),
                     false => param.span_without_modifiers(),
                 };
-                cx.report(place, SHOULD_BE_READONLY);
+                cx.report(report_span, SHOULD_BE_READONLY);
             }
         }
     }

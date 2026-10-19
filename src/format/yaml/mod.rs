@@ -63,7 +63,7 @@ pub(crate) fn document(text: &[u8], options: &FormatOptions) -> Result<Doc<'stat
 
 /// Converts an error that Bun's parser reports at byte `at`.
 #[cold]
-fn refusal(error: ParseError, at: usize) -> FormatError {
+fn to_format_error(error: ParseError, at: usize) -> FormatError {
     let message = match error {
         ParseError::StackOverflow => return FormatError::NestedTooDeeply,
         ParseError::OutOfMemory => Message::TooLarge,
@@ -91,7 +91,7 @@ fn write_document(
     out: &mut Elements,
 ) -> Result<(), FormatError> {
     // Running out of stack overrides whatever other error was reported.
-    let because_of = |stack: &Stack, error: SyntaxError| match stack.ran_out() {
+    let to_error = |stack: &Stack, error: SyntaxError| match stack.ran_out() {
         true => FormatError::NestedTooDeeply,
         false => FormatError::SyntaxErrorAt(error),
     };
@@ -104,8 +104,8 @@ fn write_document(
     let tree = YAML::parse_as_written(&without_nul, |documents, tokens| {
         ast::build(text, documents, tokens, &stack)
     })
-    .map_err(|(error, at)| refusal(error, at.min(text.len())))?
-    .map_err(|error| because_of(&stack, error))?;
+    .map_err(|(error, at)| to_format_error(error, at.min(text.len())))?
+    .map_err(|error| to_error(&stack, error))?;
     let mut printer = printer::Printer {
         tree: &tree,
         text,

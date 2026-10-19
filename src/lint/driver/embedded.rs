@@ -138,7 +138,7 @@ fn attribute<'t>(content: &'t [u8], target: &[u8]) -> Option<Option<&'t [u8]>> {
 }
 
 /// `VuePartialLoader::extract_lang_attribute`, which just searches for the letters `lang`.
-fn lang_of_vue(content: &[u8]) -> &[u8] {
+fn vue_lang(content: &[u8]) -> &[u8] {
     let content = content.trim_ascii();
     let Some(at) = strings::index_of(content, b"lang") else {
         return b"mjs";
@@ -167,7 +167,7 @@ fn until_end(text: &[u8], start: usize, kind: ScriptKind) -> Option<(Script, usi
 }
 
 /// `VuePartialLoader::parse_script`
-fn script_of_vue(text: &[u8], mut at: usize) -> Option<(Script, usize)> {
+fn vue_script(text: &[u8], mut at: usize) -> Option<(Script, usize)> {
     loop {
         at = script_start(text, at)?;
         // Not `<script-`.
@@ -176,12 +176,12 @@ fn script_of_vue(text: &[u8], mut at: usize) -> Option<(Script, usize)> {
         }
     }
     let tag = closing_angle(text, at)?;
-    let kind = kind_of(lang_of_vue(&text[at..at + tag]))?;
+    let kind = kind_of(vue_lang(&text[at..at + tag]))?;
     until_end(text, at + tag + 1, kind)
 }
 
 /// `SveltePartialLoader::parse_script`
-fn script_of_svelte(text: &[u8], mut at: usize) -> Option<(Script, usize)> {
+fn svelte_script(text: &[u8], mut at: usize) -> Option<(Script, usize)> {
     loop {
         at = script_start(text, at)?;
         if text.get(at).is_some_and(|&it| is_space(it) || it == b'>') {
@@ -245,7 +245,7 @@ fn is_javascript(tag: &[u8]) -> bool {
 }
 
 /// `AstroPartialLoader::parse`
-fn scripts_of_astro(text: &[u8]) -> Vec<Script> {
+fn astro_scripts(text: &[u8]) -> Vec<Script> {
     let mut scripts: Vec<Script> = frontmatter(text).into_iter().collect();
     let mut at = scripts.first().map_or(0, |it| it.end + 3);
     while let Some(tag_start) = script_start(text, at)
@@ -279,9 +279,9 @@ fn scripts_of_astro(text: &[u8]) -> Vec<Script> {
 
 fn scripts_of(framework: Framework, text: &[u8]) -> Vec<Script> {
     let next = match framework {
-        Framework::Vue => script_of_vue,
-        Framework::Svelte => script_of_svelte,
-        Framework::Astro => return scripts_of_astro(text),
+        Framework::Vue => vue_script,
+        Framework::Svelte => svelte_script,
+        Framework::Astro => return astro_scripts(text),
     };
     // A file has at most two.
     let Some((first, after)) = next(text, 0) else {
@@ -386,11 +386,11 @@ impl Context<'_, '_> {
         config: &ResolvedConfig,
     ) -> LintResult {
         let outer = self.lint_options().rule_filter;
-        self.verify_scripts_by(framework, path, text, config, outer)
+        self.verify_scripts_filtered(framework, path, text, config, outer)
     }
 
     /// Same. `outer` selects which rules run, among those that run on such a script.
-    pub(crate) fn verify_scripts_by(
+    pub(crate) fn verify_scripts_filtered(
         &self,
         framework: Framework,
         path: &[u8],

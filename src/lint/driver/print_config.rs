@@ -134,7 +134,7 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
     ));
     all.push((
         b"languageOptions",
-        match &config.options_of_other_language {
+        match &config.other_language_options {
             Some(Json::Null) => object(Vec::new()),
             Some(options) => options.clone(),
             None => object(language_options),

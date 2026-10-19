@@ -19,7 +19,7 @@ const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
 
 /// True if an offset in `pattern` is known to be the same offset in `regex_node`'s source text, after its delimiter.
-fn is_written_as_is(pattern: &[u8], regex_node: Expr<'_>) -> bool {
+fn has_same_offsets_in_source(pattern: &[u8], regex_node: Expr<'_>) -> bool {
     match regex_node.kind() {
         ExprKind::String(_) => !strings::contains_char(regex_node.text(), b'\\'),
         ExprKind::Number(_)
@@ -63,7 +63,7 @@ fn check_regex<'a>(
     let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default()) else {
         return;
     };
-    let as_is = OnceCell::new();
+    let same_offsets = OnceCell::new();
     let in_string = OnceCell::new();
     let group_name = OnceCell::new();
     let unnamed_count = OnceCell::new();
@@ -80,8 +80,8 @@ fn check_regex<'a>(
         utf16_start += regex::utf16_index(since, since.len()) as u32;
         start += since.len();
         // oxlint points at the group in the source, or at the whole pattern argument if it can't be located.
-        let place = match cx.language().is_oxlint {
-            true if *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) => {
+        let location = match cx.language().is_oxlint {
+            true if *same_offsets.get_or_init(|| has_same_offsets_in_source(pattern, regex_node)) => {
                 let pattern_start = regex_node.span().start + 1;
                 Span::new(pattern_start + group.start(), pattern_start + group.end())
             }
@@ -90,7 +90,7 @@ fn check_regex<'a>(
                 .unwrap_or_else(|| regex_node.span()),
             false => node.span(),
         };
-        let mut report = cx.report(place, REQUIRED).data("group", group.raw().to_vec());
+        let mut report = cx.report(location, REQUIRED).data("group", group.raw().to_vec());
         if cx.language().is_oxlint {
             let count = *unnamed_count.get_or_init(|| {
                 let groups = ast.capturing_groups();
@@ -98,7 +98,7 @@ fn check_regex<'a>(
             });
             report = report.data("unnamed_count", count.to_string()).data("s", if count == 1 { "" } else { "s" });
         }
-        if *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) {
+        if *same_offsets.get_or_init(|| has_same_offsets_in_source(pattern, regex_node)) {
             // After the delimiter and the `(`.
             let after_paren = Span::empty(regex_node.span().start + written.byte_offset(utf16_start + 2) as u32);
             report

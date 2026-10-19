@@ -23,9 +23,9 @@ fn starts_with_upper_case(tag: &[u8]) -> bool {
 
 /// Tells if the words have whitespace on each side.
 #[derive(Copy, Clone, Default)]
-struct Blanks {
+struct SurroundingWhitespace {
     before: bool,
-    behind: bool,
+    after: bool,
 }
 
 /// A text's neighbors in a `ConcatStatement`.
@@ -161,8 +161,8 @@ impl<'a> Printer<'a> {
         self.out.text(text);
     }
 
-    /// `fill(getTextValueParts(text))`, where `text` is `words` plus the whitespace that `blanks` describes.
-    fn fill(&mut self, words: &[u8], blanks: Blanks) {
+    /// `fill(getTextValueParts(text))`, where `text` is `words` plus the whitespace that `surrounding` describes.
+    fn fill(&mut self, words: &[u8], surrounding: SurroundingWhitespace) {
         self.out.start_fill();
         let separator = |out: &mut Elements| {
             out.start_item();
@@ -173,7 +173,7 @@ impl<'a> Printer<'a> {
             out.start_item();
             out.end_item();
         };
-        if blanks.before {
+        if surrounding.before {
             empty(self.out);
             separator(self.out);
         }
@@ -190,7 +190,7 @@ impl<'a> Printer<'a> {
             separator(self.out);
             rest = rest.trim_ascii_start();
         }
-        if blanks.behind {
+        if surrounding.after {
             separator(self.out);
             empty(self.out);
         }
@@ -454,7 +454,7 @@ impl<'a> Printer<'a> {
 
         // Prettier fills the text of `<script>` and `<textarea>` like any other text, which joins the lines.
         let is_raw_text = match tag == b"style" {
-            true => self.has_mustache_that_counts_in_style(children),
+            true => self.has_significant_mustache_in_style(children),
             false => {
                 (tag.eq_ignore_ascii_case(b"script") || tag.eq_ignore_ascii_case(b"textarea"))
                     && !self.are_white_space(children)
@@ -505,7 +505,7 @@ impl<'a> Printer<'a> {
 
     /// True if the `children` of a `<style>` have an escaped mustache, which Prettier prints without its backslash, or
     /// whitespace next to a mustache, which Prettier drops.
-    fn has_mustache_that_counts_in_style(&self, children: &[NodeId]) -> bool {
+    fn has_significant_mustache_in_style(&self, children: &[NodeId]) -> bool {
         children.iter().enumerate().any(|(index, child)| {
             let Kind::Text { chars } = self.tree.kind(*child) else {
                 return false;
@@ -683,7 +683,7 @@ impl<'a> Printer<'a> {
             if !leading.is_empty() {
                 self.breaks(leading, false);
             }
-            self.fill(words, Blanks::default());
+            self.fill(words, SurroundingWhitespace::default());
             if !trailing.is_empty() && !trims_trailing {
                 self.breaks(trailing, is_last);
             }
@@ -742,9 +742,9 @@ impl<'a> Printer<'a> {
             let before = leading_space && trailing_space;
             self.fill(
                 b"",
-                Blanks {
+                SurroundingWhitespace {
                     before,
-                    behind: false,
+                    after: false,
                 },
             );
         } else {
@@ -752,9 +752,9 @@ impl<'a> Printer<'a> {
             let has_trailing = chars.last().is_some_and(u8::is_ascii_whitespace);
             self.fill(
                 words,
-                Blanks {
+                SurroundingWhitespace {
                     before: has_leading && leading_space,
-                    behind: has_trailing && trailing_space,
+                    after: has_trailing && trailing_space,
                 },
             );
         }
@@ -1075,7 +1075,7 @@ impl<'a> Printer<'a> {
                 } else {
                     self.text(name)
                 };
-                match self.is_read_as_printed(head, name, tail) {
+                match self.path_round_trips(head, name, tail) {
                     true => self.path(name, tail),
                     false => self.ignored(node),
                 }
@@ -1128,7 +1128,7 @@ impl<'a> Printer<'a> {
 
     /// True if what `path` prints parses back to the same path. A name that was in brackets might not: `[this]`,
     /// `[@a]`, `[true]`, `[-1]`, `[else]`, `[a]b]`.
-    fn is_read_as_printed(&self, kind: Head, head: &[u8], tail: Range) -> bool {
+    fn path_round_trips(&self, kind: Head, head: &[u8], tail: Range) -> bool {
         let tail = self.tree.names(tail);
         if kind == Head::Var && (head == b"this" || head.starts_with(b"@")) {
             return false;
@@ -1142,8 +1142,8 @@ impl<'a> Printer<'a> {
             matches!(head, b"true" | b"false" | b"null" | b"undefined") || is_negative_number(head);
         head != b"else"
             && !(tail.is_empty() && is_literal)
-            && is_part_read_as_printed(head, true)
-            && (tail.iter()).all(|part| is_part_read_as_printed(self.text(*part), false))
+            && path_part_round_trips(head, true)
+            && (tail.iter()).all(|part| path_part_round_trips(self.text(*part), false))
     }
 
     /// `printPathExpression`
@@ -1180,7 +1180,7 @@ fn needs_brackets(part: &[u8], is_first: bool) -> bool {
             || id_len(part) != part.len())
 }
 
-fn is_part_read_as_printed(part: &[u8], is_first: bool) -> bool {
+fn path_part_round_trips(part: &[u8], is_first: bool) -> bool {
     match needs_brackets(part, is_first) {
         true => {
             strings::index_of_any(part, b"]\\\n\r").is_none()

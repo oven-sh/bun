@@ -36,11 +36,11 @@ impl Rule for NoSparseArrays {
         let count = elements.iter().filter(|it| it.is_missing()).count();
         if is_oxlint && count >= 10 {
             let span = array.span();
-            let (place, label) = match span.len() < 50 {
+            let (location, label) = match span.len() < 50 {
                 true => (span, "the array here"),
                 false => (Span::empty(span.start), "the array starting here"),
             };
-            cx.report(place, UNEXPECTED_COMMAS).data("count", count).first_label(label);
+            cx.report(location, UNEXPECTED_COMMAS).data("count", count).first_label(label);
             return;
         }
         let text = cx.text();

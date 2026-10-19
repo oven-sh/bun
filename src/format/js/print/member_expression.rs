@@ -15,7 +15,7 @@ pub(crate) fn write_member_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
             f,
             [
                 object,
-                boundary_behind_object(f),
+                boundary_after_object(f),
                 FormatComputedMemberExpressionWithoutObject(e)
             ]
         ),
@@ -25,13 +25,13 @@ pub(crate) fn write_member_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
 
 /// Prettier keeps a comment at the end of the object's line there. oxfmt, like Prettier 3.8, moves it after the member:
 /// `a // comment` with `.b` on the next line becomes `a.b // comment`.
-fn boundary_behind_object(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
+fn boundary_after_object(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
     (!f.options().flavor.is_oxfmt()).then_some(line_suffix_boundary())
 }
 
 fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, f: &mut Formatter<'a>) {
     let start = f.elements().len();
-    write!(f, [object, boundary_behind_object(f)]);
+    write!(f, [object, boundary_after_object(f)]);
     write_property_after_object(e, object, start, f);
 }
 
@@ -186,7 +186,7 @@ fn should_inline<'a>(
         outer = outer.parent();
         steps += 1;
         if steps == LONG_CHAIN
-            && let Some(answer) = answer_for_object(object, f)
+            && let Some(answer) = cached_answer_for_object(object, f)
         {
             f.context().long_member_chain.set(Some((e, answer)));
             return answer;
@@ -206,7 +206,7 @@ const LONG_CHAIN: u32 = 16;
 /// Returns the answer [`should_inline`] cached for the last member access of a long chain, if `object` is that access
 /// or an `[..]` or `!` applied to it. The walk up from there passes through `object`'s parent, so it ends at the same
 /// node, unless a `ChainExpression` is in between.
-fn answer_for_object<'a>(object: Expr<'a>, f: &Formatter<'a>) -> Option<bool> {
+fn cached_answer_for_object<'a>(object: Expr<'a>, f: &Formatter<'a>) -> Option<bool> {
     let (last, answer) = f.context().long_member_chain.get()?;
     let mut at = object;
     loop {
@@ -282,7 +282,7 @@ fn should_inline_in<'a>(
     }
 
     // Babel, which Prettier uses to parse JavaScript, has no `ChainExpression`.
-    let is_javascript = f.context().has_tree_of_babel() || has_no_chain_expression_in_the_way(f);
+    let is_javascript = f.context().has_babel_tree() || looks_through_chain_expression(f);
     let is_transparent =
         |node: AstNodes<'a>| is_javascript && matches!(node, AstNodes::ChainExpression(_));
 
@@ -325,7 +325,7 @@ fn should_inline_in<'a>(
 }
 
 /// oxfmt looks through a `ChainExpression` to find a member expression's parent, in TypeScript too.
-fn has_no_chain_expression_in_the_way(f: &Formatter<'_>) -> bool {
+fn looks_through_chain_expression(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

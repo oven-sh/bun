@@ -323,7 +323,7 @@ fn loc_end<'a>(node: AstNodes<'a>) -> u32 {
 /// `TSExportAssignment`, starts with `TSDeclare`, or ends with `Statement` or `Declaration`.
 fn is_source_element(node: AstNodes<'_>) -> bool {
     use AstNodes as N;
-    if crate::js::print::flow::is_no_source_element(node) {
+    if crate::js::print::flow::is_not_js_source_element(node) {
         return false;
     }
     match node {

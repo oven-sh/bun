@@ -171,7 +171,7 @@ impl Names {
 
 /// True if a node omits the field entirely when it has no value, where other fields are `undefined`. Rules check
 /// whether a `Literal` has a `regex`. espree also omits `directive` on a statement that isn't a directive.
-fn can_be_left_out(node_type: NodeType, field: Field, is_espree: bool) -> bool {
+fn can_be_omitted(node_type: NodeType, field: Field, is_espree: bool) -> bool {
     matches!(
         (node_type, field),
         (NodeType::Literal, Field::Regex | Field::Bigint)
@@ -229,7 +229,7 @@ const NAME_AND_ARGUMENTS: u32 = 4;
 fn visitor_key_order(layout: Layout) -> Vec<(&'static [u8], u32)> {
     let all = (NodeType::ALL.iter().enumerate()).map(|(i, it)| (it.name().as_bytes(), i as u32));
     if layout == Layout::Oxlint {
-        return visitor_key_order_of_oxlint(all.collect());
+        return oxlint_visitor_key_order(all.collect());
     }
     let (mut typescript, mut espree): (Vec<_>, Vec<_>) = all.partition(|(name, _)| {
         name.starts_with(b"TS") || *name == b"AccessorProperty" || *name == b"Decorator"
@@ -247,7 +247,7 @@ fn visitor_key_order(layout: Layout) -> Vec<(&'static [u8], u32)> {
 /// oxlint puts the types without keys first, then the JavaScript, JSX and TypeScript types, each sorted by name. It
 /// lacks the keywords that typescript-estree no longer creates nodes for, and has six types that it never creates nodes
 /// for.
-fn visitor_key_order_of_oxlint(mut all: Vec<(&'static [u8], u32)>) -> Vec<(&'static [u8], u32)> {
+fn oxlint_visitor_key_order(mut all: Vec<(&'static [u8], u32)>) -> Vec<(&'static [u8], u32)> {
     all.retain(|(name, _)| {
         !matches!(
             *name,
@@ -317,7 +317,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
             let is_espree = layout.is_espree();
             let is_short = layout == Layout::OxlintJavaScript && ast::is_short(node_type);
             let (mut fields, mut hidden, mut shown) = (Vec::new(), Vec::new(), Vec::new());
-            let (mut children, mut left_out) = (0, 0);
+            let (mut children, mut omittable) = (0, 0);
             for it in node_type.fields() {
                 if it.is_hidden {
                     hidden.push(it.field.name().as_bytes());
@@ -334,7 +334,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
                 if is_shown && !(is_short && it.is_typescript_only) {
                     let bit = 1 << fields.len();
                     children |= u32::from(it.is_child) * bit;
-                    left_out |= u32::from(can_be_left_out(node_type, it.field, is_espree)) * bit;
+                    omittable |= u32::from(can_be_omitted(node_type, it.field, is_espree)) * bit;
                     fields.push(it.field.name().as_bytes());
                 }
             }
@@ -397,7 +397,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
             words.extend_from_slice(&[
                 fields.len() as u32,
                 children,
-                left_out,
+                omittable,
                 properties.len() as u32,
                 alternate.len() as u32,
             ]);

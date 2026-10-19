@@ -7,7 +7,7 @@ use smallvec::{SmallVec, smallvec};
 /// Prefer a default export if module exports a single name or multiple names.
 pub struct PreferDefaultExport {
     /// True for `target: "any"`, false for `"single"`.
-    is_for_any: bool,
+    target_is_any: bool,
 }
 
 const SINGLE: Message = Message::new("", "Prefer default export on a file with single export.");
@@ -24,14 +24,14 @@ pub struct Seen {
 
 impl Seen {
     /// Listeners run in no particular order. ESLint visits the node that starts later last.
-    fn see(&mut self, node: Span) {
+    fn record_named_export(&mut self, node: Span) {
         if self.last.is_none_or(|it| it.start < node.start) {
             self.last = Some(node);
         }
     }
 
     /// oxlint's version, which uses its module record. That only has the top level, with one entry per name.
-    fn in_record<'a>(file: &'a File<'a>, is_for_any: bool) -> Seen {
+    fn from_module_record<'a>(file: &'a File<'a>, target_is_any: bool) -> Seen {
         if export_default(file).is_some() {
             return Seen { is_exempt: true, ..Seen::default() };
         }
@@ -41,7 +41,7 @@ impl Seen {
             is_exempt: !record.star_export_entries.is_empty() || indirect.iter().chain(local).any(|it| it.is_type),
             count: (indirect.len() + local.len()) as u32,
             last: match indirect.first() {
-                _ if is_for_any => {
+                _ if target_is_any => {
                     indirect.iter().chain(local).max_by_key(|it| it.statement_span.start).map(|it| it.statement_span)
                 }
                 Some(entry) => Some(entry.span),
@@ -99,7 +99,7 @@ impl Rule for PreferDefaultExport {
     type State<'a> = Seen;
 
     fn new(options: &Options) -> Self {
-        PreferDefaultExport { is_for_any: options.object(0).str("target") == Some("any") }
+        PreferDefaultExport { target_is_any: options.object(0).str("target") == Some("any") }
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
@@ -128,7 +128,7 @@ impl Rule for PreferDefaultExport {
             StmtKind::Var(declarations) => declarations.iter().map(|it| capture_declaration(it.pat())).sum::<u32>(),
             _ => 1,
         };
-        cx.state.see(Span::new(export.span().start, stmt.span().end));
+        cx.state.record_named_export(Span::new(export.span().start, stmt.span().end));
     }
 
     fn export_spec<'a>(&self, spec: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
@@ -136,18 +136,18 @@ impl Rule for PreferDefaultExport {
             cx.state.is_exempt = true;
         } else {
             cx.state.count += 1;
-            cx.state.see(spec.span());
+            cx.state.record_named_export(spec.span());
         }
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         if cx.language().is_oxlint {
-            cx.state = Seen::in_record(cx.file(), self.is_for_any);
+            cx.state = Seen::from_module_record(cx.file(), self.target_is_any);
         }
         let Seen { is_exempt: false, count, last: Some(last) } = cx.state else { return };
-        if self.is_for_any && count > 0 {
+        if self.target_is_any && count > 0 {
             cx.report(last, ANY);
-        } else if !self.is_for_any && count == 1 {
+        } else if !self.target_is_any && count == 1 {
             cx.report(last, SINGLE);
         }
     }

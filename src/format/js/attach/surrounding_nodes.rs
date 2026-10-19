@@ -433,7 +433,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
     }
 
     pub(super) fn is_babel(&self) -> bool {
-        self.options.has_tree_of_babel
+        self.options.has_babel_tree
     }
 
     pub(super) fn program(&self) -> Owner<'a> {
@@ -591,7 +591,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
     /// Prettier's `canAttachComment`. Also false for nodes that exist in `AstNodes` but not in Prettier's tree.
     fn can_attach_comment(&self, node: N<'a>) -> bool {
         match node {
-            _ if self.file.is_flow() && flow::is_no_node(node) => false,
+            _ if self.file.is_flow() && flow::is_not_prettier_node(node) => false,
             N::ChainExpression(_)
             | N::FormalParameters(_)
             | N::Elision(_)

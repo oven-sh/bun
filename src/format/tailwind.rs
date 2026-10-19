@@ -150,7 +150,7 @@ const IMPORTANT: [&[u8]; 4] = [
 impl Tailwind {
     /// Returns `params`, the text after `@apply`, with its classes sorted, or `None` if it has no classes. A port of
     /// oxfmt's `write_apply_prelude`, which follows the plugin's `transformCss`.
-    pub fn sorted_to_apply(&self, params: &[u8]) -> Option<Vec<u8>> {
+    pub fn sorted_apply_params(&self, params: &[u8]) -> Option<Vec<u8>> {
         let params = strings::trim_js_whitespace(params);
         // Less's `~"a b"`
         let escaped = (*b"\"'").into_iter().find_map(|quote| {
@@ -226,22 +226,22 @@ impl Tailwind {
                 .iter()
                 .take_while(|byte| !byte.is_ascii_whitespace())
                 .count();
-            let (class, behind) = rest.split_at(len);
+            let (class, after) = rest.split_at(len);
             classes.push(class);
-            if behind.is_empty() {
+            if after.is_empty() {
                 break;
             }
-            let len = behind
+            let len = after
                 .iter()
                 .take_while(|byte| byte.is_ascii_whitespace())
                 .count();
-            let (blanks, behind) = behind.split_at(len);
+            let (blanks, after) = after.split_at(len);
             white_space.push(if collapses_whitespace {
                 &b" "[..]
             } else {
                 blanks
             });
-            rest = behind;
+            rest = after;
         }
         if classes.last().is_some_and(|class| class.is_empty()) {
             classes.pop();

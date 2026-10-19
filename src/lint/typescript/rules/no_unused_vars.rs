@@ -111,8 +111,8 @@ fn oxlint_counts_as_used<'a>(
                 return !reports_vars_only_used_as_types
                     && oxlint_counts_type_query_as_use(variable, it);
             }
-            if oxlint_is_in_what_declares(variable, it)
-                && oxlint_is_read_for_a_type(variable.symbol().file(), it)
+            if oxlint_is_in_own_declaration(variable, it)
+                && oxlint_is_type_only_read(variable.symbol().file(), it)
             {
                 return false;
             }
@@ -141,12 +141,12 @@ fn is_exported(variable: Variable) -> bool {
 
 /// A deduplicated list of the variables mentioned somewhere.
 #[derive(Default)]
-struct Named<'a> {
+struct Mentioned<'a> {
     seen: SymbolSet,
     all: Vec<Symbol<'a>>,
 }
 
-impl<'a> Named<'a> {
+impl<'a> Mentioned<'a> {
     #[inline]
     fn add(&mut self, symbol: Symbol<'a>) {
         if !self.seen.contains(symbol) {
@@ -156,7 +156,7 @@ impl<'a> Named<'a> {
     }
 }
 
-impl<'a> Visitor<'a> for Named<'a> {
+impl<'a> Visitor<'a> for Mentioned<'a> {
     fn enter(&mut self, node: Node<'a>) {
         if let Node::Expr(e) = node
             && e.tag() == ExprTag::Ident
@@ -205,9 +205,9 @@ fn oxlint_discarded_parts(commas: &[Expr]) -> Vec<Span> {
 }
 
 /// True if `named` holds exactly `others` plus the variables mentioned in the left operands of `commas`.
-fn oxlint_is_what_a_walk_finds<'a>(
-    named: &Named<'a>,
-    mut others: Named<'a>,
+fn oxlint_matches_tree_walk<'a>(
+    named: &Mentioned<'a>,
+    mut others: Mentioned<'a>,
     commas: &[Expr<'a>],
 ) -> bool {
     let mut discarded: Vec<Expr<'a>> = commas.iter().filter_map(|it| it.left()).collect();
@@ -236,7 +236,7 @@ fn oxlint_may_be_unused_after_all<'a>(
     updates: &[Expr<'a>],
 ) -> Vec<Symbol<'a>> {
     let changed_by_logical_assignments = || {
-        let mut named = Named::default();
+        let mut named = Mentioned::default();
         for e in file.exprs_of_kind(ExprTag::Assign) {
             if let Some(Some(BinOp::And | BinOp::Or | BinOp::Nullish)) = e.assign_op()
                 && let Some((_, target, _)) = e.as_assign()
@@ -255,7 +255,7 @@ fn oxlint_may_be_unused_after_all<'a>(
             .filter_map(Reference::symbol)
             .for_each(|it| named.add(it));
     }
-    debug_assert!(oxlint_is_what_a_walk_finds(
+    debug_assert!(oxlint_matches_tree_walk(
         &named,
         changed_by_logical_assignments(),
         commas
@@ -357,14 +357,14 @@ fn oxlint_used_beside_infer<'a>(file: &'a File<'a>) -> SymbolSet {
 fn oxlint_counts_type_query_as_use(variable: Variable, reference: Reference) -> bool {
     is_type_only_reference(variable.symbol(), reference)
         && reference.expr().is_some()
-        && !oxlint_is_in_what_declares(variable, reference)
+        && !oxlint_is_in_own_declaration(variable, reference)
 }
 
 /// True for the first identifier of an expression that's never evaluated at run time: the computed name of an interface
 /// or type literal member, of an `abstract` or `declare` class member, or of an ambient class's member, and an ambient
 /// class's `extends` expression. Inside the variable's own declaration oxlint doesn't count that as a use, just as it
 /// doesn't count a type reference there.
-fn oxlint_is_read_for_a_type<'a>(file: &'a File<'a>, reference: Reference<'a>) -> bool {
+fn oxlint_is_type_only_read<'a>(file: &'a File<'a>, reference: Reference<'a>) -> bool {
     let Some(name) = reference.expr() else {
         return false;
     };
@@ -396,7 +396,7 @@ fn oxlint_is_read_for_a_type<'a>(file: &'a File<'a>, reference: Reference<'a>) -
 }
 
 /// True if `reference` is in `variable`'s first declaration, which for a parameter is the parameter.
-fn oxlint_is_in_what_declares(variable: Variable, reference: Reference) -> bool {
+fn oxlint_is_in_own_declaration(variable: Variable, reference: Reference) -> bool {
     let declaration = match variable.defs().next() {
         Some(Declaration::Param(pat)) => Node::Pat(pat)
             .ancestors()
@@ -412,7 +412,7 @@ fn oxlint_is_in_what_declares(variable: Variable, reference: Reference) -> bool 
 fn oxlint_leaves_alone(variable: Variable) -> bool {
     let has_declare =
         |owner: Node| matches!(owner, Node::Stmt(it) if it.flags().contains(Flags::AMBIENT));
-    let is_left_alone = match variable.defs().next() {
+    let is_exempt = match variable.defs().next() {
         Some(Declaration::Class(class)) => has_declare(class.owner()),
         Some(Declaration::Fn(function)) => !function.has_body() && has_declare(function.owner()),
         Some(Declaration::Module(module)) => has_declare(Node::Stmt(module.stmt())),
@@ -462,7 +462,7 @@ fn oxlint_leaves_alone(variable: Variable) -> bool {
     // A name in `namespace A.B { }`, which typescript-eslint has no definition for.
     let is_dotted = matches!(variable.symbol().declarations().next(), Some(Declaration::Module(it))
         if it.nested().is_some() || it.outermost() != it);
-    is_left_alone || is_dotted || variable.scope().chain().any(is_global)
+    is_exempt || is_dotted || variable.scope().chain().any(is_global)
 }
 
 /// For oxlint a property with a default value has siblings too: `const { a = 1, ...rest } = b`.
@@ -523,7 +523,7 @@ struct OxlintWalks<'a> {
     /// The enclosing loop, function or file.
     loops: AncestorMemo<'a, Node<'a>>,
     /// The first ancestor that `oxlint_is_self_reassignment` examines.
-    looked_at: AncestorMemo<'a, Node<'a>>,
+    examined_ancestors: AncestorMemo<'a, Node<'a>>,
     /// `oxlint_outermost_operation`
     operations: AncestorMemo<'a, Node<'a>>,
     /// The outermost `a && b`, `a || b` or `a ?? b` in the unbroken chain of logical operators a node is an operand of.
@@ -533,7 +533,7 @@ struct OxlintWalks<'a> {
 }
 
 /// True if `oxlint_is_self_reassignment` ignores `node`.
-fn oxlint_is_passed_over(node: Node) -> bool {
+fn oxlint_self_reassignment_ignores(node: Node) -> bool {
     matches!(node, Node::Expr(e)
         if !matches!(
             e.kind(),
@@ -609,10 +609,9 @@ fn oxlint_is_self_reassignment<'a>(
     }
     let (mut is_used_by_others, mut saw_self_update) = (true, false);
     let mut inner = Node::Expr(e);
-    while let Some(node) = walks
-        .looked_at
-        .find(inner, |_, it| (!oxlint_is_passed_over(it)).then_some(it))
-    {
+    while let Some(node) = walks.examined_ancestors.find(inner, |_, it| {
+        (!oxlint_self_reassignment_ignores(it)).then_some(it)
+    }) {
         inner = node;
         match node {
             Node::VarDecl(_) => return false,
@@ -889,13 +888,11 @@ fn oxlint_is_self_call<'a>(
             .iter()
             .any(|it| it.contains_offset(at))
     };
-    debug_assert!(
-        can_be || !oxlint_is_in_function_that_is_the_variable(variable, reference, walks)
-    );
-    can_be && oxlint_is_in_function_that_is_the_variable(variable, reference, walks)
+    debug_assert!(can_be || !oxlint_is_in_function_held_by_variable(variable, reference, walks));
+    can_be && oxlint_is_in_function_held_by_variable(variable, reference, walks)
 }
 
-fn oxlint_is_in_function_that_is_the_variable<'a>(
+fn oxlint_is_in_function_held_by_variable<'a>(
     variable: Variable<'a>,
     reference: Reference<'a>,
     walks: &mut OxlintWalks<'a>,
@@ -907,7 +904,7 @@ fn oxlint_is_in_function_that_is_the_variable<'a>(
         around = oxlint_relevant_parent(parent, walks);
         let is_function_expression = matches!(parent, Node::Func(func) if matches!(func.kind(), FnKind::Expr | FnKind::Arrow));
         // Whether the parent assigns or passes the value to something, and whether that's the variable.
-        let (is_given, is_variable) = match around {
+        let (is_passed_on, is_variable) = match around {
             Some(Node::VarDecl(declarator)) => {
                 (true, declarator.pat().symbol() == Some(variable.symbol()))
             }
@@ -920,7 +917,7 @@ fn oxlint_is_in_function_that_is_the_variable<'a>(
             },
             _ => (false, false),
         };
-        if is_value_of_variable && is_given && !is_variable {
+        if is_value_of_variable && is_passed_on && !is_variable {
             return false;
         }
         is_value_of_variable |= is_function_expression && is_variable;
@@ -1300,21 +1297,21 @@ impl FixMode {
 }
 
 /// Returns the end of the whitespace that starts at `from`, including commas if `with_commas`.
-fn end_of_blank(text: &[u8], from: u32, with_commas: bool) -> u32 {
+fn end_of_whitespace(text: &[u8], from: u32, with_commas: bool) -> u32 {
     let rest = text.get(from as usize..).unwrap_or_default();
-    let is_blank =
+    let is_whitespace =
         |it: &&u8| it.is_ascii_whitespace() || **it == 0x0B || with_commas && **it == b',';
-    from + rest.iter().take_while(is_blank).count() as u32
+    from + rest.iter().take_while(is_whitespace).count() as u32
 }
 
 /// Returns the start of the whitespace that ends at `to`. It includes commas and line breaks only if `with_commas`.
-fn start_of_blank(text: &[u8], to: u32, with_commas: bool) -> u32 {
+fn start_of_whitespace(text: &[u8], to: u32, with_commas: bool) -> u32 {
     let before = text.get(..to as usize).unwrap_or_default();
-    let is_blank = |it: &&u8| match **it {
+    let is_whitespace = |it: &&u8| match **it {
         b',' | b'\n' | b'\r' => with_commas,
         it => it.is_ascii_whitespace() || it == 0x0B,
     };
-    to - before.iter().rev().take_while(is_blank).count() as u32
+    to - before.iter().rev().take_while(is_whitespace).count() as u32
 }
 
 /// oxlint's `remove_unused_import_declaration`. `reported` holds everything that's unused in the file.
@@ -1335,7 +1332,7 @@ fn oxlint_remove_import<'a>(
     if are_all_specifiers_unused(import, reported) {
         let has_break = matches!(text.get(whole.end as usize), Some(b'\n' | b'\r'));
         let lines = Span::new(
-            start_of_blank(text, whole.start, false),
+            start_of_whitespace(text, whole.start, false),
             whole.end + u32::from(has_break),
         );
         return Some(vec![fixer.remove(lines)]);
@@ -1372,9 +1369,9 @@ fn oxlint_remove_import<'a>(
     }
     if is_last {
         // Including the `,` before it. One after it stays.
-        let blank_end = end_of_blank(text, own.end, false);
-        let end = if text.get(blank_end as usize) == Some(&b',') {
-            blank_end
+        let whitespace_end = end_of_whitespace(text, own.end, false);
+        let end = if text.get(whitespace_end as usize) == Some(&b',') {
+            whitespace_end
         } else {
             own.end
         };
@@ -1382,11 +1379,11 @@ fn oxlint_remove_import<'a>(
             fixer.remove(Span::after(file.token_before(before)?.span(), end)),
         ]);
     }
-    let blank_end = end_of_blank(text, own.end, true);
-    Some(match after.start() >= blank_end {
+    let whitespace_end = end_of_whitespace(text, own.end, true);
+    Some(match after.start() >= whitespace_end {
         // There's a comment before the `,`.
         true => vec![fixer.remove(own), fixer.remove(after)],
-        false => vec![fixer.remove(Span::new(own.start, blank_end))],
+        false => vec![fixer.remove(Span::new(own.start, whitespace_end))],
     })
 }
 
@@ -1672,10 +1669,10 @@ impl NoUnusedVars {
             _ => {}
         }
         let start = match is_in_array && is_last && count > 1 {
-            true => start_of_blank(text, part.start, true),
+            true => start_of_whitespace(text, part.start, true),
             false => part.start,
         };
-        let removed = Span::new(start, end_of_blank(text, part.end, true));
+        let removed = Span::new(start, end_of_whitespace(text, part.end, true));
         // In an array the items after it must keep their positions.
         Some(vec![fixer.replace(removed, if is_last { "" } else { "," })])
     }
@@ -2090,7 +2087,7 @@ impl NoUnusedVars {
             }
         }
 
-        let mut used_beside_infer = None;
+        let mut uses_hidden_by_type_parameters = None;
         let mut found = Vec::new();
         for unused_var in unused_vars {
             if file.language().is_oxlint
@@ -2101,7 +2098,7 @@ impl NoUnusedVars {
                         &walks,
                     )
                     || unused_var.defs().any(can_be_hidden_by_type_parameter)
-                        && (used_beside_infer
+                        && (uses_hidden_by_type_parameters
                             .get_or_insert_with(|| oxlint_used_beside_infer(file)))
                         .contains(unused_var.symbol()))
             {
@@ -2111,10 +2108,10 @@ impl NoUnusedVars {
                 .references()
                 .any(|it| is_type_only_reference(unused_var.symbol(), it));
             // Before version 8, that counted as a use.
-            let is_a_use = (file.language().eslint_8.as_ref())
+            let counts_as_use = (file.language().eslint_8.as_ref())
                 .is_some_and(|it| it.has_typescript_eslint_before_8());
             if used_only_as_type
-                && (is_a_use
+                && (counts_as_use
                     || unused_var
                         .defs()
                         .any(|def| def.kind() == Some(DeclarationKind::ImportBinding)))

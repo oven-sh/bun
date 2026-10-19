@@ -548,7 +548,7 @@ impl<'a> Fixes<'a> {
         self.remove_with_previous(span)
     }
 
-    fn follow(&self, mut step: Step<'a>) -> Option<Fix> {
+    fn run_steps(&self, mut step: Step<'a>) -> Option<Fix> {
         loop {
             step = match step {
                 Step::Done(fix) => return fix,
@@ -561,15 +561,15 @@ impl<'a> Fixes<'a> {
     }
 
     fn fix_variables(&self, node: Estree<'a>) -> Option<Fix> {
-        self.follow(Step::Variables(node))
+        self.run_steps(Step::Variables(node))
     }
 
     fn fix_nested_array_variable(&self, node: Estree<'a>) -> Option<Fix> {
-        self.follow(Step::NestedArrayVariable(node))
+        self.run_steps(Step::NestedArrayVariable(node))
     }
 
     fn fix_rest_in_pattern(&self, node: Estree<'a>) -> Option<Fix> {
-        self.follow(Step::RestInPattern(node))
+        self.run_steps(Step::RestInPattern(node))
     }
 
     /// The part of ESLint's `fixVariables` for a pattern that's the whole `id` of `declarator`.
@@ -905,7 +905,7 @@ pub(crate) fn is_pure(e: Expr) -> bool {
                 }
             }
             ExprKind::Class(class) => {
-                if !defines_purely(class, &mut rest) {
+                if !is_pure_class_definition(class, &mut rest) {
                     return false;
                 }
             }
@@ -926,7 +926,7 @@ pub(crate) fn is_pure(e: Expr) -> bool {
 }
 
 /// True if defining `class` runs no other code, provided the expressions this adds to `evaluated` are [pure](is_pure).
-fn defines_purely<'a>(class: Class<'a>, evaluated: &mut Vec<Expr<'a>>) -> bool {
+fn is_pure_class_definition<'a>(class: Class<'a>, evaluated: &mut Vec<Expr<'a>>) -> bool {
     if class.decorators().next().is_some() {
         return false;
     }
@@ -957,7 +957,7 @@ fn is_classic_script<'a>(file: &'a File<'a>) -> bool {
 /// Imports are the exception. An unused import is always removed. `import { a } from "b"` is removed entirely, even
 /// though the module is then no longer loaded for its side effects, as in ESLint, oxlint and every "remove unused
 /// imports" command. `import a from "b"` becomes `import "b"`.
-fn can_be_removed_unseen<'a>(symbol: Symbol<'a>, def: Declaration<'a>) -> bool {
+fn is_safe_to_remove_without_review<'a>(symbol: Symbol<'a>, def: Declaration<'a>) -> bool {
     let file = symbol.file();
     if symbol.scope() == file.top_level_scope() && is_classic_script(file) {
         return false;
@@ -973,7 +973,7 @@ fn can_be_removed_unseen<'a>(symbol: Symbol<'a>, def: Declaration<'a>) -> bool {
         Declaration::Fn(_) => true,
         Declaration::Class(class) => {
             let mut evaluated = Vec::new();
-            defines_purely(class, &mut evaluated) && evaluated.into_iter().all(is_pure)
+            is_pure_class_definition(class, &mut evaluated) && evaluated.into_iter().all(is_pure)
         }
         Declaration::ImportDefault(_)
         | Declaration::ImportNamespace(_)
@@ -1004,7 +1004,9 @@ impl NoUnusedVars {
     /// file, because it's the default there and [the hint](Self::hint) mentions it.
     pub fn unused_message_data(&self, kind: VariableType, file: &File) -> String {
         match self.description(kind) {
-            (_, Some(pattern)) if file.language().stands_alone && pattern.source() == "^_" => {
+            (_, Some(pattern))
+                if file.language().has_no_foreign_config && pattern.source() == "^_" =>
+            {
                 String::new()
             }
             (description, Some(pattern)) => {
@@ -1176,11 +1178,11 @@ impl NoUnusedVars {
             .data("additional", self.unused_message_data(kind, cx.file()))
             .hint(self.hint(def, kind))
             .suggest_with(REMOVE_VAR, &[("varName", name.bytes())], |fixer| {
-                if !cx.language().stands_alone {
+                if !cx.language().has_no_foreign_config {
                     return handle_fixes(fixer, variable, def, at);
                 }
                 let fix = handle_fixes(fixer, variable, def, at)
-                    .filter(|_| can_be_removed_unseen(symbol, def))?;
+                    .filter(|_| is_safe_to_remove_without_review(symbol, def))?;
                 if !fix.text.is_empty() {
                     return Some(fix);
                 }

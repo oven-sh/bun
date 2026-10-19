@@ -14,7 +14,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         // No statement list is open.
         self.lists = 0;
         while self.token() != T::Eof {
-            let is_no_name = |p: &mut Self| {
+            let is_not_property_name = |p: &mut Self| {
                 p.next();
                 p.token() != T::Colon
             };
@@ -22,9 +22,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 T::OpenBracket | T::True | T::False | T::Null => true,
                 T::Minus => self.look_ahead(|p| {
                     p.next();
-                    p.token() == T::Number && is_no_name(p)
+                    p.token() == T::Number && is_not_property_name(p)
                 }),
-                T::Number | T::String => self.look_ahead(is_no_name),
+                T::Number | T::String => self.look_ahead(is_not_property_name),
                 _ => false,
             };
             let expression = match self.token() {

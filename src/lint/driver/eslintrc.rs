@@ -100,7 +100,7 @@ impl Modules<'_> {
         if self.command_line.0 == path {
             argument.push((b"content", self.command_line.1.clone()));
         }
-        if !self.registry.answers_for(b"@typescript-eslint") {
+        if !self.registry.replaces_plugin(b"@typescript-eslint") {
             argument.push((b"loadsTypescriptEslint", Json::Bool(true)));
         }
         let mut text = Vec::new();
@@ -440,7 +440,7 @@ pub(crate) fn load(
             let is_implemented_here = matches!(
                 short,
                 b"@typescript-eslint" | b"react-hooks" | b"import" | b"n"
-            ) && modules.registry.answers_for(short);
+            ) && modules.registry.replaces_plugin(short);
             match modules.loaded([b"plugins", &directory, request], from, entry) {
                 // An installed package takes precedence over the built-in implementation, because it also has configs.
                 Err(failure) if failure.is_missing && is_implemented_here => Ok(built_in(request)),

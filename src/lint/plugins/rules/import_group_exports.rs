@@ -5,7 +5,7 @@ use bun_lint_oxlint::import::{
     AssignmentTargets, export_declaration_span, is_assignment_target, is_export_declaration,
     is_type_export_declaration, module_items,
 };
-use bun_lint_oxlint::module_record::in_order_of_map;
+use bun_lint_oxlint::module_record::in_map_order;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -66,9 +66,9 @@ impl Rule for GroupExports {
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         // [value exports, type exports]
         let mut nodes: [Spans; 2] = [Spans::new(), Spans::new()];
-        // Exports with a source, grouped by source in first-seen order. `places` maps each source to its index.
+        // Exports with a source, grouped by source in first-seen order. `source_index` maps each source to its index.
         let mut source_records: [Vec<(Name<'a>, Spans)>; 2] = [Vec::new(), Vec::new()];
-        let mut places: FxHashMap<(usize, Name<'a>), usize> = FxHashMap::default();
+        let mut source_index: FxHashMap<(usize, Name<'a>), usize> = FxHashMap::default();
         let is_oxlint = cx.language().is_oxlint;
         for stmt in module_items(cx.file()) {
             match stmt.kind() {
@@ -80,7 +80,7 @@ impl Rule for GroupExports {
                         Some(source) if !is_oxlint && source.is("__proto__") => {}
                         Some(source) => {
                             let records = &mut source_records[kind];
-                            let at = *places.entry((kind, source)).or_insert(records.len());
+                            let at = *source_index.entry((kind, source)).or_insert(records.len());
                             if at == records.len() {
                                 records.push((source, Spans::new()));
                             }
@@ -108,7 +108,7 @@ impl Rule for GroupExports {
         {
             cx.report(*span, COMMONJS);
         }
-        let of_sources = source_records.into_iter().flat_map(in_order_of_map);
+        let of_sources = source_records.into_iter().flat_map(in_map_order);
         for span in of_sources.filter(|it| it.1.len() > 1).flat_map(|it| it.1) {
             cx.report(span, ES_MODULE);
         }

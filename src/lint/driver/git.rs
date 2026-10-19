@@ -67,7 +67,7 @@ const DIFF: [&[u8]; 9] = [
 ];
 
 /// Added, modified or type-changed files. Skips deleted and conflicted ones.
-const IS_THERE: &[u8] = b"--diff-filter=AMT";
+const EXISTING_FILES_FILTER: &[u8] = b"--diff-filter=AMT";
 
 /// Refs to try for the default branch, each with the short name used in error messages.
 const DEFAULT_BRANCHES: [(&[u8], &str); 3] = [
@@ -107,13 +107,13 @@ impl Only {
     }
 
     /// Error for combining this with `flag`, which makes the run read stdin. There's no file list to filter then.
-    pub(crate) fn refusal_of_stdin(&self, flag: &str) -> Vec<u8> {
+    pub(crate) fn stdin_conflict_error(&self, flag: &str) -> Vec<u8> {
         format!("{} and {flag} cannot be used together", self.flag()).into_bytes()
     }
 }
 
 /// An error that starts with `first`, with git's stderr indented below it.
-fn in_the_words_of_git(first: &str, finished: &Finished) -> Fatal {
+fn with_git_stderr(first: &str, finished: &Finished) -> Fatal {
     let mut text = first.as_bytes().to_vec();
     for line in strings::split(&finished.stderr, b"\n").map(<[u8]>::trim_ascii_end) {
         if !line.is_empty() {
@@ -128,7 +128,7 @@ fn in_the_words_of_git(first: &str, finished: &Finished) -> Fatal {
 /// checks out with CRLF (`eol=crlf`, `core.autocrlf`). Every other file in the run is read as checked out, so this one
 /// has to match. Asking git whether it converts the file costs another call, so this looks at the file at `path` on
 /// disk instead: it's converted if every line there ends in CRLF.
-fn with_line_endings_of(path: &[u8], stored: &[u8]) -> Vec<u8> {
+fn with_checkout_line_endings(path: &[u8], stored: &[u8]) -> Vec<u8> {
     let is_converted = !strings::contains_char(stored, b'\r')
         && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))
         && fs::read(path).is_ok_and(|on_disk| {
@@ -156,12 +156,12 @@ pub(crate) struct Files<'e> {
     /// The root of the work tree. It comes from `getcwd`, so it contains no symlinks.
     top: Vec<u8>,
     /// Absolute paths, in `top`.
-    named: FxHashSet<Vec<u8>>,
+    listed_paths: FxHashSet<Vec<u8>>,
     /// For `--staged`: index contents of files that differ on disk or were deleted there, keyed by absolute path.
-    /// Covers the files in `named` and, in a run that follows imports, every file they could import.
-    in_the_index: FxHashMap<Vec<u8>, Vec<u8>>,
-    /// Files in `named` that a disk search can't find, because they were deleted after staging or are no longer regular
-    /// files.
+    /// Covers the files in `listed_paths` and, in a run that follows imports, every file they could import.
+    index_contents: FxHashMap<Vec<u8>, Vec<u8>>,
+    /// Files in `listed_paths` that a disk search can't find, because they were deleted after staging or are no longer
+    /// regular files.
     not_on_disk: Vec<Vec<u8>>,
 }
 
@@ -176,8 +176,8 @@ impl<'e> Files<'e> {
             only,
             environment,
             top: Vec::new(),
-            named: FxHashSet::default(),
-            in_the_index: FxHashMap::default(),
+            listed_paths: FxHashSet::default(),
+            index_contents: FxHashMap::default(),
             not_on_disk: Vec::new(),
         };
         let flag = only.flag();
@@ -186,7 +186,7 @@ impl<'e> Files<'e> {
         let found = files.git(&[b"rev-parse", b"--show-toplevel", b"--show-cdup"], b"")?;
         if !found.is_ok {
             let first = format!("{flag} needs a git repository");
-            return Err(in_the_words_of_git(&first, &found));
+            return Err(with_git_stderr(&first, &found));
         }
         let printed = found.stdout.strip_suffix(b"\n").unwrap_or(&found.stdout);
         let up =
@@ -195,19 +195,19 @@ impl<'e> Files<'e> {
         files.top.clone_from(&top);
         match only {
             Only::Staged => {
-                files.named = files.diff(&top, &[b"--cached", IS_THERE])?;
-                if !files.named.is_empty() {
-                    files.read_the_index(&top, follows_imports)?;
+                files.listed_paths = files.diff(&top, &[b"--cached", EXISTING_FILES_FILTER])?;
+                if !files.listed_paths.is_empty() {
+                    files.read_index(&top, follows_imports)?;
                 }
             }
             Only::Changed(since) => {
                 let since = match since {
                     Some(since) => files.commit(since)?,
-                    None => files.where_it_left_the_default_branch()?,
+                    None => files.merge_base_with_default_branch()?,
                 };
-                files.named = files.diff(&top, &[IS_THERE, &since, b"--"])?;
+                files.listed_paths = files.diff(&top, &[EXISTING_FILES_FILTER, &since, b"--"])?;
                 let up: &[u8] = if up.is_empty() { b"." } else { up };
-                files.named.extend(files.names(
+                files.listed_paths.extend(files.names(
                     &top,
                     &[
                         b"--literal-pathspecs",
@@ -259,18 +259,18 @@ impl<'e> Files<'e> {
 
     fn unreadable(&self, finished: &Finished) -> Fatal {
         let first = format!("{} cannot read the git repository", self.only.flag());
-        in_the_words_of_git(&first, finished)
+        with_git_stderr(&first, finished)
     }
 
-    /// Fills in `in_the_index`. An index entry that's a symlink doesn't count as a file, whatever it is on disk.
-    fn read_the_index(&mut self, top: &[u8], follows_imports: bool) -> Result<(), Fatal> {
+    /// Fills in `index_contents`. An index entry that's a symlink doesn't count as a file, whatever it is on disk.
+    fn read_index(&mut self, top: &[u8], follows_imports: bool) -> Result<(), Fatal> {
         let finished = self.git(&[&DIFF[..], &[b"--raw", b"--no-abbrev"]].concat(), b"")?;
         if !finished.is_ok {
             return Err(self.unreadable(&finished));
         }
         // Each entry is `:<mode in the index> <mode on disk> <ID in the index> <zeros> <status>`, NUL, the path, NUL.
         let mut parts = strings::split(&finished.stdout, b"\0");
-        let (mut is_no_file, mut wanted) = (FxHashSet::default(), Vec::new());
+        let (mut not_regular_files, mut wanted) = (FxHashSet::default(), Vec::new());
         while let Some(entry) = parts.next().filter(|it| !it.is_empty()) {
             let mut fields = strings::split(entry, b" ");
             let (Some(mode), Some(mode_on_disk), Some(id), Some(name)) =
@@ -280,20 +280,20 @@ impl<'e> Files<'e> {
             };
             let path = paths::join(top, name);
             // A conflicted file has one entry with a zero mode and a second entry for "our" side. Skip both.
-            if !mode.starts_with(b":100") || is_no_file.contains(&path) {
-                self.named.remove(&path);
-                is_no_file.insert(path);
+            if !mode.starts_with(b":100") || not_regular_files.contains(&path) {
+                self.listed_paths.remove(&path);
+                not_regular_files.insert(path);
                 continue;
             }
             let can_be_imported = follows_imports
                 && (ScriptKind::from_file_name(name).is_some()
                     || name.ends_with(b".json")
                     || Framework::of(name).is_some());
-            let is_named = self.named.contains(&path);
-            if is_named && !mode_on_disk.starts_with(b"100") {
+            let is_listed = self.listed_paths.contains(&path);
+            if is_listed && !mode_on_disk.starts_with(b"100") {
                 self.not_on_disk.push(path.clone());
             }
-            if can_be_imported || is_named {
+            if can_be_imported || is_listed {
                 wanted.push((path, id));
             }
         }
@@ -315,10 +315,10 @@ impl<'e> Files<'e> {
                 let shown = paths::relative(&self.environment.cwd, &path);
                 let (shown, id) = (bstr::BStr::new(&shown), bstr::BStr::new(id));
                 let first = format!("--staged cannot read what is staged of {shown} (blob {id})");
-                return Err(in_the_words_of_git(&first, &read));
+                return Err(with_git_stderr(&first, &read));
             };
-            let content = with_line_endings_of(&path, content);
-            self.in_the_index.insert(path, content);
+            let content = with_checkout_line_endings(&path, content);
+            self.index_contents.insert(path, content);
             rest = after.get(1..).unwrap_or_default();
         }
         Ok(())
@@ -340,7 +340,7 @@ impl<'e> Files<'e> {
     }
 
     /// Returns the merge base of `HEAD` and the default branch.
-    fn where_it_left_the_default_branch(&self) -> Result<Vec<u8>, Fatal> {
+    fn merge_base_with_default_branch(&self) -> Result<Vec<u8>, Fatal> {
         for (branch, _) in DEFAULT_BRANCHES {
             if let Some(id) = object_id(&self.git(&[b"merge-base", b"HEAD", branch], b"")?) {
                 return Ok(id.to_vec());
@@ -374,7 +374,7 @@ impl<'e> Files<'e> {
 
     /// True if git listed the file at `path` (absolute). A symlink doesn't count, even if it points to a file.
     pub(crate) fn has(&self, path: &[u8]) -> bool {
-        self.named.contains(&*self.as_listed(path))
+        self.listed_paths.contains(&*self.as_listed(path))
             && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))
     }
 
@@ -382,7 +382,7 @@ impl<'e> Files<'e> {
     /// text.
     pub(crate) fn not_on_disk(&self) -> impl Iterator<Item = (&[u8], u64)> {
         (self.not_on_disk.iter())
-            .filter_map(|path| Some((&path[..], self.in_the_index.get(path)?.len() as u64)))
+            .filter_map(|path| Some((&path[..], self.index_contents.get(path)?.len() as u64)))
     }
 
     /// True if writing `path` and staging it again would also stage changes the user didn't stage.
@@ -393,16 +393,16 @@ impl<'e> Files<'e> {
     /// Returns the text that will be committed for a [partly staged](Files::is_partly_staged) file. The file on disk
     /// differs.
     pub(crate) fn staged_text(&self, path: &[u8]) -> Option<&[u8]> {
-        if self.in_the_index.is_empty() {
+        if self.index_contents.is_empty() {
             return None;
         }
-        (self.in_the_index.get(&*self.as_listed(path))).map(Vec::as_slice)
+        (self.index_contents.get(&*self.as_listed(path))).map(Vec::as_slice)
     }
 
-    /// Converts `in_the_index` for code that follows imports, so an imported file is read as it will be committed, even
-    /// if it isn't staged itself.
+    /// Converts `index_contents` for code that follows imports, so an imported file is read as it will be committed,
+    /// even if it isn't staged itself.
     pub(crate) fn already_read(&self, keeps_byte_order_marks: bool) -> AlreadyRead {
-        (self.in_the_index.iter())
+        (self.index_contents.iter())
             .map(|(path, text)| {
                 let text = as_read(path, text.clone(), keeps_byte_order_marks);
                 (from_native(path), text)
@@ -411,7 +411,7 @@ impl<'e> Files<'e> {
     }
 
     /// Message for a run with no files left. `verb` is what the run does to files, like "lint".
-    pub(crate) fn nothing_left(&self, verb: &str) -> String {
+    pub(crate) fn no_files_message(&self, verb: &str) -> String {
         match self.only {
             Only::Staged => format!("No staged files to {verb}"),
             Only::Changed(_) => format!("No changed files to {verb}"),
@@ -421,12 +421,12 @@ impl<'e> Files<'e> {
     /// Explains why `files` (absolute paths, all [partly staged](Files::is_partly_staged)) weren't written. `done` is
     /// what didn't happen to them, like "fixed".
     #[optimize(size)]
-    pub(crate) fn refusal_to_write(&self, files: &mut [Vec<u8>], done: &str) -> Vec<u8> {
+    pub(crate) fn partly_staged_error(&self, files: &mut [Vec<u8>], done: &str) -> Vec<u8> {
         bun_lint::utils::sort::sort_unstable(files);
         let shown = files
             .iter()
             .map(|it| paths::relative(&self.environment.cwd, it));
-        let way_out: &[u8] =
+        let remedy: &[u8] =
             b"\n  Stage the rest with git add, or put it away with git stash --keep-index. Then run this again.";
         let said: &[u8] = b" both staged and unstaged changes, so ";
         match files.len() {
@@ -436,7 +436,7 @@ impl<'e> Files<'e> {
                 said,
                 b"it was not ",
                 done.as_bytes(),
-                way_out,
+                remedy,
             ]
             .concat(),
             count => {
@@ -452,7 +452,7 @@ impl<'e> Files<'e> {
                     text.extend_from_slice(b"\n  ");
                     text.extend_from_slice(&name);
                 }
-                text.extend_from_slice(way_out);
+                text.extend_from_slice(remedy);
                 text
             }
         }
@@ -473,7 +473,7 @@ impl<'e> Files<'e> {
         let finished = self.git(&[b"update-index", b"-z", b"--stdin"], &input)?;
         match finished.is_ok {
             true => Ok(()),
-            false => Err(in_the_words_of_git(
+            false => Err(with_git_stderr(
                 "Cannot stage the files that were written\n  Stage them with git add",
                 &finished,
             )),

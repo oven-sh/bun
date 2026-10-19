@@ -33,7 +33,7 @@ pub(crate) enum Syntax {
     /// The same, used to parse two lines on their own: see `leaves_paragraph`, which isn't called again for them.
     TwoLines,
     /// `Markdown`, used to parse two lines on their own.
-    TwoLinesOfMarkdown,
+    MarkdownTwoLines,
     /// See [`parse_content`].
     Plain,
     /// MDX as Prettier parses it, with remark-parse 8: `import` and `export`, and any tag starts HTML, which is JSX.
@@ -508,7 +508,7 @@ struct Builder<'t> {
     unended: Option<Unended>,
     /// The containers that have ended since the last leaf block, each with the start of the line that ended it.
     ended: Vec<(NodeId, u32)>,
-    /// The open nodes extend to the very end of the text: see `Builder::goes_on_to_the_end`.
+    /// The open nodes extend to the very end of the text: see `Builder::extends_to_the_end`.
     is_extended_to_the_end: bool,
 
     /// The open paragraph, heading or cell, and the open spans in it.
@@ -536,7 +536,7 @@ struct Builder<'t> {
     /// A pending line break. How it's printed depends on the node after it.
     guarded_break: Option<GuardedBreak>,
     /// For oxfmt: the current line is one that it prints verbatim.
-    is_on_line_as_written: bool,
+    is_on_verbatim_line: bool,
 }
 
 /// A line break before a line that is paragraph text only because it's indented. Prettier always strips the
@@ -620,7 +620,7 @@ fn is_line_shape_start(line: &[u8]) -> bool {
 }
 
 /// True if `line` may be a table's delimiter row.
-fn is_like_delimiter_row(line: &[u8]) -> bool {
+fn looks_like_delimiter_row(line: &[u8]) -> bool {
     line.iter()
         .all(|byte| matches!(byte, b'|' | b':' | b'-' | b' ' | b'\t'))
 }
@@ -630,7 +630,7 @@ fn is_like_delimiter_row(line: &[u8]) -> bool {
 pub(crate) fn leaves_paragraph(above: Option<&[u8]>, line: &[u8], syntax: Syntax) -> bool {
     let fitting_header: Vec<u8>;
     let first: &[u8] = match above {
-        _ if !is_like_delimiter_row(line) => b"a",
+        _ if !looks_like_delimiter_row(line) => b"a",
         Some(above) => above,
         None => {
             let letter = |&byte: &u8| {
@@ -850,7 +850,7 @@ impl Builder<'_> {
 
     /// micromark treats what follows the text's last line break as a line. Lists continue onto it, block quotes don't.
     /// So unclosed code and HTML, and the lists they're in, include that line break.
-    fn goes_on_to_the_end(&self, last_line_end: u32) -> bool {
+    fn extends_to_the_end(&self, last_line_end: u32) -> bool {
         last_line_end as usize + 1 == self.text.len() && !self.is_in_blockquote()
     }
 
@@ -1048,7 +1048,7 @@ impl Builder<'_> {
             }
             return;
         }
-        self.is_extended_to_the_end = self.goes_on_to_the_end(last_line_end);
+        self.is_extended_to_the_end = self.extends_to_the_end(last_line_end);
         self.unended = Some(Unended {
             node,
             is_html: false,
@@ -1143,7 +1143,7 @@ impl Builder<'_> {
             self.segments.push(segment);
         }
         if is_unended {
-            self.is_extended_to_the_end = self.goes_on_to_the_end(last.end);
+            self.is_extended_to_the_end = self.extends_to_the_end(last.end);
             self.unended = Some(Unended {
                 node,
                 is_html: true,
@@ -1516,8 +1516,8 @@ impl Builder<'_> {
             b'>' | b'=' | b'-' | b'*' | b'_' | b'+' | b'0'
                 ..=b'9' | b'#' | b'`' | b'~' | b'<' | b'$' | b'{' | b':' | b'[' | b'|'
         );
-        if !may_start_block || (line.indent < 4 && !is_like_delimiter_row(written)) {
-            self.is_on_line_as_written = is_line_shape_start(written);
+        if !may_start_block || (line.indent < 4 && !looks_like_delimiter_row(written)) {
+            self.is_on_verbatim_line = is_line_shape_start(written);
             return None;
         }
         // Prettier escapes these or keeps them off the start of a line, and so does this printer.
@@ -1557,7 +1557,7 @@ impl Builder<'_> {
             }
             _ => line,
         };
-        let is_line_as_written = is_line_shape_start(line)
+        let is_verbatim_line = is_line_shape_start(line)
             || (follower == Follower::Text
                 && (line.starts_with(b"```")
                     || line.starts_with(b"~~~")
@@ -1565,8 +1565,8 @@ impl Builder<'_> {
         let is_hard = matches!(it.kind, LineBreak::Hard);
         // Only oxfmt prints some lines verbatim.
         let stays =
-            is_hard || (self.is_for_oxfmt && (self.is_on_line_as_written || is_line_as_written));
-        self.is_on_line_as_written = is_line_as_written;
+            is_hard || (self.is_for_oxfmt && (self.is_on_verbatim_line || is_verbatim_line));
+        self.is_on_verbatim_line = is_verbatim_line;
         // After a line break that stays, the line above isn't considered.
         let leaves = leaves_paragraph((!stays).then(|| slice(it.above)), line, two_lines);
         if let LineBreak::Soft { is_as_written } = it.kind {
@@ -1829,7 +1829,7 @@ impl RendererImpl for Builder<'_> {
             }
             BlockType::P | BlockType::H | BlockType::Table | BlockType::Th | BlockType::Td => {
                 self.end_guarded_break(Follower::Other);
-                self.is_on_line_as_written = false;
+                self.is_on_verbatim_line = false;
                 self.end_text();
                 self.can_start_with_check.set(false);
                 let node = self.spans.pop();
@@ -2150,12 +2150,12 @@ pub(crate) fn parse_lines(
     let mut options = Options::default();
     (options.tables, options.math_blocks) = (!is_plain, !is_plain);
     (options.footnotes, options.no_single_tilde) = (true, true);
-    let is_as_oxfmt_reads = matches!(syntax, Syntax::WithDirectives | Syntax::TwoLines);
-    options.directives = is_as_oxfmt_reads;
+    let uses_oxfmt_syntax = matches!(syntax, Syntax::WithDirectives | Syntax::TwoLines);
+    options.directives = uses_oxfmt_syntax;
     // See `tag::CHECK`.
     options.tasklists = false;
     (options.micromark, options.mdx) = (true, is_mdx);
-    options.micromark_to_the_letter = !is_as_oxfmt_reads;
+    options.micromark_to_the_letter = !uses_oxfmt_syntax;
     if let Syntax::CommonMark { gfm, math } = syntax {
         (options.tables, options.strikethrough, options.footnotes) = (gfm, gfm, gfm);
         (options.math_blocks, options.no_single_tilde) = (math, false);
@@ -2176,7 +2176,7 @@ pub(crate) fn parse_lines(
             Syntax::Markdown
             | Syntax::WithDirectives
             | Syntax::TwoLines
-            | Syntax::TwoLinesOfMarkdown => b"{",
+            | Syntax::MarkdownTwoLines => b"{",
         },
         leaf: &leaf,
         span_bytes: match syntax {
@@ -2228,11 +2228,11 @@ pub(crate) fn parse_lines(
         starts_with_check: false,
         two_lines: match syntax {
             Syntax::WithDirectives => Some(Syntax::TwoLines),
-            Syntax::Markdown => Some(Syntax::TwoLinesOfMarkdown),
+            Syntax::Markdown => Some(Syntax::MarkdownTwoLines),
             _ => None,
         },
         guarded_break: None,
-        is_on_line_as_written: false,
+        is_on_verbatim_line: false,
     };
     render_with_extensions(
         &text[first_line..],

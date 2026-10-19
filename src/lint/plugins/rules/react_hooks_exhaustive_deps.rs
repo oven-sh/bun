@@ -611,7 +611,7 @@ impl ExhaustiveDeps {
             if self.enable_dangerous_autofix_this_may_cause_infinite_loops {
                 report = report.fix(|_| fixes.clone());
             }
-            report = report.suggest_change_of_behavior(TEXT, &[("text", &description)], |_| fixes);
+            report = report.suggest_behavior_change(TEXT, &[("text", &description)], |_| fixes);
         }
         drop(report);
     }

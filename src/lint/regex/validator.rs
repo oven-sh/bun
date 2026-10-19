@@ -85,13 +85,13 @@ pub struct Oxc {
 }
 
 /// An [`Oxc`]'s message and help.
-type Said = (&'static str, &'static str);
+type OxcText = (&'static str, &'static str);
 
 impl Oxc {
-    fn new(said: Said, start: usize, end: usize) -> Oxc {
+    fn new(oxc_text: OxcText, start: usize, end: usize) -> Oxc {
         Oxc {
-            message: Cow::Borrowed(said.0),
-            help: Cow::Borrowed(said.1),
+            message: Cow::Borrowed(oxc_text.0),
+            help: Cow::Borrowed(oxc_text.1),
             start: start as u32,
             end: end as u32,
             also: None,
@@ -99,8 +99,8 @@ impl Oxc {
     }
 }
 
-mod said {
-    use super::Said;
+mod oxc_text {
+    use super::OxcText;
 
     const CLOSE_IT: &str = "Add the missing closing delimiter";
     const NOTHING_TO_REPEAT: &str =
@@ -109,106 +109,107 @@ mod said {
     const ESCAPE_IT: &str = "Escape this character with `\\` or remove it";
     const PROPERTY: &str = "Check the property name spelling or use a valid Unicode property";
 
-    pub(super) const DUPLICATED_NAMES: Said = (
+    pub(super) const DUPLICATED_NAMES: OxcText = (
         "Duplicated capturing group names",
         "Duplicate names must be in different alternatives",
     );
-    pub(super) const INCOMPLETE: Said = (
+    pub(super) const INCOMPLETE: OxcText = (
         "Could not parse the entire pattern",
         "Check for unbalanced brackets or invalid escape sequences",
     );
-    pub(super) const LONE_QUANTIFIER: Said = (
+    pub(super) const LONE_QUANTIFIER: OxcText = (
         "Lone quantifier found, expected with `Atom`",
         NOTHING_TO_REPEAT,
     );
-    pub(super) const INVALID_BRACED_QUANTIFIER: Said =
+    pub(super) const INVALID_BRACED_QUANTIFIER: OxcText =
         ("Invalid braced quantifier", NOTHING_TO_REPEAT);
-    pub(super) const CAPTURING_GROUP: Said = ("Unterminated capturing group", CLOSE_IT);
-    pub(super) const IGNORE_GROUP: Said = ("Unterminated ignore group", CLOSE_IT);
-    pub(super) const LOOKAROUND: Said = ("Unterminated lookaround assertion", CLOSE_IT);
-    pub(super) const CLASS: Said = ("Unterminated character class", CLOSE_IT);
-    pub(super) const NESTED_CLASS: Said = ("Unterminated nested class", CLOSE_IT);
-    pub(super) const STRING_DISJUNCTION: Said = ("Unterminated class string disjunction", CLOSE_IT);
-    pub(super) const PROPERTY_ESCAPE: Said = ("Unterminated unicode property escape", CLOSE_IT);
-    pub(super) const GROUP_NAME: Said = ("Unterminated capturing group name", CLOSE_IT);
-    pub(super) const EXTENDED_ATOM_ESCAPE: Said = (
+    pub(super) const CAPTURING_GROUP: OxcText = ("Unterminated capturing group", CLOSE_IT);
+    pub(super) const IGNORE_GROUP: OxcText = ("Unterminated ignore group", CLOSE_IT);
+    pub(super) const LOOKAROUND: OxcText = ("Unterminated lookaround assertion", CLOSE_IT);
+    pub(super) const CLASS: OxcText = ("Unterminated character class", CLOSE_IT);
+    pub(super) const NESTED_CLASS: OxcText = ("Unterminated nested class", CLOSE_IT);
+    pub(super) const STRING_DISJUNCTION: OxcText =
+        ("Unterminated class string disjunction", CLOSE_IT);
+    pub(super) const PROPERTY_ESCAPE: OxcText = ("Unterminated unicode property escape", CLOSE_IT);
+    pub(super) const GROUP_NAME: OxcText = ("Unterminated capturing group name", CLOSE_IT);
+    pub(super) const EXTENDED_ATOM_ESCAPE: OxcText = (
         "Invalid extended atom escape",
         "Use a valid escape sequence or remove the backslash",
     );
     pub(super) const INDEXED_REFERENCE: &str = "Invalid indexed reference";
-    pub(super) const EMPTY_GROUP_SPECIFIER: Said = (
+    pub(super) const EMPTY_GROUP_SPECIFIER: OxcText = (
         "Group specifier is empty",
         "Provide a name for the capturing group: `(?<name>...)`",
     );
     pub(super) const NAMED_REFERENCE: &str = "Invalid named reference";
     pub(super) const NEGATED_PROPERTY_OF_STRINGS: &str = "Negated character classes cannot contain properties that match string related unicode properties";
-    pub(super) const NEGATED_CLASS_WITH_STRINGS: Said = (
+    pub(super) const NEGATED_CLASS_WITH_STRINGS: OxcText = (
         "Invalid character class with strings unicode property",
         "Properties that match string related unicode properties require the `v` flag",
     );
-    pub(super) const NEGATED_NESTED_CLASS_WITH_STRINGS: Said = (
+    pub(super) const NEGATED_NESTED_CLASS_WITH_STRINGS: OxcText = (
         "Invalid class operands inside of character class contents",
         "Negated character classes cannot contain string related unicode properties",
     );
-    pub(super) const ATOM_RANGE_OUT_OF_ORDER: Said =
+    pub(super) const ATOM_RANGE_OUT_OF_ORDER: OxcText =
         ("Character class atom range out of order", OUT_OF_ORDER);
-    pub(super) const SET_RANGE_OUT_OF_ORDER: Said =
+    pub(super) const SET_RANGE_OUT_OF_ORDER: OxcText =
         ("Character class set range out of order", OUT_OF_ORDER);
-    pub(super) const RANGE_TO_DASH: Said = (
+    pub(super) const RANGE_TO_DASH: OxcText = (
         "Character class range out of order",
         "If you meant to use set subtraction `--`, enable the `v` flag",
     );
-    pub(super) const RANGE_OF_SETS: Said = (
+    pub(super) const RANGE_OF_SETS: OxcText = (
         "Character class range with invalid atom",
         "Character class ranges must use single characters, not character classes or escape sequences like `\\d`",
     );
-    pub(super) const CLASS_ATOM: Said = (
+    pub(super) const CLASS_ATOM: OxcText = (
         "Invalid class atom",
         "This character or escape sequence is not valid inside a character class",
     );
-    pub(super) const EMPTY_CLASS_SET_EXPRESSION: Said = (
+    pub(super) const EMPTY_CLASS_SET_EXPRESSION: OxcText = (
         "Expected nonempty class set expression",
         "Add characters or properties to the class set expression",
     );
-    pub(super) const THIRD_AMPERSAND: Said = (
+    pub(super) const THIRD_AMPERSAND: OxcText = (
         "Unexpected `&` inside of class intersection",
         "A third `&` is not allowed after `&&`. Did you mean `[a&&[b]]`?",
     );
-    pub(super) const IN_INTERSECTION: Said = (
+    pub(super) const IN_INTERSECTION: OxcText = (
         "Unexpected character inside of class intersection",
         ESCAPE_IT,
     );
-    pub(super) const IN_SUBTRACTION: Said = (
+    pub(super) const IN_SUBTRACTION: OxcText = (
         "Unexpected character inside of class subtraction",
         ESCAPE_IT,
     );
-    pub(super) const BRACED_OUT_OF_ORDER: Said = (
+    pub(super) const BRACED_OUT_OF_ORDER: OxcText = (
         "Numbers out of order in braced quantifier",
         "In `{n,m}`, the minimum `n` must be less than or equal to the maximum `m`",
     );
-    pub(super) const PROPERTY_NAME: Said = ("Invalid unicode property name", PROPERTY);
-    pub(super) const PROPERTY_NAME_OR_VALUE: Said =
+    pub(super) const PROPERTY_NAME: OxcText = ("Invalid unicode property name", PROPERTY);
+    pub(super) const PROPERTY_NAME_OR_VALUE: OxcText =
         ("Invalid unicode property name and/or value", PROPERTY);
     pub(super) const PROPERTY_OF_STRINGS: &str = "Enable `UnicodeSetsMode` to use this property";
-    pub(super) const UNICODE_ESCAPE: Said = (
+    pub(super) const UNICODE_ESCAPE: OxcText = (
         "Invalid unicode escape sequence",
         "Use `\\uXXXX` or `\\u{XXXXX}` format for unicode escapes",
     );
-    pub(super) const SURROGATE_PAIR: Said = (
+    pub(super) const SURROGATE_PAIR: OxcText = (
         "Invalid surrogate pair",
         "A high surrogate (0xD800-0xDBFF) must be followed by a low surrogate (0xDC00-0xDFFF)",
     );
-    pub(super) const DUPLICATED_MODIFIER: Said =
+    pub(super) const DUPLICATED_MODIFIER: OxcText =
         ("Duplicated modifier", "Each modifier can only appear once");
-    pub(super) const MODIFIER_ON_AND_OFF: Said = (
+    pub(super) const MODIFIER_ON_AND_OFF: OxcText = (
         "Invalid modifiers",
         "A modifier cannot be both enabled and disabled",
     );
-    pub(super) const EMPTY_MODIFIERS: Said = (
+    pub(super) const EMPTY_MODIFIERS: OxcText = (
         "Empty modifiers",
         "Use `(?:...)` for non-capturing groups or add modifiers",
     );
-    pub(super) const UNKNOWN_MODIFIERS: Said =
+    pub(super) const UNKNOWN_MODIFIERS: OxcText =
         ("Unknown modifiers", "Valid modifiers are: i, m, s");
 }
 
@@ -389,7 +390,7 @@ const FEW_NAMES: usize = 16;
 struct SetResult {
     may_contain_strings: bool,
     /// oxc's message if something follows class contents built with `&&` or `--`.
-    after_operation: Option<Said>,
+    after_operation: Option<OxcText>,
 }
 
 impl SetResult {
@@ -448,8 +449,8 @@ struct Validator<'s, 'h> {
     backreference_names: Vec<BackreferenceName>,
 }
 
-fn is_class(unterminated: Said) -> bool {
-    [said::CLASS.0, said::NESTED_CLASS.0].contains(&unterminated.0)
+fn is_class(unterminated: OxcText) -> bool {
+    [oxc_text::CLASS.0, oxc_text::NESTED_CLASS.0].contains(&unterminated.0)
 }
 
 fn is_syntax_character(cp: i32) -> bool {
@@ -838,9 +839,9 @@ impl<'s, 'h> Validator<'s, 'h> {
         self.raise_with(message, oxc)
     }
 
-    /// For an error where oxc reports `said` for the range from `start` to the current position.
-    fn raise_as<T>(&mut self, message: &str, said: Said, start: usize) -> Consumed<T> {
-        self.raise_with(message, Some(Oxc::new(said, start, self.index)))
+    /// For an error where oxc reports `oxc_text` for the range from `start` to the current position.
+    fn raise_as<T>(&mut self, message: &str, oxc_text: OxcText, start: usize) -> Consumed<T> {
+        self.raise_with(message, Some(Oxc::new(oxc_text, start, self.index)))
     }
 
     fn raise_with<T>(&mut self, message: &str, oxc: Option<Oxc>) -> Consumed<T> {
@@ -864,16 +865,16 @@ impl<'s, 'h> Validator<'s, 'h> {
         let is_in_class = innermost.is_some_and(|it| is_class(it.0));
         // Without the flags, the only backslash that isn't an escape is one that ends the pattern.
         if !self.unicode_mode() && at < self.end && self.source.get(at) == Some(&b'\\') {
-            let said = match is_in_class {
-                true => said::CLASS_ATOM,
-                false => said::EXTENDED_ATOM_ESCAPE,
+            let oxc_text = match is_in_class {
+                true => oxc_text::CLASS_ATOM,
+                false => oxc_text::EXTENDED_ATOM_ESCAPE,
             };
-            return Some(Oxc::new(said, at, at + 1));
+            return Some(Oxc::new(oxc_text, at, at + 1));
         }
         match innermost {
-            Some((said, start)) => Some(Oxc::new(said, start, at)),
+            Some((oxc_text, start)) => Some(Oxc::new(oxc_text, start, at)),
             None if at >= self.end => None,
-            None => Some(Oxc::new(said::INCOMPLETE, at, at)),
+            None => Some(Oxc::new(oxc_text::INCOMPLETE, at, at)),
         }
     }
 
@@ -881,14 +882,14 @@ impl<'s, 'h> Validator<'s, 'h> {
     #[cold]
     fn oxc_has_no_escape(&self, backslash: usize) -> Option<Oxc> {
         match self.open_at(backslash).last() {
-            Some(&(said, _)) if is_class(said) && !self.unicode_sets_mode() => {
-                Some(Oxc::new(said::CLASS_ATOM, backslash, backslash + 1))
+            Some(&(oxc_text, _)) if is_class(oxc_text) && !self.unicode_sets_mode() => {
+                Some(Oxc::new(oxc_text::CLASS_ATOM, backslash, backslash + 1))
             }
-            Some(&(said, start)) if is_class(said) => {
+            Some(&(oxc_text, start)) if is_class(oxc_text) => {
                 let negated = usize::from(self.source.get(start + 1) == Some(&b'^'));
                 match backslash == start + 1 + negated {
                     true => Some(Oxc::new(
-                        said::EMPTY_CLASS_SET_EXPRESSION,
+                        oxc_text::EMPTY_CLASS_SET_EXPRESSION,
                         backslash,
                         backslash,
                     )),
@@ -902,16 +903,16 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     /// The groups and classes that enclose `at`, outermost first. Each has oxc's message for
     /// leaving it unclosed, and its start.
-    fn open_at(&self, at: usize) -> Vec<(Said, usize)> {
-        let mut open: Vec<(Said, usize)> = Vec::new();
+    fn open_at(&self, at: usize) -> Vec<(OxcText, usize)> {
+        let mut open: Vec<(OxcText, usize)> = Vec::new();
         let mut i = self.start;
         while i < at {
             let is_in_class = open.last().is_some_and(|it| is_class(it.0));
             let rest = self.source.get(i + 1..self.end).unwrap_or_default();
             match self.source.get(i) {
                 Some(b'\\') => i += 1,
-                Some(b'[') if !is_in_class => open.push((said::CLASS, i)),
-                Some(b'[') if self.unicode_sets_mode() => open.push((said::NESTED_CLASS, i)),
+                Some(b'[') if !is_in_class => open.push((oxc_text::CLASS, i)),
+                Some(b'[') if self.unicode_sets_mode() => open.push((oxc_text::NESTED_CLASS, i)),
                 Some(b']') if is_in_class => {
                     open.pop();
                 }
@@ -919,14 +920,14 @@ impl<'s, 'h> Validator<'s, 'h> {
                     let is_lookaround = [&b"?="[..], b"?!", b"?<=", b"?<!"]
                         .iter()
                         .any(|it| rest.starts_with(it));
-                    let said = match is_lookaround {
-                        true => said::LOOKAROUND,
+                    let oxc_text = match is_lookaround {
+                        true => oxc_text::LOOKAROUND,
                         false if rest.starts_with(b"?") && !rest.starts_with(b"?<") => {
-                            said::IGNORE_GROUP
+                            oxc_text::IGNORE_GROUP
                         }
-                        false => said::CAPTURING_GROUP,
+                        false => oxc_text::CAPTURING_GROUP,
                     };
-                    open.push((said, i));
+                    open.push((oxc_text, i));
                 }
                 Some(b')') if !is_in_class => {
                     open.pop();
@@ -1043,12 +1044,15 @@ impl<'s, 'h> Validator<'s, 'h> {
     }
 
     /// The last group so far named `name`.
-    fn last_group_called(&self, name: &[u8]) -> Option<u32> {
+    fn last_group_named(&self, name: &[u8]) -> Option<u32> {
         if self.group_names.len() > FEW_NAMES {
             return self.last_group_of_name.get(name).copied();
         }
-        let is_it = |group: &GroupName| self.name(group.start, group.len) == name;
-        self.group_names.iter().rposition(is_it).map(|it| it as u32)
+        let has_name = |group: &GroupName| self.name(group.start, group.len) == name;
+        self.group_names
+            .iter()
+            .rposition(has_name)
+            .map(|it| it as u32)
     }
 
     fn add_group_name(&mut self, written: (u32, u32)) {
@@ -1074,14 +1078,14 @@ impl<'s, 'h> Validator<'s, 'h> {
     }
 
     fn has_in_pattern(&self, name: &[u8]) -> bool {
-        self.last_group_called(name).is_some()
+        self.last_group_named(name).is_some()
     }
 
     /// True if a group named `name` can participate in a match together with what's being parsed.
     /// If the last one can't, none can: it was accepted, so the earlier ones are in different
     /// alternatives than it is, in disjunctions that are still being parsed.
     fn has_in_scope(&self, name: &[u8]) -> bool {
-        self.last_group_called(name)
+        self.last_group_named(name)
             .is_some_and(|group| self.is_in_scope(group))
     }
 
@@ -1101,14 +1105,14 @@ impl<'s, 'h> Validator<'s, 'h> {
     /// oxc marks the first conflicting group named `last_str_value`, and the one at `written`.
     #[cold]
     fn oxc_has_duplicate(&self, written: (u32, u32)) -> Oxc {
-        let is_in_the_way = |(i, group): &(usize, &GroupName)| {
+        let conflicts = |(i, group): &(usize, &GroupName)| {
             self.name(group.start, group.len) == self.last_str_value && self.is_in_scope(*i as u32)
         };
-        let first = self.group_names.iter().enumerate().find(is_in_the_way);
+        let first = self.group_names.iter().enumerate().find(conflicts);
         let (start, end) = first.map_or(written, |it| it.1.written);
         Oxc {
             also: Some(written),
-            ..Oxc::new(said::DUPLICATED_NAMES, start as usize, end as usize)
+            ..Oxc::new(oxc_text::DUPLICATED_NAMES, start as usize, end as usize)
         }
     }
 
@@ -1172,7 +1176,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         for i in 0..self.backreference_names.len() {
             let name = self.backreference_names[i];
             if !self.has_in_pattern(self.name(name.start, name.len)) {
-                let oxc = self.oxc_knows_no_group(name.written);
+                let oxc = self.oxc_unknown_group(name.written);
                 return self.raise_with("Invalid named capture referenced", Some(oxc));
             }
         }
@@ -1182,7 +1186,7 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     /// `written` is the range of a `\k<name>`.
     #[cold]
-    fn oxc_knows_no_group(&self, written: (u32, u32)) -> Oxc {
+    fn oxc_unknown_group(&self, written: (u32, u32)) -> Oxc {
         let mut names: Vec<&[u8]> = Vec::new();
         for group in &self.group_names {
             let name = self.name(group.start, group.len);
@@ -1201,7 +1205,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         Oxc {
             help,
             ..Oxc::new(
-                (said::NAMED_REFERENCE, ""),
+                (oxc_text::NAMED_REFERENCE, ""),
                 written.0 as usize,
                 written.1 as usize,
             )
@@ -1275,9 +1279,9 @@ impl<'s, 'h> Validator<'s, 'h> {
             false => (here, here),
         };
         let oxc = match is(start, b'{') && self.last_range.1 < self.last_range.0 {
-            true => Oxc::new(said::BRACED_OUT_OF_ORDER, start, eager_end),
-            false if self.unicode_mode() => Oxc::new(said::LONE_QUANTIFIER, start, end),
-            false => Oxc::new(said::INVALID_BRACED_QUANTIFIER, start, end),
+            true => Oxc::new(oxc_text::BRACED_OUT_OF_ORDER, start, eager_end),
+            false if self.unicode_mode() => Oxc::new(oxc_text::LONE_QUANTIFIER, start, end),
+            false => Oxc::new(oxc_text::INVALID_BRACED_QUANTIFIER, start, end),
         };
         let raised = self.raised_at("Nothing to repeat", here, None);
         self.with_oxc(raised, Some(oxc))
@@ -1399,7 +1403,7 @@ impl<'s, 'h> Validator<'s, 'h> {
                     if !no_error && max < min {
                         return self.raise_as(
                             "numbers out of order in {} quantifier",
-                            said::BRACED_OUT_OF_ORDER,
+                            oxc_text::BRACED_OUT_OF_ORDER,
                             start,
                         );
                     }
@@ -1451,12 +1455,12 @@ impl<'s, 'h> Validator<'s, 'h> {
             if self.ecma_version() >= 2025
                 && let Err(raised) = self.consume_modifiers()
             {
-                let oxc = self.oxc_refuses_modifiers(start + 2);
+                let oxc = self.oxc_rejects_modifiers(start + 2);
                 return Err(self.with_oxc(raised, Some(oxc)));
             }
             if !self.eat(b':') {
                 self.rewind(start + 1);
-                let oxc = self.oxc_refuses_modifiers(start + 2);
+                let oxc = self.oxc_rejects_modifiers(start + 2);
                 return self.raise_with("Invalid group", Some(oxc));
             }
             self.consume_disjunction()?;
@@ -1471,7 +1475,7 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     /// oxc's diagnostic for the modifiers that start at `start`, which were rejected here.
     #[cold]
-    fn oxc_refuses_modifiers(&self, start: usize) -> Oxc {
+    fn oxc_rejects_modifiers(&self, start: usize) -> Oxc {
         // The modifiers turned on, and those turned off.
         let mut seen = [[false; 3]; 2];
         let (mut side, mut has_duplicate, mut i) = (0, false, start);
@@ -1486,17 +1490,17 @@ impl<'s, 'h> Validator<'s, 'h> {
                 Some(b'i') => 0,
                 Some(b'm') => 1,
                 Some(b's') => 2,
-                _ => return Oxc::new(said::UNKNOWN_MODIFIERS, start, i),
+                _ => return Oxc::new(oxc_text::UNKNOWN_MODIFIERS, start, i),
             };
             has_duplicate |= std::mem::replace(&mut seen[side][modifier], true);
             i += 1;
         }
-        let said = match seen == [[false; 3]; 2] {
-            _ if has_duplicate => said::DUPLICATED_MODIFIER,
-            true => said::EMPTY_MODIFIERS,
-            false => said::MODIFIER_ON_AND_OFF,
+        let oxc_text = match seen == [[false; 3]; 2] {
+            _ if has_duplicate => oxc_text::DUPLICATED_MODIFIER,
+            true => oxc_text::EMPTY_MODIFIERS,
+            false => oxc_text::MODIFIER_ON_AND_OFF,
         };
-        Oxc::new(said, start, i)
+        Oxc::new(oxc_text, start, i)
     }
 
     fn consume_modifiers(&mut self) -> Consumed {
@@ -1700,7 +1704,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         };
         Oxc {
             help,
-            ..Oxc::new((said::INDEXED_REFERENCE, ""), start, end)
+            ..Oxc::new((oxc_text::INDEXED_REFERENCE, ""), start, end)
         }
     }
 
@@ -1765,7 +1769,7 @@ impl<'s, 'h> Validator<'s, 'h> {
                     let oxc = Oxc {
                         message: Cow::Owned(message),
                         ..Oxc::new(
-                            ("", said::NEGATED_PROPERTY_OF_STRINGS),
+                            ("", oxc_text::NEGATED_PROPERTY_OF_STRINGS),
                             start as usize - 1,
                             self.index,
                         )
@@ -1786,7 +1790,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
             return self.raise_as(
                 "Invalid property name",
-                said::PROPERTY_ESCAPE,
+                oxc_text::PROPERTY_ESCAPE,
                 start as usize - 1,
             );
         }
@@ -1829,7 +1833,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
             return self.raise_as(
                 "Invalid named reference",
-                said::EMPTY_GROUP_SPECIFIER,
+                oxc_text::EMPTY_GROUP_SPECIFIER,
                 start as usize - 1,
             );
         }
@@ -1853,7 +1857,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             if negate && result.may_contain_strings {
                 return self.raise_as(
                     "Negated character class may contain strings",
-                    said::NEGATED_CLASS_WITH_STRINGS,
+                    oxc_text::NEGATED_CLASS_WITH_STRINGS,
                     start as usize,
                 );
             }
@@ -1866,7 +1870,7 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     fn raise_unclosed_class<T>(&mut self, message: &str, contents: SetResult) -> Consumed<T> {
         match contents.after_operation {
-            Some(said) => self.raise_as(message, said, self.index),
+            Some(oxc_text) => self.raise_as(message, oxc_text, self.index),
             None => self.raise(message),
         }
     }
@@ -1902,18 +1906,18 @@ impl<'s, 'h> Validator<'s, 'h> {
                 if strict {
                     return self.raise_as(
                         "Invalid character class",
-                        said::RANGE_OF_SETS,
+                        oxc_text::RANGE_OF_SETS,
                         range_start as usize,
                     );
                 }
                 continue;
             }
             if min > max {
-                let said = match max == i32::from(b'-') {
-                    true => said::RANGE_TO_DASH,
-                    false => said::ATOM_RANGE_OUT_OF_ORDER,
+                let oxc_text = match max == i32::from(b'-') {
+                    true => oxc_text::RANGE_TO_DASH,
+                    false => oxc_text::ATOM_RANGE_OUT_OF_ORDER,
                 };
-                return self.raise_as("Range out of order in character class", said, dash);
+                return self.raise_as("Range out of order in character class", oxc_text, dash);
             }
             self.handler
                 .on_character_class_range(range_start, self.pos(), min as u32, max as u32);
@@ -1945,7 +1949,8 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
             if self.strict() {
                 // For oxc, a backslash before a `c` is a literal backslash even with the flags.
-                let oxc = (!self.is(b'c')).then(|| Oxc::new(said::CLASS_ATOM, start, start + 1));
+                let oxc =
+                    (!self.is(b'c')).then(|| Oxc::new(oxc_text::CLASS_ATOM, start, start + 1));
                 return self.raise_with("Invalid escape", oxc);
             }
             self.rewind(start);
@@ -1998,7 +2003,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         } else {
             let cp = self.cp;
             let empty = Some(Oxc::new(
-                said::EMPTY_CLASS_SET_EXPRESSION,
+                oxc_text::EMPTY_CLASS_SET_EXPRESSION,
                 self.index,
                 self.index,
             ));
@@ -2029,12 +2034,12 @@ impl<'s, 'h> Validator<'s, 'h> {
                 }
                 return Ok(SetResult {
                     may_contain_strings,
-                    after_operation: Some(said::IN_INTERSECTION),
+                    after_operation: Some(oxc_text::IN_INTERSECTION),
                 });
             }
             let oxc = match self.is(b'&') {
-                true => Oxc::new(said::THIRD_AMPERSAND, self.index, self.index + 1),
-                false => Oxc::new(said::IN_INTERSECTION, self.index, self.index),
+                true => Oxc::new(oxc_text::THIRD_AMPERSAND, self.index, self.index + 1),
+                false => Oxc::new(oxc_text::IN_INTERSECTION, self.index, self.index),
             };
             return self.raise_with("Invalid character in character class", Some(oxc));
         }
@@ -2046,12 +2051,12 @@ impl<'s, 'h> Validator<'s, 'h> {
                 }
                 return Ok(SetResult {
                     may_contain_strings,
-                    after_operation: Some(said::IN_SUBTRACTION),
+                    after_operation: Some(oxc_text::IN_SUBTRACTION),
                 });
             }
             return self.raise_as(
                 "Invalid character in character class",
-                said::IN_SUBTRACTION,
+                oxc_text::IN_SUBTRACTION,
                 self.index,
             );
         }
@@ -2089,7 +2094,7 @@ impl<'s, 'h> Validator<'s, 'h> {
                 if min > max {
                     return self.raise_as(
                         "Range out of order in character class",
-                        said::SET_RANGE_OUT_OF_ORDER,
+                        oxc_text::SET_RANGE_OUT_OF_ORDER,
                         start as usize,
                     );
                 }
@@ -2129,7 +2134,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             if negate && result.may_contain_strings {
                 return self.raise_as(
                     "Negated character class may contain strings",
-                    said::NEGATED_NESTED_CLASS_WITH_STRINGS,
+                    oxc_text::NEGATED_NESTED_CLASS_WITH_STRINGS,
                     start,
                 );
             }
@@ -2170,7 +2175,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
             return self.raise_as(
                 "Unterminated class string disjunction",
-                said::STRING_DISJUNCTION,
+                oxc_text::STRING_DISJUNCTION,
                 start as usize,
             );
         }
@@ -2229,7 +2234,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             if self.eat_regexp_identifier_name()? && self.eat(b'>') {
                 return Ok(true);
             }
-            let oxc = self.oxc_refuses_group_name(start);
+            let oxc = self.oxc_rejects_group_name(start);
             return self.raise_with("Invalid capture group name", Some(oxc));
         }
         Ok(false)
@@ -2238,7 +2243,7 @@ impl<'s, 'h> Validator<'s, 'h> {
     /// `start` is the position of the `<`. The current character can't be part of a name, or isn't
     /// the expected `>`.
     #[cold]
-    fn oxc_refuses_group_name(&mut self, start: usize) -> Oxc {
+    fn oxc_rejects_group_name(&mut self, start: usize) -> Oxc {
         let here = self.index;
         if self.is(b'\\') {
             // If it's a valid escape, it's for a character that isn't allowed in a name.
@@ -2246,15 +2251,15 @@ impl<'s, 'h> Validator<'s, 'h> {
             let is_escape = matches!(self.eat_regexp_unicode_escape_sequence(true), Ok(true));
             let end = if is_escape { self.index } else { here + 1 };
             self.rewind(here);
-            return Oxc::new(said::UNICODE_ESCAPE, here, end);
+            return Oxc::new(oxc_text::UNICODE_ESCAPE, here, end);
         }
         if !self.unicode_mode()
             && is_lead_surrogate(self.cp)
             && is_trail_surrogate(self.next_code_point())
         {
-            return Oxc::new(said::SURROGATE_PAIR, here, here + 4);
+            return Oxc::new(oxc_text::SURROGATE_PAIR, here, here + 4);
         }
-        Oxc::new(said::GROUP_NAME, start, here)
+        Oxc::new(oxc_text::GROUP_NAME, start, here)
     }
 
     fn eat_regexp_identifier_name(&mut self) -> Consumed {
@@ -2358,7 +2363,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             if self.strict() || u_flag {
                 // Without a flag this is inside a group name, and oxc hasn't consumed the `u` yet.
                 let read = usize::from(self.unicode_mode());
-                let oxc = Oxc::new(said::UNICODE_ESCAPE, start - 1 + read, start + read);
+                let oxc = Oxc::new(oxc_text::UNICODE_ESCAPE, start - 1 + read, start + read);
                 return self.raise_with("Invalid unicode escape", Some(oxc));
             }
             self.rewind(start);
@@ -2462,7 +2467,11 @@ impl<'s, 'h> Validator<'s, 'h> {
                         strings: false,
                     }));
                 }
-                return self.raise_as("Invalid property name", said::PROPERTY_NAME, value_start);
+                return self.raise_as(
+                    "Invalid property name",
+                    oxc_text::PROPERTY_NAME,
+                    value_start,
+                );
             }
         }
         self.rewind(start);
@@ -2494,17 +2503,17 @@ impl<'s, 'h> Validator<'s, 'h> {
                 }));
             }
             let oxc = if self.cp == EOF {
-                Oxc::new(said::PROPERTY_ESCAPE, start - 3, self.index)
+                Oxc::new(oxc_text::PROPERTY_ESCAPE, start - 3, self.index)
             } else if unicode::is_valid_lone_unicode_property_of_string(version, name_or_value) {
                 let mut message = String::from("Invalid unicode property `");
                 wtf8::push_lossy(&mut message, name_or_value);
                 message.push('`');
                 Oxc {
                     message: Cow::Owned(message),
-                    ..Oxc::new(("", said::PROPERTY_OF_STRINGS), start, self.index)
+                    ..Oxc::new(("", oxc_text::PROPERTY_OF_STRINGS), start, self.index)
                 }
             } else {
-                Oxc::new(said::PROPERTY_NAME_OR_VALUE, start, self.index)
+                Oxc::new(oxc_text::PROPERTY_NAME_OR_VALUE, start, self.index)
             };
             return self.raise_with("Invalid property name", Some(oxc));
         }

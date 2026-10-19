@@ -10,18 +10,18 @@ const UNSAFE_USAGE: Message = Message::new("unsafeUsage", "Unsafe usage of {{nod
 #[derive(Default)]
 pub struct State<'a> {
     /// For a node: the first `finally` block that a `return`, a `throw` or a labeled jump at that node exits.
-    left: AncestorMemo<'a, Option<Span>>,
+    exited: AncestorMemo<'a, Option<Span>>,
     /// The same for a `break` without a label.
-    left_by_break: AncestorMemo<'a, Option<Span>>,
+    exited_by_break: AncestorMemo<'a, Option<Span>>,
     /// The same for a `continue` without a label.
-    left_by_continue: AncestorMemo<'a, Option<Span>>,
+    exited_by_continue: AncestorMemo<'a, Option<Span>>,
     /// The labeled jumps in a `finally` block, each with its label and the block.
     to_labels: Vec<(Stmt<'a>, Name<'a>, Span)>,
 }
 
 /// One step of ESLint's `isInFinallyBlock`, from `at` up to `parent`. Returns the `finally` block being exited, or
 /// `Some(None)` where the jump ends before it exits one.
-fn leaves<'a>(at: Node<'a>, parent: Node<'a>, stops_at_loops: bool, stops_at_switch: bool) -> Option<Option<Span>> {
+fn exited_finalizer<'a>(at: Node<'a>, parent: Node<'a>, stops_at_loops: bool, stops_at_switch: bool) -> Option<Option<Span>> {
     match parent {
         Node::File(_) | Node::Class(_) => Some(None),
         Node::Func(func) if func.kind() != FnKind::StaticBlock => Some(None),
@@ -67,16 +67,16 @@ impl Rule for NoUnsafeFinally {
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
-        let (label, stops_at_loops, stops_at_switch, left) = match statement.kind() {
-            StmtKind::Break(None) => (None, true, true, &mut cx.state.left_by_break),
+        let (label, stops_at_loops, stops_at_switch, exited) = match statement.kind() {
+            StmtKind::Break(None) => (None, true, true, &mut cx.state.exited_by_break),
             // For oxlint a `continue` stops at the nearest loop, whatever its label is.
-            StmtKind::Continue(label) if is_oxlint => (label, true, false, &mut cx.state.left_by_continue),
-            StmtKind::Continue(None) => (None, true, false, &mut cx.state.left_by_continue),
-            StmtKind::Break(label) | StmtKind::Continue(label) => (label, false, false, &mut cx.state.left),
-            _ => (None, false, false, &mut cx.state.left),
+            StmtKind::Continue(label) if is_oxlint => (label, true, false, &mut cx.state.exited_by_continue),
+            StmtKind::Continue(None) => (None, true, false, &mut cx.state.exited_by_continue),
+            StmtKind::Break(label) | StmtKind::Continue(label) => (label, false, false, &mut cx.state.exited),
+            _ => (None, false, false, &mut cx.state.exited),
         };
-        let finalizer = left.find(Node::Stmt(statement), |at, parent| {
-            leaves(at, parent, stops_at_loops, stops_at_switch)
+        let finalizer = exited.find(Node::Stmt(statement), |at, parent| {
+            exited_finalizer(at, parent, stops_at_loops, stops_at_switch)
         });
         match (finalizer.flatten(), label) {
             (None, _) => {}
@@ -95,18 +95,18 @@ impl Rule for NoUnsafeFinally {
         let labeled = cx.file().stmts_of_kind(StmtTag::Labeled).filter_map(|it| Some((it.span(), it.as_labeled()?.0)));
         let mut labeled: Vec<(Span, Name<'a>)> = labeled.collect();
         utils::sort::sort_unstable_by_key(&mut labeled, |it| it.0.start);
-        // One pass over the labeled statements and the jumps, in source order. `around` has the labeled statements
+        // One pass over the labeled statements and the jumps, in source order. `enclosing` has the labeled statements
         // enclosing the current position, outermost first. `with_label` has their start offsets, by label.
-        let mut around: Vec<(Span, Name<'a>)> = Vec::new();
+        let mut enclosing: Vec<(Span, Name<'a>)> = Vec::new();
         let mut with_label: FxHashMap<Name<'a>, Vec<u32>> = FxHashMap::default();
         let mut rest = labeled.into_iter().peekable();
         for (jump, name, finalizer) in jumps {
             let at = jump.span().start;
             loop {
                 let next = rest.next_if(|it| it.0.start <= at);
-                let place = next.map_or(at, |it| it.0.start);
-                while let Some(&(_, ended)) = around.last().filter(|it| it.0.end <= place) {
-                    around.pop();
+                let position = next.map_or(at, |it| it.0.start);
+                while let Some(&(_, ended)) = enclosing.last().filter(|it| it.0.end <= position) {
+                    enclosing.pop();
                     if let Some(same) = with_label.get_mut(&ended) {
                         same.pop();
                     }
@@ -114,7 +114,7 @@ impl Rule for NoUnsafeFinally {
                 let Some((span, label)) = next else {
                     break;
                 };
-                around.push((span, label));
+                enclosing.push((span, label));
                 with_label.entry(label).or_default().push(span.start);
             }
             let target = with_label.get(&name).and_then(|it| it.last());

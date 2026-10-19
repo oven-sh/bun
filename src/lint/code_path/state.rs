@@ -40,7 +40,7 @@ impl<'e, 'a> Cx<'e, 'a> {
     }
 
     /// The node to emit an event with. A function is always a `Func`, whatever owns it.
-    pub(super) fn node_of_event(&self) -> Node<'a> {
+    pub(super) fn event_node(&self) -> Node<'a> {
         match self.node {
             Node::Expr(e) if !self.keeps_function_expression => {
                 e.as_fn().map_or(self.node, Node::Func)
@@ -316,7 +316,7 @@ fn make_looped(cx: &mut Cx, from: &[u32], to: &[u32]) {
         };
         if are_reachable {
             let (from, to) = (Segment::new(cx.file, from), Segment::new(cx.file, to));
-            let node = cx.node_of_event();
+            let node = cx.event_node();
             (cx.emit)(Event::SegmentLoop(from, to, node));
         }
     }

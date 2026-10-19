@@ -93,9 +93,9 @@ fn allowed_tags(value: &[u8]) -> Option<u8> {
 
 /// upstream's `HTML_ELEMENTS`. It has `portal`, and lacks eight entries of the list jsx-a11y uses.
 fn is_html_element(name: &[u8]) -> bool {
-    const ONLY_THERE: [&[u8]; 8] =
+    const MISSING_UPSTREAM: [&[u8]; 8] =
         [b"command", b"element", b"isindex", b"listing", b"multicol", b"nextid", b"rbc", b"search"];
-    name == b"portal" || (contains_name(&HTML_TAG, name) && !ONLY_THERE.contains(&name))
+    name == b"portal" || (contains_name(&HTML_TAG, name) && !MISSING_UPSTREAM.contains(&name))
 }
 
 /// One element of upstream's `COMPONENT_ATTRIBUTE_MAP.get("rel")`.

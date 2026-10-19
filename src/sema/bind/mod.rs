@@ -670,7 +670,7 @@ impl<'s> Symbols<'s> {
 /// `SetValueDeclaration`: returns true if `node` replaces `value_declaration`. "Non-assignment
 /// declarations take precedence over assignment declarations and non-namespace declarations take
 /// precedence over namespace declarations."
-pub fn takes_over_as_value_declaration(value_declaration: Option<Decl>, node: Decl) -> bool {
+pub fn replaces_value_declaration(value_declaration: Option<Decl>, node: Decl) -> bool {
     // `isAssignmentDeclaration`
     let is_assignment = |decl: Decl| {
         matches!(
@@ -702,7 +702,7 @@ pub enum ScopeKind {
     Enum(EnumId),
     /// Encloses the constraints and defaults of a function's type parameters. It declares nothing.
     /// It's nested in the function's scope and only identifies which part of the function contains
-    /// a name. See `Bound::is_seen_from`.
+    /// a name. See `Bound::is_visible_from`.
     TypeParamList(FnId),
     /// Same for the parameters: their types, patterns and defaults. Only a function with a block
     /// body has one.
@@ -711,7 +711,7 @@ pub enum ScopeKind {
     ReturnType(FnId),
     /// Encloses a conditional type's `extends` type. It declares nothing. The `infer` type
     /// parameters are declared in the parent scope, which also encloses the true branch, and can't
-    /// be referenced from here. See `Bound::is_seen_from`.
+    /// be referenced from here. See `Bound::is_visible_from`.
     Extends,
     /// Encloses the constraint of an `infer T extends ..`. It declares `T` again, which can be
     /// referenced from here.
@@ -1565,7 +1565,7 @@ pub struct BoundIn<S: Storage> {
     /// with its enclosing scope.
     pub hoisted_vars: S::Few<(PatId, ScopeId)>,
     /// Decorators on nodes that can't be decorated. No further errors are reported inside them.
-    pub refused_decorators: S::Few<ExprId>,
+    pub rejected_decorators: S::Few<ExprId>,
     /// The labeled statements that no `break` or `continue` refers to.
     pub unused_labels: S::Few<StmtId>,
     pub import_scope: S::List<ScopeId>,
@@ -1645,9 +1645,9 @@ pub mod kind_counts {
     pub const PATS: usize = TYPES + TypeTag::COUNT;
     /// Counts each `init` of a `For` and each `left` of a `ForIn` or `ForOf` that's a
     /// `StmtKind::Expr`.
-    pub const HEADS_THAT_ARE_EXPRESSIONS: usize = PATS + PatTag::COUNT;
+    pub const EXPRESSION_LOOP_HEADS: usize = PATS + PatTag::COUNT;
     /// Counts the patterns whose `pat_parent` is `PatParent::None`.
-    pub const PATS_WITHOUT_PARENT: usize = HEADS_THAT_ARE_EXPRESSIONS + 1;
+    pub const PATS_WITHOUT_PARENT: usize = EXPRESSION_LOOP_HEADS + 1;
     pub const LEN: usize = PATS_WITHOUT_PARENT + 1;
 }
 
@@ -1929,7 +1929,7 @@ impl<S: Storage> BoundIn<S> {
     /// `NameResolver.Resolve`'s restrictions on the locals of a function and of a conditional type.
     /// Returns true if a local with `flags` is visible to a lookup for `meaning` that has just left
     /// a scope of kind `from`.
-    pub fn is_seen_from(&self, from: ScopeKind, flags: SymFlags, meaning: SymFlags) -> bool {
+    pub fn is_visible_from(&self, from: ScopeKind, flags: SymFlags, meaning: SymFlags) -> bool {
         // Among the members of a class or an interface only the type parameters are in scope, as
         // types: `class C<T> { T = 1 }`.
         if flags.contains(SymFlags::TYPE_PARAMETER) && !meaning.intersects(SymFlags::TYPE) {
@@ -1991,7 +1991,7 @@ fn module_required_by(hir: &File, d: VarDeclId) -> Option<Atom> {
 }
 
 /// Builds `BoundIn::large_tables`.
-pub(crate) fn large_table_places(
+pub(crate) fn large_table_entries(
     tables: &[(u32, u32)],
     entries: &[(Atom, SymbolId)],
 ) -> impl Iterator<Item = ((TableId, Atom), u32)> {
@@ -2056,7 +2056,7 @@ impl Bound<'_> {
 
     /// True if `m`, which has a name, has a symbol other than the one its container has under that
     /// name.
-    pub fn is_member_in_no_table(&self, m: MemberId) -> bool {
+    pub fn is_member_not_in_table(&self, m: MemberId) -> bool {
         let Some(symbol) = self.symbols.get(self.member_symbol[m.idx()].idx()) else {
             return false;
         };
@@ -2534,7 +2534,7 @@ impl BoundBuilder {
             stmt_flow,
             case_fallthrough,
             hoisted_vars,
-            refused_decorators,
+            rejected_decorators,
             unused_labels,
             import_scope,
             import_equals_scope,
@@ -2627,7 +2627,7 @@ impl BoundBuilder {
         stmt_flow.clear();
         case_fallthrough.clear();
         hoisted_vars.clear();
-        refused_decorators.clear();
+        rejected_decorators.clear();
         unused_labels.clear();
         import_scope.clear();
         import_equals_scope.clear();
@@ -2750,7 +2750,7 @@ impl BoundBuilder {
             stmt_flow: Narrow::moved_in(arena, &mut self.stmt_flow),
             case_fallthrough: copy_to_arena(&mut self.case_fallthrough, arena),
             hoisted_vars: few_to_arena(std::mem::take(&mut self.hoisted_vars), arena),
-            refused_decorators: few_to_arena(std::mem::take(&mut self.refused_decorators), arena),
+            rejected_decorators: few_to_arena(std::mem::take(&mut self.rejected_decorators), arena),
             unused_labels: few_to_arena(std::mem::take(&mut self.unused_labels), arena),
             import_scope: copy_to_arena(&mut self.import_scope, arena),
             import_equals_scope: few_to_arena(std::mem::take(&mut self.import_equals_scope), arena),
@@ -2893,8 +2893,8 @@ impl Bound<'_> {
             stmt_flow: self.stmt_flow.shared(),
             case_fallthrough: Fixed::shared(&self.case_fallthrough),
             hoisted_vars: ArenaFew::from_iter_in(self.hoisted_vars.iter().cloned(), arena),
-            refused_decorators: ArenaFew::from_iter_in(
-                self.refused_decorators.iter().cloned(),
+            rejected_decorators: ArenaFew::from_iter_in(
+                self.rejected_decorators.iter().cloned(),
                 arena,
             ),
             unused_labels: ArenaFew::from_iter_in(self.unused_labels.iter().cloned(), arena),
@@ -2989,22 +2989,22 @@ pub fn bind<'s>(
 
 /// The lists of the last file bound on this thread, so that the next file can reuse their capacity.
 /// They're returned to the thread when this is dropped.
-pub struct Recycled(Option<Box<binder::Room>>);
+pub struct Recycled(Option<Box<binder::Buffers>>);
 
 impl Recycled {
-    pub fn of_this_thread() -> Recycled {
-        Recycled(Some(binder::take_room()))
+    pub fn for_current_thread() -> Recycled {
+        Recycled(Some(binder::take_buffers()))
     }
 
-    fn room(&mut self) -> &mut binder::Room {
+    fn buffers(&mut self) -> &mut binder::Buffers {
         self.0.get_or_insert_default()
     }
 }
 
 impl Drop for Recycled {
     fn drop(&mut self) {
-        if let Some(room) = self.0.take() {
-            binder::leave_room(room);
+        if let Some(buffers) = self.0.take() {
+            binder::return_buffers(buffers);
         }
     }
 }
@@ -3023,22 +3023,22 @@ pub fn bind_for_lint_in<'r>(
     atoms: &dyn crate::atom::Intern,
     recycled: &'r mut Recycled,
 ) -> &'r BoundBuilder {
-    match lint::fill_in(file, &mut recycled.room().b) {
-        true => &recycled.room().b,
-        false => leave_to_binder(file, options, atoms, recycled),
+    match lint::fill_in(file, &mut recycled.buffers().b) {
+        true => &recycled.buffers().b,
+        false => fall_back_to_binder(file, options, atoms, recycled),
     }
 }
 
 /// Runs [`bind`] and stores the result in `recycled`.
-fn leave_to_binder<'r>(
+fn fall_back_to_binder<'r>(
     file: &File,
     options: BindOptions,
     atoms: &dyn crate::atom::Intern,
     recycled: &'r mut Recycled,
 ) -> &'r BoundBuilder {
-    let room = recycled.room();
-    room.b = binder::Binder::run(file, options, atoms);
-    &room.b
+    let buffers = recycled.buffers();
+    buffers.b = binder::Binder::run(file, options, atoms);
+    &buffers.b
 }
 
 #[cfg(test)]

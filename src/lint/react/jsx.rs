@@ -113,10 +113,10 @@ fn is_identifier(name: &[u8]) -> bool {
 
 /// Returns the first attribute named `target_prop`. Never matches a namespaced name (`a:b`).
 pub(crate) fn has_jsx_prop<'a>(node: Jsx<'a>, target_prop: &str) -> Option<Prop<'a>> {
-    let is_it = |name: &[u8]| name == target_prop.as_bytes() && is_identifier(name);
+    let is_target = |name: &[u8]| name == target_prop.as_bytes() && is_identifier(name);
     node.attrs()
         .iter()
-        .find(|attr| get_jsx_attribute_name(*attr).is_some_and(is_it))
+        .find(|attr| get_jsx_attribute_name(*attr).is_some_and(is_target))
 }
 
 /// Like [`has_jsx_prop`], but ASCII case-insensitive: `onClick` also matches `onclick`.
@@ -205,7 +205,7 @@ fn jsx_a11y_settings<'a>(file: &'a File<'a>) -> Option<&'a Json> {
 
 /// `settings["jsx-a11y"].attributes[name]`: the names that stand for the DOM attribute `name`. Only strings are
 /// returned.
-pub(crate) fn get_attribute_names_of_settings<'a>(
+pub(crate) fn get_attribute_names_from_settings<'a>(
     file: &'a File<'a>,
     name: &str,
 ) -> Option<&'a [Json]> {

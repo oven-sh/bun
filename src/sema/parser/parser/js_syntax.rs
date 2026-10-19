@@ -4,7 +4,7 @@ use super::{Parser, ctx};
 use bun_sema::hir::*;
 
 /// Returns the error for the declaration `stmt` as a whole: its range, code and argument.
-fn error_of_js_declaration(
+fn js_declaration_error(
     file: &FileBuilder,
     stmt: &Stmt,
 ) -> Option<((u32, u32), u32, &'static [u8])> {
@@ -169,14 +169,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if let StmtKind::Fn(_) | StmtKind::Var(_) | StmtKind::Class(_) = stmt.kind {
             self.check_js_modifiers(self.f.stmt_modifiers(id), false);
         }
-        if let Some((at, code, what)) = error_of_js_declaration(&self.f, &stmt) {
+        if let Some((at, code, what)) = js_declaration_error(&self.f, &stmt) {
             self.js_error(at, code, what);
         }
     }
 
     /// Checks a method or accessor in an object literal.
     #[cold]
-    pub(crate) fn check_js_method_of_object(&mut self, prop: &Prop, modifiers: Span<ModifierId>) {
+    pub(crate) fn check_js_object_method(&mut self, prop: &Prop, modifiers: Span<ModifierId>) {
         if self.has_failed() {
             return;
         }

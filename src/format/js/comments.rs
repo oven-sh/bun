@@ -279,8 +279,8 @@ pub(crate) static NO_COMMENTS: FileComments = FileComments::EMPTY;
 
 /// Only Babel, which Prettier uses for JavaScript, keeps the parentheses after `/** @type {T} */` in its tree. In
 /// TypeScript they're ordinary parentheses. oxfmt keeps them there too.
-fn keeps_type_casts(file: &File<'_>, flavor: Flavor, has_tree_of_babel: bool) -> bool {
-    has_tree_of_babel || file.is_javascript() || flavor.is_oxfmt()
+fn keeps_type_casts(file: &File<'_>, flavor: Flavor, has_babel_tree: bool) -> bool {
+    has_babel_tree || file.is_javascript() || flavor.is_oxfmt()
 }
 
 /// Returns the sorted offsets of every `(` that directly follows a type cast comment. If such a `(` wraps an
@@ -288,9 +288,9 @@ fn keeps_type_casts(file: &File<'_>, flavor: Flavor, has_tree_of_babel: bool) ->
 pub(crate) fn cast_parens<'a>(
     file: &'a File<'a>,
     flavor: Flavor,
-    has_tree_of_babel: bool,
+    has_babel_tree: bool,
 ) -> Vec<u32> {
-    if !keeps_type_casts(file, flavor, has_tree_of_babel) {
+    if !keeps_type_casts(file, flavor, has_babel_tree) {
         return Vec::new();
     }
     let text = file.text();
@@ -313,10 +313,10 @@ pub(crate) fn cast_parens<'a>(
 /// Attaches the comments of `file`. The result is cached in the file, so it lives as long as the handles.
 pub(crate) fn of_file<'a>(file: &'a File<'a>, options: &FormatOptions) -> &'a FileComments {
     let comments = file.extension(|| {
-        let has_tree_of_babel = super::context::has_tree_of_babel(file, options);
-        let cast_parens = cast_parens(file, options.flavor, has_tree_of_babel);
+        let has_babel_tree = super::context::has_babel_tree(file, options);
+        let cast_parens = cast_parens(file, options.flavor, has_babel_tree);
         let attach_options = attach::Options {
-            has_tree_of_babel,
+            has_babel_tree,
             experimental_ternaries: options.experimental_ternaries,
             flavor: options.flavor,
         };

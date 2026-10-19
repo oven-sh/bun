@@ -182,7 +182,7 @@ impl Rule for SortTypeConstituents {
     fn new(options: &Options) -> Self {
         let object = options.object(0);
         let mut positions = [u32::MAX; Group::COUNT];
-        let mut place = |group: Group, at: usize| {
+        let mut record_position = |group: Group, at: usize| {
             let position = &mut positions[group as usize];
             *position = (*position).min(at as u32);
         };
@@ -190,13 +190,13 @@ impl Rule for SortTypeConstituents {
             Some(names) => {
                 for (at, name) in names.iter().enumerate() {
                     if let Some(group) = name.as_str().and_then(Group::named) {
-                        place(group, at);
+                        record_position(group, at);
                     }
                 }
             }
             None => {
                 for (at, group) in Group::DEFAULT_ORDER.into_iter().enumerate() {
-                    place(group, at);
+                    record_position(group, at);
                 }
             }
         }

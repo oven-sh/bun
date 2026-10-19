@@ -11,9 +11,7 @@ use crate::ast::{
     ModuleName, Name, Node, PatKind, Stmt, StmtKind, StmtTag, VarKind,
 };
 use crate::language::SourceType;
-use crate::semantic::{
-    Declaration, DeclarationKinds, Scope, ScopeKind, Symbol, order_in_table_of_oxc,
-};
+use crate::semantic::{Declaration, DeclarationKinds, Scope, ScopeKind, Symbol, oxc_table_order};
 use crate::span::Span;
 use crate::tokens::skip_trivia;
 use crate::utils::oxlint::{is_strict_mode, source_type};
@@ -436,7 +434,7 @@ impl<'a> Binder<'a> {
             })
             .collect();
         if clashing.len() > 1 {
-            let order = names_of_file_in_order_of_oxc(self.file);
+            let order = top_level_names_in_oxc_order(self.file);
             crate::utils::sort::sort_unstable_by_key(&mut clashing, |it| {
                 order.iter().position(|&name| name == it.0)
             });
@@ -448,10 +446,10 @@ impl<'a> Binder<'a> {
 }
 
 /// A module's top-level names, in the order oxc iterates over them.
-fn names_of_file_in_order_of_oxc<'a>(file: &'a File<'a>) -> Vec<Name<'a>> {
+fn top_level_names_in_oxc_order<'a>(file: &'a File<'a>) -> Vec<Name<'a>> {
     let declared = file.top_level_scope().symbols().map(|it| it.name());
     let declared: Vec<Name<'a>> = declared.collect();
-    let order = order_in_table_of_oxc(declared.iter().map(|it| it.bytes()));
+    let order = oxc_table_order(declared.iter().map(|it| it.bytes()));
     let in_order = order.into_iter().filter_map(|it| declared.get(it as usize));
     in_order.copied().collect()
 }
@@ -507,24 +505,24 @@ fn candidates<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
     );
     // A block's declaration can clash with a name hoisted through the block on its way up to the function: a `var`, or
     // in sloppy JavaScript a function.
-    let functions_go_up = file.is_javascript() && source_type(file) != SourceType::Module;
-    let goes_through = file.has_names_that_leave_blocks();
-    if !goes_through && !functions_go_up && !file.has_stmts([StmtTag::Try]) {
+    let functions_are_hoisted = file.is_javascript() && source_type(file) != SourceType::Module;
+    let has_hoisted_names = file.has_hoisted_block_declarations();
+    if !has_hoisted_names && !functions_are_hoisted && !file.has_stmts([StmtTag::Try]) {
         return names;
     }
-    for (scope, symbol) in file.symbols_of_blocks(!goes_through && !functions_go_up) {
+    for (scope, symbol) in file.block_scoped_symbols(!has_hoisted_names && !functions_are_hoisted) {
         let name = symbol.name();
         let is_function = || {
             let kinds = symbol.declaration_kinds();
             kinds.contains(DeclarationKinds::FUNCTION_NAME)
         };
-        let is_in_block_of_catch = || {
+        let is_in_catch_block = || {
             scope.kind() == ScopeKind::Catch
                 && (scope.children().next()).is_some_and(|it| it.get_name(name).is_some())
         };
-        if (goes_through || functions_go_up && is_function())
+        if (has_hoisted_names || functions_are_hoisted && is_function())
             && scope.variable_scope().get_name(name).is_some()
-            || is_in_block_of_catch()
+            || is_in_catch_block()
         {
             names.insert(name);
         }
@@ -731,7 +729,7 @@ fn undeclared_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
             }
             let name = bstr::BStr::new(local.bytes());
             let message = format!("Export '{name}' is not defined").into_bytes();
-            let names = names_in_order.get_or_insert_with(|| names_of_file_in_order_of_oxc(file));
+            let names = names_in_order.get_or_insert_with(|| top_level_names_in_oxc_order(file));
             let names = names.iter().map(|it| it.bytes());
             let help = closest(local.bytes(), names).map_or(Cow::Borrowed(""), |it| {
                 Cow::Owned(format!("Did you mean '{}'?", bstr::BStr::new(it)))

@@ -21,7 +21,7 @@ struct Marker {
     place: (Index, Index),
 }
 
-fn is_blank(byte: u8) -> bool {
+fn is_whitespace(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
 }
 
@@ -31,7 +31,7 @@ fn is_free(mut outward: impl Iterator<Item = u8>) -> bool {
     let is_in_word =
         |byte: u8| byte.is_ascii_alphanumeric() || byte >= 0x80 || matches!(byte, b'/' | b'\\');
     !outward
-        .find(|&byte| is_blank(byte) || is_in_word(byte))
+        .find(|&byte| is_whitespace(byte) || is_in_word(byte))
         .is_some_and(is_in_word)
 }
 
@@ -52,7 +52,7 @@ fn is_broken_pair(text: &[u8], opening: Marker, closing: Marker) -> bool {
     );
     // A single `*` or `~` with whitespace inside on both ends isn't emphasis: `(* a comment in OCaml *)`.
     let is_single = opening.end - opening.start == 1 && text.get(opening.start) != Some(&b'_');
-    match (is_blank(first), is_blank(last)) {
+    match (is_whitespace(first), is_whitespace(last)) {
         (false, false) => return false,
         (true, true) if is_single => return false,
         _ => {}
@@ -149,7 +149,7 @@ impl Listens for NoSpaceInEmphasis {
             let first = masked.len();
             let between = cx.document.slice(Span::before(from, span));
             util::push_blanks(between, false, &mut masked);
-            if !between.iter().all(|&byte| is_blank(byte)) {
+            if !between.iter().all(|&byte| is_whitespace(byte)) {
                 masked[first..].fill(NOT_TEXT);
             }
             masked.extend_from_slice(cx.document.slice(span));
@@ -177,14 +177,14 @@ impl Listens for NoSpaceInEmphasis {
             };
             // A `*` or `~` with whitespace on both sides is plain text: `2 * 3`, `~ 5`. Upstream's fix turns `2 * 3 *
             // 4` into `2 *3* 4`.
-            let is_blank_at = |at: Option<usize>| {
+            let is_whitespace_at = |at: Option<usize>| {
                 at.and_then(|at| masked.get(at))
                     .copied()
-                    .is_some_and(is_blank)
+                    .is_some_and(is_whitespace)
             };
             if matches!(&masked[start..end], b"*" | b"~")
-                && is_blank_at(start.checked_sub(1))
-                && is_blank_at(Some(end))
+                && is_whitespace_at(start.checked_sub(1))
+                && is_whitespace_at(Some(end))
             {
                 continue;
             }

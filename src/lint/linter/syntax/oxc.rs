@@ -18,7 +18,7 @@ use crate::ast::{
 };
 use crate::span::Span;
 use crate::tokens::{next_token, skip_trivia, token_len};
-use crate::utils::oxlint::{has_module_syntax, is_either};
+use crate::utils::oxlint::{can_be_script_or_module, has_module_syntax};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{ClassOwner, Parent};
 use bun_sema::hir::{
@@ -42,7 +42,7 @@ fn is_keyword(modifier: &Modifier, flag: Flags) -> bool {
 
 /// Each `await` outside an async function and each `yield` outside a generator. oxc's parser reports these, so our
 /// parser records them in `noted`.
-fn misplaced_suspensions<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Vec<SyntaxError> {
+fn misplaced_await_and_yield<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Vec<SyntaxError> {
     let hir = &file.hir;
     if noted.is_empty() {
         return Vec::new();
@@ -64,10 +64,10 @@ fn misplaced_suspensions<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Vec<Sy
             .any(|it| it.start <= at && at < it.end)
     };
     // A file that can still turn out to be a module may have an `await` outside every function and namespace.
-    let can_be_module = crate::utils::oxlint::is_either(file);
+    let can_be_module = crate::utils::oxlint::can_be_script_or_module(file);
     let is_await = |it: &Diagnostic| it.kind == DiagnosticKind::Grammar && it.code == 1308;
     // Only the first `await` of `await await a` is reported.
-    let follows_one = |at: u32| {
+    let follows_await = |at: u32| {
         let before = file.token_before(Span::empty(at)).map(|it| it.span().start);
         before.is_some_and(|before| noted.iter().any(|it| is_await(it) && it.start == before))
     };
@@ -75,7 +75,7 @@ fn misplaced_suspensions<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Vec<Sy
         it.kind == DiagnosticKind::Grammar
             && match it.code {
                 1163 => true,
-                1308 => (!can_be_module || is_in_body(it.start)) && !follows_one(it.start),
+                1308 => (!can_be_module || is_in_body(it.start)) && !follows_await(it.start),
                 _ => false,
             }
     });
@@ -201,10 +201,11 @@ fn class_without_name<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
 }
 
 /// `const a`, `using a`, `let [a]`, unless a loop head assigns the value or the declaration is ambient.
-/// `are_patterns_noted` means the parser already reported `let [a]`, which it does for TypeScript in oxc's dialect.
+/// `parser_reports_patterns` means the parser already reported `let [a]`, which it does for TypeScript in oxc's
+/// dialect.
 fn declarations_without_initializer<'a>(
     file: &'a File<'a>,
-    are_patterns_noted: bool,
+    parser_reports_patterns: bool,
 ) -> Vec<SyntaxError> {
     if !file.has_rare_syntax(rare::ODD_DECLARATION) || file.is_declaration_file() {
         return Vec::new();
@@ -224,17 +225,17 @@ fn declarations_without_initializer<'a>(
         let kind = hir.pats.get(it.pat.idx()).map(|it| it.kind);
         matches!(kind, Some(PatKind::Object(_) | PatKind::Array(_)))
     };
-    let lacking = hir.var_decls.iter().enumerate().filter(|(i, it)| {
+    let uninitialized = hir.var_decls.iter().enumerate().filter(|(i, it)| {
         it.init.is_none()
             && (!matches!(it.kind, VarKind::Var | VarKind::Let) || is_pattern(it))
             && !it.flags.contains(Flags::AMBIENT)
-            && !(are_patterns_noted && is_pattern(it))
+            && !(parser_reports_patterns && is_pattern(it))
             && !file.is_in_jsdoc(it.loc.end)
             // Skip a `catch` parameter, whose statement is the `try`.
             && (bound.var_stmt.get(*i)).is_some_and(|list| is_list(*list) && !is_in_loop_head(*list))
     });
     let is_in_head = |statement: StmtId| loop_with_head(file, statement.idx()).is_some();
-    lacking
+    uninitialized
         .filter_map(|(i, it)| Some((bound.var_stmt.get(i)?, it)))
         .map(|(list, it)| {
             let message = match it.kind {
@@ -358,7 +359,7 @@ fn declare_in_ambient_context<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
 }
 
 /// `import.defer` that isn't called. TypeScript's parser records a grammar error for it, positioned after the word.
-fn phases_without_call<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Vec<SyntaxError> {
+fn import_phase_without_call<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Vec<SyntaxError> {
     let is_one = |it: &&Diagnostic| {
         it.kind == DiagnosticKind::Grammar
             && it.code == 1005
@@ -397,7 +398,7 @@ fn deferred_imports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
 
 /// True if oxc adds a label at the `{` at `open` when the file ends before its `}`. It does for a block, for the body
 /// of a function, class, interface or `switch`, and for a type literal.
-fn is_marked_at_the_end<'a>(file: &'a File<'a>, open: Span) -> bool {
+fn labels_opener_at_eof<'a>(file: &'a File<'a>, open: Span) -> bool {
     let hir = &file.hir;
     let is_literal = |it: &bun_sema::hir::Expr| {
         it.pos == open.start && matches!(it.kind, bun_sema::hir::ExprKind::Object(_))
@@ -722,7 +723,11 @@ fn wrong_closing_tag<'a>(file: &'a File<'a>, closing: Span, opening: Span) -> Sy
 /// Translates a JSX error from TypeScript's parser into oxc's wording. oxc continues after a closing tag with the wrong
 /// name.
 #[optimize(size)]
-fn of_jsx<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<SyntaxError> {
+fn translate_jsx_error<'a>(
+    file: &'a File<'a>,
+    it: &Diagnostic,
+    label: Span,
+) -> Option<SyntaxError> {
     let (hir, text) = (&file.hir, file.text());
     let span_of =
         |id: bun_sema::hir::ExprId| hir.exprs.get(id.idx()).map(|it| Span::new(it.pos, it.end));
@@ -805,7 +810,7 @@ fn of_jsx<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syntax
 /// or at another token. The surrounding tokens identify the case. If oxc recovers from such an error but TypeScript's
 /// parser doesn't, it's the last error we report.
 #[optimize(size)]
-fn of_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<SyntaxError> {
+fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<SyntaxError> {
     let slice = |at: Span| file.slice(at);
     let before = |at: Span| file.token_before(at).map(|it| it.span());
     let text_before = |at: Span| before(at).map_or(&b""[..], slice);
@@ -1121,7 +1126,11 @@ fn end_of_line(text: &[u8], from: u32) -> u32 {
 /// oxlint prints the errors the lexer recovers from before all parser errors. If the parser can't continue with the
 /// token the lexer produced, the lexer's error is the fatal one.
 #[optimize(size)]
-fn of_scanner<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<SyntaxError> {
+fn translate_scanner_error<'a>(
+    file: &'a File<'a>,
+    it: &Diagnostic,
+    label: Span,
+) -> Option<SyntaxError> {
     let text = file.text();
     let end_of_text = text.len() as u32;
     let goes_on = |error: SyntaxError| error.stage(Stage::Parser).noticed_at(0);
@@ -1302,7 +1311,7 @@ fn escape_in_name<'a>(file: &'a File<'a>, at: u32) -> Vec<SyntaxError> {
         .filter(|it| text.get(*it as usize) == Some(&b'#'));
     // In operand position a private name must be followed by `in`. If it isn't, that's the only error oxc keeps.
     if let Some(hash) = hash
-        && is_where_operand_starts(file, hash)
+        && is_in_operand_position(file, hash)
         && let Some(error) = private_name_as_operand(file, Span::new(hash, end))
     {
         return vec![error];
@@ -1345,7 +1354,7 @@ fn escape_in_name<'a>(file: &'a File<'a>, at: u32) -> Vec<SyntaxError> {
 }
 
 /// True if the private name starting at `hash` is neither a member access (`a.#b`) nor the name of a class member.
-fn is_where_operand_starts<'a>(file: &'a File<'a>, hash: u32) -> bool {
+fn is_in_operand_position<'a>(file: &'a File<'a>, hash: u32) -> bool {
     let previous = file.token_before(Span::empty(hash));
     let previous = previous.map_or(&b""[..], |it| it.text());
     let starts_member = matches!(previous, b"{" | b";" | b"}" | b"*")
@@ -1361,7 +1370,7 @@ fn is_where_operand_starts<'a>(file: &'a File<'a>, hash: u32) -> bool {
 /// each closing tag closes the innermost open element. Returns `None` if we don't know how oxc continues after the
 /// first error.
 #[optimize(size)]
-fn closing_tags_of_others<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<Vec<SyntaxError>> {
+fn crossed_closing_tags<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<Vec<SyntaxError>> {
     let (hir, text) = (&file.hir, file.text());
     let name_of = |id: bun_sema::hir::ExprId| {
         let name = hir.exprs.get(id.idx())?;
@@ -1432,11 +1441,11 @@ pub(super) fn of_typescript<'a>(file: &'a File<'a>, it: &Diagnostic) -> Vec<Synt
         return escape_in_name(file, backslash);
     }
     if it.code == 17008
-        && let Some(both) = closing_tags_of_others(file, it)
+        && let Some(both) = crossed_closing_tags(file, it)
     {
         return both;
     }
-    let one = of_scanner(file, it, label).or_else(|| of_parser(file, it, label));
+    let one = translate_scanner_error(file, it, label).or_else(|| of_parser(file, it, label));
     one.into_iter().collect()
 }
 
@@ -1448,13 +1457,13 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
     let before = |at: Span| file.token_before(at).map_or(&b""[..], |it| it.text());
     let args: SmallVec<[&[u8]; 3]> = it.args.iter().map(|it| &**it).collect();
     let text = |it: &[u8]| bstr::BStr::new(it).to_string();
-    if let Some(error) = of_jsx(file, it, label) {
+    if let Some(error) = translate_jsx_error(file, it, label) {
         return Some(match error.of_oxc.stage {
             Stage::Semantic => error.stage(Stage::Fatal),
             _ => error,
         });
     }
-    if let Some(error) = of_shape(file, it, label) {
+    if let Some(error) = translate_by_shape(file, it, label) {
         return Some(error.stage(Stage::Fatal));
     }
     let error = match (it.code, &args[..]) {
@@ -1596,7 +1605,7 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
                 return Some(SyntaxError::of_oxc(call, message).stage(Stage::Fatal));
             }
             let has_opener = match *found {
-                b"EOF" => *expected == b"}" && opened.is_some_and(|it| is_marked_at_the_end(file, it)),
+                b"EOF" => *expected == b"}" && opened.is_some_and(|it| labels_opener_at_eof(file, it)),
                 _ if *expected == b")" => opened.is_some_and(|it| before(it) != b"catch"),
                 _ => is_list || !it.related.is_empty(),
             };
@@ -1680,8 +1689,8 @@ fn module_attributes<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
 /// `await` is an identifier, unless a word or a literal follows on the same line. If the file turns out to be a module,
 /// oxc goes back at the end and reparses each statement where `await` was a reference, this time with `await` as the
 /// operator.
-fn statements_read_again<'a>(file: &'a File<'a>) -> Vec<Span> {
-    if !is_either(file) || !has_module_syntax(file) {
+fn reparsed_statements<'a>(file: &'a File<'a>) -> Vec<Span> {
+    if !can_be_script_or_module(file) || !has_module_syntax(file) {
         return Vec::new();
     }
     let text = file.text();
@@ -1771,7 +1780,7 @@ fn second_readings<'a>(file: &'a File<'a>) -> impl Iterator<Item = &'a Diagnosti
 /// oxc's errors for a statement that it reparses. `errors` are our parser's errors from the reparse.
 #[optimize(size)]
 fn second_reading<'a>(file: &'a File<'a>, errors: &[Diagnostic]) -> Vec<SyntaxError> {
-    let (mut said, stop) = super::in_words_of_oxc(file, errors);
+    let (mut said, stop) = super::to_oxc_errors(file, errors);
     // A diagnostic the parser recorded in oxc's wording comes before the TypeScript parser error for the same problem.
     let before = errors.get(..stop.map_or(errors.len(), |it| it.0));
     let mut noted = before.unwrap_or_default().iter();
@@ -1783,23 +1792,23 @@ fn second_reading<'a>(file: &'a File<'a>, errors: &[Diagnostic]) -> Vec<SyntaxEr
     said
 }
 
-fn can_be_forgotten(it: &SyntaxError) -> bool {
+fn is_discardable(it: &SyntaxError) -> bool {
     it.of_oxc.stage == Stage::Parser && !matches!(it.order(), 0 | u32::MAX)
 }
 
-/// When oxc's parser goes back to a statement ([`statements_read_again`]), it discards the errors it has reported since
+/// When oxc's parser goes back to a statement ([`reparsed_statements`]), it discards the errors it has reported since
 /// it first reached that statement. It keeps its lexer's errors and the ones it reports at the end of the file. `all`
 /// must be in oxc's order.
-fn forget_what_oxc_forgets<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
-    if all.iter().any(can_be_forgotten) || second_readings(file).next().is_some() {
-        read_again_like_oxc(file, all);
+fn discard_errors_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
+    if all.iter().any(is_discardable) || second_readings(file).next().is_some() {
+        reparse_like_oxc(file, all);
     }
 }
 
 #[cold]
 #[optimize(size)]
-fn read_again_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
-    let again = statements_read_again(file);
+fn reparse_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
+    let again = reparsed_statements(file);
     let Some(first) = again.first().map(|it| it.start) else {
         return;
     };
@@ -1812,16 +1821,16 @@ fn read_again_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
     let mut kept = Vec::new();
     // If oxc gives up during a reparse, it still reparses the next statement, and discards that fatal error with the
     // others. Its tree then has nothing for the failed statement.
-    let (mut said_last, mut given_up) = (Vec::new(), Vec::new());
+    let (mut last_reparse_errors, mut given_up) = (Vec::new(), Vec::new());
     for span in &again {
         // oxc truncates the error list to the length it had when it first reached the statement.
         let is_from_first_reading = |it: &&SyntaxError| {
-            can_be_forgotten(it) && it.message != AWAIT && (first..span.start).contains(&it.at)
+            is_discardable(it) && it.message != AWAIT && (first..span.start).contains(&it.at)
         };
         kept.truncate(all.iter().filter(is_from_first_reading).count());
         let second = second_readings(file).find(|it| it.start == span.start);
-        said_last = second.map_or_else(Vec::new, |it| second_reading(file, &it.related));
-        let read_to = match (second, said_last.last()) {
+        last_reparse_errors = second.map_or_else(Vec::new, |it| second_reading(file, &it.related));
+        let read_to = match (second, last_reparse_errors.last()) {
             (Some(_), Some(last)) => {
                 given_up.push(*span);
                 last.at
@@ -1830,7 +1839,7 @@ fn read_again_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
         };
         // oxc reports only once that statements aren't allowed in a declaration file.
         let is_said_again = |it: &SyntaxError| {
-            can_be_forgotten(it)
+            is_discardable(it)
                 && (span.start..read_to).contains(&it.at)
                 && (it.of_oxc.code != 1036 || it.at != span.start)
                 && (second.is_none() || it.message != AWAIT)
@@ -1847,7 +1856,7 @@ fn read_again_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
         if given_up.iter().any(|span| span.contains_offset(it.at)) {
             return matches!(it.order(), 0 | u32::MAX) && it.of_oxc.stage == Stage::Parser;
         }
-        if !can_be_forgotten(it) || it.at < first {
+        if !is_discardable(it) || it.at < first {
             return true;
         }
         // The semantic pass also reports these, with a different message.
@@ -1860,8 +1869,8 @@ fn read_again_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
         *it = SyntaxError::of_oxc(label, ["The keyword '", word, "' is reserved"].concat());
         true
     });
-    if !said_last.is_empty() {
-        all.append(&mut said_last);
+    if !last_reparse_errors.is_empty() {
+        all.append(&mut last_reparse_errors);
         crate::utils::sort::sort_by_key(all, SyntaxError::order);
     }
 }
@@ -1906,16 +1915,16 @@ pub(super) fn errors<'a>(
     }
     let noted = file.hir.diagnostics;
     let noted = stop.and_then(|stop| noted.get(..=stop)).unwrap_or(noted);
-    all.extend(misplaced_suspensions(file, noted));
-    all.extend(phases_without_call(file, noted));
-    all.extend(espree::errors_of_oxc(file, !is_whole, is_oxfmt));
+    all.extend(misplaced_await_and_yield(file, noted));
+    all.extend(import_phase_without_call(file, noted));
+    all.extend(espree::oxc_errors(file, !is_whole, is_oxfmt));
     all.extend(targets::errors(file));
     // oxc reports the first four after it has finished the file, in this order.
     if is_whole {
         all.extend(names::class_members(file));
         all.extend(names::exports(file));
         all.extend(names::redeclarations(file));
-        all.extend(espree::export_assignment_beside_exports(file));
+        all.extend(espree::export_assignment_with_other_exports(file));
         all.extend(espree::using_in_script(file));
         all.extend(espree::with_in_strict_code(file));
         all.extend(duplicate_parameters(file));
@@ -1925,7 +1934,7 @@ pub(super) fn errors<'a>(
         all.extend(names::duplicate_exports(file));
     }
     all.extend(deferred_imports(file));
-    all.extend(espree::for_await_where_nothing_waits(file));
+    all.extend(espree::for_await_outside_async(file));
     all.extend(keywords::errors(file));
     all.extend(declarations_without_initializer(
         file,
@@ -1934,7 +1943,7 @@ pub(super) fn errors<'a>(
     all.extend(declaration_list(file));
     // The sort is stable, so errors with the same key stay in the order of the checks above.
     crate::utils::sort::sort_by_key(&mut all, SyntaxError::order);
-    forget_what_oxc_forgets(file, &mut all);
+    discard_errors_like_oxc(file, &mut all);
     if !is_whole || all.iter().any(|it| it.of_oxc.stage != Stage::Semantic) {
         all.retain(|it| it.of_oxc.stage != Stage::Semantic);
     }

@@ -65,13 +65,13 @@ fn parent_with_same_following_node(node: Node<'_>) -> Result<Node<'_>, bool> {
         is_followed |= child.span().start >= node.span().end
             && (!is_in_list || std::mem::discriminant(&child) == std::mem::discriminant(&node));
     });
-    let is_followed_by_what_follows_parent = !is_in_list
+    let inherits_following_node_of_parent = !is_in_list
         && match parent {
             Node::Stmt(_) => matches!(node, Node::Func(_)),
             Node::File(_) | Node::Pat(_) | Node::PatProp(_) | Node::PatElem(_) => false,
             _ => true,
         };
-    match is_followed || !is_followed_by_what_follows_parent {
+    match is_followed || !inherits_following_node_of_parent {
         true => Err(is_followed),
         false => Ok(parent),
     }

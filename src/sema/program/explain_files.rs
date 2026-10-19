@@ -35,9 +35,9 @@ impl Files<'_> {
         };
         let resolving = Session::new();
         let resolver = Resolver::new(&resolving, host, self.options);
-        let mut is_asked = vec![true; self.modules.len()];
-        is_asked.push(false);
-        let visits = included.visits(&resolver, &is_asked);
+        let mut is_requested = vec![true; self.modules.len()];
+        is_requested.push(false);
+        let visits = included.visits(&resolver, &is_requested);
         // `fileIncludeReasons[path]`
         let reasons_of = |file: FileId, name: &[u8]| included.by_path_of(&visits[file.idx()], name);
         // `fmt.Fprintln(w, "  ", message)`

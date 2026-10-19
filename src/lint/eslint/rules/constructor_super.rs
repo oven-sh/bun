@@ -292,7 +292,7 @@ pub struct State<'a> {
     /// after it has seen the whole constructor.
     found: Vec<Expr<'a>>,
     /// oxlint sees a path around one of them that the segments don't have.
-    is_passed_over: bool,
+    can_be_bypassed: bool,
     /// One of them runs after another one, or more than once.
     is_repeated: bool,
 }
@@ -365,7 +365,7 @@ impl ConstructorSuper {
         }
         cx.state.seg_info_map.clear();
         cx.state.found.clear();
-        cx.state.is_passed_over = false;
+        cx.state.can_be_bypassed = false;
         cx.state.is_repeated = false;
     }
 
@@ -426,7 +426,7 @@ impl ConstructorSuper {
             return;
         }
         let returned_segments = code_path.returned_segments();
-        if cx.state.is_passed_over || !returned_segments.iter().all(|it| cx.state.is_called_in_every_path(*it)) {
+        if cx.state.can_be_bypassed || !returned_segments.iter().all(|it| cx.state.is_called_in_every_path(*it)) {
             cx.report(func.owner(), MISSING_SOME);
         }
         if cx.state.is_repeated {
@@ -480,13 +480,13 @@ impl ConstructorSuper {
         code_path.traverse_segments_between(Some(to_segment), Some(from_segment), |segment, controller| {
             // A segment that hasn't been seen yet is after the loop.
             match cx.state.seg_info_map.contains_key(&segment.id()) {
-                true => Self::go_through_again(segment, cx),
+                true => Self::revisit_segment(segment, cx),
                 false => controller.skip(),
             }
         });
     }
 
-    fn go_through_again<'a>(segment: Segment<'a>, cx: &mut Cx<'a, Self>) {
+    fn revisit_segment<'a>(segment: Segment<'a>, cx: &mut Cx<'a, Self>) {
         let before = cx.state.seen_prev_segments(segment);
         let Some(info) = cx.state.seg_info_map.get_mut(&segment.id()) else {
             return;
@@ -499,7 +499,7 @@ impl ConstructorSuper {
             let again = std::mem::take(&mut info.valid_nodes);
             if cx.language().is_oxlint {
                 // oxlint assumes a loop runs either zero times or several times.
-                cx.state.is_passed_over |= !again.is_empty();
+                cx.state.can_be_bypassed |= !again.is_empty();
                 cx.state.is_repeated |= !again.is_empty();
             } else {
                 for node in again {
@@ -535,7 +535,7 @@ impl ConstructorSuper {
             let mut around = node.ancestors().take_while(|it| Some(*it) != constructor);
             cx.state.found.push(e);
             cx.state.is_repeated |= is_duplicate || is_in_head;
-            cx.state.is_passed_over |= is_in_head
+            cx.state.can_be_bypassed |= is_in_head
                 || !is_duplicate && around.any(|it| matches!(it, Node::Stmt(it) if is_endless(it)));
         }
         if is_duplicate && !is_oxlint {

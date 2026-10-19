@@ -40,7 +40,7 @@ struct Read<'e> {
 }
 
 /// Returns the names in `plugins`. `Err` if an entry isn't a string or is a plugin that could change how files print.
-fn plugins_of(json: Option<&Json>) -> Result<Vec<Vec<u8>>, Reason> {
+fn plugin_names(json: Option<&Json>) -> Result<Vec<Vec<u8>>, Reason> {
     let plugins = json.and_then(|it| it.get(b"plugins"));
     let names = plugins.and_then(Json::as_array).unwrap_or_default().iter();
     names
@@ -84,10 +84,10 @@ fn command_line(request: &Request, defaults: Option<&Options>) -> Result<Options
         (options.format).retain(|default| !of_rule.iter().any(|it| it.0 == default.0));
         options.format.extend(of_rule);
     }
-    options.plugins = plugins_of(request.options)?;
+    options.plugins = plugin_names(request.options)?;
     options
         .plugins
-        .extend(plugins_of(request.file_info_options)?);
+        .extend(plugin_names(request.file_info_options)?);
     Ok(options)
 }
 
@@ -100,9 +100,9 @@ impl<'e> Set<'e> {
         let read = command_line(request, defaults).and_then(|options| {
             let configs = Configs::owning(options.clone(), environment);
             // Prettier doesn't read oxfmt's config files.
-            let is_for_another =
+            let is_oxfmt_config =
                 request.like == Like::InstalledPrettier && configs.flavor == Flavor::Oxfmt;
-            if is_for_another || configs.check().is_err() {
+            if is_oxfmt_config || configs.check().is_err() {
                 return Err(Reason::Configuration);
             }
             Ok(Read {
@@ -136,7 +136,7 @@ impl<'e> Set<'e> {
 }
 
 /// Returns the directory and version of the `eslint-plugin-prettier` package that contains the file `module`.
-fn plugin_of(module: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
+fn plugin_containing(module: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
     paths::ancestors(paths::dirname(module)).find_map(|directory| {
         let package = fs::read(&paths::join(directory, b"package.json")).ok()?;
         let package = bun_lint::json::parse(&package)?;
@@ -147,7 +147,7 @@ fn plugin_of(module: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
 }
 
 /// Same, for the package that resolves from `cwd`.
-fn plugin_from(cwd: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
+fn plugin_resolved_from(cwd: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
     let plugin = paths::ancestors(cwd)
         .map(|it| paths::join(it, b"node_modules/eslint-plugin-prettier"))
         .find(|it| fs::is_file(&paths::join(it, b"package.json")))?;
@@ -159,9 +159,9 @@ fn plugin_from(cwd: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
 /// Checks that `eslint-plugin-prettier` and the `prettier` it loads are versions that `bun fmt` matches. `module` is
 /// [`Request::package_module`]. Without it, the plugin is resolved from `cwd`.
 fn check_packages(cwd: &[u8], module: Option<&[u8]>) -> Result<(), Reason> {
-    let found = module.map_or_else(|| plugin_from(cwd), plugin_of);
+    let found = module.map_or_else(|| plugin_resolved_from(cwd), plugin_containing);
     let (plugin, [5, _, _]) = found.ok_or(Reason::PluginNotFound)? else {
-        return Err(Reason::VersionOfPlugin);
+        return Err(Reason::PluginVersion);
     };
     match tailwind::version_of_package(b"prettier", &plugin) {
         Some([3, 9, _]) => Ok(()),
@@ -248,7 +248,7 @@ impl<'e> ForRules<'e> {
         let scope = configs
             .for_directory(paths::dirname(path))
             .map_err(unreadable)?;
-        if ignored.ignores_file(path, configs.ignores_of(&scope)) {
+        if ignored.ignores_file(path, configs.config_ignores(&scope)) {
             return Ok(Formatted::Skipped);
         }
         if is_prettier && configs.is_oxfmt_for(&scope) {

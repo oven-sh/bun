@@ -85,7 +85,7 @@ fn referenced_by<'a>(node: Node<'a>, scope: Scope<'a>) -> Nodes<'a> {
 }
 
 /// True if there's a non-empty path from `from` to `to`, with names looked up in `scope`.
-fn leads<'a>(from: Node<'a>, to: Node<'a>, scope: Scope<'a>) -> bool {
+fn has_path<'a>(from: Node<'a>, to: Node<'a>, scope: Scope<'a>) -> bool {
     let mut visited: FxHashSet<Node<'a>> = FxHashSet::default();
     let mut stack = referenced_by(from, scope);
     while let Some(node) = stack.pop() {
@@ -108,7 +108,7 @@ fn is_deeply_referencing_type<'a>(nodes: impl IntoIterator<Item = Node<'a>>, sup
     // Its declarations can only be reached through its name.
     let scope = super_var.scope();
     let declarations: Nodes<'a> = super_var.declarations().filter_map(Declaration::node).collect();
-    nodes.into_iter().any(|node| declarations.iter().any(|it| leads(node, *it, scope)))
+    nodes.into_iter().any(|node| declarations.iter().any(|it| has_path(node, *it, scope)))
 }
 
 fn any_is_referencing<'a>(types: List<'a, TypeNode<'a>>, super_var: Symbol<'a>) -> bool {
@@ -253,9 +253,9 @@ impl ConsistentIndexedObjectStyle {
             return;
         }
         // oxlint only looks for a cycle if the mapped type is the alias's whole type.
-        let is_all_of_alias = matches!(ty.parent(), Node::Stmt(_)) && !ty.is_parenthesized();
+        let is_whole_alias = matches!(ty.parent(), Node::Stmt(_)) && !ty.is_parenthesized();
         if let Some(alias) = find_parent_declaration(ty)
-            && (is_all_of_alias || !cx.language().is_oxlint)
+            && (is_whole_alias || !cx.language().is_oxlint)
             && let Some(super_var) = Node::Type(ty).scope().resolve_name(alias.name().name())
         {
             let is_circular = match ty.parent() {

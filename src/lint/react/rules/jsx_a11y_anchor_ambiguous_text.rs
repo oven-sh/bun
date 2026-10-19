@@ -49,24 +49,24 @@ pub type Texts = FxHashMap<u32, Option<Normalized>>;
 
 /// The text a screen reader reads for an element.
 enum AccessibleText<'a> {
-    Of(&'a [u8]),
-    OfChildren,
+    Explicit(&'a [u8]),
+    FromChildren,
     None,
 }
 
 fn get_accessible_text<'a>(file: &'a File<'a>, jsx_el: Jsx<'a>) -> AccessibleText<'a> {
     let string_of = |name: &str| has_jsx_prop_ignore_case(jsx_el, name).and_then(get_string_literal_prop_value);
     if let Some(label_text) = string_of("aria-label") {
-        return AccessibleText::Of(label_text);
+        return AccessibleText::Explicit(label_text);
     }
     if *get_element_type(file, jsx_el) == *b"img"
         && let Some(alt_text) = string_of("alt")
     {
-        return AccessibleText::Of(alt_text);
+        return AccessibleText::Explicit(alt_text);
     }
     match is_hidden_from_screen_reader(file, jsx_el) {
         true => AccessibleText::None,
-        false => AccessibleText::OfChildren,
+        false => AccessibleText::FromChildren,
     }
 }
 
@@ -116,12 +116,12 @@ impl AnchorAmbiguousText {
     fn ambiguous_text<'a>(&self, file: &'a File<'a>, anchor: Jsx<'a>, texts: &mut Texts) -> Option<String> {
         let longest = self.words.iter().map(String::len).max().unwrap_or(0);
         let normalized = match get_accessible_text(file, anchor) {
-            AccessibleText::Of(text) => {
+            AccessibleText::Explicit(text) => {
                 let mut normalized = Normalized::default();
                 normalized.push(text);
                 Some(normalized)
             }
-            AccessibleText::OfChildren => text_of_children(file, anchor, longest, texts),
+            AccessibleText::FromChildren => text_of_children(file, anchor, longest, texts),
             AccessibleText::None => None,
         };
         normalized.filter(|it| it.has_text && self.words.contains(&it.text)).map(|it| it.text)
@@ -148,8 +148,8 @@ fn text_of_children<'a>(file: &'a File<'a>, anchor: Jsx<'a>, longest: usize, tex
         match siblings.next() {
             Some(Child::Text(piece)) => text.push(piece),
             Some(Child::Element(child_el)) => match get_accessible_text(file, child_el) {
-                AccessibleText::Of(piece) => text.push(piece),
-                AccessibleText::OfChildren => {
+                AccessibleText::Explicit(piece) => text.push(piece),
+                AccessibleText::FromChildren => {
                     let key = key_of_anchor(child_el);
                     match key.and_then(|it| texts.get(&it)) {
                         Some(Some(known)) => text.append(known),

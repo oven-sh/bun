@@ -245,7 +245,7 @@ impl Declared {
         let old = *entry;
         let is_open = (self.levels.get(depth_of(old))).is_some_and(|it| it.id == scope_of(old));
         if is_hoisted || is_open {
-            return self.declare_beside(place, old, (flags, excludes), is_hoisted);
+            return self.declare_existing_or_hoisted(place, old, (flags, excludes), is_hoisted);
         }
         *entry = self.stamp | Entry::from(flags);
         false
@@ -260,7 +260,7 @@ impl Declared {
 
     /// [`Declared::declare`] for a name that an open scope already declares, or that's hoisted to the function.
     #[inline(never)]
-    fn declare_beside(
+    fn declare_existing_or_hoisted(
         &mut self,
         place: u32,
         old: Entry,
@@ -366,7 +366,7 @@ impl Declared {
         if held_vars {
             return;
         }
-        let goes_on = scope_of(self.stamp) != self.holds_vars;
+        let keeps_hoisting = scope_of(self.stamp) != self.holds_vars;
         for index in 0..self.carried.len() {
             let Some(&(place, flags)) = self.carried.get(index) else {
                 break;
@@ -384,7 +384,7 @@ impl Declared {
                 }
                 false => self.put(place, flags),
             }
-            if goes_on {
+            if keeps_hoisting {
                 self.log.push((place | HOISTED, Entry::from(flags)));
             }
         }
@@ -553,26 +553,26 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn declare_pattern(&mut self, pat: PatId, kind: Declares) {
         if self.declared.is_on {
-            self.declare_names_of(pat, kind);
+            self.declare_pattern_names(pat, kind);
         }
     }
 
     #[inline(never)]
-    fn declare_names_of(&mut self, pat: PatId, kind: Declares) {
+    fn declare_pattern_names(&mut self, pat: PatId, kind: Declares) {
         match self.f.pats.get(pat.idx()).map(|it| it.kind) {
             Some(PatKind::Ident(name)) => {
                 if self.declared.declare(name, kind) {
                     self.may_redeclare();
                 }
             }
-            _ => self.declare_names_in(pat, kind),
+            _ => self.declare_nested_pattern_names(pat, kind),
         }
     }
 
     /// A pattern's parts are right before it in the list. So are the parameters of a function inside one of its default
     /// values, which can only turn a "no" into a "maybe".
     #[inline(never)]
-    fn declare_names_in(&mut self, pat: PatId, kind: Declares) {
+    fn declare_nested_pattern_names(&mut self, pat: PatId, kind: Declares) {
         let Some(start) = self.f.pats.get(pat.idx()).map(|it| it.pos) else {
             return;
         };
@@ -643,7 +643,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             if let Some(pat) = self.f.params.get(index).map(|it| it.pat)
                 && self.declared.is_on
             {
-                self.declare_names_of(pat, Declares::Parameter);
+                self.declare_pattern_names(pat, Declares::Parameter);
             }
         }
     }

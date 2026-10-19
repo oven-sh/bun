@@ -1,7 +1,7 @@
 //! Reproduces the iteration order of oxlint's hash tables.
 
 use bun_lint::prelude::*;
-use bun_lint::semantic::{order_in_table, order_in_table_of_oxc};
+use bun_lint::semantic::{hashbrown_table_order, oxc_table_order};
 use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 use std::hash::Hasher;
 
@@ -32,7 +32,7 @@ pub struct HashOrder<T> {
     hashes: Vec<u32>,
     items: Vec<T>,
     /// True if the last call was [`HashOrder::insert_again`].
-    is_asked_again: bool,
+    was_insert_again: bool,
 }
 
 impl<T: Copy> HashOrder<T> {
@@ -46,7 +46,7 @@ impl<T: Copy> HashOrder<T> {
             capacity,
             hashes: Vec::new(),
             items: Vec::new(),
-            is_asked_again: false,
+            was_insert_again: false,
         }
     }
 
@@ -54,22 +54,22 @@ impl<T: Copy> HashOrder<T> {
     pub fn insert(&mut self, hash: u64, item: T) {
         self.hashes.push(hash as u32);
         self.items.push(item);
-        self.is_asked_again = false;
+        self.was_insert_again = false;
     }
 
     /// `insert` of an item that's already in the table. hashbrown reserves room for one more item before it looks the
     /// item up, so a full table grows.
     pub fn insert_again(&mut self) {
-        self.is_asked_again = true;
+        self.was_insert_again = true;
     }
 
     pub fn iter(&self) -> impl Iterator<Item = T> {
-        let mut order = order_in_table(&self.hashes, self.capacity);
-        if self.is_asked_again && is_full(self.items.len(), self.capacity) {
+        let mut order = hashbrown_table_order(&self.hashes, self.capacity);
+        if self.was_insert_again && is_full(self.items.len(), self.capacity) {
             // The items move to the larger table in the smaller table's iteration order.
             let hash_at = |at: &u32| self.hashes.get(*at as usize).copied().unwrap_or_default();
             let moved: Vec<u32> = order.iter().map(hash_at).collect();
-            let grown = order_in_table(&moved, self.items.len() + 1);
+            let grown = hashbrown_table_order(&moved, self.items.len() + 1);
             order = grown
                 .iter()
                 .filter_map(|at| order.get(*at as usize).copied())
@@ -109,7 +109,7 @@ impl<'a> UnresolvedOrder<'a> {
             names.extend(first.map(|start| (start, arguments)));
             utils::sort::sort_unstable_by_key(&mut names, |it| it.0);
         }
-        let order = order_in_table_of_oxc(names.iter().map(|it| it.1.bytes()));
+        let order = oxc_table_order(names.iter().map(|it| it.1.bytes()));
         let name_at = |place: u32| names.get(place as usize).map(|it| it.1);
         UnresolvedOrder {
             ranks: order.into_iter().filter_map(name_at).zip(0..).collect(),

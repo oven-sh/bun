@@ -98,7 +98,7 @@ const DEFAULT: &[u8] = b"default";
 
 /// A budget for the work `typeScriptExport` repeats for names it has already exported. Without a limit, that work is
 /// quadratic in the size of the file.
-const SAID_AGAIN: usize = 1024;
+const REPEATED_WORK_LIMIT: usize = 1024;
 
 /// `unambiguous.test`: `/(^|[;})])\s*(export|import)((\s+\w)|(\s*[{*=]))|import\(/m`
 pub(crate) fn may_be_module(text: &[u8]) -> bool {
@@ -286,7 +286,7 @@ struct Visitor<'a> {
     declarations: Option<FxHashMap<Name<'a>, SmallVec<[Stmt<'a>; 1]>>>,
     /// The names whose declarations `typeScriptExport` has exported, each with how much work that was.
     exported: FxHashMap<(Name<'a>, When), usize>,
-    said_again: usize,
+    repeated_work: usize,
     /// The names of one `importedSpecifiers`.
     imported: FxHashSet<Name<'a>>,
 }
@@ -429,9 +429,9 @@ impl<'a> Visitor<'a> {
                 self.set(Some(DEFAULT), doc, When::Always);
             }
             StmtKind::Var(declarations) if ast_node.is_exported() => {
-                let of_ast_node = capture_doc(file, start);
+                let statement_doc = capture_doc(file, start);
                 self.set_variables(declarations, When::Always, &|d| {
-                    capture_doc(file, d.span().start).or_else(|| of_ast_node.clone())
+                    capture_doc(file, d.span().start).or_else(|| statement_doc.clone())
                 });
             }
             _ if ast_node.is_exported() => {
@@ -482,8 +482,8 @@ impl<'a> Visitor<'a> {
     ) {
         let file = self.file;
         if let Some(&cost) = exported_name.and_then(|it| self.exported.get(&(it, when))) {
-            self.said_again = self.said_again.saturating_add(cost);
-            if self.said_again > SAID_AGAIN {
+            self.repeated_work = self.repeated_work.saturating_add(cost);
+            if self.repeated_work > REPEATED_WORK_LIMIT {
                 return;
             }
         }
@@ -498,10 +498,10 @@ impl<'a> Visitor<'a> {
         let (before, count) = (self.export_map.namespace.len(), exported_decls.len());
         self.set(Some(DEFAULT), Docs::default(), When::WithInteropIfAbsent);
         for decl in exported_decls {
-            let of_decl = capture_doc(file, decl.span().start);
+            let decl_doc = capture_doc(file, decl.span().start);
             let StmtKind::Module(module) = decl.kind() else {
                 // "Export as default"
-                self.set(Some(DEFAULT), of_decl.unwrap_or_default(), when);
+                self.set(Some(DEFAULT), decl_doc.unwrap_or_default(), when);
                 continue;
             };
             for module_block_node in module.body() {
@@ -510,7 +510,7 @@ impl<'a> Visitor<'a> {
                 let name = match module_block_node.kind() {
                     StmtKind::Var(declarations) => {
                         let namespace_decl = module_block_node.span_without_export().start;
-                        let doc = (of_decl.clone())
+                        let doc = (decl_doc.clone())
                             .or_else(|| capture_doc(file, namespace_decl))
                             .or_else(|| capture_doc(file, start));
                         self.set_variables(declarations, when, &|_| doc.clone());
@@ -589,7 +589,7 @@ pub(crate) fn read<'a>(file: &'a File<'a>) -> ExportRecord {
         getters: Vec::new(),
         declarations: None,
         exported: FxHashMap::default(),
-        said_again: 0,
+        repeated_work: 0,
         imported: FxHashSet::default(),
     };
     for ast_node in file.body() {

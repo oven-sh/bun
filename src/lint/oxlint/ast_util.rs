@@ -258,7 +258,7 @@ pub fn is_global_reference_name(e: Expr, name: &str) -> bool {
 }
 
 /// `ctx.globals().get(name)`: the config's setting for a global variable.
-fn global_of_configuration(file: &File, name: &[u8]) -> Option<Global> {
+fn configured_global(file: &File, name: &[u8]) -> Option<Global> {
     let globals = &file.language().globals;
     globals
         .binary_search_by(|it| (*it.0).cmp(name))
@@ -269,13 +269,13 @@ fn global_of_configuration(file: &File, name: &[u8]) -> Option<Global> {
 
 /// `ctx.globals().get(name) == Some(GlobalValue::Off)`: the config turns this global variable off.
 pub fn is_global_turned_off(file: &File, name: &str) -> bool {
-    global_of_configuration(file, name.as_bytes()) == Some(Global::Off)
+    configured_global(file, name.as_bytes()) == Some(Global::Off)
 }
 
 /// `ctx.globals().is_enabled(name)`: the config's `globals` has a variable with that name. Globals defined by an `env`
 /// don't count.
 pub fn is_enabled_global(file: &File, name: &[u8]) -> bool {
-    file.language().is_written_global(name)
+    file.language().is_enabled_own_global(name)
 }
 
 /// `LintContext::is_reference_to_global_variable`: nothing in the file declares it, and the config doesn't turn it off.
@@ -283,7 +283,7 @@ pub fn is_reference_to_global_variable(ident: Expr) -> bool {
     is_global_reference(ident)
         && ident
             .as_ident()
-            .and_then(|name| global_of_configuration(ident.file(), name.bytes()))
+            .and_then(|name| configured_global(ident.file(), name.bytes()))
             != Some(Global::Off)
 }
 
@@ -332,7 +332,7 @@ pub fn is_decorator_expression(e: Expr) -> bool {
 
 /// If `parent` creates the `oxc_semantic` scope that its child `child` is in, returns the node that owns the scope.
 /// Every block and every `for` creates one. Use it to walk up to the innermost scope around a node.
-pub fn scope_made_by<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Node<'a>> {
+pub fn scope_owner<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Node<'a>> {
     match parent {
         Node::Func(_) => Some(parent),
         // All cases of a `switch` share one scope. The discriminant is outside it.

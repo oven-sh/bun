@@ -88,20 +88,20 @@ impl Settings {
     }
 
     /// True if one of the `plugins` is `name`, or ends with it.
-    fn names_plugin(&self, name: &[u8]) -> bool {
+    fn lists_plugin(&self, name: &[u8]) -> bool {
         strings::contains(self.get(b"plugins").unwrap_or_default(), name)
     }
 
     /// True if `prettier-plugin-organize-imports` is listed. It reads the `tsconfig.json`.
     pub fn organizes_imports(&self) -> bool {
-        self.names_plugin(ORGANIZE_IMPORTS)
+        self.lists_plugin(ORGANIZE_IMPORTS)
     }
 
     /// The options, with their values, of plugins that aren't listed. Prettier doesn't know them.
-    pub fn of_plugins_not_named(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+    pub fn options_of_unlisted_plugins(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
         let is_known = |name: &[u8]| match name {
-            name if name.starts_with(b"importOrder") => self.names_plugin(SORT_IMPORTS),
-            name if name.starts_with(b"organizeImports") => self.names_plugin(ORGANIZE_IMPORTS),
+            name if name.starts_with(b"importOrder") => self.lists_plugin(SORT_IMPORTS),
+            name if name.starts_with(b"organizeImports") => self.lists_plugin(ORGANIZE_IMPORTS),
             _ => true,
         };
         (self.entries.iter())
@@ -293,10 +293,10 @@ impl Settings {
     /// invalid.
     pub fn compile(&self) -> Result<Option<Arc<SortImports>>, Vec<u8>> {
         // The last one set wins.
-        let is_about_all = |it: &&(Box<[u8]>, Box<[u8]>)| {
+        let is_sort_imports_option = |it: &&(Box<[u8]>, Box<[u8]>)| {
             matches!(&*it.0, b"sortImports" | b"experimentalSortImports" | OF_BUN)
         };
-        if let Some((name, value)) = self.entries.iter().rfind(is_about_all) {
+        if let Some((name, value)) = self.entries.iter().rfind(is_sort_imports_option) {
             let is_native = **name == *OF_BUN;
             return Ok(super::oxfmt::compile(value, is_native)?.map(|options| {
                 Arc::new(SortImports {
@@ -308,8 +308,8 @@ impl Settings {
             }));
         }
         // Prettier doesn't know the options of a plugin that isn't listed.
-        if !self.names_plugin(SORT_IMPORTS) {
-            if !self.names_plugin(ORGANIZE_IMPORTS) {
+        if !self.lists_plugin(SORT_IMPORTS) {
+            if !self.lists_plugin(ORGANIZE_IMPORTS) {
                 return Ok(None);
             }
             let options = organize::Options {

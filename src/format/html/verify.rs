@@ -65,7 +65,7 @@ impl Reader {
 
     /// Un-counts `byte`, whether it has already been added or will be added later.
     #[optimize(size)]
-    fn take_back(&mut self, byte: u8) {
+    fn uncount(&mut self, byte: u8) {
         let count = &mut self.bytes[usize::from(byte)];
         *count = count.wrapping_sub(1);
     }
@@ -105,19 +105,19 @@ impl Reader {
                 if matches!(*before, [.., b'0'..=b'9'] | [.., b'0'..=b'9', b'.'])
                     && is_zero(exponent)
                 {
-                    self.take_back(byte);
+                    self.uncount(byte);
                 }
             }
             // `\n` in a template with HTML in it is whitespace.
-            [b'\\', next, ..] => self.take_back(next),
+            [b'\\', next, ..] => self.uncount(next),
             _ if previous == b'\\' => {}
             // Lowercased, U+0130 becomes an `i` and U+0307.
             [0xC4, 0xB0, ..] => {
-                b"\xC4\xB0".iter().for_each(|&byte| self.take_back(byte));
+                b"\xC4\xB0".iter().for_each(|&byte| self.uncount(byte));
                 b"i\xCC\x87".iter().for_each(|&byte| self.add(byte));
             }
             _ => (rest.iter().take(bun_core::strings::js_whitespace_len(rest)))
-                .for_each(|&byte| self.take_back(byte)),
+                .for_each(|&byte| self.uncount(byte)),
         }
     }
 
@@ -128,7 +128,7 @@ impl Reader {
         for entity in [&b"&quot;"[..], b"&apos;"] {
             let mut rest = value;
             while let Some(at) = bun_core::strings::index_of(rest, entity) {
-                entity.iter().for_each(|&byte| self.take_back(byte));
+                entity.iter().for_each(|&byte| self.uncount(byte));
                 rest = &rest[at + entity.len()..];
             }
         }

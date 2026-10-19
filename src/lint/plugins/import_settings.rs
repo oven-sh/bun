@@ -51,7 +51,7 @@ fn strings_in(json: Option<&Json>) -> impl Iterator<Item = &[u8]> {
 
 /// True if `require(name)` loads `package`. `name` is either the package name or a `require.resolve` result, which is a
 /// file inside the package.
-pub(crate) fn is_of_package(name: &[u8], package: &[u8]) -> bool {
+pub(crate) fn is_package_or_file_in_it(name: &[u8], package: &[u8]) -> bool {
     let path = paths::portable(name, name);
     let inside = match strings::last_index_of(&path, b"/node_modules/") {
         Some(at) => path.get(at + b"/node_modules/".len()..).unwrap_or_default(),
@@ -61,7 +61,7 @@ pub(crate) fn is_of_package(name: &[u8], package: &[u8]) -> bool {
 }
 
 fn parser_named(name: &[u8]) -> Parser {
-    let is_in = |it: &[u8]| is_of_package(name, it);
+    let is_in = |it: &[u8]| is_package_or_file_in_it(name, it);
     if is_in(b"espree") {
         Parser::Espree
     } else if is_in(b"@typescript-eslint/parser") {

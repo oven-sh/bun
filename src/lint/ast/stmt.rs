@@ -173,12 +173,12 @@ impl<'a> Stmt<'a> {
     pub fn kind(self) -> StmtKind<'a> {
         match self.file.plain_stmts.get(self.id.idx()) {
             Some(raw) => self.kind_of::<true>(raw),
-            None => self.kind_in_general(),
+            None => self.kind_slow(),
         }
     }
 
     #[inline(never)]
-    fn kind_in_general(self) -> StmtKind<'a> {
+    fn kind_slow(self) -> StmtKind<'a> {
         match self.try_raw() {
             Some(raw) => self.kind_of::<false>(raw),
             None => StmtKind::Empty,

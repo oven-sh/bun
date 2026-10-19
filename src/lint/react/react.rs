@@ -164,7 +164,7 @@ fn is_lifecycle_component_method(node: Node, lifecycle_method_names: &[&str]) ->
 }
 
 /// `settings.react[key]`, if it's an array.
-fn components_of_settings<'a>(file: &'a File<'a>, key: &[u8]) -> &'a [Json] {
+fn components_from_settings<'a>(file: &'a File<'a>, key: &[u8]) -> &'a [Json] {
     file.settings()
         .get(b"react")
         .and_then(|it| it.get(key)?.as_array())
@@ -173,12 +173,12 @@ fn components_of_settings<'a>(file: &'a File<'a>, key: &[u8]) -> &'a [Json] {
 
 /// `settings.react.linkComponents`, for [`get_component_attrs_by_name`]
 pub(crate) fn link_components<'a>(file: &'a File<'a>) -> &'a [Json] {
-    components_of_settings(file, b"linkComponents")
+    components_from_settings(file, b"linkComponents")
 }
 
 /// `settings.react.formComponents`, for [`get_component_attrs_by_name`]
 pub(crate) fn form_components<'a>(file: &'a File<'a>) -> &'a [Json] {
-    components_of_settings(file, b"formComponents")
+    components_from_settings(file, b"formComponents")
 }
 
 /// The attributes of a component from the settings that hold a URL.
@@ -272,7 +272,7 @@ pub(crate) fn is_state_member_expression(expression: Expr) -> bool {
 
 /// `settings.react.componentWrapperFunctions`, for [`is_hoc_call`]
 pub(crate) fn component_wrapper_functions<'a>(file: &'a File<'a>) -> &'a [Json] {
-    components_of_settings(file, b"componentWrapperFunctions")
+    components_from_settings(file, b"componentWrapperFunctions")
 }
 
 /// `callee_name`: see [`callee_name`]. For `React.memo(..)` it's `memo`.
@@ -302,7 +302,7 @@ impl FunctionReturns {
 
 pub(crate) type Variables<'a> = SmallVec<[Symbol<'a>; 4]>;
 
-/// A stack entry of the depth-first search in [`FlagsOfVariables::of_variable`].
+/// A stack entry of the depth-first search in [`VariableFlags::of_variable`].
 struct Visited<'a> {
     variable: Symbol<'a>,
     flags: u8,
@@ -316,11 +316,11 @@ struct Visited<'a> {
 /// Per-variable flags for a file. A variable has its own declaration's flags plus those of the variables in its
 /// initializer: `const a = b || c`. Use a separate instance for each meaning of the flags.
 #[derive(Default)]
-pub(crate) struct FlagsOfVariables<'a> {
+pub(crate) struct VariableFlags<'a> {
     known: IdMap<Symbol<'a>, u8>,
 }
 
-impl<'a> FlagsOfVariables<'a> {
+impl<'a> VariableFlags<'a> {
     /// `declared_with`: returns the flags of a variable's declaration by itself, and the variables in its initializer.
     ///
     /// Each variable is visited once, no matter how many lookups there are. Variables that are initialized from each
@@ -425,7 +425,7 @@ fn add_expression<'a>(expression: Expr<'a>, variables: &mut Variables<'a>) -> u8
 /// Caches what a file's variables can evaluate to, for [`function_returns`].
 #[derive(Default)]
 pub(crate) struct Returns<'a> {
-    of_variables: FlagsOfVariables<'a>,
+    of_variables: VariableFlags<'a>,
 }
 
 impl<'a> Returns<'a> {

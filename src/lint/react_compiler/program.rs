@@ -16,7 +16,7 @@
 use crate::compile::{Compiler, Flavor};
 use crate::finding::Finding;
 use crate::suppression::{
-    ProgramSuppressions, find_program_suppressions, remove_what_flow_suppresses,
+    ProgramSuppressions, find_program_suppressions, remove_flow_suppressed,
     suppressions_to_diagnostics,
 };
 use bun_core::strings;
@@ -780,13 +780,13 @@ impl<'a> DiscoveryWalker<'a> {
     /// The plugin's `findFunctionsToCompile`. Babel's `traverse` goes everywhere except into classes and into queued
     /// functions. Types are skipped too, because they can't contain a function.
     fn traverse(&mut self, node: Node<'a>) {
-        let is_left_out = match node {
+        let is_skipped = match node {
             Node::Class(_) | Node::Type(_) | Node::TypeParam(_) => true,
             Node::Stmt(stmt) => matches!(stmt.tag(), StmtTag::Interface | StmtTag::TypeAlias),
             _ => false,
         };
         match node {
-            _ if is_left_out => {}
+            _ if is_skipped => {}
             Node::Func(func) if is_function(func) => {
                 self.walk_function(func, declarator_name_for(func))
             }
@@ -1039,7 +1039,7 @@ fn find_functions_to_compile<'a>(file: &'a File<'a>, search: Search<'a>) -> Vec<
 /// A function is queued because of a directive, a hook call or JSX. Returns false if the file has none of these, or if
 /// the plugin never gets to compile it.
 pub(crate) fn may_have_react_code(file: &File, flavor: Flavor) -> bool {
-    let has_react_code = file.mentions_name_of_hook()
+    let has_react_code = file.mentions_hook_name()
         || file.has_exprs([ExprTag::Jsx])
         || file.mentions_any(&OPT_IN_DIRECTIVES);
     let path = file.path();
@@ -1122,7 +1122,7 @@ fn declarator_name_for(func: Func<'_>) -> Option<Name<'_>> {
 /// This covers the syntax that a valid program can have and these parsers reject: @babel/parser 7.29, hermes-parser
 /// 0.25. TypeScript-only syntax, which hermes-parser gets in a `.mts` or `.cts` file and reads as Flow, is only partly
 /// covered.
-fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
+fn second_parser_rejects<'a>(file: &'a File<'a>) -> bool {
     #[derive(Copy, Clone, PartialEq, Eq)]
     enum Parser {
         Babel,
@@ -1134,7 +1134,7 @@ fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
         false => Parser::Hermes,
     };
 
-    let refused_modifiers = match parser {
+    let rejected_modifiers = match parser {
         Parser::Babel => Flags::ACCESSOR,
         Parser::Hermes => {
             Flags::ACCESSOR
@@ -1148,51 +1148,51 @@ fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
                 | Flags::OVERRIDE
         }
     };
-    let refuses_class = |class: Class<'a>| {
+    let rejects_class = |class: Class<'a>| {
         class.decorators().next().is_some()
-            || class.flags().intersects(refused_modifiers)
+            || class.flags().intersects(rejected_modifiers)
             || class.members().iter().any(|member| {
                 member.decorators().next().is_some()
-                    || member.flags().intersects(refused_modifiers)
+                    || member.flags().intersects(rejected_modifiers)
                     || (parser == Parser::Hermes && member.kind() == MemberKind::StaticBlock)
                     || member.func().is_some_and(|func| {
                         (func.params().iter()).any(|param| param.decorators().next().is_some())
                     })
             })
     };
-    if file.has_classes() && file.classes().any(refuses_class) {
+    if file.has_classes() && file.classes().any(rejects_class) {
         return true;
     }
 
     // Babel accepts `with { .. }` after a module specifier but not the older `assert { .. }`. hermes-parser is the
     // other way round.
-    let refused_keyword: &[u8] = match parser {
+    let rejected_keyword: &[u8] = match parser {
         Parser::Babel => b"assert",
         Parser::Hermes => b"with",
     };
-    let is_refused_name = |name: Ident<'a>| parser == Parser::Hermes && name.is_string();
-    let refuses_import_or_export = |stmt: Stmt<'a>| {
+    let is_rejected_name = |name: Ident<'a>| parser == Parser::Hermes && name.is_string();
+    let rejects_import_or_export = |stmt: Stmt<'a>| {
         (stmt.import_attributes())
-            .is_some_and(|attributes| file.slice(attributes.keyword_span()) == refused_keyword)
+            .is_some_and(|attributes| file.slice(attributes.keyword_span()) == rejected_keyword)
             || match stmt.kind() {
                 StmtKind::Import(import) => {
                     import.phase().is_some()
-                        || (import.named().iter()).any(|it| is_refused_name(it.imported()))
+                        || (import.named().iter()).any(|it| is_rejected_name(it.imported()))
                 }
                 StmtKind::ExportNamed(export) => (export.items().iter())
-                    .any(|it| is_refused_name(it.local()) || is_refused_name(it.exported())),
-                StmtKind::ExportStar { alias, .. } => alias.is_some_and(is_refused_name),
+                    .any(|it| is_rejected_name(it.local()) || is_rejected_name(it.exported())),
+                StmtKind::ExportStar { alias, .. } => alias.is_some_and(is_rejected_name),
                 _ => false,
             }
     };
-    if file.body().iter().any(refuses_import_or_export) {
+    if file.body().iter().any(rejects_import_or_export) {
         return true;
     }
 
     let is_outermost = |func: &Func<'a>| func.has_body() && func.enclosing().is_none();
     let mut outermost: Vec<Span> = file.funcs().filter(is_outermost).map(Func::span).collect();
     outermost.sort_unstable();
-    let is_in_no_function = |at: Span| {
+    let is_outside_functions = |at: Span| {
         let after = outermost.partition_point(|span| span.start <= at.start);
         let before = after.checked_sub(1).and_then(|it| outermost.get(it));
         before.is_none_or(|span| span.end <= at.start)
@@ -1203,7 +1203,7 @@ fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
         .exprs_of_kind(ExprTag::As)
         .chain(file.exprs_of_kind(ExprTag::AsConst)))
     .any(Expr::is_angle_bracket_assertion)
-        || (file.stmts_of_kind(StmtTag::Return)).any(|it| is_in_no_function(it.span()))
+        || (file.stmts_of_kind(StmtTag::Return)).any(|it| is_outside_functions(it.span()))
     {
         return true;
     }
@@ -1224,7 +1224,7 @@ fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
     };
     let awaits_in_no_function = |stmt: Stmt<'a>| {
         matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. })
-            && is_in_no_function(stmt.span())
+            && is_outside_functions(stmt.span())
     };
     let has_type_arguments = |expr: Expr<'a>| {
         expr.as_call_like()
@@ -1234,7 +1234,7 @@ fn second_parser_refuses<'a>(file: &'a File<'a>) -> bool {
         || file
             .exprs_of_kind(ExprTag::Jsx)
             .any(is_attribute_without_braces)
-        || (file.exprs_of_kind(ExprTag::Await)).any(|it| is_in_no_function(it.span()))
+        || (file.exprs_of_kind(ExprTag::Await)).any(|it| is_outside_functions(it.span()))
         || file
             .stmts_of_kind(StmtTag::ForOf)
             .any(awaits_in_no_function)
@@ -1298,7 +1298,7 @@ pub(crate) fn compile_program<'a>(
         return Vec::new();
     }
     let queue = find_functions_to_compile(file, search);
-    if queue.is_empty() || (flavor == Flavor::Eslint && second_parser_refuses(file)) {
+    if queue.is_empty() || (flavor == Flavor::Eslint && second_parser_rejects(file)) {
         return Vec::new();
     }
 
@@ -1319,7 +1319,7 @@ pub(crate) fn compile_program<'a>(
         }
     }
     if flavor == Flavor::Eslint {
-        remove_what_flow_suppresses(file, &mut context.diagnostics);
+        remove_flow_suppressed(file, &mut context.diagnostics);
     }
     context.diagnostics
 }

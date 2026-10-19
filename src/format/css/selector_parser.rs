@@ -1,6 +1,6 @@
 //! `postcss-selector-parser` 2.2.3 (`dist/tokenize.js`, `dist/parser.js`) and Prettier's `parse/parse-selector.js`.
 
-use super::misc::{ends_before_escaped_blank, ends_with_hex_escape};
+use super::misc::{ends_with_hex_escape, ends_with_unescaped_backslash};
 use crate::stack::Stack;
 use crate::text::{self, ByteSet};
 
@@ -368,13 +368,13 @@ impl<'t> Parser<'t> {
                 let before_flag = trimmed.strip_suffix(b"i").filter(|rest| {
                     let unflagged = bun_core::strings::trim_js_whitespace_end(rest);
                     let is_escape =
-                        ends_before_escaped_blank(unflagged) || ends_with_hex_escape(unflagged);
+                        ends_with_unescaped_backslash(unflagged) || ends_with_hex_escape(unflagged);
                     unflagged.len() + usize::from(is_escape) < rest.len()
                 });
                 let value_len = match before_flag {
                     Some(rest) => {
                         let unflagged = bun_core::strings::trim_js_whitespace_end(rest);
-                        unflagged.len() + usize::from(ends_before_escaped_blank(unflagged))
+                        unflagged.len() + usize::from(ends_with_unescaped_backslash(unflagged))
                     }
                     None => value.len(),
                 };

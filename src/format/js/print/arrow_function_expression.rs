@@ -728,7 +728,7 @@ impl<'a> Format<'a> for FormatArrowBody<'a> {
 
 /// `() =>⏎ /* comment */ (a, b)` for oxfmt, `() => /* comment */ (a, b)` for Prettier. For oxfmt a comment anywhere in
 /// the arrow function before the sequence counts: `(/* comment */ a) =>⏎ (b, c)`.
-fn sequence_behind_comments_is_on_its_own_line(f: &Formatter<'_>) -> bool {
+fn sequence_after_comments_is_on_its_own_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -764,7 +764,7 @@ fn write_expression_body<'a>(
         write!(f, FormatTrailingComments::Comments(owned.trailing));
     });
     match !is_on_its_own_line
-        && sequence_behind_comments_is_on_its_own_line(f)
+        && sequence_after_comments_is_on_its_own_line(f)
         && (!owned.leading.is_empty()
             || (f.comments()).has_comment_in_span(Span::before(arrow.span().start, body.span())))
     {

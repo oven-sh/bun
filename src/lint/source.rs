@@ -25,12 +25,12 @@ impl<T> Default for ByName<T> {
 }
 
 impl<T: Copy> ByName<T> {
-    /// Returns the cached value for `name`, calling `find_out` on the first lookup.
+    /// Returns the cached value for `name`, calling `compute` on the first lookup.
     #[inline]
-    pub fn get_or_insert_with(&mut self, name: Name<'_>, find_out: impl FnOnce() -> T) -> T {
+    pub fn get_or_insert_with(&mut self, name: Name<'_>, compute: impl FnOnce() -> T) -> T {
         match self.small.get(name.atom().0 as usize) {
             Some(Some(known)) => *known,
-            _ => self.insert(name.atom().0, find_out()),
+            _ => self.insert(name.atom().0, compute()),
         }
     }
 
@@ -45,8 +45,8 @@ impl<T: Copy> ByName<T> {
             self.small
                 .resize((at + 1).next_power_of_two().max(1024), None);
         }
-        if let Some(place) = self.small.get_mut(at) {
-            *place = Some(found);
+        if let Some(slot) = self.small.get_mut(at) {
+            *slot = Some(found);
         }
         found
     }
@@ -57,7 +57,7 @@ pub(crate) struct Lines {
     starts: LineStarts,
     /// One bit per line, set if the line has a non-ASCII byte. Columns in the other lines need no conversion, since
     /// there a byte is a UTF-16 code unit. Empty if every line is ASCII.
-    not_ascii: Vec<u64>,
+    non_ascii_lines: Vec<u64>,
     /// For columns far into a line: the number of UTF-16 code units in the characters that start before each multiple
     /// of `BLOCK`, followed by the total. `None` if the text isn't valid UTF-8. Built the first time such a column is
     /// requested.
@@ -66,11 +66,11 @@ pub(crate) struct Lines {
 
 impl Lines {
     fn new(text: &[u8], starts: LineStarts) -> Lines {
-        let (mut not_ascii, mut at) = (Vec::new(), 0);
+        let (mut non_ascii_lines, mut at) = (Vec::new(), 0);
         while let Some(found) = text.get(at..).and_then(bun_core::strings::first_non_ascii) {
             let line = starts.line_at(at as u32 + found).0 as usize;
-            not_ascii.resize(starts.starts.len().div_ceil(64), 0u64);
-            if let Some(bits) = not_ascii.get_mut((line - 1) / 64) {
+            non_ascii_lines.resize(starts.starts.len().div_ceil(64), 0u64);
+            if let Some(bits) = non_ascii_lines.get_mut((line - 1) / 64) {
                 *bits |= 1 << ((line - 1) % 64);
             }
             match starts.starts.get(line) {
@@ -80,7 +80,7 @@ impl Lines {
         }
         Lines {
             starts,
-            not_ascii,
+            non_ascii_lines,
             units: OnceCell::new(),
         }
     }
@@ -88,13 +88,13 @@ impl Lines {
     /// True if the whole text is ASCII.
     #[inline]
     fn is_ascii(&self) -> bool {
-        self.not_ascii.is_empty()
+        self.non_ascii_lines.is_empty()
     }
 
     /// True if line `line` (1-based) is ASCII.
     #[inline]
     fn is_line_ascii(&self, line: u32) -> bool {
-        let bits = self.not_ascii.get((line as usize - 1) / 64);
+        let bits = self.non_ascii_lines.get((line as usize - 1) / 64);
         bits.is_none_or(|bits| (bits >> ((line - 1) % 64)) & 1 == 0)
     }
 }
@@ -244,7 +244,7 @@ pub(crate) struct NearbyLine {
     /// An offset and the number of line breaks before it.
     known: Cell<(u32, u32)>,
     /// Bytes scanned so far.
-    looked_at: Cell<usize>,
+    bytes_scanned: Cell<usize>,
     /// The file's line count.
     count: OnceCell<u32>,
 }
@@ -268,11 +268,11 @@ impl<'a> File<'a> {
         let (known, lines_before) = nearby.known.get();
         let between = text.get(known.min(offset) as usize..known.max(offset) as usize)?;
         // Counting line breaks is many times faster than recording every line start.
-        let looked_at = nearby.looked_at.get() + between.len() + 256;
-        if looked_at > 4 * text.len() {
+        let bytes_scanned = nearby.bytes_scanned.get() + between.len() + 256;
+        if bytes_scanned > 4 * text.len() {
             return None;
         }
-        nearby.looked_at.set(looked_at);
+        nearby.bytes_scanned.set(bytes_scanned);
         let breaks = bun_core::strings::count_char(between, b'\n') as u32;
         let lines_before = if offset >= known {
             lines_before + breaks
@@ -285,8 +285,8 @@ impl<'a> File<'a> {
         // The line was scanned back to its start, and it's scanned again for the column. The 256 added above covers a
         // line of ordinary length.
         nearby
-            .looked_at
-            .set(looked_at + (2 * (offset - start) as usize).saturating_sub(256));
+            .bytes_scanned
+            .set(bytes_scanned + (2 * (offset - start) as usize).saturating_sub(256));
         Some((lines_before + 1, start))
     }
 
@@ -556,8 +556,8 @@ impl<'a> File<'a> {
     /// True if the file may [mention](File::mentions) `use`, or a text that starts with `use` followed by an ASCII
     /// capital or digit, which is what React treats as a hook name.
     #[inline]
-    pub fn mentions_name_of_hook(&self) -> bool {
-        self.mentions_bit(bun_sema::hir::MENTION_OF_A_HOOK)
+    pub fn mentions_hook_name(&self) -> bool {
+        self.mentions_bit(bun_sema::hir::HOOK_MENTION_BIT)
     }
 
     /// Interns `text` as a name of this file, for comparing against many nodes' names. `name == wanted` compares two

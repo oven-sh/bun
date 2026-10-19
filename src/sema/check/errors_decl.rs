@@ -114,9 +114,9 @@ impl Checker<'_, '_> {
                 .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
             {
                 // `getClassOrInterfaceDeclarationsOfSymbol`
-                let is_one =
+                let is_class_or_interface =
                     |d: &&(FileId, Decl)| matches!(d.1, Decl::Class(_) | Decl::Interface(_));
-                if decls.iter().filter(is_one).count() > 1 {
+                if decls.iter().filter(is_class_or_interface).count() > 1 {
                     self.check_type_parameter_lists_identical(file, sym, &decls);
                 }
             }

@@ -658,7 +658,7 @@ impl Rule for ConsistentTypeImports {
                 )
             }
             // There's no config file to set these in, and the fix would remove imports that decorator metadata needs.
-            None if file.language().stands_alone => (true, true),
+            None if file.language().has_no_foreign_config => (true, true),
             None => (
                 file.language().experimental_decorators,
                 file.language().emit_decorator_metadata,

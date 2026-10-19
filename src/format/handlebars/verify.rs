@@ -121,7 +121,7 @@ impl<'a> Writer<'a> {
     /// `outer`.
     #[optimize(size)]
     fn touches_of(&self, nodes: &[NodeId], index: usize, outer: [bool; 2]) -> [bool; 2] {
-        let has_blank_at = |id: NodeId, is_start: bool| {
+        let has_whitespace_at = |id: NodeId, is_start: bool| {
             let (Kind::Text { chars: text } | Kind::String { value: text }) = self.tree.kind(id)
             else {
                 return false;
@@ -132,8 +132,8 @@ impl<'a> Writer<'a> {
         };
         let before = index.checked_sub(1).and_then(|it| nodes.get(it));
         [
-            before.map_or(outer[0], |it| !has_blank_at(*it, false)),
-            (nodes.get(index + 1)).map_or(outer[1], |it| !has_blank_at(*it, true)),
+            before.map_or(outer[0], |it| !has_whitespace_at(*it, false)),
+            (nodes.get(index + 1)).map_or(outer[1], |it| !has_whitespace_at(*it, true)),
         ]
     }
 

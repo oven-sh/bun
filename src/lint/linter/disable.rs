@@ -155,14 +155,14 @@ impl Input<'_, '_> {
     /// line is removed along with the spaces around it, and with the line break too if nothing else is on the line.
     fn removal_of(&self, comment: Span) -> Fix {
         let around = Around::of(self.file.text(), comment);
-        if !self.file.language().stands_alone || around.line_break.is_none() {
+        if !self.file.language().has_no_foreign_config || around.line_break.is_none() {
             return Fix {
                 span: comment,
                 text: b" ".to_vec(),
             };
         }
         Fix {
-            span: around.whole_lines().unwrap_or(around.with_blanks),
+            span: around.whole_lines().unwrap_or(around.with_spaces),
             text: Vec::new(),
         }
     }

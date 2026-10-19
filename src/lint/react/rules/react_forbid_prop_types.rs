@@ -39,7 +39,7 @@ struct Imported<'a> {
 }
 
 /// The node that one of upstream's listeners is called with.
-struct Listened<'a> {
+struct ListenerNode<'a> {
     span: Span,
     /// The number of `State::imports` before it.
     imports: usize,
@@ -49,7 +49,7 @@ struct Listened<'a> {
 
 #[derive(Copy, Clone)]
 struct Forbidden<'a> {
-    listened: Span,
+    listener_node: Span,
     declaration: Span,
     target: &'a [u8],
 }
@@ -59,7 +59,8 @@ pub struct State<'a> {
     imports: Vec<Imported<'a>>,
     /// Reported in `finish`, so that two reports about the same property come in upstream's traversal order.
     forbidden: Vec<Forbidden<'a>>,
-    /// Maps (start of a variable's object literal, `Listened::imports`) to the range of `forbidden` that's about it.
+    /// Maps (start of a variable's object literal, `ListenerNode::imports`) to the range of `forbidden` that's about
+    /// it.
     known: FxHashMap<(u32, usize), Range<usize>>,
 }
 
@@ -158,7 +159,7 @@ impl Rule for ForbidPropTypes {
             false => None,
         };
         if let Some(value) = value {
-            self.check_node(value, &cx.state.listened(member.span()), cx);
+            self.check_node(value, &cx.state.listener_node(member.span()), cx);
         }
     }
 
@@ -170,13 +171,13 @@ impl Rule for ForbidPropTypes {
             && let Node::Expr(object) = property.parent()
             && !object.is_assignment_target()
         {
-            self.check_properties(properties, &cx.state.listened(object.span()), cx);
+            self.check_properties(properties, &cx.state.listener_node(object.span()), cx);
         }
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut forbidden = std::mem::take(&mut cx.state.forbidden);
-        utils::sort::sort_by_key(&mut forbidden, |it| it.listened.sort_key(0, 0));
+        utils::sort::sort_by_key(&mut forbidden, |it| it.listener_node.sort_key(0, 0));
         for it in forbidden {
             cx.report(it.declaration, FORBIDDEN_PROP_TYPE).data("target", it.target);
         }
@@ -251,10 +252,10 @@ impl<'a> Packages<'a> {
 }
 
 impl<'a> State<'a> {
-    fn listened(&self, span: Span) -> Listened<'a> {
+    fn listener_node(&self, span: Span) -> ListenerNode<'a> {
         let imports = self.imports.partition_point(|it| it.start < span.start);
         let packages = imports.checked_sub(1).and_then(|last| self.imports.get(last)).map(|it| it.packages);
-        Listened { span, imports, packages: packages.unwrap_or_default() }
+        ListenerNode { span, imports, packages: packages.unwrap_or_default() }
     }
 }
 
@@ -270,23 +271,23 @@ impl ForbidPropTypes {
         &self,
         target: Option<&'a [u8]>,
         declaration: Prop<'a>,
-        listened: &Listened<'a>,
+        listener_node: &ListenerNode<'a>,
         cx: &mut Cx<'a, Self>,
     ) {
         if let Some(target) = target
             && self.forbid.iter().any(|it| target == &**it)
         {
-            cx.state.forbidden.push(Forbidden { listened: listened.span, declaration: declaration.span(), target });
+            cx.state.forbidden.push(Forbidden { listener_node: listener_node.span, declaration: declaration.span(), target });
         }
     }
 
     fn check_properties<'a>(
         &self,
         declarations: List<'a, Prop<'a>>,
-        listened: &Listened<'a>,
+        listener_node: &ListenerNode<'a>,
         cx: &mut Cx<'a, Self>,
     ) {
-        let packages = listened.packages;
+        let packages = listener_node.packages;
         for declaration in declarations {
             let Some(mut value) = declaration.value().filter(|_| declaration.kind() != PropKind::Spread) else {
                 continue;
@@ -301,43 +302,43 @@ impl ForbidPropTypes {
                     continue;
                 }
                 for arg in call.args() {
-                    self.report_if_forbidden(name_of(arg), declaration, listened, cx);
+                    self.report_if_forbidden(name_of(arg), declaration, listener_node, cx);
                 }
                 value = call.callee();
             }
             if packages.is_prop_types_package(value) {
-                self.report_if_forbidden(name_of(value), declaration, listened, cx);
+                self.report_if_forbidden(name_of(value), declaration, listener_node, cx);
             }
         }
     }
 
     /// `checkProperties` of a variable's object literal. The result is cached, so only the first call walks the
     /// properties.
-    fn check_properties_of_variable<'a>(&self, init: Expr<'a>, listened: &Listened<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_properties_of_variable<'a>(&self, init: Expr<'a>, listener_node: &ListenerNode<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Object(properties) = init.kind() else {
             return;
         };
-        let key = (init.span().start, listened.imports);
+        let key = (init.span().start, listener_node.imports);
         let Some(known) = cx.state.known.get(&key).cloned() else {
             let first = cx.state.forbidden.len();
-            self.check_properties(properties, listened, cx);
+            self.check_properties(properties, listener_node, cx);
             cx.state.known.insert(key, first..cx.state.forbidden.len());
             return;
         };
         cx.state.forbidden.extend_from_within(known.clone());
         let added = cx.state.forbidden.len() - known.len();
         for it in cx.state.forbidden.iter_mut().skip(added) {
-            it.listened = listened.span;
+            it.listener_node = listener_node.span;
         }
     }
 
-    fn check_node<'a>(&self, mut node: Expr<'a>, listened: &Listened<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_node<'a>(&self, mut node: Expr<'a>, listener_node: &ListenerNode<'a>, cx: &mut Cx<'a, Self>) {
         loop {
             match node.kind() {
-                ExprKind::Object(properties) => self.check_properties(properties, listened, cx),
+                ExprKind::Object(properties) => self.check_properties(properties, listener_node, cx),
                 ExprKind::Ident(name) => {
                     if let Some(Found::Init(init)) = find_variable_by_name(Node::Expr(node), name) {
-                        self.check_properties_of_variable(init, listened, cx);
+                        self.check_properties_of_variable(init, listener_node, cx);
                     }
                 }
                 ExprKind::Call(call) if !node.is_chain_root() => {
@@ -363,9 +364,9 @@ impl ForbidPropTypes {
         {
             return;
         }
-        let listened = cx.state.listened(node.span());
-        if listened.packages.is_prop_types_package(node) || self.is_checked_declaration(Node::Expr(node)) {
-            self.check_node(right, &listened, cx);
+        let listener_node = cx.state.listener_node(node.span());
+        if listener_node.packages.is_prop_types_package(node) || self.is_checked_declaration(Node::Expr(node)) {
+            self.check_node(right, &listener_node, cx);
         }
     }
 
@@ -378,9 +379,9 @@ impl ForbidPropTypes {
         if !callee.is_ident("shape") && !is_member_called(callee, "shape") {
             return;
         }
-        let listened = cx.state.listened(node.span());
-        if callee.object().is_none_or(|object| listened.packages.is_prop_types_package(object)) {
-            self.check_properties(properties, &listened, cx);
+        let listener_node = cx.state.listener_node(node.span());
+        if callee.object().is_none_or(|object| listener_node.packages.is_prop_types_package(object)) {
+            self.check_properties(properties, &listener_node, cx);
         }
     }
 }

@@ -61,7 +61,7 @@ pub(crate) fn comment_before_semicolon_keeps_its_line(f: &Formatter<'_>) -> bool
 }
 
 /// The end of `comment`, which leads something. See [`comment_before_semicolon_keeps_its_line`].
-fn end_with_semicolon_of_statement_before(comment: Comment<'_>, f: &Formatter<'_>) -> u32 {
+fn end_including_previous_statement_semicolon(comment: Comment<'_>, f: &Formatter<'_>) -> u32 {
     let end = comment.span().end;
     if !comment.has_newline_before() || !comment_before_semicolon_keeps_its_line(f) {
         return end;
@@ -103,7 +103,7 @@ fn write_leading_comments<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) 
 
         let lines_after = (f.source_text().lines_after(comment.span().end)).max(
             f.source_text()
-                .lines_after(end_with_semicolon_of_statement_before(comment, f)),
+                .lines_after(end_including_previous_statement_semicolon(comment, f)),
         );
         match (comment.is_block(), lines_after) {
             (true, 0) => write!(f, space()),

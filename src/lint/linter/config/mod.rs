@@ -75,7 +75,7 @@ use super::resolved::{
 use super::schema;
 use crate::context::Severity;
 use crate::js_plugin;
-use crate::language::{GlobalsOfOptions, InferGlobals, LanguageOptions};
+use crate::language::{GlobalsFromOptions, InferGlobals, LanguageOptions};
 use crate::languages::{Dialect, Language, Refusal};
 use crate::options::Json;
 use crate::paths;
@@ -88,13 +88,13 @@ pub use flat::{ConfigError, LoadLocatedPlugin, NamedPlugin};
 use ignore_lines::IgnoreLines;
 use merge::RuleSetting;
 pub use rc::{
-    LoadPlugin, is_plugin_of_oxlint, oxlint_category, oxlint_lacks, oxlint_runs_on, strings_of,
+    LoadPlugin, is_missing_in_oxlint, is_oxlint_plugin, oxlint_category, oxlint_runs_on, strings_of,
 };
 pub(crate) use rc::{OxlintChanges, oxlint_changes};
-pub(crate) use rc::{is_rule_not_built_in, is_rule_of_oxlint};
+pub(crate) use rc::{is_oxlint_rule, is_rule_not_built_in};
 use rustc_hash::FxHashMap;
 pub use serde_json::json_for_oxlint;
-pub use shape::glob_refusal;
+pub use shape::glob_error;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -120,7 +120,7 @@ struct Pattern {
     /// extension.
     is_by_extension: bool,
     /// It ends with `/**`, so it gives the same answer for all files in a directory.
-    is_about_directory: bool,
+    matches_whole_directory: bool,
     /// For a pattern like `**/*{.,_}{test,spec}.{js,ts}`, which only tests the end of the file name and has more than
     /// one brace group: the parts after `**/*`, last one first, each with its alternatives. Otherwise empty.
     ending: Vec<SmallVec<[Box<[u8]>; 8]>>,
@@ -209,8 +209,8 @@ impl Pattern {
             written => written.to_vec(),
         };
         let bangs = normalized.iter().take_while(|it| **it == b'!').count();
-        let says_what_it_matches = bangs == 0 && !normalized.starts_with(b"#");
-        let extensions = match says_what_it_matches {
+        let is_positive_pattern = bangs == 0 && !normalized.starts_with(b"#");
+        let extensions = match is_positive_pattern {
             true => extensions_of(&normalized),
             false => SmallVec::new(),
         };
@@ -231,8 +231,8 @@ impl Pattern {
                 && normalized.starts_with(b"**/*.")
                 && bun_core::strings::last_index_of_char(&normalized, b'.') == Some(4),
             extensions,
-            is_about_directory: says_what_it_matches && normalized.ends_with(b"/**"),
-            ending: match says_what_it_matches {
+            matches_whole_directory: is_positive_pattern && normalized.ends_with(b"/**"),
+            ending: match is_positive_pattern {
                 true => ending_of(&normalized),
                 false => Vec::new(),
             },
@@ -260,7 +260,7 @@ impl Pattern {
             is_universal: true,
             extensions: SmallVec::new(),
             is_by_extension: false,
-            is_about_directory: false,
+            matches_whole_directory: false,
             ending: Vec::new(),
         }
     }
@@ -346,16 +346,18 @@ struct ConfigObject {
     required_framework: Frameworks,
     /// For an oxlint override that has `plugins`: those plugins and the files' plugins, as bit sets. The leading
     /// settings in its `rules` with `yields` set are the ones that `categories` turns on.
-    plugins_of_override: Option<(u32, u32)>,
+    override_plugin_sets: Option<(u32, u32)>,
     /// The plugins [with no built-in rules](Plugin::has_no_rules) for which oxlint's `categories` turns rules on.
     without_rules: Vec<Plugin>,
 }
 
 impl ConfigObject {
     /// True if only the file's directory determines whether it applies.
-    fn is_about_directories(&self) -> bool {
+    fn depends_only_on_directory(&self) -> bool {
         let mut patterns = self.files.iter().flatten().flatten();
-        self.files.is_some() && self.ignores.is_none() && patterns.all(|it| it.is_about_directory)
+        self.files.is_some()
+            && self.ignores.is_none()
+            && patterns.all(|it| it.matches_whole_directory)
     }
 
     /// The [`BeforeName`] of the entries of `directory` (absolute) relative to its own base path, if it has one.
@@ -380,7 +382,7 @@ impl ConfigObject {
 
 /// True if merging `settings` into nothing yields the same value. The merge drops `__proto__`, and a flat config keeps
 /// only one entry of a duplicated key.
-fn stay_as_they_are(settings: &Json, is_legacy: bool) -> bool {
+fn merge_is_identity(settings: &Json, is_legacy: bool) -> bool {
     let entries = settings.as_object().unwrap_or_default();
     let is_again = |at: usize, key: &[u8]| entries.iter().take(at).any(|it| it.0 == key);
     let mut entries = entries.iter().enumerate();
@@ -412,7 +414,7 @@ impl Default for ConfigObject {
             parser_location: None,
             changes_linter: false,
             required_framework: Frameworks::empty(),
-            plugins_of_override: None,
+            override_plugin_sets: None,
             without_rules: Vec::new(),
         }
     }
@@ -449,26 +451,26 @@ struct Heads {
     objects: Vec<(u32, bool)>,
     /// For each extension that a pattern ends with, [packed](packed_extension): what can match a file with that
     /// extension.
-    by_extension: Vec<(u64, OfExtension)>,
+    by_extension: Vec<(u64, ExtensionMatches)>,
     /// The same for a file with any other extension, or without one.
-    without_extension: OfExtension,
-    /// A bit for each object that is [about directories](ConfigObject::is_about_directories).
-    about_directories: Bits,
+    without_extension: ExtensionMatches,
+    /// A bit for each object that is [about directories](ConfigObject::depends_only_on_directory).
+    directory_only_objects: Bits,
     /// The patterns in `files` that look at more of a file's name than its extension. `None` if a file's objects can't
     /// be derived from these patterns' results, its extension and its directory, or if there are more than 64.
-    by_name: Option<Vec<Place>>,
+    by_name: Option<Vec<PatternLocation>>,
 }
 
 /// A pattern's location: the object, the element of its `files`, and the pattern in that element.
 #[derive(Copy, Clone)]
-struct Place {
+struct PatternLocation {
     object: u32,
     element: u32,
     pattern: u32,
 }
 
 /// The results of the [`Heads::by_name`] patterns for a file, one bit each, with the file's [extension](extension_of).
-type SaidOfName = (Option<u64>, u64);
+type NameMatchKey = (Option<u64>, u64);
 
 /// The extension of the file at `path`, [packed](packed_extension). One that contains a `/` is harmless, because no
 /// pattern's extension does.
@@ -495,7 +497,7 @@ struct Listed {
 
 /// Facts about the files with a given extension.
 #[derive(Default)]
-struct OfExtension {
+struct ExtensionMatches {
     can_match: Listed,
     /// One of these elements makes ESLint lint what it matches.
     can_be_linted: bool,
@@ -554,7 +556,7 @@ impl Heads {
                 }
             }
             let makes_linted = |it: &'o Vec<Pattern>| !it.iter().all(|it| it.is_universal);
-            OfExtension {
+            ExtensionMatches {
                 can_match: found,
                 can_be_linted: elements().any(|it| can_match(it) && makes_linted(it)),
             }
@@ -565,15 +567,16 @@ impl Heads {
         let by_extension = extensions.iter().map(|&it| (it, for_extension(Some(it))));
         heads.by_extension = by_extension.collect();
         heads.without_extension = for_extension(None);
-        heads.about_directories = smallvec::smallvec![0; objects.len().div_ceil(64)];
-        for (at, _) in (objects.iter().enumerate()).filter(|it| it.1.is_about_directories()) {
-            heads.about_directories[at / 64] |= 1 << (at % 64);
+        heads.directory_only_objects = smallvec::smallvec![0; objects.len().div_ceil(64)];
+        for (at, _) in (objects.iter().enumerate()).filter(|it| it.1.depends_only_on_directory()) {
+            heads.directory_only_objects[at / 64] |= 1 << (at % 64);
         }
         let (mut by_name, mut follows) = (Vec::new(), true);
         for (at, object) in objects.iter().enumerate() {
             follows &= object.ignores.is_none() || object.is_global_ignores;
             for (element, patterns) in object.files.iter().flatten().enumerate() {
-                let looks_at_name = |it: &&Pattern| !it.is_by_extension && !it.is_about_directory;
+                let looks_at_name =
+                    |it: &&Pattern| !it.is_by_extension && !it.matches_whole_directory;
                 for (pattern, _) in patterns
                     .iter()
                     .enumerate()
@@ -581,7 +584,7 @@ impl Heads {
                 {
                     // It would have to be matched against a different path.
                     follows &= object.base_path.is_none();
-                    by_name.push(Place {
+                    by_name.push(PatternLocation {
                         object: at as u32,
                         element: element as u32,
                         pattern: pattern as u32,
@@ -594,7 +597,7 @@ impl Heads {
     }
 
     /// Two files in a directory with the same result have the same objects.
-    fn said_of_name(&self, objects: &[ConfigObject], path: &Candidate) -> Option<SaidOfName> {
+    fn name_match_key(&self, objects: &[ConfigObject], path: &Candidate) -> Option<NameMatchKey> {
         let extension = extension_of(path.path());
         let mut said = 0;
         for (bit, place) in self.by_name.as_ref()?.iter().enumerate() {
@@ -608,7 +611,7 @@ impl Heads {
     }
 
     /// Returns what can match `path`, judging by its extension.
-    fn of_extension(&self, path: &[u8]) -> &OfExtension {
+    fn extension_matches(&self, path: &[u8]) -> &ExtensionMatches {
         let extension = extension_of(path);
         let mut known = self.by_extension.iter();
         known
@@ -675,7 +678,7 @@ pub struct Config {
     infers_globals: InferGlobals,
     /// ESLint 8's `--no-ignore`: a file passed by name is linted no matter what ignores it. Files found in a directory
     /// aren't.
-    lints_all_that_is_named: bool,
+    lints_all_named_files: bool,
     /// The index of the object with the patterns that make ESLint 8 ignore dotfiles.
     dot_patterns: Option<usize>,
     /// An ESLint rule that typescript-eslint extends means the extension rule, as in oxlint.
@@ -683,15 +686,15 @@ pub struct Config {
     /// [`ResolvedConfig::has_every_rule`]
     has_every_rule: bool,
     /// The `options` of an `.oxlintrc.json` and of the files it extends.
-    options_of_oxlint: Vec<(Vec<u8>, Json)>,
-    /// [`Config::printed_for_oxlint`]
-    printed_for_oxlint: Vec<(Vec<u8>, Json)>,
+    oxlintrc_options: Vec<(Vec<u8>, Json)>,
+    /// [`Config::oxlint_print_config`]
+    oxlint_print_config: Vec<(Vec<u8>, Json)>,
     notes: Vec<Vec<u8>>,
     advice: Vec<Vec<u8>>,
     unknown_rules: Vec<Box<[u8]>>,
     js_plugins: Vec<Arc<js_plugin::Plugin>>,
     /// Each one's index in `js_locations`.
-    js_plugin_places: Vec<u32>,
+    js_plugin_location_indices: Vec<u32>,
     /// `$jsPlugins`: each prefix with its plugin's location.
     js_locations: Vec<(Box<[u8]>, Json)>,
     /// Objects for different files register different plugins under the same name.
@@ -732,32 +735,32 @@ pub struct Within<'c> {
     missing_frameworks: Frameworks,
 }
 
-/// For objects that are [about directories](ConfigObject::is_about_directories), by index: whether the object applies
-/// to the directory's files, and whether that makes ESLint lint them.
+/// For objects that are [about directories](ConfigObject::depends_only_on_directory), by index: whether the object
+/// applies to the directory's files, and whether that makes ESLint lint them.
 type Said = std::cell::RefCell<SmallVec<[(u32, bool, bool); 2]>>;
 
-/// Cached [`Config::matching`] results for the directory's files, keyed by [`Heads::said_of_name`].
-type Known = std::cell::RefCell<Vec<(SaidOfName, Option<Indices>)>>;
+/// Cached [`Config::matching`] results for the directory's files, keyed by [`Heads::name_match_key`].
+type Known = std::cell::RefCell<Vec<(NameMatchKey, Option<Indices>)>>;
 
 /// An entry of a [`Within`]'s directory.
 struct Entry<'w> {
     name: &'w [u8],
-    seen_by_objects: &'w [(u32, BeforeName)],
+    prefixes_by_object: &'w [(u32, BeforeName)],
     said: &'w Said,
     known: &'w Known,
 }
 
 impl Entry<'_> {
     /// The entry's path relative to the base path of the object at `index`, if that's known.
-    fn seen_by(&self, index: usize) -> Option<Vec<u8>> {
-        let objects = self.seen_by_objects;
+    fn path_relative_to_object(&self, index: usize) -> Option<Vec<u8>> {
+        let objects = self.prefixes_by_object;
         let at = objects
             .binary_search_by_key(&index, |it| it.0 as usize)
             .ok()?;
         Some([objects.get(at)?.1.as_deref()?, self.name].concat())
     }
 
-    fn said_by(&self, index: usize) -> Option<(bool, bool)> {
+    fn directory_verdict(&self, index: usize) -> Option<(bool, bool)> {
         let said = self.said.borrow();
         let found = said.iter().find(|it| it.0 as usize == index)?;
         Some((found.1, found.2))
@@ -790,7 +793,7 @@ impl Within<'_> {
             before_name.entry(&self.relative),
             Entry {
                 name,
-                seen_by_objects: &self.seen.by_objects,
+                prefixes_by_object: &self.seen.by_objects,
                 said: &self.said,
                 known: &self.known,
             },
@@ -798,7 +801,7 @@ impl Within<'_> {
     }
 
     /// [`Config::see`] for the directory at `path`, which is an entry of this one.
-    pub fn see_below(&self, path: &[u8]) -> Seen {
+    pub fn see_child(&self, path: &[u8]) -> Seen {
         let config = self.config;
         let (Some(name), Some(before_name)) = (path.get(self.name_at..), &self.seen.before_name)
         else {
@@ -860,10 +863,10 @@ impl Within<'_> {
             }
             let matching = || config.matching(path, &parts, Some(&entry), must_match);
             let said = match must_match {
-                true => config.heads.said_of_name(&config.objects, &parts),
+                true => config.heads.name_match_key(&config.objects, &parts),
                 false => None,
             };
-            let find = |said: SaidOfName| {
+            let find = |said: NameMatchKey| {
                 let known = entry.known.borrow();
                 known.iter().find(|it| it.0 == said).map(|it| it.1.clone())
             };
@@ -920,8 +923,8 @@ fn path_matches<'o>(
         && !ignores.is_some_and(|ignores| is_ignored_by(ignores, path, false))
 }
 
-/// [`Config::in_javascript`]
-pub struct InJavaScript<'c> {
+/// [`Config::shadowed_builtin_plugins`]
+pub struct ShadowedBuiltinPlugin<'c> {
     /// The prefix of the JavaScript plugin's rules.
     pub prefix: &'c [u8],
     /// The built-in plugin with the same name.
@@ -934,7 +937,7 @@ pub struct InJavaScript<'c> {
 
 /// oxlint's error for options that the schema of a JavaScript plugin's rule rejects. `lines` come from
 /// [`schema::validate_js`].
-fn js_options_error_of_oxlint(rule: &js_plugin::Rule, options: &[Json], lines: &[u8]) -> Vec<u8> {
+fn oxlint_js_options_error(rule: &js_plugin::Rule, options: &[Json], lines: &[u8]) -> Vec<u8> {
     let start: &[u8] = b"Failed to setup JS plugin options:\nError: ";
     let takes_none = match &rule.schema {
         js_plugin::Schema::None => true,
@@ -993,27 +996,27 @@ impl Config {
     }
 
     /// Returns what oxlint's `--print-config` prints, if the config was built from an `.oxlintrc.json`.
-    pub fn printed_for_oxlint(&self) -> Json {
-        Json::Object(self.printed_for_oxlint.clone())
+    pub fn oxlint_print_config(&self) -> Json {
+        Json::Object(self.oxlint_print_config.clone())
     }
 
     /// `options[name]` of an `.oxlintrc.json`, or else of a file it extends.
-    pub fn option_of_oxlint(&self, name: &[u8]) -> Option<&Json> {
-        let mut options = self.options_of_oxlint.iter();
+    pub fn oxlintrc_option(&self, name: &[u8]) -> Option<&Json> {
+        let mut options = self.oxlintrc_options.iter();
         Some(&options.find(|it| it.0 == name)?.1)
     }
 
     /// The plugins in an oxlint config's `jsPlugins` that share a name with a built-in plugin and have an enabled rule
     /// that's built in. Rules written with that name run in JavaScript, as in oxlint.
-    pub fn in_javascript(&self, registry: &Registry) -> Vec<InJavaScript<'_>> {
-        let mut found: Vec<InJavaScript> = Vec::new();
+    pub fn shadowed_builtin_plugins(&self, registry: &Registry) -> Vec<ShadowedBuiltinPlugin<'_>> {
+        let mut found: Vec<ShadowedBuiltinPlugin> = Vec::new();
         let mut seen: Vec<&[u8]> = Vec::new();
         let settings = self.objects.iter().flat_map(|it| &it.rules);
         for setting in
             settings.filter(|_| self.prefers_typescript_rules && !self.js_plugins.is_empty())
         {
             let id = &setting.id[..];
-            let is_on = setting.severity != Severity::Off && setting.written_for.is_none();
+            let is_on = setting.severity != Severity::Off && setting.builtin_plugin.is_none();
             if !is_on
                 || seen.contains(&id)
                 || find_js_rule(&self.js_plugins, id).flatten().is_none()
@@ -1022,12 +1025,12 @@ impl Config {
             }
             seen.push(id);
             let prefix = super::registry::parse_rule_id(id).0;
-            let Some(plugin) = Plugin::of_oxlint_prefix(prefix) else {
+            let Some(plugin) = Plugin::from_oxlint_prefix(prefix) else {
                 continue;
             };
             let at = found.iter().position(|it| it.prefix == prefix);
             let at = at.unwrap_or_else(|| {
-                found.push(InJavaScript {
+                found.push(ShadowedBuiltinPlugin {
                     prefix,
                     plugin,
                     built_in: 0,
@@ -1082,7 +1085,7 @@ impl Config {
             };
             let computed =
                 || paths::relative_to_base(base_path, &paths::resolve(&self.base_path, relative));
-            let known = entry.and_then(|it| it.seen_by(index));
+            let known = entry.and_then(|it| it.path_relative_to_object(index));
             debug_assert!(known.as_ref().is_none_or(|it| *it == computed()));
             let mut own = known.unwrap_or_else(computed);
             if own.is_empty() || paths::is_external(&own) {
@@ -1216,7 +1219,7 @@ impl Config {
             self.is_directory_ignored(paths::dirname(file), Dotfiles::AsConfigured)
                 || self.is_ignored_globally(&relative, Dotfiles::AsConfigured)
         };
-        if !self.lints_all_that_is_named && is_ignored() {
+        if !self.lints_all_named_files && is_ignored() {
             return FileConfig::Ignored;
         }
         // ESLint 8 lints every file it's given, whatever its name.
@@ -1282,11 +1285,11 @@ impl Config {
         let mut matching = Indices::new();
         let mut is_matched = false;
         let listed = self.heads.of(parts.path());
-        let of_extension = self.heads.of_extension(parts.path());
-        if must_match && !of_extension.can_be_linted {
+        let extension_matches = self.heads.extension_matches(parts.path());
+        if must_match && !extension_matches.can_be_linted {
             return None;
         }
-        let by_extension = &of_extension.can_match;
+        let by_extension = &extension_matches.can_match;
         for (index, object) in self.objects.iter().enumerate() {
             if !has_bit(&by_extension.objects, index)
                 || (listed.as_ref()).is_some_and(|found| !self.heads.allows_object(found, index))
@@ -1294,8 +1297,8 @@ impl Config {
                 continue;
             }
             // Already computed for another file in the directory.
-            let said = entry.filter(|_| has_bit(&self.heads.about_directories, index));
-            if let Some((applies, is_linted)) = said.and_then(|it| it.said_by(index)) {
+            let said = entry.filter(|_| has_bit(&self.heads.directory_only_objects, index));
+            if let Some((applies, is_linted)) = said.and_then(|it| it.directory_verdict(index)) {
                 if applies {
                     matching.push(index as u32);
                 }
@@ -1303,7 +1306,7 @@ impl Config {
                 continue;
             }
             let own = object.base_path.as_ref().map(|base_path| {
-                let known = entry.and_then(|it| it.seen_by(index));
+                let known = entry.and_then(|it| it.path_relative_to_object(index));
                 debug_assert!(
                     (known.as_ref())
                         .is_none_or(|it| *it == paths::relative_to_base(base_path, file))
@@ -1358,12 +1361,12 @@ impl Config {
         (is_matched || !must_match).then_some(matching)
     }
 
-    /// [`ConfiguredRule::reported_as`]. `written_for` is the plugin that the config writes the rule with.
+    /// [`ConfiguredRule::reported_as`]. `builtin_plugin` is the plugin that the config writes the rule with.
     fn reported_as(
         &self,
         registry: &Registry,
         entry: &'static RuleEntry,
-        written_for: Option<Plugin>,
+        builtin_plugin: Option<Plugin>,
     ) -> &'static Meta {
         let meta = entry.meta;
         let is_extension =
@@ -1374,7 +1377,7 @@ impl Config {
         // A few are in both plugins.
         let is_in = |plugin: Plugin| oxlint_category(plugin, meta.name).is_some();
         if !is_in(Plugin::Eslint)
-            || is_in(Plugin::TypeScript) && written_for == Some(Plugin::TypeScript)
+            || is_in(Plugin::TypeScript) && builtin_plugin == Some(Plugin::TypeScript)
         {
             return meta;
         }
@@ -1388,7 +1391,9 @@ impl Config {
             b"@" => registry.get(Plugin::Eslint, name).is_some() || formatting_rule(name).is_some(),
             other => match find_js_rule(&self.js_plugins, &[other, b"/", name].concat()) {
                 Some(found) => found.is_some(),
-                None => Plugin::of_prefix(other).is_some_and(|it| registry.get(it, name).is_some()),
+                None => {
+                    Plugin::from_prefix(other).is_some_and(|it| registry.get(it, name).is_some())
+                }
             },
         };
         let mut message = [
@@ -1411,7 +1416,7 @@ impl Config {
     /// [`schema::validate_js`].
     fn js_options_error(&self, rule: &js_plugin::Rule, options: &[Json], lines: &[u8]) -> Vec<u8> {
         match self.prefers_typescript_rules {
-            true => js_options_error_of_oxlint(rule, options, lines),
+            true => oxlint_js_options_error(rule, options, lines),
             false => [b"Key \"rules\": Key \"", &rule.id[..], b"\":\n", lines].concat(),
         }
     }
@@ -1471,7 +1476,7 @@ impl Config {
         // different set of plugins than all the plugins that are on for the file.
         let of_overrides = || {
             let objects = indices.iter();
-            objects.filter_map(|index| self.objects.get(*index as usize)?.plugins_of_override)
+            objects.filter_map(|index| self.objects.get(*index as usize)?.override_plugin_sets)
         };
         let all_plugins = of_overrides().fold(0, |all, (own, of_files)| all | own | of_files);
         let have_categories = of_overrides().any(|(own, _)| own != all_plugins);
@@ -1500,7 +1505,7 @@ impl Config {
             };
             merge_into(&mut language_options, &object.language_options);
             if let Some(of_object) = &object.settings {
-                if settings.is_none() && stay_as_they_are(of_object, self.is_legacy) {
+                if settings.is_none() && merge_is_identity(of_object, self.is_legacy) {
                     settings = Some(Arc::clone(of_object));
                 } else {
                     let merged = settings.get_or_insert_with(|| Arc::new(Json::Null));
@@ -1511,7 +1516,7 @@ impl Config {
             match self.is_legacy {
                 true => eslintrc::merge_rules(&mut rules, &object.rules),
                 false => {
-                    let skipped = match object.plugins_of_override.is_some() && !have_categories {
+                    let skipped = match object.override_plugin_sets.is_some() && !have_categories {
                         true => object.rules.iter().take_while(|it| it.yields).count(),
                         false => {
                             let of_categories = object.without_rules.iter();
@@ -1552,7 +1557,7 @@ impl Config {
         // Other languages validate their own options.
         match config.is_javascript() {
             true => config.validate_language_options(&language_options),
-            false => config.options_of_other_language = Some(language_options.clone()),
+            false => config.other_language_options = Some(language_options.clone()),
         }
         let language = self.language_of(registry, &config, &plugins);
         let line_breaks = language.map_or_else(Default::default, |it| it.0.line_breaks());
@@ -1566,7 +1571,7 @@ impl Config {
                     config.error = Some([&b"Key \"languageOptions\": "[..], &message].concat());
                     None
                 }
-                Err(Refusal::OnlyThePackage) => None,
+                Err(Refusal::NeedsPackage) => None,
             },
             None => None,
         };
@@ -1579,21 +1584,21 @@ impl Config {
         let settings = settings.unwrap_or_else(|| Arc::new(Json::Null));
         // oxlint has no such setting.
         config.has_unknown_resolver =
-            !self.prefers_typescript_rules && flat::names_unknown_resolver(&settings);
-        let make = || GlobalsOfOptions::new(&language_options, whose);
+            !self.prefers_typescript_rules && flat::settings_have_unknown_resolver(&settings);
+        let make = || GlobalsFromOptions::new(&language_options, whose);
         let globals = self.cache.globals(&language_options, make);
         config.language = LanguageOptions::from_json_with(&language_options, settings, globals);
         // oxlint has no `parser`.
-        config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
+        config.language.rejects_what_parser_rejects = !self.prefers_typescript_rules;
         config.language.is_oxlint = self.prefers_typescript_rules;
-        config.language.stands_alone = self.has_every_rule;
-        config.language.has_scopes_of_oxc = self.prefers_typescript_rules;
+        config.language.has_no_foreign_config = self.has_every_rule;
+        config.language.has_oxc_scopes = self.prefers_typescript_rules;
         config.language.eslint_8 = eslint_8;
         config.language.eslint_major = self.eslint_major;
         config.language.without_modules = self.without_modules;
         config.language.infers_globals = self.infers_globals;
         let decides_by_syntax = self.has_every_rule
-            && match config.language.follow_the_runtime(&language_options) {
+            && match config.language.resolve_source_type(&language_options) {
                 Ok(decides_by_syntax) => decides_by_syntax,
                 Err(message) => {
                     config.error.get_or_insert(message);
@@ -1603,20 +1608,20 @@ impl Config {
         let parser_location = (indices.iter().rev())
             .find_map(|index| self.objects.get(*index as usize)?.parser_location.as_ref());
         // Excludes the plugins that the file replaces with another plugin of the same name.
-        let is_of_file = |place: u32| {
+        let belongs_to_file = |place: u32| {
             places.contains(&place) || !places.iter().any(|it| prefix_at(*it) == prefix_at(place))
         };
         let js_plugins: Cow<[Arc<js_plugin::Plugin>]> = match self.has_twins {
             false => Cow::Borrowed(&self.js_plugins),
-            true => (self.js_plugins.iter().zip(&self.js_plugin_places))
-                .filter(|it| is_of_file(*it.1))
+            true => (self.js_plugins.iter().zip(&self.js_plugin_location_indices))
+                .filter(|it| belongs_to_file(*it.1))
                 .map(|it| Arc::clone(it.0))
                 .collect(),
         };
         let js_locations: Cow<[(Box<[u8]>, Json)]> = match self.has_twins {
             false => Cow::Borrowed(&self.js_locations),
             true => (self.js_locations.iter().zip(0..))
-                .filter(|it| is_of_file(it.1))
+                .filter(|it| belongs_to_file(it.1))
                 .map(|it| it.0.clone())
                 .collect(),
         };
@@ -1626,7 +1631,7 @@ impl Config {
             .map(Box::from);
         config.changes_linter = (indices.iter())
             .any(|index| (self.objects.get(*index as usize)).is_some_and(|it| it.changes_linter));
-        if config.is_for_eslint() && !config.changes_linter {
+        if config.may_route_to_eslint() && !config.changes_linter {
             config.for_eslint = for_eslint::build(&for_eslint::Parts {
                 language: config.language_name.as_deref(),
                 language_options: &language_options,
@@ -1661,7 +1666,9 @@ impl Config {
                         .concat()
                     }),
                     plugin if plugins.contains(&plugin) => None,
-                    plugin if Plugin::of_prefix(plugin).is_some_and(Plugin::is_always_there) => {
+                    plugin
+                        if Plugin::from_prefix(plugin).is_some_and(Plugin::is_always_available) =>
+                    {
                         None
                     }
                     plugin => Some(
@@ -1704,7 +1711,7 @@ impl Config {
             // Except for a rule written with oxlint's name for the built-in plugin (`node/..`), or one that comes from
             // a category.
             let is_native_for_oxlint =
-                self.prefers_typescript_rules && setting.written_for.is_some();
+                self.prefers_typescript_rules && setting.builtin_plugin.is_some();
             let is_hidden = js.is_some()
                 && self.accepts_all_plugins
                 && !is_native_for_oxlint
@@ -1767,7 +1774,7 @@ impl Config {
                 }
                 None => None,
             };
-            let reported_as = self.reported_as(registry, entry, setting.written_for);
+            let reported_as = self.reported_as(registry, entry, setting.builtin_plugin);
             config.has_named_rules |= name.is_some();
             config.may_hand_back |= or_else.is_some() && setting.severity != Severity::Off;
             config.rules.push(
@@ -1783,9 +1790,10 @@ impl Config {
                 it.severity != Severity::Off && it.entry.meta.name == "no-unused-vars"
             };
             config.language.parser_tracks_names = !config.rules.iter().any(makes_variables);
-            let lacking = (config.rules.iter())
-                .filter(|it| it.severity != Severity::Off && oxlint_lacks(it.reported_as()));
-            config.language.rules_that_oxlint_lacks = lacking.map(|it| it.entry.meta).collect();
+            let lacking = (config.rules.iter()).filter(|it| {
+                it.severity != Severity::Off && is_missing_in_oxlint(it.reported_as())
+            });
+            config.language.rules_missing_in_oxlint = lacking.map(|it| it.entry.meta).collect();
         }
         // oxlint looks up the severity of a tsgolint report by the rule's bare name, and finds ESLint's rule first if it's on.
         if self.prefers_typescript_rules {
@@ -1828,7 +1836,7 @@ impl Config {
             let is_foreign =
                 |it: &&&[u8]| config.foreign_plugins.iter().any(|other| **other == ***it);
             let built_in = plugins.iter().filter(|it| !is_foreign(it));
-            for plugin in built_in.filter_map(|it| Plugin::of_prefix(it)) {
+            for plugin in built_in.filter_map(|it| Plugin::from_prefix(it)) {
                 if !implemented.contains(&plugin) {
                     implemented.push(plugin);
                 }
@@ -1858,7 +1866,7 @@ impl Config {
             })
             .collect();
         // A rule that isn't specific to the language belongs to a package, or expects JavaScript that isn't there.
-        let is_all_here = on().all(|it| !it.entry.meta.languages.is_empty())
+        let is_fully_native = on().all(|it| !it.entry.meta.languages.is_empty())
             && unsupported.is_empty()
             && (config.js_rules.iter()).all(|it| it.severity == Severity::Off)
             && config.skipped == Skipped::None
@@ -1874,7 +1882,7 @@ impl Config {
                 .concat(),
             );
         }
-        config.dialect = dialect.filter(|_| is_all_here);
+        config.dialect = dialect.filter(|_| is_fully_native);
         config
     }
 
@@ -1893,7 +1901,7 @@ impl Config {
             && !config.foreign_plugins.iter().any(|it| **it == *prefix)
             && !self.is_legacy
             && !self.prefers_typescript_rules;
-        let language = registry.language(Plugin::of_prefix(prefix)?, name)?;
+        let language = registry.language(Plugin::from_prefix(prefix)?, name)?;
         is_built_in.then_some((language, name))
     }
 }

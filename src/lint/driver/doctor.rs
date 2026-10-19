@@ -91,7 +91,7 @@ pub(crate) struct Kinds(Vec<(Vec<u8>, usize)>);
 
 impl Kinds {
     pub(crate) fn add(&mut self, path: &[u8]) {
-        self.add_ending(crate::fmt::ending_of(path), 1);
+        self.add_ending(crate::fmt::extension_or_name(path), 1);
     }
 
     /// Adds `count` files with the extension `ending`. For a file without a dot, `ending` is its whole name.
@@ -369,7 +369,7 @@ pub(crate) fn lint(
             Route::Unsupported => {
                 not_linted.add(&target.path);
                 lacks_eslint |= target.loaded.flavor == Flavor::Eslint
-                    && config.route_as_it_is(&target.path) == Route::Eslint;
+                    && config.route_without_processor(&target.path) == Route::Eslint;
             }
             Route::Native | Route::Language | Route::Processor => {
                 files += 1;
@@ -449,9 +449,9 @@ pub(crate) fn lint(
     let mut notes = std::mem::take(&mut *loader.warnings.lock());
     notes.append(&mut *loader.advice.lock());
 
-    let ignored = loader.passed_over().map(|it| &it.0[..]);
+    let ignored = loader.ignored_eslint_config().map(|it| &it.0[..]);
 
-    let bunfig = (options.has_section_of_bunfig).then_some(&options.bunfig[..]);
+    let bunfig = (options.has_bunfig_section).then_some(&options.bunfig[..]);
     let mut out = Vec::new();
     if how.as_json {
         let javascript = javascript.iter().map(|it| (it.0.clone(), texts(&it.1)));

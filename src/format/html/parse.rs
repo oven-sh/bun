@@ -154,7 +154,7 @@ impl<'a> Context<'a, '_> {
         let parser::ParseResult { root, errors, .. } =
             self.angular_html_parser_parse(range, &options, true)?;
         // A top-level void element makes Prettier report the second result's errors.
-        let mut has_errors_of_second = false;
+        let mut reports_second_result_errors = false;
         let is_html = self.tree.children(root).any(|id| {
             let node = &self.tree[id];
             match node.kind {
@@ -170,7 +170,7 @@ impl<'a> Context<'a, '_> {
         }
         let mut second: Option<parser::ParseResult<'a>> = None;
         // The second result's first error, before the errors are sorted.
-        let mut first_of_second = None;
+        let mut second_result_first_error = None;
         // The first top-level node of the second result that doesn't start before the current element.
         let mut candidate = None;
         let mut next = self.tree.first_child(root);
@@ -208,14 +208,14 @@ impl<'a> Context<'a, '_> {
                 None => {
                     let second =
                         second.insert(self.angular_html_parser_parse(range, &options, false)?);
-                    first_of_second = second.errors.first().copied();
+                    second_result_first_error = second.errors.first().copied();
                     crate::sort::sort_by_key(&mut second.errors[..], |it| it.at);
                     candidate = self.tree.first_child(second.root);
                     &*second
                 }
             };
             if is_void {
-                has_errors_of_second = true;
+                reports_second_result_errors = true;
             } else {
                 // Without an end tag, Prettier throws when it reads the end tag's span.
                 let first = second
@@ -225,7 +225,7 @@ impl<'a> Context<'a, '_> {
                     .take_while(|it| end_span.is_none_or(|span| it.at < span.end));
                 if let Some(&first) = errors.clone().next() {
                     let error = errors
-                        .find(|it| it.kind.is_of_lexer())
+                        .find(|it| it.kind.is_lexer_error())
                         .map_or(first, |it| *it);
                     return Err(ParseError::Syntax(error));
                 }
@@ -245,8 +245,8 @@ impl<'a> Context<'a, '_> {
                 self.tree.replace(id, same);
             }
         }
-        let error = match has_errors_of_second {
-            true => first_of_second,
+        let error = match reports_second_result_errors {
+            true => second_result_first_error,
             false => errors.first().copied(),
         };
         match error {

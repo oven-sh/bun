@@ -1,4 +1,4 @@
-use crate::rules::no_unnecessary_template_expression::binding_needed_in_place_of;
+use crate::rules::no_unnecessary_template_expression::min_precedence_at;
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::utils::visible::{is_declared_again, is_only_declaration};
@@ -95,7 +95,7 @@ fn fix<'a>(
     // The span to replace, the name with its type parameters, and the statement's span starting at `export`.
     let (replaced, name, export) = match owner {
         Owner::TypeLiteral(literal) => {
-            if binding_needed_in_place_of(literal) > 0 {
+            if min_precedence_at(literal) > 0 {
                 suggestion.insert(0, b'(');
                 suggestion.push(b')');
             }
@@ -179,7 +179,7 @@ fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunc
 
 /// oxlint only checks a type literal that's a type annotation or an alias's type, a member of a union in one of those
 /// positions, or a member of an intersection that's an alias's type. It skips `a as { (): void }` and type arguments.
-fn oxlint_looks_at(literal: TypeNode) -> bool {
+fn oxlint_checks_literal(literal: TypeNode) -> bool {
     let is_annotated = |node: Node| matches!(node, Node::VarDecl(_) | Node::Param(_) | Node::Member(_) | Node::Func(_));
     let is_alias = |node: Node| matches!(node, Node::Stmt(it) if it.tag() == StmtTag::TypeAlias);
     if literal.is_parenthesized() {
@@ -226,7 +226,7 @@ impl Rule for PreferFunctionType {
         if let Some(member) = members.first()
             && members.len() == 1
             && matches!(member.kind(), MemberKind::CallSignature | MemberKind::ConstructSignature)
-            && (!cx.language().is_oxlint || oxlint_looks_at(literal))
+            && (!cx.language().is_oxlint || oxlint_checks_literal(literal))
         {
             check_member(member, Owner::TypeLiteral(literal), cx);
         }

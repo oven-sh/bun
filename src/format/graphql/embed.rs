@@ -25,7 +25,7 @@ fn nodes_with_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> [Option
 
 /// True if a comment could specify the language of the template `e`. A cheap check before trying each embedded
 /// language.
-pub(crate) fn is_behind_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn may_have_language_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     (nodes_with_language_comment(e, e.ast_parent())
         .into_iter()
         .flatten())
@@ -179,7 +179,7 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         return false;
     };
     is_candidate(quasi, template, f)
-        && (crate::css::embed::tag_alone_decides_what_is_around_a_template(f)
+        && (crate::css::embed::tag_alone_decides_template_layout(f)
             || (!is_blank_template(template) && parse(template).is_some()))
 }
 

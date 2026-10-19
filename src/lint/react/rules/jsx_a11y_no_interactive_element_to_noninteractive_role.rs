@@ -35,7 +35,7 @@ impl<const REVERSED: bool> Rule for NoElementToOtherRole<REVERSED> {
                     ("li", &["menuitem", "menuitemcheckbox", "menuitemradio", "row", "tab", "treeitem"]),
                     ("fieldset", &["radiogroup", "presentation"]),
                 ]),
-                (false, _) => NamesByElement::of_option(options.object(0), ""),
+                (false, _) => NamesByElement::from_option_except(options.object(0), ""),
             },
         }
     }

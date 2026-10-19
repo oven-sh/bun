@@ -797,7 +797,7 @@ impl<'p> Checker<'p, '_> {
             _ => None,
         };
         declared.map_or((1, (false, 0, 0)), |(file, pos)| {
-            (0, self.place_in_program_order(file, pos))
+            (0, self.position_in_program_order(file, pos))
         })
     }
 

@@ -169,7 +169,7 @@ fn is_range_test(node: Node) -> bool {
 
 /// Returns whether oxlint adds a space before, and after, the flipped comparison at `whole`. It goes by the adjacent
 /// characters.
-fn needs_spaces_for_oxlint(source: &[u8], whole: Span, left: Expr, right: Expr) -> (bool, bool) {
+fn oxlint_needs_spaces(source: &[u8], whole: Span, left: Expr, right: Expr) -> (bool, bool) {
     let is_literal_or_name = |it: Expr| {
         !it.is_parenthesized()
             && matches!(
@@ -227,7 +227,7 @@ fn flipped_text<'a>(
         })
     };
     let (needs_space_before, needs_space_after) = match file.language().is_oxlint {
-        true => needs_spaces_for_oxlint(file.text(), whole, left_side, right_side),
+        true => oxlint_needs_spaces(file.text(), whole, left_side, right_side),
         false => (needs_space_before(), needs_space_after()),
     };
     let space = |is_needed: bool| -> &'static [u8] { if is_needed { b" " } else { b"" } };

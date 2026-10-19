@@ -18,16 +18,16 @@ pub(crate) struct Ignores {
     directory: Vec<u8>,
     rules: IgnoreRules,
     /// Parsed and matched the way Prettier does it.
-    is_of_prettier: bool,
+    matches_like_prettier: bool,
     /// From `info/exclude`, which doesn't apply to anything outside the working tree.
-    is_of_repository: bool,
+    is_info_exclude: bool,
     above: Option<Arc<Ignores>>,
 }
 
 impl Ignores {
     /// True if one of the leading `..` in `path` is ignored. The `ignore` package treats them like any other directory,
     /// so `.*` matches them, and with them everything outside the ignore file's directory.
-    fn ignores_a_way_up(&self, path: &[u8]) -> bool {
+    fn ignores_leading_dotdot(&self, path: &[u8]) -> bool {
         let ups = strings::split(path, b"/")
             .take_while(|name| *name == b"..")
             .count();
@@ -41,13 +41,13 @@ impl Ignores {
 pub(crate) type Chain = Option<Arc<Ignores>>;
 
 /// How oxlint and oxfmt parse the lines, with the `ignore` crate: `{a,b}` means `a` or `b`.
-const OF_OXC: IgnoreOptions = IgnoreOptions {
+const OXC_OPTIONS: IgnoreOptions = IgnoreOptions {
     has_braces: true,
     ignores_case: false,
 };
 
 /// How Prettier parses them, with the `ignore` package: braces are literal, and `readme.md` also matches `README.md`.
-const OF_PRETTIER: IgnoreOptions = IgnoreOptions {
+const PRETTIER_OPTIONS: IgnoreOptions = IgnoreOptions {
     has_braces: false,
     ignores_case: true,
 };
@@ -57,7 +57,7 @@ fn with_rules(
     directory: &[u8],
     rules: IgnoreRules,
     is_for_oxc: bool,
-    is_of_repository: bool,
+    is_info_exclude: bool,
 ) -> Chain {
     if rules.is_empty() {
         return chain;
@@ -65,14 +65,21 @@ fn with_rules(
     Some(Arc::new(Ignores {
         directory: directory.to_vec(),
         rules,
-        is_of_prettier: !is_for_oxc,
-        is_of_repository,
+        matches_like_prettier: !is_for_oxc,
+        is_info_exclude,
         above: chain,
     }))
 }
 
 fn rules_of(text: &[u8], is_for_oxc: bool) -> IgnoreRules {
-    IgnoreRules::from_text(text, if is_for_oxc { OF_OXC } else { OF_PRETTIER })
+    IgnoreRules::from_text(
+        text,
+        if is_for_oxc {
+            OXC_OPTIONS
+        } else {
+            PRETTIER_OPTIONS
+        },
+    )
 }
 
 /// Returns `chain` plus the lines of `text`, an ignore file's contents. They're relative to `directory`. With
@@ -93,15 +100,15 @@ pub(crate) fn with_lines<'l>(
     with_rules(
         chain,
         directory,
-        IgnoreRules::from_lines(lines, OF_OXC),
+        IgnoreRules::from_lines(lines, OXC_OPTIONS),
         is_for_oxc,
         false,
     )
 }
 
 /// Returns the first of `lines` that oxlint and oxfmt reject.
-pub(crate) fn refused_line<'l>(lines: impl IntoIterator<Item = &'l [u8]>) -> Option<Box<[u8]>> {
-    let rules = IgnoreRules::from_lines(lines, OF_OXC);
+pub(crate) fn rejected_line<'l>(lines: impl IntoIterator<Item = &'l [u8]>) -> Option<Box<[u8]>> {
+    let rules = IgnoreRules::from_lines(lines, OXC_OPTIONS);
     rules.refused().first().cloned()
 }
 
@@ -116,13 +123,13 @@ fn with_file(chain: Chain, directory: &[u8], file: &[u8], is_for_oxc: bool) -> C
 /// Returns `chain` plus `text`, the contents of a repository's `info/exclude`. The lines are relative to `root`, the
 /// root of the working tree.
 pub(crate) fn with_excludes(chain: Chain, root: &[u8], text: &[u8], is_for_oxc: bool) -> Chain {
-    let is_of_repository = true;
+    let is_info_exclude = true;
     with_rules(
         chain,
         root,
         rules_of(text, is_for_oxc),
         is_for_oxc,
-        is_of_repository,
+        is_info_exclude,
     )
 }
 
@@ -221,14 +228,15 @@ pub(crate) fn are_all_in_repositories<'p>(
         root.is_some()
     };
     let is_for_oxc = true;
-    let is_left_out =
-        |it: &[u8]| OfGit::above_and_in(it, true, is_for_oxc).is_directory_ignored_anywhere(it);
-    searched.all(|it| is_in_one(it) || is_left_out(it)) && named.all(is_in_one)
+    let is_skipped = |it: &[u8]| {
+        GitIgnores::above_and_in(it, true, is_for_oxc).is_directory_ignored_anywhere(it)
+    };
+    searched.all(|it| is_in_one(it) || is_skipped(it)) && named.all(is_in_one)
 }
 
 /// `.gitignore` and `info/exclude` for a search like oxlint's and oxfmt's, read the way the `ignore` crate reads them.
 #[derive(Clone, Default)]
-pub(crate) struct OfGit {
+pub(crate) struct GitIgnores {
     ignores: Chain,
     /// `info/exclude`. Every `.gitignore` takes precedence over it.
     excludes: Chain,
@@ -236,11 +244,11 @@ pub(crate) struct OfGit {
     stops_at_roots: bool,
     /// Find `info/exclude` the way the crate does. See [`common_directory`].
     is_for_oxc: bool,
-    /// Parse the lines the way Prettier does. See [`OF_PRETTIER`].
+    /// Parse the lines the way Prettier does. See [`PRETTIER_OPTIONS`].
     reads_like_prettier: bool,
 }
 
-impl OfGit {
+impl GitIgnores {
     /// For a search that starts in `directory`. `None` if `directory` or one of its parents is ignored, so it isn't
     /// searched. If any search in the run is outside a repository, repository roots stop none of them.
     pub(crate) fn for_search(
@@ -268,9 +276,9 @@ impl OfGit {
         .with_all_above_and_in(directory, None)
     }
 
-    /// Like [`OfGit::above_and_in`], for `bun fmt` without another tool's config. Lines are parsed the same way as in
-    /// `.prettierignore`. Outside a repository, Git ignores nothing and Prettier only reads the file in `cwd`, so files
-    /// above `cwd` are skipped.
+    /// Like [`GitIgnores::above_and_in`], for `bun fmt` without another tool's config. Lines are parsed the same way as
+    /// in `.prettierignore`. Outside a repository, Git ignores nothing and Prettier only reads the file in `cwd`, so
+    /// files above `cwd` are skipped.
     pub(crate) fn above_and_in_for_fmt(directory: &[u8], cwd: &[u8]) -> Self {
         Self {
             stops_at_roots: true,
@@ -351,7 +359,7 @@ impl OfGit {
 #[derive(Clone, Default)]
 pub(crate) struct Files {
     pub(crate) named: Chain,
-    of_git: OfGit,
+    git_ignores: GitIgnores,
 }
 
 impl Files {
@@ -362,7 +370,7 @@ impl Files {
     pub(crate) fn above_and_in(
         directory: &[u8],
         name: Option<&[u8]>,
-        of_git: OfGit,
+        git_ignores: GitIgnores,
         pipes: &fs::NamedPipes,
     ) -> Self {
         let mut named = None;
@@ -377,7 +385,7 @@ impl Files {
                 }
             }
         }
-        Self { named, of_git }
+        Self { named, git_ignores }
     }
 
     /// Adds the files in `directory`, which the search has just entered. `has` returns whether the directory has an
@@ -392,14 +400,14 @@ impl Files {
             let file = paths::join(directory, name);
             self.named = with_file(self.named, directory, &file, true);
         }
-        self.of_git = self.of_git.and_in(directory, has);
+        self.git_ignores = self.git_ignores.and_in(directory, has);
         self
     }
 
     /// True if `path` is ignored, assuming its parent directory isn't.
     pub(crate) fn is_ignored(&self, path: &[u8], is_directory: bool) -> bool {
         decide(&self.named, path, is_directory, false)
-            .or_else(|| self.of_git.decide(path, is_directory))
+            .or_else(|| self.git_ignores.decide(path, is_directory))
             .unwrap_or(false)
     }
 }
@@ -408,7 +416,7 @@ impl Files {
 /// command line. oxlint calls the `ignore` crate with both paths as typed:
 /// `Gitignore::new(file).matched(argument, false)`. If `argument` doesn't start with `file`'s directory, the lines are
 /// matched against all of `argument`.
-pub(crate) fn has_argument(text: &[u8], file: &[u8], argument: &[u8]) -> bool {
+pub(crate) fn ignores_argument(text: &[u8], file: &[u8], argument: &[u8]) -> bool {
     let mut root = &file[..strings::last_index_of_char(file, b'/').unwrap_or(0)];
     while let [rest @ .., b'/'] = root {
         root = rest;
@@ -422,7 +430,7 @@ pub(crate) fn has_argument(text: &[u8], file: &[u8], argument: &[u8]) -> bool {
     {
         path = rest.strip_prefix(b"/").unwrap_or(rest);
     }
-    IgnoreRules::from_text(text, OF_OXC).verdict(path, false) == Verdict::Ignored
+    IgnoreRules::from_text(text, OXC_OPTIONS).verdict(path, false) == Verdict::Ignored
 }
 
 /// True if `path` is ignored, assuming its parent directory isn't. The nearest file with a matching line decides, and
@@ -454,11 +462,11 @@ fn decide(chain: &Chain, path: &[u8], is_directory: bool, is_in_search: bool) ->
         let inside = match paths::inside(directory, path) {
             Some(inside) => Some(inside),
             // No pattern applies to the ignore file's own directory or to its parents.
-            None if is_at_or_above(path, directory) || ignores.is_of_repository => None,
+            None if is_at_or_above(path, directory) || ignores.is_info_exclude => None,
             // Prettier passes the `ignore` package `../src/a.js`, where a pattern without a `/` can match the name.
-            None if ignores.is_of_prettier => {
+            None if ignores.matches_like_prettier => {
                 from_outside = paths::relative(directory, path);
-                if ignores.ignores_a_way_up(&from_outside) {
+                if ignores.ignores_leading_dotdot(&from_outside) {
                     return Some(true);
                 }
                 Some(&from_outside[..])

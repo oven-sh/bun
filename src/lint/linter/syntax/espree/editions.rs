@@ -27,7 +27,7 @@ use bun_core::strings;
 const RESERVED_IN_ES3: &[u8] = b" abstract boolean byte char class double enum export extends final float goto implements import int interface long native package private protected public short static super synchronized throws transient volatile ";
 
 /// `keywords[5]`, with a space on both sides of each word.
-const KEYWORDS_OF_ES5: &[u8] = b" break case catch continue debugger default do else finally for function if return switch throw try var while with null true false instanceof typeof void delete new in this ";
+const ES5_KEYWORDS: &[u8] = b" break case catch continue debugger default do else finally for function if return switch throw try var while with null true false instanceof typeof void delete new in this ";
 
 /// The environments listed in `file`'s `/* eslint-env */` comments.
 fn environments_in_comments<'a>(file: &'a File<'a>) -> Vec<&'a [u8]> {
@@ -42,7 +42,7 @@ fn environments_in_comments<'a>(file: &'a File<'a>) -> Vec<&'a [u8]> {
 }
 
 /// The error espree throws for invalid `parserOptions`, before it reads the file.
-pub(crate) fn refused_options<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
+pub(crate) fn invalid_parser_options<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
     let eslint_8 = file.language().eslint_8.as_deref()?;
     eslint_8.edition(&environments_in_comments(file)).err()
 }
@@ -108,7 +108,7 @@ impl<'a> Checks<'a, '_> {
                 year => year.saturating_sub(2009),
             }),
         };
-        // Invalid options are reported by `refused_options`, without looking at the file.
+        // Invalid options are reported by `invalid_parser_options`, without looking at the file.
         let Ok(edition) = edition else {
             return;
         };
@@ -127,7 +127,7 @@ impl<'a> Checks<'a, '_> {
         self.newer_literals(edition);
         self.newer_module_syntax(edition);
         if edition == 3 {
-            self.words_of_es3();
+            self.es3_reserved_words();
         }
     }
 
@@ -169,7 +169,7 @@ impl<'a> Checks<'a, '_> {
                 }
                 Some(VarKind::Const) if edition == 5 => self.reserved(start),
                 Some(VarKind::Const) if edition == 3 => self.unexpected(self.after_token(start)),
-                Some(VarKind::Let) if edition < 6 => self.let_as_a_name(it, start, edition),
+                Some(VarKind::Let) if edition < 6 => self.let_as_identifier(it, start, edition),
                 _ => {}
             }
         }
@@ -185,7 +185,7 @@ impl<'a> Checks<'a, '_> {
     }
 
     /// `it` is a `let` declaration whose `let` is at `start`.
-    fn let_as_a_name(&mut self, it: Stmt<'a>, start: u32, edition: u32) {
+    fn let_as_identifier(&mut self, it: Stmt<'a>, start: u32, edition: u32) {
         if edition >= 5 && self.is_strict(Node::Stmt(it)) {
             return self.reserved(start);
         }
@@ -293,7 +293,7 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         let (start, params, close) = (it.estree_span().start, it.params(), it.close_paren());
-        let is_a_name = |it: Param<'a>| {
+        let is_plain_identifier = |it: Param<'a>| {
             it.default().is_none() && !it.is_rest() && matches!(it.pat().kind(), PatKind::Ident(_))
         };
         match (params.first(), close) {
@@ -303,7 +303,7 @@ impl<'a> Checks<'a, '_> {
             _ if it.is_async() && edition >= 6 => self.unexpected(arrow.start),
             (None, Some(close)) if !it.is_async() => self.unexpected(close),
             // `a = > b`
-            (Some(only), _) if !it.is_async() && params.len() == 1 && is_a_name(only) => {
+            (Some(only), _) if !it.is_async() && params.len() == 1 && is_plain_identifier(only) => {
                 self.unexpected(arrow.start + 1)
             }
             _ => self.when_read_to(arrow.start, |checks| {
@@ -741,10 +741,10 @@ impl<'a> Checks<'a, '_> {
     // ───────────────────────────── ES3 ─────────────────────────────
 
     /// `checkUnreserved` for the word at `at`.
-    fn word_of_es3(&mut self, at: u32) {
+    fn check_es3_word(&mut self, at: u32) {
         let word = self.token_at(at);
         let spaced = [b" ", word, b" "].concat();
-        if strings::contains(KEYWORDS_OF_ES5, &spaced) {
+        if strings::contains(ES5_KEYWORDS, &spaced) {
             self.fail(at, [b"Unexpected keyword '", word, b"'"].concat());
         } else if strings::contains(RESERVED_IN_ES3, &spaced) {
             self.reserved(at);
@@ -752,7 +752,7 @@ impl<'a> Checks<'a, '_> {
     }
 
     /// ES3 reserves more words, even as property names, and doesn't allow a trailing comma in an object literal.
-    fn words_of_es3(&mut self) {
+    fn es3_reserved_words(&mut self) {
         let file = self.file;
         for it in file.exprs_of_kind(ExprTag::Object) {
             let close = it.span().end.saturating_sub(1);
@@ -764,28 +764,28 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         for it in file.exprs_of_kind(ExprTag::Ident) {
-            self.word_of_es3(it.span().start);
+            self.check_es3_word(it.span().start);
         }
         for it in file.exprs_of_kind(ExprTag::Dot) {
             if let Some(name) = it.member_name_start() {
-                self.word_of_es3(name);
+                self.check_es3_word(name);
             }
         }
         for &id in file.pats_of(PatTag::Ident) {
-            self.word_of_es3(Pat::from_raw(file, id).span().start);
+            self.check_es3_word(Pat::from_raw(file, id).span().start);
         }
         for name in file.funcs().filter_map(Func::name) {
-            self.word_of_es3(name.start());
+            self.check_es3_word(name.start());
         }
         for it in file.stmts_of_kind(StmtTag::Labeled) {
-            self.word_of_es3(it.span().start);
+            self.check_es3_word(it.span().start);
         }
         file.every_prop(|prop| {
             if let Some(key) = prop.key()
                 && matches!(key.kind(), KeyKind::Ident(_))
                 && !prop.is_jsx_attribute()
             {
-                self.word_of_es3(key.span(file).start);
+                self.check_es3_word(key.span(file).start);
             }
         });
     }

@@ -93,12 +93,12 @@ struct PropertyInfo<'a> {
     node: Property<'a>,
     name: Option<&'a [u8]>,
     indexes: RefPropIndexes,
-    /// Index of its [`Alike`] group.
-    alike: usize,
+    /// Index of its [`IndexGroup`] group.
+    index_group: usize,
 }
 
 /// A component's properties that have the same indexes. They all compare the same way against any other property.
-struct Alike {
+struct IndexGroup {
     indexes: RefPropIndexes,
     count: u64,
     /// Position of the last one.
@@ -186,23 +186,23 @@ impl MethodsOrder {
     /// Upstream's `checkPropsOrder`, which compares every pair of properties. Two are in the wrong order if every index
     /// of the earlier one is higher than every index of the later one.
     fn check_props_order<'a>(&self, properties: &[Property<'a>], errors: &mut [Option<Error<'a>>]) {
-        let mut all_alike: Vec<Alike> = Vec::new();
+        let mut index_groups: Vec<IndexGroup> = Vec::new();
         let mut properties_infos = Vec::with_capacity(properties.len());
         for (i, &node) in properties.iter().enumerate() {
             let kinds = kinds_of(node);
             let name = get_property_name(node, kinds);
             let indexes = self.get_ref_prop_indexes(name, kinds);
-            let known = all_alike.iter().position(|it| it.indexes == indexes);
-            let next = all_alike.len();
-            let alike = known.unwrap_or(next);
+            let known = index_groups.iter().position(|it| it.indexes == indexes);
+            let next = index_groups.len();
+            let index_group = known.unwrap_or(next);
             if known.is_none() {
-                all_alike.push(Alike { indexes, count: 0, last: i, count_before: 0, last_before: i });
+                index_groups.push(IndexGroup { indexes, count: 0, last: i, count_before: 0, last_before: i });
             }
-            if let Some(it) = all_alike.get_mut(alike) {
+            if let Some(it) = index_groups.get_mut(index_group) {
                 it.count += 1;
                 it.last = i;
             }
-            properties_infos.push(PropertyInfo { node, name, indexes, alike });
+            properties_infos.push(PropertyInfo { node, name, indexes, index_group });
         }
         for (i, prop_a) in properties_infos.iter().enumerate() {
             let index_a = prop_a.indexes.last;
@@ -210,7 +210,7 @@ impl MethodsOrder {
             // Upstream's `storeError` keeps a candidate that's no farther than any earlier one, so this is the last of
             // the closest.
             let mut closest: Option<(u32, usize)> = None;
-            for it in &all_alike {
+            for it in &index_groups {
                 let (count, k) = if it.indexes.first > index_a {
                     (it.count_before, it.last_before)
                 } else if it.indexes.last < prop_a.indexes.first {
@@ -224,7 +224,7 @@ impl MethodsOrder {
                 }
                 score += count;
             }
-            if let Some(it) = all_alike.get_mut(prop_a.alike) {
+            if let Some(it) = index_groups.get_mut(prop_a.index_group) {
                 it.count_before += 1;
                 it.last_before = i;
             }

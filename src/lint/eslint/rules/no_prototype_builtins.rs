@@ -74,12 +74,12 @@ impl NoPrototypeBuiltins {
             _ => return,
         };
         // oxlint points at the callee.
-        let place = if cx.language().is_oxlint { callee.span() } else { property };
+        let location = if cx.language().is_oxlint { callee.span() } else { property };
         let hint = || match prop {
             "hasOwnProperty" => Some("Use Object.hasOwn(object, key) instead.".to_owned()),
             _ => Some(format!("Use Object.prototype.{prop}.call(object, value) instead.")),
         };
-        cx.report(place, PROTOTYPE_BUILD_IN).data("prop", prop).hint_with(hint).suggest_with(
+        cx.report(location, PROTOTYPE_BUILD_IN).data("prop", prop).hint_with(hint).suggest_with(
             CALL_OBJECT_PROTOTYPE,
             &[("prop", prop.as_bytes())],
             |fixer| {

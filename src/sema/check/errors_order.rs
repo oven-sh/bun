@@ -48,13 +48,18 @@ impl Checker<'_, '_> {
             return;
         }
         // `isInPropertyInitializerOrClassStaticBlock` can only be true inside one of these.
-        let is_place =
+        let is_property_or_static_block =
             |m: &&Member| matches!(m.kind, MemberKind::Property | MemberKind::StaticBlock);
-        let places = Places::new(hir.members.iter().filter(is_place).map(|m| m.loc));
+        let initializer_ranges = RangeSet::new(
+            hir.members
+                .iter()
+                .filter(is_property_or_static_block)
+                .map(|m| m.loc),
+        );
         for &e in index.of(ExprTag::Dot) {
             if !bound.is_unchecked(e.idx()) && !self.is_never_checked(hir[e].pos) {
-                let may_be_in_place = places.contain(hir[e].pos);
-                self.check_property_not_used_before_declaration(file, e, may_be_in_place);
+                let may_be_in_initializer = initializer_ranges.contain(hir[e].pos);
+                self.check_property_not_used_before_declaration(file, e, may_be_in_initializer);
             }
         }
     }
@@ -73,11 +78,11 @@ impl Checker<'_, '_> {
             return 0;
         };
         // Cases that `block_scoped_declaration` handles specially.
-        let is_more = SymFlags::MERGED
+        let special_flags = SymFlags::MERGED
             | SymFlags::FUNCTION
             | SymFlags::FUNCTION_SCOPED_VARIABLE
             | SymFlags::ASSIGNMENT;
-        if symbol.flags.intersects(is_more) {
+        if symbol.flags.intersects(special_flags) {
             return 0;
         }
         let mut statement = match declaration {
@@ -458,22 +463,22 @@ impl Checker<'_, '_> {
         &mut self,
         file: FileId,
         e: ExprId,
-        may_be_in_place: bool,
+        may_be_in_initializer: bool,
     ) {
         let hir = self.hir(file);
         let ExprKind::Dot { obj, name, .. } = hir[e].kind else {
             return;
         };
         let (node, right) = (hir.node(e), hir.name(hir.node(e)));
-        let is_in_place = may_be_in_place
+        let is_in_initializer = may_be_in_initializer
             && hir.is_in_property_initializer_or_class_static_block(node, false)
             && !hir.kind(hir.expression(node)).is_access_expression();
         // Elsewhere only a class declaration exported by a namespace is considered.
-        if !is_in_place && hir.classes.is_empty() {
+        if !is_in_initializer && hir.classes.is_empty() {
             return;
         }
         let object = self.type_of_expr(file, obj);
-        if !is_in_place
+        if !is_in_initializer
             && !matches!(
                 self.data(object),
                 TypeData::Anon {
@@ -506,7 +511,7 @@ impl Checker<'_, '_> {
         let is_optional = kind == Kind::PropertyDeclaration
             && flags.contains(Flags::OPTIONAL)
             && !flags.contains(Flags::ACCESSOR);
-        let code = if is_in_place
+        let code = if is_in_initializer
             && !is_optional
             && !(kind == Kind::MethodDeclaration && flags.contains(Flags::STATIC))
             && (self.p.files.options.use_define_for_class_fields

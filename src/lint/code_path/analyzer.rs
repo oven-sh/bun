@@ -42,7 +42,7 @@ bitflags::bitflags! {
         /// Not an ESTree node, and irrelevant to the analysis.
         const ABSENT = 1 << 6;
         /// It matters which of its children a node is. See `place_of_expr` and `preprocess`.
-        const PLACES_CHILDREN = 1 << 7;
+        const CHILD_POSITION_MATTERS = 1 << 7;
         /// Leaving it takes more work than just emitting pending segment changes.
         const HAS_EXIT = 1 << 8;
         /// There's work to do after it has been left.
@@ -237,7 +237,7 @@ fn place_of_expr<'a>(e: Expr<'a>, parent: Frame<'a>) -> Is {
                 )
                 && !e.is_parenthesized() =>
             {
-                Is::ABSENT | Is::PLACES_CHILDREN
+                Is::ABSENT | Is::CHILD_POSITION_MATTERS
             }
             ExprKind::Jsx(jsx) if jsx.tag() == Some(e) || jsx.close_tag() == Some(e) => {
                 Is::JSX_NAME
@@ -307,7 +307,7 @@ fn is_plain(node: Node) -> bool {
 #[inline]
 fn with_default(default: Option<Expr>) -> Is {
     match default {
-        Some(_) => Is::HAS_EXIT | Is::PLACES_CHILDREN,
+        Some(_) => Is::HAS_EXIT | Is::CHILD_POSITION_MATTERS,
         None => Is::empty(),
     }
 }
@@ -344,7 +344,7 @@ impl<'s, 'a> Builder<'s, 'a> {
 
     #[cold]
     fn forward(state: &mut State, cx: &mut Cx<'_, 'a>) {
-        let (file, store, node) = (cx.file, cx.store(), cx.node_of_event());
+        let (file, store, node) = (cx.file, cx.store(), cx.event_node());
         let head = SegmentIds::from_slice(state.head_segments());
         let current = std::mem::replace(&mut state.current_segments, head.clone());
         for (i, &id) in current.iter().enumerate() {
@@ -376,7 +376,7 @@ impl<'s, 'a> Builder<'s, 'a> {
         state.reset(store, path);
         self.states.push(state);
         self.is_settled = false;
-        let node = cx.node_of_event();
+        let node = cx.event_node();
         (cx.emit)(Event::CodePathStart(CodePath::new(cx.file, path), node));
     }
 
@@ -384,7 +384,7 @@ impl<'s, 'a> Builder<'s, 'a> {
         let Some(mut state) = self.states.pop() else {
             return;
         };
-        let (store, node) = (cx.store(), cx.node_of_event());
+        let (store, node) = (cx.store(), cx.event_node());
         self.is_settled = false;
         state.make_final(store);
         // `leaveFromCurrentSegment`
@@ -617,17 +617,17 @@ impl<'s, 'a> Builder<'s, 'a> {
             | ExprTag::AsConst => return may_throw,
             ExprTag::Yield => return Is::HAS_EXIT,
             ExprTag::Dot | ExprTag::Index | ExprTag::Call => match e.chain() {
-                Chain::No if is.contains(Is::JSX_NAME) => return Is::PLACES_CHILDREN,
+                Chain::No if is.contains(Is::JSX_NAME) => return Is::CHILD_POSITION_MATTERS,
                 Chain::No => return may_throw,
-                _ => Is::IN_CHAIN | Is::HAS_EXIT | Is::PLACES_CHILDREN,
+                _ => Is::IN_CHAIN | Is::HAS_EXIT | Is::CHILD_POSITION_MATTERS,
             },
             ExprTag::NonNull if is.contains(Is::CONTINUES_CHAIN) || is_non_null_after_chain(e) => {
-                Is::IN_CHAIN | Is::PLACES_CHILDREN
+                Is::IN_CHAIN | Is::CHILD_POSITION_MATTERS
             }
             ExprTag::Array | ExprTag::Spread | ExprTag::Object if is.contains(Is::PATTERN) => {
-                return Is::PLACES_CHILDREN;
+                return Is::CHILD_POSITION_MATTERS;
             }
-            ExprTag::Jsx => return Is::PLACES_CHILDREN,
+            ExprTag::Jsx => return Is::CHILD_POSITION_MATTERS,
             ExprTag::Binary | ExprTag::Assign | ExprTag::Cond => Is::empty(),
             _ => return Is::empty(),
         };
@@ -659,13 +659,13 @@ impl<'s, 'a> Builder<'s, 'a> {
             ExprKind::Binary { op, .. } => {
                 if let Some(kind) = choice_kind(op) {
                     state.push_choice_context(kind, is_forking_by_true_or_false(e, parent));
-                    more |= Is::HAS_EXIT | Is::PLACES_CHILDREN;
+                    more |= Is::HAS_EXIT | Is::CHILD_POSITION_MATTERS;
                 } else if op == BinOp::Comma {
-                    more |= Is::PLACES_CHILDREN;
+                    more |= Is::CHILD_POSITION_MATTERS;
                 }
             }
             ExprKind::Assign { op, .. } => {
-                more |= Is::PLACES_CHILDREN;
+                more |= Is::CHILD_POSITION_MATTERS;
                 if let Some(kind) = op.and_then(choice_kind) {
                     state.push_choice_context(kind, is_forking_by_true_or_false(e, parent));
                     more |= Is::HAS_EXIT;
@@ -675,7 +675,7 @@ impl<'s, 'a> Builder<'s, 'a> {
             }
             ExprKind::Cond { .. } => {
                 state.push_choice_context(ChoiceKind::Test, false);
-                more |= Is::HAS_EXIT | Is::PLACES_CHILDREN;
+                more |= Is::HAS_EXIT | Is::CHILD_POSITION_MATTERS;
             }
             _ => {}
         }
@@ -702,7 +702,7 @@ impl<'s, 'a> Builder<'s, 'a> {
             }
             StmtTag::If => {
                 state.push_choice_context(ChoiceKind::Test, false);
-                return Is::HAS_EXIT | Is::PLACES_CHILDREN;
+                return Is::HAS_EXIT | Is::CHILD_POSITION_MATTERS;
             }
             StmtTag::While => LoopKind::While,
             StmtTag::DoWhile => LoopKind::DoWhile,
@@ -717,7 +717,7 @@ impl<'s, 'a> Builder<'s, 'a> {
                 }
                 StmtKind::Try { finalizer, .. } => {
                     state.push_try_context(finalizer.is_some());
-                    return Is::HAS_EXIT | Is::PLACES_CHILDREN;
+                    return Is::HAS_EXIT | Is::CHILD_POSITION_MATTERS;
                 }
                 StmtKind::Labeled { label, body } if !is_breakable(body) => {
                     state.push_break_context(false, Some(label.atom()));
@@ -728,35 +728,35 @@ impl<'s, 'a> Builder<'s, 'a> {
             _ => return Is::empty(),
         };
         state.push_loop_context(kind, label_of(parent));
-        Is::HAS_EXIT | Is::PLACES_CHILDREN
+        Is::HAS_EXIT | Is::CHILD_POSITION_MATTERS
     }
 
     /// `enterNode`, up to where it calls the node's listeners.
     #[inline]
     fn enter(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        let is_placed = matches!(self.ancestors.last(), Some(parent) if parent.is.contains(Is::PLACES_CHILDREN));
+        let position_matters = matches!(self.ancestors.last(), Some(parent) if parent.is.contains(Is::CHILD_POSITION_MATTERS));
         let is_in_try = matches!(self.states.last(), Some(state) if state.is_in_try());
-        if self.is_settled && !is_placed && !is_in_try && is_plain(node) {
+        if self.is_settled && !position_matters && !is_in_try && is_plain(node) {
             let is = Is::empty();
             self.ancestors.push(Frame { node, is });
             return;
         }
-        self.enter_what_matters(node, emit);
+        self.enter_slow(node, emit);
     }
 
     #[inline(never)]
-    fn enter_what_matters(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
+    fn enter_slow(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
         self.is_settled = false;
         let cx = &mut Cx::new(self.file, self.store, node, emit);
         let parent = self.ancestors.last().copied();
         let mut is = Is::empty();
         if let Some(parent) = parent
-            && parent.is.contains(Is::PLACES_CHILDREN)
+            && parent.is.contains(Is::CHILD_POSITION_MATTERS)
         {
             match node {
                 Node::Expr(e) => is = place_of_expr(e, parent),
                 Node::Prop(_) if parent.is.contains(Is::PATTERN) => {
-                    is = Is::PATTERN | Is::PLACES_CHILDREN
+                    is = Is::PATTERN | Is::CHILD_POSITION_MATTERS
                 }
                 _ => {}
             }
@@ -793,7 +793,7 @@ impl<'s, 'a> Builder<'s, 'a> {
                 MemberKind::Property
                     if member.init().is_some() && is_property_definition(member) =>
                 {
-                    Is::PLACES_CHILDREN
+                    Is::CHILD_POSITION_MATTERS
                 }
                 _ => Is::empty(),
             },
@@ -803,7 +803,7 @@ impl<'s, 'a> Builder<'s, 'a> {
                 if !is_first && let Some(state) = self.states.last_mut() {
                     state.fork_path(cx.store());
                 }
-                Is::HAS_EXIT | Is::PLACES_CHILDREN
+                Is::HAS_EXIT | Is::CHILD_POSITION_MATTERS
             }
             Node::Param(param) => with_default(param.default()),
             Node::PatElem(element) => with_default(element.default()),
@@ -936,11 +936,11 @@ impl<'s, 'a> Builder<'s, 'a> {
         if is.contains(Is::ABSENT) || self.is_settled && !is.contains(Is::HAS_EXIT) {
             return;
         }
-        self.leave_what_matters(node, is, emit);
+        self.leave_slow(node, is, emit);
     }
 
     #[inline(never)]
-    fn leave_what_matters(&mut self, node: Node<'a>, is: Is, emit: &mut dyn FnMut(Event<'a>)) {
+    fn leave_slow(&mut self, node: Node<'a>, is: Is, emit: &mut dyn FnMut(Event<'a>)) {
         let cx = &mut Cx::new(self.file, self.store, node, emit);
         let store = cx.store();
         let dont_forward = is.contains(Is::HAS_EXIT)
@@ -1079,7 +1079,7 @@ impl<'a> Recorder<'_, 'a> {
             };
             self.enter(node);
             // Until something may have thrown in a `try` block, every name matters.
-            let is_left_out = matters.is_some_and(|it| it.is_nothing_in(node))
+            let is_left_out = matters.is_some_and(|it| it.can_skip(node))
                 && !self.builder.is_before_first_throwable()
                 || is_shallow && self.builder.has_started_inner_code_path();
             if is_left_out {
@@ -1148,7 +1148,7 @@ pub(super) fn steps_of<'a>(
             owner @ Node::Member(_) => (Some((owner, Is::empty())), root),
             owner => (None, owner),
         },
-        Node::Expr(_) => (Some((root.parent(), Is::PLACES_CHILDREN)), root),
+        Node::Expr(_) => (Some((root.parent(), Is::CHILD_POSITION_MATTERS)), root),
         _ => (None, root),
     };
     if let Some((node, is)) = around {
@@ -1208,12 +1208,12 @@ pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
         enter,
         exit,
     };
-    let tell_nobody = &mut |_| {};
-    let cx = &mut Cx::new(file, store, node, tell_nobody);
+    let discard_events = &mut |_| {};
+    let cx = &mut Cx::new(file, store, node, discard_events);
     recorder.builder.start_code_path(cx);
     let mut children = node.children();
     children.reverse();
-    let matters = file.lazy.code_paths.what_matters_to_nobody(file);
+    let matters = file.lazy.code_paths.matters_without_listeners(file);
     recorder.walk(children, Some(matters), true);
     let is_end_reachable =
         matches!(recorder.builder.states.last(), Some(state) if state.is_reachable(store));

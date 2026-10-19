@@ -93,7 +93,7 @@ impl Rule for NoDeprecated {
         match e.kind() {
             ExprKind::Ident(name) => {
                 // The `b` in `a[b]` is a property, and the one in `import(b)` is inside an import.
-                let is_passed_over = || match e.parent() {
+                let is_skipped = || match e.parent() {
                     Node::Expr(parent) => match parent.kind() {
                         ExprKind::Index { index, .. } => index == e,
                         ExprKind::ImportCall { .. } => true,
@@ -101,9 +101,7 @@ impl Rule for NoDeprecated {
                     },
                     _ => false,
                 };
-                if cx.state.deprecated.contains_key(&name)
-                    && !e.is_jsx_tag_name()
-                    && !is_passed_over()
+                if cx.state.deprecated.contains_key(&name) && !e.is_jsx_tag_name() && !is_skipped()
                 {
                     check_identifier(name, e.span(), node, cx);
                 }

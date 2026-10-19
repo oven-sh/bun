@@ -26,7 +26,7 @@ impl Rule for NoRedundantRoles {
     no_state!();
 
     fn new(options: &Options) -> Self {
-        NoRedundantRoles { allowed_redundant_roles: NamesByElement::of_option(options.object(0), "") }
+        NoRedundantRoles { allowed_redundant_roles: NamesByElement::from_option_except(options.object(0), "") }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -55,7 +55,7 @@ impl Rule for NoRedundantRoles {
 
 impl NoRedundantRoles {
     fn is_allowed_redundant_role(&self, element: &[u8], role: &str) -> bool {
-        (self.allowed_redundant_roles.has_if_named(element, role.as_bytes()))
+        (self.allowed_redundant_roles.has_if_listed(element, role.as_bytes()))
             .unwrap_or_else(|| element == b"nav" && role == "navigation")
     }
 }

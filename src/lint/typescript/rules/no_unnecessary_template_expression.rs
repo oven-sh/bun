@@ -301,7 +301,7 @@ fn is_type_of_expression(template: TypeNode) -> bool {
 
 /// Returns the lowest precedence a type can have to replace `ty` without parentheses, or 0 if any type works there. A
 /// conditional or function type has precedence 0, a union 1, an intersection 2, `keyof T` 3.
-pub(crate) fn binding_needed_in_place_of(ty: TypeNode) -> u8 {
+pub(crate) fn min_precedence_at(ty: TypeNode) -> u8 {
     let is_ty = |it: TypeNode| it.span() == ty.span();
     match ty.parent() {
         Node::TupleElem(element) if element.is_optional() && element.name().is_none() => 4,
@@ -328,7 +328,7 @@ fn moved_type_needs_parentheses(template: TypeNode, moved: TypeNode) -> bool {
         TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::Unique(_) | TypeKind::Infer(_) => 3,
         _ => return false,
     };
-    binding < binding_needed_in_place_of(template)
+    binding < min_precedence_at(template)
 }
 
 /// True if `` `${interpolation}` `` is probably there to convert whatever a caller passes to a string. The declared

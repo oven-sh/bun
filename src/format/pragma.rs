@@ -15,7 +15,7 @@ use std::borrow::Cow;
 /// The decision made for a file before it's parsed.
 pub enum BeforeParsing<'t> {
     /// Skip it. The file must not be formatted.
-    LeaveAsItIs,
+    LeaveUnchanged,
     /// Parse and format this text.
     Format(Cow<'t, [u8]>),
 }
@@ -44,7 +44,7 @@ pub fn before_parsing_css<'t>(
     if (options.require_pragma && !has_pragma(content))
         || (options.check_ignore_pragma && has_ignore_pragma(content))
     {
-        return BeforeParsing::LeaveAsItIs;
+        return BeforeParsing::LeaveUnchanged;
     }
     // Range formatting never inserts the pragma.
     if options.insert_pragma && !options.require_pragma && is_whole_file && !has_pragma(content) {

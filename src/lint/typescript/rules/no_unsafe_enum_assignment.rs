@@ -48,11 +48,11 @@ pub struct State<'a> {
     /// The array and object literals that have something to report, unless they turn out to be in `checked_nodes`.
     pending: Vec<Expr<'a>>,
     /// True if the node being checked is an assignment, a mutation or an assertion.
-    is_about_itself: bool,
+    defers_reports: bool,
     /// Deferred reports about those nodes, with the enum names. Such a node can also be reported at the same location
     /// as part of an enclosing node. ESLint puts that report first, and for a part of a literal it's only known at the
     /// end.
-    about_themselves: Vec<(Span, Message, Vec<u8>)>,
+    deferred_reports: Vec<(Span, Message, Vec<u8>)>,
     types: TypeCache<'a>,
     /// Caches [`describe_enum_types`] of a single type.
     descriptions: IdMap<Type<'a>, Vec<u8>>,
@@ -310,8 +310,8 @@ fn report<'a>(cx: &mut Context<'a>, node: Span, message: Message, receiver_types
             .clone(),
         _ => describe_enum_types(receiver_types),
     };
-    if cx.state.is_about_itself {
-        return cx.state.about_themselves.push((node, message, enum_names));
+    if cx.state.defers_reports {
+        return cx.state.deferred_reports.push((node, message, enum_names));
     }
     cx.report(node, message).data("enumNames", enum_names);
 }
@@ -380,14 +380,14 @@ fn is_safe_enum_bitwise_expression<'a>(node: Expr<'a>, receiver_type: Type<'a>) 
             _ => break,
         }
     }
-    let is_of_the_type =
+    let matches_receiver_type =
         |operand: Expr<'a>| !is_mismatched_enum_assignment_types(operand.ty(), receiver_type);
     // The result for `first`, and then for the expression whose first operand it is.
     let mut is_safe = false;
     for (first, other) in operands.into_iter().rev() {
-        is_safe = (is_safe || is_of_the_type(first))
+        is_safe = (is_safe || matches_receiver_type(first))
             && other.is_none_or(|it| {
-                is_safe_enum_bitwise_expression(it, receiver_type) || is_of_the_type(it)
+                is_safe_enum_bitwise_expression(it, receiver_type) || matches_receiver_type(it)
             });
     }
     is_safe
@@ -817,7 +817,7 @@ impl Rule for NoUnsafeEnumAssignment {
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        cx.state.is_about_itself = matches!(node.tag(), ExprTag::Assign | ExprTag::Unary | ExprTag::As);
+        cx.state.defers_reports = matches!(node.tag(), ExprTag::Assign | ExprTag::Unary | ExprTag::As);
         match node.tag() {
             // Handled as an expression so that it's visited before its body. Both can be reported at the same location,
             // and ESLint reports the arrow function first.
@@ -865,7 +865,7 @@ impl Rule for NoUnsafeEnumAssignment {
             }
             _ => {}
         }
-        cx.state.is_about_itself = false;
+        cx.state.defers_reports = false;
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -962,7 +962,7 @@ impl Rule for NoUnsafeEnumAssignment {
                 check_literal(cx, literal, true);
             }
         }
-        for (node, message, enum_names) in std::mem::take(&mut cx.state.about_themselves) {
+        for (node, message, enum_names) in std::mem::take(&mut cx.state.deferred_reports) {
             cx.report(node, message).data("enumNames", enum_names);
         }
     }

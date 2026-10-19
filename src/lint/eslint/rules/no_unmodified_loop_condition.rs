@@ -37,11 +37,11 @@ struct Condition<'a> {
     inside: Span,
     /// The `init` of a `for`.
     outside: Option<Span>,
-    /// The result of [`Functions::around`] for the loop.
+    /// The result of [`Functions::enclosing_id`] for the loop.
     function: u32,
     is_modified: bool,
     /// True if it's in a conditional expression and `checkConditionalExpressions` is on.
-    is_alone: bool,
+    is_in_conditional: bool,
 }
 
 /// Memos for finding a node's enclosing function.
@@ -55,7 +55,7 @@ struct Functions<'a> {
 impl<'a> Functions<'a> {
     /// Returns an ID for the function that `node` is in, or 0 outside a function. oxlint doesn't count code in a
     /// function nested in a loop as part of the loop. A static block isn't a function. Always 0 for ESLint.
-    fn around(&mut self, node: Node<'a>) -> u32 {
+    fn enclosing_id(&mut self, node: Node<'a>) -> u32 {
         if !self.is_oxlint {
             return 0;
         }
@@ -64,24 +64,24 @@ impl<'a> Functions<'a> {
         function.map_or(0, |it| it.span().start + 1)
     }
 
-    fn places(&mut self, references: &[Reference<'a>]) -> Places {
-        let mut places: Places = references.iter().map(|it| (self.around(it.node()), it.span())).collect();
-        utils::sort::sort_unstable_by_key(&mut places, |it| (it.0, it.1.start));
-        places
+    fn sorted(&mut self, references: &[Reference<'a>]) -> SortedReferences {
+        let mut sorted: SortedReferences = references.iter().map(|it| (self.enclosing_id(it.node()), it.span())).collect();
+        utils::sort::sort_unstable_by_key(&mut sorted, |it| (it.0, it.1.start));
+        sorted
     }
 }
 
-/// References, each with its [`Functions::around`] ID, sorted by ID and then by position.
-type Places = Vec<(u32, Span)>;
+/// References, each with its [`Functions::enclosing_id`] ID, sorted by ID and then by position.
+type SortedReferences = Vec<(u32, Span)>;
 
 /// The writes to a variable, and the calls that may write to it.
 struct Modifiers<'a> {
     /// The references that write to it.
     all: Vec<Reference<'a>>,
-    writes: Places,
+    writes: SortedReferences,
     /// The references to the function declarations that contain one of the writes. Computed the first time a loop has
     /// none of `writes` in it.
-    calls: Option<Places>,
+    calls: Option<SortedReferences>,
 }
 
 /// oxlint's `is_function_invocation_reference`
@@ -99,7 +99,7 @@ impl<'a> Modifiers<'a> {
     fn new(references: &mut dyn Iterator<Item = Reference<'a>>, functions: &mut Functions<'a>) -> Self {
         let all: Vec<Reference<'a>> = references.filter(|it| is_write_reference(*it, functions.is_oxlint)).collect();
         Modifiers {
-            writes: functions.places(&all),
+            writes: functions.sorted(&all),
             all,
             calls: None,
         }
@@ -122,17 +122,17 @@ impl<'a> Modifiers<'a> {
                     calls.extend(variable.references().filter(|it| !functions.is_oxlint || is_invocation(it)));
                 }
             }
-            functions.places(&calls)
+            functions.sorted(&calls)
         })
     }
 }
 
 impl<'a> Condition<'a> {
-    /// ESLint's `isInLoop`, for any of `places`.
-    fn is_any_in_loop(&self, places: &[(u32, Span)]) -> bool {
+    /// ESLint's `isInLoop`, for any of `sorted`.
+    fn is_any_in_loop(&self, sorted: &[(u32, Span)]) -> bool {
         let within = |span: Span| {
-            places.partition_point(|it| (it.0, it.1.start) < (self.function, span.start))
-                ..places.partition_point(|it| (it.0, it.1.end) <= (self.function, span.end))
+            sorted.partition_point(|it| (it.0, it.1.start) < (self.function, span.start))
+                ..sorted.partition_point(|it| (it.0, it.1.end) <= (self.function, span.end))
         };
         let (inside, outside) = (within(self.inside), self.outside.map_or(0..0, within));
         inside.start < inside.end && (inside.start < outside.start || outside.end < inside.end)
@@ -153,8 +153,8 @@ struct Above<'a> {
     statement: Option<Stmt<'a>>,
     /// The outermost `BinaryExpression` or `ConditionalExpression` that the node is, or is in.
     group: Option<Expr<'a>>,
-    /// [`Condition::is_alone`]
-    is_alone: bool,
+    /// [`Condition::is_in_conditional`]
+    is_in_conditional: bool,
 }
 
 #[derive(Default)]
@@ -188,7 +188,7 @@ fn is_write_reference(reference: Reference, is_oxlint: bool) -> bool {
 
 /// oxlint doesn't stop at a call or member expression that's the root of an optional chain, or at a member expression
 /// that's written to.
-fn is_passed_by_oxlint(node: Node) -> bool {
+fn oxlint_looks_through(node: Node) -> bool {
     let is_updated = |e: Expr| {
         matches!(e.parent(), Node::Expr(parent) if matches!(
             parent.kind(),
@@ -209,7 +209,7 @@ fn has_dynamic_expressions(root: Expr, is_oxlint: bool) -> bool {
         match utils::estree_type_name(node) {
             "CallExpression" | "MemberExpression" | "NewExpression" | "TaggedTemplateExpression"
             | "YieldExpression"
-                if !(is_oxlint && is_passed_by_oxlint(node)) =>
+                if !(is_oxlint && oxlint_looks_through(node)) =>
             {
                 return true;
             }
@@ -223,10 +223,10 @@ fn has_dynamic_expressions(root: Expr, is_oxlint: bool) -> bool {
 impl NoUnmodifiedLoopCondition {
     /// Walks up from `node`. `child` is the child the walk came from.
     fn look_above<'a>(&self, mut child: Node<'a>, mut node: Node<'a>, is_oxlint: bool) -> Above<'a> {
-        let (mut group, mut is_alone) = (None, false);
+        let (mut group, mut is_in_conditional) = (None, false);
         loop {
             let node_type = utils::estree_type_name(node);
-            let is_end = is_sentinel(node_type) && !(is_oxlint && is_passed_by_oxlint(node));
+            let is_end = is_sentinel(node_type) && !(is_oxlint && oxlint_looks_through(node));
             if is_end || matches!(node, Node::File(_)) {
                 let statement = node.as_stmt().filter(|it| {
                     let test = match it.kind() {
@@ -236,7 +236,7 @@ impl NoUnmodifiedLoopCondition {
                     };
                     is_end && test.is_some_and(|test| Node::Expr(test) == child)
                 });
-                return Above { statement, group, is_alone };
+                return Above { statement, group, is_in_conditional };
             }
             if (node_type == "BinaryExpression"
                 || !self.check_conditional_expressions && node_type == "ConditionalExpression")
@@ -244,7 +244,7 @@ impl NoUnmodifiedLoopCondition {
             {
                 group = Some(expression);
             } else if node_type == "ConditionalExpression" {
-                is_alone = true;
+                is_in_conditional = true;
             }
             child = node;
             node = utils::estree_parent(node);
@@ -268,7 +268,7 @@ impl NoUnmodifiedLoopCondition {
             // The name is part of this node.
             _ => child,
         };
-        let Above { statement, group, is_alone } = self.look_above(child, node, state.is_oxlint);
+        let Above { statement, group, is_in_conditional } = self.look_above(child, node, state.is_oxlint);
         let statement = statement?;
         // Only the outermost group needs checking: anything dynamic in an inner group is also inside the outer one.
         let is_oxlint = state.is_oxlint;
@@ -289,9 +289,9 @@ impl NoUnmodifiedLoopCondition {
             group,
             inside: statement.span(),
             outside: init.map(|it| utils::estree_span(Node::Stmt(it))),
-            function: functions.around(Node::Stmt(statement)),
+            function: functions.enclosing_id(Node::Stmt(statement)),
             is_modified: false,
-            is_alone,
+            is_in_conditional,
         })
     }
 }
@@ -340,18 +340,18 @@ impl Rule for NoUnmodifiedLoopCondition {
             end = end.max(test.end);
         }
         let mut modified_groups: IdSet<Expr<'a>> = IdSet::new();
-        let mut of_symbols: IdMap<Symbol<'a>, Modifiers<'a>> = IdMap::new();
-        let mut of_globals: FxHashMap<Name<'a>, Modifiers<'a>> = FxHashMap::default();
+        let mut symbol_modifiers: IdMap<Symbol<'a>, Modifiers<'a>> = IdMap::new();
+        let mut global_modifiers: FxHashMap<Name<'a>, Modifiers<'a>> = FxHashMap::default();
         for condition in &mut conditions {
             let modifiers = match condition.reference.symbol() {
                 Some(symbol) if !symbol.has_writes() => continue,
                 Some(symbol) => {
-                    of_symbols.get_or_insert_with(symbol, || Modifiers::new(&mut symbol.references(), &mut functions))
+                    symbol_modifiers.get_or_insert_with(symbol, || Modifiers::new(&mut symbol.references(), &mut functions))
                 }
                 None => {
                     let name = condition.reference.name();
                     let references = || cx.file().unresolved_references_to(name.bytes());
-                    of_globals.entry(name).or_insert_with(|| Modifiers::new(&mut references(), &mut functions))
+                    global_modifiers.entry(name).or_insert_with(|| Modifiers::new(&mut references(), &mut functions))
                 }
             };
             condition.is_modified = condition.has_modifier_in_loop(modifiers, &mut functions);
@@ -367,9 +367,9 @@ impl Rule for NoUnmodifiedLoopCondition {
             // oxlint reports a variable once per loop: at a reference outside any group if there is one, otherwise at
             // the first.
             let variable_in_loop = |it: &Condition<'a>| (it.inside.start, it.reference.symbol().map(Symbol::key));
-            utils::sort::sort_by_key(&mut conditions, |it| (variable_in_loop(it), it.is_alone, it.group.is_some()));
+            utils::sort::sort_by_key(&mut conditions, |it| (variable_in_loop(it), it.is_in_conditional, it.group.is_some()));
             let mut last = None;
-            conditions.retain(|it| it.is_alone || last.replace(variable_in_loop(it)) != Some(variable_in_loop(it)));
+            conditions.retain(|it| it.is_in_conditional || last.replace(variable_in_loop(it)) != Some(variable_in_loop(it)));
         }
         for condition in &conditions {
             cx.report(condition.reference, LOOP_CONDITION_NOT_MODIFIED).data("name", condition.reference.name());

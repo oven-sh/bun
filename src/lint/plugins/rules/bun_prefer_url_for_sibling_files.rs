@@ -1,4 +1,4 @@
-use crate::bun::{CALLED, Each, calls_of_modules};
+use crate::bun::{CALLED, Each, module_calls};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -37,30 +37,30 @@ fn is_own_file(e: Expr) -> bool {
 }
 
 /// `__dirname`, `import.meta.dirname`, `import.meta.dir`, `dirname()` of the module's own file
-fn is_written_own_directory(e: Expr) -> bool {
+fn is_own_directory_expression(e: Expr) -> bool {
     (e.is_ident("__dirname") && is_global_reference(e))
         || is_meta_property(e, &["dirname", "dir"])
         || argument_of(e, "dirname").is_some_and(is_own_file)
 }
 
-/// Like `is_written_own_directory`, but also follows a constant initialized to one of those.
+/// Like `is_own_directory_expression`, but also follows a constant initialized to one of those.
 fn is_own_directory(e: Expr) -> bool {
     let declared = || match e.symbol()?.declarations().next()?.node()? {
         Node::VarDecl(declaration) if declaration.var_kind() == VarKind::Const => declaration.init(),
         _ => None,
     };
-    is_written_own_directory(e) || declared().is_some_and(is_written_own_directory)
+    is_own_directory_expression(e) || declared().is_some_and(is_own_directory_expression)
 }
 
 /// True if a path ending with `end` can be a file's path: not `..`, `a/.`, `a/`.
-fn can_name_a_file(end: &[u8]) -> bool {
+fn can_be_file_path(end: &[u8]) -> bool {
     let name = end.get(strings::last_index_of_char(end, b'/').map_or(0, |it| it + 1)..);
     !matches!(name, None | Some(b"" | b"." | b".."))
 }
 
 /// `/a.txt`, to be appended to a directory.
-fn is_rest_of_path(written: Option<Name>) -> bool {
-    written.is_some_and(|it| it.bytes().starts_with(b"/") && can_name_a_file(it.bytes()))
+fn is_path_suffix(written: Option<Name>) -> bool {
+    written.is_some_and(|it| it.bytes().starts_with(b"/") && can_be_file_path(it.bytes()))
 }
 
 impl Rule for PreferUrlForSiblingFiles {
@@ -89,7 +89,7 @@ impl Rule for PreferUrlForSiblingFiles {
         if let ExprKind::Template(template) = e.kind()
             && template.exprs().len() == 1
             && template.cooked(0).is_some_and(|it| it.bytes().is_empty())
-            && is_rest_of_path(template.cooked(1))
+            && is_path_suffix(template.cooked(1))
             && template.exprs().first().is_some_and(is_own_directory)
         {
             cx.report(e, JOINED_PATH);
@@ -98,7 +98,7 @@ impl Rule for PreferUrlForSiblingFiles {
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Binary { left, right, .. } = e.kind()
-            && is_rest_of_path(static_string(right))
+            && is_path_suffix(static_string(right))
             && is_own_directory(left)
         {
             cx.report(e, JOINED_PATH);
@@ -106,12 +106,12 @@ impl Rule for PreferUrlForSiblingFiles {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        for (e, _) in calls_of_modules(cx.file(), &PATH) {
+        for (e, _) in module_calls(cx.file(), &PATH) {
             if let Some(arguments) = e.as_call().map(Call::args)
                 && arguments.len() > 1
                 && arguments.first().is_some_and(is_own_directory)
                 && arguments.iter().skip(1).all(|it| static_string(it).is_some())
-                && arguments.last().and_then(static_string).is_some_and(|it| can_name_a_file(it.bytes()))
+                && arguments.last().and_then(static_string).is_some_and(|it| can_be_file_path(it.bytes()))
             {
                 cx.report(e, JOINED_PATH);
             }

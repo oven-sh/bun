@@ -17,7 +17,7 @@
 //! - `nodes.span()`: the node's range in oxc.
 //! - `nodes.ancestors()`: the node itself, its parent, and so on up to `Program`.
 
-use super::print::flow::{arrow_behind_parameters, is_declared_class, is_flow_declare_export};
+use super::print::flow::{arrow_after_parameters, is_declared_class, is_flow_declare_export};
 use bun_lint::ast::{
     BinOp, Case, Class, EnumMember, ExportSpec, Expr, ExprKind, File, Flags, FnBody, FnKind, Func,
     ImportSpec, Keyword, Member, MemberKind, ModuleName, Node, Param, Pat, PatKind, PatProp, Prop,
@@ -290,13 +290,13 @@ impl<'a> ChainElement<'a> for Expr<'a> {
             ExprTag::Call => N::CallExpression(self),
             ExprTag::Dot if !self.is_private_member() => N::StaticMemberExpression(self),
             ExprTag::Number => N::NumericLiteral(self),
-            _ => chain_element_in_general(self),
+            _ => chain_element_slow_path(self),
         }
     }
 }
 
 /// Handles the less common expression kinds.
-fn chain_element_in_general<'a>(e: Expr<'a>) -> AstNodes<'a> {
+fn chain_element_slow_path<'a>(e: Expr<'a>) -> AstNodes<'a> {
     use AstNodes as N;
     match e.tag() {
         ExprTag::Missing if e.jsx_container_span().is_some() => N::JSXEmptyExpression(e),
@@ -1213,7 +1213,7 @@ impl<'a> AstNodes<'a> {
             },
             N::FormalParameters(func) => {
                 let span = func.params_span().unwrap_or_else(|| func.span());
-                let end = arrow_behind_parameters(func).unwrap_or(span.end);
+                let end = arrow_after_parameters(func).unwrap_or(span.end);
                 Span::new(span.start, end)
             }
             N::Class(class) => match class.owner() {

@@ -985,6 +985,45 @@ fn a_task_that_hit_a_limit_is_not_rechecked_early() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn a_commit_lists_what_was_logged_from_each_cycle_to_the_next_idle_moment() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let mut task = begin_committing(&session, &tables, &commits, 0);
+    task.set_first_in_order(true, true);
+    let resolve_a_cycle = |task: &Task| task.close_ring(|| false, std::iter::once(1));
+    // Before the first cycle.
+    tables.by_id.insert(&task, STRING, NUMBER, stored());
+    assert!(!task.has_closed_a_ring());
+    resolve_a_cycle(&task);
+    assert!(task.has_closed_a_ring());
+    tables.by_id.insert(&task, NUMBER, NUMBER, stored());
+    // A second cycle in the same statement doesn't start another part.
+    resolve_a_cycle(&task);
+    tables.by_node.insert(&task, (A, 1), STRING, stored());
+    task.note_what_is_logged_at_rest();
+    // A statement without a cycle.
+    tables.by_node.insert(&task, (A, 2), STRING, stored());
+    task.note_what_is_logged_at_rest();
+    assert!(task.has_closed_a_ring());
+    // The commit follows this cycle without an idle moment in between.
+    resolve_a_cycle(&task);
+    tables.by_node.insert(&task, (A, 3), STRING, stored());
+    assert_eq!(
+        task.take_logged_at_cycles(),
+        [[[1, 0], [2, 1]], [[2, 2], [2, 3]]]
+    );
+    assert!(!task.has_closed_a_ring());
+    assert_eq!(task.take_logged_at_cycles(), [[[0; 2]; 2]; 0]);
+    // A task that begins has resolved none.
+    resolve_a_cycle(&task);
+    task.note_what_is_logged_at_rest();
+    resolve_a_cycle(&task);
+    task.begin(0, 1);
+    assert!(!task.has_closed_a_ring());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn what_a_task_holds_back_under_a_key_is_what_it_goes_by() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));

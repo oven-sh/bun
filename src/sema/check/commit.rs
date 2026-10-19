@@ -46,8 +46,8 @@
 //!   it could miss one member of a ring and find the next, which closes no ring and is right from no entry. The commit of
 //!   a task that was believed about a ring follows a file, so nothing of it is withheld, and says so before it stores its
 //!   first entry (`Numbers::with_a_ring`). A task that has not been at rest since then writes nothing at once
-//!   (`Task::is_beside_a_ring`). It is lost if it has stored under a key of that commit: it has missed that one
-//!   (`Checker::lose_what_has_missed_a_ring`).
+//!   (`Task::is_beside_a_ring`). It is lost if it has stored under a key that the commit lists for its cycles
+//!   (`Task::take_logged_at_cycles`): it has missed that one (`Checker::lose_what_has_missed_a_ring`).
 //! - **The last round** is one task that checks the files that are still discarded, in program order, while nothing else
 //!   runs. It finds all that was committed. What it computes at a limit is what counts, as with one checker. It commits
 //!   once, when it ends (`Checker::is_commit_due`).
@@ -123,7 +123,8 @@ struct Numbers {
 /// A commit of a task that `Task::close_ring` has believed.
 pub(super) struct Ring {
     number: u32,
-    /// The keys that the task has logged from then on, sorted: those of the members, and of what follows from them.
+    /// The keys of `Task::take_logged_at_cycles`, sorted: those of the queries in the cycles, and of what was stored in the
+    /// same statements.
     of_records: Vec<[u32; 2]>,
     of_nodes: Vec<[u32; 3]>,
     /// Hashes of the queries in the cycles this commit resolves, sorted. See `Task::take_cycle_members`.
@@ -733,11 +734,14 @@ impl<'s> Checker<'_, 's> {
             .map(|&file| p.files.rank_of_file(file))
             .max()
             .unwrap_or(0);
+        let at_cycles = self.task.take_logged_at_cycles();
         let mut log = self.task.buffer().take_log();
-        let ring = self.task.take_has_closed_a_ring().map(|[records, nodes]| {
-            let of_records = log.of_records.get(records..).unwrap_or(&log.of_records);
-            let of_nodes = log.of_nodes.get(nodes..).unwrap_or(&log.of_nodes);
-            let (mut of_records, mut of_nodes) = (of_records.to_vec(), of_nodes.to_vec());
+        let ring = (!at_cycles.is_empty()).then(|| {
+            let (mut of_records, mut of_nodes) = (Vec::new(), Vec::new());
+            for [from, to] in &at_cycles {
+                of_records.extend_from_slice(log.of_records.get(from[0]..to[0]).unwrap_or(&[]));
+                of_nodes.extend_from_slice(log.of_nodes.get(from[1]..to[1]).unwrap_or(&[]));
+            }
             of_records.shared_sort_unstable();
             of_nodes.shared_sort_unstable();
             Ring {

@@ -83,8 +83,10 @@ pub struct Task<'s> {
     is_first_in_component: Cell<bool>,
     /// See `take_cycle_members`.
     cycle_members: RefCell<Vec<u64>>,
-    /// `Some`: `close_ring` has believed the task since its last commit. `Buffer::lengths_of_log` the first time.
-    has_closed_a_ring: Cell<Option<[usize; 2]>>,
+    /// `Buffer::lengths_of_log` at the first cycle that the task has resolved since it was last idle.
+    cycle_since_rest: Cell<Option<[usize; 2]>>,
+    /// See `take_logged_at_cycles`.
+    logged_at_cycles: RefCell<Vec<[[usize; 2]; 2]>>,
     /// `Buffer::lengths_of_log` when the task was last at rest.
     logged_at_rest: Cell<[usize; 2]>,
     /// How many keys the task had logged at its commits, and how many entries they have stored.
@@ -126,7 +128,8 @@ impl<'s> Task<'s> {
             is_first_in_order: Cell::new(false),
             is_first_in_component: Cell::new(false),
             cycle_members: RefCell::default(),
-            has_closed_a_ring: Cell::new(None),
+            cycle_since_rest: Cell::new(None),
+            logged_at_cycles: RefCell::default(),
             logged_at_rest: Cell::new([0; 2]),
             committed: Cell::new([0; 2]),
             waits: Cell::new([Duration::ZERO; 3]),
@@ -290,9 +293,9 @@ impl<'s> Task<'s> {
             || self.is_believed
             || self.is_first_in_component.get() && is_reachable_only_by_importers()
         {
-            if self.has_closed_a_ring.get().is_none() {
+            if self.cycle_since_rest.get().is_none() {
                 let logged = self.buffer().lengths_of_log();
-                self.has_closed_a_ring.set(Some(logged));
+                self.cycle_since_rest.set(Some(logged));
             }
             self.stop_writing_at_once();
         } else {
@@ -309,14 +312,21 @@ impl<'s> Task<'s> {
         members
     }
 
-    /// Whether `close_ring` has believed the task since its last commit.
+    /// True if the task has resolved a cycle since its last commit.
     pub(super) fn has_closed_a_ring(&self) -> bool {
-        self.has_closed_a_ring.get().is_some()
+        self.cycle_since_rest.get().is_some() || !self.logged_at_cycles.borrow().is_empty()
     }
 
-    /// For a commit: `Buffer::lengths_of_log` when `close_ring` first believed the task since the last one.
-    pub(super) fn take_has_closed_a_ring(&self) -> Option<[usize; 2]> {
-        self.has_closed_a_ring.take()
+    /// Call for a commit, before `Buffer::take_log`. Returns the parts of the log that the task wrote between resolving a
+    /// cycle and its next idle moment, as `Buffer::lengths_of_log` at both ends. Empty if it has resolved no cycle since
+    /// its last commit.
+    ///
+    /// Every query of a cycle stores its result in there: the stack is empty at an idle moment. What the task logs in
+    /// later statements isn't in there. Another task that computes one of those needs the queries of the cycle, so
+    /// it has either found them or stored one itself.
+    pub(super) fn take_logged_at_cycles(&self) -> Vec<[[usize; 2]; 2]> {
+        self.note_what_is_logged_at_rest();
+        self.logged_at_cycles.take()
     }
 
     /// Whether a commit with what the members of a ring got has begun since the task was last at rest. What the task is
@@ -329,7 +339,11 @@ impl<'s> Task<'s> {
 
     /// Nothing is in progress in the task.
     pub(super) fn note_what_is_logged_at_rest(&self) {
-        self.logged_at_rest.set(self.buffer().lengths_of_log());
+        let logged = self.buffer().lengths_of_log();
+        if let Some(from) = self.cycle_since_rest.take() {
+            self.logged_at_cycles.borrow_mut().push([from, logged]);
+        }
+        self.logged_at_rest.set(logged);
     }
 
     /// The keys under which the task has stored since it was last at rest, but for what it has written at once.
@@ -429,7 +443,8 @@ impl<'s> Task<'s> {
         self.is_first_in_order.set(false);
         self.is_first_in_component.set(false);
         self.cycle_members.get_mut().clear();
-        self.has_closed_a_ring.set(None);
+        self.cycle_since_rest.set(None);
+        self.logged_at_cycles.get_mut().clear();
         self.logged_at_rest.set([0; 2]);
         self.committed.set([0; 2]);
         self.waits.set([Duration::ZERO; 3]);

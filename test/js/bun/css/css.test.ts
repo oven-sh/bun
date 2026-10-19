@@ -8162,11 +8162,20 @@ describe("css tests", () => {
         rule("<string>|none", "none"),
         rule("<string>|<string>+", `"a" "b"`),
       ]);
-      expect(() => property("<string>", `"a" "b"`)).toThrow(`Unexpected token: "a"`);
-      expect(() => property("<string>", `"a" 2px`)).toThrow(`Unexpected token: "a"`);
-      expect(() => property("<string>", "1px")).toThrow("Unexpected token: 1px");
-      expect(() => property("<string>#", `"a" "b"`)).toThrow(`Unexpected token: "a"`);
-      expect(() => property("<string>+", `"a", "b"`)).toThrow(`Unexpected token: "a"`);
+      // No component matches all of these values, so each is printed as written.
+      expect([
+        property("<string>", `"a" "b"`),
+        property("<string>", `"a" 2px`),
+        property("<string>", "1px"),
+        property("<string>#", `"a" "b"`),
+        property("<string>+", `"a", "b"`),
+      ]).toEqual([
+        rule("<string>", `"a" "b"`),
+        rule("<string>", `"a" 2px`),
+        rule("<string>", "1px"),
+        rule("<string>#", `"a" "b"`),
+        rule("<string>+", `"a","b"`),
+      ]);
     });
 
     // Spaces and tabs were stripped from the start of the syntax string only. `"* "` was not

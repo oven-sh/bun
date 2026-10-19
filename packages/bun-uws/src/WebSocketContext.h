@@ -167,23 +167,28 @@ private:
                 /* Are we done now? */
                 // todo: what if we don't have any remaining bytes yet we are not fin? forceclose!
                 if (!remainingBytes && fin) {
+                    /* Take the message out of the socket's state before the callback. The callback can
+                     * tick the event loop and read the next frame on this socket (see consumeMessage);
+                     * that frame must not land on this message's bytes. */
+                    std::string message;
+                    message.swap(webSocketData->fragmentBuffer);
 
                     /* Handle compression */
                     if (webSocketData->compressionStatus == WebSocketData::CompressionStatus::COMPRESSED_FRAME) {
                             webSocketData->compressionStatus = WebSocketData::CompressionStatus::ENABLED;
 
                             /* 9 bytes of padding for libdeflate, 4 for zlib */
-                            webSocketData->fragmentBuffer.append("123456789");
+                            message.append("123456789");
 
-                            data = webSocketData->fragmentBuffer.data();
-                            length = webSocketData->fragmentBuffer.length() - 9;
+                            data = message.data();
+                            length = message.length() - 9;
                             if (!inflateMessage(s, data, length)) {
                                 return true;
                             }
                     } else {
                         // reset length and data ptrs
-                        length = webSocketData->fragmentBuffer.length();
-                        data = webSocketData->fragmentBuffer.data();
+                        length = message.length();
+                        data = message.data();
                     }
 
                     /* Check text messages for Utf-8 validity */
@@ -200,8 +205,12 @@ private:
                         }
                     }
 
-                    /* If we shutdown or closed, this will be taken care of elsewhere */
-                    webSocketData->fragmentBuffer.clear();
+                    /* Keep the allocation for the next fragmented message, unless a nested read
+                     * already started one. */
+                    if (webSocketData->fragmentBuffer.empty()) {
+                        message.clear();
+                        message.swap(webSocketData->fragmentBuffer);
+                    }
                 }
             }
         } else {
@@ -236,32 +245,33 @@ private:
                 webSocketData->controlTipLength += (unsigned int) length;
 
                 if (!remainingBytes && fin) {
-                    char *controlBuffer = (char *) webSocketData->fragmentBuffer.data() + webSocketData->fragmentBuffer.length() - webSocketData->controlTipLength;
+                    /* Take the tip (at most 125 bytes) out of the socket's state before the handlers run,
+                     * for the same reason as the message above. */
+                    std::string controlTip = webSocketData->fragmentBuffer.substr(webSocketData->fragmentBuffer.length() - webSocketData->controlTipLength);
+                    webSocketData->fragmentBuffer.resize(webSocketData->fragmentBuffer.length() - webSocketData->controlTipLength);
+                    webSocketData->controlTipLength = 0;
+
                     if (opCode == CLOSE) {
-                        handleCloseFrame(webSocket, controlBuffer, webSocketData->controlTipLength);
+                        handleCloseFrame(webSocket, controlTip.data(), controlTip.length());
                         return true;
                     } else {
                         if (opCode == PING) {
-                            sendAutomaticPong(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
+                            sendAutomaticPong(webSocket, controlTip);
                             if (webSocketContextData->pingHandler) {
-                                webSocketContextData->pingHandler(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
+                                webSocketContextData->pingHandler(webSocket, controlTip);
                                 if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                     return true;
                                 }
                             }
                         } else if (opCode == PONG) {
                             if (webSocketContextData->pongHandler) {
-                                webSocketContextData->pongHandler(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
+                                webSocketContextData->pongHandler(webSocket, controlTip);
                                 if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                     return true;
                                 }
                             }
                         }
                     }
-
-                    /* Same here, we do not care for any particular smart allocation scheme */
-                    webSocketData->fragmentBuffer.resize((unsigned int) webSocketData->fragmentBuffer.length() - webSocketData->controlTipLength);
-                    webSocketData->controlTipLength = 0;
                 }
             }
         }

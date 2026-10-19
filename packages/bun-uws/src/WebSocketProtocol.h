@@ -339,24 +339,28 @@ protected:
         }
 
         if (payLength + MESSAGE_HEADER <= length) {
-            if (isServer) {
-                unmaskImpreciseCopyMask(src + MESSAGE_HEADER, (unsigned int) payLength);
-                if (Impl::handleFragment(src + MESSAGE_HEADER - 4, payLength, 0, wState->state.opCode[wState->state.opStack], isFin(src), wState, user)) {
-                    return true;
-                }
-            } else {
-                if (Impl::handleFragment(src + MESSAGE_HEADER, payLength, 0, wState->state.opCode[wState->state.opStack], isFin(src), wState, user)) {
-                    return true;
-                }
-            }
-
-            if (isFin(src)) {
+            /* The frame is whole: put the parser between frames before handleFragment runs the
+             * user's callback. The callback can tick the event loop (bun:test's `.rejects` inside a
+             * message handler) and that tick reads the next frame on this socket through this same
+             * parser. A frame left open here would then fail as interleaved. */
+            OpCode opCode = wState->state.opCode[wState->state.opStack];
+            bool fin = isFin(src);
+            if (fin) {
                 wState->state.opStack--;
+            }
+            wState->state.spillLength = 0;
+
+            char *payload = src + MESSAGE_HEADER;
+            if (isServer) {
+                unmaskImpreciseCopyMask(payload, (unsigned int) payLength);
+                payload -= 4;
+            }
+            if (Impl::handleFragment(payload, payLength, 0, opCode, fin, wState, user)) {
+                return true;
             }
 
             src += payLength + MESSAGE_HEADER;
             length -= (unsigned int) (payLength + MESSAGE_HEADER);
-            wState->state.spillLength = 0;
             return false;
         } else {
             wState->state.spillLength = 0;
@@ -384,25 +388,29 @@ protected:
 
     static inline bool consumeContinuation(char *&src, unsigned int &length, WebSocketState<isServer> *wState, void *user) {
         if (wState->remainingBytes <= length) {
+            unsigned int remainingBytes = wState->remainingBytes;
             if (isServer) {
-                unsigned int n = wState->remainingBytes >> 2;
+                unsigned int n = remainingBytes >> 2;
                 unmaskInplace(src, src + n * 4, wState->mask);
-                for (unsigned int i = 0, s = wState->remainingBytes % 4; i < s; i++) {
+                for (unsigned int i = 0, s = remainingBytes % 4; i < s; i++) {
                     src[n * 4 + i] ^= wState->mask[i];
                 }
             }
 
-            if (Impl::handleFragment(src, wState->remainingBytes, 0, wState->state.opCode[wState->state.opStack], wState->state.lastFin, wState, user)) {
+            /* Between frames before the callback, as in consumeMessage. */
+            OpCode opCode = wState->state.opCode[wState->state.opStack];
+            bool fin = wState->state.lastFin;
+            if (fin) {
+                wState->state.opStack--;
+            }
+            wState->state.wantsHead = true;
+
+            if (Impl::handleFragment(src, remainingBytes, 0, opCode, fin, wState, user)) {
                 return false;
             }
 
-            if (wState->state.lastFin) {
-                wState->state.opStack--;
-            }
-
-            src += wState->remainingBytes;
-            length -= wState->remainingBytes;
-            wState->state.wantsHead = true;
+            src += remainingBytes;
+            length -= remainingBytes;
             return true;
         } else {
             if (isServer) {

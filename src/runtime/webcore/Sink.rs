@@ -562,6 +562,10 @@ impl<T: JsSinkType> JSSink<T> {
         }
 
         let view = arg.to_js_string_view(global)?;
+        // Converting a String object runs user JS, which can free the sink.
+        let Some(this) = Self::get_this(global, frame)? else {
+            return Ok(JSValue::js_number(0.0));
+        };
         if view.is_empty() {
             return Ok(JSValue::js_number(0.0));
         }

@@ -2258,8 +2258,10 @@ pub(crate) mod internal {
         // To preserve memory, we use a 32 bit timestamp
         // However, we're almost out of time to use 32 bit timestamps for anything
         // So we set the epoch to January 1st, 2024 instead.
+        //
+        // Every VM's JS thread and the HTTP thread share the cache, so ignore fake timers.
         fn get_cache_timestamp() -> u32 {
-            (bun::Timespec::now(bun::TimespecMockMode::AllowMockedTime).ms_unsigned() / 1000) as u32
+            (bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ms_unsigned() / 1000) as u32
         }
 
         fn is_nearly_full(&self) -> bool {
@@ -3650,6 +3652,12 @@ pub(crate) struct UvDnsPoll {
     // `Resolver::deref`, which may write/free `*this`.
     pub parent: *mut Resolver,
     pub socket: c_ares::ares_socket_t,
+    /// Number of `on_dns_poll_uv` calls for this handle on the stack. libuv
+    /// reads `poll` again after each one returns.
+    poll_cb_depth: u32,
+    /// True if a nested `uv_run` called `on_close_uv` while `poll_cb_depth` was
+    /// non-zero. The outermost `on_dns_poll_uv` call then queues the free.
+    closed: bool,
     pub poll: libuv::uv_poll_t,
 }
 
@@ -3659,17 +3667,31 @@ impl UvDnsPoll {
         bun_core::heap::into_raw(Box::new(Self {
             parent,
             socket,
+            poll_cb_depth: 0,
+            closed: false,
             poll: bun_core::ffi::zeroed(),
         }))
     }
 
-    fn destroy(this: *mut Self) {
+    pub(crate) fn destroy(this: *mut Self) {
         unsafe { drop(bun_core::heap::take(this)) };
     }
 
     fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
         // SAFETY: poll points to UvDnsPoll.poll
         unsafe { bun_core::from_field_ptr!(UvDnsPoll, poll, poll) }
+    }
+}
+
+#[cfg(windows)]
+impl bun_event_loop::Taskable for UvDnsPoll {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::UvDnsPollFree;
+    unsafe fn release_unrun(this: *mut Self) {
+        Self::destroy(this);
+    }
+    /// The task doesn't run JS.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -4651,34 +4673,44 @@ impl Resolver {
     ) {
         let poll = UvDnsPoll::from_poll(watcher);
         // SAFETY: `poll` is the live `UvDnsPoll` recovered from libuv's `watcher`
-        // via `from_poll` (libuv guarantees the handle outlives this callback).
+        // via `from_poll`. `on_close_uv` doesn't free it while `poll_cb_depth` is non-zero.
         // `parent` is the heap-allocated Resolver back-ptr (set in
         // `on_dns_socket_state`); it is kept alive across `Channel::process` by the
         // `_guard` below. `channel` is non-null because c-ares
         // must have been initialized for this poll callback to fire.
         unsafe {
+            (*poll).poll_cb_depth += 1;
             let parent: *mut Resolver = (*poll).parent;
             let vm = (*parent).vm.get();
-            let _exit = vm.enter_event_loop_scope();
-            // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
-            let _guard = RefPtr::init_ref(parent);
-            // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
-            let channel = (*parent).channel.get().unwrap();
-            if status < 0 {
-                // an error occurred. just pretend that the socket is both readable and writable.
-                // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
-                (*channel).process((*poll).socket, true, true);
-            } else {
-                (*channel).process(
-                    (*poll).socket,
-                    events & libuv::UV_READABLE != 0,
-                    events & libuv::UV_WRITABLE != 0,
-                );
-            }
+            {
+                // Dropping `_exit` drains microtasks. That JS can run a nested `uv_run`,
+                // which calls `on_close_uv` for a socket c-ares closed below.
+                let _exit = vm.enter_event_loop_scope();
+                // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
+                let _guard = RefPtr::init_ref(parent);
+                // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
+                let channel = (*parent).channel.get().unwrap();
+                if status < 0 {
+                    // an error occurred. just pretend that the socket is both readable and writable.
+                    // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+                    (*channel).process((*poll).socket, true, true);
+                } else {
+                    (*channel).process(
+                        (*poll).socket,
+                        events & libuv::UV_READABLE != 0,
+                        events & libuv::UV_WRITABLE != 0,
+                    );
+                }
 
-            // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
-            if !(*parent).any_requests_pending() {
-                (*parent).remove_timer();
+                // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
+                if !(*parent).any_requests_pending() {
+                    (*parent).remove_timer();
+                }
+            }
+            (*poll).poll_cb_depth -= 1;
+            if (*poll).poll_cb_depth == 0 && (*poll).closed {
+                // The task queue isn't drained until this libuv callback returns.
+                vm.as_mut().enqueue_task(jsc::Task::init(poll));
             }
         }
     }
@@ -4689,6 +4721,13 @@ impl Resolver {
         // to `uv_close`, which was `&mut UvDnsPoll::poll` (a `uv_poll_t` whose
         // header is `uv_handle_t`); `from_poll` recovers the containing struct.
         let poll = UvDnsPoll::from_poll(watcher.cast());
+        // SAFETY: only the code below and the task `on_dns_poll_uv` queues free the struct.
+        unsafe {
+            if (*poll).poll_cb_depth > 0 {
+                (*poll).closed = true;
+                return;
+            }
+        }
         UvDnsPoll::destroy(poll);
     }
 

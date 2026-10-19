@@ -357,7 +357,7 @@ impl TextDecoder {
                     unsafe { core::slice::from_raw_parts_mut(units.as_mut_ptr(), out_length) };
                 let out = strings::copy_cp1252_into_utf16(buf, buffer_slice);
                 // SAFETY: the copy above initialized `out.written` (≤ `out_length`) units.
-                unsafe { units.set_len(out.written as usize) };
+                unsafe { units.set_len(out.written) };
                 bun_string_jsc::owned_utf16_into_js(global_this, units)
             }
             EncodingLabel::Utf8 => {

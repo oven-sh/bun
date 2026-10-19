@@ -563,6 +563,42 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(exitCode).toBe(0);
   });
 
+  // The first read that has to wait for a pipe starts the IO thread, which needs its own descriptors.
+  it.skipIf(isWindows)(
+    "Bun.file(fifo).text() rejects with EMFILE when out of descriptors, and works afterwards",
+    async () => {
+      using dir = tempDir("bun-file-fifo-emfile", {});
+      const fifo = join(String(dir), "fifo");
+      expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+      const script = `
+      const fs = require("node:fs");
+      const fifo = process.argv[1];
+      const writer = fs.openSync(fifo, fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+      const held = [];
+      try {
+        for (;;) held.push(fs.openSync("/dev/null", "r"));
+      } catch {}
+      // Free one descriptor so the read can open the fifo.
+      fs.closeSync(held.pop());
+      console.log(await Bun.file(fifo).text().catch(e => e.code));
+      for (const fd of held) fs.closeSync(fd);
+      const text = Bun.file(fifo).text();
+      fs.writeSync(writer, "hello");
+      fs.closeSync(writer);
+      console.log(await text);
+    `;
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'ulimit -n 64 && exec "$0" -e "$1" "$2"', bunExe(), script, fifo],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("EMFILE\nhello\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   it("Bun.file(0) survives GC", async () => {
     for (let i = 0; i < 10; i++) {
       let f = Bun.file(0);

@@ -1,4 +1,5 @@
 import { describe } from "bun:test";
+import { isASAN } from "harness";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -1273,6 +1274,34 @@ b {
           a { color: red }
         }
       `,
+    },
+  });
+
+  // Skipped under ASAN: the linker clones the import condition and leaks the env() fallback's token list.
+  (isASAN ? itBundled.skip : itBundled)("css/URLInEnvFallbackOfAtImportMediaQuery", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./b.css" (min-width: env(foo, url(sub/g.css)));
+        .c0 { color: blue }
+      `,
+      "/b.css": `.b1 { color: green }`,
+      "/sub/g.css": `.c0 { color: red }`,
+    },
+    backend: "cli",
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(`/* b.css */
+@media (min-width: env(foo, url(sub/g.css))) {
+  .b1 {
+    color: green;
+  }
+}
+
+/* entry.css */
+.c0 {
+  color: #00f;
+}
+`);
     },
   });
 

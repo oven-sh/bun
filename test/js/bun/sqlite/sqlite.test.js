@@ -6319,6 +6319,74 @@ describe("db.onInsert, db.onUpdate and db.onDelete", () => {
     });
   });
 
+  // The INSERT commits when its statement is reset or finalized. An FTS5 table writes to its shadow tables
+  // at commit, which calls onInsert.
+  describe("an INSERT that iterate() only stepped to its first row", () => {
+    const open = (calls, filename = ":memory:") => {
+      const db = new Database(filename);
+      db.run("CREATE VIRTUAL TABLE ft USING fts5(x)");
+      db.onInsert = (_, name) => void calls.push(name);
+      return db;
+    };
+    const abandonInsert = (db, calls) => {
+      db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1").iterate().next();
+      calls.length = 0;
+    };
+
+    it("is finished by the next call on the connection after it's garbage collected", () => {
+      const calls = [];
+      using db = open(calls);
+      abandonInsert(db, calls);
+      Bun.gc(true);
+      expect(calls).toEqual([]);
+      expect(db.inTransaction).toBe(false);
+      expect(calls).toContain("ft_data");
+    });
+
+    it("doesn't call the hook when it's collected along with its Database", () => {
+      const calls = [];
+      (() => abandonInsert(open(calls), calls))();
+      Bun.gc(true);
+      expect(calls).toEqual([]);
+    });
+
+    it("doesn't call the hook when the ModuleGraph that opened its Database is disposed", () => {
+      const calls = [];
+      const graph = new Bun.ModuleGraph();
+      const db = graph.run(() => open(calls));
+      abandonInsert(db, calls);
+      graph.dispose();
+      expect(calls).toEqual([]);
+      expect(() => db.run("SELECT 1")).toThrow("Database has closed");
+    });
+
+    it("is finished by close(), and the hook can collect other statements", async () => {
+      const src = /* js */ `
+        const { Database } = require("bun:sqlite");
+        for (const force of [true, false]) {
+          const db = new Database(":memory:");
+          db.run("CREATE VIRTUAL TABLE ft USING fts5(x)");
+          let others = Array.from({ length: 400 }, (_, i) => db.query("SELECT " + i));
+          db.query("INSERT INTO ft VALUES ('a') RETURNING 1").iterate().next();
+          let calls = 0;
+          db.onInsert = () => {
+            calls++;
+            others = null;
+            Bun.gc(true);
+          };
+          db.close(force);
+          console.log(calls);
+        }
+      `;
+      // Malloc=1 lets ASAN catch a use of freed WTF memory. On Windows, WebKit traps at startup when it's set.
+      const ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":");
+      const env = isWindows ? bunEnv : { ...bunEnv, Malloc: "1", ASAN_OPTIONS };
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "3\n3\n", stderr: "", exitCode: 0 });
+    });
+  });
+
   it("on a closed database: null, and setting one throws", () => {
     const db = new Database(":memory:");
     db.onInsert = () => {};

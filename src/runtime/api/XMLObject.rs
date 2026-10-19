@@ -44,9 +44,15 @@ pub(crate) fn parse<'a>(
     // whose encoding declaration must not be acted upon: a Latin-1 string is
     // parsed byte-per-character as is, a UTF-16 one by its code units.
     let text;
+    let copy;
     let mut utf16 = None;
     let (bytes, encoding): (&[u8], _) = match input {
-        StringOrJsBytes::Bytes(bytes) => (bytes.get(&cx.heap), xml::InputEncoding::Bytes),
+        StringOrJsBytes::Bytes(bytes) => {
+            // The parser reads a byte more than once, and the result's strings are made from the input.
+            copy = bytes.copy_if_shared(&cx.heap)?;
+            let bytes = copy.as_deref().unwrap_or_else(|| bytes.get(&cx.heap));
+            (bytes, xml::InputEncoding::Bytes)
+        }
         StringOrJsBytes::String(string) => {
             text = string;
             if text.is_8bit() {

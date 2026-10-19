@@ -77,6 +77,8 @@ function makePng(
 }
 
 const tinyPng = makePng(2, 2, (x, y) => [x * 255, y * 255, 128, 255]);
+/// Longer than JSC's fastSizeLimit (1000 elements), so `new Uint8Array(kilobytePng)` allocates its ArrayBuffer lazily.
+const kilobytePng = makePng(32, 32, (x, y) => [(x * 7 + y * 13) & 255, (x * 31) & 255, (y * 17) & 255, 255]);
 
 /// Decode any image to RGBA via Bun.Image→PNG, then walk the PNG ourselves
 /// (filter de-prediction included) so assertions are against ground truth,
@@ -1167,6 +1169,17 @@ describe("hostile option objects", () => {
     expect(a.byteLength).toBe(0);
   });
 
+  test("pins a view whose `.buffer` was never accessed, so transfer() copies", async () => {
+    const a = new Uint8Array(kilobytePng); // > fastSizeLimit elements, .buffer not accessed yet
+    const p = new Bun.Image(a).png().bytes();
+    const moved = a.buffer.transfer();
+    expect(moved.byteLength).toBe(kilobytePng.length);
+    expect(a.byteLength).toBe(kilobytePng.length); // pinned, so `a` isn't detached
+    expect((await p)[0]).toBe(0x89);
+    a.buffer.transfer();
+    expect(a.byteLength).toBe(0); // the pin is released when the task finishes
+  });
+
   test("SharedArrayBuffer input is refused (cross-thread mutation surface)", () => {
     const sab = new SharedArrayBuffer(tinyPng.byteLength);
     new Uint8Array(sab).set(tinyPng);
@@ -1221,6 +1234,92 @@ describe("concurrent terminals on one Image", () => {
     const out = await p;
     expect(out[0]).toBe(0xff);
     expect(out[1]).toBe(0xd8); // still JPEG
+  });
+
+  // An input over ~1 KB is borrowed, so the pool thread reads bytes that the JS thread can still
+  // write. The docs forbid that write. It can corrupt the image, but it must not crash.
+  const raceFixture = (setup: string) => `
+    const bmp = (w, h, c) => {
+      const b = Buffer.alloc(54 + w * h * 4);
+      b.write("BM");
+      b.writeUInt32LE(b.length, 2);
+      b.writeUInt32LE(54, 10);
+      b.writeUInt32LE(40, 14);
+      b.writeInt32LE(w, 18);
+      b.writeInt32LE(-h, 22);
+      b.writeUInt16LE(1, 26);
+      b.writeUInt16LE(32, 28);
+      b.fill(Buffer.from([c, c, c, 255]), 54);
+      return b;
+    };
+    const webp = async (w, h, c) => Buffer.from(await new Bun.Image(bmp(w, h, c)).webp({ lossless: true }).bytes());
+    ${setup}
+    let settled = 0;
+    for (let round = 0; round < 8; round++) {
+      const jobs = [];
+      for (let i = 0; i < 32; i++) jobs.push(new Bun.Image(input).png().bytes().catch(() => {}).then(() => settled++));
+      let done = false;
+      const all = Promise.all(jobs).then(() => (done = true));
+      while (!done) {
+        const until = performance.now() + 4;
+        do {
+          for (let k = 0; k < 64; k++) rewrite();
+        } while (performance.now() < until);
+        await new Promise(r => setImmediate(r));
+      }
+      await all;
+    }
+    console.log(settled);
+  `;
+  test.concurrent.each([
+    [
+      // libwebp parses the header more than once, so its output size can differ from the size it reported.
+      "dimensions",
+      `
+      const input = new Uint8Array(2048);
+      const small = new Uint8Array(2048), large = new Uint8Array(2048);
+      small.set(await webp(16, 16, 1));
+      large.set(await webp(200, 211, 2));
+      const rewrite = () => { input.set(large); input.set(small); };
+      input.set(large);
+      `,
+    ],
+    [
+      // libwebp's demuxer counts the chunks with a tag, then looks one up.
+      // The filler chunks widen the gap between the two walks.
+      "ICCP tag",
+      `
+      const chunk = (tag, payload) => {
+        const h = Buffer.alloc(8);
+        h.write(tag, 0, "latin1");
+        h.writeUInt32LE(payload.length, 4);
+        return Buffer.concat([h, payload, Buffer.alloc(payload.length & 1)]);
+      };
+      const body = Buffer.concat([
+        Buffer.from("WEBP"),
+        chunk("VP8X", Buffer.from([0x20, 0, 0, 0, 31, 0, 0, 31, 0, 0])),
+        chunk("ICCP", Buffer.alloc(512, 7)),
+        Buffer.alloc(4096 * 10, chunk("FILL", Buffer.alloc(2))),
+        (await webp(32, 32, 9)).subarray(12),
+      ]);
+      const head = Buffer.alloc(8);
+      head.write("RIFF");
+      head.writeUInt32LE(body.length, 4);
+      const input = new Uint8Array(Buffer.concat([head, body]));
+      const at = Buffer.from(input.buffer).indexOf("ICCP");
+      const ICCP = Buffer.from("ICCP"), JUNK = Buffer.from("JUNK");
+      const rewrite = () => { input.set(JUNK, at); input.set(ICCP, at); };
+      `,
+    ],
+  ])("doesn't crash when the %s of a WebP input is rewritten while a pipeline is pending", async (_, setup) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", raceFixture(setup)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.slice(-3000), exitCode }).toEqual({ stdout: "256\n", stderr: "", exitCode: 0 });
   });
 });
 

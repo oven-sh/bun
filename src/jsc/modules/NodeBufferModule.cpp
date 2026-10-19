@@ -3,15 +3,11 @@
 #include "BunClientData.h"
 #include "ErrorCode.h"
 #include "helpers.h"
+#include "JSBuffer.h"
 #include "JSBufferEncodingType.h"
 #include "JSDOMExceptionHandling.h"
 #include "wtf/SIMDUTF.h"
 #include <JavaScriptCore/JSTypedArrays.h>
-
-namespace WebCore {
-JSC::JSUint8Array* createUninitializedBuffer(JSC::JSGlobalObject*, size_t);
-JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject*);
-}
 
 using namespace JSC;
 
@@ -181,7 +177,13 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
     if (length == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createEmptyBuffer(globalObject)));
 
-    const std::span<const uint8_t> input { view->typedVector(), length };
+    std::span<const uint8_t> input { view->typedVector(), length };
+    WTF::MallocSpan<uint8_t> copy;
+    if (view->isShared()) [[unlikely]] {
+        copy = Bun::copySharedBytes(globalObject, scope, input);
+        RETURN_IF_EXCEPTION(scope, {});
+        input = copy.span();
+    }
     const auto* data = reinterpret_cast<const char*>(input.data());
 
     // Only these two ICU statuses are producible here.
@@ -210,7 +212,6 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
         result = WebCore::createUninitializedBuffer(globalObject, expected * 2);
         RETURN_IF_EXCEPTION(scope, {});
         const size_t actual = simdutf::convert_utf8_to_utf16le(data, length, reinterpret_cast<char16_t*>(result->typedVector()));
-        // A shared source can change between the two passes. This keeps unwritten bytes out of the result; it does not bound the writes.
         if (actual == 0 || actual != expected) {
             errorCode = U_INVALID_CHAR_FOUND_ERRNO;
             errorName = "U_INVALID_CHAR_FOUND"_s;

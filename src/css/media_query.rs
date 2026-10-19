@@ -1182,7 +1182,11 @@ impl MediaFeatureValue {
 
         // The real `ParserOptions` are threaded down from
         // `QueryFeature::parse`; `depth = 0` since this is a fresh value.
-        if let Ok(env) = input.try_parse(|i| EnvironmentVariable::parse(i, options, 0)) {
+        // Keep `url()` raw because the linker prints an `@import`'s media query with another file's
+        // import records.
+        if let Ok(env) = input.try_parse(|i| {
+            i.parse_with_raw_url_tokens(|i| EnvironmentVariable::parse(i, options, 0))
+        }) {
             return Ok(MediaFeatureValue::Env(env));
         }
 

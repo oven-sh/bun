@@ -376,7 +376,13 @@ unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // provenance covers the full `ParseTask` and the `&mut` is unique per the
     // CONCURRENCY note above.
     let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, io_task, task) };
+    // Read the pool first. `run_from_thread_pool` can reschedule `*parse_task` onto a worker
+    // thread, which then owns it.
+    // SAFETY: teardown waits for this callback (`wait_for_io_tasks`), so the bundle is live.
+    let pool: *const crate::ThreadPool = unsafe { parse_task.ctx() }.graph.pool();
     parse_worker::run_from_thread_pool(parse_task);
+    // SAFETY: `pool` scheduled this task, and this is the last access to the bundle.
+    unsafe { crate::ThreadPool::finish_io_task(pool) };
 }
 
 // CONCURRENCY: see `io_task_callback` — same task, different intrusive field.
@@ -2462,12 +2468,8 @@ pub mod parse_worker {
             if task.known_target == options::Target::ServerComponentsSsr
                 && topts
                     .framework
-                    .as_ref()
-                    .unwrap()
-                    .server_components
-                    .as_ref()
-                    .unwrap()
-                    .separate_ssr_graph
+                    .and_then(|framework| framework.server_components.as_ref())
+                    .is_some_and(|sc| sc.separate_ssr_graph)
             {
                 options::Target::ServerComponentsSsr
             } else {
@@ -2618,7 +2620,6 @@ pub mod parse_worker {
         opts.framework = topts.framework.map(|f| {
             // `Framework` is bump-allocated below, so `Drop` never runs — use arena-owned slices.
             let projected = js_parser::options::Framework {
-                is_built_in_react: f.is_built_in_react,
                 server_components: f.server_components.as_ref().map(|sc| {
                     js_parser::options::FrameworkServerComponents {
                         separate_ssr_graph: sc.separate_ssr_graph,

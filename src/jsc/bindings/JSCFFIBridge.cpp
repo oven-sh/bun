@@ -2,6 +2,7 @@
 #include "root.h"
 
 #include <JavaScriptCore/BunFFI.h>
+#include <JavaScriptCore/FFIConversions.h>
 #include <JavaScriptCore/FFISignature.h>
 #include <JavaScriptCore/FFIType.h>
 #include <JavaScriptCore/FFIContext.h>
@@ -16,7 +17,13 @@
 #include "headers-handwritten.h"
 
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Char) == 0, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::Int64) == 7, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::Uint64) == 8, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Pointer) == 12, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::CString) == 14, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::Int64Fast) == 15, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::Uint64Fast) == 16, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::Function) == 17, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::JSValue) == 19, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Buffer) == 20, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::BufferLength) == 21, "FFI::Type tag drift");
@@ -118,4 +125,20 @@ extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
 {
     if (auto* callback = dynamicDowncast<JSC::JSFFICallback>(JSC::JSValue::decode(callbackValue)))
         callback->close();
+}
+
+// Implements JSVALUE_TO_SLOT_SLOW in src/runtime/ffi/FFI.h. Converts a cc() wrapper's arguments the way dlopen() does.
+extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObject, int32_t abiType, bool* threw, JSC::EncodedJSValue encodedValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    uint64_t slot = 0;
+    // Nothing could free a transcoded `cstring` after the call, so pass a null arena, which makes a JS string throw.
+    JSC::FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), static_cast<JSC::FFI::Type>(abiType), JSC::JSValue::decode(encodedValue), slot, nullptr);
+    if (scope.exception()) [[unlikely]] {
+        *threw = true;
+        return 0;
+    }
+    return slot;
 }

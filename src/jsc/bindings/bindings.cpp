@@ -43,6 +43,7 @@
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/FunctionConstructor.h"
+#include "JavaScriptCore/HeapProfiler.h"
 #include "JavaScriptCore/HeapSnapshotBuilder.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/IteratorOperations.h"
@@ -2438,10 +2439,11 @@ bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char 
     return arg0->fastHas(static_cast<HTTPHeaderName>(HTTPHeaderName1));
 }
 
-void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer* names, StringPointer* values, unsigned char* buf)
+// `names` and `values` each have room for `count` entries, and `buf` has room for `buf_len` bytes.
+void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer* names, StringPointer* values, uint32_t count, unsigned char* buf, uint32_t buf_len)
 {
     auto iter = headers->createIterator(false);
-    unsigned int i = 0;
+    uint32_t i = 0;
 
     while (auto* entry = iter.nextEntry()) {
         const auto& name = *entry->key;
@@ -2449,6 +2451,11 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
 
         ASSERT_WITH_MESSAGE(name.length(), "Header name must not be empty");
         ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
+
+        // Each header writes one entry to `names` and `values`, and one byte per code unit to `buf`.
+        RELEASE_ASSERT(count > 0);
+        RELEASE_ASSERT(name.length() <= buf_len - i && value.length() <= buf_len - i - name.length());
+        count--;
 
         if (name.is8Bit()) {
             const auto nameSpan = name.span8();
@@ -2485,7 +2492,8 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
         values++;
     }
 }
-void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
+// Returns false if the total length of the names and values overflows a StringPointer's uint32_t fields.
+bool WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
     uint32_t entries = 0;
     size_t bytes = 0;
@@ -2505,8 +2513,11 @@ void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* coun
     for (auto& cookie : map.getSetCookieHeaders())
         add(WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), cookie);
 
+    if (bytes > std::numeric_limits<uint32_t>::max())
+        return false;
     *count = entries;
-    *buf_len = bytes;
+    *buf_len = static_cast<uint32_t>(bytes);
+    return true;
 }
 
 typedef struct ZigSliceString {
@@ -3008,28 +3019,30 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
 [[ZIG_EXPORT(check_slow)]]
 void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global, EncodedSlice* key, EncodedSlice* values, size_t valuesLen)
 {
-    auto scope = DECLARE_THROW_SCOPE(global->vm());
-    auto ident = Identifier::fromString(global->vm(), Zig::toStringCopy(*key));
-    JSC::PropertyDescriptor descriptor;
-
-    descriptor.setEnumerable(1);
-    descriptor.setConfigurable(1);
-    descriptor.setWritable(1);
+    auto& vm = global->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto ident = Identifier::fromString(vm, Zig::toStringCopy(*key));
+    JSC::JSValue value;
 
     if (valuesLen == 1) {
-        descriptor.setValue(JSC::jsString(global->vm(), Zig::toStringCopy(values[0])));
+        value = JSC::jsString(vm, Zig::toStringCopy(values[0]));
     } else {
 
         // Pre-convert all strings to JSValues before entering ObjectInitializationScope,
         // since jsString() allocates GC cells which is not allowed inside the scope.
         MarkedArgumentBuffer strings;
+        strings.ensureCapacity(valuesLen);
         for (size_t i = 0; i < valuesLen; ++i) {
-            strings.append(JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
+            strings.append(JSC::jsString(vm, Zig::toStringCopy(values[i])));
+        }
+        if (strings.hasOverflowed()) [[unlikely]] {
+            JSC::throwOutOfMemoryError(global, scope);
+            return;
         }
 
         JSC::JSArray* array = nullptr;
         {
-            JSC::ObjectInitializationScope initializationScope(global->vm());
+            JSC::ObjectInitializationScope initializationScope(vm);
             if ((array = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), valuesLen))) {
 
                 for (size_t i = 0; i < valuesLen; ++i) {
@@ -3043,12 +3056,12 @@ void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global
             return;
         }
 
-        descriptor.setValue(array);
+        value = array;
     }
 
-    object->methodTable()->defineOwnProperty(object, global, ident, descriptor, true);
-    object->putDirect(global->vm(), ident, descriptor.value());
-    scope.release();
+    // The key is a query-string name or a route parameter, so it can be an array index.
+    object->putDirectMayBeIndex(global, ident, value);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 JSC::JSPromise* JSC__JSValue__asInternalPromise(JSC::EncodedJSValue JSValue0)
@@ -3393,12 +3406,13 @@ JSC::JSObject* JSC__JSCell__toObject(JSC::JSCell* cell, JSC::JSGlobalObject* glo
 // Throws (and returns empty) when resolving a rope runs out of memory.
 // `JSString::view`: a substring rope is viewed in place; other ropes resolve
 // (and can throw on OOM). The characters belong to `str` (or its base), which
-// the caller keeps alive.
-BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global)
+// the caller keeps alive through `*owner`.
+BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global, const JSC::JSString** owner)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
     auto view = str->view(global);
     RETURN_IF_EXCEPTION(scope, BunStringEmpty);
+    *owner = uncheckedDowncast<JSC::JSString>(view.owner);
     return Bun::toStringView(view.data);
 }
 
@@ -3439,17 +3453,12 @@ JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject,
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity));
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!clone) {
-        for (size_t i = 0; i < initialCapacity; ++i) {
-            object->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(keys[i]))),
-                Zig::toJSStringGC(values[i], globalObject), 0);
-        }
-    } else {
-        for (size_t i = 0; i < initialCapacity; ++i) {
-            object->putDirect(vm, JSC::PropertyName(Zig::toIdentifier(keys[i], globalObject)),
-                Zig::toJSStringGC(values[i], globalObject), 0);
-        }
+    for (size_t i = 0; i < initialCapacity; ++i) {
+        JSC::Identifier key = clone
+            ? Zig::toIdentifier(keys[i], globalObject)
+            : JSC::Identifier::fromString(vm, Zig::toString(keys[i]));
+        object->putDirectMayBeIndex(globalObject, key, Zig::toJSStringGC(values[i], globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSC::JSValue::encode(object);
@@ -3473,6 +3482,21 @@ JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* globalObject, JSC:
     JSValue value = JSValue::decode(objectValue);
 
     return JSValue::encode(JSC::objectValues(vm, globalObject, value));
+}
+
+// A view without an ArrayBuffer can't be shared, resizable or wasm memory, so this never materializes one.
+static void setStorageFlags(JSC::JSArrayBufferView* view, Bun__ArrayBuffer* out)
+{
+    if (!view->hasArrayBuffer()) {
+        out->shared = false;
+        out->resizable = false;
+        out->wasm_memory = false;
+        return;
+    }
+    auto* buffer = view->possiblySharedBuffer();
+    out->shared = buffer->isShared();
+    out->resizable = view->isResizableOrGrowableShared();
+    out->wasm_memory = buffer->isWasmMemory();
 }
 
 bool JSC__JSValue__asArrayBuffer(
@@ -3508,8 +3532,7 @@ bool JSC__JSValue__asArrayBuffer(
         out->len = view->length();
         out->byte_len = view->byteLength();
         out->cell_type = type;
-        out->shared = view->isShared();
-        out->resizable = view->isResizableOrGrowableShared();
+        setStorageFlags(view, out);
         break;
     }
     case JSC::JSType::ArrayBufferType: {
@@ -3520,6 +3543,7 @@ bool JSC__JSValue__asArrayBuffer(
         out->cell_type = JSC::JSType::ArrayBufferType;
         out->shared = buffer->isShared();
         out->resizable = buffer->isResizableOrGrowableShared();
+        out->wasm_memory = buffer->isWasmMemory();
         break;
     }
     case JSC::JSType::ObjectType:
@@ -3529,8 +3553,7 @@ bool JSC__JSValue__asArrayBuffer(
             out->len = view->length();
             out->byte_len = view->byteLength();
             out->cell_type = view->type();
-            out->shared = view->isShared();
-            out->resizable = view->isResizableOrGrowableShared();
+            setStorageFlags(view, out);
         } else if (JSC::JSArrayBuffer* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
             JSC::ArrayBuffer* buffer = jsBuffer->impl();
             if (!buffer)
@@ -3541,6 +3564,7 @@ bool JSC__JSValue__asArrayBuffer(
             out->cell_type = JSC::JSType::ArrayBufferType;
             out->shared = buffer->isShared();
             out->resizable = buffer->isResizableOrGrowableShared();
+            out->wasm_memory = buffer->isWasmMemory();
         } else {
             return false;
         }
@@ -3569,43 +3593,32 @@ bool JSC__JSValue__asArrayBuffer(
 // `port.postMessage(v, [ab])` each return normally, give the destination an
 // independent copy, and leave `ab` attached; the bytes being read never move.
 //
-// A view with no ArrayBuffer yet (`Buffer.allocUnsafeSlow`, `new Uint8Array(n)`
-// past fastSizeLimit: OversizeTypedArray) is held, not adopted: materializing
-// an ArrayBuffer just to pin it registers the bytes with the heap a second
-// time and, because ArrayBuffers are only reclaimed by full collections,
-// turns every threadpool fs/zlib/crypto op over a fresh Buffer into full-GC
-// pressure. Such a view cannot be detached without JS first touching
-// `.buffer`; if it does so mid-op the new ArrayBuffer is unpinned and a
-// `transfer()` moves (does not free) the storage — the same window Node has.
-// The caller keeps the returned kind and only calls unpin for `Pinned`; a
-// held view is kept alive by the caller's own root, and nothing here needs
-// undoing for it.
-enum class PinKind : uint8_t { None = 0,
-    Pinned = 1,
-    Held = 2 };
-static PinKind pinStorage(JSC::JSValue value)
+// Only an ArrayBuffer can be pinned, so a view without one
+// (OversizeTypedArray) gets one first. `possiblySharedBuffer()` wraps the
+// storage in place (`createAdopted`, no byte copy). Otherwise `view.buffer`
+// would later create an unpinned ArrayBuffer, and transferring it would free
+// the storage while the borrower is still reading it.
+static bool pinStorage(JSC::JSValue value)
 {
     JSC::ArrayBuffer* buf = nullptr;
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
         buf = jb->impl();
     else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         if (view->isDetached())
-            return PinKind::None;
-        if (!view->hasArrayBuffer() && view->mode() == JSC::OversizeTypedArray)
-            return PinKind::Held;
+            return false;
         buf = view->possiblySharedBuffer();
     }
-    if (!buf)
-        return PinKind::None;
+    if (!buf || buf->isDetached())
+        return false;
     if (!buf->isShared())
         buf->pin();
-    return PinKind::Pinned;
+    return true;
 }
-CPP_DECL uint8_t JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
+CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
 {
-    return static_cast<uint8_t>(pinStorage(JSC::JSValue::decode(v)));
+    return pinStorage(JSC::JSValue::decode(v));
 }
-// Only for a value `pinStorage` answered `Pinned` for: that buffer still exists (pinned buffers are not detached).
+// Only call this for a value that `pinStorage` returned true for. That buffer still exists because pinned buffers can't be detached.
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
     // Reached from finalizers during GC sweep, where classInfo() (and so any
@@ -3629,20 +3642,39 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
         buf->unpin();
 }
 
+// Returns `v`'s current byte range, or null and 0 if it's detached.
+CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** out_ptr, size_t* out_len)
+{
+    auto value = JSC::JSValue::decode(v);
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        if (!view->isDetached()) {
+            *out_ptr = static_cast<uint8_t*>(view->vector());
+            *out_len = view->byteLength();
+            return;
+        }
+    } else if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        auto* buf = jb->impl();
+        if (buf && !buf->isDetached()) {
+            *out_ptr = static_cast<uint8_t*>(buf->data());
+            *out_len = buf->byteLength();
+            return;
+        }
+    }
+    *out_ptr = nullptr;
+    *out_len = 0;
+}
+
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data
 // (`ArrayBuffer::tryCreate(span())`) — and it's ≤ fastSizeLimit elements, so
-// the caller dupes instead. Every other mode goes through `pinStorage` (pin an
-// existing ArrayBuffer, hold an OversizeTypedArray without adopting it).
+// the caller dupes instead. Every other mode uses `pinStorage`.
 //
 //   0  Detached/null — nothing to read.
 //   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
 //      should dupe `out_ptr[0..out_len]`; no unpin.
-//   2  Pinned an existing ArrayBuffer; caller MUST `unpinArrayBuffer(v)`
-//      when done.
-//   3  Held: a bufferless OversizeTypedArray; nothing to unpin, caller roots
-//      the value for the duration as it already does for 2.
+//   2  Pinned the storage: an existing ArrayBuffer, or one adopted for a
+//      bufferless view. Caller MUST `unpinArrayBuffer(v)` when done.
 //
 // `out_ptr`/`out_len` describe the VIEW's byte range (offset+length).
 CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
@@ -3655,11 +3687,10 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
             *out_len = view->byteLength();
             return 1;
         }
-        auto kind = pinStorage(view);
-        if (kind == PinKind::None) return 0;
+        if (!pinStorage(view)) return 0;
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
-        return kind == PinKind::Held ? 3 : 2;
+        return 2;
     }
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         auto* buf = jb->impl();
@@ -4099,14 +4130,20 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
 
     Bun__Feature__heap_snapshot += 1;
 
-    JSC::HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler());
+    auto& heapProfiler = vm.ensureHeapProfiler();
+    heapProfiler.clearSnapshots();
+
+    JSC::HeapSnapshotBuilder snapshotBuilder(heapProfiler);
     snapshotBuilder.buildSnapshot();
 
     WTF::String jsonString = snapshotBuilder.json();
+    if (jsonString.isNull()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    JSC::JSValue result = JSONParseWithException(globalObject, jsonString);
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::EncodedJSValue result = JSC::JSValue::encode(JSONParse(globalObject, jsonString));
-    scope.releaseAssertNoException();
-    return result;
+    return JSC::JSValue::encode(result);
 }
 
 // One load. always_inline so ThinLTO importers and the inliner never leave
@@ -4196,8 +4233,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::Enco
     auto& vm = JSC::getVM(globalObject);
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    WTF::String keyStr = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
-    JSC::Identifier identifier = JSC::Identifier::fromString(vm, keyStr);
+    JSC::Identifier identifier = Bun::toIdentifier(vm, *key);
 
     JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
     object->putDirectMayBeIndex(globalObject, JSC::PropertyName(identifier), JSC::JSValue::decode(value));
@@ -4549,8 +4585,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSC::JSValue::decode(JSValue0);
-    WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::emptyString() : propertyName->toWTFString(BunString::ZeroCopy);
-    auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
+    auto identifier = Bun::toIdentifier(vm, *propertyName);
     auto property = JSC::PropertyName(identifier);
     PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);
     bool hasSlot = value.getOwnPropertySlot(globalObject, property, slot);
@@ -4778,8 +4813,8 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
     return value.toStringOrNull(arg1);
 }
 
-/// `toStringOrNull` + `JSString::view` in one call.
-JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view)
+/// `toStringOrNull` + `JSString::view` in one call. `*owner` is the cell that owns the characters.
+JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view, const JSC::JSString** owner)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
     auto* str = JSC::JSValue::decode(JSValue0).toStringOrNull(global);
@@ -4787,6 +4822,7 @@ JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::J
     auto data = str->view(global);
     RETURN_IF_EXCEPTION(scope, nullptr);
     *view = Bun::toStringView(data.data);
+    *owner = uncheckedDowncast<JSC::JSString>(data.owner);
     return str;
 }
 
@@ -5563,7 +5599,11 @@ restart:
 
                 // Ignore exceptions from getters.
                 if (scope.exception()) [[unlikely]] {
-                    (void)scope.tryClearException();
+                    if (!scope.tryClearException())
+                        return;
+                    // A CustomValue getter that throws (e.g. Bun.$) didn't produce a value. Skip it, like a lazy builder that throws above.
+                    if (slot.attributes() & PropertyAttribute::CustomValue)
+                        continue;
                     propertyValue = jsUndefined();
                 }
 
@@ -6252,15 +6292,28 @@ extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject,
 
 #pragma mark - WebCore::DOMFormData
 
-CPP_DECL void WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, const EncodedSlice* arg1, const EncodedSlice* arg2)
+// Both append functions throw and return false on failure.
+CPP_DECL bool WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* globalObject, const EncodedSlice* arg1, const EncodedSlice* arg2)
 {
-    arg0->append(toStringCopy(*arg1), toStringCopy(*arg2));
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto result = arg0->append(toStringCopy(*arg1), toStringCopy(*arg2));
+    if (result.hasException()) [[unlikely]] {
+        WebCore::propagateException(*globalObject, throwScope, result.releaseException());
+        return false;
+    }
+    return true;
 }
 
-CPP_DECL void WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* arg1, const EncodedSlice* arg2, void* blobValueInner, const EncodedSlice* fileName)
+CPP_DECL bool WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* arg1, const EncodedSlice* arg2, void* blobValueInner, const EncodedSlice* fileName)
 {
+    auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
     RefPtr<Blob> blob = WebCore::Blob::create(blobValueInner);
-    arg0->append(toStringCopy(*arg2), blob, toStringCopy(*fileName));
+    auto result = arg0->append(toStringCopy(*arg2), blob, toStringCopy(*fileName));
+    if (result.hasException()) [[unlikely]] {
+        WebCore::propagateException(*arg1, throwScope, result.releaseException());
+        return false;
+    }
+    return true;
 }
 CPP_DECL size_t WebCore__DOMFormData__count(WebCore::DOMFormData* arg0)
 {
@@ -6289,8 +6342,13 @@ CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlo
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
     }
-    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), WTF::move(str));
-    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTF::move(formData)));
+    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), str);
+    if (formData.hasException()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        WebCore::propagateException(*globalObject, scope, formData.releaseException());
+        return {};
+    }
+    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, formData.releaseReturnValue()));
 }
 
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__create(JSC::JSGlobalObject* arg0)
@@ -6901,6 +6959,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
     // Get the util.inspect function from the global object
     auto* bunGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     JSC::JSValue inspectFn = bunGlobal->utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
     if (!inspectFn || !inspectFn.isCallable()) {
         // Fallback to toString if util.inspect is not available
@@ -7120,5 +7179,6 @@ extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__
     out->cell_type = JSC::JSType::ArrayBufferType;
     out->shared = self->isShared();
     out->resizable = self->isResizableOrGrowableShared();
+    out->wasm_memory = self->isWasmMemory();
     out->pinned = false;
 }

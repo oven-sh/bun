@@ -741,6 +741,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return {};
     }
 
+    // appendVector() can't append a vector to itself, and the clear() below would drop the trace.
+    if (source == destination) {
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
     // A destination that is materialized, or is being formatted right now, never renders frames again.
     if (destination->hasMaterializedErrorInfo()) {
         return JSC::JSValue::encode(jsUndefined());

@@ -107,6 +107,7 @@ impl ParsedShellScript {
             return Err(global.throw(format_args!("$`...`.cwd(): expected a string argument")));
         };
         let str = BunString::from_js(str_js, global)?;
+        throw_if_nul(global, "cwd", &str.to_utf8())?;
         self.cwd.set(Some(str));
         Ok(JSValue::UNDEFINED)
     }
@@ -155,11 +156,11 @@ impl ParsedShellScript {
                 continue;
             }
 
-            let keyslice = key.to_owned_slice();
+            let keyslice = env_bytes(global, "env key", &key)?;
             // errdefer free(keyslice) — Drop on early-return handles this.
-            let slice = value.to_bun_string(global)?.to_owned_slice();
-            let keyref = EnvStr::init_ref_counted(keyslice.into_boxed_slice());
-            let valueref = EnvStr::init_ref_counted(slice.into_boxed_slice());
+            let slice = env_bytes(global, "env value", &value.to_bun_string(global)?)?;
+            let keyref = EnvStr::init_ref_counted(keyslice);
+            let valueref = EnvStr::init_ref_counted(slice);
 
             env.insert(keyref, valueref);
             keyref.deref();
@@ -169,6 +170,56 @@ impl ParsedShellScript {
         self.export_env.set(Some(env));
         Ok(JSValue::UNDEFINED)
     }
+}
+
+/// Throws if `bytes` contains a NUL. The OS reads the cwd and env as C strings, which end at the first NUL.
+fn throw_if_nul(global: &JSGlobalObject, name: &str, bytes: &[u8]) -> JsResult<()> {
+    if bun_core::strings::contains_char(bytes, 0) {
+        return Err(global
+            .err(
+                bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The shell {name} must be a string without null bytes. Received {}",
+                    bun_core::fmt::quote(bytes)
+                ),
+            )
+            .throw());
+    }
+    Ok(())
+}
+
+/// Returns an env name's or value's UTF-8 bytes. Throws like [`throw_if_nul`].
+fn env_bytes(global: &JSGlobalObject, name: &str, str: &BunString) -> JsResult<Box<[u8]>> {
+    // Fast path, because this runs for every variable of every command. One scan proves
+    // the bytes are ASCII (so already valid UTF-8) and have no NUL.
+    if !str.is_utf16() {
+        let bytes = str.latin1();
+        if is_ascii_without_nul(bytes) {
+            return Ok(Box::from(bytes));
+        }
+    }
+    let bytes = str.to_owned_slice();
+    throw_if_nul(global, name, &bytes)?;
+    Ok(bytes.into_boxed_slice())
+}
+
+fn is_ascii_without_nul(bytes: &[u8]) -> bool {
+    const LOW_BITS: u64 = 0x0101_0101_0101_0101;
+    const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+    // Nonzero if any of the 8 bytes is 0 or above 0x7F.
+    let rejected = |word: &[u8; 8]| {
+        let word = u64::from_ne_bytes(*word);
+        (word.wrapping_sub(LOW_BITS) | word) & HIGH_BITS
+    };
+    let Some(last) = bytes.last_chunk::<8>() else {
+        return bytes.iter().all(|&b| matches!(b, 1..=0x7F));
+    };
+    // `last` overlaps the final whole word, so it covers the tail.
+    let (words, _) = bytes.as_chunks::<8>();
+    words
+        .iter()
+        .fold(rejected(last), |found, word| found | rejected(word))
+        == 0
 }
 
 /// `jsc.MarkedArgumentBuffer.wrap` generates a host-fn shim that allocates a

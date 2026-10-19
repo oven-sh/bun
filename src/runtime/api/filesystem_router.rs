@@ -22,7 +22,6 @@ pub(crate) mod kind_enum {
 use bun_paths::strings;
 use core::cell::UnsafeCell;
 
-use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
 use bun_jsc::bun_string_jsc;
@@ -40,6 +39,7 @@ use bun_router::{self as Router, Match as RouterMatch, RouteConfig};
 use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
+use crate::node::types::Valid;
 use crate::webcore::{Request, Response};
 
 // Note: `FrameworkFileSystemRouter` is declared in this file's
@@ -82,7 +82,7 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
 bun_jsc::codegen_cached_accessors!("FileSystemRouter"; routes);
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `JsCell` for the two fields that `reload`/`match`
+// interior mutability via `JsCell` for `router`, the field that `reload`/`match`
 // mutate. The codegen shim may still emit `this: &mut FileSystemRouter` —
 // `&mut T` reborrows to `&T` so the impls compile against either.
 #[bun_jsc::JsClass]
@@ -92,10 +92,6 @@ pub(crate) struct FileSystemRouter {
     pub(crate) origin: Option<BackRef<RefString>>,
     pub(crate) base_dir: Option<BackRef<RefString>>,
     pub(crate) router: JsCell<Router::Router>,
-    // Router borrows slices from this arena across calls;
-    // kept as boxed arena per LIFETIMES.tsv (OWNED). `bun_alloc::Arena` (mimalloc heap) is
-    // the runtime-wide arena type, so allocations here are individually freeable too.
-    pub(crate) arena: JsCell<Box<ArenaAllocator>>,
     pub(crate) asset_prefix: Option<BackRef<RefString>>,
 }
 
@@ -145,12 +141,13 @@ impl FileSystemRouter {
                     .throw_invalid_arguments(format_args!("Expected dir to be a string")));
             }
             let root_dir_path_ = dir.to_utf8(global_this)?;
+            Valid::no_null_bytes(root_dir_path_.slice(), "dir", "a string", global_this)?;
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
                 // An absolute path is normalized too: a route is named by what follows this
                 // path in the resolver's spelling of its directory, which is normalized.
                 let Some(joined) =
                     path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                        Fs::FileSystem::instance().top_level_dir,
+                        Fs::FileSystem::instance().top_level_dir(),
                         &mut out_buf,
                         &[root_dir_path_.slice()],
                     )
@@ -168,9 +165,7 @@ impl FileSystemRouter {
                 global_this.throw_invalid_arguments(format_args!("Expected dir to be a string"))
             );
         }
-        // extensions/asset_prefix/log are all allocated from this arena.
-        let arena = Box::new(ArenaAllocator::new());
-        let mut extensions: Vec<&[u8]> = Vec::new();
+        let mut extensions: Vec<Box<[u8]>> = Vec::new();
         if let Some(file_extensions) = argument.get(global_this, "fileExtensions")? {
             if !file_extensions.js_type().is_array() {
                 return Err(global_this.throw_invalid_arguments(format_args!(
@@ -190,12 +185,7 @@ impl FileSystemRouter {
                     continue;
                 }
                 let utf8 = val.to_utf8(global_this)?;
-                // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`, so the
-                // backing allocation outlives this slice. Cast through raw ptr to detach the
-                // borrow from `arena` so it can be moved below.
-                let leaked: &'static [u8] =
-                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(utf8.slice())) };
-                extensions.push(&leaked[1..]);
+                extensions.push(Box::from(&utf8.slice()[1..]));
             }
         }
 
@@ -246,7 +236,7 @@ impl FileSystemRouter {
         let mut router = Router::Router::init(RouteConfig {
             dir: Box::from(&path_to_use[..]),
             extensions: if !extensions.is_empty() {
-                extensions.iter().map(|s| Box::<[u8]>::from(*s)).collect()
+                extensions.into_boxed_slice()
             } else {
                 DEFAULT_EXTENSIONS
                     .iter()
@@ -294,37 +284,37 @@ impl FileSystemRouter {
         };
 
         // Note: `vm.refCountedString` is an interning cache — on a cache HIT it
-        // returns the existing `*mut RefString` WITHOUT bumping the refcount.
+        // returns the existing `RefString` WITHOUT bumping the refcount.
         // `getScriptSrc`/`getOrigin` use `.leak()` (no ref), so without an
         // explicit hold N routers sharing one interned RefString → N finalizers
         // deref a single +1 → UAF on the second deref. Claim an explicit +1 here
         // so each `FileSystemRouter` owns its hold; `finalize` releases it.
-        let claim = |p: *mut RefString| -> BackRef<RefString> {
-            // `ref_counted_string` returns a live interned `*mut RefString`; wrap as
+        let claim = |p: core::ptr::NonNull<RefString>| -> BackRef<RefString> {
+            // `ref_counted_string` returns a live interned `RefString`; wrap as
             // `BackRef` (owner-outlives-holder: VM intern cache + our +1).
-            let r = BackRef::from(core::ptr::NonNull::new(p).expect("ref_counted_string"));
+            let r = BackRef::from(p);
             r.ref_();
             r
         };
+        // Intern all three before claiming any, so a failure can't leak a ref.
+        let mut intern = |bytes: &[u8]| {
+            vm.ref_counted_string(bytes, None)
+                .map_err(|_| global_this.throw_string_too_long())
+        };
+        let origin = match origin_str.slice() {
+            [] => None,
+            bytes => Some(intern(bytes)?),
+        };
+        let base_dir = intern(base_dir_str)?;
+        let asset_prefix = match asset_prefix_slice.slice() {
+            [] => None,
+            bytes => Some(intern(bytes)?),
+        };
         let fs_router = Box::new(FileSystemRouter {
-            origin: if !origin_str.slice().is_empty() {
-                Some(claim(
-                    vm.ref_counted_string::<true>(origin_str.slice(), None),
-                ))
-            } else {
-                None
-            },
-            base_dir: Some(claim(vm.ref_counted_string::<true>(base_dir_str, None))),
-            asset_prefix: if !asset_prefix_slice.slice().is_empty() {
-                Some(claim(vm.ref_counted_string::<true>(
-                    asset_prefix_slice.slice(),
-                    None,
-                )))
-            } else {
-                None
-            },
+            origin: origin.map(claim),
+            base_dir: Some(claim(base_dir)),
+            asset_prefix: asset_prefix.map(claim),
             router: JsCell::new(router),
-            arena: JsCell::new(arena),
         });
 
         // RouteConfig::dir is an owned `Box<[u8]>`, so copy the bytes; the
@@ -437,7 +427,6 @@ impl FileSystemRouter {
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
 
-        let arena = Box::new(ArenaAllocator::new());
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
         let vm_ptr = global_this.bun_vm_ptr();
 
@@ -504,11 +493,7 @@ impl FileSystemRouter {
             }
         }
 
-        // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.
-        // Note: order matters — old router borrows slices from old arena, so it must drop
-        // first.
         this.router.set(router);
-        this.arena.set(arena);
         // `js.routesSetCached` — wired via `codegen_cached_accessors!` above.
         routes_set_cached(this_value, global_this, JSValue::ZERO);
         Ok(this_value)
@@ -908,7 +893,7 @@ impl MatchedRoute {
             if let Some(ref base_dir) = this.base_dir {
                 base_dir.leak()
             } else {
-                Fs::FileSystem::get().top_level_dir
+                Fs::FileSystem::get().top_level_dir()
             },
             &origin_url,
             if let Some(ref prefix) = this.asset_prefix {

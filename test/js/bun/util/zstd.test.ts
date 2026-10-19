@@ -885,6 +885,25 @@ describe.concurrent("async compression of a resizable ArrayBuffer that shrinks a
       "same\n",
     );
   });
+
+  // A typed array created from a length has no ArrayBuffer until JS reads `.buffer`.
+  it("a typed array created from a length keeps its bytes when its buffer is transferred mid-compress", async () => {
+    await runInChild(
+      /* js */ `
+      const N = 256 * 1024;
+      const u8 = new Uint8Array(N).fill(0x41);
+      const promise = Bun.zstdCompress(u8);
+      u8.buffer.transfer(0);
+      const out = Buffer.from(Bun.zstdDecompressSync(await promise));
+      console.log(JSON.stringify({
+        byteLength: u8.byteLength,
+        decompressed: out.length,
+        allA: out.every(b => b === 0x41),
+      }));
+    `,
+      JSON.stringify({ byteLength: 256 * 1024, decompressed: 256 * 1024, allA: true }) + "\n",
+    );
+  });
 });
 
 describe.concurrent("Zstandard HTTP compression", () => {

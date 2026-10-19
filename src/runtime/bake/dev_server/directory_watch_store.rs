@@ -172,11 +172,16 @@ impl DirectoryWatchStore {
         }
 
         let mut buf = bun_paths::path_buffer_pool::get();
-        let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
-            &mut buf.0,
-            &[specifier],
-        );
+        let Some(joined) =
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
+                &mut buf.0,
+                &[specifier],
+            )
+        else {
+            // There's nothing to watch, like in `insert`'s NameTooLong case.
+            return Ok(());
+        };
         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
 
         // The `import_source` parameter is not a stable string. Since the
@@ -319,8 +324,8 @@ impl DirectoryWatchStore {
                             // TODO: implement that. for now it ignores (BUN-10968)
                             return Err(DirectoryWatchInsertError::Ignore);
                         }
-                        bun_sys::E::ENOTDIR => return Err(DirectoryWatchInsertError::Ignore),
-                        _ => bun_core::todo_panic!("log watcher error"),
+                        // The resolver already reported the failed import.
+                        _ => return Err(DirectoryWatchInsertError::Ignore),
                     },
                 }
             }

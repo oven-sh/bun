@@ -20965,6 +20965,40 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(stdout.split("\n").sort()).toEqual(expected.sort());
       expect(exitCode).toBe(1);
     });
+
+    // Declarations are emitted even after syntax errors. `app` parses the .d.ts files that `lib` emits.
+    test("emits an export declaration whose module specifier is missing or parenthesized", async () => {
+      const globals =
+        "Array<T> Boolean CallableFunction Function IArguments NewableFunction Number Object RegExp String"
+          .split(" ")
+          .map(name => `interface ${name} {}\n`)
+          .join("");
+      const config = (rest: object = {}) =>
+        JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, noEmit: false, noLib: true, composite: true },
+          ...rest,
+        });
+      using dir = tempDir("bun-check", {
+        "tsconfig.json": `{ "files": [], "references": [{ "path": "./lib" }, { "path": "./app" }] }`,
+        "lib/tsconfig.json": config(),
+        "lib/globals.d.ts": globals,
+        "lib/m.ts": `export const a = 1;\n`,
+        "lib/star.ts": `export *\n`,
+        "lib/closed.ts": `export * from ("./m")\n`,
+        "lib/open.ts": `export * from (("./m")\n`,
+        "app/tsconfig.json": config({ references: [{ path: "../lib" }] }),
+        "app/globals.d.ts": globals,
+        "app/main.ts": `import "../lib/star";\nimport "../lib/closed";\nimport "../lib/open";\n`,
+      });
+      const { stdout, exitCode } = await check(dir, ["-b"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "lib/open.ts(2,1): error TS1005: ')' expected.
+        lib/star.ts(1,9): error TS1109: Expression expected.
+        lib/star.ts(2,1): error TS1005: 'from' expected.
+        lib/star.d.ts(1,15): error TS1109: Expression expected."
+      `);
+      expect(exitCode).toBe(1);
+    });
   });
 
   describe("compiler options as flags", () => {

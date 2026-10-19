@@ -53,8 +53,10 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup rejects"
       } catch (e) {
         result = (e as Error).name;
       }
+      // The route must not be stuck in the queue for a bundle that never starts.
+      const second = await fetch(server.url).then(res => res.text());
       await server.stop(true);
-      console.log(JSON.stringify({ result }));
+      console.log(JSON.stringify({ result, second }));
     `,
   });
 
@@ -73,10 +75,11 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup rejects"
 
   const line = stdout.split("\n").find(l => l.startsWith("{"));
   expect(line).toBeDefined();
-  const { result } = JSON.parse(line!);
+  const { result, second } = JSON.parse(line!);
   // With the DevServer notified, the deferred request is released promptly. If it
   // isn't, the fetch sits until the 10s abort fires and we see "TimeoutError" here.
   expect(result).not.toBe("TimeoutError");
+  expect(second).toBe("Plugin Error");
   expect(exitCode).toBe(0);
 });
 
@@ -135,5 +138,217 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup resolves
   expect(line).toBeDefined();
   const out = JSON.parse(line!);
   expect(out).toEqual({ status: 200, fromPlugin: true });
+  expect(exitCode).toBe(0);
+});
+
+const parkedPlugin = /* ts */ `
+  export default {
+    name: "parked-plugin",
+    async setup() {
+      const { entered, release, finished } = globalThis.__setup;
+      entered();
+      try {
+        if ((await release) === "reject") throw new Error("plugin setup failed after stop");
+      } finally {
+        finished();
+      }
+    },
+  };
+`;
+
+test.concurrent.each(["kept", "collected"])(
+  "stop(true) releases a request waiting on a plugin load that settles later (server %s)",
+  async mode => {
+    using dir = tempDir(`serve-plugins-devserver-stop-${mode}`, {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": parkedPlugin,
+      "index.html": indexHtml,
+      "entry.ts": `console.log("entry");`,
+      "server.ts": `
+        import { getDevServerDeinitCount } from "bun:internal-for-testing";
+        import html from "./index.html";
+
+        const entered = Promise.withResolvers();
+        const release = Promise.withResolvers();
+        const finished = Promise.withResolvers();
+        globalThis.__setup = { entered: entered.resolve, release: release.promise, finished: finished.resolve };
+        const turn = () => new Promise(resolve => setImmediate(resolve));
+
+        let collected = false;
+        const registry = new FinalizationRegistry(() => void (collected = true));
+        let keepServer;
+
+        // A separate function so that the stack doesn't reference the server after it returns.
+        async function stopWhileParked() {
+          const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+          registry.register(server, "server");
+          if (process.argv[2] === "kept") keepServer = server;
+          const request = fetch(server.url).then(res => String(res.status), err => err.code);
+          await entered.promise;
+          await server.stop(true);
+          return await request;
+        }
+        const request = await stopWhileParked();
+
+        for (let i = 0; i < 50 && !keepServer && !collected; i++) {
+          Bun.gc(true);
+          await turn();
+        }
+
+        release.resolve("resolve");
+        await finished.promise;
+        // The reaction that reports the load to the server runs in this turn's microtasks.
+        await turn();
+        console.log(JSON.stringify({ request, deinits: getDevServerDeinitCount(), collected }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts", mode],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const line = stdout.split("\n").find(l => l.startsWith("{"));
+    expect(line === undefined ? undefined : JSON.parse(line), stderr).toEqual({
+      request: "ECONNRESET",
+      deinits: 1,
+      collected: mode === "collected",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("responds to a framework route waiting on a plugin load that rejects after stop()", async () => {
+  using dir = tempDir("serve-plugins-devserver-reject-framework", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": parkedPlugin,
+    "render.ts": `export function render() { return new Response("rendered"); }`,
+    "routes/index.ts": `export default {};`,
+    "server.ts": `
+      import { getDevServerDeinitCount } from "bun:internal-for-testing";
+      const entered = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      globalThis.__setup = { entered: entered.resolve, release: release.promise, finished() {} };
+
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" };
+      const server = Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } });
+      const status = fetch(server.url).then(res => res.status);
+      await entered.promise;
+      const stopped = server.stop();
+      release.resolve("reject");
+      console.log(await status);
+      await stopped;
+      console.log(server.pendingRequests, getDevServerDeinitCount());
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("plugin setup failed after stop");
+  expect(stdout).toBe("500\n0 1\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("releases a framework request that the client aborts while it waits for a plugin load", async () => {
+  using dir = tempDir("serve-plugins-devserver-abort-framework", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": parkedPlugin,
+    "render.ts": `export function render() { return new Response("rendered"); }`,
+    "routes/index.ts": `export default {};`,
+    "server.ts": `
+      const entered = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      globalThis.__setup = { entered: entered.resolve, release: release.promise, finished() {} };
+
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" };
+      const server = Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } });
+      const controller = new AbortController();
+      const aborted = fetch(server.url, { signal: controller.signal }).catch(err => err.name);
+      await entered.promise;
+      controller.abort();
+      console.log(await aborted);
+      // The server has seen the disconnect by the time it responds to this request.
+      console.log((await fetch(new URL("/no-such-route", server.url))).status);
+      release.resolve("resolve");
+      console.log(await fetch(server.url).then(res => res.text()), server.pendingRequests);
+      await server.stop();
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout, stderr).toBe("AbortError\n404\nrendered 0\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("responds to a framework request queued behind the reload that bundles its page", async () => {
+  using dir = tempDir("serve-plugins-devserver-queued-framework", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": `
+      export default {
+        name: "park-page",
+        setup(build) {
+          build.onLoad({ filter: /edited\\.ts$/ }, async () => {
+            globalThis.loadParked.resolve();
+            await globalThis.releaseLoad.promise;
+          });
+        },
+      };
+    `,
+    "render.ts": `export function render(request, meta) { return new Response(meta.pageModule.default); }`,
+    "routes/index.ts": `export default "index";`,
+    "routes/edited.ts": `export default "before";`,
+    "server.ts": `
+      import { renameSync, writeFileSync } from "node:fs";
+      globalThis.loadParked = Promise.withResolvers();
+      globalThis.releaseLoad = Promise.withResolvers();
+
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" };
+      const server = Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } });
+      const get = path => fetch(new URL(path, server.url)).then(res => res.text());
+      console.log(await get("/"));
+
+      // A rename is a single watcher event, so a second reload isn't queued behind the first.
+      writeFileSync("edited.next", 'export default "after";');
+      renameSync("edited.next", "routes/edited.ts");
+      await globalThis.loadParked.promise;
+      const queued = get("/edited");
+      // The server has read the request for the page by the time it responds to this one.
+      await get("/no-such-route");
+      globalThis.releaseLoad.resolve();
+      console.log(await queued);
+      console.log(await get("/edited"));
+      await server.stop();
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout, stderr).toBe("index\nafter\nafter\n");
   expect(exitCode).toBe(0);
 });

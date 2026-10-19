@@ -845,15 +845,17 @@ impl JSValue {
             .map(|p| JSString::opaque_ref(p.as_ptr()))
     }
     /// [`to_js_string`] plus a borrowed view of its characters, in one FFI
-    /// call. The returned guard keeps the cell alive while in scope.
+    /// call. The returned guard keeps the characters' owner cell alive while in scope.
     #[track_caller]
     pub fn to_js_string_view<'a>(self, global: &'a JSGlobalObject) -> JsResult<JSStringView<'a>> {
         let mut view = bun_core::StringView::EMPTY;
+        let mut owner: *const JSString = core::ptr::null();
         crate::call_null_is_throw(global, || {
-            JSC__JSValue__toJSStringView(self, global, &mut view)
+            JSC__JSValue__toJSStringView(self, global, &mut view, &mut owner)
         })
         .map(|p| JSStringView {
             cell: JSString::opaque_ref(p.as_ptr()),
+            owner: JSString::opaque_ref(owner),
             view,
         })
     }
@@ -897,7 +899,8 @@ impl JSValue {
     pub fn js_type_string<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
         let cell = JSString::opaque_ref::<'a>(JSC__jsTypeStringForValue(global, self));
         crate::validation_scope!(scope, global);
-        let view = crate::js_string::JSC__JSString__view(cell, global);
+        let mut owner: *const JSString = cell;
+        let view = crate::js_string::JSC__JSString__view(cell, global, &mut owner);
         scope.assert_no_exception();
         view
     }
@@ -918,15 +921,13 @@ impl JSValue {
     /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
     /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
     pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        let kind = JSC__JSValue__pinArrayBuffer(self);
-        if kind == 0 {
+        if !JSC__JSValue__pinArrayBuffer(self) {
             return None;
         }
         let mut buffer = self.as_array_buffer(global);
         match &mut buffer {
-            Some(buffer) => buffer.pinned = kind == 1,
-            None if kind == 1 => self.unpin_array_buffer(),
-            None => {}
+            Some(buffer) => buffer.pinned = true,
+            None => self.unpin_array_buffer(),
         }
         buffer
     }
@@ -2113,6 +2114,7 @@ unsafe extern "C" {
         this: JSValue,
         global: &'a JSGlobalObject,
         view: &mut bun_core::StringView<'a>,
+        owner: &mut *const JSString,
     ) -> *mut JSString;
     safe fn JSC__JSValue__asString(this: JSValue) -> *mut JSString;
     safe fn JSC__jsTypeStringForValue(global: &JSGlobalObject, value: JSValue) -> *mut JSString;
@@ -2121,8 +2123,9 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut ArrayBuffer,
     ) -> bool;
-    /// 0 = nothing to pin, 1 = pinned an ArrayBuffer (unpin later), 2 = held a bufferless view (nothing to unpin).
-    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> u8;
+    /// Returns true if it pinned the value's ArrayBuffer, materializing one for a view that has
+    /// none. The caller must unpin it later.
+    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> bool;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(

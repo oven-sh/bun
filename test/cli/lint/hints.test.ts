@@ -58,6 +58,14 @@ export function rename(kind) {
       "no-useless-assignment 4: Nothing reads it after this.",
     ]);
   });
+
+  test("an assignment in parentheses is not a pattern", async () => {
+    const f = `export function f(a: number, b: number) {\n  (a = b) = a;\n}\n`;
+    const g = `export function g(a: number, b: number) {\n  (a = b) += a;\n}\n`;
+    const { stdout, exitCode } = await lint({ "a.ts": f + g }, "-f", "unix");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 
 /** Code and its expected reports. The code uses everything it declares, so nothing else gets reported. */

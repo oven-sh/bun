@@ -440,6 +440,18 @@ impl<'a> JsBytes<'a> {
             },
         }
     }
+
+    /// `shared: "copied"` for `string: "asIs"`. Returns `None` for anything but a shared buffer.
+    pub fn copy_if_shared(self, heap: &JsHeap<'a>) -> crate::JsResult<Option<Vec<u8>>> {
+        let global = heap.global_object();
+        match self.value.0.as_array_buffer(global) {
+            Some(buffer) if buffer.shared => match buffer.try_copy_bytes() {
+                Some(copy) => Ok(Some(copy)),
+                None => Err(global.throw_out_of_memory()),
+            },
+            _ => Ok(None),
+        }
+    }
 }
 
 /// `b.bytes` with `string: "asIs"`.

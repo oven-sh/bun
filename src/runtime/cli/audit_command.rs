@@ -486,6 +486,13 @@ fn collect_packages_for_audit(
         }
     }
 
+    // There is no package to audit, so no registry is asked.
+    if by_name.is_empty() {
+        return Ok(CollectPackagesResult {
+            requests: Vec::new(),
+        });
+    }
+
     let requests = groups
         .into_iter()
         .enumerate()
@@ -607,7 +614,8 @@ fn is_empty_bulk_body(body: &[u8]) -> bool {
 fn merge_bulk_bodies(bodies: &[Box<[u8]>]) -> Box<[u8]> {
     let mut non_empty = bodies.iter().filter(|body| !is_empty_bulk_body(body));
     let Some(first) = non_empty.next() else {
-        return bodies.first().cloned().unwrap_or_default();
+        // Without a body, no request was sent, because there was no package to audit.
+        return (bodies.first().cloned()).unwrap_or_else(|| Box::from(&b"{}"[..]));
     };
     let Some(second) = non_empty.next() else {
         return first.clone();

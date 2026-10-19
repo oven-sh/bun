@@ -4,15 +4,15 @@ use super::Parser as Syntax;
 use super::media_query::{MediaKind, MediaNode};
 use super::memo::Memo;
 use super::misc::{
-    adjust_numbers, adjust_strings, ends_before_escaped_blank, last_line_has_inline_comment,
-    maybe_to_lower_case, print_css_number, print_string, print_unit, quote_attribute_value,
-    to_lower_case,
+    adjust_numbers, adjust_strings, ends_before_escaped_blank, ends_with_hex_escape,
+    last_line_has_inline_comment, maybe_to_lower_case, print_css_number, print_string, print_unit,
+    quote_attribute_value, to_lower_case,
 };
 use super::parse::{Context, CssNode, Params, Parsed, Value};
 use super::postcss::{Kind, Node, NodeId, Tree};
 use super::selector_parser::{Namespace, SelectorId, SelectorKind, Selectors};
 use super::sink::Sink;
-use super::value_parser::{Before, ValueId, ValueKind, Values};
+use super::value_parser::{Before, ValueId, ValueKind, ValueRef, Values};
 use crate::FormatError;
 use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{self, has_newline_backwards, is_next_line_empty};
@@ -72,6 +72,14 @@ impl<'s, 'a> Statement<'s, 'a> {
                 .iter()
                 .any(|name| node.name.eq_ignore_ascii_case(name))
         })
+    }
+
+    /// True for a custom property. Scripts read its value exactly as written, and `style()` queries compare it that
+    /// way. So its tokens are printed unchanged, spaces aren't added where there were none, and lines don't break after
+    /// a comma that touches the next token. Prettier and oxfmt format it like any other value: `#FFF` becomes `#fff`,
+    /// `.50` becomes `0.5`, `'a'` becomes `"a"`, `1,000` becomes `1, 000`, and in Prettier `16:9` becomes `16: 9`.
+    pub(crate) fn is_custom_property(&self) -> bool {
+        self.node().kind == Kind::Decl && self.node().prop.starts_with(b"--")
     }
 
     fn is_in_keyframes(&self) -> bool {
@@ -798,11 +806,11 @@ impl<'a> Printer<'a, '_> {
                 Value::Parsed(_)
                     if printer.is_oxfmt
                         && node.prop.starts_with(b"--")
+                        // The raw text includes `!default` and `!global`, which are also printed after the value.
+                        && !(node.scss_default || node.scss_global)
                         && is_more_than_values(printer.context.of(raw.value), printer.syntax()) =>
                 {
-                    printer.sink.text(bun_core::strings::trim_js_whitespace(
-                        printer.context.of(raw.value),
-                    ));
+                    printer.sink.text(printer.context.written(raw.value));
                 }
                 Value::Parsed(value) => {
                     // `hasComposesNode`
@@ -880,7 +888,19 @@ impl<'a> Printer<'a, '_> {
         let is_in_less_variable = statement
             .parent()
             .is_some_and(|parent| parent.kind == Kind::AtRule && parent.variable);
-        match is_in_less_variable || statement.inside_icss_rule() {
+        // Tailwind `@plugin` options are JavaScript object keys, and the names in `@font-feature-values` blocks are
+        // chosen by the author. Both are case-sensitive. Prettier prints `className` as `classname`.
+        let is_name_of_the_author = statement.inside_at_rule(&[
+            b"plugin",
+            b"stylistic",
+            b"historical-forms",
+            b"styleset",
+            b"character-variant",
+            b"swash",
+            b"ornaments",
+            b"annotation",
+        ]);
+        match is_in_less_variable || is_name_of_the_author || statement.inside_icss_rule() {
             true => self.sink.text(&node.prop),
             false => self.sink.text(&maybe_to_lower_case(&node.prop)),
         }
@@ -972,6 +992,7 @@ impl<'a> Printer<'a, '_> {
             }
             false => self.sink.token(";"),
         }
+        self.print_line_comment(node);
     }
 
     /// Whether there is no semicolon behind the node of `scope`.
@@ -1038,7 +1059,8 @@ impl<'a> Printer<'a, '_> {
                 if node.important {
                     self.sink.token(" !important");
                 }
-                return self.sink.token(semicolon);
+                self.sink.token(semicolon);
+                return self.print_line_comment(node);
             }
             if node.function {
                 self.sink.text(node.name);
@@ -1131,6 +1153,10 @@ impl<'a> Printer<'a, '_> {
             self.print_selector(statement, selector, None, None);
             self.sink.end_indent();
         }
+        let ends_with_blank = match node.value {
+            Value::Parsed(_) => is_control_directive,
+            _ => node.name == b"else",
+        };
         match node.value {
             Value::Parsed(value) => {
                 // `hasParensAroundNode`
@@ -1155,6 +1181,14 @@ impl<'a> Printer<'a, '_> {
             && matches!(node.params, Params::Value(value)
                 if statement.values.node(value).kind == ValueKind::Unknown && statement.values.value(value).is_some_and(|it| it.ends_with(b";")));
         match node.has_block {
+            true if !node.line_comment.is_empty() => {
+                if !ends_with_blank {
+                    self.sink.token(" ");
+                }
+                self.sink.text(node.line_comment);
+                self.sink.hard_line();
+                self.sink.token("{");
+            }
             true => {
                 let has_inline_comment = match (node.selector, &node.params) {
                     (Some(selector), _) => {
@@ -1178,7 +1212,16 @@ impl<'a> Printer<'a, '_> {
                     self.sink.token(" ");
                 }
                 self.sink.token(semicolon);
+                self.print_line_comment(node);
             }
+        }
+    }
+
+    /// Prints `CssNode::line_comment` after a `;`.
+    fn print_line_comment(&mut self, node: &CssNode<'a>) {
+        if !node.line_comment.is_empty() {
+            self.sink.token(" ");
+            self.sink.text(node.line_comment);
         }
     }
 
@@ -1440,8 +1483,12 @@ impl<'a> Printer<'a, '_> {
                         .unwrap_or_default(),
                 );
                 if node.has_value {
-                    let adjusted =
-                        adjust_strings(bun_core::strings::trim_js_whitespace(value), single_quote);
+                    let value = bun_core::strings::trim_js_whitespace_start(value);
+                    let mut len = bun_core::strings::trim_js_whitespace_end(value).len();
+                    if len < value.len() && ends_before_escaped_blank(&value[..len]) {
+                        len += 1;
+                    }
+                    let adjusted = adjust_strings(&value[..len], single_quote);
                     // `replaceEndOfLine(.., literallineWithoutBreakParent)`
                     for (index, line) in bun_core::strings::split(
                         &quote_attribute_value(adjusted, single_quote),
@@ -1467,12 +1514,37 @@ impl<'a> Printer<'a, '_> {
                         self.sink.line();
                     }
                     self.sink.text(value);
-                    if node.next_sibling != 0 {
+                    // `:nth-child(+n+3)` and the keyframe selector `+50%`. Prettier prints a space after the sign,
+                    // which makes them invalid.
+                    let is_sign = is_first
+                        && value == b"+"
+                        && (selectors.text((node.value.1, node.value.1 + 1)).first())
+                            .is_some_and(|next| !next.is_ascii_whitespace())
+                        && parent.is_some_and(|parent| {
+                            let around = selectors.node(selectors.node(parent).parent);
+                            match around.kind {
+                                SelectorKind::Pseudo => (selectors.text(around.value).get(..5))
+                                    .is_some_and(|it| it.eq_ignore_ascii_case(b":nth-")),
+                                SelectorKind::Root => statement.is_in_keyframes(),
+                                _ => false,
+                            }
+                        });
+                    if node.next_sibling != 0 && !is_sign {
                         self.sink.token(" ");
                     }
                     return;
                 }
                 if value.iter().all(u8::is_ascii_whitespace) {
+                    // The first space of `.\31  .b` ends the escape and the second is the combinator. Prettier prints
+                    // `.\31 .b`, which is a compound selector.
+                    if value.len() > 1
+                        && previous.is_some_and(|it| {
+                            let name = (selectors.node(it).value.0, node.value.0);
+                            ends_with_hex_escape(selectors.text(name))
+                        })
+                    {
+                        self.sink.token(" ");
+                    }
                     return self.sink.line();
                 }
                 if bun_core::strings::trim_js_whitespace_start(value).starts_with(b"(") {
@@ -1636,10 +1708,19 @@ impl<'a> Printer<'a, '_> {
                 self.print_child_value(statement, id, node.group);
             }
             ValueKind::Number => {
-                self.scratch.clear();
-                print_css_number(value, &mut self.scratch);
-                self.sink.text(&self.scratch);
-                self.sink.text(print_unit(values.text(node.unit)));
+                let as_written = match statement.is_custom_property() {
+                    true => (ValueRef { values, id }).number_as_written(),
+                    false => None,
+                };
+                match as_written {
+                    Some(number) => self.sink.text(number),
+                    None => {
+                        self.scratch.clear();
+                        print_css_number(value, &mut self.scratch);
+                        self.sink.text(&self.scratch);
+                        self.sink.text(print_unit(values.text(node.unit)));
+                    }
+                }
             }
             ValueKind::Paren
             | ValueKind::Operator
@@ -1653,7 +1734,9 @@ impl<'a> Printer<'a, '_> {
                 let is_wide_keyword = ["initial", "inherit", "unset", "revert"]
                     .iter()
                     .any(|it| value.eq_ignore_ascii_case(it.as_bytes()));
-                match (node.is_color && node.is_hex) || is_wide_keyword {
+                match ((node.is_color && node.is_hex) || is_wide_keyword)
+                    && !statement.is_custom_property()
+                {
                     true => self.sink.text(&to_lower_case(value)),
                     false => self.sink.text(value),
                 }
@@ -1664,7 +1747,9 @@ impl<'a> Printer<'a, '_> {
                     .is_some_and(|it| it.ends_with(b"\\"));
                 self.sink.start_group(false);
                 self.sink.token(":");
-                if !(is_escaped || self.inside_value_function(values, b"url")) {
+                let is_as_written = statement.is_custom_property()
+                    && (ValueRef { values, id }).blanks_behind() == 0;
+                if !(is_escaped || is_as_written || self.inside_value_function(values, b"url")) {
                     self.sink.line();
                 }
                 self.sink.end_group();
@@ -1677,6 +1762,9 @@ impl<'a> Printer<'a, '_> {
                         .value_function(values)
                         .is_some_and(|name| !name.eq_ignore_ascii_case(b"url")) =>
             {
+                self.sink.text(values.raw_string(id));
+            }
+            ValueKind::String if statement.is_custom_property() => {
                 self.sink.text(values.raw_string(id));
             }
             ValueKind::String => {

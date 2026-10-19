@@ -277,7 +277,8 @@ impl<'t> Builder<'t, '_, '_> {
         let flavor = self.f.options().flavor;
         let is_ignored = comments.iter().any(|it| {
             let comment = self.slice(self.comment_span(it));
-            flavor.is_ignore_comment(comment.get(1..).unwrap_or_default().trim_ascii())
+            let content = comment.get(1..).unwrap_or_default();
+            flavor.is_ignore_comment(bun_core::strings::trim_js_whitespace(content))
         });
         match is_ignored {
             true => self.ignored(self.tree.span(id)),
@@ -502,40 +503,51 @@ impl<'t> Builder<'t, '_, '_> {
                     .unwrap_or_default(),
             });
 
+        // Flush pending line-suffix comments. Otherwise they'd be printed inside the string, as in Prettier.
+        self.push(FormatElement::LineSuffixBoundary);
         self.token("\"\"\"");
-        let mut empty_lines = 0;
+        // `""" a """` is printed as is. The padding is part of the value, and Prettier drops it. On its own line, the
+        // leading whitespace would turn into indentation and the trailing whitespace would be invisible.
+        let ends_with_blank = |line: &[u8]| matches!(line.last(), Some(b' ' | b'\t'));
+        let is_padded = leading_blanks(content) > 0 || ends_with_blank(content);
+        if count == 1 && is_padded && bun_core::strings::index_of_any(content, b"\r\n").is_none() {
+            self.text(content);
+            return self.token("\"\"\"");
+        }
+        let mut is_at_quotes = count == 1 && first == 0 && leading_blanks(content) > 0;
+        let (mut empty_lines, mut is_line_ended) = (0, false);
         for line in dedented {
-            // The printer of Prettier leaves out the blanks at the end of a line.
-            let mut line = &line[..line.len()
-                - line
-                    .iter()
-                    .rev()
-                    .take_while(|byte| matches!(byte, b' ' | b'\t'))
-                    .count()];
-            if count == 1 {
-                line = line.trim_ascii();
-            }
             if line.is_empty() {
                 empty_lines += 1;
                 continue;
             }
-            self.line_breaks(empty_lines);
+            if !std::mem::take(&mut is_at_quotes) {
+                self.line_breaks(empty_lines, is_line_ended);
+            }
             empty_lines = 0;
             self.text(line);
+            // Trailing spaces and tabs are part of the value too. A `hardline` trims them, as in Prettier. A line break
+            // printed as text doesn't, and the `hardline` after it then only indents.
+            is_line_ended = ends_with_blank(line);
+            if is_line_ended {
+                self.f.write_text(b"\n", Some(TextWidth::multiline(0)));
+            }
         }
         self.hardline();
         self.token("\"\"\"");
     }
 
-    /// A line break after so many empty lines.
-    fn line_breaks(&mut self, empty_lines: usize) {
+    /// Ends the current line and prints `empty_lines` empty lines. `is_line_ended` is true if the current line's line
+    /// break is already printed.
+    fn line_breaks(&mut self, empty_lines: usize, is_line_ended: bool) {
         match empty_lines {
             0 => {}
             1 => return self.line(LineMode::Empty),
             // The printer writes no more than one empty line for line breaks.
-            _ => self
-                .f
-                .write_text(&vec![b'\n'; empty_lines + 1], Some(TextWidth::multiline(0))),
+            _ => self.f.write_text(
+                &vec![b'\n'; empty_lines + usize::from(!is_line_ended)],
+                Some(TextWidth::multiline(0)),
+            ),
         }
         self.hardline();
     }

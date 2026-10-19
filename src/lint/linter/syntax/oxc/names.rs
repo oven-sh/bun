@@ -87,6 +87,9 @@ struct Binder<'a> {
     file: &'a File<'a>,
     is_typescript: bool,
     is_module: bool,
+    /// Even in TypeScript, report an import that isn't `import type` and clashes with a variable, a function or a
+    /// class. oxc leaves that to the type checker, which can tell whether the import is a type.
+    imports_are_values: bool,
     /// The scope of the file.
     top: u32,
     symbols: Vec<Bound>,
@@ -416,7 +419,7 @@ impl<'a> Binder<'a> {
 
     /// `check_import_value_redeclarations`, when oxc is through with the file.
     fn check_imports(&mut self) {
-        if self.is_typescript || !self.is_module {
+        if !self.imports_are_values && (self.is_typescript || !self.is_module) {
             return;
         }
         let top = self.top;
@@ -536,6 +539,15 @@ pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if file.language().parser_tracks_names && !file.has_rare_syntax(rare::MAY_REDECLARE) {
         return Vec::new();
     }
+    replay(file, false)
+}
+
+/// Returns the number of redeclarations, regardless of the config. See [`Binder::imports_are_values`].
+pub(super) fn count_of_redeclarations<'a>(file: &'a File<'a>) -> usize {
+    replay(file, true).len()
+}
+
+fn replay<'a>(file: &'a File<'a>, imports_are_values: bool) -> Vec<SyntaxError> {
     let mut all: Vec<Found<'a>> = Vec::new();
     #[expect(
         clippy::iter_over_hash_type,
@@ -556,6 +568,7 @@ pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         file,
         is_typescript: !file.is_javascript(),
         is_module: source_type(file) == SourceType::Module,
+        imports_are_values,
         top: file.top_level_scope().id().0,
         symbols: Vec::new(),
         bindings: FxHashMap::default(),

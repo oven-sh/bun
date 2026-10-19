@@ -525,7 +525,7 @@ pub(crate) mod prefer_spy_on {
         ctx: &Ctx<'a, '_>,
     ) {
         let report = ctx.report(callee, USE_SPY_ON);
-        if !ctx.can_write(b"spyOn") || left_assign.is_private_member() {
+        if !ctx.can_write(b"spyOn", assign_expr) || left_assign.is_private_member() {
             return;
         }
         report.suggest(USE_SPY_ON, |fixer| {

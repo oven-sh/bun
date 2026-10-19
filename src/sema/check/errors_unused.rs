@@ -242,7 +242,7 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &e in index.of(ExprTag::Ident) {
             let i = e.idx();
-            let symbol = bound.expr_symbol[i];
+            let symbol = bound.symbol_of_expr(ExprId(i as u32));
             if symbol.is_none()
                 || u.referenced[symbol.idx()] & VALUE != 0
                 || bound.is_unchecked(i)
@@ -254,18 +254,15 @@ impl Checker<'_, '_> {
             }
             // `checkVariableLikeDeclaration` only validates the alias that `const x = require("m")` declares. It does not check the
             // initializer, so it does not resolve the callee.
-            if let Parent::Expr(call) = bound.expr_parent[i]
+            if let Parent::Expr(call) = bound.parent_of_expr(ExprId(i as u32))
                 && call.is_some()
-                && let Parent::VarInit(d) = bound.expr_parent[call.idx()]
+                && let Parent::VarInit(d) = bound.parent_of_expr(call)
                 && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
                 && bound.required_by(hir, hir[d].pat).is_some()
             {
                 continue;
             }
-            if bound.symbols[symbol.idx()]
-                .flags
-                .intersects(SymFlags::VALUE)
-            {
+            if bound.symbol(symbol).flags.intersects(SymFlags::VALUE) {
                 u.referenced[symbol.idx()] |= VALUE;
                 continue;
             }
@@ -354,7 +351,7 @@ impl Checker<'_, '_> {
             let ImportEqualsTarget::Entity(names) = import.target else {
                 continue;
             };
-            if matches!(bound.stmt_parent[import.stmt.idx()], Parent::None) {
+            if matches!(bound.parent_of_stmt(import.stmt), Parent::None) {
                 continue;
             }
             let scope = bound.import_equals_scope[i];
@@ -458,7 +455,7 @@ impl Checker<'_, '_> {
         for (stmt, name, flags, created) in enums.chain(namespaces) {
             // `isExportOfNamespace`: `N.x || (N.x = {})`
             let is_export_of_namespace = flags.contains(Flags::EXPORT)
-                && matches!(bound.stmt_parent[stmt.idx()], Parent::Module(_));
+                && matches!(bound.parent_of_stmt(stmt), Parent::Module(_));
             if !is_export_of_namespace && created.is_some() && !hir.is_ambient(hir.node(stmt)) {
                 u.note_name(bound.scopes[created.idx()].parent, name, meaning, VALUE);
             }
@@ -486,7 +483,7 @@ impl Checker<'_, '_> {
             let is_in_such_a_function =
                 || (self.get_containing_function(file, e)).is_some_and(has_inferred_return_type);
             // `isConstContext(e)`
-            let is_tested = match bound.expr_parent[e.idx()] {
+            let is_tested = match bound.parent_of_expr(e) {
                 // `checkExpressionForMutableLocation`, `checkAssertion`,
                 // `checkAndAggregateYieldOperandTypes`
                 Parent::Expr(parent) => match hir[parent].kind {
@@ -517,15 +514,15 @@ impl Checker<'_, '_> {
                 && is_property_access_entity_name_expression(hir, key)
                 && is_checked(u, e)
                 && !self.is_definite_assignment_target(file, e)
-                && compares_references(bound, bound.expr_flow[e.idx()], 0)
+                && compares_references(bound, bound.flow_of_expr(e), 0)
             {
                 self.note_qualified_name(file, u, key);
             }
         }
         // `checkTemplateExpression`
         for &e in index.of(ExprTag::Template) {
-            let is_tagged = matches!(bound.expr_parent[e.idx()], Parent::Expr(parent)
-                if matches!(hir[parent].kind, ExprKind::TaggedTemplate(call) if hir[call].template == e));
+            let is_tagged = matches!(bound.parent_of_expr(e), Parent::Expr(parent)
+                if matches!(hir[parent].kind, ExprKind::TaggedTemplate(call) if hir.template_of(call) == e));
             if !is_tagged && is_checked(u, e) {
                 self.note_evaluated(file, u, e, Location::Expr(file, e));
             }
@@ -832,7 +829,7 @@ impl Checker<'_, '_> {
                 is_await,
                 ..
             } = s.kind
-                && !matches!(bound.stmt_parent[i], Parent::None)
+                && !matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None)
                 && !u.is_never_checked(s.start)
                 && let StmtKind::Expr(target) = hir[left].kind
                 && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
@@ -1022,8 +1019,7 @@ impl Checker<'_, '_> {
         if symbol.file == file || files.rank_of_file(visited) > files.rank_of_file(symbol.file) {
             return;
         }
-        // The checkers of a `checkerPool` share nothing.
-        if self.referenced_properties.insert(symbol) && self.task.checker_count == 0 {
+        if self.referenced_properties.insert(symbol) {
             self.p.properties_referenced_before.lock().insert(symbol);
         }
     }
@@ -1163,13 +1159,13 @@ impl Checker<'_, '_> {
             } => *class,
             _ => return false,
         };
-        let symbol = bound.expr_symbol[first.idx()];
+        let symbol = bound.symbol_of_expr(first);
         matches!(hir[first].kind, ExprKind::Ident(_))
             && symbol.is_some()
             && self.files().sym(file, symbol) == class
             // The name of a declaration with an `export` modifier resolves to the local symbol,
             // while the type has the export symbol.
-            && !bound.symbols[symbol.idx()].decls.iter().any(|d| matches!(*d, Decl::Class(c) if hir[c].flags.contains(Flags::EXPORT)))
+            && !bound.symbol(symbol).decls.iter().any(|d| matches!(*d, Decl::Class(c) if hir[c].flags.contains(Flags::EXPORT)))
     }
 
     /// Whether the property that `members` declare is the declared symbol in every type it is found
@@ -1343,14 +1339,17 @@ impl Unused<'_, '_> {
             }
         }
         for (i, s) in hir.stmts.iter().enumerate() {
-            if matches!(bound.stmt_parent[i], Parent::None) {
+            if matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None) {
                 continue;
             }
             // `export { a }` references `a` with any meaning, past
             // `checkGrammarModuleElementContext`.
             if let StmtKind::ExportNamed(id) = s.kind
                 && !hir[id].has_module_specifier
-                && matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_))
+                && matches!(
+                    bound.parent_of_stmt(StmtId(i as u32)),
+                    Parent::File | Parent::Module(_)
+                )
             {
                 let scope = bound.export_scope[id.idx()];
                 for item in hir[id].items.iter() {
@@ -1360,7 +1359,7 @@ impl Unused<'_, '_> {
         }
         // `export default I`, `export = I`: a type is accepted too.
         for &(e, scope) in &bound.free_idents {
-            if let Parent::Stmt(s) = bound.expr_parent[e.idx()]
+            if let Parent::Stmt(s) = bound.parent_of_expr(e)
                 && matches!(
                     hir[s].kind,
                     StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
@@ -1442,7 +1441,7 @@ impl Unused<'_, '_> {
                 owns_trailing_comments,
             })
         };
-        let is_checked = |i: usize| !matches!(bound.stmt_parent[i], Parent::None);
+        let is_checked = |i: usize| !matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None);
         let mut statements = hir.stmts.iter().enumerate();
         if let Some((i, s)) = statements.find(|&(i, s)| follows(s.loc, s.start) && is_checked(i)) {
             let is_host = match s.kind {
@@ -1450,8 +1449,10 @@ impl Unused<'_, '_> {
                 // `ParenthesizedExpression` alone, which `checkSourceElement` never visits.
                 StmtKind::Expr(_) => hir.text.get(s.start as usize) != Some(&b'('),
                 // `checkTryStatement` and `checkCatchClause` call `checkBlock` themselves.
-                StmtKind::Block(_) => !matches!(bound.stmt_parent[i], Parent::Stmt(outer)
-                    if outer.is_some() && matches!(hir[outer].kind, StmtKind::Try { .. })),
+                StmtKind::Block(_) => {
+                    !matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::Stmt(outer)
+                    if outer.is_some() && matches!(hir[outer].kind, StmtKind::Try { .. }))
+                }
                 _ => true,
             };
             if !is_host {
@@ -1554,7 +1555,7 @@ impl Unused<'_, '_> {
         if s.is_none() || !matches!(hir[s].kind, StmtKind::Var(_)) {
             return None;
         }
-        host(d.loc, hir[d.pat].pos, bound.stmt_scope[s.idx()], true)
+        host(d.loc, hir[d.pat].pos, bound.scope_of_stmt(s), true)
     }
 
     /// `Resolve` from a child of `s` that is not a statement: the scope that `s` creates, or else
@@ -1579,7 +1580,7 @@ impl Unused<'_, '_> {
             StmtKind::Block(list) => hir.ids(list).next().unwrap_or(s),
             _ => s,
         };
-        bound.stmt_scope[inside.idx()]
+        bound.scope_of_stmt(inside)
     }
 
     /// `reparseJSDocComment`: in JavaScript the comment of a `@param`, `@property` or `@this` tag
@@ -1766,10 +1767,11 @@ impl Unused<'_, '_> {
     /// `isSelfReferenceLocation`.
     fn is_inside_declaration_of(&self, e: ExprId, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
-        bound.symbols[symbol.idx()]
+        bound
+            .symbol(symbol)
             .flags
             .intersects(SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::ENUM | SymFlags::MODULE)
-            && bound.symbols[symbol.idx()].decls.iter().any(|&d| {
+            && bound.symbol(symbol).decls.iter().any(|&d| {
                 // The span of the declaration contains `e`: a position test instead of an ancestor walk.
                 matches!(
                     d,
@@ -1812,8 +1814,7 @@ impl Unused<'_, '_> {
         }
         let (hir, bound) = (self.hir, self.bound);
         let first = bound.table(bound.scopes[scope.idx()].locals).first();
-        let Some(&declaration) = first.and_then(|it| bound.symbols[it.1.idx()].decls.first())
-        else {
+        let Some(&declaration) = first.and_then(|it| bound.symbol(it.1).decls.first()) else {
             return true;
         };
         let container = hir.get_enclosing_block_scope_container(hir.node(declaration));
@@ -1910,7 +1911,7 @@ impl Unused<'_, '_> {
     fn start_of_next(&self, s: StmtId) -> (u32, bool) {
         let (hir, bound) = (self.hir, self.bound);
         let next_in = |list: IdList<StmtId>| hir.ids(list).skip_while(|&other| other != s).nth(1);
-        let next = match bound.stmt_parent[s.idx()] {
+        let next = match bound.parent_of_stmt(s) {
             Parent::File => next_in(hir.body),
             Parent::Module(m) => next_in(hir[m].body),
             Parent::FnBody(f) => match hir[f].body {
@@ -2042,7 +2043,7 @@ impl Unused<'_, '_> {
             PatParent::Var(d) => {
                 let stmt = bound.var_stmt[d.idx()];
                 let heads_a_loop = stmt.is_some()
-                    && matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(outer) if outer.is_some()
+                    && matches!(bound.parent_of_stmt(stmt), Parent::Stmt(outer) if outer.is_some()
                         && matches!(hir[outer].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt));
                 heads_a_loop || matches!(hir[d].kind, VarKind::Using | VarKind::AwaitUsing)
             }
@@ -2174,7 +2175,7 @@ impl Checker<'_, '_> {
             if name == known::empty || name.is_none() {
                 continue;
             }
-            let symbol = &bound.symbols[local.idx()];
+            let symbol = bound.symbol(local);
             let kinds = u.referenced[local.idx()];
             if if symbol.flags.contains(SymFlags::TYPE_PARAMETER) {
                 !symbol.flags.intersects(SymFlags::VARIABLE) || kinds & VALUE != 0
@@ -2185,7 +2186,7 @@ impl Checker<'_, '_> {
             } {
                 continue;
             }
-            for &decl in &symbol.decls {
+            for &decl in symbol.decls {
                 let declaration = hir.node(decl);
                 match hir.kind(declaration) {
                     Kind::VariableDeclaration | Kind::Parameter | Kind::BindingElement => {

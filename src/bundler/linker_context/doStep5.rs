@@ -325,7 +325,11 @@ impl LinkerContext<'_> {
                     .unwrap()
                     .get(ref_)
                     .unwrap();
-                let use_: &mut SymbolUse = symbol_uses.get_ptr_mut(ref_).unwrap();
+                // The part may have no use of `ref_` left: every read of it was a property read.
+                let use_: &mut SymbolUse = symbol_uses
+                    .get_or_put_value(*ref_, Default::default())
+                    .expect("OOM")
+                    .value_ptr;
 
                 // Rare path: this import is a TypeScript enum
                 if let Some(import_data) = our_imports_to_bind.get(ref_) {

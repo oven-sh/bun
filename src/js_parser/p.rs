@@ -25,8 +25,9 @@ use crate::{
     ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
-    ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
-    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    ScopeOrderList, StmtsKind, StrictModeFeature, StringBoolMap, Substitution, TempRef,
+    ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments, options,
+    statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -624,6 +625,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     //
     // Relevant issue: https://github.com/evanw/esbuild/issues/1158
     pub(crate) has_non_local_export_declare_inside_namespace: bool,
+
+    /// An `import a = b.c` was parsed and `remove_unused_ts_import_equals` has not run over it yet.
+    pub(crate) has_ts_import_equals: bool,
 
     // This helps recognize the "await import()" pattern. When this is present,
     // warnings about non-string import paths will be omitted inside try blocks.
@@ -5501,6 +5505,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
+        kind: StmtsKind,
     ) -> Result<(), crate::Error> {
         // Uses recorded outside a part's visit (the parse pass resolving
         // decorator-metadata types) belong to no part.
@@ -5514,7 +5519,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.had_commonjs_named_exports_this_visit = false;
 
         let arena = self.arena;
-        let mut opts = PrependTempRefsOpts::default();
+        let mut opts = PrependTempRefsOpts { kind };
         let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
 
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
@@ -6624,7 +6629,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return false;
         };
         use_.subtract(1);
-        // note: this use is not removed as we assume it exists later
 
         let gop = self
             .import_symbol_property_uses
@@ -6637,6 +6641,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         inner_use.count_estimate += 1;
         inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
         true
+    }
+
+    /// Undoes one `record_import_property_use` of `base.name` in the current part:
+    /// the read of `base` is a plain part use again.
+    pub(crate) fn forget_import_property_use(&mut self, base: Ref, name: &[u8]) {
+        let Some(uses) = self.import_symbol_property_uses.get_ptr_mut(&base) else {
+            return;
+        };
+        let Some(use_) = uses.get_mut(name) else {
+            return;
+        };
+        use_.count_estimate -= 1;
+        if use_.count_estimate == 0 {
+            uses.remove(name);
+        }
+        if uses.is_empty() {
+            self.import_symbol_property_uses.swap_remove(&base);
+        }
+        self.part_use(base).add_scoped(1);
     }
 
     pub(crate) fn ignore_usage(&mut self, r#ref: Ref) {
@@ -8826,6 +8849,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let bundling = self.options.bundle;
         let mut parts_end: usize = usize::from(bundling);
 
+        // A module that was visited as one Part has done this at the end of its visit.
+        if TYPESCRIPT && self.has_ts_import_equals {
+            self.remove_unused_ts_import_equals(&mut parts[parts_end..], |part| &mut part.stmts);
+        }
+
         // When bundling with HMR, we need every module to be just a
         // single part, as we later wrap each module into a function,
         // which requires a single part. Otherwise, you'll end up with
@@ -8860,7 +8888,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             });
 
             for part in head_parts.iter() {
-                // Bake does not care about 'import =', as it handles it on it's own
                 let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
                     part.stmts.slice_mut(),
@@ -8884,146 +8911,60 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in
             // TypeScript code.
-            loop {
-                let mut kept_import_equals = false;
-                let mut removed_import_equals = false;
+            let begin = parts_end;
+            // Potentially remove some statements, then filter out parts to remove any
+            // with no statements
+            for idx in begin..parts.len() {
+                self.import_records_for_current_part.clear();
+                self.declared_symbols.clear_retaining_capacity();
 
-                let begin = parts_end;
-                // Potentially remove some statements, then filter out parts to remove any
-                // with no statements
-                for idx in begin..parts.len() {
-                    // A shallow bitwise copy leaves `parts[idx]` intact so the outer
-                    // multi-pass loop (which restarts at `begin = parts_end`) re-scans
-                    // real data on the next iteration. `mem::take` would zero the slot
-                    // and degrade this to a single pass, so use `ptr::read`; the
-                    // duplicate is non-owning (paired with `ptr::write`/`forget`
-                    // below to avoid double-drop of arena-backed Vec fields).
-                    // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
-                    // (Borrowed-origin BabyLists, raw stmt slices), so the bitwise copy is
-                    // a valid non-owning duplicate.
-                    let mut part = core::mem::ManuallyDrop::new(unsafe {
-                        core::ptr::read(&raw const parts[idx])
-                    });
-                    self.import_records_for_current_part.clear();
-                    self.declared_symbols.clear_retaining_capacity();
-
-                    let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
-                        self,
-                        part.stmts.slice_mut(),
-                        wrap_mode != WrapMode::None,
-                        None,
-                    ) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            // `part` is a bitwise duplicate of `parts[idx]` held in
-                            // `ManuallyDrop`; let it fall out of scope so the source
-                            // slot keeps sole ownership.
-                            return Err(e);
-                        }
-                    };
-                    kept_import_equals = kept_import_equals || result.kept_import_equals;
-                    removed_import_equals = removed_import_equals || result.removed_import_equals;
-
-                    part.stmts = bun_ast::StoreSlice::new_mut(result.stmts);
-                    if !part.stmts.is_empty() {
-                        if self.module_scope().contains_direct_eval
-                            && part.declared_symbols.len() > 0
-                        {
-                            // If this file contains a direct call to "eval()", all parts that
-                            // declare top-level symbols must be kept since the eval'd code may
-                            // reference those symbols.
-                            part.can_be_removed_if_unused = false;
-                        }
-                        if part.declared_symbols.len() == 0 {
-                            // SAFETY: `part` is a bitwise duplicate of `parts[idx]`
-                            // (via `ptr::read` above); the old `declared_symbols`
-                            // is still owned by that slot. Overwrite without running
-                            // Drop, which would double-free the original.
-                            unsafe {
-                                core::ptr::write(
-                                    &raw mut part.declared_symbols,
-                                    self.declared_symbols.clone().expect("unreachable"),
-                                );
-                            }
-                        } else {
-                            part.declared_symbols
-                                .append_list(&self.declared_symbols)
-                                .expect("unreachable");
-                        }
-
-                        if part.import_record_indices.is_empty() {
-                            // Bump-arena slice; Vec::from_bump_slice marks origin
-                            // Borrowed so Drop is a no-op (arena ownership).
-                            // The *old* value is a bitwise duplicate of
-                            // `parts[idx].import_record_indices` and may be Owned —
-                            // overwrite without running Drop, which would double-free the original.
-                            // SAFETY: bitwise duplicate field — overwrite without
-                            // running Drop (see `declared_symbols` above).
-                            unsafe {
-                                core::ptr::write(
-                                    &raw mut part.import_record_indices,
-                                    Vec::from_arena_slice(arena.alloc_slice_copy(
-                                        self.import_records_for_current_part.as_slice(),
-                                    )),
-                                );
-                            }
-                        } else {
-                            part.import_record_indices
-                                .append_slice(self.import_records_for_current_part.as_slice());
-                        }
-
-                        // Wipe the source slot's heap-backed maps so a multi-pass
-                        // re-scan of `idx` never aliases the compacted survivor.
-                        // SAFETY: `idx < parts.len()`; field-only write, `part` owns the old bits.
-                        unsafe {
-                            let src = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*src).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // SAFETY: bitwise overwrite — the old slot value is intentionally not
-                        // dropped (its fields are arena-owned, so abandoning it does not leak).
-                        unsafe {
-                            core::ptr::write(
-                                parts.as_mut_ptr().add(parts_end),
-                                core::mem::ManuallyDrop::into_inner(part),
-                            )
-                        };
-                        parts_end += 1;
-                    } else {
-                        // Filtered out; free the global-heap maps and clear the
-                        // alias in `parts[idx]` so a re-scan never sees freed handles.
-                        drop(core::mem::take(&mut part.symbol_uses));
-                        drop(core::mem::take(&mut part.import_symbol_property_uses));
-                        // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
-                        unsafe {
-                            let slot = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*slot).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // `part` is `ManuallyDrop`; falls out of scope without dropping.
-                    }
+                let part = &mut parts[idx];
+                let result = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
+                    self,
+                    part.stmts.slice_mut(),
+                    wrap_mode != WrapMode::None,
+                    None,
+                )?;
+                part.stmts = bun_ast::StoreSlice::new_mut(result.stmts);
+                if part.stmts.is_empty() {
+                    continue;
                 }
 
-                // We need to iterate multiple times if an import-equals statement was
-                // removed and there are more import-equals statements that may be removed
-                if !kept_import_equals || !removed_import_equals {
-                    break;
+                if self.module_scope().contains_direct_eval && part.declared_symbols.len() > 0 {
+                    // If this file contains a direct call to "eval()", all parts that
+                    // declare top-level symbols must be kept since the eval'd code may
+                    // reference those symbols.
+                    part.can_be_removed_if_unused = false;
                 }
+                if part.declared_symbols.len() == 0 {
+                    part.declared_symbols = self.declared_symbols.clone().expect("unreachable");
+                } else {
+                    part.declared_symbols
+                        .append_list(&self.declared_symbols)
+                        .expect("unreachable");
+                }
+
+                if part.import_record_indices.is_empty() {
+                    // Bump-arena slice; Vec::from_bump_slice marks origin
+                    // Borrowed so Drop is a no-op (arena ownership).
+                    part.import_record_indices = Vec::from_arena_slice(
+                        arena.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
+                    );
+                } else {
+                    part.import_record_indices
+                        .append_slice(self.import_records_for_current_part.as_slice());
+                }
+
+                if idx != parts_end {
+                    // `slice::swap` must allow equal indices, so it moves a Part three times through memcpy.
+                    let (kept, rest) = parts.split_at_mut(idx);
+                    core::mem::swap(&mut kept[parts_end], &mut rest[0]);
+                }
+                parts_end += 1;
             }
 
             // leave the first part in there for namespace export when bundling
-            // `truncate` would drop slots that may alias kept parts (the loop
-            // above did `ptr::read` without clearing the source), so use
-            // `set_len`, which runs no destructors.
-            // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned
-            // (arena-/process-lifetime).
-            unsafe { parts.set_len(parts_end) };
+            parts.truncate(parts_end);
 
             // Do a second pass for exported items now that imported items are filled out.
             // This isn't done for HMR because it already deletes all `.s_export_clause`s
@@ -9798,6 +9739,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_revisit_for_substitution: false,
             method_call_must_be_replaced_with_undefined: false,
             has_non_local_export_declare_inside_namespace: false,
+            has_ts_import_equals: false,
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,

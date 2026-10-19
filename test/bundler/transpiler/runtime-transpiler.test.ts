@@ -253,6 +253,68 @@ describe("unterminated string literals in large files", () => {
   });
 });
 
+describe("TypeScript import-equals aliases that no value reads", () => {
+  test.concurrent("bun run: each statement runs once", async () => {
+    using dir = tempDir("transpiler-import-equals-run", {
+      "gen.ts": `
+        export const val = 5;
+        export type T = string;
+        export namespace Types { export namespace Inner { export type U = number } }
+      `,
+      "index.ts": `
+        import { appendFileSync, readFileSync } from "node:fs";
+        import * as g from "./gen.ts";
+        import V = g.val;
+        import T = g.T;
+        import Inner = g.Types.Inner;
+        import U = Inner.U;
+        const u: U = 1;
+        appendFileSync("rows.txt", "row " + u + "\\n");
+        console.log(readFileSync("rows.txt", "utf8").trim(), V);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "row 1 5\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("bun test: a test is registered once", async () => {
+    using dir = tempDir("transpiler-import-equals-test", {
+      "once.test.ts": `
+        import { expect, test } from "bun:test";
+        namespace NS { export const a = 1; export type T = string }
+        import A = NS.a;
+        import T = NS.T;
+        test("registered once", () => {
+          expect(A).toBe(1);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "once.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr.match(/^\s*(\d+) pass$/m)?.[1]).toBe("1");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // 2 GiB through the printer takes over 30 seconds on a debug or ASAN build.
 test.skipIf(isDebug || isASAN)(
   "printing more than 2 GiB of modules in one process keeps the space after a keyword",

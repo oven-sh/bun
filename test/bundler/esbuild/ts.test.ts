@@ -713,7 +713,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/ImportEqualsEliminationTest", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import a = foo.a
@@ -749,7 +748,7 @@ describe("bundler", () => {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
         import used = foo.used
-        import unused_keep = foo.unused
+        import unused_drop = foo.unused
         export { used }
       `,
     },
@@ -759,7 +758,6 @@ describe("bundler", () => {
     external: ["pkg"],
   });
   itBundled("ts/ImportEqualsTreeShakingTrue", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -774,7 +772,6 @@ describe("bundler", () => {
     bundling: false,
   });
   itBundled("ts/ImportEqualsBundle", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -786,6 +783,178 @@ describe("bundler", () => {
     dce: true,
     treeShaking: true,
     external: ["pkg"],
+  });
+  itBundled("ts/ImportEqualsUndefinedImport", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as ns from './import.ts'
+        import value_copy = ns.value
+        import Type_copy = ns.Type
+        let foo: Type_copy = value_copy
+        console.log(foo)
+      `,
+      "/import.ts": /* ts */ `
+        export let value = 123
+        export type Type = number
+      `,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
+  itBundled("ts/ImportEqualsStatementsRunOnce", {
+    files: {
+      "/entry.ts": /* ts */ `
+        namespace NS { export const a = 1; export type T = string; export type U = number }
+        import A = NS.a
+        import T = NS.T
+        import U = NS.U
+        console.log("first")
+        console.log("last", A)
+      `,
+    },
+    run: {
+      stdout: "first\nlast 1",
+    },
+  });
+  itBundled("ts/ImportEqualsTypeChainThroughImportStar", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as T from './types'
+        import Inner = T.NS.Inner
+        import Baz = Inner.Baz
+        const x: Baz = 's'
+        console.log('entry: ' + x + T.real)
+      `,
+      "/types.ts": /* ts */ `
+        export namespace NS { export type Foo = number; export namespace Inner { export type Baz = string } }
+        export const real = 1
+      `,
+    },
+    run: {
+      stdout: "entry: s1",
+    },
+  });
+  itBundled("ts/ImportEqualsTypeOfNamedImport", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { NS, real } from './types'
+        import Foo = NS.Foo
+        const x: Foo = real
+        console.log('entry: ' + x)
+      `,
+      "/types.ts": /* ts */ `
+        export namespace NS { export type Foo = number }
+        export const real = 1
+      `,
+    },
+    run: {
+      stdout: "entry: 1",
+    },
+  });
+  // Without tree shaking the whole file is one Part, so the alias is removed while the uses of the Part are live.
+  itBundled("ts/ImportEqualsTypeOfNamedImportNoTreeShaking", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { NS, real } from './types'
+        import Foo = NS.Foo
+        const x: Foo = real
+        console.log('entry: ' + x)
+      `,
+      "/types.ts": /* ts */ `
+        export namespace NS { export type Foo = number }
+        export const real = 1
+      `,
+    },
+    treeShaking: false,
+    // The CLI has no flag to disable tree shaking.
+    backend: "api",
+    run: {
+      stdout: "entry: 1",
+    },
+  });
+  // The same property is also read by a value, so the import must stay.
+  itBundled("ts/ImportEqualsOfPropertyReadElsewhereNoTreeShaking", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { NS, real } from './types'
+        import foo = NS.foo
+        console.log('entry: ' + NS.foo + real)
+      `,
+      "/types.ts": /* ts */ `
+        export namespace NS { export const foo = 2 }
+        export const real = 1
+      `,
+    },
+    treeShaking: false,
+    backend: "api",
+    run: {
+      stdout: "entry: 21",
+    },
+  });
+  // The root is also read on its own. With splitting, the entry chunk must still import it.
+  itBundled("ts/ImportEqualsOfRootReadBareNoTreeShakingSplitting", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { NS, real } from './types'
+        import foo = NS.foo
+        console.log(JSON.stringify(NS) + real)
+      `,
+      "/other.ts": /* ts */ `
+        import { real } from './types'
+        console.log('other ' + real)
+      `,
+      "/types.ts": /* ts */ `
+        export namespace NS { export const foo = 2 }
+        export const real = 1
+      `,
+    },
+    entryPoints: ["/entry.ts", "/other.ts"],
+    splitting: true,
+    outdir: "/out",
+    treeShaking: false,
+    backend: "api",
+    run: [
+      { file: "/out/entry.js", stdout: '{"foo":2}1' },
+      { file: "/out/other.js", stdout: "other 1" },
+    ],
+  });
+  // A lowered top-level `using` also makes the whole file one Part.
+  itBundled("ts/ImportEqualsTypeOfNamedImportWithUsing", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { NS, real } from './types'
+        import Foo = NS.Foo
+        using r = { [Symbol.dispose]() { console.log('disposed') } }
+        const x: Foo = real
+        console.log('entry: ' + x)
+      `,
+      "/types.ts": /* ts */ `
+        export namespace NS { export type Foo = number }
+        export const real = 1
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "entry: 1\ndisposed",
+    },
+  });
+  itBundled("ts/ImportEqualsMinifySyntaxNoBundle", {
+    files: {
+      "/entry.ts": /* ts */ `
+        namespace NS { export const a = 1; export type T = string }
+        import T = NS.T
+        import A = NS.a
+        import U = NS.a
+        const port = (console.log('reading the port'), 3000)
+        console.log('port is ' + port, A)
+      `,
+    },
+    bundling: false,
+    minifySyntax: true,
+    run: {
+      stdout: "reading the port\nport is 3000 1",
+    },
   });
   itBundled("ts/MinifiedBundleES6", {
     files: {

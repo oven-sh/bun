@@ -36,9 +36,6 @@
 
 namespace Zig {
 
-extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
-using OnAppendPluginCallback = void (*)(void*, JSGlobalObject* globalObject);
-
 static bool isValidNamespaceString(String& namespaceString)
 {
     static JSC::Yarr::RegularExpression* namespaceRegex = nullptr;
@@ -48,7 +45,19 @@ static bool isValidNamespaceString(String& namespaceString)
     return namespaceRegex->match(namespaceString) > -1;
 }
 
-static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)
+// Bun.build throws the same sentence from `validate` in src/js/builtins/BundlerPlugin.ts. plugins.test.ts compares the two.
+static void throwInvalidNamespace(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const String& namespaceString)
+{
+    // `namespaceString` comes from JS. Past `String::MaxLength`, `makeString` calls `CRASH()` and `tryMakeString` returns null.
+    auto message = tryMakeString("namespace \""_s, namespaceString, "\" can only contain ASCII letters, digits, \"_\", \"-\", \"@\" and \"/\""_s);
+    if (!message) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    throwException(globalObject, scope, createError(globalObject, message));
+}
+
+static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -81,7 +90,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
             namespaceString = namespaceValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (!isValidNamespaceString(namespaceString)) {
-                throwException(globalObject, scope, createError(globalObject, "namespace can only contain letters, numbers, dashes, or underscores"_s));
+                throwInvalidNamespace(globalObject, scope, namespaceString);
                 return {};
             }
         }
@@ -95,8 +104,6 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
     }
 
     plugin.append(vm, filter->regExp(), func.getObject(), namespaceString);
-    callback(ctx, globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());
 }
@@ -165,7 +172,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     return JSValue::encode(callframe->thisValue());
 }
 
-static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)
+static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -198,7 +205,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
             namespaceString = namespaceValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (!isValidNamespaceString(namespaceString)) {
-                throwException(globalObject, scope, createError(globalObject, "namespace can only contain letters, numbers, dashes, or underscores"_s));
+                throwInvalidNamespace(globalObject, scope, namespaceString);
                 return {};
             }
         }
@@ -212,8 +219,6 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
     }
 
     plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
-    callback(ctx, globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());
 }
@@ -223,8 +228,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginGlobal(JSC::JSGlobalOb
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
 
     auto& plugins = global->onResolvePlugins;
-    auto callback = Bun__onDidAppendPlugin;
-    return jsFunctionAppendOnResolvePluginBody(globalObject, callframe, target, plugins, global->bunVM(), callback);
+    return jsFunctionAppendOnResolvePluginBody(globalObject, callframe, target, plugins);
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
@@ -232,8 +236,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginGlobal(JSC::JSGlobalObjec
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
 
     auto& plugins = global->onLoadPlugins;
-    auto callback = Bun__onDidAppendPlugin;
-    return jsFunctionAppendOnLoadPluginBody(globalObject, callframe, target, plugins, global->bunVM(), callback);
+    return jsFunctionAppendOnLoadPluginBody(globalObject, callframe, target, plugins);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnLoadPluginNode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -1045,12 +1048,36 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject, (JSC::JSGlobalObject
     return {};
 }
 
-extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* from, BunPluginTarget target)
+extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* from)
 {
     return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
 }
 
-extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path, BunPluginTarget target)
+extern "C" bool Bun__hasPlugins(Zig::GlobalObject* globalObject)
+{
+    return !globalObject->onLoadPlugins.isEmpty() || !globalObject->onResolvePlugins.isEmpty();
+}
+
+extern "C" BunString Bun__resolveVirtualModule(Zig::GlobalObject* globalObject, const BunString* specifier, const BunString* importer)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (plugins.hasVirtualModules()) {
+        if (auto key = plugins.resolveVirtualModule(specifier->toWTFString(), importer->toWTFString(BunString::ZeroCopy)))
+            return Bun::toStringRef(*key);
+    }
+    return { BunStringTag::Dead };
+}
+
+extern "C" bool Bun__hasOnLoad(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path)
+{
+    auto* group = globalObject->onLoadPlugins.group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
+    if (!group)
+        return false;
+    auto pathString = path->toWTFString(BunString::ZeroCopy);
+    return group->find(globalObject, pathString);
+}
+
+extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path)
 {
     return globalObject->onLoadPlugins.run(globalObject, namespaceString, path);
 }

@@ -23,23 +23,23 @@ pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[path = "fetch/FetchTasklet.rs"]
-pub mod fetch_tasklet;
+pub(crate) mod fetch_tasklet;
 
 #[path = "fetch/FetchRequestBodySink.rs"]
-pub mod fetch_request_body_sink;
-pub use self::fetch_request_body_sink::FetchRequestBodySink;
+pub(crate) mod fetch_request_body_sink;
+pub(crate) use self::fetch_request_body_sink::FetchRequestBodySink;
 
 #[path = "fetch/compress_body.rs"]
-pub mod compress_body;
+pub(crate) mod compress_body;
 
 #[path = "fetch/FetchSession.rs"]
-pub mod fetch_session;
-pub use self::fetch_session::FetchSession;
+pub(crate) mod fetch_session;
+pub(crate) use self::fetch_session::FetchSession;
 
 /// `proxyInternals` of `bun:internal-for-testing`. `generated_js2native.rs`
 /// snake-cases `TestingAPIs` as `testing_ap_is`.
 #[path = "fetch/proxy_testing.rs"]
-pub mod testing_ap_is;
+pub(crate) mod testing_ap_is;
 
 // ──────────────────────────────────────────────────────────────────────────
 // fetch() implementation
@@ -81,7 +81,9 @@ use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
-pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
+pub(crate) use self::fetch_tasklet::{
+    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
@@ -284,12 +286,9 @@ fn bun_fetch_preconnect(
 
     // `preconnect` is a free fn in `bun_http::async_http`. Ownership
     // of `href_raw` transfers here (`is_url_owned: true`).
-    // A request to an origin the environment proxies never dials it.
-    if VirtualMachine::get()
-        .env_loader()
-        .get_http_proxy_for(&url)
-        .is_some()
-    {
+    // A request to an origin the environment proxies never dials it. One after `tls.DEFAULT_CIPHERS` was assigned does not use the default context.
+    let vm = VirtualMachine::get();
+    if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.tls_default_ciphers().is_some() {
         reclaim_href!();
         return Ok(JSValue::UNDEFINED);
     }
@@ -756,6 +755,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ssl_config = session.ssl_config();
         reject_unauthorized = session.reject_unauthorized().unwrap_or(reject_unauthorized);
         session_check_server_identity = session.check_server_identity().is_some();
+    }
+    if ssl_config.is_none() {
+        ssl_config = crate::socket::http_client_defaults(vm);
     }
 
     // unix: string | undefined
@@ -1396,12 +1398,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
-                let main = global_this.bun_vm().as_mut().main();
+                // Relative to the folder of the entry module, or to the working directory when there
+                // is none (`bun bake`).
+                let parts: &[&[u8]] = match global_this.bun_vm().as_mut().main() {
+                    Some(main) => &[main, b"../", url_path_decoded],
+                    None => &[url_path_decoded],
+                };
                 let fullpath = bun_paths::resolve_path::join_abs_string_buf::<
                     bun_paths::platform::Auto,
-                >(
-                    cwd, &mut path_buf, &[main, b"../", url_path_decoded]
-                );
+                >(cwd, &mut path_buf, parts);
                 #[cfg(windows)]
                 {
                     break 'brk match PosixToWinNormalizer::resolve_cwd_with_external_buf_z(
@@ -1527,8 +1532,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         global_this,
                     )),
                 );
-                // HTTPRequestBody has no Drop
-                // impl, so a bare `drop(old)` would leak the S3 Blob.Store ref.
                 old.detach();
                 break 'prepare_body;
             }
@@ -1537,8 +1540,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 global_this.create_error_instance(format_args!("Failed to start s3 stream")),
             )
             .to_js();
-            // HTTPRequestBody has no Drop impl, so a bare `drop(body)` would
-            // leak the S3 Blob.Store ref.
             body.detach();
             return Ok(rejected_value);
         }
@@ -1577,7 +1578,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // An explicit `compress` request always wins over the sendfile
             // heuristic — otherwise the same `Bun.file()` body would compress
             // over https/proxy/<32 KiB/Windows but silently not over plain http.
-            if proxy.is_none() && compress.is_none() && http::SendFile::is_eligible(&url) {
+            let env_proxy_is_tls = !proxy_direct
+                && vm
+                    .env_loader()
+                    .get_http_proxy_for(&url)
+                    .is_some_and(|env_proxy| env_proxy.is_https());
+            if proxy.is_none()
+                && !env_proxy_is_tls
+                && compress.is_none()
+                && http::SendFile::is_eligible(&url)
+            {
                 'use_sendfile: {
                     let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
                         Ok(result) => result,

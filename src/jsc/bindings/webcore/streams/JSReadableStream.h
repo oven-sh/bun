@@ -113,6 +113,9 @@ public:
         // reads the raw slot, so the fetch/server push-side is unaffected.
         if (m_nativeTextMode)
             return {};
+        // The native source of an errored stream only knows that it ended; the stored error is here.
+        if (m_state == ReadableStreamState::Errored)
+            return {};
         return m_nativePtr.get(); // may be empty
     }
     // Transferred to a node:stream Readable, drained as a Body, or detached: the handle is off limits.

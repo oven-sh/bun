@@ -24,12 +24,13 @@ import { define } from "./replacements";
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
+const TYPES_DIR = process.argv[4];
 
 const timeString = 'Bundled "src/js" for ' + (debug ? "development" : "production");
 console.time(timeString);
 
-if (!CMAKE_BUILD_ROOT) {
-  console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR>");
+if (!CMAKE_BUILD_ROOT || !TYPES_DIR) {
+  console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR> <TYPES_DIR>");
   process.exit(1);
 }
 
@@ -368,6 +369,7 @@ function idToPublicSpecifierOrEnumName(id: string) {
 }
 
 const { combinedSourceCode: functionsSource } = await bundleBuiltinFunctions({
+  typesDir: TYPES_DIR,
   requireTransformer,
 });
 
@@ -664,7 +666,7 @@ const registryModuleKeys = [
 ];
 const builtinModuleKeyList = [
   ...registryModuleKeys,
-  ...["bun", "bun:main", "bun:wrap", "bun:test", "bun:app", "node:buffer"].filter(k => !registryModuleKeys.includes(k)),
+  ...["bun", "bun:main", "bun:wrap", "bun:test", "node:buffer"].filter(k => !registryModuleKeys.includes(k)),
 ];
 
 // C++: canonical key string per InternalModuleRegistry id (+ extras), for handing JSC an Identifier without a round
@@ -739,7 +741,7 @@ writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCP
 // Rust sibling: include!()'d by src/runtime/generated_js2native.rs
 writeIfNotChanged(path.join(CODEGEN_DIR, "generated_js2native.rs"), getJS2NativeRust());
 
-const generatedDTSPath = path.join(CODEGEN_DIR, "generated.d.ts");
+const generatedDTSPath = path.join(TYPES_DIR, "generated.d.ts");
 writeIfNotChanged(
   generatedDTSPath,
   (() => {

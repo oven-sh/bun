@@ -100,6 +100,12 @@ const REPORTS_UNMEASURABLE: u8 = 8;
 const REPORTS_UNRELIABLE: u8 = 16;
 pub(super) const COMPLEXITY_OVERFLOW: u8 = 32;
 
+/// A comparison shares its first entries right away (`Task::may_write_at_once`). Once it has stored this many, the rest
+/// wait for the commit. If the comparison then exceeds its budget (2859), the task is discarded, and they are discarded
+/// with it. The task that rechecks the file has to exceed the budget too, and an entry that it finds doesn't count
+/// toward it.
+const ENTRIES_SHARED_RIGHT_AWAY: i32 = 1024;
+
 // VarianceFlags
 pub(super) const INVARIANT: u8 = 0;
 pub(super) const COVARIANT: u8 = 1;
@@ -233,6 +239,8 @@ pub(super) struct Relater {
     /// `constrained`. Consumed by the first comparison that needs a key.
     top_key: Option<(Key, bool)>,
     pub(super) relation_count: i32,
+    /// `relation_count` once the comparison has stored `ENTRIES_SHARED_RIGHT_AWAY` entries.
+    waits_for_commit_below: i32,
     /// `Checker::cycles` at the start of the check. Once it has changed, no result is cacheable.
     cycles: u64,
     /// Failures are recorded in `failed` instead of the relation cache: in the non-reporting run
@@ -272,6 +280,7 @@ impl Relater {
             is_from_related: false,
             top_key: None,
             relation_count: 2_000_000,
+            waits_for_commit_below: 2_000_000 - ENTRIES_SHARED_RIGHT_AWAY,
             cycles,
             caches_failures: false,
             failed: FxHashSet::default(),
@@ -281,6 +290,12 @@ impl Relater {
             error_chain: None,
             related_info: Vec::new(),
         }
+    }
+
+    /// `r.relationCount = count`, at the start of a comparison.
+    pub(super) fn set_relation_count(&mut self, count: i32) {
+        self.relation_count = count;
+        self.waits_for_commit_below = count - ENTRIES_SHARED_RIGHT_AWAY;
     }
 
     #[inline]
@@ -1179,7 +1194,7 @@ impl<'p, 's> Checker<'p, 's> {
         r.relation = relation;
         r.top_source = source;
         r.top_target = target;
-        r.relation_count = self.initial_relation_count(relation);
+        r.set_relation_count(self.initial_relation_count(relation));
         r.cycles = self.cycles;
         // Under the identity relation `related` uses other rules.
         r.is_from_related = relation != Relation::Identity;
@@ -4293,6 +4308,9 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
+        if r.relation_count < r.waits_for_commit_below {
+            self.task.hold_back();
+        }
         let stored = self.end_scope(scope).ok();
         let replaces = self.in_progress_variance_reads != variance_reads;
         let propagating = self.reliability;

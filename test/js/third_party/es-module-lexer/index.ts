@@ -6,8 +6,6 @@ async function main() {
   process.exit(42);
 }
 
-exports.forceCommonJS = true;
-
 if (require.main === module) {
   main();
 }

@@ -1235,4 +1235,97 @@ describe("bundler", () => {
       stdout: "function/undefined",
     },
   });
+
+  // ============================================================================
+  // A file the resolver marks as an ES module (`.mjs`, or `.js` under
+  // `"type": "module"`) never binds `module` or `exports`. A reference is an
+  // unbound global, as in Node and esbuild, so the file is never wrapped in
+  // __commonJS because of it. oven-sh/bun#45729
+  // ============================================================================
+
+  itBundled("cjs/esm_file_umd_guard_takes_esm_branch", {
+    // The output runs as an ES module, so the runtime does not bind `module` either.
+    outfile: "/out.mjs",
+    files: {
+      "/entry.mjs": /* js */ `
+        if (typeof module < "u" && module.exports) console.log("cjs");
+        else console.log("esm", typeof module, typeof exports);
+      `,
+    },
+    run: {
+      stdout: "esm undefined undefined",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toContain("__commonJS");
+      api.expectFile("/out.mjs").toContain("typeof module");
+      api.expectFile("/out.mjs").not.toMatch(/\b(module|exports)_entry\b/);
+    },
+  });
+
+  itBundled("cjs/esm_file_exports_assignment_is_a_global_write", {
+    // The output runs as an ES module, so the runtime does not bind `module` either.
+    outfile: "/out.mjs",
+    files: {
+      "/entry.mjs": /* js */ `
+        import './setup.mjs';
+        import { a } from './lib.mjs';
+        console.log(a, JSON.stringify(globalThis.exports));
+      `,
+      "/setup.mjs": /* js */ `globalThis.exports = {};`,
+      "/lib.mjs": /* js */ `
+        export const a = 1;
+        exports.x = 2;
+      `,
+    },
+    run: {
+      stdout: '1 {"x":2}',
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toContain("__commonJS");
+      api.expectFile("/out.mjs").toContain("exports.x = 2");
+    },
+  });
+
+  itBundled("cjs/type_module_file_with_import_reads_module_as_undefined", {
+    files: {
+      "/entry.js": /* js */ `
+        import { sep } from "node:path";
+        console.log(typeof module, typeof sep);
+      `,
+      "/package.json": `{ "type": "module" }`,
+    },
+    target: "bun",
+    run: {
+      stdout: "undefined string",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__commonJS");
+    },
+  });
+
+  // A `.js` file with no "type" and `export` next to `exports.x`: the export
+  // keyword already made it an ES module, so `exports` is a global there too.
+  itBundled("cjs/untyped_export_keyword_keeps_exports_global", {
+    // The output runs as an ES module, so the runtime does not bind `module` either.
+    outfile: "/out.mjs",
+    files: {
+      "/entry.js": /* js */ `
+        import './setup.js';
+        import * as ns from './lib.js';
+        console.log(JSON.stringify(Object.keys(ns)), JSON.stringify(globalThis.exports));
+      `,
+      "/setup.js": /* js */ `globalThis.exports = {}; export {};`,
+      "/lib.js": /* js */ `
+        export const a = 1;
+        exports.x = 2;
+      `,
+    },
+    run: {
+      stdout: '["a"] {"x":2}',
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toContain("__commonJS");
+      api.expectFile("/out.mjs").toContain("exports.x = 2");
+    },
+  });
 });

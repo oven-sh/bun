@@ -1552,7 +1552,10 @@ impl<'a> Resolver<'a> {
                                 primary: Fs::Path::init_with_namespace(import_path, b"node"),
                                 secondary: None,
                             },
-                            module_type: options::ModuleType::Esm,
+                            // Embedded code has no extension or package.json.
+                            // Its contents decide: the react-refresh fallback
+                            // is a CommonJS bundle.
+                            module_type: options::ModuleType::Unknown,
                             primary_side_effects_data: SideEffects::NoSideEffectsPureData,
                             flags: ResultFlags::default(),
                             ..Default::default()

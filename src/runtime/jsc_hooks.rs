@@ -3918,6 +3918,24 @@ unsafe fn normalize_specifier_for_loader<'a>(
 
 /// Result of [`get_loader_and_virtual_source`] — mirrors
 /// `options.LoaderResult`.
+/// The ESM-or-CommonJS hint the parser gets for a file: the extension when it
+/// is `.mjs`/`.mts`/`.cjs`/`.cts`, else the `"type"` of the nearest package.json
+/// for `.js`/`.ts`. Every other extension lets the file contents decide.
+fn module_type_hint(
+    ext: &[u8],
+    package_json_for_module_type: Option<&bun_resolver::package_json::PackageJSON>,
+) -> ModuleType {
+    if let Some(from_ext) = bun_resolver::module_type_from_ext(ext) {
+        from_ext
+    } else if ext == b".js" || ext == b".ts" {
+        package_json_for_module_type
+            .map(|pkg| pkg.module_type)
+            .unwrap_or(ModuleType::Unknown)
+    } else {
+        ModuleType::Unknown
+    }
+}
+
 struct LoaderResult<'a> {
     loader: Option<Loader>,
     virtual_source: Option<&'a bun_ast::Source>,
@@ -4247,22 +4265,8 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         }
     }
 
-    // ── module_type hint from extension / package.json ──────────────────────
     // Shared by the synchronous and the concurrent transpiler below.
-    let module_type: ModuleType = {
-        let ext = lr.path.name().ext;
-        if let Some(from_ext) = bun_resolver::module_type_from_ext(ext) {
-            from_ext
-        } else if ext == b".js" || ext == b".ts" {
-            // Use the package.json module type if it exists.
-            lr.package_json_for_module_type
-                .map(|pkg| pkg.module_type)
-                .unwrap_or(ModuleType::Unknown)
-        } else {
-            // For JSX/TSX and other extensions, let the file contents decide.
-            ModuleType::Unknown
-        }
-    };
+    let module_type = module_type_hint(lr.path.name().ext, lr.package_json_for_module_type);
     let pkg_name: Option<&[u8]> = lr
         .package_json
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
@@ -4319,7 +4323,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                     referrer.clone(),
                     concurrent_loader,
                     module_type,
-                    lr.package_json_for_module_type,
+                    lr.package_json,
                     module_loader,
                 )
             };
@@ -4551,11 +4555,32 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         p
     });
 
+    // A plugin can serve a real file, so its path gets the same hint as a
+    // file read from disk.
+    let module_type = {
+        let ext = path.name().ext;
+        let dir = path.name().dir;
+        let package_json = if loader.is_java_script_like()
+            && (ext == b".js" || ext == b".ts")
+            && bun_paths::is_absolute(dir)
+        {
+            // SAFETY: `jsc_vm` is the live per-thread VM; `read_dir_info` is
+            // re-entrant on the JS thread.
+            match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
+                Ok(Some(dir_info)) => dir_info.package_json_for_module_type,
+                _ => None,
+            }
+        } else {
+            None
+        };
+        module_type_hint(ext, package_json)
+    };
+
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
     let mut extra = TranspileExtra {
         path,
         loader,
-        module_type: ModuleType::Unknown,
+        module_type,
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution
     };

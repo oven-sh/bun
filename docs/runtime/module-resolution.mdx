@@ -343,7 +343,7 @@ Bun also supports [Node.js-style subpath imports](https://nodejs.org/api/package
 
 <Accordion title="Low-level details of CommonJS interop in Bun">
 
-Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript transpiler detects usages of `module.exports`, it treats the file as CommonJS. The module loader then wraps the transpiled module in a function shaped like this:
+Bun's JavaScript runtime has native support for CommonJS. A `.cjs` or `.cts` file, or a `.js` or `.ts` file under a package.json with `"type": "commonjs"`, is CommonJS. A `.mjs` or `.mts` file, or a `.js` or `.ts` file under `"type": "module"`, is an ES module, and `module` and `exports` are not defined there, as in Node.js. For any other file, Bun's JavaScript transpiler reads the contents: when it detects usages of `module.exports`, it treats the file as CommonJS. The module loader then wraps the transpiled module in a function shaped like this:
 
 ```js
 (function (module, exports, require) {

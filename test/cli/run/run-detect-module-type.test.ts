@@ -79,15 +79,34 @@ describe("an ES module file never binds module or exports", () => {
     "typemod/cjs.cjs": `module.exports = { fromCjs: true };`,
     // A dual package: the named package.json says "module", the CommonJS
     // build carries a nameless package.json that says "commonjs". Node reads
-    // the nearest one.
+    // the nearest one, named or not. The nameless file sits in an ancestor
+    // directory, not next to the file: a same-directory package.json is found
+    // by every lookup.
     "dual/package.json": `{ "name": "dual", "type": "module" }`,
-    "dual/cjs/package.json": `{ "type": "commonjs" }`,
-    "dual/cjs/lib.js": `module.exports = { dual: typeof module };`,
+    "dual/dist/package.json": `{ "type": "commonjs" }`,
+    "dual/dist/cjs/lib.js": `module.exports = { dual: typeof module };`,
     "dual/esm/lib.js": `export const dual = typeof module;`,
     "dual.cjs": `
-      console.log(require("./dual/cjs/lib.js").dual);
+      console.log(require("./dual/dist/cjs/lib.js").dual);
       import("./dual/esm/lib.js").then(m => console.log(m.dual));
     `,
+    // A plugin that serves the file gets the same hint as a read from disk.
+    "plugin.ts": `
+      Bun.plugin({
+        name: "serve-lib",
+        setup(build) {
+          build.onLoad({ filter: /served\.mjs$/ }, () => ({
+            contents: 'import { sep } from "node:path"; console.log("served", typeof module, typeof sep);',
+            loader: "js",
+          }));
+        },
+      });
+    `,
+    "served.mjs": `// replaced by plugin.ts`,
+    "plugin-entry.mjs": `import "./served.mjs";`,
+    "this.mjs": `console.log(this);`,
+    "this.cjs": `console.log(this);`,
+    "typemod/this.js": `console.log(this);`,
     // Files loaded by a static import transpile on the work pool, not on
     // the JS thread. Both paths must agree on the module type.
     "entry.mjs": `
@@ -97,13 +116,14 @@ describe("an ES module file never binds module or exports", () => {
       import "./typemod/typeof.js";
       import "./typemod/import-typeof.js";
       import cjs from "./typemod/cjs.cjs";
-      import dualCjs from "./dual/cjs/lib.js";
+      import dualCjs from "./dual/dist/cjs/lib.js";
       import { dual as dualEsm } from "./dual/esm/lib.js";
       console.log(JSON.stringify(cjs), dualCjs.dual, dualEsm);
     `,
     "dynamic.mjs": `
       await import("./typeof.mjs");
       console.log(JSON.stringify(await import("./typemod/cjs.cjs").then(m => m.default)));
+      console.log((await import("./dual/dist/cjs/lib.js")).default.dual);
       try { await import("./assign-module.mjs"); } catch (e) { console.log(e.name, e.message); }
     `,
     "require.cjs": `
@@ -135,7 +155,12 @@ describe("an ES module file never binds module or exports", () => {
     ["dual.cjs", "object\nundefined"],
     [
       "dynamic.mjs",
-      ["undefined undefined function string", '{"fromCjs":true}', "ReferenceError module is not defined"].join("\n"),
+      [
+        "undefined undefined function string",
+        '{"fromCjs":true}',
+        "object",
+        "ReferenceError module is not defined",
+      ].join("\n"),
     ],
     ["require.cjs", ["undefined undefined function string", "ReferenceError exports is not defined"].join("\n")],
   ];
@@ -144,6 +169,31 @@ describe("an ES module file never binds module or exports", () => {
     test.concurrent(file, async () => {
       using dir = tempDir("esm-module-type", files);
       const { stdout, stderr, exitCode } = await run(String(dir), file);
+      expect(stdout).toBe(expected);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test.concurrent("a plugin-served .mjs", async () => {
+    using dir = tempDir("esm-module-type", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), "--preload", "./plugin.ts", "plugin-entry.mjs");
+    expect(stdout).toBe("served undefined string");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun build --no-bundle` transpiles one file with the resolver's verdict.
+  // Top-level `this` shows it: `undefined` in an ES module (printed as null),
+  // `exports` in a CommonJS module.
+  for (const [file, expected] of [
+    ["this.mjs", "console.log(null);"],
+    ["this.cjs", "console.log(exports);"],
+    ["typemod/this.js", "console.log(null);"],
+  ]) {
+    test.concurrent(`bun build --no-bundle ${file}`, async () => {
+      using dir = tempDir("esm-module-type", files);
+      const { stdout, stderr, exitCode } = await run(String(dir), "build", "--no-bundle", file);
       expect(stdout).toBe(expected);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);

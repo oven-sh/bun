@@ -898,3 +898,32 @@ devTest("react component with hooks and mutual recursion renders without error",
     );
   },
 });
+// When react is installed but react-refresh is not, the dev server serves its
+// own copy of the react-refresh runtime. That copy is a CommonJS file, so it
+// must reach the client wrapped as one.
+devTest("react refresh falls back to the bundled runtime when react-refresh is not installed", {
+  framework: minimalFramework,
+  files: {
+    "node_modules/react/index.js": reactAndRefreshStub["node_modules/react/index.js"],
+    "node_modules/react/jsx-dev-runtime.js": reactAndRefreshStub["node_modules/react/jsx-dev-runtime.js"],
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.tsx"],
+    }),
+    "index.tsx": `
+      import App from './App.tsx';
+      console.log("PASS " + typeof App());
+    `,
+    "App.tsx": `
+      import { useState } from "react";
+      export default function App() {
+        let [a] = useState(1);
+        return <div>Hello, world! {a}</div>;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {});
+    await c.expectMessage("PASS object");
+  },
+});

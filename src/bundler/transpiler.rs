@@ -2864,7 +2864,7 @@ impl<'a> Transpiler<'a> {
                     remove_cjs_module_wrapper: false,
                     dont_bundle_twice: false,
                     allow_commonjs: false,
-                    module_type: options::ModuleType::Unknown,
+                    module_type: resolve_result.module_type,
                     runtime_transpiler_cache: None,
                     keep_json_and_toml_as_one_statement: false,
                     allow_bytecode_cache: false,

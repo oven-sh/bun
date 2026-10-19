@@ -339,10 +339,18 @@ static String stripCommonJSWrapper(StringView source)
     size_t bodyStart = source.find('{', start);
     if (bodyStart == WTF::notFound)
         return {};
+    // A `bun build` footer after the wrapper is a comment: `//` lines or `/* */` blocks.
     size_t end = source.length();
     while (true) {
         while (end > bodyStart && (isASCIIWhitespace(source[end - 1]) || source[end - 1] == ';'))
             end--;
+        if (source.substring(0, end).endsWith("*/"_s)) {
+            size_t open = source.reverseFind("/*"_s, end - 2);
+            if (open == WTF::notFound || open <= bodyStart)
+                break;
+            end = open;
+            continue;
+        }
         size_t lineStart = end > 0 ? source.reverseFind('\n', end - 1) : WTF::notFound;
         lineStart = lineStart == WTF::notFound ? 0 : lineStart + 1;
         if (lineStart <= bodyStart || !source.substring(lineStart, end - lineStart).startsWith("//"_s))
@@ -352,6 +360,34 @@ static String stripCommonJSWrapper(StringView source)
     if (end < bodyStart + 3 || source.substring(end - 2, 2) != "})"_s)
         return {};
     return source.substring(bodyStart + 1, end - 2 - bodyStart - 1).toString();
+}
+
+// The body of a module source: the transpiler's wrapper, or the overridden `Module.wrapper` put around it at fetch.
+static String commonJSBody(Zig::GlobalObject* globalObject, StringView source)
+{
+    if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
+        const String& start = globalObject->m_moduleWrapperStart;
+        const String& end = globalObject->m_moduleWrapperEnd;
+        if (source.length() >= start.length() + end.length() && source.startsWith(start) && source.endsWith(end))
+            return source.substring(start.length(), source.length() - start.length() - end.length()).toString();
+    }
+    return stripCommonJSWrapper(source);
+}
+
+// The overridden `Module.wrapper` decided at evaluation: a source fetched while a hook was installed still has the transpiler's.
+static void ensureModuleWrapperOverride(Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject)
+{
+    StringView source = moduleObject->sourceCode.view();
+    if (source.startsWith(globalObject->m_moduleWrapperStart))
+        return;
+    String body = stripCommonJSWrapper(source);
+    if (body.isNull())
+        return;
+    auto* provider = moduleObject->sourceCode.provider();
+    moduleObject->sourceCode = makeSource(
+        makeString(globalObject->m_moduleWrapperStart, body, globalObject->m_moduleWrapperEnd),
+        provider->sourceOrigin(), JSC::SourceTaintedOrigin::Untainted, provider->sourceURL(),
+        WTF::TextPosition(), JSC::SourceProviderSourceType::Program);
 }
 
 // Puts the overridden `Module.wrapper` around the body in place of the transpiler's wrapper.
@@ -394,11 +430,13 @@ static bool evaluateCommonJSModuleWithCompileHook(JSC::VM& vm, Zig::GlobalObject
         throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
         return false;
     }
-    String body = stripCommonJSWrapper(moduleObject->sourceCode.view());
+    String body = commonJSBody(globalObject, moduleObject->sourceCode.view());
     if (body.isNull()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Expected CommonJS module to have a function wrapper. If you weren't messing around with Bun's internals, this is a bug in Bun"_s);
         return false;
     }
+    // The same refusal as the setter's, for a hook installed with defineProperty or after a delete.
+    THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, false);
     noteCommonJSEntryEvaluation(globalObject, moduleObject, filename);
     RETURN_IF_EXCEPTION(scope, false);
 
@@ -420,9 +458,11 @@ static bool hasCompileHook(Zig::GlobalObject* globalObject, JSCommonJSModule* mo
 
 static bool evaluateCommonJSModule(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
-    if (!hasCompileHook(globalObject, moduleObject)) [[likely]]
-        return evaluateCommonJSModuleOnce(vm, globalObject, moduleObject, dirname, filename);
-    return evaluateCommonJSModuleWithCompileHook(vm, globalObject, moduleObject, dirname, filename);
+    if (hasCompileHook(globalObject, moduleObject)) [[unlikely]]
+        return evaluateCommonJSModuleWithCompileHook(vm, globalObject, moduleObject, dirname, filename);
+    if (globalObject->hasOverriddenModuleWrapper) [[unlikely]]
+        ensureModuleWrapperOverride(globalObject, moduleObject);
+    return evaluateCommonJSModuleOnce(vm, globalObject, moduleObject, dirname, filename);
 }
 
 bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
@@ -1162,11 +1202,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
         }
         return true;
     }
-    JSObject* object = receiver.getObject();
-    if (!object)
-        return false;
-    object->putDirect(vm, propertyName, decodedValue);
-    return true;
+    return putOnNonModuleReceiver(globalObject, receiver, decodedValue, propertyName);
 }
 
 void JSCommonJSModule::finishCreation(JSC::VM& vm, const JSC::SourceCode& sourceCode)

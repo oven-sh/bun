@@ -68,7 +68,7 @@ describe.concurrent("node-module-module", () => {
       "package.json": JSON.stringify({ type: "commonjs" }),
       "target.js": "module.exports = function target() { return require('./nested.js') + 1; };\n",
       "nested.js": "module.exports = 1;\n",
-      "meta.cjs": "module.exports = typeof import.meta.url;\n",
+      "meta.cjs": "exports.meta = typeof import.meta.url;\nexports.n = 1;\n",
       "hook.js": `
         const Module = require("node:module");
         const path = require("node:path");
@@ -178,7 +178,7 @@ describe.concurrent("node-module-module", () => {
       expect(await run(dir, ["main.mjs"])).toEqual({ compiled: ["target.js", "nested.js"], result: 101 });
     });
 
-    test("the default _compile accepts a body that uses import.meta", async () => {
+    test("the default _compile wraps a rewritten body that uses import.meta with its parameter", async () => {
       using dir = tempDir("module-prototype-compile-meta", {
         ...files,
         "main.js": `
@@ -187,7 +187,7 @@ describe.concurrent("node-module-module", () => {
           console.log(JSON.stringify({ compiled: compiled.map(c => c.file), meta }));
         `,
       });
-      expect(await run(dir, ["main.js"])).toEqual({ compiled: ["meta.cjs"], meta: "string" });
+      expect(await run(dir, ["main.js"])).toEqual({ compiled: ["meta.cjs"], meta: { meta: "string", n: 100 } });
     });
 
     test("a hook that evaluates the body itself leaves a loaded module with exports", async () => {
@@ -275,6 +275,68 @@ describe.concurrent("node-module-module", () => {
       const bundled = await Bun.file(`${dir}/out/bundled.cjs`).text();
       expect(bundled.startsWith("#!/usr/bin/env bun\n// @bun @bun-cjs\n(function(")).toBe(true);
       expect(await run(dir, ["main.js"])).toEqual({ compiled: ["bundled.cjs"], result: 101 });
+    });
+
+    test("a bundle with a block comment footer reaches the hook as its body", async () => {
+      using dir = tempDir("module-prototype-compile-footer", {
+        ...files,
+        "src.js": "module.exports = require('./nested.js') + 1;\n",
+        "main.js": `
+          const { compiled } = require("./hook.js");
+          const result = require("./out/bundled.cjs");
+          console.log(JSON.stringify({ compiled: compiled.map(c => c.file), result }));
+        `,
+      });
+      await using build = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--target=bun",
+          "--format=cjs",
+          "--footer=/* (c) ACME\n two lines */",
+          "--outfile=out/bundled.cjs",
+          "src.js",
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).toBe("");
+      expect(buildExit).toBe(0);
+      expect((await Bun.file(`${dir}/out/bundled.cjs`).text()).trimEnd().endsWith("two lines */")).toBe(true);
+      expect(await run(dir, ["main.js"])).toEqual({ compiled: ["bundled.cjs"], result: 101 });
+    });
+
+    test("a hook installed between the fetch and the evaluation of an imported CommonJS file sees the body once", async () => {
+      using dir = tempDir("module-prototype-compile-window", {
+        "wrapper.cjs": `
+          const Module = require("node:module");
+          const [start, end] = Module.wrapper;
+          Module.wrapper = [start + "globalThis.prefixRuns = (globalThis.prefixRuns ?? 0) + 1;", end];
+        `,
+        "setup.cjs": `
+          const Module = require("node:module");
+          const orig = Module.prototype._compile;
+          globalThis.hooked = [];
+          Module.prototype._compile = function (content, filename) {
+            globalThis.hooked.push(require("path").basename(filename));
+            return orig.call(this, content, filename);
+          };
+        `,
+        "app.cjs": "module.exports = 42;\n",
+        "main.mjs": `
+          import "./setup.cjs";
+          import app from "./app.cjs";
+          console.log(JSON.stringify({ app, hooked: globalThis.hooked, prefixRuns: globalThis.prefixRuns }));
+        `,
+      });
+      expect(await run(dir, ["--preload", "./wrapper.cjs", "main.mjs"])).toEqual({
+        app: 42,
+        hooked: ["app.cjs"],
+        prefixRuns: 2,
+      });
     });
 
     test("bun test --isolate runs a require.extensions hook with an own _compile for every file", async () => {

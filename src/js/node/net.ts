@@ -353,6 +353,25 @@ const kwriteCallback = Symbol("writeCallback");
 const kRejectedWrite = Symbol("kRejectedWrite");
 const kSocketClass = Symbol("kSocketClass");
 
+// Node completes a write in the async context of that write: its WriteWrap is an AsyncResource.
+let runInFrame;
+function inAsyncContextOfWrite(callback) {
+  const frame = $getInternalField($asyncContext, 0);
+  if (frame === undefined) return callback;
+  return (runInFrame ??= require("internal/async_context_frame").run).bind(undefined, frame, callback, undefined);
+}
+// uv_close() fails a write request that is still queued with UV_ECANCELED.
+function cancelWriteNT(callback) {
+  callback(new ErrnoException(uv().UV_ECANCELED, "write"));
+}
+// A throw under a completed write (a write callback, a 'drain' or 'finish' listener) is an uncaughtException in Node. The socket stays.
+function completeDrainedWrite(callback) {
+  try {
+    callback(null);
+  } catch (e) {
+    reportError(e);
+  }
+}
 // A completed write whose status is a negative errno: Node hands it to the write
 // callback as errnoException(status, 'write') and destroys the stream when no
 // callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
@@ -837,7 +856,7 @@ const SocketHandlers = {
       } else if (res) {
         self._pendingData = self[kwriteCallback] = null;
         unrefAfterDrain(self, socket);
-        callback(null);
+        completeDrainedWrite(callback);
       } else {
         self._pendingData = null;
       }
@@ -1412,10 +1431,10 @@ const ServerHandlers = {
     if (!data) return;
 
     if (data._hadError) return;
-    data._hadError = true;
     const bunTLS = data[bunTlsSymbol];
 
     if (typeof bunTLS === "function") {
+      data._hadError = true;
       const tlsError = establishedTLSError(data, error);
       if (tlsError) error = tlsError;
       const callback = data[kwriteCallback];
@@ -1461,8 +1480,11 @@ const ServerHandlers = {
     const callback = data[kwriteCallback];
     if (callback) {
       data[kwriteCallback] = null;
+      // Ahead of _hadError: Node sets it for an error of the TLS engine only, and node:http emits the 'finish'
+      // of a message from this callback when it is not set.
       callback(error);
     }
+    data._hadError = true;
     if (!data.destroyed) {
       data.destroy(error);
     }
@@ -1697,7 +1719,7 @@ const SocketHandlers2 = {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
         unrefAfterDrain(self, socket);
-        callback(null);
+        completeDrainedWrite(callback);
       } else {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = null;
@@ -2469,6 +2491,15 @@ Socket.prototype._destroy = function _destroy(err, callback) {
 
   this.connecting = false;
   const upgraded = this[kupgraded];
+  // libuv completes the write requests of a handle that closes with ECANCELED, once destroy() has returned.
+  // A write held for 'connect' or for a TLS attach still has its chunk, and fails from its own 'close' listener.
+  const canceledWrite = this._pendingData == null && this[kRejectedWrite] === undefined ? this[kwriteCallback] : null;
+  if (canceledWrite) {
+    this[kwriteCallback] = null;
+    // Node: after the 'error' of destroy(err), before 'close'. With no error it goes first: the failed write leaves
+    // the stream errored, so the 'end' that the close of the handle queues does not follow.
+    if (!err) process.nextTick(cancelWriteNT, canceledWrite);
+  }
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
@@ -2542,9 +2573,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
+    if (canceledWrite && err) process.nextTick(cancelWriteNT, canceledWrite);
     closeOwedRaw(this, upgraded);
   } else {
     callback(err);
+    if (canceledWrite && err) process.nextTick(cancelWriteNT, canceledWrite);
     closeOwedRaw(this, upgraded);
     const transport = transportToDestroy(this);
     if (transport !== undefined) abortTransport(transport);
@@ -3097,7 +3130,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   } else if (this[kwriteCallback]) {
     callback(new Error("overlapping _write()"));
   } else {
-    this[kwriteCallback] = callback;
+    this[kwriteCallback] = inAsyncContextOfWrite(callback);
     // A pending write holds the loop even on a handle whose FIN/pause dropped
     // its hold (libuv: the uv_write_t is active); unrefAfterDrain lets go again.
     if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();

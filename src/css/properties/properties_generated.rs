@@ -258,10 +258,18 @@ pub enum PropertyIdTag {
     Translate,
     Rotate,
     Scale,
+    TextDecorationLine,
+    TextDecorationStyle,
     TextDecorationColor,
+    TextDecorationThickness,
+    TextDecoration,
+    TextEmphasisStyle,
     TextEmphasisColor,
+    TextEmphasis,
+    TextEmphasisPosition,
     TextShadow,
     Direction,
+    ListStyleImage,
     Composes,
     MaskImage,
     MaskMode,
@@ -342,8 +350,14 @@ impl PropertyIdTag {
             T::BackfaceVisibility => PrefixFeature::BackfaceVisibility,
             T::Perspective => PrefixFeature::Perspective,
             T::PerspectiveOrigin => PrefixFeature::PerspectiveOrigin,
+            T::TextDecorationLine => PrefixFeature::TextDecorationLine,
+            T::TextDecorationStyle => PrefixFeature::TextDecorationStyle,
             T::TextDecorationColor => PrefixFeature::TextDecorationColor,
+            T::TextDecoration => PrefixFeature::TextDecoration,
+            T::TextEmphasisStyle => PrefixFeature::TextEmphasisStyle,
             T::TextEmphasisColor => PrefixFeature::TextEmphasisColor,
+            T::TextEmphasis => PrefixFeature::TextEmphasis,
+            T::TextEmphasisPosition => PrefixFeature::TextEmphasisPosition,
             T::MaskImage => PrefixFeature::MaskImage,
             T::MaskRepeat => PrefixFeature::MaskRepeat,
             T::MaskPosition => PrefixFeature::MaskPosition,
@@ -573,10 +587,18 @@ impl PropertyIdTag {
             PropertyIdTag::Translate => b"translate",
             PropertyIdTag::Rotate => b"rotate",
             PropertyIdTag::Scale => b"scale",
+            PropertyIdTag::TextDecorationLine => b"text-decoration-line",
+            PropertyIdTag::TextDecorationStyle => b"text-decoration-style",
             PropertyIdTag::TextDecorationColor => b"text-decoration-color",
+            PropertyIdTag::TextDecorationThickness => b"text-decoration-thickness",
+            PropertyIdTag::TextDecoration => b"text-decoration",
+            PropertyIdTag::TextEmphasisStyle => b"text-emphasis-style",
             PropertyIdTag::TextEmphasisColor => b"text-emphasis-color",
+            PropertyIdTag::TextEmphasis => b"text-emphasis",
+            PropertyIdTag::TextEmphasisPosition => b"text-emphasis-position",
             PropertyIdTag::TextShadow => b"text-shadow",
             PropertyIdTag::Direction => b"direction",
+            PropertyIdTag::ListStyleImage => b"list-style-image",
             PropertyIdTag::Composes => b"composes",
             PropertyIdTag::MaskImage => b"mask-image",
             PropertyIdTag::MaskMode => b"mask-mode",
@@ -841,10 +863,18 @@ pub enum PropertyId {
     Translate,
     Rotate,
     Scale,
+    TextDecorationLine(VendorPrefix),
+    TextDecorationStyle(VendorPrefix),
     TextDecorationColor(VendorPrefix),
+    TextDecorationThickness,
+    TextDecoration(VendorPrefix),
+    TextEmphasisStyle(VendorPrefix),
     TextEmphasisColor(VendorPrefix),
+    TextEmphasis(VendorPrefix),
+    TextEmphasisPosition(VendorPrefix),
     TextShadow,
     Direction,
+    ListStyleImage,
     Composes,
     MaskImage(VendorPrefix),
     MaskMode,
@@ -1126,10 +1156,18 @@ impl PropertyId {
             PropertyId::Translate => PropertyIdTag::Translate,
             PropertyId::Rotate => PropertyIdTag::Rotate,
             PropertyId::Scale => PropertyIdTag::Scale,
+            PropertyId::TextDecorationLine(..) => PropertyIdTag::TextDecorationLine,
+            PropertyId::TextDecorationStyle(..) => PropertyIdTag::TextDecorationStyle,
             PropertyId::TextDecorationColor(..) => PropertyIdTag::TextDecorationColor,
+            PropertyId::TextDecorationThickness => PropertyIdTag::TextDecorationThickness,
+            PropertyId::TextDecoration(..) => PropertyIdTag::TextDecoration,
+            PropertyId::TextEmphasisStyle(..) => PropertyIdTag::TextEmphasisStyle,
             PropertyId::TextEmphasisColor(..) => PropertyIdTag::TextEmphasisColor,
+            PropertyId::TextEmphasis(..) => PropertyIdTag::TextEmphasis,
+            PropertyId::TextEmphasisPosition(..) => PropertyIdTag::TextEmphasisPosition,
             PropertyId::TextShadow => PropertyIdTag::TextShadow,
             PropertyId::Direction => PropertyIdTag::Direction,
+            PropertyId::ListStyleImage => PropertyIdTag::ListStyleImage,
             PropertyId::Composes => PropertyIdTag::Composes,
             PropertyId::MaskImage(..) => PropertyIdTag::MaskImage,
             PropertyId::MaskMode => PropertyIdTag::MaskMode,
@@ -1234,8 +1272,14 @@ impl PropertyId {
             | PropertyId::BackfaceVisibility(p)
             | PropertyId::Perspective(p)
             | PropertyId::PerspectiveOrigin(p)
+            | PropertyId::TextDecorationLine(p)
+            | PropertyId::TextDecorationStyle(p)
             | PropertyId::TextDecorationColor(p)
+            | PropertyId::TextDecoration(p)
+            | PropertyId::TextEmphasisStyle(p)
             | PropertyId::TextEmphasisColor(p)
+            | PropertyId::TextEmphasis(p)
+            | PropertyId::TextEmphasisPosition(p)
             | PropertyId::MaskImage(p)
             | PropertyId::MaskRepeat(p)
             | PropertyId::MaskPosition(p)
@@ -1508,10 +1552,18 @@ impl PropertyId {
                 b"translate" => (VendorPrefix::NONE, |_| PropertyId::Translate),
                 b"rotate" => (VendorPrefix::NONE, |_| PropertyId::Rotate),
                 b"scale" => (VendorPrefix::NONE, |_| PropertyId::Scale),
+                b"text-decoration-line" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::TextDecorationLine),
+                b"text-decoration-style" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::TextDecorationStyle),
                 b"text-decoration-color" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::TextDecorationColor),
+                b"text-decoration-thickness" => (VendorPrefix::NONE, |_| PropertyId::TextDecorationThickness),
+                b"text-decoration" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::TextDecoration),
+                b"text-emphasis-style" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::TextEmphasisStyle),
                 b"text-emphasis-color" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::TextEmphasisColor),
+                b"text-emphasis" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::TextEmphasis),
+                b"text-emphasis-position" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::TextEmphasisPosition),
                 b"text-shadow" => (VendorPrefix::NONE, |_| PropertyId::TextShadow),
                 b"direction" => (VendorPrefix::NONE, |_| PropertyId::Direction),
+                b"list-style-image" => (VendorPrefix::NONE, |_| PropertyId::ListStyleImage),
                 b"composes" => (VendorPrefix::NONE, |_| PropertyId::Composes),
                 b"mask-image" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskImage),
                 b"mask-mode" => (VendorPrefix::NONE, |_| PropertyId::MaskMode),
@@ -1831,10 +1883,18 @@ pub enum Property {
     Translate(transform::Translate),
     Rotate(transform::Rotate),
     Scale(transform::Scale),
+    TextDecorationLine((text::TextDecorationLine, VendorPrefix)),
+    TextDecorationStyle((text::TextDecorationStyle, VendorPrefix)),
     TextDecorationColor((css::css_values::color::CssColor, VendorPrefix)),
+    TextDecorationThickness(text::TextDecorationThickness),
+    TextDecoration((text::TextDecoration, VendorPrefix)),
+    TextEmphasisStyle((text::TextEmphasisStyle, VendorPrefix)),
     TextEmphasisColor((css::css_values::color::CssColor, VendorPrefix)),
+    TextEmphasis((text::TextEmphasis, VendorPrefix)),
+    TextEmphasisPosition((text::TextEmphasisPosition, VendorPrefix)),
     TextShadow(SmallList<text::TextShadow, 1>),
     Direction(text::Direction),
+    ListStyleImage(css::css_values::image::Image),
     Composes(css_modules::Composes),
     MaskImage((SmallList<css::css_values::image::Image, 1>, VendorPrefix)),
     MaskMode(SmallList<masking::MaskMode, 1>),
@@ -2111,10 +2171,18 @@ impl Property {
             Property::Translate(..) => PropertyId::Translate,
             Property::Rotate(..) => PropertyId::Rotate,
             Property::Scale(..) => PropertyId::Scale,
+            Property::TextDecorationLine(v) => PropertyId::TextDecorationLine(v.1),
+            Property::TextDecorationStyle(v) => PropertyId::TextDecorationStyle(v.1),
             Property::TextDecorationColor(v) => PropertyId::TextDecorationColor(v.1),
+            Property::TextDecorationThickness(..) => PropertyId::TextDecorationThickness,
+            Property::TextDecoration(v) => PropertyId::TextDecoration(v.1),
+            Property::TextEmphasisStyle(v) => PropertyId::TextEmphasisStyle(v.1),
             Property::TextEmphasisColor(v) => PropertyId::TextEmphasisColor(v.1),
+            Property::TextEmphasis(v) => PropertyId::TextEmphasis(v.1),
+            Property::TextEmphasisPosition(v) => PropertyId::TextEmphasisPosition(v.1),
             Property::TextShadow(..) => PropertyId::TextShadow,
             Property::Direction(..) => PropertyId::Direction,
+            Property::ListStyleImage(..) => PropertyId::ListStyleImage,
             Property::Composes(..) => PropertyId::Composes,
             Property::MaskImage(v) => PropertyId::MaskImage(v.1),
             Property::MaskMode(..) => PropertyId::MaskMode,
@@ -2383,10 +2451,18 @@ impl Property {
             Property::Translate(v) => css::generic::to_css(v, dest),
             Property::Rotate(v) => css::generic::to_css(v, dest),
             Property::Scale(v) => css::generic::to_css(v, dest),
+            Property::TextDecorationLine(v) => css::generic::to_css(&v.0, dest),
+            Property::TextDecorationStyle(v) => css::generic::to_css(&v.0, dest),
             Property::TextDecorationColor(v) => css::generic::to_css(&v.0, dest),
+            Property::TextDecorationThickness(v) => css::generic::to_css(v, dest),
+            Property::TextDecoration(v) => css::generic::to_css(&v.0, dest),
+            Property::TextEmphasisStyle(v) => css::generic::to_css(&v.0, dest),
             Property::TextEmphasisColor(v) => css::generic::to_css(&v.0, dest),
+            Property::TextEmphasis(v) => css::generic::to_css(&v.0, dest),
+            Property::TextEmphasisPosition(v) => css::generic::to_css(&v.0, dest),
             Property::TextShadow(v) => css::generic::to_css(v, dest),
             Property::Direction(v) => css::generic::to_css(v, dest),
+            Property::ListStyleImage(v) => css::generic::to_css(v, dest),
             Property::Composes(v) => css::generic::to_css(v, dest),
             Property::MaskImage(v) => css::generic::to_css(&v.0, dest),
             Property::MaskMode(v) => css::generic::to_css(v, dest),
@@ -3664,14 +3740,49 @@ impl Property {
                     return Ok(Property::Scale(c));
                 }
             }
+            PropertyId::TextDecorationLine(pre) => {
+                if let Some(c) = parse_value::<text::TextDecorationLine>(input, options) {
+                    return Ok(Property::TextDecorationLine((c, pre)));
+                }
+            }
+            PropertyId::TextDecorationStyle(pre) => {
+                if let Some(c) = parse_value::<text::TextDecorationStyle>(input, options) {
+                    return Ok(Property::TextDecorationStyle((c, pre)));
+                }
+            }
             PropertyId::TextDecorationColor(pre) => {
                 if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
                     return Ok(Property::TextDecorationColor((c, pre)));
                 }
             }
+            PropertyId::TextDecorationThickness => {
+                if let Some(c) = parse_value::<text::TextDecorationThickness>(input, options) {
+                    return Ok(Property::TextDecorationThickness(c));
+                }
+            }
+            PropertyId::TextDecoration(pre) => {
+                if let Some(c) = parse_value::<text::TextDecoration>(input, options) {
+                    return Ok(Property::TextDecoration((c, pre)));
+                }
+            }
+            PropertyId::TextEmphasisStyle(pre) => {
+                if let Some(c) = parse_value::<text::TextEmphasisStyle>(input, options) {
+                    return Ok(Property::TextEmphasisStyle((c, pre)));
+                }
+            }
             PropertyId::TextEmphasisColor(pre) => {
                 if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
                     return Ok(Property::TextEmphasisColor((c, pre)));
+                }
+            }
+            PropertyId::TextEmphasis(pre) => {
+                if let Some(c) = parse_value::<text::TextEmphasis>(input, options) {
+                    return Ok(Property::TextEmphasis((c, pre)));
+                }
+            }
+            PropertyId::TextEmphasisPosition(pre) => {
+                if let Some(c) = parse_value::<text::TextEmphasisPosition>(input, options) {
+                    return Ok(Property::TextEmphasisPosition((c, pre)));
                 }
             }
             PropertyId::TextShadow => {
@@ -3682,6 +3793,11 @@ impl Property {
             PropertyId::Direction => {
                 if let Some(c) = parse_value::<text::Direction>(input, options) {
                     return Ok(Property::Direction(c));
+                }
+            }
+            PropertyId::ListStyleImage => {
+                if let Some(c) = parse_value::<css::css_values::image::Image>(input, options) {
+                    return Ok(Property::ListStyleImage(c));
                 }
             }
             PropertyId::Composes => {
@@ -4386,14 +4502,38 @@ impl Property {
             Property::Translate(v) => Property::Translate(css::generic::deep_clone(v, arena)),
             Property::Rotate(v) => Property::Rotate(css::generic::deep_clone(v, arena)),
             Property::Scale(v) => Property::Scale(css::generic::deep_clone(v, arena)),
+            Property::TextDecorationLine(v) => {
+                Property::TextDecorationLine((css::generic::deep_clone(&v.0, arena), v.1))
+            }
+            Property::TextDecorationStyle(v) => {
+                Property::TextDecorationStyle((css::generic::deep_clone(&v.0, arena), v.1))
+            }
             Property::TextDecorationColor(v) => {
                 Property::TextDecorationColor((css::generic::deep_clone(&v.0, arena), v.1))
+            }
+            Property::TextDecorationThickness(v) => {
+                Property::TextDecorationThickness(css::generic::deep_clone(v, arena))
+            }
+            Property::TextDecoration(v) => {
+                Property::TextDecoration((css::generic::deep_clone(&v.0, arena), v.1))
+            }
+            Property::TextEmphasisStyle(v) => {
+                Property::TextEmphasisStyle((css::generic::deep_clone(&v.0, arena), v.1))
             }
             Property::TextEmphasisColor(v) => {
                 Property::TextEmphasisColor((css::generic::deep_clone(&v.0, arena), v.1))
             }
+            Property::TextEmphasis(v) => {
+                Property::TextEmphasis((css::generic::deep_clone(&v.0, arena), v.1))
+            }
+            Property::TextEmphasisPosition(v) => {
+                Property::TextEmphasisPosition((css::generic::deep_clone(&v.0, arena), v.1))
+            }
             Property::TextShadow(v) => Property::TextShadow(css::generic::deep_clone(v, arena)),
             Property::Direction(v) => Property::Direction(css::generic::deep_clone(v, arena)),
+            Property::ListStyleImage(v) => {
+                Property::ListStyleImage(css::generic::deep_clone(v, arena))
+            }
             Property::Composes(v) => Property::Composes(css::generic::deep_clone(v, arena)),
             Property::MaskImage(v) => {
                 Property::MaskImage((css::generic::deep_clone(&v.0, arena), v.1))
@@ -4931,14 +5071,36 @@ impl Property {
             (Property::Translate(a), Property::Translate(b)) => css::generic::eql(a, b),
             (Property::Rotate(a), Property::Rotate(b)) => css::generic::eql(a, b),
             (Property::Scale(a), Property::Scale(b)) => css::generic::eql(a, b),
+            (Property::TextDecorationLine(a), Property::TextDecorationLine(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::TextDecorationStyle(a), Property::TextDecorationStyle(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
             (Property::TextDecorationColor(a), Property::TextDecorationColor(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::TextDecorationThickness(a), Property::TextDecorationThickness(b)) => {
+                css::generic::eql(a, b)
+            }
+            (Property::TextDecoration(a), Property::TextDecoration(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::TextEmphasisStyle(a), Property::TextEmphasisStyle(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
             (Property::TextEmphasisColor(a), Property::TextEmphasisColor(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
+            (Property::TextEmphasis(a), Property::TextEmphasis(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::TextEmphasisPosition(a), Property::TextEmphasisPosition(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
             (Property::TextShadow(a), Property::TextShadow(b)) => css::generic::eql(a, b),
             (Property::Direction(a), Property::Direction(b)) => css::generic::eql(a, b),
+            (Property::ListStyleImage(a), Property::ListStyleImage(b)) => css::generic::eql(a, b),
             (Property::Composes(a), Property::Composes(b)) => css::generic::eql(a, b),
             (Property::MaskImage(a), Property::MaskImage(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1

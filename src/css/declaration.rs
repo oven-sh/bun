@@ -15,7 +15,7 @@ use crate::css_properties::margin_padding::{
 };
 use crate::css_properties::prefix_handler::FallbackHandler;
 use crate::css_properties::size::SizeHandler;
-use crate::css_properties::text::Direction;
+use crate::css_properties::text::{Direction, TextDecorationHandler};
 use crate::css_properties::transform::TransformHandler;
 use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
@@ -86,6 +86,12 @@ impl<'bump> DeclarationBlock<'bump> {
                         .push(core::mem::replace(prop, placeholder_property()));
                 }
             }
+        }
+
+        // The `!important` list has its own handler. Each one has to know what the other list wrote.
+        if !self.important_declarations.is_empty() {
+            handler.text.see_other_list(&self.important_declarations);
+            important_handler.text.see_other_list(&self.declarations);
         }
 
         handle(
@@ -398,6 +404,7 @@ pub struct DeclarationHandler<'bump> {
     pub(crate) scroll_margin: ScrollMarginHandler,
     pub(crate) transition: TransitionHandler,
     pub(crate) font: FontHandler,
+    pub(crate) text: TextDecorationHandler,
     pub(crate) inset: InsetHandler,
     pub(crate) transform: TransformHandler,
     pub(crate) box_shadow: BoxShadowHandler,
@@ -423,6 +430,7 @@ impl<'bump> DeclarationHandler<'bump> {
         self.scroll_margin.finalize(&mut self.decls, context);
         self.transition.finalize(&mut self.decls, context);
         self.font.finalize(&mut self.decls, context);
+        self.text.finalize(&mut self.decls, context);
         self.inset.finalize(&mut self.decls, context);
         self.transform.finalize(&mut self.decls, context);
         self.box_shadow.finalize(&mut self.decls, context);
@@ -466,6 +474,9 @@ impl<'bump> DeclarationHandler<'bump> {
                 .font
                 .handle_property(property, &mut self.decls, context)
             || self
+                .text
+                .handle_property(property, &mut self.decls, context)
+            || self
                 .inset
                 .handle_property(property, &mut self.decls, context)
             || self
@@ -494,6 +505,7 @@ impl<'bump> DeclarationHandler<'bump> {
             scroll_margin: Default::default(),
             transition: Default::default(),
             font: Default::default(),
+            text: Default::default(),
             inset: Default::default(),
             transform: Default::default(),
             box_shadow: Default::default(),

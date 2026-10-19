@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -15,6 +15,7 @@ import {
   ParserFlags,
   ParserOptions,
   prefix_test,
+  prefixTest as prefix_test_output,
 } from "./util";
 
 function Some(n: number): number {
@@ -5302,6 +5303,1776 @@ describe("css tests", () => {
       {
         chrome: 50 << 16,
       },
+    );
+  });
+
+  describe("text-decoration", () => {
+    minify_test(".foo { text-decoration-line: none }", ".foo{text-decoration-line:none}");
+    minify_test(".foo { text-decoration-line: underline }", ".foo{text-decoration-line:underline}");
+    minify_test(".foo { text-decoration-line: overline }", ".foo{text-decoration-line:overline}");
+    minify_test(".foo { text-decoration-line: line-through }", ".foo{text-decoration-line:line-through}");
+    minify_test(".foo { text-decoration-line: blink }", ".foo{text-decoration-line:blink}");
+    minify_test(".foo { text-decoration-line: underline overline }", ".foo{text-decoration-line:underline overline}");
+    minify_test(".foo { text-decoration-line: overline underline }", ".foo{text-decoration-line:underline overline}");
+    minify_test(
+      ".foo { text-decoration-line: overline line-through underline }",
+      ".foo{text-decoration-line:underline overline line-through}",
+    );
+    minify_test(".foo { text-decoration-line: spelling-error }", ".foo{text-decoration-line:spelling-error}");
+    minify_test(".foo { text-decoration-line: grammar-error }", ".foo{text-decoration-line:grammar-error}");
+    minify_test(
+      ".foo { -webkit-text-decoration-line: overline underline }",
+      ".foo{-webkit-text-decoration-line:underline overline}",
+    );
+    minify_test(
+      ".foo { -moz-text-decoration-line: overline underline }",
+      ".foo{-moz-text-decoration-line:underline overline}",
+    );
+
+    minify_test(".foo { text-decoration-style: solid }", ".foo{text-decoration-style:solid}");
+    minify_test(".foo { text-decoration-style: dotted }", ".foo{text-decoration-style:dotted}");
+    minify_test(".foo { -webkit-text-decoration-style: solid }", ".foo{-webkit-text-decoration-style:solid}");
+
+    minify_test(".foo { text-decoration-color: yellow }", ".foo{text-decoration-color:#ff0}");
+    minify_test(".foo { -webkit-text-decoration-color: yellow }", ".foo{-webkit-text-decoration-color:#ff0}");
+
+    minify_test(".foo { text-decoration: none }", ".foo{text-decoration:none}");
+    minify_test(".foo { text-decoration: underline dotted }", ".foo{text-decoration:underline dotted}");
+    minify_test(".foo { text-decoration: underline dotted yellow }", ".foo{text-decoration:underline dotted #ff0}");
+    minify_test(".foo { text-decoration: yellow dotted underline }", ".foo{text-decoration:underline dotted #ff0}");
+    minify_test(
+      ".foo { text-decoration: underline overline dotted yellow }",
+      ".foo{text-decoration:underline overline dotted #ff0}",
+    );
+    minify_test(
+      ".foo { -webkit-text-decoration: yellow dotted underline }",
+      ".foo{-webkit-text-decoration:underline dotted #ff0}",
+    );
+    minify_test(
+      ".foo { -moz-text-decoration: yellow dotted underline }",
+      ".foo{-moz-text-decoration:underline dotted #ff0}",
+    );
+
+    // lightningcss has these two with no browser list. Bun folds unprefixed declarations only for a browser list.
+    prefix_test(
+      `
+      .foo {
+        text-decoration-line: underline;
+        text-decoration-style: dotted;
+        text-decoration-color: yellow;
+        text-decoration-thickness: 2px;
+      }
+      `,
+      indoc`
+      .foo {
+        text-decoration: underline 2px dotted #ff0;
+      }
+      `,
+      {
+        chrome: Some(90 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: underline;
+        text-decoration-style: dotted;
+      }
+      `,
+      indoc`
+      .foo {
+        text-decoration: underline dotted;
+      }
+      `,
+      {
+        chrome: Some(90 << 16),
+      },
+    );
+
+    cssTest(
+      `
+      .foo {
+        text-decoration: underline;
+        text-decoration-style: var(--style);
+      }
+      `,
+      indoc`
+      .foo {
+        text-decoration: underline;
+        text-decoration-style: var(--style);
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-text-decoration: underline;
+        -webkit-text-decoration-style: dotted;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+      }
+      `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: underline dotted;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        firefox: Some(30 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration-line: underline;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration-line: underline;
+        -moz-text-decoration-line: underline;
+        text-decoration-line: underline;
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        firefox: Some(30 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration-style: dotted;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration-style: dotted;
+        -moz-text-decoration-style: dotted;
+        text-decoration-style: dotted;
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        firefox: Some(30 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration-color: yellow;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration-color: #ff0;
+        -moz-text-decoration-color: #ff0;
+        text-decoration-color: #ff0;
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        firefox: Some(30 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: underline;
+      }
+      `,
+      indoc`
+      .foo {
+        text-decoration: underline;
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        firefox: Some(30 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+      }
+      `,
+      {
+        safari: Some(14 << 16),
+        firefox: Some(45 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: double underline;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline double;
+        text-decoration: underline double;
+      }
+      `,
+      {
+        safari: Some(16 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: underline;
+        text-decoration-style: double;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline double;
+        text-decoration: underline double;
+      }
+      `,
+      {
+        safari: Some(16 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: underline;
+        text-decoration-color: red;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline red;
+        text-decoration: underline red;
+      }
+      `,
+      {
+        safari: Some(16 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: var(--test);
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration: var(--test);
+        text-decoration: var(--test);
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        firefox: Some(30 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: lch(50.998% 135.363 338) underline;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline #ee00be;
+        text-decoration: underline #ee00be;
+        -webkit-text-decoration: underline lch(50.998% 135.363 338);
+        text-decoration: underline lch(50.998% 135.363 338);
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        firefox: Some(30 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration-color: lch(50.998% 135.363 338);
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-decoration-color: #ee00be;
+        -moz-text-decoration-color: #ee00be;
+        text-decoration-color: #ee00be;
+        -webkit-text-decoration-color: lch(50.998% 135.363 338);
+        -moz-text-decoration-color: lch(50.998% 135.363 338);
+        text-decoration-color: lch(50.998% 135.363 338);
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        firefox: Some(30 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: lch(50.998% 135.363 338) var(--style);
+      }
+      `,
+      indoc`
+      .foo {
+        text-decoration: #ee00be var(--style);
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          text-decoration: lab(50.998% 125.506 -50.7078) var(--style);
+        }
+      }
+      `,
+      {
+        chrome: Some(90 << 16),
+      },
+    );
+
+    // Needs the condition of the enclosing `@supports` rule, which the handlers do not see yet.
+    cssTestTodo(
+      `
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          text-decoration: lab(50.998% 125.506 -50.7078) var(--style);
+        }
+      }
+      `,
+      indoc`
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          text-decoration: lab(50.998% 125.506 -50.7078) var(--style);
+        }
+      }
+      `,
+      {
+        chrome: Some(90 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: underline 10px;
+      }
+      `,
+      indoc`
+      .foo {
+        text-decoration: underline;
+        text-decoration-thickness: 10px;
+      }
+      `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: underline 10px;
+      }
+      `,
+      indoc`
+      .foo {
+        text-decoration: underline 10px;
+      }
+      `,
+      {
+        chrome: Some(90 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: underline 10%;
+      }
+      `,
+      indoc`
+      .foo {
+        text-decoration: underline;
+        text-decoration-thickness: calc(1em / 10);
+      }
+      `,
+      {
+        safari: Some(12 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration: underline 10%;
+      }
+      `,
+      indoc`
+      .foo {
+        text-decoration: underline 10%;
+      }
+      `,
+      {
+        firefox: Some(89 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration-thickness: 10%;
+      }
+      `,
+      indoc`
+      .foo {
+        text-decoration-thickness: calc(1em / 10);
+      }
+      `,
+      {
+        safari: Some(12 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-decoration-thickness: 10%;
+      }
+      `,
+      indoc`
+      .foo {
+        text-decoration-thickness: 10%;
+      }
+      `,
+      {
+        firefox: Some(89 << 16),
+      },
+    );
+
+    // lightningcss replaces the prefixes that an author wrote with the ones that the targets need. Bun keeps them.
+    minify_test(
+      ".foo { -webkit-text-decoration: underline dotted; text-decoration: underline dotted }",
+      ".foo{-webkit-text-decoration:underline dotted;text-decoration:underline dotted}",
+    );
+    minify_test(
+      ".foo { -moz-text-decoration: underline dotted; text-decoration: underline dotted }",
+      ".foo{-moz-text-decoration:underline dotted;text-decoration:underline dotted}",
+    );
+    prefix_test(
+      ".foo { -moz-text-decoration: underline dotted; text-decoration: underline dotted }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        -moz-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+
+    // A prefixed value that the author wrote stays the value for that prefix (parcel-bundler/lightningcss#977).
+    prefix_test(
+      ".foo { -webkit-text-decoration: underline dotted; text-decoration: overline dotted }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: overline dotted;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".foo { -webkit-text-decoration-color: red; text-decoration: underline wavy blue }",
+      indoc`
+      .foo {
+        -webkit-text-decoration-color: red;
+        text-decoration: underline wavy #00f;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".foo { -webkit-text-decoration: underline dotted; text-decoration-color: red }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration-color: red;
+      }
+      `,
+      { safari: Some(8 << 16) },
+    );
+    // lightningcss writes the prefixed line twice here.
+    prefix_test(
+      ".foo { -webkit-text-decoration: var(--x); text-decoration: var(--x) }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: var(--x);
+        text-decoration: var(--x);
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    // A prefixed declaration that comes later has its own line. The copy before it does no harm.
+    prefix_test(
+      ".foo { text-decoration: underline dotted; -webkit-text-decoration: overline dotted }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        -webkit-text-decoration: overline dotted;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+
+    // A value with fewer prefixes does not replace the value of the other prefixes. lightningcss prints one `overline` line.
+    minify_test(
+      ".foo { -webkit-text-decoration-line: underline; text-decoration-line: underline; -webkit-text-decoration-line: overline }",
+      ".foo{-webkit-text-decoration-line:underline;text-decoration-line:underline;-webkit-text-decoration-line:overline}",
+    );
+    minify_test(
+      ".foo { -webkit-text-decoration: underline dotted; text-decoration: underline dotted; text-decoration-style: wavy }",
+      ".foo{-webkit-text-decoration:underline dotted;text-decoration:underline dotted;text-decoration-style:wavy}",
+    );
+
+    // The shorthand is for the prefixes that every longhand has. lightningcss prints `text-decoration: underline 2px dotted red`.
+    minify_test(
+      ".foo { -webkit-text-decoration-line: underline; text-decoration-style: dotted; text-decoration-color: red; text-decoration-thickness: 2px }",
+      ".foo{-webkit-text-decoration-line:underline;text-decoration-style:dotted;text-decoration-color:red;text-decoration-thickness:2px}",
+    );
+    minify_test(
+      ".foo { text-decoration: underline dotted; -webkit-text-decoration-line: underline }",
+      ".foo{text-decoration:underline dotted;-webkit-text-decoration-line:underline}",
+    );
+
+    // A second value of one property is a new declaration, so a fallback stays (normalize.css). lightningcss keeps the last.
+    minify_test(
+      ".foo { text-decoration: underline; text-decoration: underline dotted }",
+      ".foo{text-decoration:underline;text-decoration:underline dotted}",
+    );
+    prefix_test(
+      ".foo { text-decoration: underline; text-decoration: underline dotted }",
+      indoc`
+      .foo {
+        text-decoration: underline;
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    minify_test(
+      ".foo { text-decoration-color: red; text-decoration-color: blue }",
+      ".foo{text-decoration-color:red;text-decoration-color:#00f}",
+    );
+    // A longhand after its shorthand is not a second value of one property. It is folded, as in lightningcss.
+    prefix_test(
+      ".foo { text-decoration-color: red; text-decoration: underline; text-decoration-color: blue }",
+      ".foo { text-decoration: underline #00f; }",
+      { chrome: Some(90 << 16) },
+    );
+
+    // Unprefixed declarations are folded only when the browsers that need `-webkit-text-decoration` get it. lightningcss always folds them.
+    minify_test(
+      ".foo { text-decoration: underline; text-decoration-color: red }",
+      ".foo{text-decoration:underline;text-decoration-color:red}",
+    );
+    minify_test(
+      ".foo { text-decoration-line: underline; text-decoration-style: dotted; text-decoration-color: yellow; text-decoration-thickness: 2px }",
+      ".foo{text-decoration-line:underline;text-decoration-style:dotted;text-decoration-color:#ff0;text-decoration-thickness:2px}",
+    );
+    minify_test(
+      ".foo { text-decoration: underline; text-decoration-thickness: 2px }",
+      ".foo{text-decoration:underline;text-decoration-thickness:2px}",
+    );
+    prefix_test(
+      ".foo { text-decoration: underline; text-decoration-color: red }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline red;
+        text-decoration: underline red;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".foo { -webkit-text-decoration: overline wavy; text-decoration: underline; text-decoration-color: red }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: overline wavy;
+        text-decoration: underline;
+        text-decoration-color: red;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+
+    // The buffer is written before `all` and before an unknown name, which can be one more spelling of the property.
+    prefix_test(
+      ".foo { text-decoration: underline dotted; all: unset }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        all: unset;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".foo { all: unset; text-decoration: underline dotted }",
+      indoc`
+      .foo {
+        all: unset;
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".foo { text-decoration: underline dotted; -khtml-text-decoration: none; text-decoration: underline }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        -khtml-text-decoration: none;
+        text-decoration: underline;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    minify_test(
+      ".foo { text-decoration-line: underline; cursor: pointer; text-decoration-style: dotted }",
+      ".foo{text-decoration-line:underline;cursor:pointer;text-decoration-style:dotted}",
+    );
+    // `all` sets the prefixed names too, so a declaration after it gets its prefix again.
+    prefix_test(
+      ".foo { -webkit-text-decoration: underline dotted; all: unset; text-decoration: overline dotted }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        all: unset;
+        -webkit-text-decoration: overline dotted;
+        text-decoration: overline dotted;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    // A custom property and a property of another handler are no barrier.
+    prefix_test(
+      ".foo { text-decoration: underline; --x: 1; color: red; text-decoration-color: blue }",
+      indoc`
+      .foo {
+        --x: 1;
+        color: red;
+        text-decoration: underline #00f;
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // A value that browsers reject stays as it is. lightningcss prints `none`, `underline` and `underline` for these three.
+    minify_test(
+      ".foo { text-decoration: underline; text-decoration: ; }",
+      ".foo{text-decoration:underline;text-decoration: }",
+    );
+    minify_test(".foo { text-decoration: none underline }", ".foo{text-decoration:none underline}");
+    minify_test(".foo { text-decoration-line: underline underline }", ".foo{text-decoration-line:underline underline}");
+    minify_test(
+      ".foo { text-decoration-line: spelling-error underline }",
+      ".foo{text-decoration-line:spelling-error underline}",
+    );
+    minify_test(".foo { text-decoration-line: underline none }", ".foo{text-decoration-line:underline none}");
+
+    // A thickness, style or color with no line is printed. lightningcss prints `none` for each of these.
+    minify_test(".foo { text-decoration: red }", ".foo{text-decoration:red}");
+    minify_test(".foo { text-decoration: wavy }", ".foo{text-decoration:wavy}");
+    minify_test(".foo { text-decoration: 2px }", ".foo{text-decoration:2px}");
+    minify_test(".foo { text-decoration: none red }", ".foo{text-decoration:red}");
+    minify_test(".foo { text-decoration: solid currentColor }", ".foo{text-decoration:none}");
+    prefix_test(
+      ".foo { text-decoration-line: none; text-decoration-thickness: auto; text-decoration-style: solid; text-decoration-color: red }",
+      ".foo { text-decoration: red; }",
+      { chrome: Some(90 << 16) },
+    );
+
+    // An unparsed longhand gets the prefixes of its own feature, as its typed value does. lightningcss uses the shorthand's.
+    prefix_test(".foo { text-decoration-color: var(--c) }", ".foo { text-decoration-color: var(--c); }", {
+      safari: Some(14 << 16),
+    });
+    prefix_test(
+      ".foo { text-decoration-color: var(--c) }",
+      indoc`
+      .foo {
+        -webkit-text-decoration-color: var(--c);
+        -moz-text-decoration-color: var(--c);
+        text-decoration-color: var(--c);
+      }
+      `,
+      { safari: Some(8 << 16), firefox: Some(30 << 16) },
+    );
+    prefix_test(".foo { text-decoration-thickness: var(--c) }", ".foo { text-decoration-thickness: var(--c); }", {
+      safari: Some(8 << 16),
+      firefox: Some(30 << 16),
+    });
+    // A reset reaches the browsers that read the prefixed name.
+    prefix_test(
+      ".foo { text-decoration: underline dotted; text-decoration: initial }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        -webkit-text-decoration: initial;
+        text-decoration: initial;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+
+    // A prefixed shorthand with a thickness is written as it is. lightningcss moves the thickness to the unprefixed longhand.
+    prefix_test(".foo { -webkit-text-decoration: underline 2px }", ".foo { -webkit-text-decoration: underline 2px; }", {
+      safari: Some(14 << 16),
+    });
+    prefix_test(
+      ".foo { -webkit-text-decoration: underline 2px; text-decoration: underline 2px }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline 2px;
+        text-decoration: underline;
+        text-decoration-thickness: 2px;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    // A thickness is not folded into a prefixed shorthand. lightningcss prints `-webkit-text-decoration: underline 2px dotted`.
+    minify_test(
+      ".foo { -webkit-text-decoration: underline dotted; text-decoration-thickness: 2px }",
+      ".foo{-webkit-text-decoration:underline dotted;text-decoration-thickness:2px}",
+    );
+    prefix_test(
+      ".foo { text-decoration: underline 2px dotted }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        text-decoration-thickness: 2px;
+      }
+      `,
+      { safari: Some(14 << 16), chrome: Some(90 << 16) },
+    );
+
+    // `!important` declarations are a list of their own. A prefix that the other list writes is not added.
+    prefix_test(
+      ".foo { -webkit-text-decoration: overline wavy; text-decoration: underline dotted !important }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: overline wavy;
+        text-decoration: underline dotted !important;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".foo { -webkit-text-decoration: overline wavy !important; text-decoration: underline dotted }",
+      indoc`
+      .foo {
+        text-decoration: underline dotted;
+        -webkit-text-decoration: overline wavy !important;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".foo { text-decoration: underline dotted !important; text-decoration: overline wavy }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: overline wavy;
+        text-decoration: overline wavy;
+        -webkit-text-decoration: underline dotted !important;
+        text-decoration: underline dotted !important;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+
+    // Two rules with one selector are merged and minified again. The output of the first pass is stable.
+    prefix_test(
+      ".a { text-decoration: underline dotted } .a { color: red }",
+      indoc`
+      .a {
+        color: red;
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".a { text-decoration: underline 2px dotted } .a { top: 0 }",
+      indoc`
+      .a {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        text-decoration-thickness: 2px;
+        top: 0;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".a { text-decoration: underline 10% } .a { top: 0 }",
+      indoc`
+      .a {
+        text-decoration: underline;
+        text-decoration-thickness: calc(1em / 10);
+        top: 0;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".a { text-decoration: underline lch(50.998% 135.363 338) } .a { top: 0 }",
+      indoc`
+      .a {
+        -webkit-text-decoration: underline #ee00be;
+        text-decoration: underline #ee00be;
+        -webkit-text-decoration: underline lch(50.998% 135.363 338);
+        text-decoration: underline lch(50.998% 135.363 338);
+        top: 0;
+      }
+      `,
+      { safari: Some(8 << 16) },
+    );
+    prefix_test(
+      ".a { text-decoration-color: lch(50.998% 135.363 338) } .a { top: 0 }",
+      indoc`
+      .a {
+        -webkit-text-decoration-color: #ee00be;
+        -moz-text-decoration-color: #ee00be;
+        text-decoration-color: #ee00be;
+        -webkit-text-decoration-color: lch(50.998% 135.363 338);
+        -moz-text-decoration-color: lch(50.998% 135.363 338);
+        text-decoration-color: lch(50.998% 135.363 338);
+        top: 0;
+      }
+      `,
+      { safari: Some(8 << 16), firefox: Some(30 << 16) },
+    );
+    // Each rule gets its own copies, as in autoprefixer and esbuild: the second rule does not write the prefixed name.
+    prefix_test(
+      ".a { -webkit-text-decoration: overline wavy } .a { text-decoration: underline dotted }",
+      indoc`
+      .a {
+        -webkit-text-decoration: overline wavy;
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+
+    // A rule is a duplicate of a later one only when the property names are equal too.
+    minify_test(
+      ".a{text-decoration:underline;cursor:pointer}.q{top:0}.a{text-decoration:underline;vertical-align:middle}",
+      ".a{text-decoration:underline;cursor:pointer}.q{top:0}.a{text-decoration:underline;vertical-align:middle}",
+    );
+    minify_test(
+      ".c{text-decoration:underline}.q{top:0}.c{cursor:pointer}",
+      ".c{text-decoration:underline}.q{top:0}.c{cursor:pointer}",
+    );
+    prefix_test(
+      ".a{text-decoration:underline dotted;cursor:pointer}.q{top:0}.a{-webkit-text-decoration:underline dotted;text-decoration:underline dotted;vertical-align:middle}",
+      indoc`
+      .a {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        cursor: pointer;
+      }
+
+      .q {
+        top: 0;
+      }
+
+      .a {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        vertical-align: middle;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+
+    // A rule is no duplicate of a rule that has the same properties with another importance.
+    minify_test(
+      ".a{-webkit-text-decoration:underline dotted!important;text-decoration:underline dotted!important}.b{top:0}.a{text-decoration:overline wavy}",
+      ".a{-webkit-text-decoration:underline dotted!important;text-decoration:underline dotted!important}.b{top:0}.a{text-decoration:overline wavy}",
+    );
+
+    // The name inside a transition gets the same prefixes.
+    prefix_test(
+      ".foo { transition: text-decoration .3s }",
+      ".foo { transition: -webkit-text-decoration .3s, text-decoration .3s; }",
+      { safari: Some(14 << 16) },
+    );
+
+    // The prefix of a condition of `@import` is printed.
+    cssTest(
+      '@import "foo.css" supports(-webkit-text-decoration: underline dotted);',
+      '@import "foo.css" supports((-webkit-text-decoration: underline dotted));',
+    );
+  });
+
+  describe("text-emphasis", () => {
+    minify_test(".foo { text-emphasis-style: none }", ".foo{text-emphasis-style:none}");
+    minify_test(".foo { text-emphasis-style: filled }", ".foo{text-emphasis-style:filled}");
+    minify_test(".foo { text-emphasis-style: open }", ".foo{text-emphasis-style:open}");
+    minify_test(".foo { text-emphasis-style: dot }", ".foo{text-emphasis-style:dot}");
+    minify_test(".foo { text-emphasis-style: filled dot }", ".foo{text-emphasis-style:dot}");
+    minify_test(".foo { text-emphasis-style: dot filled }", ".foo{text-emphasis-style:dot}");
+    minify_test(".foo { text-emphasis-style: open dot }", ".foo{text-emphasis-style:open dot}");
+    minify_test(".foo { text-emphasis-style: dot open }", ".foo{text-emphasis-style:open dot}");
+    minify_test('.foo { text-emphasis-style: "x" }', '.foo{text-emphasis-style:"x"}');
+
+    minify_test(".foo { text-emphasis-color: yellow }", ".foo{text-emphasis-color:#ff0}");
+
+    minify_test(".foo { text-emphasis: none }", ".foo{text-emphasis:none}");
+    minify_test(".foo { text-emphasis: filled }", ".foo{text-emphasis:filled}");
+    minify_test(".foo { text-emphasis: filled yellow }", ".foo{text-emphasis:filled #ff0}");
+    minify_test(".foo { text-emphasis: dot filled yellow }", ".foo{text-emphasis:dot #ff0}");
+
+    cssTest(
+      `
+      .foo {
+        text-emphasis-style: filled;
+        text-emphasis-color: yellow;
+      }
+      `,
+      indoc`
+      .foo {
+        text-emphasis: filled #ff0;
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        text-emphasis: filled red;
+        text-emphasis-color: yellow;
+      }
+      `,
+      indoc`
+      .foo {
+        text-emphasis: filled #ff0;
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        text-emphasis: filled yellow;
+        text-emphasis-color: var(--color);
+      }
+      `,
+      indoc`
+      .foo {
+        text-emphasis: filled #ff0;
+        text-emphasis-color: var(--color);
+      }
+      `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-emphasis-style: filled;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-emphasis-style: filled;
+        text-emphasis-style: filled;
+      }
+      `,
+      {
+        safari: Some(10 << 16),
+        chrome: Some(30 << 16),
+        firefox: Some(45 << 16),
+      },
+    );
+
+    minify_test(".foo { text-emphasis-position: over }", ".foo{text-emphasis-position:over}");
+    minify_test(".foo { text-emphasis-position: under }", ".foo{text-emphasis-position:under}");
+    minify_test(".foo { text-emphasis-position: over right }", ".foo{text-emphasis-position:over}");
+    minify_test(".foo { text-emphasis-position: over left }", ".foo{text-emphasis-position:over left}");
+
+    prefix_test(
+      `
+      .foo {
+        text-emphasis-position: over;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-emphasis-position: over;
+        text-emphasis-position: over;
+      }
+      `,
+      {
+        safari: Some(10 << 16),
+        chrome: Some(30 << 16),
+        firefox: Some(45 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-emphasis-position: over left;
+      }
+      `,
+      indoc`
+      .foo {
+        text-emphasis-position: over left;
+      }
+      `,
+      {
+        safari: Some(10 << 16),
+        chrome: Some(30 << 16),
+        firefox: Some(45 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-emphasis-position: var(--test);
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-emphasis-position: var(--test);
+        text-emphasis-position: var(--test);
+      }
+      `,
+      {
+        safari: Some(10 << 16),
+        chrome: Some(30 << 16),
+        firefox: Some(45 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-emphasis: filled lch(50.998% 135.363 338);
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-emphasis: filled #ee00be;
+        text-emphasis: filled #ee00be;
+        -webkit-text-emphasis: filled lch(50.998% 135.363 338);
+        text-emphasis: filled lch(50.998% 135.363 338);
+      }
+      `,
+      {
+        chrome: Some(25 << 16),
+        firefox: Some(48 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-emphasis-color: lch(50.998% 135.363 338);
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-emphasis-color: #ee00be;
+        text-emphasis-color: #ee00be;
+        -webkit-text-emphasis-color: lch(50.998% 135.363 338);
+        text-emphasis-color: lch(50.998% 135.363 338);
+      }
+      `,
+      {
+        chrome: Some(25 << 16),
+        firefox: Some(48 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        text-emphasis: lch(50.998% 135.363 338) var(--style);
+      }
+      `,
+      indoc`
+      .foo {
+        text-emphasis: #ee00be var(--style);
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          text-emphasis: lab(50.998% 125.506 -50.7078) var(--style);
+        }
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    // Needs the condition of the enclosing `@supports` rule, which the handlers do not see yet.
+    cssTestTodo(
+      `
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          text-emphasis: lab(50.998% 125.506 -50.7078) var(--style);
+        }
+      }
+      `,
+      indoc`
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          text-emphasis: lab(50.998% 125.506 -50.7078) var(--style);
+        }
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    // A written prefix stays when no target needs it. lightningcss prints only the unprefixed line.
+    prefix_test(
+      `
+      .foo {
+        -webkit-text-emphasis-style: filled;
+        text-emphasis-style: filled;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-emphasis-style: filled;
+        text-emphasis-style: filled;
+      }
+      `,
+      {
+        safari: Some(10 << 16),
+        firefox: Some(45 << 16),
+      },
+    );
+
+    // A prefixed value that the author wrote stays the value for that prefix. lightningcss adds `-webkit-text-emphasis: circle #00f`.
+    prefix_test(
+      ".foo { -webkit-text-emphasis: dot red; text-emphasis: circle blue }",
+      indoc`
+      .foo {
+        -webkit-text-emphasis: dot red;
+        text-emphasis: circle #00f;
+      }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+
+    // The shorthand is for the prefixes that both longhands have. lightningcss prints `text-emphasis: dot red` with both names.
+    prefix_test(
+      ".foo { -webkit-text-emphasis-style: dot; text-emphasis-color: red }",
+      indoc`
+      .foo {
+        -webkit-text-emphasis-style: dot;
+        -webkit-text-emphasis-color: red;
+        text-emphasis-color: red;
+      }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+    minify_test(
+      ".foo { -webkit-text-emphasis-style: dot; text-emphasis-color: red }",
+      ".foo{-webkit-text-emphasis-style:dot;text-emphasis-color:red}",
+    );
+
+    // The prefixed name does not read a horizontal keyword. A written one stays. lightningcss prints it unprefixed.
+    prefix_test(
+      ".foo { -webkit-text-emphasis-position: over left }",
+      ".foo { -webkit-text-emphasis-position: over left; }",
+      { chrome: Some(80 << 16) },
+    );
+    prefix_test(
+      ".foo { -webkit-text-emphasis-position: over; text-emphasis-position: under left }",
+      indoc`
+      .foo {
+        -webkit-text-emphasis-position: over;
+        text-emphasis-position: under left;
+      }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+
+    // A color with no style is printed, and an empty value stays as it is. lightningcss prints `none` for all four.
+    minify_test(".foo { text-emphasis: red }", ".foo{text-emphasis:red}");
+    minify_test(".foo { text-emphasis: none red }", ".foo{text-emphasis:red}");
+    minify_test(".foo { text-emphasis-style: none; text-emphasis-color: red }", ".foo{text-emphasis:red}");
+    minify_test(".foo { text-emphasis: dot; text-emphasis: ; }", ".foo{text-emphasis:dot;text-emphasis: }");
+
+    // A second value of one property is a new declaration. A longhand after its shorthand is folded.
+    minify_test(".foo { text-emphasis: dot; text-emphasis: circle }", ".foo{text-emphasis:dot;text-emphasis:circle}");
+    minify_test(".foo { text-emphasis: dot; text-emphasis-style: circle }", ".foo{text-emphasis:circle}");
+
+    // Unprefixed declarations are not folded in a block that has a prefix that the targets need. lightningcss folds them.
+    prefix_test(
+      ".foo { -webkit-text-emphasis: circle; text-emphasis-style: dot; text-emphasis-color: red }",
+      indoc`
+      .foo {
+        -webkit-text-emphasis: circle;
+        text-emphasis-style: dot;
+        text-emphasis-color: red;
+      }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+
+    // The buffer is written before `all` and before an unknown name.
+    prefix_test(
+      ".foo { text-emphasis: dot; -epub-text-emphasis: circle; text-emphasis-color: red }",
+      indoc`
+      .foo {
+        -webkit-text-emphasis: dot;
+        text-emphasis: dot;
+        -epub-text-emphasis: circle;
+        -webkit-text-emphasis-color: red;
+        text-emphasis-color: red;
+      }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+
+    // A value that did not parse gets the prefix too, and a written prefix is not added a second time.
+    prefix_test(
+      ".foo { text-emphasis: var(--x) }",
+      ".foo { -webkit-text-emphasis: var(--x); text-emphasis: var(--x); }",
+      { chrome: Some(80 << 16) },
+    );
+    prefix_test(
+      ".foo { -webkit-text-emphasis: var(--x); text-emphasis: var(--x) }",
+      ".foo { -webkit-text-emphasis: var(--x); text-emphasis: var(--x); }",
+      { chrome: Some(80 << 16) },
+    );
+
+    // Two rules with one selector are merged and minified again.
+    prefix_test(
+      ".a { text-emphasis: dot lch(50.998% 135.363 338) } .a { top: 0 }",
+      indoc`
+      .a {
+        -webkit-text-emphasis: dot #ee00be;
+        text-emphasis: dot #ee00be;
+        -webkit-text-emphasis: dot lch(50.998% 135.363 338);
+        text-emphasis: dot lch(50.998% 135.363 338);
+        top: 0;
+      }
+      `,
+      { chrome: Some(25 << 16) },
+    );
+    prefix_test(
+      ".a { text-emphasis-color: red; -webkit-text-emphasis: circle red; text-emphasis: circle red } .a { top: 0 }",
+      indoc`
+      .a {
+        -webkit-text-emphasis-color: red;
+        text-emphasis-color: red;
+        -webkit-text-emphasis: circle red;
+        text-emphasis: circle red;
+        top: 0;
+      }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+    prefix_test(
+      ".a { text-emphasis-position: over } .a { text-emphasis: dot }",
+      indoc`
+      .a {
+        -webkit-text-emphasis: dot;
+        text-emphasis: dot;
+        -webkit-text-emphasis-position: over;
+        text-emphasis-position: over;
+      }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+  });
+
+  describe("list-style-image", () => {
+    minify_test(".foo { list-style-image: url('ellipse.png'); }", ".foo{list-style-image:url(ellipse.png)}");
+    minify_test(".foo { list-style-image: none }", ".foo{list-style-image:none}");
+
+    prefix_test(
+      ".foo { list-style-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) }",
+      indoc`
+      .foo {
+        list-style-image: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0f0e), to(#7773ff));
+        list-style-image: -webkit-linear-gradient(#ff0f0e, #7773ff);
+        list-style-image: linear-gradient(#ff0f0e, #7773ff);
+        list-style-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+      `,
+      {
+        chrome: Some(8 << 16),
+      },
+    );
+
+    prefix_test(
+      '.foo { list-style-image: image-set("a.png" 1x, "b.png" 2x) }',
+      indoc`
+      .foo {
+        list-style-image: -webkit-image-set(url("a.png") 1x, url("b.png") 2x);
+        list-style-image: image-set("a.png" 1x, "b.png" 2x);
+      }
+      `,
+      { chrome: Some(95 << 16) },
+    );
+    prefix_test(
+      '.foo { list-style-image: image-set("a.png" 1x, "b.png" 2x) }',
+      '.foo { list-style-image: image-set("a.png" 1x, "b.png" 2x); }',
+      { chrome: Some(113 << 16) },
+    );
+    minify_test(
+      '.foo { list-style-image: image-set("a.png" 1x, "b.png" 2x) }',
+      '.foo{list-style-image:image-set("a.png" 1x,"b.png" 2x)}',
+    );
+
+    // An earlier image stays as a fallback. lightningcss deletes it when every target reads `image-set()` with a prefix.
+    prefix_test(
+      `
+      .foo {
+        list-style-image: url(foo.png);
+        list-style-image: image-set(url("foo.png") 2x, url(bar.png) 1x);
+      }
+      `,
+      indoc`
+      .foo {
+        list-style-image: url("foo.png");
+        list-style-image: -webkit-image-set(url("foo.png") 2x, url("bar.png") 1x);
+        list-style-image: image-set("foo.png" 2x, "bar.png" 1x);
+      }
+      `,
+      { chrome: Some(95 << 16) },
+    );
+    minify_test(
+      '.foo { list-style-image: url(foo.png); list-style-image: image-set("foo.png" 2x) }',
+      '.foo{list-style-image:url(foo.png);list-style-image:image-set("foo.png" 2x)}',
+    );
+
+    // A prefix that the block already has is not written a second time.
+    prefix_test(
+      `
+      .foo {
+        list-style-image: -webkit-image-set(url("a.png") 1x, url("b.png") 2x);
+        list-style-image: image-set("c.png" 1x, "d.png" 2x);
+      }
+      `,
+      indoc`
+      .foo {
+        list-style-image: -webkit-image-set(url("a.png") 1x, url("b.png") 2x);
+        list-style-image: image-set("c.png" 1x, "d.png" 2x);
+      }
+      `,
+      { chrome: Some(95 << 16) },
+    );
+
+    // `list-style` and `all` set the image, so the image after them gets its own fallback.
+    prefix_test(
+      '.foo { list-style-image: image-set("a.png" 1x); list-style: square; list-style-image: image-set("b.png" 1x) }',
+      indoc`
+      .foo {
+        list-style-image: -webkit-image-set(url("a.png") 1x);
+        list-style-image: image-set("a.png" 1x);
+        list-style: square;
+        list-style-image: -webkit-image-set(url("b.png") 1x);
+        list-style-image: image-set("b.png" 1x);
+      }
+      `,
+      { chrome: Some(95 << 16) },
+    );
+
+    prefix_test(
+      '.foo { list-style-image: image-set("a.png" 1x); list-style-image: var(--x) }',
+      indoc`
+      .foo {
+        list-style-image: -webkit-image-set(url("a.png") 1x);
+        list-style-image: image-set("a.png" 1x);
+        list-style-image: var(--x);
+      }
+      `,
+      { chrome: Some(95 << 16) },
+    );
+
+    // Two rules with one selector are merged and minified again.
+    prefix_test(
+      '.a { list-style-image: image-set("a.png" 1x) } .a { top: 0 }',
+      indoc`
+      .a {
+        list-style-image: -webkit-image-set(url("a.png") 1x);
+        list-style-image: image-set("a.png" 1x);
+        top: 0;
+      }
+      `,
+      { chrome: Some(95 << 16) },
+    );
+    prefix_test(
+      ".a { list-style-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) } .a { top: 0 }",
+      indoc`
+      .a {
+        list-style-image: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0f0e), to(#7773ff));
+        list-style-image: -webkit-linear-gradient(#ff0f0e, #7773ff);
+        list-style-image: linear-gradient(#ff0f0e, #7773ff);
+        list-style-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+        top: 0;
+      }
+      `,
+      { chrome: Some(8 << 16) },
+    );
+
+    // `list-style` and `list-style-type` have no typed value: a counter style name is not a local name of a CSS module.
+    minify_test(".foo { list-style: square inside }", ".foo{list-style:square inside}");
+    minify_test(".foo { list-style-type: my-counter }", ".foo{list-style-type:my-counter}");
+  });
+
+  describe("text-decoration, text-emphasis and list-style-image under the default browsers", () => {
+    // The list `bun build` uses for `--target=browser`.
+    const defaults = {
+      chrome: Some(80 << 16),
+      edge: Some(80 << 16),
+      firefox: Some(78 << 16),
+      safari: Some(14 << 16),
+      opera: Some(67 << 16),
+    };
+
+    prefix_test(
+      ".foo { text-decoration: underline wavy red }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline wavy red;
+        text-decoration: underline wavy red;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { text-decoration: var(--x) }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: var(--x);
+        text-decoration: var(--x);
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { text-emphasis: dot red }",
+      indoc`
+      .foo {
+        -webkit-text-emphasis: dot red;
+        text-emphasis: dot red;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { text-emphasis-style: dot; text-emphasis-color: red; text-emphasis-position: over right }",
+      indoc`
+      .foo {
+        -webkit-text-emphasis: dot red;
+        text-emphasis: dot red;
+        -webkit-text-emphasis-position: over;
+        text-emphasis-position: over;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { text-emphasis-style: dot }",
+      ".foo { -webkit-text-emphasis-style: dot; text-emphasis-style: dot; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { text-emphasis-color: red }",
+      ".foo { -webkit-text-emphasis-color: red; text-emphasis-color: red; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { text-emphasis: var(--x) }",
+      ".foo { -webkit-text-emphasis: var(--x); text-emphasis: var(--x); }",
+      defaults,
+    );
+    prefix_test(
+      '.foo { list-style-image: image-set("a.png" 1x, "b.png" 2x) }',
+      indoc`
+      .foo {
+        list-style-image: -webkit-image-set(url("a.png") 1x, url("b.png") 2x);
+        list-style-image: image-set("a.png" 1x, "b.png" 2x);
+      }
+      `,
+      defaults,
+    );
+    // These need no prefix under the default browsers.
+    prefix_test(".foo { text-decoration: underline }", ".foo { text-decoration: underline; }", defaults);
+    prefix_test(".foo { text-decoration: none }", ".foo { text-decoration: none; }", defaults);
+    prefix_test(".foo { text-decoration-line: underline }", ".foo { text-decoration-line: underline; }", defaults);
+    prefix_test(".foo { text-decoration-style: wavy }", ".foo { text-decoration-style: wavy; }", defaults);
+    prefix_test(".foo { text-decoration-color: red }", ".foo { text-decoration-color: red; }", defaults);
+    // Safari 14 does not read a thickness in the shorthand, and Chrome 80 does not read a percentage.
+    prefix_test(
+      ".foo { text-decoration: underline 2px }",
+      ".foo { text-decoration: underline; text-decoration-thickness: 2px; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { text-decoration-thickness: 10% }",
+      ".foo { text-decoration-thickness: calc(1em / 10); }",
+      defaults,
+    );
+
+    type Declaration = {
+      // The name with no prefix.
+      name: string;
+      prefixed: boolean;
+      // The value is one word.
+      alone: boolean;
+      // The three values that the declaration sets. `undefined` is a value that it does not set.
+      values: (string | undefined)[];
+      // The third kind of browser of `expectSameValues` reads the declaration.
+      read: boolean;
+      // The prefixed copy that the third kind of browser needs.
+      copy?: Declaration;
+    };
+    // Every block of up to four of the declarations: its lines as Bun prints them, and its text in the sheet.
+    const blocksOf = (atoms: string[]) => {
+      const blocks: { lines: string[]; text: string }[] = [];
+      for (let length = 1, last = [{ lines: [] as string[], text: "" }]; length <= 4; length++) {
+        const next: typeof last = [];
+        for (const block of last)
+          for (const atom of atoms)
+            next.push({ lines: [...block.lines, `  ${atom.replace(":", ": ")};`], text: block.text + atom + ";" });
+        for (const block of next) blocks.push(block);
+        last = next;
+      }
+      return blocks;
+    };
+    // The lines of the declarations of each rule `.r<i>` of a printed sheet.
+    const rulesOf = (output: string, count: number) => {
+      const rules = new Array<string[]>(count).fill([]);
+      for (const rule of output.split("\n}\n")) {
+        const lines = rule.split("\n");
+        const selectors = lines.findIndex(line => line.length !== 0);
+        if (selectors === -1) continue;
+        for (const selector of lines[selectors].slice(0, -2).split(", "))
+          rules[Number(selector.slice(2))] = lines.slice(selectors + 1);
+      }
+      return rules;
+    };
+    // Checks the values that three kinds of browser apply, for every block of up to four of `atoms`.
+    const expectSameValues = (
+      atoms: string[],
+      // The values that a declaration sets.
+      longhands: (name: string, words: string[]) => (string | undefined)[],
+      // The first kind of browser reads the unprefixed names, and the second kind reads every name. This is the third kind.
+      reads: (declaration: Declaration) => boolean,
+      // The third kind gets a prefixed copy of these declarations, until the block writes a prefixed name.
+      copied: (declaration: Declaration) => boolean,
+    ) => {
+      const blocks = blocksOf(atoms);
+      const output = prefix_test_output(blocks.map((block, i) => `.r${i}{${block.text}}`).join("\n"), "", defaults);
+      const rules = rulesOf(output, blocks.length);
+
+      const parsed: Record<string, Declaration> = {};
+      const parse = (line: string) => {
+        if (parsed[line]) return parsed[line];
+        const [name, value] = line.slice(2, -1).split(": ");
+        const [prefixed, words] = [name.startsWith("-webkit-"), value.split(" ")];
+        const declaration: Declaration = {
+          name: prefixed ? name.slice(8) : name,
+          prefixed,
+          alone: words.length === 1 && !value.startsWith("var("),
+          values: [],
+          read: false,
+        };
+        declaration.values = longhands(declaration.name, words);
+        declaration.read = reads(declaration);
+        if (!prefixed && copied(declaration)) declaration.copy = { ...declaration, prefixed: true, read: true };
+        return (parsed[line] = declaration);
+      };
+      // The values that a browser applies: each declaration that it reads sets them, in order. Every browser reads `all`.
+      const applied = (declarations: Declaration[], kind: number, copies: boolean) => {
+        let [first, second, third, all, cursor] = ["", "", "", "", "auto"];
+        let written = false;
+        // An indexed loop with no call: a debug build runs this body about 50,000 times.
+        for (let i = 0; i < declarations.length; i++) {
+          let declaration = declarations[i];
+          if (declaration.name === "all") {
+            first = second = third = "";
+            all = cursor = "all";
+            written = false;
+          } else if (declaration.name === "cursor") cursor = declaration.values[0]!;
+          else {
+            if (declaration.prefixed) written = true;
+            else if (copies && !written && declaration.copy) declaration = declaration.copy;
+            if (kind === 0 ? declaration.prefixed : kind === 2 && !declaration.read) continue;
+            first = declaration.values[0] ?? first;
+            second = declaration.values[1] ?? second;
+            third = declaration.values[2] ?? third;
+          }
+        }
+        return all + " " + cursor + " " + first + " " + second + " " + third;
+      };
+
+      const wrong = blocks.filter((block, i) => {
+        const [printed, written] = [rules[i].map(parse), block.lines.map(parse)];
+        for (let kind = 0; kind < 3; kind++)
+          if (applied(printed, kind, false) !== applied(written, kind, kind === 2)) return true;
+        return false;
+      });
+      expect(wrong.map(block => block.text)).toEqual([]);
+
+      // Bun minifies a rule again after it merges a second rule into it. Neither that pass nor a new build changes the output.
+      expect(prefix_test_output(output, "", defaults)).toBe(output);
+      const merged = blocks.map((block, i) => `.r${i}{${block.text}}.r${i}{--z:1}`).join("\n");
+      expect(prefix_test_output(merged, "", defaults).replaceAll("  --z: 1;\n", "")).toBe(output);
+      return blocks.length;
+    };
+
+    test("the prefixes and the folds of text-decoration change no value that a browser applies", () => {
+      const blocks = expectSameValues(
+        [
+          "text-decoration:underline",
+          "text-decoration:underline dotted",
+          "-webkit-text-decoration:overline wavy",
+          "text-decoration-color:red",
+          "all:unset",
+          "cursor:pointer",
+        ],
+        (name, words) =>
+          name === "text-decoration"
+            ? [
+                words[0],
+                words.find(word => word === "dotted" || word === "wavy") ?? "solid",
+                words.find(word => word === "red") ?? "currentcolor",
+              ]
+            : name === "text-decoration-color"
+              ? [undefined, undefined, words[0]]
+              : [words[0], undefined, undefined],
+        // Safari 14 reads the prefixed shorthand, the unprefixed shorthand when it is a line alone, and the unprefixed longhands.
+        declaration => declaration.prefixed || declaration.name !== "text-decoration" || declaration.alone,
+        // Safari needs a prefixed copy of each shorthand that it does not read.
+        declaration => declaration.name === "text-decoration" && !declaration.alone,
+      );
+      expect(blocks).toBe(1554);
+    }, 30_000);
+
+    test("the prefixes and the folds of text-emphasis change no value that a browser applies", () => {
+      const blocks = expectSameValues(
+        [
+          "text-emphasis:dot",
+          "text-emphasis:circle red",
+          "-webkit-text-emphasis:circle red",
+          "text-emphasis:var(--v)",
+          "text-emphasis-color:red",
+          "all:unset",
+        ],
+        (name, words) =>
+          name === "text-emphasis-color"
+            ? [undefined, words[0], undefined]
+            : name !== "text-emphasis"
+              ? [words[0], undefined, undefined]
+              : words[0] === "var(--v)"
+                ? [words[0], words[0], undefined]
+                : [
+                    words.find(word => word === "dot" || word === "circle") ?? "none",
+                    words.find(word => word === "red") ?? "currentcolor",
+                    undefined,
+                  ],
+        // Chrome 80 reads only the prefixed names of this family.
+        declaration => declaration.prefixed,
+        // Chrome 80 needs a prefixed copy of each unprefixed declaration.
+        () => true,
+      );
+      expect(blocks).toBe(1554);
+    }, 30_000);
+
+    test("bun build writes the prefixes for the browser target and none for the bun target", async () => {
+      using dir = tempDir("css-text-decoration", {
+        "a.css": ".a { text-decoration: underline wavy red; }\n.b { text-emphasis: dot red; }\n",
+      });
+      // The first line of the output is a comment with the path of the sheet.
+      const build = async (target: "browser" | "bun") => {
+        const { outputs } = await Bun.build({ entrypoints: [join(String(dir), "a.css")], target });
+        return (await outputs[0].text()).split("\n").slice(1).join("\n").trim();
+      };
+      expect(await build("browser")).toBe(indoc`
+        .a {
+          -webkit-text-decoration: underline wavy red;
+          text-decoration: underline wavy red;
+        }
+
+        .b {
+          -webkit-text-emphasis: dot red;
+          text-emphasis: dot red;
+        }
+      `);
+      expect(await build("bun")).toBe(indoc`
+        .a {
+          text-decoration: underline wavy red;
+        }
+
+        .b {
+          text-emphasis: dot red;
+        }
+      `);
+    });
+
+    // No browser list (`--target=bun`): nothing is added, and no unprefixed declaration is folded.
+    minify_test(".foo { text-decoration: underline wavy red }", ".foo{text-decoration:underline wavy red}");
+    minify_test(".foo { text-emphasis: dot red }", ".foo{text-emphasis:dot red}");
+    minify_test(
+      ".foo { -webkit-text-decoration: underline dotted; text-decoration: underline dotted }",
+      ".foo{-webkit-text-decoration:underline dotted;text-decoration:underline dotted}",
     );
   });
 

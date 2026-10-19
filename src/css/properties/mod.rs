@@ -269,6 +269,11 @@ mod generic_registrations {
         size::MaxSize,
         size::Size,
         // text
+        text::TextDecoration,
+        text::TextDecorationLine,
+        text::TextEmphasis,
+        text::TextEmphasisPosition,
+        text::TextEmphasisStyle,
         text::TextShadow,
         // transform
         transform::Rotate,

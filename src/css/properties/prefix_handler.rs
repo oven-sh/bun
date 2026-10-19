@@ -1,5 +1,6 @@
 use crate as css;
-use crate::css_properties::custom::UnparsedProperty;
+use crate::VendorPrefix;
+use crate::css_properties::custom::{CustomPropertyName, UnparsedProperty};
 use crate::css_properties::{Property, PropertyIdTag};
 use crate::generics::{DeepClone as _, IsCompatible as _};
 use bun_alloc::ArenaVecExt as _;
@@ -9,6 +10,8 @@ use bun_alloc::ArenaVecExt as _;
 pub struct FallbackHandler {
     pub(crate) color: Option<usize>,
     pub(crate) text_shadow: Option<usize>,
+    /// The prefixes of the `list-style-image` functions that the block has since `all` or an unknown name.
+    pub(crate) list_style_image: VendorPrefix,
     // The remaining fallback fields are not implemented yet.
     // filter: Option<usize>,
     // backdrop_filter: Option<usize>,
@@ -109,6 +112,42 @@ impl FallbackHandler {
                 .is_compatible(b)
         );
 
+        match property {
+            Property::ListStyleImage(image) => {
+                let mut image = image.deep_clone(arena);
+                let written = this.list_style_image;
+                // Unlike lightningcss: an earlier image stays, and a fallback gets no prefix that the block already has.
+                if !image.has_vendor_prefix() {
+                    let fallbacks = image.get_fallbacks(arena, &context.targets);
+                    for fallback in fallbacks.to_owned_slice().into_vec() {
+                        let prefix = fallback.get_vendor_prefix();
+                        if !written.intersects(prefix) {
+                            this.list_style_image.insert(prefix);
+                            dest.push(Property::ListStyleImage(fallback));
+                        }
+                    }
+                }
+                this.list_style_image.insert(image.get_vendor_prefix());
+                dest.push(Property::ListStyleImage(image));
+                return true;
+            }
+            Property::Unparsed(val) if val.property_id.tag() == PropertyIdTag::ListStyleImage => {
+                let mut unparsed = val.deep_clone(arena);
+                context.add_unparsed_fallbacks(arena, &mut unparsed);
+                dest.push(Property::Unparsed(unparsed));
+                return true;
+            }
+            // `all` and `list-style` set the image, so the next image gets its own fallbacks.
+            Property::All(_) => this.list_style_image = VendorPrefix::empty(),
+            Property::Unparsed(val) if val.property_id.tag() == PropertyIdTag::All => {
+                this.list_style_image = VendorPrefix::empty()
+            }
+            Property::Custom(custom) if matches!(custom.name, CustomPropertyName::Unknown(_)) => {
+                this.list_style_image = VendorPrefix::empty()
+            }
+            _ => {}
+        }
+
         if let Property::Unparsed(val) = property {
             let val: &UnparsedProperty = val;
             let (mut unparsed, index): (UnparsedProperty, &mut Option<usize>) = 'unparsed_and_index: {
@@ -150,5 +189,6 @@ impl FallbackHandler {
     ) {
         self.color = None;
         self.text_shadow = None;
+        self.list_style_image = VendorPrefix::empty();
     }
 }

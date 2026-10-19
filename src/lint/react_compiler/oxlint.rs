@@ -170,12 +170,12 @@ pub fn render_all<'a, 'f>(
     file: &'a File<'a>,
     findings: impl IntoIterator<Item = &'f Finding>,
 ) -> impl Iterator<Item = (&'f Finding, Rendered)> {
-    let (mut said, mut memo) = (FxHashSet::default(), Memo::default());
+    let mut said = FxHashSet::default();
     findings.into_iter().filter_map(move |finding| {
         if is_about_what_a_callback_captures(file, finding) {
             return None;
         }
-        let rendered = render(file, finding, &mut memo);
+        let rendered = render(file, finding);
         let labels = || {
             rendered
                 .labels
@@ -193,14 +193,7 @@ fn is_said_once(finding: &Finding) -> bool {
     finding.category == ErrorCategory::Refs || finding.reason == LOCAL_FBT
 }
 
-/// What is found out about the file once, for all its diagnostics.
-#[derive(Default)]
-struct Memo<'a> {
-    /// Every `x.current`, in the order of the source.
-    currents: Option<Vec<Expr<'a>>>,
-}
-
-fn render<'a>(file: &'a File<'a>, finding: &Finding, memo: &mut Memo<'a>) -> Rendered {
+fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Rendered {
     let category = finding.category;
     // oxc's `diagnostic()`. What the compiler calls a hint is left out.
     let mut out = Rendered {
@@ -224,7 +217,7 @@ fn render<'a>(file: &'a File<'a>, finding: &Finding, memo: &mut Memo<'a>) -> Ren
         }
         ErrorCategory::Immutability => immutability(file, finding, &mut out),
         ErrorCategory::Globals => globals(&mut out),
-        ErrorCategory::Refs => refs(file, &mut out, memo),
+        ErrorCategory::Refs => refs(file, &mut out),
         ErrorCategory::EffectSetState => set_state_in_effect(file, &mut out),
         ErrorCategory::EffectDerivationsOfState => derived_state_in_effect(file, &mut out),
         ErrorCategory::ErrorBoundaries => jsx_in_try(file, &mut out),
@@ -441,9 +434,14 @@ fn function_of_value<'a>(file: &'a File<'a>, span: Span) -> Option<Func<'a>> {
     let Some(mut reference) = file.reference_at(span.start).filter(|it| it.span() == span) else {
         return function_at(file, span);
     };
-    // Names that stand for each other do not end.
-    for _ in 0..8 {
-        let declaration = reference.symbol()?.declarations().next()?;
+    // Names that stand for each other in a circle do not end.
+    let mut seen = FxHashSet::default();
+    loop {
+        let symbol = reference.symbol()?;
+        if !seen.insert(symbol.key()) {
+            return None;
+        }
+        let declaration = symbol.declarations().next()?;
         if let Declaration::Fn(func) = declaration {
             return Some(func);
         }
@@ -459,7 +457,6 @@ fn function_of_value<'a>(file: &'a File<'a>, span: Span) -> Option<Func<'a>> {
         }
         reference = value.reference()?;
     }
-    None
 }
 
 /// The name of what is called: `name(..)`, `object.name(..)`.
@@ -471,16 +468,15 @@ fn called(call: Call) -> Option<Name> {
     }
 }
 
-/// The `object.name` or `object["name"]` that `object` is the object of, also as `object!`. `any_index`: or `object[index]`.
-fn member_around(mut object: Expr, any_index: bool) -> Option<Expr> {
+/// The `object.name` or `object["name"]` that `object` is the object of, also as `object!`.
+fn member_around(mut object: Expr) -> Option<Expr> {
     loop {
         let parent = object.parent().as_expr()?;
         match parent.kind() {
             ExprKind::NonNull(_) => object = parent,
             ExprKind::Dot { obj, .. } if obj == object => return Some(parent),
             ExprKind::Index { obj, index, .. }
-                if obj == object
-                    && (any_index || matches!(index.tag(), ExprTag::String | ExprTag::Number)) =>
+                if obj == object && matches!(index.tag(), ExprTag::String | ExprTag::Number) =>
             {
                 return Some(parent);
             }
@@ -743,13 +739,13 @@ fn inferred_dependency(call: Call, help: &str) -> Option<Span> {
 fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
     let (mut read, mut place) = (variable, None);
     for name in path {
-        read = member_around(read, false)?;
+        read = member_around(read)?;
         place = Some(property_named(read, name)?);
     }
     if let Some(place) = place {
         return Some((read, place));
     }
-    while let Some(member) = member_around(read, false) {
+    while let Some(member) = member_around(read) {
         read = member;
     }
     Some((read, read.span()))
@@ -928,7 +924,7 @@ fn globals(out: &mut Rendered) {
 }
 
 /// `ref_access` and what calls it.
-fn refs<'a>(file: &'a File<'a>, out: &mut Rendered, memo: &mut Memo<'a>) {
+fn refs<'a>(file: &'a File<'a>, out: &mut Rendered) {
     out.help = Cow::Borrowed(
         "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in \
          event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not \
@@ -936,70 +932,31 @@ fn refs<'a>(file: &'a File<'a>, out: &mut Rendered, memo: &mut Memo<'a>) {
     );
     match out.text() {
         "Cannot update ref during render" => ref_update(file, out),
-        // `function_accesses_ref`
+        // `function_accesses_ref`. The compiler says where the first error in the function is: `RefFnType::ref_access_span`.
         "This function accesses a ref value" => {
-            let func = out.place().and_then(|at| {
-                function_of_value(file, at).or_else(|| {
-                    let callee = find(file, at, |node| node.as_expr()?.callee())?;
-                    function_of_value(file, callee.span())
-                })
-            });
-            let access = func.and_then(|func| first_ref_access(file, func, memo));
-            out.also(access, "The ref is accessed here");
+            let place = out.place();
+            if let Some(access) = out.labels.get_mut(1) {
+                if access.text == "The ref is updated here" {
+                    access.span = updated_part(file, access.span).map_or(access.span, |it| it.0);
+                }
+                access.text = Cow::Borrowed("The ref is accessed here");
+                if Some(access.span) == place {
+                    out.labels.truncate(1);
+                }
+            }
         }
         _ => {}
     }
 }
 
-/// Where oxc has the first error in `func`, which it keeps with the type of the function (`RefFnType::ref_access_span`), as far as
-/// the syntax tells: the first `ref.current` that is written in it, with all that is read of it but for a method that is called.
-/// What is assigned to is marked as [`ref_update`] does it.
-fn first_ref_access<'a>(file: &'a File<'a>, func: Func<'a>, memo: &mut Memo<'a>) -> Option<Span> {
-    let currents = memo.currents.get_or_insert_with(|| {
-        let is_current = |e: &Expr| {
-            e.member_name()
-                .is_some_and(|name| name.name().is("current"))
-        };
-        let mut all: Vec<_> = file
-            .exprs_of_kind(ExprTag::Dot)
-            .filter(is_current)
-            .collect();
-        bun_lint::utils::sort::sort_unstable_by_key(&mut all, |e| e.span());
-        all
-    });
-    let whole = func.span();
-    let first = currents.partition_point(|e| e.span().start < whole.start);
-    let access = *(currents.get(first..)?.iter())
-        .take_while(|e| e.span().end <= whole.end)
-        .find(|e| e.object().is_some_and(is_ref))?;
-    let mut read = access;
-    while let Some(member) = member_around(read, true)
-        && member.parent().as_expr().and_then(Expr::callee) != Some(member)
-    {
-        read = member;
-    }
-    let is_assigned = matches!(
-        read.parent().as_expr().map(Expr::kind),
-        Some(ExprKind::Assign { op: None, target, .. }) if target == read
-    );
-    Some(match is_assigned {
-        true => Span::new(access.object()?.span().end, access.span().end),
-        false => read.span(),
-    })
-}
-
-/// It is called `ref` or `..Ref`, which the compiler takes for a ref, or it is declared with `useRef()`.
-fn is_ref(object: Expr) -> bool {
-    let name = match object.kind() {
-        ExprKind::Ident(name) => name,
-        ExprKind::Dot { name, .. } => name.name(),
-        _ => return false,
+/// What `ref_update` marks of the `whole` that is assigned to, and the ref.
+fn updated_part<'a>(file: &'a File<'a>, whole: Span) -> Option<(Span, Span)> {
+    let object = find(file, whole, |node| Some(node.as_expr()?.object()?.span()))?;
+    let value = match whole.start == object.start && object.end < whole.end {
+        true => Span::new(object.end, whole.end),
+        false => whole,
     };
-    if name.is("ref") || name.bytes().ends_with(b"Ref") {
-        return true;
-    }
-    let hook = || called(initializer(object.symbol()?.declarations().next()?)?.as_call()?);
-    hook().is_some_and(|hook| hook.is("useRef"))
+    Some((value, object))
 }
 
 fn ref_update<'a>(file: &'a File<'a>, out: &mut Rendered) {
@@ -1007,12 +964,8 @@ fn ref_update<'a>(file: &'a File<'a>, out: &mut Rendered) {
     let Some(whole) = out.place() else {
         return;
     };
-    let Some(object) = find(file, whole, |node| Some(node.as_expr()?.object()?.span())) else {
+    let Some((value, object)) = updated_part(file, whole) else {
         return;
-    };
-    let value = match whole.start == object.start && object.end < whole.end {
-        true => Span::new(object.end, whole.end),
-        false => whole,
     };
     out.move_to(Some(value));
     if object.end <= value.start || object.start >= value.end {

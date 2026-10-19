@@ -363,10 +363,13 @@ impl ByName {
                 Some(&hir::ExprKind::Call(call)) => hir.calls.get(call.idx()),
                 _ => None,
             };
-            let callee = callee.and_then(|it| hir.exprs.get(file.written_expr(it.callee).idx()));
-            match callee.map(|it| &it.kind) {
-                Some(&hir::ExprKind::Dot { name, name_pos, .. }) => {
-                    classes.of_member(name, name_pos)
+            let callee = callee.map(|it| file.written_expr(it.callee));
+            match callee
+                .and_then(|it| hir.exprs.get(it.idx()))
+                .map(|it| &it.kind)
+            {
+                Some(&hir::ExprKind::Dot { name, .. }) => {
+                    classes.of_member(name, hir.name_pos(callee.unwrap_or_default()))
                 }
                 Some(&hir::ExprKind::Ident(name)) => {
                     (ByName::FUNCTIONS + classes.of(name) as usize % (NAME_CLASSES / 2)) as u8
@@ -380,7 +383,9 @@ impl ByName {
     fn of_members<'a>(file: &'a File<'a>) -> ByName {
         let mut classes = Classes::new(file);
         let group_of = |&id: &u32| match file.hir.exprs.get(id as usize).map(|it| &it.kind) {
-            Some(&hir::ExprKind::Dot { name, name_pos, .. }) => classes.of_member(name, name_pos),
+            Some(&hir::ExprKind::Dot { name, .. }) => {
+                classes.of_member(name, file.hir.name_pos(hir::ExprId(id)))
+            }
             _ => ByName::OTHERS as u8,
         };
         ByName::new(file.exprs_of(ExprTag::Dot).iter().map(group_of).collect())
@@ -842,7 +847,9 @@ impl<'a> File<'a> {
                 let is_other = |id: &u32| {
                     let callee = grouped_expr(self, *id).callee();
                     match callee.and_then(Expr::try_raw).map(|it| it.kind) {
-                        Some(hir::ExprKind::Dot { name_pos, .. }) => is_private(name_pos),
+                        Some(hir::ExprKind::Dot { .. }) => callee
+                            .and_then(Expr::member_name_start)
+                            .is_some_and(is_private),
                         Some(hir::ExprKind::Ident(_)) => false,
                         _ => true,
                     }
@@ -855,7 +862,9 @@ impl<'a> File<'a> {
                     return Vec::new();
                 }
                 let is_other = |id: &u32| match self.hir.exprs.get(*id as usize).map(|it| it.kind) {
-                    Some(hir::ExprKind::Dot { name_pos, .. }) => is_private(name_pos),
+                    Some(hir::ExprKind::Dot { .. }) => {
+                        is_private(self.hir.name_pos(hir::ExprId(*id)))
+                    }
                     _ => true,
                 };
                 let all = self.exprs_of(ExprTag::Dot).iter().copied();
@@ -1375,14 +1384,16 @@ impl ByTag {
     }
 }
 
-/// Calls the listeners that depend on the order of the nodes.
-struct Walk<'w, T> {
+/// Calls the listeners that depend on the order of the nodes. `MIXED`: see [`run_rules`].
+struct Walk<'w, T, const MIXED: bool> {
     running: &'w mut [T],
+    /// For each of `running`, if `MIXED`: it sees the scopes of typescript-eslint.
+    of_eslint: &'w [bool],
     enter: ByTag,
     exit: ByTag,
 }
 
-impl<T> Walk<'_, T> {
+impl<T, const MIXED: bool> Walk<'_, T, MIXED> {
     /// `kind`, here and below: `NodeTags::index_of(node)`.
     #[inline]
     fn enter<'a>(&mut self, node: Node<'a>, kind: u8)
@@ -1390,6 +1401,10 @@ impl<T> Walk<'_, T> {
         T: Running<'a>,
     {
         for &rule in self.enter.of(kind) {
+            if MIXED {
+                node.file()
+                    .ask_scopes_of_eslint(self.of_eslint[rule as usize]);
+            }
             self.running[rule as usize].enter(node);
         }
     }
@@ -1400,6 +1415,10 @@ impl<T> Walk<'_, T> {
         T: Running<'a>,
     {
         for &rule in self.exit.of(kind) {
+            if MIXED {
+                node.file()
+                    .ask_scopes_of_eslint(self.of_eslint[rule as usize]);
+            }
             self.running[rule as usize].exit(node);
         }
     }
@@ -1451,7 +1470,10 @@ pub(crate) fn in_walk_order(
 /// Enters and leaves the nodes that are listened for, without walking: the nodes of a file nest, so their spans determine the order.
 /// Only the nodes of the kinds that are listened for are collected, from the vectors they are in, and sorted. The cost depends on
 /// how many of those there are, not on the size of the file.
-fn walk_listened<'a, T: Running<'a>>(file: &'a File<'a>, walk: &mut Walk<'_, T>) {
+fn walk_listened<'a, T: Running<'a>, const MIXED: bool>(
+    file: &'a File<'a>,
+    walk: &mut Walk<'_, T, MIXED>,
+) {
     struct Found<'a> {
         start: u32,
         end: u32,
@@ -1587,14 +1609,17 @@ impl<S: Starts> Copy for Enabled<'_, S> {}
 /// Runs `rules` on `file`. Returns what they report, in no order: see [`sorted`]. `Diagnostic::rule` is an index into `rules`.
 ///
 /// `wants_fixes`: whether the fixes and suggestions are going to be read.
-pub(crate) fn run<'a, S: Starts>(
+pub(crate) fn run<'a, S: RuleSet>(
     file: &'a File<'a>,
     rules: &[Enabled<'_, S>],
     wants_fixes: bool,
 ) -> Vec<Diagnostic> {
     file.sink.wants_fixes.set(wants_fixes);
     file.sink.thrown.take();
-    run_rules(file, rules);
+    match file.language().rules_that_oxlint_lacks.is_empty() {
+        true => run_rules::<S, false>(file, rules),
+        false => run_rules::<S, true>(file, rules),
+    }
     file.sink.diagnostics.take()
 }
 
@@ -1834,11 +1859,28 @@ impl Listeners {
     }
 }
 
-fn run_rules<'r, 'a: 'r, S: Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, S>]) {
+/// `MIXED`: with a configuration of oxlint, some of the rules are rules that oxlint lacks. They see the scopes of
+/// typescript-eslint, and the others those of oxc: before a rule is called the file is told [which](File::ask_scopes_of_eslint).
+fn run_rules<'r, 'a: 'r, S: RuleSet, const MIXED: bool>(
+    file: &'a File<'a>,
+    rules: &'r [Enabled<'r, S>],
+) {
     let mut running: Vec<S::Run<'r, 'a>> = Vec::with_capacity(rules.len());
+    let mut of_eslint: Vec<bool> = Vec::new();
+    let is_lacking = |rule: &S| {
+        let lacking = &file.language().rules_that_oxlint_lacks;
+        let meta = S::METAS.get(rule.number() as usize).copied().flatten();
+        meta.is_some_and(|meta| {
+            (lacking.iter()).any(|it| it.plugin == meta.plugin && it.name == meta.name)
+        })
+    };
     for (i, enabled) in rules.iter().enumerate() {
         if enabled.severity == Severity::Off {
             continue;
+        }
+        let asks_eslint = MIXED && is_lacking(enabled.rule);
+        if MIXED {
+            file.ask_scopes_of_eslint(asks_eslint);
         }
         let run = enabled.rule.start(Start {
             file,
@@ -1847,6 +1889,9 @@ fn run_rules<'r, 'a: 'r, S: Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, 
         });
         if let Some(run) = run {
             running.push(run);
+            if MIXED {
+                of_eslint.push(asks_eslint);
+            }
         }
     }
 
@@ -1863,16 +1908,23 @@ fn run_rules<'r, 'a: 'r, S: Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, 
     if !enter.registered.is_empty() || !exit.registered.is_empty() {
         enter.finish();
         exit.finish();
-        let mut listeners = Walk {
+        let mut listeners = Walk::<_, MIXED> {
             running: &mut running,
+            of_eslint: &of_eslint,
             enter,
             exit,
         };
         walk_listened(file, &mut listeners);
     }
 
-    for rule in &mut running {
+    for (i, rule) in running.iter_mut().enumerate() {
+        if MIXED {
+            file.ask_scopes_of_eslint(of_eslint[i]);
+        }
         rule.finish();
+    }
+    if MIXED {
+        file.ask_scopes_of_eslint(false);
     }
 }
 

@@ -1,9 +1,11 @@
-//! A check that formatting has not lost or made up anything. `bun format` makes it before it writes a file.
+//! A check that formatting has not lost or made up anything: `bun fmt --debug-check`.
 //!
-//! What has been written is parsed, and compared with the file:
+//! What would be written is parsed, and compared with the file:
 //!
 //! - The elements, comments, blocks and declarations are the same, in the same order and in each other the same way, and the
 //!   elements have the same attributes in the same order. Upper and lower case do not count.
+//! - HTML text that isn't just whitespace shows up in the same positions as before and nowhere else. A stray `>`
+//!   between two elements counts as new text.
 //! - All that is text has the same letters as often, whatever becomes of white space, punctuation, numbers and upper and
 //!   lower case: text, comments, scripts, style sheets, the values of attributes, expressions. So nothing with a letter in
 //!   it is lost or there twice, in whatever language it is. That letters have changed places is not noticed.
@@ -11,36 +13,39 @@
 use super::Parser;
 use super::ast::{Id, Kind, Tree};
 use super::parse;
+use bun_collections::ByteSet;
 use rustc_hash::FxHasher;
 use std::hash::Hasher;
 
 /// What is compared of a text.
 #[derive(PartialEq, Eq)]
-struct Signature {
+pub(crate) struct Signature {
     /// Of the nodes that are not text.
     structure: u64,
     /// How often each letter is there, and each byte of a character that is not ASCII.
     letters: [u64; 26 + 128],
 }
 
-struct Reader {
+pub(crate) struct Reader {
     structure: FxHasher,
     /// How often each byte is there, of those that count.
     bytes: [u64; 256],
 }
 
-/// The bytes that do not always count, or next to which another does not.
-const IS_SPECIAL: [bool; 256] = {
-    let mut is_special = [false; 256];
-    let (bytes, mut at) = (b"eE\\\xC2\xC4\xE1\xE2\xE3\xEF", 0);
-    while at < bytes.len() {
-        is_special[bytes[at] as usize] = true;
-        at += 1;
+impl Default for Reader {
+    fn default() -> Reader {
+        Reader {
+            structure: FxHasher::default(),
+            bytes: [0; 256],
+        }
     }
-    is_special
-};
+}
+
+/// The bytes that do not always count, or next to which another does not.
+const SPECIAL: ByteSet = ByteSet::of(b"eE\\\xC2\xC4\xE1\xE2\xE3\xEF");
 
 /// `/^[+-]?0+(?!\d)/.test(text)`
+#[optimize(size)]
 fn is_zero(text: &[u8]) -> bool {
     let digits = match text {
         [b'+' | b'-', digits @ ..] => digits,
@@ -52,27 +57,45 @@ fn is_zero(text: &[u8]) -> bool {
 
 impl Reader {
     #[inline]
+    #[optimize(size)]
     fn add(&mut self, byte: u8) {
         let count = &mut self.bytes[usize::from(byte)];
         *count = count.wrapping_add(1);
     }
 
     /// `byte` does not count, whether it has been added or is going to be.
+    #[optimize(size)]
     fn take_back(&mut self, byte: u8) {
         let count = &mut self.bytes[usize::from(byte)];
         *count = count.wrapping_sub(1);
     }
 
-    fn count(&mut self, text: &[u8]) {
+    /// Something that is not text.
+    #[optimize(size)]
+    pub(crate) fn mark(&mut self, mark: u8) {
+        self.structure.write_u8(mark);
+    }
+
+    #[optimize(size)]
+    pub(crate) fn finish(&self) -> Signature {
+        Signature {
+            structure: self.structure.finish(),
+            letters: self.letters(),
+        }
+    }
+
+    #[optimize(size)]
+    pub(crate) fn count(&mut self, text: &[u8]) {
         for (at, &byte) in text.iter().enumerate() {
             self.add(byte);
-            if IS_SPECIAL[usize::from(byte)] {
+            if SPECIAL.has(byte) {
                 self.look_around(text, at);
             }
         }
     }
 
-    /// Takes back what does not count because of the byte at `at`, which is one of `IS_SPECIAL`.
+    /// Un-counts the bytes that shouldn't count because of the byte at `at`, which is one of `SPECIAL`.
+    #[optimize(size)]
     fn look_around(&mut self, text: &[u8], at: usize) {
         let (before, rest) = text.split_at_checked(at).unwrap_or_default();
         let previous = before.last().copied().unwrap_or(0);
@@ -99,7 +122,8 @@ impl Reader {
     }
 
     /// The same for the value of an attribute, in which a quote can be written as an entity.
-    fn count_value(&mut self, value: &[u8]) {
+    #[optimize(size)]
+    pub(crate) fn count_value(&mut self, value: &[u8]) {
         self.count(value);
         for entity in [&b"&quot;"[..], b"&apos;"] {
             let mut rest = value;
@@ -111,6 +135,7 @@ impl Reader {
     }
 
     /// How often each letter is there, and each byte of a character that is not ASCII.
+    #[optimize(size)]
     fn letters(&self) -> [u64; 26 + 128] {
         let mut letters = [0; 26 + 128];
         for (count, lower) in letters.iter_mut().zip(b'a'..=b'z') {
@@ -121,7 +146,15 @@ impl Reader {
         letters
     }
 
-    fn name(&mut self, namespace: &[u8], name: &[u8]) {
+    /// Text that has to be where it is, byte for byte.
+    #[optimize(size)]
+    pub(crate) fn exact(&mut self, text: &[u8]) {
+        self.structure.write(text);
+        self.structure.write_u8(0);
+    }
+
+    #[optimize(size)]
+    pub(crate) fn name(&mut self, namespace: &[u8], name: &[u8]) {
         for &byte in namespace.iter().chain(b":").chain(name) {
             self.structure.write_u8(byte.to_ascii_lowercase());
         }
@@ -129,6 +162,7 @@ impl Reader {
     }
 
     /// What is said of `id` before what is in it.
+    #[optimize(size)]
     fn enter(&mut self, tree: &Tree<'_>, id: Id, text: &[u8]) {
         let node = &tree[id];
         if !matches!(node.kind, Kind::Text | Kind::Cdata) {
@@ -164,24 +198,41 @@ impl Reader {
     }
 }
 
+/// True if `id` contains code in another language. Formatting can remove all of it, as in `<script>;</script>`.
+#[optimize(size)]
+fn has_other_language(tree: &Tree<'_>, id: Id, parser: Parser) -> bool {
+    matches!(&tree[id].name[..], b"script" | b"style" | b"mj-style")
+        || (parser == Parser::Vue && tree.parent(id) == Some(tree.root))
+}
+
+#[optimize(size)]
 fn signature(text: &[u8], parser: Parser) -> Option<Signature> {
     let (content, front_matter_len) = super::without_front_matter(text);
     let mut tree = Tree::default();
     parse::parse(&content, front_matter_len, parser, &mut tree).ok()?;
-    let mut reader = Reader {
-        structure: FxHasher::default(),
-        bytes: [0; 256],
-    };
+    let mut reader = Reader::default();
     // What is in a node comes behind it.
     let root = tree.root;
     let mut next = tree.first_child(root);
+    // Adjacent text nodes count as one.
+    let mut is_after_text = false;
     while let Some(id) = next {
+        if !matches!(tree[id].kind, Kind::Text | Kind::Cdata) {
+            is_after_text = false;
+        } else if !is_after_text
+            && !tree[id].value.trim_ascii().is_empty()
+            && !(tree.parent(id)).is_some_and(|parent| has_other_language(&tree, parent, parser))
+        {
+            reader.mark(1 + Kind::Text as u8);
+            is_after_text = true;
+        }
         reader.enter(&tree, id, text);
         next = tree.first_child(id).or_else(|| {
             let mut at = id;
             loop {
                 if !matches!(tree[at].kind, Kind::Text | Kind::Cdata) {
                     reader.structure.write_u8(0);
+                    is_after_text = false;
                 }
                 if let Some(next) = tree.next(at) {
                     return Some(next);
@@ -190,14 +241,12 @@ fn signature(text: &[u8], parser: Parser) -> Option<Signature> {
             }
         });
     }
-    Some(Signature {
-        structure: reader.structure.finish(),
-        letters: reader.letters(),
-    })
+    Some(reader.finish())
 }
 
 /// Whether `after`, which is what has become of `before`, has all that is in `before` and nothing else. Both are what
 /// `prepared_text` makes of a text.
+#[optimize(size)]
 pub(crate) fn has_same_content(before: &[u8], after: &[u8], parser: Parser) -> bool {
     match (signature(before, parser), signature(after, parser)) {
         (Some(before), Some(after)) => before == after,

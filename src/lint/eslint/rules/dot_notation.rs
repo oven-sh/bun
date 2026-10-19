@@ -10,10 +10,37 @@ pub struct DotNotation {
 const USE_DOT: Message = Message::new("useDot", "[{{key}}] is better written in dot notation.");
 const USE_BRACKETS: Message = Message::new("useBrackets", ".{{key}} is a syntax error.");
 
-/// Reports the `name` of `object.name`, which is a keyword.
-fn report_keyword<'a, R: Rule>(cx: &Cx<'a, R>, name: Ident<'a>, is_optional: bool, is_after_let: bool) {
+/// Whether `e`, an `a.b`, can be written `a["b"]`: not in the name of a JSX tag, nor in a decorator
+/// without parentheses.
+fn can_be_computed(e: Expr<'_>) -> bool {
+    if e.is_jsx_tag_name() {
+        return false;
+    }
+    let mut outermost = e;
+    while !outermost.is_parenthesized()
+        && let Node::Expr(parent) = outermost.parent()
+        && (parent.object() == Some(outermost) || parent.callee() == Some(outermost))
+    {
+        outermost = parent;
+    }
+    outermost.is_parenthesized() || !e.file().token_before(outermost).is_some_and(|token| token.text() == b"@")
+}
+
+/// Reports the `name` of `object.name`, which is a keyword. `member` is the `Dot`, `None` for a name
+/// in a heritage clause.
+fn report_keyword<'a, R: Rule>(
+    cx: &Cx<'a, R>,
+    name: Ident<'a>,
+    member: Option<Expr<'a>>,
+    is_optional: bool,
+    is_after_let: bool,
+) {
     cx.report(name, USE_BRACKETS).data("key", name).fix(|fixer| {
         let file = fixer.file();
+        // tsgolint writes the brackets also where they are a syntax error.
+        if file.language().is_oxlint && !member.is_some_and(can_be_computed) {
+            return None;
+        }
         let dot = file.token_before(name)?;
         // A statement that starts with `let[` declares variables. tsgolint does not mind comments.
         if (is_after_let && !is_optional) || file.comments_exist_between(dot, name) && !file.language().is_oxlint {
@@ -84,9 +111,11 @@ impl DotNotation {
             ExprKind::Dot { obj, name, chain }
                 if !self.allows_keywords
                     && keywords::is_keyword(name.bytes())
-                    && ast_utils::is_member_expression(e) =>
+                    // tsgolint listens on every PropertyAccessExpression: also the name of a JSX tag.
+                    && (ast_utils::is_member_expression(e)
+                        || (e.is_jsx_tag_name() && e.file().language().is_oxlint)) =>
             {
-                report_keyword(cx, name, chain == Chain::Start, obj.is_ident("let"));
+                report_keyword(cx, name, Some(e), chain == Chain::Start, obj.is_ident("let"));
             }
             _ => {}
         }
@@ -104,7 +133,7 @@ impl DotNotation {
         for (i, part) in name.parts().enumerate().skip(1) {
             if keywords::is_keyword(part.bytes()) {
                 let is_after_let = i == 1 && name.first().is_some_and(|first| first.name().is("let"));
-                report_keyword(cx, part, false, is_after_let);
+                report_keyword(cx, part, None, false, is_after_let);
             }
         }
     }

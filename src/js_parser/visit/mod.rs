@@ -2002,7 +2002,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 StmtData::SEmpty(_) => continue,
 
                 // skip directives for now
-                StmtData::SDirective(_) => continue,
+                StmtData::SDirective(_) if !p.options.keep_directives => continue,
 
                 StmtData::SLocal(local) => {
                     // Merge adjacent local statements

@@ -1,8 +1,8 @@
 //! ESLint's `stylish` formatter, byte for byte, and what oxlint calls `stylish`.
 
-use super::Meta;
 use super::info::Source;
 use super::oxlint::is_error;
+use super::{Meta, link, linked};
 use crate::results::{Counts, FileResult};
 use crate::{fs, paths};
 use bun_core::strings;
@@ -119,11 +119,14 @@ struct Row {
     message: Vec<u8>,
     message_len: usize,
     rule: Vec<u8>,
+    /// [`link`]
+    link: Option<Vec<u8>>,
 }
 
+/// A line or a column of a [`LintMessage`](bun_lint::linter::LintMessage).
 fn number(n: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity(4);
-    let _ = write!(out, "{n}");
+    let _ = write!(out, "{}", n as i32);
     out
 }
 
@@ -135,7 +138,8 @@ pub(super) fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
 }
 
-pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
+pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    let color = meta.color;
     let mut counts = Counts::default();
     let mut has_errors = false;
     let mut padded = 0usize;
@@ -156,17 +160,16 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
                     }
                     text => text,
                 };
+                let rule = (message.rule_id.as_ref()).map(|id| id.to_vec());
+                let rule = rule.unwrap_or_default();
                 Row {
                     line: number(message.line),
                     column: number(message.column),
                     is_error: message.is_fatal || message.severity == Severity::Error,
                     message: text.to_vec(),
                     message_len: visible_len(text),
-                    rule: message
-                        .rule_id
-                        .as_ref()
-                        .map(|id| id.to_vec())
-                        .unwrap_or_default(),
+                    link: link(&rule, message, meta),
+                    rule,
                 }
             })
             .collect();
@@ -204,7 +207,12 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
             };
             pad(&mut text, gap + 2);
             if !row.rule.is_empty() {
-                styled(&mut text, color, &DIM, &row.rule);
+                styled(
+                    &mut text,
+                    color,
+                    &DIM,
+                    row.link.as_ref().unwrap_or(&row.rule),
+                );
             }
             pad(&mut text, rules - visible_len(&row.rule));
             text.truncate(strings::trim_js_whitespace_end(&text).len());
@@ -281,11 +289,11 @@ struct Placed<'r> {
 /// `filename`: what oxlint calls the file. Empty for the problems without a place, which it puts under the working directory.
 fn write_file_as_oxlint(
     out: &mut Vec<u8>,
-    color: bool,
-    cwd: &[u8],
+    (color, meta): (bool, &Meta),
     filename: &[u8],
     rows: &mut [Placed],
 ) {
+    let cwd = meta.cwd;
     if rows.is_empty() {
         return;
     }
@@ -308,7 +316,7 @@ fn write_file_as_oxlint(
         out.extend_from_slice(b"  ");
         out.extend_from_slice(&row.message.message);
         out.extend_from_slice(b"  ");
-        styled_until_reset(out, color, &DIM, &row.code);
+        styled_until_reset(out, color, &DIM, &linked(&row.code, row.message, meta));
         out.push(b'\n');
     }
 }
@@ -339,9 +347,9 @@ pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &
                 code: info.code.unwrap_or_default(),
             });
         }
-        write_file_as_oxlint(out, color, meta.cwd, &source.name, &mut rows);
+        write_file_as_oxlint(out, (color, meta), &source.name, &mut rows);
     }
-    write_file_as_oxlint(out, color, meta.cwd, b"", &mut without_place);
+    write_file_as_oxlint(out, (color, meta), b"", &mut without_place);
     if total == 0 {
         return;
     }

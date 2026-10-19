@@ -1,8 +1,8 @@
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ts_scope::reference_contains_type_query;
 use bun_lint::utils::ts_utils;
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// Disallow variable declarations from shadowing variables declared in the outer scope.
@@ -73,28 +73,35 @@ struct Known<'a> {
     /// [`functions_without_body`], once they are asked for.
     without_body: Option<Vec<Span>>,
     /// Whether the file uses what it imports only as a type.
-    only_types: FxHashMap<Symbol<'a>, bool>,
+    only_types: IdMap<Symbol<'a>, bool>,
     /// [`Known::is_namespace_of_types`]
-    namespaces_of_types: FxHashMap<Symbol<'a>, bool>,
+    namespaces_of_types: IdMap<Symbol<'a>, bool>,
 }
 
 impl<'a> Known<'a> {
     /// For oxlint a namespace with nothing but types in it is no value.
     fn is_namespace_of_types(&mut self, symbol: Symbol<'a>) -> bool {
         symbol.file().language().is_oxlint
-            && symbol.declaration_kinds().contains(DeclarationKinds::TS_MODULE_NAME)
-            && *(self.namespaces_of_types.entry(symbol))
-                .or_insert_with(|| utils::oxlint::is_namespace_of_types(symbol))
+            && symbol
+                .declaration_kinds()
+                .contains(DeclarationKinds::TS_MODULE_NAME)
+            && *self
+                .namespaces_of_types
+                .get_or_insert_with(symbol, || utils::oxlint::is_namespace_of_types(symbol))
     }
 }
 
 /// The class of `class A<A> {}`, given the type parameter. For ESLint the two are one variable of the
 /// scope of the class, here the class is only in the scope around it.
-fn class_declaration_with_the_name_of<'a>(definition: Declaration<'a>, name: Name<'a>) -> Option<Class<'a>> {
+fn class_declaration_with_the_name_of<'a>(
+    definition: Declaration<'a>,
+    name: Name<'a>,
+) -> Option<Class<'a>> {
     match definition {
         Declaration::TypeParam(type_parameter) => match type_parameter.parent() {
             Node::Class(class)
-                if matches!(class.owner(), Node::Stmt(_)) && class.name().is_some_and(|it| it.name() == name) =>
+                if matches!(class.owner(), Node::Stmt(_))
+                    && class.name().is_some_and(|it| it.name() == name) =>
             {
                 Some(class)
             }
@@ -107,10 +114,14 @@ fn class_declaration_with_the_name_of<'a>(definition: Declaration<'a>, name: Nam
 impl<'a> Variable<'a> {
     fn new(symbol: Symbol<'a>, known: &mut Known<'a>) -> Option<Self> {
         let mut definition = symbol.declarations().find(|it| it.name_span().is_some())?;
-        // The name of an enum member in quotes is not an identifier.
+        // The name of an enum member in quotes is not an identifier. oxlint goes by the symbol.
+        let is_oxlint = symbol.file().language().is_oxlint;
         let mut with_identifier = symbol.declarations().find(|it| match it {
             Declaration::EnumMember(member) => {
-                member.key().is_some_and(|key| matches!(key.kind(), KeyKind::Ident(_)))
+                is_oxlint
+                    || member
+                        .key()
+                        .is_some_and(|key| matches!(key.kind(), KeyKind::Ident(_)))
             }
             _ => it.name_span().is_some(),
         })?;
@@ -138,7 +149,8 @@ impl<'a> Variable<'a> {
                 true => with_identifier.name_span()?,
                 false => identifier,
             },
-            is_value: class.is_some() || symbol.is_value_variable() && !known.is_namespace_of_types(symbol),
+            is_value: class.is_some()
+                || symbol.is_value_variable() && !known.is_namespace_of_types(symbol),
             is_duplicated_class_name: class.is_some(),
         })
     }
@@ -167,11 +179,16 @@ fn functions_without_body<'a>(file: &'a File<'a>) -> Vec<Span> {
 /// [`functions_without_body`]. The name of a function is not declared in that function.
 fn is_declared_in_function_without_body(variable: &Variable, all: &[Span]) -> bool {
     let at = match variable.definition {
-        Declaration::Fn(func) => func.scope().map_or(variable.place.start, |it| it.span().start),
+        Declaration::Fn(func) => func
+            .scope()
+            .map_or(variable.place.start, |it| it.span().start),
         _ => variable.place.start,
     };
     let after = all.partition_point(|it| it.start < at);
-    after.checked_sub(1).and_then(|it| all.get(it)).is_some_and(|it| at < it.end)
+    after
+        .checked_sub(1)
+        .and_then(|it| all.get(it))
+        .is_some_and(|it| at < it.end)
 }
 
 /// The scope of a `declare global { }`.
@@ -204,9 +221,9 @@ fn import_of(definition: Declaration<'_>) -> Option<Import<'_>> {
 fn is_defined_by_function_without_body(definition: Declaration) -> bool {
     match definition {
         Declaration::Fn(func) => !func.has_body() && !func.file().language().is_oxlint,
-        Declaration::Param(pat) => {
-            Node::Pat(pat).enclosing_function().is_some_and(|func| !func.has_body())
-        }
+        Declaration::Param(pat) => Node::Pat(pat)
+            .enclosing_function()
+            .is_some_and(|func| !func.has_body()),
         _ => false,
     }
 }
@@ -229,7 +246,10 @@ fn unwrap_expression(mut e: Expr<'_>) -> Expr<'_> {
 
 /// ESLint's `isFunctionNameInitializerException`, typescript-eslint's `isOnInitializer`:
 /// `var a = function a() {}`, `var { A = foo || class A {} } = b`.
-fn is_function_name_initializer_exception<'a>(variable: &Variable<'a>, shadowed: &Variable<'a>) -> bool {
+fn is_function_name_initializer_exception<'a>(
+    variable: &Variable<'a>,
+    shadowed: &Variable<'a>,
+) -> bool {
     let owner = match variable.definition {
         Declaration::Fn(func) if func.kind() == FnKind::Expr => func.owner(),
         Declaration::Class(class) => class.owner(),
@@ -257,7 +277,9 @@ fn is_function_name_initializer_exception<'a>(variable: &Variable<'a>, shadowed:
                 _ => None,
             })?
         };
-        return initializer.or_else(of_declarator).is_some_and(|it| it.outer_span().contains(e.span()))
+        return initializer
+            .or_else(of_declarator)
+            .is_some_and(|it| it.outer_span().contains(e.span()))
             && variable.scope.parent() == Some(shadowed.scope);
     }
     initializer.is_some_and(|it| unwrap_expression(e) == it)
@@ -268,13 +290,15 @@ fn is_function_name_initializer_exception<'a>(variable: &Variable<'a>, shadowed:
 fn oxlint_is_import_used_only_as_type<'a>(
     variable: &Variable<'a>,
     shadowed: &Variable<'a>,
-    known: &mut FxHashMap<Symbol<'a>, bool>,
+    known: &mut IdMap<Symbol<'a>, bool>,
 ) -> bool {
     variable.is_value
         && import_of(shadowed.definition).is_some()
-        && *known.entry(shadowed.symbol).or_insert_with(|| {
+        && *known.get_or_insert_with(shadowed.symbol, || {
             let mut references = shadowed.symbol.references().peekable();
-            let is_type = |it: Reference<'a>| it.is_type() && !it.is_value() || reference_contains_type_query(it);
+            let is_type = |it: Reference<'a>| {
+                it.is_type() && !it.is_value() || reference_contains_type_query(it)
+            };
             references.peek().is_some() && references.all(is_type)
         })
 }
@@ -310,9 +334,8 @@ fn is_init_pattern_node<'a>(variable: &Variable<'a>, shadowed: &Variable<'a>) ->
         return false;
     };
     let location = call.span().end;
-    let is_in_range = |e: Option<Expr>| {
-        e.is_some_and(|e| e.span().start <= location && location <= e.span().end)
-    };
+    let is_in_range =
+        |e: Option<Expr>| e.is_some_and(|e| e.span().start <= location && location <= e.span().end);
     for node in Node::Pat(outer).ancestors() {
         let default = match node {
             Node::Pat(_) => None,
@@ -379,13 +402,15 @@ fn enclosing_module_name(definition: Declaration<'_>) -> Option<Name<'_>> {
         Declaration::Var(pat) | Declaration::Param(pat) => Node::Pat(pat),
         _ => definition.node()?,
     };
-    let module = std::iter::once(start).chain(start.ancestors()).find_map(|it| match it {
-        Node::Stmt(statement) => match statement.kind() {
-            StmtKind::Module(module) => Some(module),
+    let module = std::iter::once(start)
+        .chain(start.ancestors())
+        .find_map(|it| match it {
+            Node::Stmt(statement) => match statement.kind() {
+                StmtKind::Module(module) => Some(module),
+                _ => None,
+            },
             _ => None,
-        },
-        _ => None,
-    })?;
+        })?;
     match module.name() {
         // `namespace A.B` has a `TSQualifiedName`.
         ModuleName::Ident(_) if module.nested().is_some() => None,
@@ -399,7 +424,9 @@ impl Checker {
         let object = options.object(0);
         Checker {
             dialect,
-            allow: (object.strings("allow").into_iter()).map(|it| it.as_bytes().into()).collect(),
+            allow: (object.strings("allow").into_iter())
+                .map(|it| it.as_bytes().into())
+                .collect(),
             builtin_globals: object.bool_or("builtinGlobals", false),
             hoist: match (object.str("hoist"), dialect) {
                 (Some("all"), _) => Hoist::All,
@@ -426,6 +453,23 @@ impl Checker {
             }
             Dialect::TypeScriptEslint => ts_utils::is_definition_file(path),
         };
+        // oxlint's rule looks at all that the first declaration is in.
+        let is_declared = |it: Node| match it {
+            Node::Stmt(it) => it.flags().contains(Flags::AMBIENT),
+            Node::Func(func) => func.kind() == FnKind::Decl && !func.has_body(),
+            _ => false,
+        };
+        if is_definition_file
+            && file.language().is_oxlint
+            && let Some(first) = variable
+                .symbol
+                .declarations()
+                .next()
+                .and_then(Declaration::node)
+            && first.ancestors().any(is_declared)
+        {
+            return true;
+        }
         is_definition_file
             && variable.symbol.declarations().any(|definition| {
                 let declaration = match definition {
@@ -450,9 +494,12 @@ impl Checker {
             Declaration::Param(pat) => Node::Pat(pat).enclosing_function(),
             _ => None,
         };
-        let is_function = function.is_some_and(|func| func.kind() == FnKind::Decl && func.has_body());
-        let is_type =
-            matches!(shadowed.definition, Declaration::Interface(_) | Declaration::TypeAlias(_));
+        let is_function =
+            function.is_some_and(|func| func.kind() == FnKind::Decl && func.has_body());
+        let is_type = matches!(
+            shadowed.definition,
+            Declaration::Interface(_) | Declaration::TypeAlias(_)
+        );
         match self.hoist {
             Hoist::All => false,
             Hoist::Functions => !is_function,
@@ -529,7 +576,8 @@ impl Checker {
             Dialect::Eslint => {
                 let name = shadowed.symbol.name();
                 (import.is_type_only()
-                    || (import.named().iter()).any(|it| it.is_type_only() && it.local().name() == name))
+                    || (import.named().iter())
+                        .any(|it| it.is_type_only() && it.local().name() == name))
                     && enclosing_module_name(variable.definition) == Some(import.spec())
             }
             Dialect::TypeScriptEslint => {
@@ -576,19 +624,26 @@ impl Checker {
             || variable.is_duplicated_class_name
             || self.is_declare_in_dts_file(file, &variable)
             || self.is_type_value_shadow(&variable, shadowed.as_ref())
-            || self.is_function_type_parameter_name_value_shadow(&variable, shadowed.as_ref(), is_global_value)
+            || self.is_function_type_parameter_name_value_shadow(
+                &variable,
+                shadowed.as_ref(),
+                is_global_value,
+            )
             || file.language().is_oxlint
                 && self.ignore_function_type_parameter_name_value_shadow
                 && is_declared_in_function_without_body(
                     &variable,
-                    known.without_body.get_or_insert_with(|| functions_without_body(file)),
+                    known
+                        .without_body
+                        .get_or_insert_with(|| functions_without_body(file)),
                 )
             || self.is_generic_of_a_static_method_shadow(&variable, shadowed.as_ref())
         {
             return;
         }
         let Some(shadowed) = shadowed else {
-            cx.report(variable.place, NO_SHADOW_GLOBAL).data("name", name);
+            cx.report(variable.place, NO_SHADOW_GLOBAL)
+                .data("name", name);
             return;
         };
         if is_function_name_initializer_exception(&variable, &shadowed)
@@ -601,17 +656,26 @@ impl Checker {
             return;
         }
         let is_enum = self.dialect == Dialect::TypeScriptEslint
-            && shadowed.symbol.declaration_kinds().contains(DeclarationKinds::TS_ENUM_NAME);
+            && shadowed
+                .symbol
+                .declaration_kinds()
+                .contains(DeclarationKinds::TS_ENUM_NAME);
         let position = file.position(shadowed.identifier.start);
-        cx.report(variable.place, if is_enum { NO_ENUM_SHADOW } else { NO_SHADOW })
-            .data("name", name)
-            .data("shadowedLine", position.line)
-            .data("shadowedColumn", position.column + 1)
-            .labels_with(|labels| {
-                // The name without its type.
-                let start = shadowed.identifier.start;
-                labels.push(Span::new(start, start + name.bytes().len() as u32), "shadowed declaration is here");
-            });
+        cx.report(
+            variable.place,
+            if is_enum { NO_ENUM_SHADOW } else { NO_SHADOW },
+        )
+        .data("name", name)
+        .data("shadowedLine", position.line)
+        .data("shadowedColumn", position.column + 1)
+        .labels_with(|labels| {
+            // The name without its type.
+            let start = shadowed.identifier.start;
+            labels.push(
+                Span::new(start, start + name.bytes().len() as u32),
+                "shadowed declaration is here",
+            );
+        });
     }
 
     /// Reports every variable of the file that shadows another. What is declared in the global
@@ -620,13 +684,16 @@ impl Checker {
         let file = cx.file();
         let mut global_augmentations: SmallVec<[Scope<'a>; 1]> = SmallVec::new();
         if file.has_stmts([StmtTag::Module]) {
-            global_augmentations.extend(file.scopes().filter(|it| is_scope_of_global_augmentation(*it)));
+            global_augmentations.extend(
+                file.scopes()
+                    .filter(|it| is_scope_of_global_augmentation(*it)),
+            );
         }
         let mut known = Known {
             global_augmentations,
             without_body: None,
-            only_types: FxHashMap::default(),
-            namespaces_of_types: FxHashMap::default(),
+            only_types: IdMap::default(),
+            namespaces_of_types: IdMap::default(),
         };
         // By the last bits of the number of a name: the outermost of the scopes around the one that is looked at that declare
         // such a name. The scopes come in the order they start, so what is not around one is around none that follows. A
@@ -651,7 +718,11 @@ impl Checker {
                     continue;
                 };
                 let name = symbol.name();
-                let shadowed = if may_shadow { upper.resolve_name(name) } else { None };
+                let shadowed = if may_shadow {
+                    upper.resolve_name(name)
+                } else {
+                    None
+                };
                 let global = match shadowed {
                     None if self.builtin_globals => file.global(name.bytes()),
                     _ => None,

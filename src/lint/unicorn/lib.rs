@@ -4,6 +4,7 @@
 //! - which are ports of https://github.com/sindresorhus/eslint-plugin-unicorn (Copyright Sindre Sorhus, MIT License)
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 
 mod unicorn;
 

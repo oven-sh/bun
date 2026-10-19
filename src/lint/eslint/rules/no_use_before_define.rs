@@ -8,8 +8,10 @@ pub struct NoUseBeforeDefine {
     config: Config,
 }
 
-const USED_BEFORE_DEFINED: Message =
-    Message::new("usedBeforeDefined", "'{{name}}' was used before it was defined.");
+const USED_BEFORE_DEFINED: Message = Message::new(
+    "usedBeforeDefined",
+    "'{{name}}' was used before it was defined.",
+);
 
 /// The options, which are those of the rule of typescript-eslint as well.
 pub struct Config {
@@ -61,10 +63,14 @@ pub fn end_of_definition(definition: Declaration) -> Option<u32> {
             };
             let end = declarator.span().end;
             match declarator.parent().parent() {
-                Node::Stmt(parent) if matches!(parent.tag(), StmtTag::ForIn | StmtTag::ForOf) => match parent.kind() {
-                    StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. } => Some(end.max(expr.span().end)),
-                    _ => None,
-                },
+                Node::Stmt(parent) if matches!(parent.tag(), StmtTag::ForIn | StmtTag::ForOf) => {
+                    match parent.kind() {
+                        StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. } => {
+                            Some(end.max(expr.span().end))
+                        }
+                        _ => None,
+                    }
+                }
                 _ => Some(end),
             }
         }
@@ -109,7 +115,9 @@ pub fn first_use(variable: Symbol) -> Option<u32> {
         }
     }
     let is_settled = first == u32::MAX
-        || initialized != 0 && first > initialized && variable.declaration_kinds() == DeclarationKinds::VARIABLE;
+        || initialized != 0
+            && first > initialized
+            && variable.declaration_kinds() == DeclarationKinds::VARIABLE;
     (!is_settled).then_some(first)
 }
 
@@ -166,7 +174,8 @@ fn is_initializer_of<'a>(child: Node<'a>, parent: Node<'a>) -> bool {
         Node::PatProp(prop) => prop.default() == Some(child),
         Node::Param(param) => param.default() == Some(child),
         Node::Expr(e) => {
-            matches!(e.kind(), ExprKind::Assign { value, .. } if value == child) && utils::is_assignment_target(e)
+            matches!(e.kind(), ExprKind::Assign { value, .. } if value == child)
+                && utils::is_assignment_target(e)
         }
         _ => false,
     }
@@ -184,7 +193,9 @@ impl<'a> Initializers<'a> {
         let end = self.ends.find(name, |child, parent| match parent {
             Node::VarDecl(_) => Some(parent),
             // A signature or a function type does not end the search.
-            Node::Func(func) if func.has_body() && func.kind() != FnKind::StaticBlock => Some(child),
+            Node::Func(func) if func.has_body() && func.kind() != FnKind::StaticBlock => {
+                Some(child)
+            }
             // Around a statement is nothing but functions, classes, namespaces and the file.
             Node::Class(_) | Node::Stmt(_) => Some(child),
             _ => None,
@@ -208,16 +219,19 @@ impl<'a> Initializers<'a> {
     /// Whether `reference` is in an initializer of the variable.
     pub fn has(&mut self, declared: Declared, reference: Reference<'a>) -> bool {
         let location = reference.span().end;
-        if declared.iterated.is_some_and(|it| is_in_range(it, location)) {
+        if declared
+            .iterated
+            .is_some_and(|it| is_in_range(it, location))
+        {
             return true;
         }
         if !is_in_range(declared.within, location) {
             return false;
         }
         let mut at = reference.node();
-        while let Some(owner) =
-            (self.owners).find(at, |child, parent| is_initializer_of(child, parent).then_some(parent))
-        {
+        while let Some(owner) = (self.owners).find(at, |child, parent| {
+            is_initializer_of(child, parent).then_some(parent)
+        }) {
             let span = owner.span();
             if !declared.within.contains(span) {
                 return false;
@@ -240,15 +254,20 @@ pub fn is_class_ref_in_class_decorator(definition: Declaration, identifier: Span
 /// ESLint's `isInClassStaticInitializerRange`.
 fn is_in_class_static_initializer_range(class: Class, location: u32) -> bool {
     // `location` is the end of a name.
-    class.members().around(location.saturating_sub(1)).is_some_and(|member| match member.kind() {
-        MemberKind::StaticBlock => is_in_range(member.span(), location),
-        MemberKind::Property => {
-            member.is_static()
-                && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
-                && member.init().is_some_and(|value| is_in_range(value.span(), location))
-        }
-        _ => false,
-    })
+    class
+        .members()
+        .around(location.saturating_sub(1))
+        .is_some_and(|member| match member.kind() {
+            MemberKind::StaticBlock => is_in_range(member.span(), location),
+            MemberKind::Property => {
+                member.is_static()
+                    && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
+                    && member
+                        .init()
+                        .is_some_and(|value| is_in_range(value.span(), location))
+            }
+            _ => false,
+        })
 }
 
 /// ESLint's `isClassStaticInitializerScope`.
@@ -316,14 +335,17 @@ fn parent_of_identifier(reference: Reference, is_in_type_query: bool) -> Parent 
             _ => Parent::Other,
         },
         // `typeof a.b`
-        Node::Expr(e) if is_in_type_query && matches!(e.parent(), Node::Expr(_)) => Parent::QualifiedName,
+        Node::Expr(e) if is_in_type_query && matches!(e.parent(), Node::Expr(_)) => {
+            Parent::QualifiedName
+        }
         _ => Parent::Other,
     }
 }
 
 impl NoUseBeforeDefine {
     fn check<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
-        let (Some(first), Some(definition)) = (first_use(variable), variable.declarations().next()) else {
+        let (Some(first), Some(definition)) = (first_use(variable), variable.declarations().next())
+        else {
             return;
         };
         let end = match definition {
@@ -331,7 +353,8 @@ impl NoUseBeforeDefine {
             _ => end_of_definition(definition),
         };
         if end.is_none_or(|end| first <= end) {
-            let is_defined = |it: Reference<'a>| starts_after(it, end) || it.is_init() || it.is_jsx_pragma();
+            let is_defined =
+                |it: Reference<'a>| starts_after(it, end) || it.is_init() || it.is_jsx_pragma();
             self.check_references(variable, definition, &is_defined, cx);
         }
     }
@@ -347,7 +370,9 @@ impl NoUseBeforeDefine {
     ) {
         let config = &self.config;
         let references = variable.references();
-        let (Some(kind), Some(definition_end)) = (definition.kind(), definition_name_end(definition)) else {
+        let (Some(kind), Some(definition_end)) =
+            (definition.kind(), definition_name_end(definition))
+        else {
             return;
         };
         if !config.functions && kind == DeclarationKind::FunctionName
@@ -357,15 +382,16 @@ impl NoUseBeforeDefine {
             return;
         }
         let declared = cx.state.declared(definition);
-        let is_in_initializer = |reference: Reference<'a>, initializers: &mut Initializers<'a>| match definition {
-            // The binding of a class is initialized before its static initializers run.
-            Declaration::Class(class) => {
-                let location = reference.span().end;
-                is_in_range(class.estree_span(), location)
-                    && !is_in_class_static_initializer_range(class, location)
-            }
-            _ => declared.is_some_and(|it| initializers.has(it, reference)),
-        };
+        let is_in_initializer =
+            |reference: Reference<'a>, initializers: &mut Initializers<'a>| match definition {
+                // The binding of a class is initialized before its static initializers run.
+                Declaration::Class(class) => {
+                    let location = reference.span().end;
+                    is_in_range(class.estree_span(), location)
+                        && !is_in_class_static_initializer_range(class, location)
+                }
+                _ => declared.is_some_and(|it| initializers.has(it, reference)),
+            };
         for reference in references {
             // What JSX makes of `React` is a reference whose identifier is the declaration.
             if is_defined(reference) {
@@ -389,14 +415,19 @@ impl NoUseBeforeDefine {
             }
             let is_in_type_query = reference_contains_type_query(reference);
             let parent = parent_of_identifier(reference, is_in_type_query);
-            if config.ignore_type_references && (is_in_type_query || parent == Parent::TypeReference) {
+            if config.ignore_type_references
+                && (is_in_type_query || parent == Parent::TypeReference)
+            {
                 continue;
             }
-            if parent != Parent::QualifiedName && is_class_ref_in_class_decorator(definition, identifier) {
+            if parent != Parent::QualifiedName
+                && is_class_ref_in_class_decorator(definition, identifier)
+            {
                 continue;
             }
             if is_before || !is_separate && parent != Parent::TypeReference {
-                cx.report(identifier, USED_BEFORE_DEFINED).data("name", reference.name());
+                cx.report(reference, USED_BEFORE_DEFINED)
+                    .data("name", reference.name());
             }
         }
     }

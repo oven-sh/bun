@@ -418,7 +418,37 @@ impl<'v> ValueRef<'v> {
         self.values.value(self.id)
     }
 
-    /// Another node of the same values.
+    /// Returns a number with its unit as written in the source, or `None` if either was changed after parsing.
+    pub(crate) fn number_as_written(self) -> Option<&'v [u8]> {
+        let (number, unit) = (self.node().value, self.node().unit);
+        (number.1 == unit.0).then(|| self.values.text((number.0, unit.1)))
+    }
+
+    /// True if the `@` of `at_word` immediately follows this number in the source. A signed number's `loc` can't be
+    /// used to check this.
+    pub(crate) fn is_number_right_before(self, at_word: ValueRef<'v>) -> bool {
+        self.kind() == ValueKind::Number && self.node().unit.1 + 1 == at_word.node().value.0
+    }
+
+    /// Returns the number of whitespace bytes after its `value` in the source, or after its unit if it's a number.
+    pub(crate) fn blanks_behind(self) -> usize {
+        let end = match self.kind() {
+            ValueKind::Number => self.node().unit.1,
+            _ => self.node().value.1,
+        };
+        let rest = self.values.text.get(end as usize..);
+        (rest.unwrap_or_default().iter())
+            .take_while(|byte| byte.is_ascii_whitespace())
+            .count()
+    }
+
+    /// Whether something that is no blank follows its `value` in the text.
+    pub(crate) fn is_before_more(self) -> bool {
+        let rest = self.values.text.get(self.node().value.1 as usize..);
+        !rest.unwrap_or_default().trim_ascii_start().is_empty()
+    }
+
+    /// Returns a reference to another node in the same `Values`.
     pub(crate) fn at(self, id: ValueId) -> ValueRef<'v> {
         ValueRef { id, ..self }
     }
@@ -776,8 +806,7 @@ impl ValuesParser<'_> {
         let mut ind = 0;
         loop {
             let word = &self.text()[word_start..word_start + word_len];
-            static AT: ByteSet = ByteSet::new(b"@");
-            let index = AT.find(word, ind + 1).unwrap_or(word_len);
+            let index = text::index_of_from(word, b"@", ind + 1).unwrap_or(word_len);
             let value = &word[ind..index];
             let (start, end) = (word_start + ind, word_start + index);
             let loc = Source {

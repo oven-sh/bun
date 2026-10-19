@@ -15,16 +15,22 @@ import {
 import {
   chmodSync,
   chownSync,
+  closeSync,
+  constants,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   symlinkSync,
   truncateSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { basename, dirname, join, parse, posix, sep, win32 } from "node:path";
 import { endChildren, spawn } from "../children";
@@ -35,6 +41,8 @@ import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
 import whatOxlintMarks from "./oracle/plugins/oxlint/labels.json";
 import { filesOf as filesOfMessages, helpsOf, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
 import optionsOfOxlint from "./oracle/plugins/oxlint/options.json";
+import parenthesesExpected from "./oracle/plugins/oxlint/parentheses.expected.json";
+import parentheses from "./oracle/plugins/oxlint/parentheses.json";
 import { labelsOf, projects } from "./oracle/plugins/oxlint/projects";
 
 afterAll(endChildren);
@@ -199,7 +207,7 @@ describe.concurrent("bun lint", () => {
     const reports = (stdout: string) =>
       stdout
         .split("\n")
-        .flatMap(line => /^<dir>\/(\S+?:\d+:\d+): .*?'(\w+)'.* \[Error\/(.*)\]$/.exec(line)?.slice(1).join(" ") ?? []);
+        .flatMap(line => /^<dir>\/(\S+?:\d+:\d+): .*?'(\w+)'.* \[\w+\/(.*)\]$/.exec(line)?.slice(1).join(" ") ?? []);
     const union = ["a/a.js:1:35 nothing no-undef", "d/build.js:1:39 nothing no-undef"];
 
     test("without a configuration file, with --infer-globals", async () => {
@@ -300,7 +308,9 @@ describe.concurrent("bun lint", () => {
       }),
     ]);
     expect(read.stdout).toContain("<dir>/a.mjs:1:1: Unexpected var, use let or const instead. [Error/no-var]");
-    expect(unread.stderr).toContain("1 file was not linted, only the parser of the configuration can read it: b.mjs.");
+    expect(unread.stderr).toContain(
+      "1 file was not linted because only the parser in your config can read it: b.mjs\n",
+    );
     expect([read.exitCode, unread.exitCode]).toEqual([1, 2]);
   });
 
@@ -330,17 +340,17 @@ describe.concurrent("bun lint", () => {
         "vendor.min.js": "debugger;\n",
         ".gitignore": "dist\n",
       },
-      [],
+      ["-f", "stylish"],
     );
     expect(stdout).toMatchInlineSnapshot(`
       "<dir>/a.js
-        2:5  error  'unused' is defined but never used  no-unused-vars
-        3:1  error  'undefinedName' is not defined      no-undef
+        2:5  warning  'unused' is defined but never used  no-unused-vars
+        3:1  error    'undefinedName' is not defined      no-undef
 
       <dir>/b.ts
-        1:17  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+        1:17  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
 
-      ✖ 3 problems (3 errors, 0 warnings)"
+      ✖ 3 problems (1 error, 2 warnings)"
     `);
     expect(exitCode).toBe(1);
   });
@@ -383,9 +393,14 @@ describe.concurrent("bun lint", () => {
       "b.ts": 'import source x from "m";\ndebugger;\n',
       "c.js": 'import.source("m");\ndebugger;\n',
       "d.tsx": "<>\n<\n/>;\ndebugger;\n",
+      // The attributes of a re-export on the next line, where TypeScript reads a `with` statement. In JavaScript espree reads these.
+      "e.ts": 'export * from "m"\nwith { type: "json" }\ndebugger;\n',
+      "f.ts": 'export * as ns from "m"\nwith { type: "json" }\ndebugger;\n',
+      "g.ts": 'export { a } from "m"\nwith { type: "json" }\ndebugger;\n',
+      "h.ts": 'export { default as k } from "m"\nwith { type: "json" }\ndebugger;\n',
     };
     const names = Object.keys(files);
-    const lines = (stdout: string) => stdout.split("\n").filter(line => /^\S*[a-d]\.\w+:\d/.test(line));
+    const lines = (stdout: string) => stdout.split("\n").filter(line => /^\S*[a-h]\.\w+:\d/.test(line));
     const rules = { "no-debugger": "error" };
     const ofOxlint = JSON.stringify({ categories: { correctness: "off" }, rules });
     const ofEslint = `export default [{ files: ["**/*.{js,ts,tsx}"], rules: ${JSON.stringify(rules)} }];\n`;
@@ -393,8 +408,719 @@ describe.concurrent("bun lint", () => {
       lint({ ".oxlintrc.json": ofOxlint, ...files }, ["-f", "unix", ...names]),
       lint({ "eslint.config.js": ofEslint, ...files }, ["-f", "unix", ...names]),
     ]);
-    expect(lines(oxlint.stdout).map(line => /no-debugger/.test(line))).toEqual([true, true, true, true]);
-    expect(lines(eslint.stdout).map(line => /Parsing error: /.test(line))).toEqual([true, true, true, true]);
+    expect(lines(oxlint.stdout).map(line => /no-debugger/.test(line))).toEqual(names.map(() => true));
+    expect(lines(eslint.stdout).map(line => /Parsing error: /.test(line))).toEqual(names.map(() => true));
+  });
+
+  // Each row is what oxlint 1.87 prints, in its order. tsc, typescript-estree, espree and Babel reject an escape in a name of JSX.
+  test("with .oxlintrc.json a name of JSX with a unicode escape is the text as written", async () => {
+    const rows: [extension: string, code: string, found: string[]][] = [
+      ["tsx", 'const X = () => null;\nexport const a = <X d\\u0065nsity="comfortable" />;', []],
+      ["jsx", "export const a = <d\\u0069v></d\\u0069v>;", []],
+      ["jsx", 'export const a = <a:\\u0059 b:\\u0059="1" />;', []],
+      ["tsx", 'export const a = <\\u0061-b c-\\u0064="1" />;', []],
+      ["tsx", "const X = { Y: () => null };\nexport const a = <X.\\u0059 />;", []],
+      // It isn't the variable `Xe`.
+      [
+        "tsx",
+        "const Xe = () => null;\nexport const a = <X\\u0065 />;",
+        [
+          "eslint(no-undef): 'X\\u0065' is not defined. @41+7",
+          "eslint(no-unused-vars): Variable 'Xe' is declared but never used. Unused variables should start with a '_'. @6+2",
+        ],
+      ],
+      // A rule gets the whole name.
+      [
+        "jsx",
+        'export const a = <div d\\u{65}nsity="x" />;',
+        ["react(no-unknown-property): Unknown property found @22+12"],
+      ],
+      [
+        "jsx",
+        "export const a = <d\\u0069v></div>;",
+        ["error: Expected corresponding JSX closing tag for 'd\\u0069v'. @29+3"],
+      ],
+    ];
+    const rules = { "no-undef": "error", "no-unused-vars": "warn", "react/no-unknown-property": "error" };
+    const files = Object.fromEntries(rows.map(([extension, code], i) => [`a${i}.${extension}`, code + "\n"]));
+    const { raw } = await lint(
+      { ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, plugins: ["react"], rules }), ...files },
+      ["-f", "json"],
+    );
+    type Diagnostic = { filename: string; code?: string; message: string; labels: { span: Record<string, number> }[] };
+    const found: Record<string, string[]> = Object.fromEntries(Object.keys(files).map(name => [name, []]));
+    for (const { filename, code, message, labels } of JSON.parse(raw).diagnostics as Diagnostic[]) {
+      const { offset, length } = labels[0].span;
+      found[filename].push(`${code ?? "error"}: ${message} @${offset}+${length}`);
+    }
+    expect(found).toEqual(
+      Object.fromEntries(rows.map(([extension, , expected], i) => [`a${i}.${extension}`, expected])),
+    );
+  });
+
+  // tsc reports TS17021 and ESLint 10.12 "Unexpected token \\u0059".
+  test("an escape in a member of a JSX tag name is a parsing error with eslint.config.js", async () => {
+    const config = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
+    const code = "const X = { Y: () => null };\nexport const a = <X.\\u0059 />;\n";
+    const { raw, exitCode } = await lint({ "eslint.config.js": config, "a.jsx": code }, ["-f", "unix"]);
+    expect(raw).toContain("a.jsx:2:21: Parsing error: Unexpected token \\u0059 [Error]");
+    expect(exitCode).toBe(1);
+  });
+
+  // oxlint 1.87 lints all of these, and ESLint 10.12 with espree lints the .jsx files. tsc 6 and typescript-estree scan a
+  // JavaScript string, with escapes, as soon as something is between the `=` and the quote.
+  test("a JSX attribute string has no escapes, whatever is between the `=` and the quote", async () => {
+    const attributes = [
+      'id = "x\\" density = "comfortable"',
+      "id = 'x\\' density = 'comfortable'",
+      'id =\n"x\\" density="c"',
+      'id\t=\t"x\\" y="1"',
+      'id = "a\nb"',
+      'id = "\\u{110000}"',
+      'id = "\\x"',
+      'id = /* c */ "x\\" density = "c"',
+      'id =/* c */"x\\" density = "c"',
+      'id = // c\n "x\\" density = "c"',
+      'id = /* c */ "a\nb"',
+    ];
+    const code = attributes.map(it => `debugger;\nexport const a = <X ${it} />;\n`);
+    const jsx = Object.fromEntries(code.map((it, i) => [`a${i}.jsx`, it]));
+    const tsx = Object.fromEntries(code.map((it, i) => [`a${i}.tsx`, it]));
+    const rules = { "no-debugger": "error" };
+    const ofOxlint = JSON.stringify({ categories: { correctness: "off" }, rules });
+    const ofEslint = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } }, rules: ${JSON.stringify(rules)} }];\n`;
+    const [oxlint, eslint] = await Promise.all([
+      lint({ ".oxlintrc.json": ofOxlint, ...jsx, ...tsx }, ["-f", "unix"]),
+      lint({ "eslint.config.js": ofEslint, ...jsx }, ["-f", "unix"]),
+    ]);
+    const reported = (stdout: string) =>
+      stdout
+        .split("\n")
+        .flatMap(line => line.match(/a\d+\.\w+:\d+:\d+: .*/)?.[0].replace(/: .*no-debugger.*/, " no-debugger") ?? []);
+    const expected = (files: object) => Object.keys(files).map(name => `${name}:1:1 no-debugger`);
+    expect(reported(oxlint.stdout).sort()).toEqual(expected({ ...jsx, ...tsx }).sort());
+    expect(reported(eslint.stdout).sort()).toEqual(expected(jsx).sort());
+  });
+
+  // Each row is what oxlint 1.87 prints. tsc, typescript-estree and Babel leave the await and yield context inside a type, so
+  // there `await (k)` is a call of `await`.
+  test("with .oxlintrc.json an expression in a type is in the await and yield context around the type", async () => {
+    const rows: [extension: string, code: string, found: string[]][] = [
+      ["ts", 'const k = "a"; export let x: { [await (k)]: number };', []],
+      [
+        "ts",
+        'const k = ["a"]; export let x: { [await [k]]: number };',
+        ["unicorn(no-unnecessary-await): Unexpected `await` on a non-Promise value @34+5"],
+      ],
+      [
+        "ts",
+        "export let x: { [await -1]: number };",
+        ["unicorn(no-unnecessary-await): Unexpected `await` on a non-Promise value @17+5"],
+      ],
+      [
+        "ts",
+        "export let x: { [await +1]: number };",
+        ["unicorn(no-unnecessary-await): Unexpected `await` on a non-Promise value @17+5"],
+      ],
+      [
+        "ts",
+        "export let x: { [await `a`]: number };",
+        ["unicorn(no-unnecessary-await): Unexpected `await` on a non-Promise value @17+5"],
+      ],
+      ["ts", 'const k = "a"; export const y = 1 as { [await (k)]: number };', []],
+      ["ts", 'const k = "a"; export type T = { [await (k)]: number };', []],
+      ["ts", 'const k = "a"; export class C { p: { [await (k)]: number } = null as any; }', []],
+      ["ts", 'const k = "a"; export enum E { A = await (k) }', []],
+      ["ts", 'const k = "a"; export namespace N { export const x = await (k); }', []],
+      ["ts", 'const k = "a"; const enum E { A = await (k) } export {};', []],
+      [
+        "ts",
+        'const k = "a"; export async function f(): Promise<{ [await (k)]: number }> { await k; return null as any; }',
+        [],
+      ],
+      [
+        "ts",
+        'const k = "a"; export async function f(a: any) { for (;;) { let z: { [await (k)]: number } = a; return z; } }',
+        ["eslint(no-await-in-loop): Unexpected `await` inside a loop. @70+5"],
+      ],
+      ["ts", 'const k = "a"; export function* g() { let x: { [yield (k)]: number } = null as any; yield x; }', []],
+      // A parameter's type is part of the parameter.
+      [
+        "ts",
+        'const k = "a"; export async function f(a: { [await (k)]: number }): Promise<void>;\nexport async function f(a: any) { await a; }',
+        ["error: await expression not allowed in formal parameter @45+9"],
+      ],
+      [
+        "ts",
+        'const k = "a"; export const f = async (a: { [await (k)]: number }) => a;',
+        ["error: await expression not allowed in formal parameter @45+9"],
+      ],
+      [
+        "ts",
+        'const k = "a"; export function* g(a: { [yield (k)]: number }) { yield a; }',
+        ["error: yield expression not allowed in formal parameter @40+9"],
+      ],
+      [
+        "js",
+        'const k = "a"; async function f(a = await (k)) {} f(); export {};',
+        ["error: await expression not allowed in formal parameter @36+9"],
+      ],
+      [
+        "js",
+        'const k = "a"; const f = async (a = await k) => {}; f(); export {};',
+        ["error: await expression not allowed in formal parameter @36+7"],
+      ],
+      // A declaration of TypeScript that is a statement by itself is outside the await context.
+      [
+        "ts",
+        'const k = "a"; type T = { [await (k)]: number }; export {};',
+        ["error: The keyword 'await' is reserved @27+5"],
+      ],
+      [
+        "ts",
+        'const k = "a"; interface T { [await (k)]: number } export {};',
+        ["error: The keyword 'await' is reserved @30+5"],
+      ],
+      [
+        "ts",
+        'const k = "a"; abstract class C { [await (k)]: number = 1 } export {};',
+        ["error: The keyword 'await' is reserved @35+5"],
+      ],
+      [
+        "ts",
+        'const k = "a"; export async function f() { interface T { [await (k)]: number } return 1 as T; }',
+        ["error: The keyword 'await' is reserved @58+5"],
+      ],
+      [
+        "ts",
+        'const k = "a"; declare let x: { [await (k)]: number }; export {};',
+        ["eslint(no-undef): 'await' is not defined. @33+5"],
+      ],
+      [
+        "ts",
+        'const k = "a"; declare class C { [await (k)]: number } export {};',
+        ["eslint(no-undef): 'await' is not defined. @34+5"],
+      ],
+      // Nothing says that these are modules, so `await (k)` is a call.
+      ["ts", 'const k = "a"; let x: { [await (k)]: number };', ["eslint(no-undef): 'await' is not defined. @25+5"]],
+      ["ts", "const k = 1; await (k);", ["eslint(no-undef): 'await' is not defined. @13+5"]],
+      ["js", "const k = 1; await (k);", ["eslint(no-undef): 'await' is not defined. @13+5"]],
+      ["ts", "const k = [1]; await [k];", ["eslint(no-undef): 'await' is not defined. @15+5"]],
+      // `await k` says so.
+      ["ts", "const k = 1; await (k); await k;", []],
+      ["ts", "const k = 1; await k; let x: { [await (k)]: number };", []],
+      ["mts", 'const k = "a"; let x: { [await (k)]: number };', []],
+    ];
+    const rules = { "no-undef": "error", "no-await-in-loop": "error", "unicorn/no-unnecessary-await": "error" };
+    const files = Object.fromEntries(rows.map(([extension, code], i) => [`a${i}.${extension}`, code + "\n"]));
+    const { raw } = await lint(
+      { ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules }), ...files },
+      ["-f", "json"],
+    );
+    type Diagnostic = { filename: string; code?: string; message: string; labels: { span: Record<string, number> }[] };
+    const found: Record<string, string[]> = Object.fromEntries(Object.keys(files).map(name => [name, []]));
+    for (const { filename, code, message, labels } of JSON.parse(raw).diagnostics as Diagnostic[]) {
+      const { offset, length } = labels[0].span;
+      found[filename].push(`${code ?? "error"}: ${message} @${offset}+${length}`);
+    }
+    expect(found).toEqual(
+      Object.fromEntries(rows.map(([extension, , expected], i) => [`a${i}.${extension}`, expected])),
+    );
+  });
+
+  // Each row is what oxlint 1.87 prints. oxc's parser reports these, so the file isn't linted. tsc leaves them to its checker
+  // (TS1308, TS1163), and typescript-estree says nothing.
+  // Every row was run on oxlint 1.87.
+  test("with .oxlintrc.json an `await` that is put up with outside every body makes the file a module", async () => {
+    // What the `await` of `await (z);` in the next line is. In a script it is the name of a function.
+    const rows: [extensions: string, code: string, found: "the operator" | "a name"][] = [
+      ["ts tsx", "function f(): { [await g()]: 1 } { return null!; }", "the operator"],
+      ["ts", "const f = function (): { [await g()]: 1 } { return null!; };", "the operator"],
+      ["ts", "function* f(): { [await g()]: 1 } {}", "the operator"],
+      ["ts", "function f<T extends { [await g()]: 1 }>(t: T) {}", "the operator"],
+      ["ts", "function f<T = { [await g()]: 1 }>() {}", "the operator"],
+      ["ts", "function f(this: { [await g()]: 1 }) {}", "the operator"],
+      ["ts", "declare function f(): { [await g()]: 1 };", "the operator"],
+      ["ts", "class A { m(): { [await g()]: 1 } { return null!; } }", "the operator"],
+      ["ts", "class A { get x(): { [await g()]: 1 } { return null!; } }", "the operator"],
+      ["ts", "const o = { m(): { [await g()]: 1 } { return null!; } };", "the operator"],
+      ["ts", "function f(a = (): { [await g()]: 1 } => null!) {}", "the operator"],
+      ["ts", "function f(a = function (): { [await g()]: 1 } { return null!; }) {}", "the operator"],
+      ["ts", "class A { x = function (): { [await g()]: 1 } { return null!; }; }", "the operator"],
+      ["ts", "class A { static { function f(): { [await g()]: 1 } { return null!; } } }", "the operator"],
+      ["ts js", "class A { x = await g(); }", "the operator"],
+      ["ts", "enum E { A = await g }", "the operator"],
+      ["ts", "type T = { [await g()]: 1 };", "the operator"],
+      ["ts", "const f = (): { [await g()]: 1 } => null!;", "the operator"],
+      ["ts js", "function f() {}", "a name"],
+      ["ts", "function f(): { [await (g)]: 1 } { return null!; }", "a name"],
+      ["ts", "async function f(): { [await g()]: Promise<1> } { return null!; }", "a name"],
+      ["ts", "const f = async (): { [await g()]: 1 } => null!;", "a name"],
+      ["ts", "const f = async <T extends { [await g()]: 1 }>() => {};", "a name"],
+      ["ts", "async function o() { const f = (): { [await g()]: 1 } => null!; }", "a name"],
+    ];
+    const cases = rows.flatMap(([extensions, code, found], i) =>
+      extensions.split(" ").map(extension => ({ name: `${i}.${extension}`, code, found })),
+    );
+    const files = Object.fromEntries(cases.map(({ name, code }) => [name, code + "\nawait (z);\n"]));
+    const config = { categories: { correctness: "off" }, rules: { "no-undef": "error" } };
+    const { raw } = await lint({ ".oxlintrc.json": JSON.stringify(config), ...files }, ["-f", "json"]);
+    const found: Record<string, string> = Object.fromEntries(cases.map(({ name }) => [name, "the operator"]));
+    for (const { filename, code, message } of JSON.parse(raw).diagnostics as Diagnostic[]) {
+      if (code !== "eslint(no-undef)") found[filename] = message;
+      else if (message === "'await' is not defined.") found[filename] = "a name";
+    }
+    expect(found).toEqual(Object.fromEntries(cases.map(({ name, found }) => [name, found])));
+  });
+
+  test("with .oxlintrc.json `await` outside an async function and `yield` outside a generator are errors", async () => {
+    const all = "ts tsx mts cts js jsx mjs cjs";
+    const typescript = "ts tsx mts cts";
+    // "await@15": the error about `await`, at offset 15. "linted": no error, and the `debugger` in the last line is reported.
+    const rows: [extensions: string, code: string, found: string][] = [
+      [all, "function f() { await g(); }", "await@15"],
+      [all, "function f() { return await g; }", "await@22"],
+      [all, "function f() { await 1; }", "await@15"],
+      [all, "const f = () => { await g(); };", "await@18"],
+      [all, "const f = () => await g();", "await@16"],
+      [all, "class A { m() { await g(); } }", "await@16"],
+      [all, "class A { get x() { return await g(); } }", "await@27"],
+      [all, "class A { constructor() { await g(); } }", "await@26"],
+      [all, "const o = { m() { await g(); } };", "await@18"],
+      [all, "[1].forEach(x => { await g(x); });", "await@19"],
+      [all, "async function a() { function b() { await g(); } }", "await@36"],
+      [all, "async function a() { [1].forEach(x => { await g(x); }); }", "await@40"],
+      [all, "function* f() { await g(); }", "await@16"],
+      [all, "function f() { await using x = g(); }", "await@15"],
+      [all, "function f() { for (await using x of y) ; }", "await@20"],
+      [all, "function f() { class A { x = await g(); } }", "await@29"],
+      [all, "async function f() { class A { x = await g(); } }", "await@35"],
+      [all, "function f() { class A { [await g()]() {} } }", "await@26"],
+      [all, "function f() { function h(a = await g()) {} }", "await@30"],
+      [all, "function f(a = () => await g()) {}", "await@21"],
+      // One error: what follows the first `await` is read as if it were in an async function.
+      [all, "function f() { await await g; }", "await@15"],
+      [all, "function f() { await x(await y); }", "await@15"],
+      // In an async function, or not a keyword.
+      [all, "async function f() { await g(); }", "linted"],
+      [all, "const f = async () => await g();", "linted"],
+      [all, "function f() { return async () => await g(); }", "linted"],
+      [all, "function f() { return o.await; }", "linted"],
+      // A name in a script, reserved in a module.
+      ["ts tsx cts js jsx cjs", "function f() { await (g()); }", "linted"],
+      ["mts mjs", "function f() { await (g()); }", "The keyword 'await' is reserved @15+5"],
+      ["ts tsx cts js jsx cjs", "function f() { await; }", "linted"],
+      ["mts mjs", "function f() { await; }", "The keyword 'await' is reserved @15+5"],
+      ["ts tsx cts js jsx cjs", "function f() { return await in x; }", "linted"],
+      ["mts mjs", "function f() { return await in x; }", "The keyword 'await' is reserved @22+5"],
+      ["ts tsx cts js jsx cjs", "function f() { return await instanceof X; }", "linted"],
+      ["mts mjs", "function f() { return await instanceof X; }", "The keyword 'await' is reserved @22+5"],
+      ["ts tsx cts js jsx cjs", "function f() { for (await of x) ; }", "linted"],
+      ["mts mjs", "function f() { for (await of x) ; }", "The keyword 'await' is reserved @20+5"],
+      ["ts tsx cts js jsx cjs", "var await; await = 1;", "linted"],
+      // Outside every function: by the name of the file.
+      ["ts tsx mts js jsx mjs", "await g();", "linted"],
+      ["cts cjs", "await g();", "await@0"],
+      ["ts tsx js jsx", "class A { x = await g(); }", "linted"],
+      ["mts cts mjs cjs", "class A { x = await g(); }", "await@14"],
+      ["ts tsx mts js jsx mjs", "class A { [await g()]() {} }", "linted"],
+      ["cts cjs", "class A { [await g()]() {} }", "await@11"],
+      ["ts tsx js jsx", "function f(a = await g()) {}", "await expression not allowed in formal parameter @15+9"],
+      ["mts cts mjs cjs", "function f(a = await g()) {}", "await@15"],
+      [
+        "ts tsx mts js jsx mjs",
+        "const f = (a = await g()) => a;",
+        "await expression not allowed in formal parameter @15+9",
+      ],
+      ["cts cjs", "const f = (a = await g()) => a;", "await@15"],
+      // Yield.
+      [all, "function f() { yield 1; }", "yield@15"],
+      [all, "function f() { yield g(); }", "yield@15"],
+      [all, "const f = () => { yield 1; };", "yield@18"],
+      [all, "class A { m() { yield 1; } }", "yield@16"],
+      [all, "class A { x = yield g; }", "yield@14"],
+      [all, "async function f() { yield 1; }", "yield@21"],
+      [all, "function* a() { function b() { yield 1; } }", "yield@31"],
+      [all, "function* a() { [1].forEach(x => { yield x; }); }", "yield@35"],
+      [all, "function a(x = yield g) {}", "yield@15"],
+      [all, "yield g;", "yield@0"],
+      [all, "function f() { yield yield g; }", "yield@15"],
+      [all, "function* f() { yield 1; }", "linted"],
+      ["ts tsx cts js jsx cjs", "function f() { yield (g()); }", "linted"],
+      ["mts mjs", "function f() { yield (g()); }", "The keyword 'yield' is reserved @15+5"],
+      ["ts tsx cts js jsx cjs", "function f() { yield; }", "linted"],
+      ["mts mjs", "function f() { yield; }", "The keyword 'yield' is reserved @15+5"],
+      ["ts tsx cts js jsx cjs", "function f() { return yield in x; }", "linted"],
+      ["mts mjs", "function f() { return yield in x; }", "The keyword 'yield' is reserved @22+5"],
+      ["ts tsx cts js jsx cjs", "var yield; yield = 1;", "linted"],
+      // TypeScript.
+      [typescript, "function f(): void { await g<string>(); }", "await@21"],
+      [typescript, "function f() { await g as any; }", "await@15"],
+      [typescript, "namespace N { await g(); }", "await@14"],
+      [typescript, "namespace N { export const x = await g(); }", "await@31"],
+      ["ts tsx mts", "export namespace N { await g(); }", "linted"],
+      ["cts", "export namespace N { await g(); }", "await@21"],
+      [typescript, "declare namespace N { const x = await g; }", "await@32"],
+      [typescript, "namespace N { yield g; }", "yield@14"],
+      ["ts tsx", "enum E { A = await g }", "linted"],
+      ["mts cts", "enum E { A = await g }", "await@13"],
+      ["ts tsx mts", "export enum E { A = await g }", "linted"],
+      ["cts", "export enum E { A = await g }", "await@20"],
+      [typescript, "function f() { enum E { A = await g } }", "await@28"],
+      [typescript, "async function f() { enum E { A = await g } }", "await@34"],
+      ["ts tsx", "type T = { [await g]: 1 };", "linted"],
+      ["mts cts", "type T = { [await g]: 1 };", "await@12"],
+      [typescript, "function f() { type T = { [await g]: 1 }; }", "await@27"],
+      ["ts tsx", "function f(): { [await g]: 1 } { return null!; }", "linted"],
+      ["mts cts", "function f(): { [await g]: 1 } { return null!; }", "await@17"],
+      // A signature in a type starts nothing: it is in the block.
+      [
+        "ts tsx",
+        "class A { static { type F = { (): { [await g()]: 1 } }; } }",
+        "Cannot use await in class static initialization block @37+5",
+      ],
+      ["mts cts", "class A { static { type F = { (): { [await g()]: 1 } }; } }", "await@37"],
+      [
+        "ts tsx",
+        "class A { static { interface I { m<T extends { [await g()]: 1 }>(): void } } }",
+        "Cannot use await in class static initialization block @48+5",
+      ],
+      ["mts cts", "class A { static { interface I { m<T extends { [await g()]: 1 }>(): void } } }", "await@48"],
+      // The type of a variable is read in the context of the block, where `await` is the operator.
+      [
+        typescript,
+        "class A { static { let v: { get x(): { [await g()]: 1 } }; } }",
+        "Cannot use await in class static initialization block @40+5",
+      ],
+      // A function does, with or without a body.
+      ["ts tsx", "class A { static { abstract class B { abstract m(): { [await g()]: 1 }; } } }", "linted"],
+      ["ts tsx", "class A { static { function f(): { [await g()]: 1 } { return null!; } } }", "linted"],
+      [typescript, "function o() { @dec(await g()) class A {} }", "await@20"],
+      [typescript, "async function o() { @dec(await g()) class A {} }", "linted"],
+      ["ts tsx", "declare const x = await g;", "linted"],
+      ["mts cts", "declare const x = await g;", "await@18"],
+      [typescript, "function f() { let x: { [yield g]: 1 }; }", "yield@25"],
+      // Arrow parameters are read in the context around the arrow function.
+      [
+        all,
+        "async function f() { const h = (a = await g()) => a; }",
+        "await expression not allowed in formal parameter @36+9",
+      ],
+      [all, "function f() { const h = (a = await g()) => a; }", "await@30"],
+      [all, "const f = async (a = await g()) => a;", "await expression not allowed in formal parameter @21+9"],
+      [
+        all,
+        "function* f() { const h = (a = yield g) => a; }",
+        "yield expression not allowed in formal parameter @31+7",
+      ],
+      // `await` and `using` on two lines are no declaration.
+      ["ts tsx cts js jsx cjs", "function f() { await\nusing x = g(); }", "linted"],
+      ["mts mjs", "function f() { await\nusing x = g(); }", "The keyword 'await' is reserved @15+5"],
+      [
+        all,
+        "function f() { for await (const x of y) ; }",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @19+5",
+      ],
+      // Static blocks.
+      [all, "class A { static { await g(); } }", "Cannot use await in class static initialization block @19+5"],
+      [all, "class A { static { await (g()); } }", "Cannot use await in class static initialization block @19+5"],
+      [
+        all,
+        "async function o() { class A { static { await g(); } } }",
+        "Cannot use await in class static initialization block @40+5",
+      ],
+      [
+        all,
+        "class A { static { class B { [await g()]() {} } } }",
+        "Cannot use await in class static initialization block @30+5",
+      ],
+      [
+        all,
+        "class A { static { for await (const x of y) ; } }",
+        "Cannot use 'for await' in class static initialization block @19+26",
+      ],
+      [
+        all,
+        "class A { static { await using x = g(); } }",
+        "Cannot use 'await using' in class static initialization block @19+20",
+      ],
+      [all, "class A { static { const f = () => await g(); } }", "await@35"],
+      [all, "class A { static { function f() { await g(); } } }", "await@34"],
+      [all, "class A { static { async function f() { await g(); } } }", "linted"],
+      [all, "class A { static { yield g; } }", "yield@19"],
+    ];
+    const cases = rows.flatMap(([extensions, code, found], i) =>
+      extensions.split(" ").map(extension => ({ name: `a${i}.${extension}`, code, found })),
+    );
+    const files = Object.fromEntries(cases.map(({ name, code }) => [name, code + "\ndebugger;\n"]));
+    const config = { categories: { correctness: "off" }, rules: { "no-debugger": "error" } };
+    const { raw } = await lint({ ".oxlintrc.json": JSON.stringify(config), ...files }, ["-f", "json"]);
+    const words: Record<string, string> = {
+      "`await` is only allowed within async functions and at the top levels of modules": "await",
+      "A 'yield' expression is only allowed in a generator body.": "yield",
+    };
+    type Diagnostic = { filename: string; code?: string; message: string; labels: { span: Record<string, number> }[] };
+    const found: Record<string, string[]> = Object.fromEntries(cases.map(({ name }) => [name, []]));
+    for (const { filename, code, message, labels } of JSON.parse(raw).diagnostics as Diagnostic[]) {
+      const { offset, length } = labels[0].span;
+      if (code === "eslint(no-debugger)") found[filename].push("linted");
+      else if (message in words && length === 5) found[filename].push(`${words[message]}@${offset}`);
+      else found[filename].push(`${message} @${offset}+${length}`);
+    }
+    expect(found).toEqual(Object.fromEntries(cases.map(({ name, found }) => [name, [found]])));
+  });
+
+  // Each row is what oxlint 1.87 does. oxc can't parse Flow. Where it fails on a JavaScript file whose first comment has `@flow`,
+  // oxlint prints nothing about the file.
+  test("with .oxlintrc.json a file that doesn't parse is skipped silently if its first comment has @flow", async () => {
+    // "silent": nothing is printed. "error": only a syntax error. "linted": the `debugger` in the last line is reported.
+    const rows: [extension: string, code: string, outcome: "silent" | "error" | "linted"][] = [
+      ["js", "// @flow\ntype A = number;", "silent"],
+      ["js", "// @flow\nimport typeof X from 'x';", "silent"],
+      ["js", "// @flow\nimport typeof { X } from 'x';", "silent"],
+      ["js", "// @flow\nimport typeof * as X from 'x';", "silent"],
+      ["js", "// @flow\nimport { typeof X } from 'x';", "silent"],
+      ["js", "// @flow\ndeclare export function f(): void;", "silent"],
+      ["js", "/**\n * @flow strict\n */\nimport typeof X from 'x';", "silent"],
+      ["js", "#!/usr/bin/env node\n// @flow\nimport typeof X from 'x';", "silent"],
+      ["js", "'use strict';\n// @flow\nimport typeof X from 'x';", "silent"],
+      ["jsx", "// @flow\nimport typeof X from 'x';", "silent"],
+      ["mjs", "// @flow\nimport typeof X from 'x';", "silent"],
+      ["cjs", "// @flow\nimport typeof X from 'x';", "silent"],
+      ["js", "import /* @flow */ typeof X from 'x';", "silent"],
+      ["js", "type /* @flow */ A = number;", "silent"],
+      ["js", "foo( // @flow\n;", "silent"],
+      // Oxc's lexer hasn't come to the comment yet.
+      ["js", "import typeof /* @flow */ X from 'x';", "error"],
+      ["js", "import typeof X from 'x';\n// @flow", "error"],
+      ["js", "type A /* @flow */ = number;", "error"],
+      ["js", "type A = number; // @flow", "error"],
+      ["js", "type A = number;\n// @flow", "error"],
+      ["js", "foo(; // @flow", "error"],
+      // Only the first comment counts, and only in JavaScript.
+      ["js", "// first\n// @flow\nimport typeof X from 'x';", "error"],
+      ["js", "// @noflow\nimport typeof X from 'x';", "error"],
+      ["js", "import typeof X from 'x';", "error"],
+      ["ts", "// @flow\nimport typeof X from 'x';", "error"],
+      ["js", "// @flow\nfoo();", "linted"],
+      // Oxc goes on after these errors, to the end of the file, so it comes to the comment.
+      ["js", "function f() { await g(); }\n// @flow", "silent"],
+      ["js", "function f() { yield 1; }\n// @flow", "silent"],
+      ["js", "function f() { await g(); } // @flow\nlet = ;", "silent"],
+      ["js", "function f() { await g(); }\nlet = ;\n// @flow", "error"],
+      ["js", "function f(a: number) {}\n// @flow", "error"],
+      ["js", "// @flow\nfunction f(a: number) {}", "silent"],
+    ];
+    const files = Object.fromEntries(
+      rows.map(([extension, code], i) => [`a${i}.${extension}`, code + "\ndebugger;\n"]),
+    );
+    const config = { categories: { correctness: "off" }, rules: { "no-debugger": "error" } };
+    const { raw } = await lint({ ".oxlintrc.json": JSON.stringify(config), ...files }, ["-f", "json"]);
+    const codes: Record<string, (string | undefined)[]> = Object.fromEntries(
+      Object.keys(files).map(name => [name, []]),
+    );
+    for (const { filename, code } of JSON.parse(raw).diagnostics as { filename: string; code?: string }[]) {
+      codes[filename].push(code);
+    }
+    const outcome = (found: (string | undefined)[]) =>
+      found.length === 0 ? "silent" : found.every(it => it === undefined) ? "error" : found.join();
+    expect(Object.fromEntries(Object.entries(codes).map(([name, found]) => [name, outcome(found)]))).toEqual(
+      Object.fromEntries(
+        rows.map(([extension, , expected], i) => [
+          `a${i}.${extension}`,
+          expected === "linted" ? "eslint(no-debugger)" : expected,
+        ]),
+      ),
+    );
+  });
+
+  // Each text is what oxlint 1.87 prints with --threads 1. It prints the files in no particular order in two of the formats.
+  test("with .oxlintrc.json every format has the code, the help and every occurrence of a syntax error", async () => {
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-debugger": "error" } }),
+      "f1.ts": "class A { constructor(); }\n",
+      "f2.ts": "function f() { await g(); await h(); }\n",
+      "f3.ts": "export = a;\nexport const b = 1;\n",
+      "f4.ts": "debugger;\n",
+      "f5.js": "class A { static { await g(); } }\n",
+    };
+    const names = Object.keys(files).slice(1);
+    const print = async (format: string) => {
+      const { raw, stdout, exitCode } = await lint(files, ["--threads", "1", "-f", format, ...names]);
+      expect(exitCode).toBe(1);
+      // Only this one has the directory in it.
+      return (format === "stylish" ? stdout : raw)
+        .replace(/\x1b\[[0-9;]*m/g, "")
+        .replace(/Finished in [\d.]+ms/, "Finished in Nms");
+    };
+    const [unix, github, junit, json, gitlab, stylish, checkstyle] = await Promise.all(
+      ["unix", "github", "junit", "json", "gitlab", "stylish", "checkstyle"].map(print),
+    );
+    expect(unix.split("\n")).toEqual([
+      "f1.ts:1:11: Constructor implementation is missing. [Error/TS(2390)]",
+      "f2.ts:1:16: `await` is only allowed within async functions and at the top levels of modules [Error]",
+      "f2.ts:1:27: `await` is only allowed within async functions and at the top levels of modules [Error]",
+      "f3.ts:1:1: An export assignment cannot be used in a module with other exported elements [Error/TS(2309)]",
+      "f4.ts:1:1: `debugger` statement is not allowed [Error/eslint(no-debugger)]",
+      "f5.js:1:20: Cannot use await in class static initialization block [Error]",
+      "",
+      "6 problems",
+      "",
+    ]);
+    expect(github.split("\n")).toEqual([
+      "::error file=f1.ts,line=1,endLine=1,col=11,endColumn=22,title=TS(2390)::f1.ts:1:11: Constructor implementation is missing.",
+      "::error file=f2.ts,line=1,endLine=1,col=16,endColumn=21,title=oxlint::f2.ts:1:16: `await` is only allowed within async functions and at the top levels of modules",
+      "::error file=f2.ts,line=1,endLine=1,col=27,endColumn=32,title=oxlint::f2.ts:1:27: `await` is only allowed within async functions and at the top levels of modules",
+      "::error file=f3.ts,line=1,endLine=1,col=1,endColumn=12,title=TS(2309)::f3.ts:1:1: An export assignment cannot be used in a module with other exported elements",
+      "::error file=f4.ts,line=1,endLine=1,col=1,endColumn=10,title=eslint(no-debugger)::f4.ts:1:1: `debugger` statement is not allowed",
+      "::error file=f5.js,line=1,endLine=1,col=20,endColumn=25,title=oxlint::f5.js:1:20: Cannot use await in class static initialization block",
+      "",
+      "Found 0 warnings and 6 errors.",
+      "Finished in Nms on 5 files with 1 rules using 1 threads.",
+      "",
+    ]);
+    expect(junit.split("\n")).toEqual([
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<testsuites name="Oxlint" tests="6" failures="0" errors="6">',
+      '    <testsuite name="f1.ts" tests="1" disabled="0" errors="1" failures="0">',
+      '        <testcase name="TS(2390)">',
+      '            <error message="Constructor implementation is missing.">line 1, column 11, Constructor implementation is missing.</error>',
+      "        </testcase>",
+      "    </testsuite>",
+      '    <testsuite name="f2.ts" tests="2" disabled="0" errors="2" failures="0">',
+      '        <testcase name="">',
+      '            <error message="`await` is only allowed within async functions and at the top levels of modules">line 1, column 16, `await` is only allowed within async functions and at the top levels of modules</error>',
+      "        </testcase>",
+      '        <testcase name="">',
+      '            <error message="`await` is only allowed within async functions and at the top levels of modules">line 1, column 27, `await` is only allowed within async functions and at the top levels of modules</error>',
+      "        </testcase>",
+      "    </testsuite>",
+      '    <testsuite name="f3.ts" tests="1" disabled="0" errors="1" failures="0">',
+      '        <testcase name="TS(2309)">',
+      '            <error message="An export assignment cannot be used in a module with other exported elements">line 1, column 1, An export assignment cannot be used in a module with other exported elements</error>',
+      "        </testcase>",
+      "    </testsuite>",
+      '    <testsuite name="f4.ts" tests="1" disabled="0" errors="1" failures="0">',
+      '        <testcase name="eslint(no-debugger)">',
+      '            <error message="`debugger` statement is not allowed">line 1, column 1, `debugger` statement is not allowed</error>',
+      "        </testcase>",
+      "    </testsuite>",
+      '    <testsuite name="f5.js" tests="1" disabled="0" errors="1" failures="0">',
+      '        <testcase name="">',
+      '            <error message="Cannot use await in class static initialization block">line 1, column 20, Cannot use await in class static initialization block</error>',
+      "        </testcase>",
+      "    </testsuite>",
+      "</testsuites>",
+      "",
+    ]);
+    type Label = { span: { offset: number; length: number } };
+    const diagnostics = (JSON.parse(json).diagnostics as { labels: Label[] }[]).map(it => ({
+      ...it,
+      labels: it.labels.map(({ span }) => [span.offset, span.length]),
+    }));
+    expect(diagnostics).toEqual([
+      {
+        "message": "Constructor implementation is missing.",
+        "code": "TS(2390)",
+        "severity": "error",
+        "filename": "f1.ts",
+        "labels": [[10, 11]],
+      },
+      {
+        "message": "`await` is only allowed within async functions and at the top levels of modules",
+        "severity": "error",
+        "help": "Either remove this `await` or add the `async` keyword to the enclosing function",
+        "filename": "f2.ts",
+        "labels": [[15, 5]],
+      },
+      {
+        "message": "`await` is only allowed within async functions and at the top levels of modules",
+        "severity": "error",
+        "help": "Either remove this `await` or add the `async` keyword to the enclosing function",
+        "filename": "f2.ts",
+        "labels": [[26, 5]],
+      },
+      {
+        "message": "An export assignment cannot be used in a module with other exported elements",
+        "code": "TS(2309)",
+        "severity": "error",
+        "help":
+          "If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+        "filename": "f3.ts",
+        "labels": [[0, 11]],
+      },
+      {
+        "message": "`debugger` statement is not allowed",
+        "code": "eslint(no-debugger)",
+        "severity": "error",
+        "url": "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html",
+        "help": "Remove the debugger statement",
+        "filename": "f4.ts",
+        "labels": [[0, 9]],
+      },
+      {
+        "message": "Cannot use await in class static initialization block",
+        "severity": "error",
+        "filename": "f5.js",
+        "labels": [[19, 5]],
+      },
+    ]);
+    type Issue = Record<"check_name" | "severity" | "fingerprint" | "description", string> & {
+      location: { path: string; lines: { begin: number } };
+    };
+    expect(
+      (JSON.parse(gitlab) as Issue[]).map(it => [
+        it.location.path,
+        it.location.lines.begin,
+        it.check_name,
+        it.severity,
+        it.fingerprint,
+        it.description,
+      ]),
+    ).toEqual([
+      ["f1.ts", 1, "TS(2390)", "critical", "106845087d5c5a0f", "Constructor implementation is missing."],
+      [
+        "f2.ts",
+        1,
+        "",
+        "critical",
+        "3f7536233e17e706",
+        "`await` is only allowed within async functions and at the top levels of modules",
+      ],
+      [
+        "f2.ts",
+        1,
+        "",
+        "critical",
+        "3f7536233e17e706",
+        "`await` is only allowed within async functions and at the top levels of modules",
+      ],
+      [
+        "f3.ts",
+        1,
+        "TS(2309)",
+        "critical",
+        "29f7a7c91515a896",
+        "An export assignment cannot be used in a module with other exported elements",
+      ],
+      ["f4.ts", 1, "eslint(no-debugger)", "critical", "9651ed4bad05aab3", "`debugger` statement is not allowed"],
+      ["f5.js", 1, "", "critical", "f7e9e2da0f31ec9c", "Cannot use await in class static initialization block"],
+    ]);
+    expect(stylish.trim().split("\n\n").sort()).toEqual([
+      "<dir>/f1.ts\n  1:11  error  Constructor implementation is missing.  TS(2390)",
+      "<dir>/f2.ts\n  1:16  error  `await` is only allowed within async functions and at the top levels of modules  \n  1:27  error  `await` is only allowed within async functions and at the top levels of modules  ",
+      "<dir>/f3.ts\n  1:1  error  An export assignment cannot be used in a module with other exported elements  TS(2309)",
+      "<dir>/f4.ts\n  1:1  error  `debugger` statement is not allowed  eslint(no-debugger)",
+      "<dir>/f5.js\n  1:20  error  Cannot use await in class static initialization block  ",
+      "✖ 6 problems (6 errors, 0 warnings)",
+    ]);
+    expect(checkstyle.match(/<file .*?<\/file>/g)?.sort()).toEqual([
+      '<file name="f1.ts"><error line="1" column="11" severity="error" message="Constructor implementation is missing." source="TS(2390)" /></file>',
+      '<file name="f2.ts"><error line="1" column="16" severity="error" message="`await` is only allowed within async functions and at the top levels of modules" source="" /><error line="1" column="27" severity="error" message="`await` is only allowed within async functions and at the top levels of modules" source="" /></file>',
+      '<file name="f3.ts"><error line="1" column="1" severity="error" message="An export assignment cannot be used in a module with other exported elements" source="TS(2309)" /></file>',
+      '<file name="f4.ts"><error line="1" column="1" severity="error" message="`debugger` statement is not allowed" source="eslint(no-debugger)" /></file>',
+      '<file name="f5.js"><error line="1" column="20" severity="error" message="Cannot use await in class static initialization block" source="" /></file>',
+    ]);
   });
 
   // Each row is what oxlint 1.87 does.
@@ -602,6 +1328,90 @@ describe.concurrent("bun lint", () => {
       expect(await listed([], { cwd: "src/deep" })).toEqual({ files: ["<dir>/src/deep/f.js"], exitCode: 0 });
     });
 
+    // Same as `bun fmt` and Prettier. ESLint 10.12.0 exits with code 2 for these arguments. oxlint 1.87.0 ignores them.
+    describe.each([
+      ["no config", {}],
+      ["eslint.config.js", { "eslint.config.js": config({ "no-var": "error" }) }],
+      [".oxlintrc.json", { ".oxlintrc.json": "{}\n" }],
+    ])("an argument that starts with ! excludes files: %s", (name, project) => {
+      const code = "var  a = 1;\n";
+      const files = {
+        ...project,
+        "src/f.js": code,
+        "src/g.js": code,
+        "src/deep/h.js": code,
+        "other/o.js": code,
+        "top.js": code,
+      };
+      const listed = async (...args: string[]) => {
+        const { stdout, stderr, exitCode } = await lint(files, ["--list-files", ...args], { mayFail: true });
+        return { files: stdout.split("\n").filter(Boolean), stderr: stderr.split("\n")[0], exitCode };
+      };
+
+      test.each([
+        [
+          ["src", "!src/f.js"],
+          ["<dir>/src/deep/h.js", "<dir>/src/g.js"],
+        ],
+        [
+          ["!src/f.js", "src"],
+          ["<dir>/src/deep/h.js", "<dir>/src/g.js"],
+        ],
+        [["src/*.js", "!src/f.js"], ["<dir>/src/g.js"]],
+        [
+          ["src", "!src/deep"],
+          ["<dir>/src/f.js", "<dir>/src/g.js"],
+        ],
+        [["src", "!**/h.js", "!./src/g.js"], ["<dir>/src/f.js"]],
+        [
+          ["src", "top.js", "!nothing.js"],
+          ["<dir>/src/deep/h.js", "<dir>/src/f.js", "<dir>/src/g.js", "<dir>/top.js"],
+        ],
+        // A `!` that isn't at the start of the argument opens an extglob group.
+        [["src/!(f).js"], ["<dir>/src/g.js"]],
+      ])("%j", async (args, expected) => {
+        expect(await listed(...args)).toEqual({ files: expected, stderr: "", exitCode: 0 });
+      });
+
+      test.skipIf(name === ".oxlintrc.json")("exits with code 2 when the arguments don't select any file", async () => {
+        expect(
+          await Promise.all([listed("!top.js"), listed("top.js", "!top.js"), listed("src/*.js", "!src/*")]),
+        ).toEqual([
+          { files: [], stderr: 'error: No files matching the pattern "!top.js" were found.', exitCode: 2 },
+          {
+            files: [],
+            stderr:
+              'error: You are linting "top.js", but all of the files matching the glob pattern "top.js" are ignored.',
+            exitCode: 2,
+          },
+          {
+            files: [],
+            stderr:
+              'error: You are linting "src/*.js", but all of the files matching the glob pattern "src/*.js" are ignored.',
+            exitCode: 2,
+          },
+        ]);
+      });
+
+      // Same as oxfmt.
+      test.skipIf(name !== ".oxlintrc.json")(
+        "with no other argument, lints the rest of the working directory",
+        async () => {
+          expect(await listed("!top.js")).toEqual({
+            files: ["<dir>/other/o.js", "<dir>/src/deep/h.js", "<dir>/src/f.js", "<dir>/src/g.js"],
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+      );
+
+      test("--fix only writes to the selected files", async () => {
+        const reads = ["src/f.js", "src/g.js", "src/deep/h.js", "other/o.js", "top.js"];
+        const result = await lint(files, ["--fix", "--rule", "no-var: error", "src", "!src/f.js"], { reads });
+        expect(reads.filter(name => result.files[name] !== code)).toEqual(["src/g.js", "src/deep/h.js"]);
+      });
+    });
+
     test.skipIf(isWindows)("a named pipe with the name of a script is passed over", async () => {
       const { stdout, exitCode } = await lint({ "eslint.config.js": basic, "a.js": bad }, ["-f", "unix", "."], {
         before: dir => expect(Bun.spawnSync(["mkfifo", join(dir, "pipe.js")]).exitCode).toBe(0),
@@ -609,6 +1419,120 @@ describe.concurrent("bun lint", () => {
       expect(stdout).toContain("<dir>/a.js:1:1: ");
       expect(stdout).not.toContain("pipe.js");
       expect(exitCode).toBe(1);
+    });
+
+    // Opening a pipe like this blocks until a writer opens it.
+    test.skipIf(isWindows).each([".gitignore", ".git/info/exclude", ".eslintignore", "package.json"])(
+      "doesn't hang when %s is a link to a named pipe without a writer",
+      async name => {
+        const { raw } = await lint({ "project/a.js": bad, "project/.git/info/a": "" }, ["-f", "json", "."], {
+          cwd: "project",
+          before: dir => {
+            expect(Bun.spawnSync(["mkfifo", join(dir, "pipe")]).exitCode).toBe(0);
+            symlinkSync(join(dir, "pipe"), join(dir, "project", name));
+          },
+        });
+        expect(raw).toContain("a.js");
+      },
+    );
+
+    describe.skipIf(isWindows)("a named pipe passed to a flag", () => {
+      const makePipes = (dir: string) =>
+        expect(Bun.spawnSync(["mkfifo", join(dir, "pipe"), join(dir, "pipe.json")]).exitCode).toBe(0);
+
+      // Reading the pipe as empty would silently disable the ignore list, so it's an error. `bun lint` doesn't block
+      // waiting for a writer either.
+      describe.each([
+        ["no config", {}],
+        ["eslint.config.js", { "eslint.config.js": basic }],
+        [".oxlintrc.json", { ".oxlintrc.json": "{}\n" }],
+        [".eslintrc.json", { ".eslintrc.json": "{}\n" }],
+      ])("without a writer is an error, with %s", (_, config: Record<string, string>) => {
+        test.each([
+          [["--ignore-path", "pipe"], "pipe"],
+          [["--ignore-path=./pipe"], "./pipe"],
+          [["--config", "pipe.json"], "pipe.json"],
+          [["-c", "pipe.json"], "pipe.json"],
+          [["--config=pipe"], "pipe"],
+        ])("%j", async (flags, name) => {
+          const result = await lint({ ...config, "a.js": bad }, ["--fix", ...flags, "."], {
+            before: makePipes,
+            reads: ["a.js"],
+            mayFail: true,
+          });
+          expect(result.stderr).toBe(`error: cannot read ${name}: nothing is writing to this pipe`);
+          expect(result.raw).toBe("");
+          expect(result.files).toEqual({ "a.js": bad });
+          expect(result.exitCode).toBe(2);
+        });
+      });
+
+      test("a pipe set as ignorePath in bunfig.toml is still read as empty", async () => {
+        const files = { "bunfig.toml": '[lint]\nignorePath = "pipe"\n', "a.js": bad };
+        const { stdout, exitCode } = await lint(files, ["-f", "unix", "."], { before: makePipes });
+        expect(stdout).toContain("<dir>/a.js:2:15: ");
+        expect(exitCode).toBe(1);
+      });
+
+      // `--ignore-path <(true)`
+      test("a pipe whose writer closes it without writing is read as an empty file", async () => {
+        using dir = tempDir("bun-lint", { "a.js": bad });
+        await using proc = spawn({
+          cmd: ["sh", "-c", ': | "$0" "$@"', ...command, "-f", "unix", "--ignore-path", "/dev/stdin", "."],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("cannot read");
+        expect(stdout).toContain("a.js:2:15: ");
+        expect(exitCode).toBe(1);
+      });
+
+      /** Runs `bun lint` with `args` in a directory containing `files` while writing `text` to the pipe `name`. */
+      async function lintWhileWriting(files: Record<string, string>, args: string[], name: string, text: string) {
+        using dir = tempDir("bun-lint", files);
+        makePipes(String(dir));
+        // With a reader open, opening the pipe for writing doesn't block, and written data stays buffered.
+        const reader = openSync(join(String(dir), name), constants.O_RDONLY | constants.O_NONBLOCK);
+        const writer = openSync(join(String(dir), name), constants.O_WRONLY);
+        try {
+          const stdio = { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const;
+          await using proc = spawn({ cmd: [...command, ...args], env, cwd: String(dir), ...stdio });
+          writeSync(writer, text);
+          closeSync(writer);
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          return { stdout, exitCode };
+        } finally {
+          closeSync(reader);
+        }
+      }
+
+      // A pipe can only be read once, but the ignore list is needed for every directory that is searched.
+      test.each([
+        ["no config", {}, 1],
+        [".oxlintrc.json", { ".oxlintrc.json": "{}\n" }, 0],
+        [".eslintrc.json", { ".eslintrc.json": '{ "rules": { "no-debugger": "error" } }\n' }, 1],
+      ])("--ignore-path reads patterns written to the pipe, with %s", async (_, config, exitCode) => {
+        const files = { ...config, "src/a.js": bad, "src/b.js": bad, "lib/a.js": bad, "lib/b.js": bad };
+        const args = ["-f", "unix", "--ignore-path", "pipe", "src", "lib"];
+        const result = await lintWhileWriting(files, args, "pipe", "a.js\n");
+        expect(result.stdout.match(/(?:src|lib)\/[ab]\.js:2:15/g)).toEqual(["lib/b.js:2:15", "src/b.js:2:15"]);
+        expect(result.exitCode).toBe(exitCode);
+      });
+
+      // Detecting whether the config is oxlint's or ESLint's also reads the file, and a pipe can only be read once.
+      test.each([
+        ["oxlint", '{ "rules": { "no-debugger": "off", "eqeqeq": "error" } }\n'],
+        ["ESLint 8", '{ "root": true, "rules": { "eqeqeq": "error" } }\n'],
+      ])("--config reads a config written to the pipe, for %s", async (_, text) => {
+        const args = ["-f", "unix", "--config", "pipe.json", "a.js"];
+        const result = await lintWhileWriting({ "a.js": bad }, args, "pipe.json", text);
+        expect(result.stdout.match(/a\.js:\d+:\d+: .+/g)).toEqual([expect.stringContaining("eqeqeq")]);
+        expect(result.exitCode).toBe(1);
+      });
     });
 
     // git keeps a link to `/dev/zero` as it is.
@@ -1076,6 +2000,1551 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(1);
       });
 
+      // The message, and the offset and length of the first label, are what oxlint 1.87 prints.
+      test("the label of a parsing error is as long as oxlint's", async () => {
+        const waits = "only allowed within async functions and at the top levels of modules";
+        const rows: [extension: string, code: string, message: string, offset: number, length: number][] = [
+          ["cjs", 'import a from "a";', "Cannot use import statement outside a module", 0, 6],
+          ["cjs", "export const a = 1;", "Cannot use export statement outside a module", 0, 6],
+          ["cjs", "x = import.meta.url;", "Unexpected import.meta expression", 4, 11],
+          ["cts", "x = import.meta.url;", "Unexpected import.meta expression", 4, 11],
+          ["cjs", "await 1;", `\`await\` is ${waits}`, 0, 5],
+          ["cts", "await 1;", `\`await\` is ${waits}`, 0, 5],
+          ["cjs", "for await (const a of b) {}", `\`for await\` loops are ${waits}`, 4, 5],
+          ["js", "function f() { for await (const a of b) {} }", `\`for await\` loops are ${waits}`, 19, 5],
+          ["ts", "export {}; function yield() {}", "The keyword 'yield' is reserved", 20, 5],
+          ["ts", "export {}; class let {}", "The keyword 'let' is reserved", 17, 3],
+          ["ts", "export {}; static: for(;;){}", "The keyword 'static' is reserved", 11, 6],
+          ["ts", "export {}; let x = yield;", "The keyword 'yield' is reserved", 19, 5],
+          ["js", 'function f(a, a) { "use strict"; }', "Identifier `a` has already been declared", 11, 1],
+          ["ts", "export function f(a: number, a: number) {}", "Identifier `a` has already been declared", 18, 1],
+          ["mjs", "with (a) {}", "'with' statements are not allowed", 0, 4],
+          ["js", 'function f() { "use strict"; with (a) {} }', "'with' statements are not allowed", 29, 4],
+          ["ts", "const a: number;", "Missing initializer in const declaration", 6, 1],
+          ["ts", "export {}; { using a; }", "Using declarations must have an initializer.", 19, 1],
+          [
+            "ts",
+            "declare namespace N { declare const a: number; }",
+            "A 'declare' modifier cannot be used in an already ambient context.",
+            22,
+            7,
+          ],
+          ["js", 'import defer a from "b";', "Default imports are not allowed in a deferred import.", 7, 5],
+          ["js", 'import defer { a } from "b";', "Named imports are not allowed in a deferred import.", 7, 5],
+          ["js", "using a = b;", "'using' declarations are not allowed at the top level of a script", 0, 12],
+          [
+            "ts",
+            "export const a = 1; export = a;",
+            "An export assignment cannot be used in a module with other exported elements",
+            20,
+            11,
+          ],
+        ];
+        const files = Object.fromEntries(rows.map(([extension, code], i) => [`a${i}.${extension}`, code + "\n"]));
+        const { raw } = await lint({ ".oxlintrc.json": quiet, ...files }, ["-f", "json"]);
+        type Diagnostic = { filename: string; message: string; labels: { span: { offset: number; length: number } }[] };
+        const found = (JSON.parse(raw).diagnostics as Diagnostic[]).map(({ filename, message, labels: [first] }) => [
+          filename,
+          message,
+          first.span.offset,
+          first.span.length,
+        ]);
+        const byName = (a: unknown[], b: unknown[]) => String(a[0]).localeCompare(String(b[0]));
+        expect(found.sort(byName)).toEqual(
+          rows.map(([extension, , ...rest], i) => [`a${i}.${extension}`, ...rest]).sort(byName),
+        );
+      });
+
+      type ErrorRow = [extension: string, code: string, errors: string];
+      type OxlintDiagnostic = {
+        filename: string;
+        message: string;
+        severity: string;
+        help?: string;
+        labels: { label?: string; span: { offset: number; length: number } }[];
+      };
+      /**
+       * Lints each row as a file of its own and returns the rows with what was printed: every error of the file in order, as
+       * its message (or the short word for it in `words`) and the offset and length of each label.
+       */
+      const withErrorsFound = async (
+        rows: ErrorRow[],
+        words: Record<string, string> | ((message: string) => string),
+        config = quiet,
+      ) => {
+        const files = Object.fromEntries(rows.map(([extension, code], i) => [`a${i}.${extension}`, code + "\n"]));
+        const { raw } = await lint({ ".oxlintrc.json": config, ...files }, ["-f", "json"]);
+        const all = JSON.parse(raw).diagnostics as OxlintDiagnostic[];
+        const diagnostics = all.filter(it => it.severity === "error");
+        const short = typeof words === "function" ? words : (message: string) => words[message] ?? message;
+        const print = ({ message, labels }: OxlintDiagnostic) =>
+          `${short(message)} ${labels.map(({ span }) => `${span.offset}+${span.length}`).join(",")}`;
+        const found = rows.map(([extension, code], i): ErrorRow => {
+          const ofFile = diagnostics.filter(it => it.filename === `a${i}.${extension}`);
+          return [extension, code, ofFile.map(print).join(", ")];
+        });
+        return { found, diagnostics };
+      };
+
+      // Each row is what oxlint 1.87 prints. "" means that it lints the file. tsc and typescript-estree reject `<T>a = 1`,
+      // `a as T = 1` and `++<T>a`: to them a type assertion is no left-hand side.
+      test("assignment targets are checked like oxc's parser checks them", async () => {
+        const words: Record<string, string> = {
+          "Cannot assign to this expression": "cannot",
+          "Invalid rest element target in destructuring assignment": "rest",
+          "A rest parameter or binding pattern may not have a trailing comma.": "comma",
+          "Spread must be last element": "last",
+          "Only '=' operator can be used for specifying default value.": "operator",
+          "Invalid left-hand side in assignment": "pattern",
+          "The left-hand side of an assignment expression must be a variable or a property access.": "instantiation",
+        };
+        const helps: Record<string, string> = {
+          rest: "Expected an identifier or member expression, like `...rest` or `...obj.prop`.",
+          comma: "Remove the trailing comma here",
+          operator: "Replace this operator with `=`.",
+        };
+        const rows: ErrorRow[] = [
+          ["js", "a = 1;", ""],
+          ["ts", "a.b = 1;", ""],
+          ["js", "a[0] = 1;", ""],
+          ["ts", "(a) = 1;", ""],
+          ["js", "((a)) = 1;", ""],
+          ["ts", "(a.b) = 1;", ""],
+          ["ts", "this.a = 1;", ""],
+          ["js", "this = 1;", "cannot 0+4"],
+          ["js", "[a] = b;", ""],
+          ["ts", "[a, b] = c;", ""],
+          ["js", "[a = 1] = b;", ""],
+          ["ts", "[a.b] = c;", ""],
+          ["js", "[(a)] = b;", ""],
+          ["ts", "[(a.b)] = c;", ""],
+          ["js", "[[a]] = b;", ""],
+          ["ts", "[{a}] = b;", ""],
+          ["js", "[...a] = b;", ""],
+          ["ts", "[...a.b] = c;", ""],
+          ["js", "[...[a]] = b;", ""],
+          ["ts", "[...{a}] = b;", ""],
+          ["js", "[...a, b] = c;", "last 1+4"],
+          ["ts", "[...a,] = b;", "comma 5+1"],
+          ["js", "[...a = 1] = b;", "rest 4+5, cannot 4+5"],
+          ["ts", "[...a()] = b;", "rest 4+3, cannot 4+3"],
+          ["js", "[...(a)] = b;", ""],
+          ["ts", "[...1] = b;", "rest 4+1, cannot 4+1"],
+          ["js", "[a, ...b, ] = c;", "comma 8+1"],
+          ["ts", "[, a] = b;", ""],
+          ["js", "[a,,] = b;", ""],
+          ["ts", "[a,] = b;", ""],
+          ["js", "([a]) = b;", "cannot 0+5"],
+          ["ts", "(([a])) = b;", "cannot 1+5"],
+          ["js", "({a}) = b;", "cannot 0+5"],
+          ["ts", "(({a})) = b;", "cannot 1+5"],
+          ["js", "[([a])] = b;", "cannot 1+5"],
+          ["ts", "[({a})] = b;", "cannot 1+5"],
+          ["js", "({ a: ([b]) } = c);", "cannot 6+5"],
+          ["ts", "({ a: ({b}) } = c);", "cannot 6+5"],
+          ["js", "({a} = b);", ""],
+          ["ts", "({a, b} = c);", ""],
+          ["js", "({a: b} = c);", ""],
+          ["ts", "({a: b.c} = d);", ""],
+          ["js", "({a: (b)} = c);", ""],
+          ["ts", "({a = 1} = b);", ""],
+          ["js", "({a: b = 1} = c);", ""],
+          ["ts", "({...a} = b);", ""],
+          ["js", "({...a.b} = c);", ""],
+          ["ts", "({...(a)} = b);", ""],
+          ["js", "({...a, b} = c);", "last 2+4"],
+          ["ts", "({...a,} = b);", "comma 6+1"],
+          ["js", "({...a = 1} = b);", "rest 5+5, cannot 5+5"],
+          ["ts", "({...a()} = b);", "rest 5+3, cannot 5+3"],
+          ["js", "({...{a}} = b);", "rest 5+3"],
+          ["ts", "({...[a]} = b);", "rest 5+3"],
+          ["js", "({a() {}} = b);", "cannot 3+5"],
+          ["ts", "({get a() {}} = b);", "cannot 7+5"],
+          ["js", "({set a(v) {}} = b);", "cannot 7+6"],
+          ["ts", "({async a() {}} = b);", "cannot 9+5"],
+          ["js", "({'a': b} = c);", ""],
+          ["ts", "({[a]: b} = c);", ""],
+          ["js", "({1: b} = c);", ""],
+          ["js", "({a: 1} = b);", "cannot 5+1"],
+          ["ts", "({a: b()} = c);", "cannot 5+3"],
+          ["js", "({a: b += 1} = c);", "operator 5+6"],
+          ["ts", "[a += 1] = b;", "operator 1+6"],
+          ["js", "[a *= 1] = b;", "operator 1+6"],
+          ["ts", "({a: b ??= 1} = c);", "operator 5+7"],
+          ["js", "({a: b?.c} = d);", "cannot 5+4"],
+          ["ts", "[a?.b] = c;", "cannot 1+4"],
+          ["js", "a?.b = 1;", "cannot 0+4"],
+          ["ts", "a?.b.c = 1;", "cannot 0+6"],
+          ["js", "a?.[0] = 1;", "cannot 0+6"],
+          ["ts", "a?.() = 1;", "cannot 0+5"],
+          ["js", "(a?.b) = 1;", "cannot 1+4"],
+          ["ts", "(a?.b).c = 1;", ""],
+          ["js", "a?.b++;", "cannot 0+4"],
+          ["ts", "++a?.b;", "cannot 2+4"],
+          ["js", "a?.b += 1;", "cannot 0+4"],
+          ["ts", "1 = 2;", "cannot 0+1"],
+          ["js", "'a' = 1;", "cannot 0+3"],
+          ["ts", "`a` = 1;", "cannot 0+3"],
+          ["js", "null = 1;", "cannot 0+4"],
+          ["ts", "true = 1;", "cannot 0+4"],
+          ["js", "a() = 1;", "cannot 0+3"],
+          ["ts", "new a = 1;", "cannot 0+5"],
+          ["js", "new a() = 1;", "cannot 0+7"],
+          ["ts", "a`b` = 1;", "cannot 0+4"],
+          ["js", "(a, b) = 1;", "cannot 1+4"],
+          ["ts", "(a = 1) = 2;", "cannot 1+5"],
+          ["js", "(a ? b : c) = 1;", "cannot 1+9"],
+          ["ts", "(a + b) = 1;", "cannot 1+5"],
+          ["js", "(-a) = 1;", "cannot 1+2"],
+          ["ts", "(() => 1) = 1;", "cannot 1+7"],
+          ["js", "(function(){}) = 1;", "cannot 1+12"],
+          ["ts", "(class {}) = 1;", "cannot 1+8"],
+          ["js", "/a/ = 1;", "cannot 0+3"],
+          ["ts", "import.meta = 1;", "cannot 0+11"],
+          ["ts", "import('a') = 1;", "cannot 0+11"],
+          ["js", "a + b = 1;", "cannot 0+5"],
+          ["ts", "-a = 1;", "cannot 0+2"],
+          ["js", "!a = 1;", "cannot 0+2"],
+          ["ts", "typeof a = 1;", "cannot 0+8"],
+          ["js", "void a = 1;", "cannot 0+6"],
+          ["ts", "delete a = 1;", "cannot 0+8"],
+          ["js", "a * b = 1;", "cannot 0+5"],
+          ["ts", "a && b = 1;", "cannot 0+6"],
+          ["js", "a ?? b = 1;", "cannot 0+6"],
+          ["ts", "a in b = 1;", "cannot 0+6"],
+          ["js", "a instanceof b = 1;", "cannot 0+14"],
+          ["ts", "a < b = 1;", "cannot 0+5"],
+          ["js", "a++ = 1;", "cannot 0+3"],
+          ["ts", "++a = 1;", "cannot 0+3"],
+          ["js", "a ** b = 1;", "cannot 0+6"],
+          ["ts", "[a] += 1;", "pattern 0+3"],
+          ["js", "({a} += 1);", "pattern 1+3"],
+          ["ts", "[a] ||= 1;", "pattern 0+3"],
+          ["js", "([a]) += 1;", "cannot 0+5"],
+          ["ts", "a() += 1;", "cannot 0+3"],
+          ["js", "1 += 1;", "cannot 0+1"],
+          ["ts", "(a) += 1;", ""],
+          ["js", "(a.b) ||= 1;", ""],
+          ["ts", "a++;", ""],
+          ["js", "a.b++;", ""],
+          ["ts", "(a)++;", ""],
+          ["js", "((a))++;", ""],
+          ["ts", "(a.b)--;", ""],
+          ["js", "a()++;", "cannot 0+3"],
+          ["ts", "1++;", "cannot 0+1"],
+          ["js", "[a]++;", "cannot 0+3"],
+          ["ts", "({a})++;", "cannot 0+5"],
+          ["js", "([a])++;", "cannot 0+5"],
+          ["ts", "this++;", "cannot 0+4"],
+          ["ts", "(a++)++;", "cannot 1+3"],
+          ["js", "++a;", ""],
+          ["ts", "++a.b;", ""],
+          ["js", "++(a);", ""],
+          ["ts", "++a();", "cannot 2+3"],
+          ["js", "++1;", "cannot 2+1"],
+          ["ts", "++[a];", "cannot 2+3"],
+          ["js", "++{a};", "cannot 2+3"],
+          ["ts", "++-a;", "cannot 2+2"],
+          ["js", "++ ++a;", "cannot 0+6"],
+          ["ts", "++a++;", "cannot 2+3"],
+          ["js", "--(a, b);", "cannot 3+4"],
+          ["ts", "++this;", "cannot 2+4"],
+          ["js", "++new a;", "cannot 2+5"],
+          ["ts", "++(a = 1);", "cannot 3+5"],
+          ["js", "++typeof a;", "cannot 2+8"],
+          ["ts", "++!a;", "cannot 2+2"],
+          ["js", "for (a in b);", ""],
+          ["ts", "for (a.b in c);", ""],
+          ["js", "for ((a) in b);", ""],
+          ["ts", "for ([a] in b);", ""],
+          ["js", "for ({a} in b);", ""],
+          ["ts", "for (a() in b);", "cannot 5+3"],
+          ["js", "for (1 in b);", "cannot 5+1"],
+          ["ts", "for ([a()] in b);", "cannot 6+3"],
+          ["js", "for (([a]) in b);", "cannot 5+5"],
+          ["ts", "for (({a}) in b);", "cannot 5+5"],
+          ["js", "for (a = 1 in b);", "cannot 5+5"],
+          ["ts", "for (a, b in c);", "cannot 5+4"],
+          ["js", "for (a?.b in c);", "cannot 5+4"],
+          ["ts", "for (a + b in c);", "cannot 5+5"],
+          ["js", "for (-a in c);", "cannot 5+2"],
+          ["ts", "for (a of b);", ""],
+          ["js", "for (a.b of c);", ""],
+          ["ts", "for ((a) of b);", ""],
+          ["js", "for ([a] of b);", ""],
+          ["ts", "for ({a} of b);", ""],
+          ["js", "for (a() of b);", "cannot 5+3"],
+          ["ts", "for (1 of b);", "cannot 5+1"],
+          ["js", "for ([a()] of b);", "cannot 6+3"],
+          ["ts", "for (([a]) of b);", "cannot 5+5"],
+          ["js", "for (({a}) of b);", "cannot 5+5"],
+          ["ts", "for (a = 1 of b);", "cannot 5+5"],
+          ["js", "for (a, b of c);", "cannot 5+4"],
+          ["ts", "for (a?.b of c);", "cannot 5+4"],
+          ["js", "for ([...a, b] of c);", "last 6+4"],
+          ["ts", "for ({...a, b} of c);", "last 6+4"],
+          ["js", "for ([a = 1] of c);", ""],
+          ["ts", "for (this of c);", "cannot 5+4"],
+          ["js", "for (a + b of c);", "cannot 5+5"],
+          ["ts", "a() = 1; b() = 2;", "cannot 0+3"],
+          ["js", "[...a,] = b; c() = 1;", "comma 5+1, cannot 13+3"],
+          ["ts", "c() = 1; [...a,] = b;", "cannot 0+3"],
+          ["js", "[...a,] = b; [...c,] = d;", "comma 5+1, comma 18+1"],
+          ["ts", "({...{a}} = b); ({...[c]} = d);", "rest 5+3, rest 21+3"],
+          ["js", "x = (a() = 1);", "cannot 5+3"],
+          ["ts", "f(a() = 1);", "cannot 2+3"],
+          ["js", "[a() = 1] = b;", "cannot 1+3"],
+          ["ts", "({a: b() = 1} = c);", "cannot 5+3"],
+          ["js", "[[a()]] = b;", "cannot 2+3"],
+          ["ts", "[a, b(), c()] = d;", "cannot 4+3"],
+          ["js", "({a: 1, b: 2} = c);", "cannot 5+1"],
+          ["ts", "a = b() = 1;", "cannot 4+3"],
+          ["js", "a = [b()] = c;", "cannot 5+3"],
+          ["ts", "[a = b() = 1] = c;", "cannot 5+3"],
+          ["js", "let x = a() = 1;", "cannot 8+3"],
+          ["ts", "() => a() = 1;", "cannot 6+3"],
+          ["js", "a ? b() = 1 : c;", "cannot 4+3"],
+          ["ts", "a ? b : c() = 1;", "cannot 8+3"],
+          ["js", "async () => { await a = 1; };", "cannot 14+7"],
+          ["js", "function* g() { yield a = 1; }", ""],
+          ["ts", "async () => { (await a) = 1; };", "cannot 15+7"],
+          ["js", "async () => { ++await a; };", "cannot 16+7"],
+          ["ts", "a! = 1;", ""],
+          ["ts", "a!! = 1;", ""],
+          ["ts", "a.b! = 1;", ""],
+          ["ts", "a!.b = 1;", ""],
+          ["ts", "(a!) = 1;", ""],
+          ["ts", "(a)! = 1;", ""],
+          ["ts", "a()! = 1;", "cannot 0+4"],
+          ["ts", "a?.b! = 1;", "cannot 0+5"],
+          ["ts", "(a?.b)! = 1;", "cannot 0+7"],
+          ["ts", "[a]! = 1;", "cannot 0+4"],
+          ["ts", "([a]!) = 1;", "cannot 1+4"],
+          ["ts", "1! = 1;", "cannot 0+2"],
+          ["ts", "a!++;", ""],
+          ["ts", "++a!;", ""],
+          ["ts", "a()!++;", "cannot 0+4"],
+          ["ts", "[a!] = b;", ""],
+          ["ts", "({a: b!} = c);", ""],
+          ["ts", "[a()!] = b;", "cannot 1+4"],
+          ["ts", "[...a!] = b;", ""],
+          ["ts", "({...a!} = b);", ""],
+          ["ts", "for (a! of b);", ""],
+          ["ts", "for (a()! of b);", "cannot 5+4"],
+          ["ts", "(a as T) = 1;", ""],
+          ["ts", "(a.b as T) = 1;", ""],
+          ["ts", "(a() as T) = 1;", "cannot 1+8"],
+          ["ts", "([a] as T) = 1;", "cannot 1+8"],
+          ["ts", "({a} as T) = 1;", "cannot 1+8"],
+          ["ts", "((a) as T) = 1;", ""],
+          ["ts", "((a as T) as U) = 1;", ""],
+          ["ts", "(a as T as U) = 1;", ""],
+          ["ts", "(a! as T) = 1;", ""],
+          ["ts", "(1 as T) = 1;", "cannot 1+6"],
+          ["ts", "(a?.b as T) = 1;", "cannot 1+9"],
+          ["ts", "((a?.b) as T) = 1;", "cannot 1+11"],
+          ["ts", "(a as const) = 1;", ""],
+          ["ts", "a as T = 1;", ""],
+          ["ts", "a.b as T = 1;", ""],
+          ["ts", "a() as T = 1;", "cannot 0+8"],
+          ["ts", "[a] as T = 1;", "cannot 0+8"],
+          ["ts", "a as T as U = 1;", ""],
+          ["ts", "a as T += 1;", ""],
+          ["ts", "a as const = 1;", ""],
+          ["ts", "a + b as T = 1;", "cannot 0+10"],
+          ["ts", "-a as T = 1;", "cannot 0+7"],
+          ["ts", "a as T ? b : c = 1;", ""],
+          ["ts", "(a satisfies T) = 1;", ""],
+          ["ts", "(a() satisfies T) = 1;", "cannot 1+15"],
+          ["ts", "a satisfies T = 1;", ""],
+          ["ts", "a() satisfies T = 1;", "cannot 0+15"],
+          ["ts", "[a satisfies T] = b;", ""],
+          ["ts", "[a() satisfies T] = b;", "cannot 1+15"],
+          ["ts", "(<T>a) = 1;", ""],
+          ["ts", "(<T>a.b) = 1;", ""],
+          ["ts", "(<T>a()) = 1;", "cannot 1+6"],
+          ["ts", "(<T>[a]) = 1;", "cannot 1+6"],
+          ["ts", "<T>a = 1;", ""],
+          ["ts", "<T>a.b = 1;", ""],
+          ["ts", "<T>a() = 1;", "cannot 0+6"],
+          ["ts", "<T>[a] = 1;", "cannot 0+6"],
+          ["ts", "<T>(a) = 1;", ""],
+          ["ts", "<T><U>a = 1;", ""],
+          ["ts", "<T>a += 1;", ""],
+          ["ts", "<const>a = 1;", ""],
+          ["ts", "<T>a! = 1;", ""],
+          ["ts", "<T>a as U = 1;", ""],
+          ["ts", "<T>-a = 1;", "cannot 0+5"],
+          ["ts", "<T>a++;", ""],
+          ["ts", "(<T>a)++;", ""],
+          ["ts", "++<T>a;", ""],
+          ["ts", "++<T>a.b;", ""],
+          ["ts", "++<T>a();", "cannot 2+6"],
+          ["ts", "--<T><U>a;", ""],
+          ["ts", "++(<T>a);", ""],
+          ["ts", "++(a as T);", ""],
+          ["ts", "(a as T)++;", ""],
+          ["ts", "(a() as T)++;", "cannot 1+8"],
+          ["ts", "++a as T;", ""],
+          ["ts", "[<T>a] = b;", ""],
+          ["ts", "[a as T] = b;", ""],
+          ["ts", "[a() as T] = b;", "cannot 1+8"],
+          ["ts", "[<T>a()] = b;", "cannot 1+6"],
+          ["ts", "({a: <T>b} = c);", ""],
+          ["ts", "({a: b as T} = c);", ""],
+          ["ts", "({a: b() as T} = c);", "cannot 5+8"],
+          ["ts", "[...a as T] = b;", ""],
+          ["ts", "[...<T>a] = b;", ""],
+          ["ts", "({...a as T} = b);", ""],
+          ["ts", "({...<T>a} = b);", ""],
+          ["ts", "[...a() as T] = b;", "rest 4+8, cannot 4+8"],
+          ["ts", "[a as T = 1] = b;", ""],
+          ["ts", "[<T>a = 1] = b;", ""],
+          ["ts", "({a: b as T = 1} = c);", ""],
+          ["ts", "[[a] as T] = b;", "cannot 1+8"],
+          ["ts", "[({a}) as T] = b;", "cannot 1+10"],
+          ["ts", "for (a as T of b);", ""],
+          ["ts", "for (<T>a of b);", ""],
+          ["ts", "for (a() as T of b);", "cannot 5+8"],
+          ["ts", "for (<T>a() of b);", "cannot 5+6"],
+          ["ts", "for (a as T in b);", ""],
+          ["ts", "for (<T>a in b);", ""],
+          ["ts", "for ((a as T) of b);", ""],
+          ["ts", "for ([a as T] of b);", ""],
+          ["ts", "for (a satisfies T of b);", ""],
+          ["ts", "a<T> = 1;", "instantiation 0+4"],
+          ["ts", "(a<T>) = 1;", "instantiation 1+4"],
+          ["ts", "++a<T>;", "instantiation 2+4"],
+          ["ts", "[a<T>] = b;", "instantiation 1+4"],
+          ["ts", "(a<T> as U) = 1;", ""],
+          ["ts", "y = <T>a = 1;", ""],
+          ["ts", "<T>a = <T>b = 1;", ""],
+          ["ts", "f(<T>a = 1);", ""],
+          ["ts", "() => <T>a = 1;", ""],
+          ["ts", "x ? <T>a = 1 : 0;", ""],
+          ["ts", "x ? 0 : <T>a = 1;", ""],
+          ["ts", "let z = <T>a = 1;", ""],
+          ["ts", "<T>a = 1, <T>b = 2;", ""],
+          ["ts", "for (<T>a = 0;;);", ""],
+          ["ts", "<T>this.a = 1;", ""],
+          ["ts", "<T>a[0] = 1;", ""],
+          ["ts", "<T>a?.b = 1;", "cannot 0+7"],
+          ["ts", "<T>new a = 1;", "cannot 0+8"],
+          ["ts", "<T>a`b` = 1;", "cannot 0+7"],
+          ["ts", "<T>(a, b) = 1;", "cannot 0+9"],
+          ["ts", "<T>{ a } = b;", "cannot 0+8"],
+          ["ts", "<T>1 = 1;", "cannot 0+4"],
+          ["ts", "typeof <T>a = 1;", "cannot 0+11"],
+          ["ts", "-<T>a = 1;", "cannot 0+5"],
+          ["ts", "y = -<T>a = 1;", "cannot 4+5"],
+        ];
+        const { found, diagnostics } = await withErrorsFound(rows, words);
+        expect(found).toEqual(rows);
+        for (const { message, help } of diagnostics) expect([message, help]).toEqual([message, helps[words[message]]]);
+      });
+
+      // The parser gives up on these in the middle of a module. Like oxlint 1.87, one error on line 2 and nothing about exports.
+      test.each([
+        "export const b = 1;\nx y;",
+        'import { a } from "b";\nwidget W() {\n  a();\n}',
+        "export { nope };\nf() {}",
+      ])("a JavaScript module that doesn't parse gets the parser's error alone: %j", async code => {
+        const { stdout, exitCode } = await lint({ ".oxlintrc.json": "{}", "a.js": code + "\n" }, ["-f", "unix"]);
+        expect(stdout.split("\n").filter(line => line.startsWith("a.js:"))).toEqual([
+          expect.stringMatching(/^a\.js:2:/),
+        ]);
+        expect(exitCode).toBe(1);
+      });
+
+      // Which names are declared twice is found in two ways. With no-unused-vars on, the variables of every file are there to be
+      // asked. Without it the parser looks out for a file that may have such a name.
+      const waysToFindNames: [string, string][] = [
+        ["no rule needs the variables", quiet],
+        [
+          "no-unused-vars is on",
+          JSON.stringify({ categories: { correctness: "off" }, rules: { "no-unused-vars": "warn" } }),
+        ],
+      ];
+
+      describe.each(waysToFindNames)("a name that is declared twice, when %s", (_, config) => {
+        const declarations: Record<string, string> = {
+          var: "var a;",
+          let: "let a;",
+          const: "const a = 1;",
+          fn: "function a() {}",
+          afn: "async function a() {}",
+          gfn: "function* a() {}",
+          cls: "class a {}",
+          using: "using a = null;",
+          imp: "import a from 'm';",
+          impns: "import * as a from 'm';",
+          impspec: "import { a } from 'm';",
+          iface: "interface a {}",
+          type: "type a = 1;",
+          enum: "enum a {}",
+          cenum: "const enum a {}",
+          ns: "namespace a {}",
+          nsv: "namespace a { export let x = 1; }",
+          dvar: "declare var a: any;",
+          dlet: "declare let a: any;",
+          dconst: "declare const a: any;",
+          dfn: "declare function a(): void;",
+          dcls: "declare class a {}",
+          denum: "declare enum a {}",
+          dns: "declare namespace a {}",
+          dnsv: "declare namespace a { let x: any; }",
+          sig: "function a(): void;",
+          acls: "abstract class a {}",
+          imptype: "import type a from 'm';",
+          imptspec: "import { type a } from 'm';",
+          impeq: "import a = require('m');",
+          impalias: "import a = b.c;",
+        };
+        const redeclared = /^Identifier `a` has already been declared$/;
+        /** How many redeclarations are printed for each file. "-": something else is printed too. */
+        const count = async (files: Record<string, string>) => {
+          const { raw } = await lint({ ".oxlintrc.json": config, ...files }, ["-f", "json"]);
+          const errors = (JSON.parse(raw).diagnostics as OxlintDiagnostic[]).filter(it => it.severity === "error");
+          return (name: string) => {
+            const ofFile = errors.filter(it => it.filename === name);
+            return ofFile.every(it => redeclared.test(it.message)) ? String(ofFile.length) : "-";
+          };
+        };
+        /** Where oxlint has another error, what is printed here is not compared. */
+        const like = (expected: string[], found: string[]) =>
+          found.map((line, i) => [...line].map((cell, j) => (expected[i][j] === "-" ? "-" : cell)).join(""));
+
+        // One table for each place and kind of file. A line is the first declaration, a column the second, both in the order of
+        // `names`. A cell is how many "Identifier `a` has already been declared" oxlint 1.87 prints, or "-" if it has another error.
+        test("by two declarations: every pair, in many places", async () => {
+          const places: Record<string, string> = {
+            same: "1 2",
+            block: "{ 1 2 }",
+            nsbody: "namespace W { 1 2 }",
+            mod: "export {}; 1 2",
+            inner: "1 { 2 }",
+            outer: "{ 1 } 2",
+            deepout: "{ { 1 } 2 }",
+            fnbody: "function w() { 1 2 }",
+            fnouter: "function w() { { 1 } 2 }",
+            sblock: "class W { static { 1 2 } }",
+            sw: "switch (0) { case 0: 1 case 1: 2 }",
+            strictblock: "'use strict'; { 1 2 }",
+            strictouter: "'use strict'; { 1 } 2",
+            modblock: "export {}; { 1 2 }",
+            modouter: "export {}; { 1 } 2",
+          };
+          const tables: [extension: string, place: string, names: string, cells: string[]][] = [
+            [
+              "ts",
+              "same",
+              "var let const fn afn gfn cls using imp impns impspec iface type enum cenum ns nsv dvar dlet dconst dfn dcls denum dns dnsv sig acls imptype imptspec impeq impalias",
+              [
+                "0111111-00000110101111101110000",
+                "1111111-00000110111111101110000",
+                "1111111-00000110111111101110000",
+                "0110000-00000110001100100000000",
+                "0110000-00000110001100100000000",
+                "0110000-00000110001100100000000",
+                "1110001-00001110011101100010000",
+                "--------000----------------00--",
+                "0000000011100000000000000001111",
+                "0000000011100000000000000001111",
+                "0000000011100000000000000001111",
+                "0000000-00001110000000100000000",
+                "0000001-00011110000001100010000",
+                "1111111-00011010011111000110000",
+                "1111111-00011100111111101110000",
+                "0000000-00000000000000000000000",
+                "1110000-00000010011100000000000",
+                "0111111-00000110101111101110000",
+                "1111111-00000110111111101110000",
+                "1111111-00000110111111101110000",
+                "0110000-00000110001100100000000",
+                "1110001-00001110011101100010000",
+                "1111111-00011010011111000110000",
+                "0000000-00000000000000000000000",
+                "1110000-00000010011100000000000",
+                "0110000-00000110001100100000000",
+                "1110001-00001110011101100010000",
+                "0000000011100000000000000001111",
+                "0000000011100000000000000001111",
+                "0000000-11100000000000000001111",
+                "0000000-11100000000000000001111",
+              ],
+            ],
+            [
+              "ts",
+              "block",
+              "var let const fn afn gfn cls using iface type enum cenum ns nsv dvar dlet dconst dfn dcls denum dns dnsv sig acls",
+              [
+                "011111110011--011111--11",
+                "111111110011--111111--11",
+                "111111110011--111111--11",
+                "011000010011--011001--00",
+                "011000010011--011001--00",
+                "011000010011--011001--00",
+                "111000110111--111011--01",
+                "111111110011--111111--11",
+                "000000000111--000001--00",
+                "000000101111--000011--01",
+                "111111111101--111110--11",
+                "111111111110--111111--11",
+                "------------------------",
+                "------------------------",
+                "011111110011--011111--11",
+                "111111110011--111111--11",
+                "111111110011--111111--11",
+                "011000010011--011001--00",
+                "111000110111--111011--01",
+                "111111111101--111110--11",
+                "------------------------",
+                "------------------------",
+                "011000010011--011001--00",
+                "111000110111--111011--01",
+              ],
+            ],
+            [
+              "ts",
+              "nsbody",
+              "var let const fn afn gfn cls using iface type enum cenum ns nsv dvar dlet dconst dfn dcls denum dns dnsv sig acls",
+              [
+                "011111110011010111110111",
+                "111111110011011111110111",
+                "111111110011011111110111",
+                "011000010011000110010000",
+                "011000010011000110010000",
+                "011000010011000110010000",
+                "111000110111001110110001",
+                "111111110011011111110111",
+                "000000000111000000010000",
+                "000000101111000000110001",
+                "111111111101001111100011",
+                "111111111110011111110111",
+                "000000000000000000000000",
+                "111000010001001110000000",
+                "011111110011010111110111",
+                "111111110011011111110111",
+                "111111110011011111110111",
+                "011000010011000110010000",
+                "111000110111001110110001",
+                "111111111101001111100011",
+                "000000000000000000000000",
+                "111000010001001110000000",
+                "011000010011000110010000",
+                "111000110111001110110001",
+              ],
+            ],
+            [
+              "js",
+              "same",
+              "var let const fn afn gfn cls using imp impns impspec",
+              [
+                "0110001-111",
+                "1111111-111",
+                "1111111-111",
+                "0110001-111",
+                "0110001-111",
+                "0110001-111",
+                "1111111-111",
+                "--------111",
+                "11122211111",
+                "11122211111",
+                "11122211111",
+              ],
+            ],
+            [
+              "js",
+              "mod",
+              "var let const fn afn gfn cls using imp impns impspec",
+              [
+                "01111111111",
+                "11111111111",
+                "11111111111",
+                "11111111111",
+                "11111111111",
+                "11111111111",
+                "11111111111",
+                "11111111111",
+                "11122211111",
+                "11122211111",
+                "11122211111",
+              ],
+            ],
+            [
+              "mjs",
+              "same",
+              "var let const fn afn gfn cls using imp impns impspec",
+              [
+                "01111111111",
+                "11111111111",
+                "11111111111",
+                "11111111111",
+                "11111111111",
+                "11111111111",
+                "11111111111",
+                "11111111111",
+                "11122211111",
+                "11122211111",
+                "11122211111",
+              ],
+            ],
+            [
+              "cjs",
+              "same",
+              "var let const fn afn gfn cls using",
+              ["01100011", "11111111", "11111111", "01100011", "01100011", "01100011", "11111111", "11111111"],
+            ],
+            [
+              "js",
+              "block",
+              "var let const fn afn gfn cls using",
+              ["01111111", "11111111", "11111111", "11101111", "11111111", "11111111", "11111111", "11111111"],
+            ],
+            [
+              "js",
+              "inner",
+              "var let const fn afn gfn cls using",
+              ["00000000", "10000000", "10000000", "10000000", "10000000", "10000000", "10000000", "--------"],
+            ],
+            [
+              "js",
+              "outer",
+              "var let const fn afn gfn cls using",
+              ["0110001-", "0000000-", "0000000-", "0110001-", "0000000-", "0000000-", "0000000-", "0000000-"],
+            ],
+            [
+              "js",
+              "deepout",
+              "var let const fn afn gfn cls using",
+              ["01111111", "00000000", "00000000", "10000000", "00000000", "00000000", "00000000", "00000000"],
+            ],
+            [
+              "js",
+              "fnbody",
+              "var let const fn afn gfn cls using",
+              ["01100011", "11111111", "11111111", "01100011", "01100011", "01100011", "11111111", "11111111"],
+            ],
+            [
+              "js",
+              "fnouter",
+              "var let const fn afn gfn cls using",
+              ["01100011", "00000000", "00000000", "01100011", "00000000", "00000000", "00000000", "00000000"],
+            ],
+            [
+              "js",
+              "sblock",
+              "var let const fn afn gfn cls using",
+              ["01100011", "11111111", "11111111", "11100011", "11100011", "11100011", "11111111", "11111111"],
+            ],
+            [
+              "js",
+              "sw",
+              "var let const fn afn gfn cls using",
+              ["0111111-", "1111111-", "1111111-", "1110111-", "1111111-", "1111111-", "1111111-", "--------"],
+            ],
+            [
+              "js",
+              "strictblock",
+              "var let const fn afn gfn cls using",
+              ["01111111", "11111111", "11111111", "11111111", "11111111", "11111111", "11111111", "11111111"],
+            ],
+            [
+              "js",
+              "strictouter",
+              "var let const fn afn gfn cls using",
+              ["0110001-", "0000000-", "0000000-", "0000000-", "0000000-", "0000000-", "0000000-", "0000000-"],
+            ],
+            [
+              "js",
+              "modblock",
+              "var let const fn afn gfn cls using",
+              ["01111111", "11111111", "11111111", "11111111", "11111111", "11111111", "11111111", "11111111"],
+            ],
+            [
+              "js",
+              "modouter",
+              "var let const fn afn gfn cls using",
+              ["01111111", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+            ],
+          ];
+          const files: Record<string, string> = {};
+          const nameOf = (extension: string, place: string, first: string, second: string) =>
+            `${place}-${first}-${second}.${extension}`;
+          for (const [extension, place, names] of tables) {
+            for (const first of names.split(" ")) {
+              for (const second of names.split(" ")) {
+                files[nameOf(extension, place, first, second)] =
+                  places[place].replace("1", () => declarations[first]).replace("2", () => declarations[second]) + "\n";
+              }
+            }
+          }
+          const counted = await count(files);
+          for (const [extension, place, names, cells] of tables) {
+            const all = names.split(" ");
+            const found = all.map(first =>
+              all.map(second => counted(nameOf(extension, place, first, second))).join(""),
+            );
+            expect([extension, place, ...like(cells, found)]).toEqual([extension, place, ...cells]);
+          }
+        });
+
+        // A line is a place that has declared `a` already, a column the declaration that is put there.
+        test("by a declaration and a parameter, a catch parameter, the head of a loop, a type parameter", async () => {
+          const places: Record<string, string> = {
+            param: "function w(a) { 2 }",
+            paramblock: "function w(a) { { 2 } }",
+            parampat: "function w({ a }) { 2 }",
+            paramdef: "function w(a = 1) { 2 }",
+            rest: "function w(...a) { 2 }",
+            arrowparam: "((a) => { 2 });",
+            arrow1: "(a => { 2 });",
+            methodparam: "({ w(a) { 2 } });",
+            ctorparam: "class W { constructor(a) { 2 } }",
+            setter: "class W { set w(a) { 2 } }",
+            catch: "try {} catch (a) { 2 }",
+            catchblock: "try {} catch (a) { { 2 } }",
+            catchpat: "try {} catch ({ a }) { 2 }",
+            catchpatblock: "try {} catch ([a]) { { 2 } }",
+            forlet: "for (let a;;) { 2 }",
+            forletbody: "for (let a of []) 2",
+            forvar: "for (var a;;) { 2 }",
+            forafter: "for (var a;;) {} 2",
+            fnexprname: "(function a() { 2 });",
+            clsexprname: "(class a { static { 2 } });",
+            modparam: "export {}; function w(a) { 2 }",
+            modcatch: "export {}; try {} catch (a) { 2 }",
+            tparam: "function w<a>() { 2 }",
+            tparamarrow: "(<a,>() => { 2 });",
+            tparammethod: "class W { w<a>() { 2 } }",
+            tparamcls: "class W<a> { w() { 2 } }",
+            pprop: "class W { constructor(public a: any) { 2 } }",
+          };
+          const tables: [extension: string, places: string, names: string, cells: string[]][] = [
+            [
+              "js",
+              "param paramblock parampat paramdef rest arrowparam arrow1 methodparam ctorparam setter catch catchblock catchpat catchpatblock forlet forletbody forvar forafter fnexprname clsexprname modparam modcatch",
+              "var let const fn afn gfn cls using",
+              [
+                "01100011",
+                "00000000",
+                "01100011",
+                "01100011",
+                "01100011",
+                "01100011",
+                "01100011",
+                "01100011",
+                "01100011",
+                "01100011",
+                "01111111",
+                "00000000",
+                "11111111",
+                "10000000",
+                "10000000",
+                "1-------",
+                "00000000",
+                "0110001-",
+                "00000000",
+                "00000000",
+                "01100011",
+                "01111111",
+              ],
+            ],
+            [
+              "ts",
+              "param paramblock parampat paramdef rest arrowparam arrow1 methodparam ctorparam setter catch catchblock catchpat catchpatblock forlet forletbody forvar forafter fnexprname clsexprname modparam modcatch tparam tparamarrow tparammethod tparamcls pprop",
+              "var let const fn afn gfn cls using iface type enum cenum ns nsv dvar dlet dconst dfn dcls denum dns dnsv sig acls",
+              [
+                "011111110011--011111--11",
+                "000000000000--000000--00",
+                "011111110011--011111--11",
+                "011111110011--011111--11",
+                "011111110011--011111--11",
+                "011111110011--011111--11",
+                "011111110011--011111--11",
+                "011111110011--011111--11",
+                "011111110011--011111--11",
+                "011111110011--011111--11",
+                "011111110011--011111--11",
+                "000000000000--000000--00",
+                "111111110011--111111--11",
+                "100000000000--100000--00",
+                "100000000000--100000--00",
+                "1----------1------------",
+                "000000000000--000000--00",
+                "0111111-0011010111110111",
+                "000000000000--000000--00",
+                "000000000000--000000--00",
+                "011111110011--011111--11",
+                "011111110011--011111--11",
+                "000000101111--000011--01",
+                "000000101111--000011--01",
+                "000000101111--000011--01",
+                "000000000000--000000--00",
+                "011111110011--011111--11",
+              ],
+            ],
+          ];
+          const files: Record<string, string> = {};
+          for (const [extension, lines, names] of tables) {
+            for (const place of lines.split(" ")) {
+              for (const name of names.split(" ")) {
+                files[`${place}-${name}.${extension}`] = places[place].replace("2", () => declarations[name]) + "\n";
+              }
+            }
+          }
+          const counted = await count(files);
+          for (const [extension, lines, names, cells] of tables) {
+            const found = lines.split(" ").map(place =>
+              names
+                .split(" ")
+                .map(name => counted(`${place}-${name}.${extension}`))
+                .join(""),
+            );
+            expect([extension, ...like(cells, found)]).toEqual([extension, ...cells]);
+          }
+        });
+
+        // Each row is what oxlint 1.87 prints: the name, then where it is declared first and where again. "" means that it lints
+        // the file.
+        test("has oxlint's labels", async () => {
+          const rows: ErrorRow[] = [
+            ["ts", "function f<T>() { type T = 1; }", "T 11+1,23+1"],
+            ["ts", "function f<T>() { interface T {} }", "T 11+1,28+1"],
+            ["ts", "function f<T>() { class T {} }", "T 11+1,24+1"],
+            ["ts", "function f<T>() { enum T {} }", "T 11+1,23+1"],
+            ["ts", "function f<T>() { let T; }", ""],
+            ["ts", "function f<T>(T) {}", ""],
+            ["ts", "function f<T>() { function T() {} }", ""],
+            ["ts", "const f = <T,>() => { type T = 1; };", "T 11+1,27+1"],
+            ["ts", "class A { m<T>() { type T = 1; } }", "T 12+1,24+1"],
+            ["ts", "class A<T> { m() { type T = 1; } }", ""],
+            ["ts", "class A<A> {}", ""],
+            ["ts", "interface A<A> {}", ""],
+            ["ts", "type A<A> = A;", ""],
+            ["ts", "(class A<A> {});", "A 7+1,9+1"],
+            ["ts", "function f<f>() {}", ""],
+            ["ts", "(function f<f>() {});", ""],
+            ["ts", "enum E { A, A }", "A 9+1,12+1"],
+            ["ts", "enum E { A, 'A' }", "A 9+1,12+3"],
+            ["ts", "enum E { 'A', 'A' }", "A 9+3,14+3"],
+            ["ts", "enum E { A } enum E { A }", ""],
+            ["ts", "const enum E { A, A }", "A 15+1,18+1"],
+            ["ts", "declare enum E { A, A }", "A 17+1,20+1"],
+            ["ts", "enum E { A, B, A, B }", "A 9+1,15+1, B 12+1,18+1"],
+            ["ts", "enum E { E }", ""],
+            ["ts", "enum E { ['A'], A }", "A 10+3,16+1"],
+            ["ts", "namespace N { var a; let a; }", "a 18+1,25+1"],
+            ["ts", "namespace N { { var a; } let a; }", "a 20+1,29+1"],
+            ["ts", "namespace N { var a; } let a;", ""],
+            ["ts", "let a; namespace N { var a; }", ""],
+            ["ts", "namespace N { export let a; export let a; }", "a 25+1,39+1"],
+            ["ts", "namespace N {} let N;", ""],
+            ["ts", "let N; namespace N {}", ""],
+            ["ts", "namespace N { let x; } let N;", "N 10+1,27+1"],
+            ["ts", "let N; namespace N { let x; }", "N 4+1,17+1"],
+            ["ts", "namespace N { type x = 1; } let N;", ""],
+            ["ts", "var N; namespace N { let x; }", "N 4+1,17+1"],
+            ["ts", "namespace N { let x; } var N;", "N 10+1,27+1"],
+            ["ts", "const enum N {} namespace N { let x; }", "N 11+1,26+1"],
+            ["ts", "namespace N { let x; } const enum N {}", "N 10+1,34+1"],
+            ["ts", "namespace A.B {} let A;", ""],
+            ["ts", "namespace A.B { let x; } let A;", "A 10+1,29+1"],
+            ["ts", "namespace A.B {} let B;", ""],
+            ["ts", "namespace A.B { let x } namespace A.B { let x }", ""],
+            ["ts", "declare module N { let x: any; } let N;", "N 15+1,37+1"],
+            ["ts", "declare namespace N { let x: any; } declare let N: any;", "N 18+1,48+1"],
+            ["ts", "function N() {} namespace N { let x; }", ""],
+            ["ts", "namespace N { let x; } function N() {}", ""],
+            ["ts", "class N {} namespace N { let x; }", ""],
+            ["ts", "namespace N { let x; } class N {}", ""],
+            ["ts", "enum N {} namespace N { let x; }", ""],
+            ["ts", "namespace N { let x; } enum N {}", ""],
+            ["ts", "import N from 'n'; namespace N { let x; }", ""],
+            ["ts", "declare global { let a: any; let a: any; } export {};", "a 21+1,33+1"],
+            ["ts", "declare module 'm' { let a: any; let a: any; }", "a 25+1,37+1"],
+            ["ts", "declare module 'm' { var a: any; let a: any; }", "a 25+1,37+1"],
+            ["ts", "class A {} let A;", "A 6+1,15+1"],
+            ["js", "class A {} let A;", "A 6+1,15+1"],
+            ["ts", "let A; class A {}", "A 4+1,13+1"],
+            ["ts", "class A {} enum A {}", "A 6+1,16+1"],
+            ["ts", "class A {} type A = 1;", "A 6+1,16+1"],
+            ["ts", "interface A {} enum A {}", "A 10+1,20+1"],
+            ["ts", "interface A {} type A = 1;", "A 10+1,20+1"],
+            ["ts", "interface A {} class A {} class A {}", "A 10+1,32+1"],
+            ["ts", "function A() {} class A {}", ""],
+            ["js", "function A() {} class A {}", "A 9+1,22+1"],
+            ["ts", "class A {} function A() {} let A;", "A 6+1,31+1"],
+            ["js", "class A {} function A() {} let A;", "A 6+1,20+1, A 6+1,31+1"],
+            ["ts", "function A() {} enum A {}", "A 9+1,21+1"],
+            ["ts", "var A; enum A {}", "A 4+1,12+1"],
+            ["ts", "enum A {} var A;", "A 5+1,14+1"],
+            ["ts", "var A; class A {}", "A 4+1,13+1"],
+            ["js", "var A; class A {}", "A 4+1,13+1"],
+            ["ts", "var A; interface A {}", ""],
+            ["ts", "var A; type A = 1;", ""],
+            ["ts", "let A; interface A {}", ""],
+            ["ts", "let A; type A = 1; let A;", "A 4+1,23+1"],
+            ["ts", "type A = 1; let A; type A = 2;", "A 5+1,24+1"],
+            ["ts", "import a from 'a'; import a = require('b');", "a 7+1,26+1"],
+            ["ts", "import a = require('a'); import a from 'b';", "a 7+1,32+1"],
+            ["ts", "import type a from 'a'; import a from 'b';", "a 12+1,31+1"],
+            ["ts", "import { type a, a } from 'a';", "a 14+1,17+1"],
+            ["ts", "import { a } from 'a'; export import a = N.b;", "a 9+1,37+1"],
+            ["ts", "import a from 'a'; enum a {}", ""],
+            ["ts", "import a from 'a'; class a {} class a {}", "a 7+1,36+1"],
+            ["js", "import a from 'a'; class a {} class a {}", "a 7+1,36+1, a 7+1,36+1"],
+            ["ts", "import a from 'a'; let a; let a;", "a 7+1,30+1"],
+            ["js", "import a from 'a'; let a; let a;", "a 7+1,30+1, a 7+1,30+1"],
+            ["ts", "let a; import a from 'a';", ""],
+            ["js", "let a; import a from 'a';", "a 4+1,14+1"],
+            ["ts", "let a; import a from 'a'; import a from 'b';", "a 4+1,33+1"],
+            ["js", "let a; import a from 'a'; import a from 'b';", "a 4+1,33+1, a 4+1,33+1"],
+            ["ts", "let a; let a; let a;", "a 4+1,11+1, a 4+1,18+1"],
+            ["ts", "let a; var a; let a;", "a 4+1,11+1, a 4+1,18+1"],
+            ["ts", "var a; let a; var a;", "a 4+1,11+1, a 4+1,18+1"],
+            ["js", "var a; let a; var a;", "a 4+1,11+1, a 4+1,18+1"],
+            ["ts", "let a, a, a;", "a 4+1,7+1, a 4+1,10+1"],
+            ["ts", "let a; { var a; var a; }", "a 4+1,13+1, a 4+1,20+1"],
+            ["ts", "{ let a; { var a; } { var a; } }", "a 6+1,15+1, a 6+1,26+1"],
+            ["js", "{ let a; { var a; } { var a; } }", "a 6+1,15+1, a 6+1,26+1"],
+            ["ts", "{ var a; } { let a; }", ""],
+            ["ts", "{ let a; } { var a; }", ""],
+            ["ts", "{ { var a; } let a; }", "a 8+1,17+1"],
+            ["js", "{ { var a; } let a; }", "a 8+1,17+1"],
+            ["ts", "{ { { var a; } } let a; }", "a 10+1,21+1"],
+            ["ts", "{ let a; { { var a; } } }", "a 6+1,17+1"],
+            ["ts", "function f() { { var a; } let a; }", "a 21+1,30+1"],
+            ["js", "function f() { { var a; } let a; }", "a 21+1,30+1"],
+            ["ts", "function f() { let a; { var a; } }", "a 19+1,28+1"],
+            ["ts", "{ function g() { var a; } let a; }", ""],
+            ["ts", "{ let a; function g() { var a; } }", ""],
+            ["js", "{ let a; function g() { var a; } }", ""],
+            ["ts", "{ let a; (() => { var a; }); }", ""],
+            ["ts", "{ let a; class C { static { var a; } } }", ""],
+            ["ts", "{ let a; class C { m() { var a; } } }", ""],
+            ["js", "{ let a; class C { m() { var a; } } }", ""],
+            ["ts", "for (let a;;) { var a; }", "a 9+1,20+1"],
+            ["ts", "for (let a;;) { let a; }", ""],
+            ["js", "for (let a;;) { let a; }", ""],
+            ["ts", "for (var a;;) { let a; }", ""],
+            ["ts", "for (var a;;) {} let a;", "a 9+1,21+1"],
+            ["ts", "for (let a of []) { { var a; } }", "a 9+1,26+1"],
+            ["js", "for (let a of []) { { var a; } }", "a 9+1,26+1"],
+            ["ts", "for (const a in {}) var a;", "a 11+1,24+1"],
+            ["ts", "for (let a;;) var a;", "a 9+1,18+1"],
+            ["ts", "let a; for (var a;;) {}", "a 4+1,16+1"],
+            ["js", "let a; for (var a;;) {}", "a 4+1,16+1"],
+            ["ts", "let a; for (var a of []) {}", "a 4+1,16+1"],
+            ["ts", "for (let [a, a] of []) {}", "a 10+1,13+1"],
+            ["ts", "for (var a of []) { var a; }", ""],
+            ["js", "for (var a of []) { var a; }", ""],
+            ["ts", "for (let a of []) for (let a of []) {}", ""],
+            ["ts", "switch (1) { case 1: var a; case 2: let a; }", "a 25+1,40+1"],
+            ["ts", "switch (1) { case 1: let a; case 2: var a; }", "a 25+1,40+1"],
+            ["js", "switch (1) { case 1: let a; case 2: var a; }", "a 25+1,40+1"],
+            ["ts", "switch (1) { case 1: { var a; } default: let a; }", "a 27+1,45+1"],
+            ["ts", "switch (1) { case 1: let a; } let a;", ""],
+            ["ts", "let a; switch (1) { case 1: var a; }", "a 4+1,32+1"],
+            ["js", "let a; switch (1) { case 1: var a; }", "a 4+1,32+1"],
+            ["ts", "switch (1) { case 1: class A {} default: class A {} }", "A 27+1,47+1"],
+            ["ts", "switch (1) { case 1: function f() {} default: let f; }", "f 30+1,50+1"],
+            ["ts", "try {} catch (e) { { var e; } }", ""],
+            ["js", "try {} catch (e) { { var e; } }", ""],
+            ["ts", "try {} catch (e) { { let e; } }", ""],
+            ["ts", "try {} catch (e) { const e = 1; }", "e 14+1,25+1"],
+            ["ts", "try {} catch (e) { class e {} }", "e 14+1,25+1"],
+            ["js", "try {} catch (e) { class e {} }", "e 14+1,25+1"],
+            ["ts", "try {} catch ({ e }) { let e; }", "e 16+1,27+1"],
+            ["ts", "try {} catch ({ e }) { var e; }", "e 16+1,27+1"],
+            ["ts", "try {} catch ([e]) { { var e; } }", "e 15+1,27+1"],
+            ["js", "try {} catch ([e]) { { var e; } }", "e 15+1,27+1"],
+            ["ts", "try {} catch (e) { var e; var e; }", ""],
+            ["ts", "try {} catch (e) { var e; let e; }", "e 14+1,30+1"],
+            ["ts", "try {} catch (e) {} let e;", ""],
+            ["js", "try {} catch (e) {} let e;", ""],
+            ["ts", "let e; try {} catch (e) {}", ""],
+            ["ts", "let e; try {} catch (e) { var e; }", ""],
+            ["ts", "var e; try {} catch (e) { var e; }", ""],
+            ["js", "var e; try {} catch (e) { var e; }", ""],
+            ["ts", "try {} catch (e) { for (var e;;) {} }", ""],
+            ["ts", "try {} catch (e) { for (var e in {}) {} }", ""],
+            ["ts", "try {} catch (e) { for (let e of []) {} }", ""],
+            ["js", "try {} catch (e) { for (let e of []) {} }", ""],
+            ["ts", "try {} catch (e) { function e() {} function e() {} }", "e 14+1,28+1, e 14+1,44+1"],
+            ["js", "try {} catch (e) { function e() {} function e() {} }", "e 14+1,28+1"],
+            ["mjs", "try {} catch (e) { function e() {} function e() {} }", "e 14+1,28+1, e 28+1,44+1"],
+            ["ts", "try {} catch (e) { type e = 1; }", ""],
+            ["ts", "try {} catch (e) { enum e {} }", "e 14+1,24+1"],
+            ["ts", "try {} catch (e) { interface e {} }", ""],
+            ["ts", "try { let a; let a; } catch {}", "a 10+1,17+1"],
+            ["js", "try { let a; let a; } catch {}", "a 10+1,17+1"],
+            ["ts", "try {} catch { let a; let a; }", "a 19+1,26+1"],
+            ["ts", "try {} finally { let a; let a; }", "a 21+1,28+1"],
+            ["ts", "try {} catch (e) { try {} catch (e) {} }", ""],
+            ["js", "try {} catch (e) { try {} catch (e) {} }", ""],
+            ["ts", "try {} catch (e) { try {} catch (e) { var e; } }", ""],
+            ["ts", "try {} catch ([e]) { try {} catch (e) { var e; } }", ""],
+            ["ts", "function f(a) { { let a; } }", ""],
+            ["js", "function f(a) { { let a; } }", ""],
+            ["ts", "function f(a) { { var a; } }", ""],
+            ["ts", "function f(a) { const a = 1; }", "a 11+1,22+1"],
+            ["ts", "function f(a) { class a {} }", "a 11+1,22+1"],
+            ["js", "function f(a) { class a {} }", "a 11+1,22+1"],
+            ["ts", "function f(a) { enum a {} }", "a 11+1,21+1"],
+            ["ts", "function f(a) { type a = 1; }", ""],
+            ["ts", "function f(a) { interface a {} }", ""],
+            ["ts", "function f([a]) { var a; }", ""],
+            ["js", "function f([a]) { var a; }", ""],
+            ["ts", "function f(...a) { let a; }", "a 14+1,23+1"],
+            ["ts", "function f(a = 1) { let a; }", "a 11+1,24+1"],
+            ["ts", "function f(a, b = () => { let a; }) {}", ""],
+            ["js", "function f(a, b = () => { let a; }) {}", ""],
+            ["ts", "function f(a, b = function (a) {}) {}", ""],
+            ["ts", "(a) => { let a; };", "a 1+1,13+1"],
+            ["ts", "a => { let a; };", "a 0+1,11+1"],
+            ["js", "a => { let a; };", "a 0+1,11+1"],
+            ["ts", "async a => { let a; };", "a 6+1,17+1"],
+            ["ts", "async (a) => { let a; };", "a 7+1,19+1"],
+            ["ts", "(a) => { var a; };", ""],
+            ["js", "(a) => { var a; };", ""],
+            ["ts", "({ m(a) { let a; } });", "a 5+1,14+1"],
+            ["ts", "({ set m(a) { let a; } });", "a 9+1,18+1"],
+            ["ts", "class A { m(a) { let a; } }", "a 12+1,21+1"],
+            ["js", "class A { m(a) { let a; } }", "a 12+1,21+1"],
+            ["ts", "class A { constructor(a) { let a; } }", "a 22+1,31+1"],
+            ["ts", "class A { constructor(public a) { let a; } }", "a 29+1,38+1"],
+            ["ts", "class A { set m(a) { let a; } }", "a 16+1,25+1"],
+            ["js", "class A { set m(a) { let a; } }", "a 16+1,25+1"],
+            ["ts", "function f(f) {}", ""],
+            ["ts", "function f() { let f; }", ""],
+            ["ts", "function f() { var f; }", ""],
+            ["js", "function f() { var f; }", ""],
+            ["ts", "(function f(f) {});", ""],
+            ["ts", "(function f() { let f; let f; });", "f 20+1,27+1"],
+            ["ts", "(function f() { function f() {} });", ""],
+            ["js", "(function f() { function f() {} });", ""],
+            ["ts", "(function f() { class f {} });", ""],
+            ["ts", "function f(this: any, a) { let a; }", "a 22+1,31+1"],
+            ["ts", "function f(a): void; function f(a) { let a; }", "a 32+1,41+1"],
+            ["ts", "declare function f(a, b): void; let a;", ""],
+            ["ts", "function f(a) { function a() {} function a() {} }", "a 11+1,25+1, a 11+1,41+1"],
+            ["js", "function f(a) { function a() {} function a() {} }", ""],
+            ["ts", "function f(a) { var a; function a() {} }", "a 11+1,32+1"],
+            ["js", "function f(a) { var a; function a() {} }", ""],
+            ["ts", "function f() { var a; function a() {} }", "a 19+1,31+1"],
+            ["js", "function f() { var a; function a() {} }", ""],
+            ["ts", "function f() { function a() {} var a; }", ""],
+            ["ts", "function f() { function a() {} function a() {} }", ""],
+            ["js", "function f() { function a() {} function a() {} }", ""],
+            ["ts", "function f() { { function a() {} var a; } }", ""],
+            ["js", "function f() { { function a() {} var a; } }", "a 26+1,37+1"],
+            ["ts", "function f() { { var a; function a() {} } }", "a 21+1,33+1"],
+            ["ts", "{ var a; function a() {} }", "a 6+1,18+1"],
+            ["js", "{ var a; function a() {} }", "a 6+1,18+1"],
+            ["ts", "{ function a() {} } var a;", ""],
+            ["ts", "{ function a() {} } let a;", ""],
+            ["js", "{ function a() {} } let a;", "a 11+1,24+1"],
+            ["mjs", "{ function a() {} } let a;", ""],
+            ["ts", "let a; { function a() {} }", ""],
+            ["js", "let a; { function a() {} }", ""],
+            ["ts", "{ function a() {} } function a() {}", ""],
+            ["ts", "var a; { function a() {} }", ""],
+            ["ts", "{ { function a() {} } let a; }", ""],
+            ["js", "{ { function a() {} } let a; }", ""],
+            ["ts", "{ let a; { function a() {} } }", ""],
+            ["ts", "if (1) function a() {} let a;", "a 16+1,27+1"],
+            ["ts", "let a; if (1) function a() {}", "a 4+1,23+1"],
+            ["js", "let a; if (1) function a() {}", ""],
+            ["ts", "l: function a() {} let a;", "a 12+1,23+1"],
+            ["ts", "class A { static { let a; { var a; } } }", "a 23+1,32+1"],
+            ["ts", "class A { static { { var a; } let a; } }", "a 25+1,34+1"],
+            ["js", "class A { static { { var a; } let a; } }", "a 25+1,34+1"],
+            ["ts", "let a; class A { static { var a; } }", ""],
+            ["ts", "class A { static { function a() {} function a() {} } }", ""],
+            ["ts", "class A { static { function a() {} var a; } }", ""],
+            ["js", "class A { static { function a() {} var a; } }", "a 28+1,39+1"],
+            ["ts", "class A { static { var a; function a() {} } }", "a 23+1,35+1"],
+            ["js", "class A { static { var a; function a() {} } }", ""],
+            ["ts", "class A { static { let A; } }", ""],
+            ["ts", "class A { static { class A {} } }", ""],
+            ["js", "class A { static { class A {} } }", ""],
+            ["ts", "export let a; export let a;", "a 11+1,25+1"],
+            ["ts", "export function f() {} export function f() {}", ""],
+            ["ts", "export class A {} export class A {}", "A 13+1,31+1"],
+            ["ts", "export default function f() {} let f;", "f 24+1,35+1"],
+            ["ts", "export default class A {} let A;", "A 21+1,30+1"],
+            ["ts", "export default class A {} class A {}", "A 21+1,32+1"],
+            ["js", "export default class A {} class A {}", "A 21+1,32+1"],
+            ["ts", "export default function f() {} function f() {}", ""],
+            ["js", "export default function f() {} function f() {}", "f 24+1,40+1"],
+            ["ts", "export const a = 1; var a;", "a 13+1,24+1"],
+            ["ts", "export var a; export var a;", ""],
+            ["ts", "export enum E {} export enum E {}", ""],
+            ["ts", "export type T = 1; export type T = 2;", "T 12+1,31+1"],
+            ["ts", "export interface I {} export type I = 1;", "I 17+1,34+1"],
+            ["ts", "export namespace N { let x } export let N;", "N 17+1,40+1"],
+            ["ts", "export declare let a: any; export declare let a: any;", "a 19+1,46+1"],
+            ["ts", "export import a = N.a; let a;", ""],
+            ["ts", "using a = b; using a = c; export {};", "a 6+1,19+1"],
+            ["ts", "{ using a = b; let a; }", "a 8+1,19+1"],
+            ["ts", "{ await using a = b; var a; } export {};", "a 14+1,25+1"],
+            ["js", "{ await using a = b; var a; } export {};", "a 14+1,25+1"],
+            ["ts", "declare const a: any; declare const a: any;", "a 14+1,36+1"],
+            ["ts", "declare var a: any; declare let a: any;", "a 12+1,32+1"],
+            ["ts", "declare function f(): void; declare let f: any;", "f 17+1,40+1"],
+            ["ts", "declare function f(): void; declare var f: any;", ""],
+            ["ts", "declare var f: any; declare function f(): void;", "f 12+1,37+1"],
+            ["ts", "declare class A {} declare function A(): void;", ""],
+            ["ts", "declare class A {} interface A {} declare namespace A {}", ""],
+            ["ts", "abstract class A {} abstract class A {}", "A 15+1,35+1"],
+            ["ts", "let \\u0061; let a;", "a 4+6,16+1"],
+            ["js", "let \\u0061; let a;", "a 4+6,16+1"],
+            ["ts", "let a; let \\u{61};", "a 4+1,11+6"],
+            ["ts", "var a; let \\u0061;", "a 4+1,11+6"],
+            ["ts", "let undefined; let undefined;", "undefined 4+9,19+9"],
+            ["js", "let undefined; let undefined;", "undefined 4+9,19+9"],
+            ["ts", "let NaN; var NaN;", "NaN 4+3,13+3"],
+            ["ts", "let a; function a(): void;", "a 4+1,16+1"],
+            ["ts", "function a(): void; let a;", "a 9+1,24+1"],
+            ["ts", "var a; function a() {} export {};", "a 4+1,16+1"],
+            ["ts", "function a() {} var a = 1; export {};", ""],
+            ["js", "function a() {} var a = 1; export {};", "a 9+1,20+5"],
+            ["ts", "{ function a() {} var a = 1; }", ""],
+            ["js", "{ function a() {} var a = 1; }", "a 11+1,22+5"],
+            ["ts", "{ function a() {} var [a] = []; }", ""],
+            ["js", "{ function a() {} var [a] = []; }", "a 11+1,22+8"],
+            ["ts", "{ function a() {} { var a; } }", ""],
+            ["js", "{ function a() {} { var a; } }", "a 11+1,24+1"],
+            ["ts", "{ { function a() {} } var a; }", ""],
+            ["js", "{ { function a() {} } var a; }", "a 13+1,26+1"],
+            ["mjs", "{ { function a() {} } var a; }", ""],
+            ["ts", "function f() { { function a() {} } let a; }", ""],
+            ["js", "function f() { { function a() {} } let a; }", "a 26+1,39+1"],
+            ["mjs", "function f() { { function a() {} } let a; }", ""],
+            ["ts", "function f() { let a; { function a() {} } }", ""],
+            ["ts", '"use strict"; { function a() {} } let a;', ""],
+            ["js", '"use strict"; { function a() {} } let a;', ""],
+            ["ts", '"use strict"; function a() {} function a() {}', ""],
+            ["mjs", '"use strict"; function a() {} function a() {}', "a 23+1,39+1"],
+            ["ts", 'function f() { "use strict"; { function a() {} function a() {} } }', ""],
+            ["js", 'function f() { "use strict"; { function a() {} function a() {} } }', "a 40+1,56+1"],
+            ["ts", 'function f() { "use strict"; function a() {} function a() {} }', ""],
+            ["js", 'function f() { "use strict"; function a() {} function a() {} }', ""],
+            ["ts", "{ function a() {} async function a() {} }", ""],
+            ["js", "{ function a() {} async function a() {} }", "a 11+1,33+1"],
+            ["ts", "{ async function a() {} function a() {} }", ""],
+            ["js", "{ async function a() {} function a() {} }", "a 17+1,33+1"],
+            ["ts", "{ function a() {} function a() {} async function a() {} }", ""],
+            ["js", "{ function a() {} function a() {} async function a() {} }", "a 27+1,49+1"],
+            ["mjs", "{ function a() {} function a() {} async function a() {} }", "a 11+1,27+1, a 27+1,49+1"],
+            ["ts", "{ async function a() {} function a() {} function a() {} }", ""],
+            ["js", "{ async function a() {} function a() {} function a() {} }", "a 17+1,33+1, a 17+1,49+1"],
+            ["mjs", "{ async function a() {} function a() {} function a() {} }", "a 17+1,33+1, a 33+1,49+1"],
+            ["ts", "{ function* a() {} function* a() {} }", ""],
+            ["js", "{ function* a() {} function* a() {} }", "a 12+1,29+1"],
+            ["ts", "{ function a() {} class a {} }", ""],
+            ["js", "{ function a() {} class a {} }", "a 11+1,24+1"],
+            ["ts", "{ class a {} function a() {} }", ""],
+            ["js", "{ class a {} function a() {} }", "a 8+1,22+1"],
+            ["ts", "{ function a() {} let a; }", "a 11+1,22+1"],
+            ["ts", "{ var a; function a() {} function a() {} }", "a 6+1,18+1, a 6+1,34+1"],
+            ["js", "{ var a; function a() {} function a() {} }", "a 6+1,18+1"],
+            ["mjs", "{ var a; function a() {} function a() {} }", "a 6+1,18+1, a 18+1,34+1"],
+            ["ts", "switch (1) { case 1: function a() {} case 2: var a; }", ""],
+            ["js", "switch (1) { case 1: function a() {} case 2: var a; }", "a 30+1,49+1"],
+            ["ts", "switch (1) { case 1: async function a() {} case 2: function a() {} }", ""],
+            ["js", "switch (1) { case 1: async function a() {} case 2: function a() {} }", "a 36+1,60+1"],
+            ["ts", "if (1) function a() {} var a;", ""],
+            ["js", "if (1) function a() {} var a;", ""],
+            ["ts", "if (1) function a() {} function a() {}", ""],
+            ["ts", "if (1) function a() {} else function a() {} let a;", "a 16+1,48+1"],
+            ["ts", "if (1) { function a() {} } let a;", ""],
+            ["js", "if (1) { function a() {} } let a;", "a 18+1,31+1"],
+            ["mjs", "if (1) { function a() {} } let a;", ""],
+            ["ts", "while (0) { function a() {} } const a = 1;", ""],
+            ["js", "while (0) { function a() {} } const a = 1;", "a 21+1,36+1"],
+            ["mjs", "while (0) { function a() {} } const a = 1;", ""],
+            ["ts", "for (;;) { function a() {} break; } let a;", ""],
+            ["js", "for (;;) { function a() {} break; } let a;", "a 20+1,40+1"],
+            ["mjs", "for (;;) { function a() {} break; } let a;", ""],
+            ["ts", "try { function a() {} } catch {} let a;", ""],
+            ["js", "try { function a() {} } catch {} let a;", "a 15+1,37+1"],
+            ["mjs", "try { function a() {} } catch {} let a;", ""],
+            ["ts", "try {} catch (a) { function a() {} }", "a 14+1,28+1"],
+            ["ts", "try {} catch (a) { { function a() {} } }", ""],
+            ["ts", "try {} catch ({ a }) { function a() {} }", "a 16+1,32+1"],
+            ["js", "try {} catch ({ a }) { function a() {} }", "a 16+1,32+1"],
+            ["ts", "l: { function a() {} } let a;", ""],
+            ["js", "l: { function a() {} } let a;", "a 14+1,27+1"],
+            ["mjs", "l: { function a() {} } let a;", ""],
+            ["ts", 'import a from "a"; { var a; }', ""],
+            ["js", 'import a from "a"; { var a; }', "a 7+1,25+1"],
+            ["ts", 'import a from "a"; { let a; }', ""],
+            ["js", 'import a from "a"; { let a; }', ""],
+            ["ts", 'import a from "a"; { function a() {} }', ""],
+            ["ts", 'import a from "a"; function f(a) {}', ""],
+            ["ts", 'import a from "a"; var a; var a;', ""],
+            ["js", 'import a from "a"; var a; var a;', "a 7+1,30+1"],
+            ["ts", 'import a from "a"; import b from "b"; let a, b;', ""],
+            ["js", 'import a from "a"; import b from "b"; let a, b;', "b 26+1,45+1, a 7+1,42+1"],
+            ["ts", 'import { a, b } from "a"; class a {} function b() {}', ""],
+            ["js", 'import { a, b } from "a"; class a {} function b() {}', "b 12+1,46+1, b 12+1,46+1, a 9+1,32+1"],
+            ["ts", 'import a from "a"; try {} catch (a) {}', ""],
+            ["js", 'import a from "a"; try {} catch (a) {}', ""],
+            ["ts", 'var a; import a from "a";', ""],
+            ["js", 'var a; import a from "a";', "a 4+1,14+1"],
+            ["ts", 'function a() {} import a from "a";', ""],
+            ["js", 'function a() {} import a from "a";', "a 9+1,23+1"],
+            ["ts", 'class a {} import a from "a";', ""],
+            ["js", 'class a {} import a from "a";', "a 6+1,18+1"],
+            ["ts", 'import * as a from "a"; import * as a from "b";', "a 12+1,36+1"],
+            ["ts", 'import a, * as a from "a";', "a 7+1,15+1"],
+            ["ts", "let a; let b; let a; let b;", "a 4+1,18+1, b 11+1,25+1"],
+            ["js", "let a; let b; let a; let b;", "a 4+1,18+1, b 11+1,25+1"],
+            ["ts", "let a; { let a; let a; } let a;", "a 13+1,20+1, a 4+1,29+1"],
+            ["ts", "function f() { let a; let a; } function g() { let a; let a; }", "a 19+1,26+1, a 50+1,57+1"],
+            ["ts", "let a; function f() { var a; let a; }", "a 26+1,33+1"],
+            ["js", "let a; function f() { var a; let a; }", "a 26+1,33+1"],
+            ["ts", "const [a, { a: b, b: a }] = [];", "a 7+1,21+1"],
+            ["ts", "let a = () => { let a; let a; };", "a 20+1,27+1"],
+            ["ts", "let a = function a() { let a; };", ""],
+            ["js", "let a = function a() { let a; };", ""],
+            ["ts", "class A { m() { let a; var a; } n() { var b; let b; } }", "a 20+1,27+1, b 42+1,49+1"],
+            ["ts", "var a, a, a; let a;", "a 4+1,17+1"],
+            ["ts", "let a; var a, a;", "a 4+1,11+1, a 4+1,14+1"],
+            ["js", "let a; var a, a;", "a 4+1,11+1, a 4+1,14+1"],
+            ["ts", "let a; for (var a, a;;) {}", "a 4+1,16+1, a 4+1,19+1"],
+            ["ts", "function f(a, b) { let a, b; }", "a 11+1,23+1, b 14+1,26+1"],
+            ["ts", "function f(a) { let a; let a; }", "a 11+1,20+1, a 11+1,27+1"],
+            ["js", "function f(a) { let a; let a; }", "a 11+1,20+1, a 11+1,27+1"],
+            ["ts", "function f({ a, b: [c] }) { const c = 1; var a; let b; }", "c 20+1,34+1"],
+            ["ts", "function f(a = () => { let a; }) { var a; }", ""],
+            ["ts", "(function (a) { let a; });", "a 11+1,20+1"],
+            ["js", "(function (a) { let a; });", "a 11+1,20+1"],
+            ["ts", "(function a(a) { let a; });", "a 12+1,21+1"],
+            ["ts", "(a, b) => { const b = 1; };", "b 4+1,18+1"],
+            ["ts", "function f(arguments) { let arguments; }", "arguments 11+9,28+9"],
+            ["js", "function f(arguments) { let arguments; }", "arguments 11+9,28+9"],
+            ["ts", "function f() { var arguments; let arguments; }", "arguments 19+9,34+9"],
+            ["ts", "class A {} class A {} class A {}", "A 6+1,17+1, A 6+1,28+1"],
+            ["ts", "class A {} var A; let A;", "A 6+1,15+1, A 6+1,22+1"],
+            ["js", "class A {} var A; let A;", "A 6+1,15+1, A 6+1,22+1"],
+            ["ts", "(class A { static { let A; var A; } });", "A 24+1,31+1"],
+            ["ts", "class A { static { let a; } static { let a; } }", ""],
+            ["ts", "class A { static { var a; } static { let a; } }", ""],
+            ["js", "class A { static { var a; } static { let a; } }", ""],
+            ["ts", "let a; a: ;", ""],
+            ["ts", "label: { let label; }", ""],
+            ["js", "label: { let label; }", ""],
+          ];
+          const short = (message: string) =>
+            /^Identifier `(.*)` has already been declared$/.exec(message)?.[1] ?? message;
+          const { found, diagnostics } = await withErrorsFound(rows, short, config);
+          expect(found).toEqual(rows);
+          for (const { labels } of diagnostics) {
+            expect(labels.map(it => it.label?.replace(/^`.*` /, ""))).toEqual([
+              "has already been declared here",
+              "It can not be redeclared here",
+            ]);
+          }
+        });
+
+        // "twice": "Duplicated export 'a'". "defaults": TS(2528), "A module cannot have multiple default exports.". "undefined":
+        // "Export 'a' is not defined", with the name of its help, "Did you mean 'b'?", in parentheses. TypeScript files have none
+        // of the three.
+        test("and what a JavaScript module exports twice, or doesn't declare", async () => {
+          const rows: ErrorRow[] = [
+            ["js", "export const a = 1; export const a = 2;", "twice a 13+1,33+1"],
+            ["ts", "export const a = 1; export const a = 2;", "declared a 13+1,33+1"],
+            ["js", "export { nope };", "undefined nope 9+4"],
+            ["js", "export default 1; export default 2;", "defaults 7+7,25+7"],
+            ["ts", "export default 1; export default 2;", ""],
+            ["js", "const a = 1; export { a, a };", "twice a 22+1,25+1"],
+            ["js", "const a = 1; export { a }; export { a };", "twice a 22+1,36+1"],
+            ["ts", "const a = 1; export { a }; export { a };", ""],
+            ["js", "const a = 1, b = 2; export { a as c, b as c };", "twice c 34+1,42+1"],
+            ["js", "const a = 1; export { a as default }; export default 2;", "defaults 27+7,45+7"],
+            ["ts", "const a = 1; export { a as default }; export default 2;", ""],
+            ["js", "export { a } from 'a'; export { a } from 'b';", "twice a 9+1,32+1"],
+            ["js", "export * as a from 'a'; export const a = 1;", "twice a 12+1,37+1"],
+            ["ts", "export * as a from 'a'; export const a = 1;", ""],
+            ["js", "export * from 'a'; export * from 'b';", ""],
+            ["js", "export function f(){} export function f(){}", "twice f 16+1,38+1"],
+            ["ts", "export function f(){} export function f(){}", ""],
+            ["js", "export { f }; function f(){}", ""],
+            ["js", "export { a }; var a;", ""],
+            ["ts", "export { a }; var a;", ""],
+            ["js", "export { a }; import a from 'a';", ""],
+            ["js", "export { Array };", "undefined Array 9+5"],
+            ["ts", "export { Array };", ""],
+            ["js", "export { undefined };", "undefined undefined 9+9"],
+            ["js", "export { a as b }; let a;", ""],
+            ["ts", "export { a as b }; let a;", ""],
+            ["js", "export { nope as x };", "undefined nope 9+4"],
+            ["js", "export { nope } from 'a';", ""],
+            ["ts", "export { nope } from 'a';", ""],
+            ["js", "export default function f(){} export { f as default };", "defaults 7+7,44+7"],
+            ["js", "const a = 1; export { a as 'x', a as 'x' };", "twice x 27+3,37+3"],
+            ["ts", "const a = 1; export { a as 'x', a as 'x' };", ""],
+            ["js", "export class A {} export { A };", "twice A 13+1,27+1"],
+            ["js", "const a = 1; export { a, a, a };", "twice a 22+1,28+1, twice a 25+1,28+1"],
+            ["ts", "const a = 1; export { a, a, a };", ""],
+            ["js", "const a = 1; export { a }; export { a }; export { a };", "twice a 22+1,50+1, twice a 36+1,50+1"],
+            ["js", "export default 1; export default 2; export default 3;", "defaults 7+7,25+7,43+7"],
+            ["ts", "export default 1; export default 2; export default 3;", ""],
+            [
+              "js",
+              "const a = 1, b = 2; export { a as default, b as default };",
+              "twice default 34+7,48+7, defaults 34+7,48+7",
+            ],
+            ["js", "export { default } from 'a'; export default 1;", "defaults 36+7,9+7"],
+            ["ts", "export { default } from 'a'; export default 1;", ""],
+            [
+              "js",
+              "export { default } from 'a'; export { default } from 'b';",
+              "twice default 9+7,38+7, defaults 9+7,38+7",
+            ],
+            ["js", "export { a as default } from 'a'; export default 1;", "defaults 41+7,14+7"],
+            ["ts", "export { a as default } from 'a'; export default 1;", ""],
+            ["js", "export default 1; export { default } from 'a';", "defaults 7+7,27+7"],
+            ["js", "import a from 'a'; export { a as default }; export default 1;", "defaults 51+7,33+7"],
+            ["ts", "import a from 'a'; export { a as default }; export default 1;", ""],
+            ["js", "import * as a from 'a'; export { a as default }; export default 1;", "defaults 38+7,56+7"],
+            ["js", "import { a } from 'a'; export default 1; export { a as default };", "defaults 30+7,55+7"],
+            ["ts", "import { a } from 'a'; export default 1; export { a as default };", ""],
+            ["js", "export * as default from 'a'; export default 1;", "defaults 37+7,12+7"],
+            [
+              "js",
+              "export * as default from 'a'; export * as default from 'b';",
+              "twice default 12+7,42+7, defaults 12+7,42+7",
+            ],
+            ["ts", "export * as default from 'a'; export * as default from 'b';", ""],
+            ["js", "export default class A {} export default class B {}", "defaults 7+7,33+7"],
+            ["js", "export default function () {} export default function () {}", "defaults 7+7,37+7"],
+            ["ts", "export default function () {} export default function () {}", ""],
+            ["js", "export default class {} export { x as default }; var x;", "defaults 7+7,38+7"],
+            ["js", "export const [a, a] = [];", "twice a 14+1,17+1"],
+            ["ts", "export const [a, a] = [];", "declared a 14+1,17+1"],
+            ["js", "export const { a, b: a } = {};", "twice a 15+1,21+1"],
+            ["ts", "export const { a, b: a } = {};", "declared a 15+1,21+1"],
+            ["js", "export const [a] = [], { a } = {};", "twice a 14+1,25+1"],
+            ["ts", "export const [a] = [], { a } = {};", "declared a 14+1,25+1"],
+            ["js", "export var a; export var a;", "twice a 11+1,25+1"],
+            ["js", "export let a; export { a };", "twice a 11+1,23+1"],
+            ["ts", "export let a; export { a };", ""],
+            ["js", "export let a, b; export { a as b };", "twice b 14+1,31+1"],
+            ["js", "export function a() {} export class a {}", "twice a 16+1,36+1"],
+            ["ts", "export function a() {} export class a {}", ""],
+            ["js", "export const a = 1; export function a() {}", "twice a 13+1,36+1"],
+            ["ts", "export const a = 1; export function a() {}", "declared a 13+1,36+1"],
+            ["js", "export async function a() {} export { a };", "twice a 22+1,38+1"],
+            ["ts", "export async function a() {} export { a };", ""],
+            ["js", "export function* a() {} export { a };", "twice a 17+1,33+1"],
+            ["js", "export { a }; { var a; }", ""],
+            ["ts", "export { a }; { var a; }", ""],
+            ["js", "export { a }; { let a; }", "undefined a 9+1"],
+            ["js", "export { a }; if (1) { var a; }", ""],
+            ["ts", "export { a }; if (1) { var a; }", ""],
+            ["js", "export { a }; for (var a;;) {}", ""],
+            ["js", "export { a }; for (let a;;) {}", "undefined a 9+1"],
+            ["ts", "export { a }; for (let a;;) {}", ""],
+            ["js", "export { a }; function f() { var a; }", "undefined a 9+1 (f)"],
+            ["js", "export { a }; { function a() {} }", "undefined a 9+1"],
+            ["ts", "export { a }; { function a() {} }", ""],
+            ["js", "export { a }; try {} catch (a) {}", "undefined a 9+1"],
+            ["js", "export { a }; class a {}", ""],
+            ["ts", "export { a }; class a {}", ""],
+            ["js", "export { a }; import * as a from 'a';", ""],
+            ["js", "export { a }; import { b as a } from 'a';", ""],
+            ["ts", "export { a }; import { b as a } from 'a';", ""],
+            ["js", "export { a }; import { a as b } from 'a';", "undefined a 9+1 (b)"],
+            ["js", "export { a }; (function a() {});", "undefined a 9+1"],
+            ["ts", "export { a }; (function a() {});", ""],
+            ["js", "export { a }; (class a {});", "undefined a 9+1"],
+            ["js", "export { a }; a: ;", "undefined a 9+1"],
+            ["ts", "export { a }; a: ;", ""],
+            ["js", "export { a }; const { a } = {};", ""],
+            ["js", "export { a }; var [[a]] = [];", ""],
+            ["ts", "export { a }; var [[a]] = [];", ""],
+            ["js", "export { a }; switch (1) { case 1: var a; }", ""],
+            ["js", "export { a, b }; let a;", "undefined b 12+1 (a)"],
+            ["js", "export { a, b };", "undefined a 9+1, undefined b 12+1"],
+            ["ts", "export { a, b };", ""],
+            ["js", "export { b, a }; export { c };", "undefined b 9+1, undefined a 12+1, undefined c 26+1"],
+            ["js", "let abc; export { abd };", "undefined abd 18+3 (abc)"],
+            ["ts", "let abc; export { abd };", ""],
+            ["js", "let abc; export { ab };", "undefined ab 18+2 (abc)"],
+            ["js", "let abc, abd; export { abe };", "undefined abe 23+3 (abc)"],
+            ["ts", "let abc, abd; export { abe };", ""],
+            ["js", "let abd, abc; export { abe };", "undefined abe 23+3 (abc)"],
+            ["js", "let abc; export { xyz };", "undefined xyz 18+3"],
+            ["ts", "let abc; export { xyz };", ""],
+            ["js", "let abcdef; export { abcd };", "undefined abcd 21+4 (abcdef)"],
+            ["js", "let abcdef; export { abc };", "undefined abc 21+3"],
+            ["ts", "let abcdef; export { abc };", ""],
+            ["js", "function foo() {} export { fooo };", "undefined fooo 27+4 (foo)"],
+            ["js", "import foo from 'a'; export { fo };", "undefined fo 30+2 (foo)"],
+            ["ts", "import foo from 'a'; export { fo };", ""],
+            ["js", "let a; export { b };", "undefined b 16+1 (a)"],
+            ["js", "let aa; export { bb };", "undefined bb 17+2 (aa)"],
+            ["ts", "let aa; export { bb };", ""],
+            ["js", "let aaa; export { abb };", "undefined abb 18+3 (aaa)"],
+            ["js", "class Foo {} export { foo };", "undefined foo 22+3 (Foo)"],
+            ["ts", "class Foo {} export { foo };", ""],
+            ["js", "let \\u0061bc; export { abd };", "undefined abd 23+3 (abc)"],
+            ["js", "let é; export { e };", "undefined e 17+1 (é)"],
+            ["ts", "let é; export { e };", ""],
+            ["js", "export { a as b, nope }; let a; export { a as b };", "twice b 14+1,46+1"],
+            ["js", "export { nope }; export default 1; export default 2;", "defaults 24+7,42+7"],
+            ["ts", "export { nope }; export default 1; export default 2;", ""],
+            ["js", "export { nope }; let a; let a;", "declared a 21+1,28+1, undefined nope 9+4"],
+            ["ts", "export { nope }; let a; let a;", "declared a 21+1,28+1"],
+            ["js", "let a; let a; export { a, a };", "twice a 23+1,26+1"],
+            ["ts", "let a; let a; export { a, a };", "declared a 4+1,11+1"],
+            ["js", "export { eval };", "undefined eval 9+4"],
+            ["js", "export { arguments };", "undefined arguments 9+9"],
+            ["ts", "export { arguments };", ""],
+            ["js", "export { a as 'b' }; let a;", ""],
+            ["js", "export {};", ""],
+            ["ts", "export {};", ""],
+            ["js", "export { };", ""],
+            ["js", "export * as a from 'a'; export * as a from 'b';", "twice a 12+1,36+1"],
+            ["ts", "export * as a from 'a'; export * as a from 'b';", ""],
+            ["js", "export * as 'a' from 'a'; export const a = 1;", "twice a 12+3,39+1"],
+            ["js", "export { a as b } from 'a'; export { c as b } from 'c';", "twice b 14+1,42+1"],
+            ["ts", "export { a as b } from 'a'; export { c as b } from 'c';", ""],
+            ["js", "export { a } from 'a'; let a; export { a };", "twice a 9+1,39+1"],
+            ["ts", "function f() { export { a }; }", ""],
+            ["js", "export { a }; export { a as b }; let a;", ""],
+            ["ts", "export { a }; export { a as b }; let a;", ""],
+            ["js", "export { x as a, y as b, x as c }; let x, y;", ""],
+            ["js", "let a; export { a as default, a as b };", ""],
+            ["ts", "let a; export { a as default, a as b };", ""],
+            ["js", "export default a; let a;", ""],
+            ["js", "export default nope;", ""],
+            ["ts", "export default nope;", ""],
+            ["js", "export default (nope);", ""],
+          ];
+          const short = (message: string) =>
+            message
+              .replace(/^Duplicated export '(.*)'$/, "twice $1")
+              .replace(/^A module cannot have multiple default exports\.$/, "defaults")
+              .replace(/^Export '(.*)' is not defined$/, "undefined $1")
+              .replace(/^Identifier `(.*)` has already been declared$/, "declared $1");
+          const { found, diagnostics } = await withErrorsFound(rows, short, config);
+          const helps = (text: string) => text.replace(/ \([^)]*\)/g, "");
+          expect(found).toEqual(rows.map(([extension, code, errors]): ErrorRow => [extension, code, helps(errors)]));
+          const suggested = diagnostics.filter(it => it.help).map(it => `${it.message} ${it.help}`);
+          expect(suggested.sort()).toEqual(
+            rows
+              .flatMap(([, , errors]) => [...errors.matchAll(/undefined (\S+) \S+ \(([^)]*)\)/g)])
+              .map(([, name, other]) => `Export '${name}' is not defined Did you mean '${other}'?`)
+              .sort(),
+          );
+        });
+      });
+
       // oxlint 1.87.0: "Identifier `a` has already been declared", at the first of the two. The parser, which has the names in
       // hand, says that a file may have such a list: no other file is looked at.
       test.each([
@@ -1114,7 +3583,6 @@ describe.concurrent("bun lint", () => {
         ["a.js", "class A { accessor b = 1 }"],
         ["a.js", "@d class A {}"],
         ["a.ts", "let a!: string;"],
-        ["a.ts", "function f<>() {}"],
         ["a.ts", "for (const a in b);"],
         ["a.js", "for (const a of b);"],
       ])("what OXC takes is linted: %s: %j", async (name, code) => {
@@ -1207,12 +3675,29 @@ describe.concurrent("bun lint", () => {
             (await lint(files, [...flags, "a.js"], { reads: ["a.js"] })).files["a.js"];
           expect(await after("--fix")).toBe("done; suggested;\n");
           expect(await after("--fix", "--quiet")).toBe("done; suggested;\n");
-          expect(await after("--fix-suggestions")).toBe("fixed; done;\n");
+          // oxlint 1.87 applies a JS plugin's fixes under any of the three flags.
+          expect(await after("--fix-suggestions")).toBe("done; done;\n");
           expect(await after("--fix", "--fix-suggestions")).toBe("done; done;\n");
           expect(await after("--fix-dangerously")).toBe("done; done;\n");
         },
         isDebug || isASAN ? 120_000 : 30_000,
       );
+
+      // oxlint 1.87 removes it with --fix, but then the function no longer yields to its caller.
+      test("only --fix-dangerously removes an await that unicorn/no-unnecessary-await reports", async () => {
+        const code = "async function worker() {\n  await null;\n  const retries = await 3;\n  return retries;\n}\n";
+        const files = { ".oxlintrc.json": "{}", "a.js": code };
+        for (const flags of [["--fix"], ["--fix-suggestions"], ["--fix", "--fix-suggestions"]]) {
+          const result = await lint(files, [...flags, "a.js"], { reads: ["a.js"] });
+          expect(result.files["a.js"]).toBe(code);
+          expect(result.stdout).toContain("no-unnecessary-await");
+        }
+        const result = await lint(files, ["--fix-dangerously", "a.js"], { reads: ["a.js"] });
+        expect(result.files["a.js"]).toBe(
+          "async function worker() {\n  null;\n  const retries = 3;\n  return retries;\n}\n",
+        );
+        expect(result.stdout).not.toContain("no-unnecessary-await");
+      });
 
       // What oxlint 1.87 writes.
       describe("a comment that disables nothing is removed from the scripts of a .vue file only, there by every flag", () => {
@@ -1375,9 +3860,9 @@ describe.concurrent("bun lint", () => {
 
         test("is there, however many problems there are", async () => {
           const [few, many, all] = await Promise.all([
-            print("let _a;\n".repeat(3), ["a.js"]),
-            print("let _a;\n".repeat(60), ["a.js"]),
-            print("let _a;\n".repeat(60), ["--all", "a.js"]),
+            print("{ let _a; }\n".repeat(3), ["a.js"]),
+            print("{ let _a; }\n".repeat(60), ["a.js"]),
+            print("{ let _a; }\n".repeat(60), ["--all", "a.js"]),
           ]);
           expect([few, many, all].map(it => times(it.raw))).toEqual([3, 1, 60]);
           // The one that stands for all is printed like the first of all.
@@ -1625,14 +4110,14 @@ describe.concurrent("bun lint", () => {
         const rules = JSON.parse(raw);
         const find = (scope: string, value: string) =>
           rules.find((it: any) => it.scope === scope && it.value === value);
-        expect(find("eslint", "no-debugger")).toEqual({
+        expect(find("eslint", "no-debugger")).toMatchObject({
           scope: "eslint",
           value: "no-debugger",
           category: "correctness",
           type_aware: false,
           fix: "none",
           default: true,
-          docs_url: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html",
+          docs_url: "https://bun.com/docs/lint/rules/eslint/no-debugger",
         });
         expect(find("typescript", "no-floating-promises").type_aware).toBe(true);
         // Each once. A rule of the React Compiler is `react-hooks/purity` too, which has suggestions: oxlint's has none.
@@ -1946,6 +4431,763 @@ describe.concurrent("bun lint", () => {
         );
       });
 
+      // Recorded from oxlint 1.87.0.
+      test("-A, -W and -D also change rules that come from `extends`, but never JS plugin rules", async () => {
+        const rule = `{ create: context => ({ DebuggerStatement: node => context.report({ node, message: "no" }) }) }`;
+        const files = {
+          ".oxlintrc.json": rc({
+            extends: ["./shared/base.json"],
+            jsPlugins: ["./plugin.js"],
+            rules: { "no-console": "warn", "no-var": "error", "local/own": "error" },
+          }),
+          "shared/base.json": JSON.stringify({
+            extends: ["./deep.json"],
+            rules: { "no-debugger": "warn", "no-alert": "error", "no-console": "error", "local/inherited": "warn" },
+          }),
+          "shared/deep.json": JSON.stringify({ rules: { eqeqeq: ["warn", "smart"], "no-alert": "off" } }),
+          "plugin.js": `const rule = ${rule};\nexport default { meta: { name: "local" }, rules: { own: rule, inherited: rule } };\n`,
+          "a.js": "var a = 1;\ndebugger;\nalert(a);\nconsole.log(a);\nif (a == null) a = 2;\nif (a == 1) a = 2;\n",
+        };
+        const local = ["a.js:2 local(inherited) warning", "a.js:2 local(own) error"];
+        const [noVar, noDebugger] = ["a.js:1 eslint(no-var) error", "a.js:2 eslint(no-debugger) warning"];
+        const [noAlert, noConsole] = ["a.js:3 eslint(no-alert) error", "a.js:4 eslint(no-console) warning"];
+        const eqeqeq = "a.js:6 eslint(eqeqeq) warning";
+        const unchanged = [noVar, noDebugger, ...local, noAlert, noConsole, eqeqeq];
+        const rows: [string[], string[]][] = [
+          [[], unchanged],
+          [["-A", "all"], local],
+          [
+            ["-A", "all", "-D", "no-debugger"],
+            ["a.js:2 eslint(no-debugger) error", ...local],
+          ],
+          [
+            ["-A", "correctness"],
+            [noVar, ...local, noAlert, noConsole, eqeqeq],
+          ],
+          [
+            ["-D", "correctness"],
+            [noVar, "a.js:2 eslint(no-debugger) error", ...local, noAlert, noConsole, eqeqeq],
+          ],
+          [
+            ["-W", "restriction"],
+            [
+              "a.js:1 eslint(no-implicit-globals) warning",
+              "a.js:1 eslint(no-var) warning",
+              noDebugger,
+              ...local,
+              "a.js:3 eslint(no-alert) warning",
+              noConsole,
+              "a.js:5 eslint(no-eq-null) warning",
+              eqeqeq,
+            ],
+          ],
+          // "smart" stays, so line 5 is still fine.
+          [
+            ["-D", "pedantic"],
+            [noVar, noDebugger, ...local, noAlert, noConsole, "a.js:6 eslint(eqeqeq) error"],
+          ],
+          [
+            ["-D", "eqeqeq"],
+            [noVar, noDebugger, ...local, noAlert, noConsole, "a.js:6 eslint(eqeqeq) error"],
+          ],
+          // -A forgets the rule, so "smart" is gone when -D or -W turns it on again.
+          [
+            ["-A", "eqeqeq", "-D", "eqeqeq"],
+            [
+              noVar,
+              noDebugger,
+              ...local,
+              noAlert,
+              noConsole,
+              "a.js:5 eslint(eqeqeq) error",
+              "a.js:6 eslint(eqeqeq) error",
+            ],
+          ],
+          [
+            ["-A", "all", "-W", "pedantic"],
+            [...local, "a.js:5 eslint(eqeqeq) warning", "a.js:6 eslint(eqeqeq) warning"],
+          ],
+          [["-A", "local/own", "-A", "local/inherited"], unchanged],
+          [["-W", "local/own", "-D", "local/inherited"], unchanged],
+        ];
+        const results = await Promise.all(rows.map(([args]) => lint(files, [...args, "-f", "json", "a.js"])));
+        expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[1]));
+        expect(results.map(it => it.exitCode)).toEqual(rows.map(() => 1));
+      });
+
+      // Recorded from oxlint 1.87.0 with tsgolint. typescript-eslint passes over `finally`, which waits for the Promise.
+      test("no-misused-promises reports an async function that is handed to finally()", async () => {
+        const texts = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "a.ts": `declare const p: Promise<number>;
+declare function f(): Promise<void>;
+void p.finally(async () => {});
+void p.finally(f);
+void p
+  .then(() => 1)
+  // oxlint-disable-next-line typescript/no-misused-promises
+  .finally(async () => {});
+void p.finally(() => {});
+`,
+        };
+        const rule = { "no-misused-promises": ["error", { checksVoidReturn: { attributes: false } }] };
+        const oxlint = {
+          categories: { correctness: "off" },
+          rules: { "typescript/no-misused-promises": rule["no-misused-promises"] },
+        };
+        const flags = ["--type-aware", "--report-unused-disable-directives", "-f", "json", "a.ts"];
+        const [forOxlint, alone] = await Promise.all([
+          lint({ ...texts, ".oxlintrc.json": JSON.stringify(oxlint) }, flags),
+          lint({ ...texts, "bunfig.toml": `[lint.rules]\n"typescript/no-misused-promises" = "error"\n` }, flags),
+        ]);
+        expect(places(forOxlint.raw)).toEqual([
+          "a.ts:3 typescript(no-misused-promises) error",
+          "a.ts:4 typescript(no-misused-promises) error",
+        ]);
+        const found = JSON.parse(alone.raw)[0].messages as { line: number; message: string }[];
+        expect(found.map(it => `${it.line} ${it.message}`)).toEqual([
+          "7 Unused oxlint-disable directive (no problems were reported from 'typescript/no-misused-promises').",
+        ]);
+      });
+
+      // Recorded from oxlint 1.87.0 with tsgolint.
+      test("no-misused-promises on what a function returns: a type in parentheses, and the type that a callback is given", async () => {
+        const texts = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "a.ts": `declare function f(): Promise<void>;
+declare function on(callback: () => () => void): void;
+declare function maybe(callback?: () => () => void): void;
+export function a(): () => void { return f; }
+export function b(): (() => void) { return f; }
+on(() => { return f; });
+maybe(() => { return f; });
+`,
+        };
+        const oxlint = { categories: { correctness: "off" }, rules: { "typescript/no-misused-promises": "error" } };
+        const flags = ["--type-aware", "-f", "json", "a.ts"];
+        const [forOxlint, alone] = await Promise.all([
+          lint({ ...texts, ".oxlintrc.json": JSON.stringify(oxlint) }, flags),
+          lint({ ...texts, "bunfig.toml": `[lint.rules]\n"typescript/no-misused-promises" = "error"\n` }, flags),
+        ]);
+        type Label = { label?: string; span: { line: number; column: number; length: number } };
+        const found = (JSON.parse(forOxlint.raw).diagnostics as { labels: Label[] }[]).map(it =>
+          it.labels.map(({ label, span }) => `${span.line}:${span.column}+${span.length} ${label ?? ""}`.trimEnd()),
+        );
+        const value = "This callback has type \`() => Promise<void>\`.";
+        const context = "This context accepts a \`void\`-returning callback through type \`() => void\`.";
+        expect(found).toEqual([
+          [`4:42+1 ${value}`, `4:22+10 ${context}`, "4:42+1"],
+          [`6:19+1 ${value}`, `2:37+10 ${context}`, "6:19+1"],
+          [`7:22+1 ${value}`, "7:22+1"],
+        ]);
+        const lines = (JSON.parse(alone.raw)[0].messages as { line: number }[]).map(it => it.line);
+        expect(lines).toEqual([4, 5, 6, 7]);
+      });
+
+      // Recorded from oxlint 1.87.0 with tsgolint.
+      test("a type-aware rule reports with the severity of the ESLint rule of the same name, if that one is on", async () => {
+        const texts = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "a.ts": 'setTimeout("alert(1)", 1);\nexport async function f() {\n  return 1;\n}\n',
+        };
+        const rows: [object, string[]][] = [
+          [
+            { categories: { correctness: "error", suspicious: "warn" } },
+            ["a.ts:1 typescript(no-implied-eval) warning"],
+          ],
+          [{ categories: { correctness: "warn", suspicious: "error" } }, ["a.ts:1 typescript(no-implied-eval) error"]],
+          [{ categories: { correctness: "error", suspicious: "off" } }, ["a.ts:1 typescript(no-implied-eval) error"]],
+          [
+            { rules: { "eslint/no-implied-eval": "off", "typescript/no-implied-eval": "warn" } },
+            ["a.ts:1 typescript(no-implied-eval) warning"],
+          ],
+          [
+            { rules: { "eslint/require-await": "warn", "typescript/require-await": "error" } },
+            ["a.ts:2 typescript(require-await) warning"],
+          ],
+          [
+            { rules: { "typescript/require-await": "warn", "eslint/require-await": "error" } },
+            ["a.ts:2 typescript(require-await) error"],
+          ],
+        ];
+        const results = await Promise.all(
+          rows.map(([config]) =>
+            lint({ ".oxlintrc.json": rc({ rules: {}, ...config }), ...texts }, ["--type-aware", "-f", "json", "a.ts"]),
+          ),
+        );
+        expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[1]));
+      });
+
+      describe("a rule with types and a rule without types that look for the same problem", () => {
+        const tsconfig = JSON.stringify({
+          compilerOptions: { strict: true, target: "esnext", lib: ["esnext", "dom"] },
+        });
+        const config = (rules: Record<string, string>, more: object = {}) =>
+          rc({ plugins: ["unicorn", "typescript"], env: { browser: true }, rules, ...more });
+        const on = (rules: string[]) => config(Object.fromEntries(rules.map(it => [it, "error"])));
+        /** Each row in a directory of its own. What is reported for each, in the order of the rows. */
+        const lintRows = async (rows: [config: string, text: string][], args: string[]) => {
+          const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+          rows.forEach(([config, text], index) => {
+            files[`${index}/.oxlintrc.json`] = config;
+            files[`${index}/tsconfig.json`] = tsconfig;
+            files[`${index}/a.ts`] = text;
+          });
+          const all = places((await lint(files, ["-f", "json", ...args])).raw);
+          return rows.map((_, index) =>
+            all.filter(it => it.startsWith(`${index}/`)).map(it => it.slice(`${index}/`.length)),
+          );
+        };
+        // The rule without types, the rule with types, and code with one thing to report per line.
+        const pairs: [untyped: string, typed: string, lines: string[]][] = [
+          [
+            "require-await",
+            "typescript/require-await",
+            [
+              "declare const p: Promise<number>;",
+              "export async function a() { return 1; }",
+              "export const b = async () => 1;",
+              "export const c = { async m() { return 1; } };",
+              "export class D { async m() { return 1; } }",
+              "export async function e() { return p; }",
+              "export async function f() { await p; }",
+              "export async function* g() { yield 1; }",
+            ],
+          ],
+          [
+            "no-implied-eval",
+            "typescript/no-implied-eval",
+            [
+              'setTimeout("alert(1)", 1);',
+              'window.setTimeout("alert(1)", 1);',
+              'self.setTimeout("alert(1)", 1);',
+              'window[`setTimeout`]("alert(1)", 1);',
+              '(window?.setTimeout)("alert(1)", 1);',
+              "declare const s: string;",
+              "setTimeout(s, 1);",
+              "setTimeout(() => {}, 1);",
+              "export {};",
+            ],
+          ],
+          [
+            "no-throw-literal",
+            "typescript/only-throw-error",
+            [
+              "declare const e: Error;",
+              "declare const x: any;",
+              'export function a() { throw "a"; }',
+              "export function b() { throw 1; }",
+              'export function c() { throw "a" as any; }',
+              "export function d() { throw class extends Error {}; }",
+              'export function f() { throw x && "a"; }',
+              "export function g(s: string) { throw s; }",
+              "export function h() { throw e; }",
+            ],
+          ],
+          [
+            "prefer-promise-reject-errors",
+            "typescript/prefer-promise-reject-errors",
+            [
+              "declare const s: string;",
+              "void Promise.reject(5);",
+              'void Promise[("reject")](5);',
+              "void new Promise((_, reject) => reject(5));",
+              "void new Promise((...a) => a[1](5));",
+              "void Promise.reject(s);",
+              'void Promise.reject(new Error("a"));',
+            ],
+          ],
+          [
+            "prefer-destructuring",
+            "typescript/prefer-destructuring",
+            [
+              "declare const o: { a: number; b: number[] };",
+              "export const a = o.a;",
+              "export const b: number[] = o.b;",
+              "export const { b: c } = o;",
+            ],
+          ],
+          [
+            "unicorn/prefer-string-starts-ends-with",
+            "typescript/prefer-string-starts-ends-with",
+            [
+              "declare const s: string;",
+              "export const a = /^abc/.test(s);",
+              "export const b = /abc$/.test(s);",
+              "export const c = /^abc/g.test(s);",
+              "export const d = /^123/i.test(s);",
+              "export const e = /^abc/.test!(s);",
+              "export const f = /^{{/.test(s);",
+              'export const g = s.slice(0, 3) === "abc";',
+              "export const h = /^a|b/.test(s);",
+            ],
+          ],
+          [
+            "unicorn/prefer-includes",
+            "typescript/prefer-includes",
+            [
+              "declare const a: string[];",
+              "declare const x: any;",
+              "declare const o: { indexOf(a: string): number };",
+              'export const b = a.indexOf("b") !== -1;',
+              'export const c = a.indexOf!("b") !== -1;',
+              'export const d = (a.indexOf)("b") !== -1;',
+              'export const e = a["indexOf"]("b") !== -1;',
+              'export const f = a.indexOf("b") !== (-1);',
+              'export const g = x.indexOf("b") !== -1;',
+              'export const h = o.indexOf("b") !== -1;',
+              'export const i = a.indexOf("b") <= -1;',
+              'export const j = a.includes("b");',
+            ],
+          ],
+          [
+            "unicorn/prefer-array-find",
+            "typescript/prefer-find",
+            [
+              "declare const a: string[];",
+              "declare const aa: string[][];",
+              "declare const x: any;",
+              "export const b = a.filter(Boolean)[0];",
+              "export const c = a.filter(Boolean).at(0);",
+              "export const d = a.filter(Boolean)![0];",
+              "export const e = (a.filter(Boolean) as string[])[0];",
+              "export const f = a.filter?.(Boolean)[0];",
+              "export const g = a.filter(Boolean)?.at(0);",
+              "export const h = a.filter(Boolean).at!(0);",
+              "export const i = a.filter(Boolean).shift();",
+              "export const [j] = a.filter(Boolean);",
+              "export const k = x.filter(Boolean)[0];",
+              // Two calls that start at the same place. Only the first is for both rules.
+              "export const l = aa.filter(Boolean)[0]",
+              "  .filter(Boolean).pop();",
+              "export const m = a.find(Boolean);",
+            ],
+          ],
+        ];
+        const text = (lines: string[]) => lines.join("\n") + "\n";
+        const lineOf = (place: string) => place.slice(0, place.indexOf(" "));
+
+        test("with both on, what either reports alone is reported once", async () => {
+          const rowsOf = (rules: (pair: (typeof pairs)[number]) => string[]) =>
+            pairs.map((pair): [string, string] => [on(rules(pair)), text(pair[2])]);
+          const [untyped, typed, both] = await Promise.all([
+            lintRows(
+              rowsOf(it => [it[0]]),
+              ["--type-aware"],
+            ),
+            lintRows(
+              rowsOf(it => [it[1]]),
+              ["--type-aware"],
+            ),
+            lintRows(
+              rowsOf(it => [it[0], it[1]]),
+              ["--type-aware"],
+            ),
+          ]);
+          for (const [index, [name]] of pairs.entries()) {
+            const withTypes = new Set(typed[index].map(lineOf));
+            const rest = untyped[index].filter(it => !withTypes.has(lineOf(it)));
+            expect([name, both[index]]).toEqual([name, [...typed[index], ...rest].sort()]);
+            // There is code that both report, and all but one pair has code that only the rule without types reports.
+            const hasBoth = untyped[index].length > rest.length;
+            const hasRest = rest.length > 0 || name === "prefer-destructuring";
+            expect([name, hasBoth, hasRest]).toEqual([name, true, true]);
+          }
+          expect(Object.fromEntries(pairs.map(([name], index) => [name, both[index]]))).toMatchInlineSnapshot(`
+            {
+              "no-implied-eval": [
+                "a.ts:1 typescript(no-implied-eval) error",
+                "a.ts:2 typescript(no-implied-eval) error",
+                "a.ts:3 eslint(no-implied-eval) error",
+                "a.ts:4 eslint(no-implied-eval) error",
+                "a.ts:5 eslint(no-implied-eval) error",
+                "a.ts:7 typescript(no-implied-eval) error",
+              ],
+              "no-throw-literal": [
+                "a.ts:3 typescript(only-throw-error) error",
+                "a.ts:4 typescript(only-throw-error) error",
+                "a.ts:5 eslint(no-throw-literal) error",
+                "a.ts:6 eslint(no-throw-literal) error",
+                "a.ts:7 eslint(no-throw-literal) error",
+                "a.ts:8 typescript(only-throw-error) error",
+              ],
+              "prefer-destructuring": [
+                "a.ts:2 eslint(prefer-destructuring) error",
+              ],
+              "prefer-promise-reject-errors": [
+                "a.ts:2 typescript(prefer-promise-reject-errors) error",
+                "a.ts:3 eslint(prefer-promise-reject-errors) error",
+                "a.ts:4 typescript(prefer-promise-reject-errors) error",
+                "a.ts:5 eslint(prefer-promise-reject-errors) error",
+                "a.ts:6 typescript(prefer-promise-reject-errors) error",
+              ],
+              "require-await": [
+                "a.ts:2 typescript(require-await) error",
+                "a.ts:3 typescript(require-await) error",
+                "a.ts:4 typescript(require-await) error",
+                "a.ts:5 typescript(require-await) error",
+                "a.ts:6 eslint(require-await) error",
+                "a.ts:8 typescript(require-await) error",
+              ],
+              "unicorn/prefer-array-find": [
+                "a.ts:10 unicorn(prefer-array-find) error",
+                "a.ts:11 unicorn(prefer-array-find) error",
+                "a.ts:12 unicorn(prefer-array-find) error",
+                "a.ts:13 unicorn(prefer-array-find) error",
+                "a.ts:14 typescript(prefer-find) error",
+                "a.ts:15 unicorn(prefer-array-find) error",
+                "a.ts:4 typescript(prefer-find) error",
+                "a.ts:5 typescript(prefer-find) error",
+                "a.ts:6 unicorn(prefer-array-find) error",
+                "a.ts:7 unicorn(prefer-array-find) error",
+                "a.ts:8 unicorn(prefer-array-find) error",
+                "a.ts:9 typescript(prefer-find) error",
+              ],
+              "unicorn/prefer-includes": [
+                "a.ts:10 unicorn(prefer-includes) error",
+                "a.ts:11 typescript(prefer-includes) error",
+                "a.ts:4 typescript(prefer-includes) error",
+                "a.ts:5 unicorn(prefer-includes) error",
+                "a.ts:6 unicorn(prefer-includes) error",
+                "a.ts:7 unicorn(prefer-includes) error",
+                "a.ts:8 unicorn(prefer-includes) error",
+                "a.ts:9 unicorn(prefer-includes) error",
+              ],
+              "unicorn/prefer-string-starts-ends-with": [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) error",
+                "a.ts:4 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:5 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:6 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:7 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:8 typescript(prefer-string-starts-ends-with) error",
+              ],
+            }
+          `);
+        });
+
+        const await_ = ["require-await", "typescript/require-await"];
+        const throw_ = ["no-throw-literal", "typescript/only-throw-error"];
+        const f = "export async function f() {\n  return 1;\n}\n";
+
+        test("without types for the file, the rule without types reports", async () => {
+          const rows = pairs
+            .slice(0, 4)
+            .map(([untyped, typed, lines]): [string, string] => [on([untyped, typed]), text(lines)]);
+          const alone = pairs.slice(0, 4).map(([untyped, , lines]): [string, string] => [on([untyped]), text(lines)]);
+          expect(await lintRows(rows, [])).toEqual(await lintRows(alone, []));
+        });
+
+        test("where the rule without types is the more severe, both report", async () => {
+          const starts = (untyped: string, typed: string) =>
+            config({
+              "unicorn/prefer-string-starts-ends-with": untyped,
+              "typescript/prefer-string-starts-ends-with": typed,
+            });
+          const code =
+            'declare const s: string;\nexport const a = /^a/.test(s);\nexport const b = s.slice(0, 1) === "a";\n';
+          const rows: [string, string][] = [
+            [starts("error", "warn"), code],
+            [starts("warn", "error"), code],
+            [starts("warn", "warn"), code],
+          ];
+          expect(await lintRows(rows, ["--type-aware"])).toMatchInlineSnapshot(`
+            [
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) warning",
+                "a.ts:2 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) warning",
+              ],
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) error",
+              ],
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) warning",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) warning",
+              ],
+            ]
+          `);
+        });
+
+        test("comments that disable work as they do for two reports", async () => {
+          const find = ["unicorn/prefer-array-find", "typescript/prefer-find"];
+          const first = "declare const a: string[];\n";
+          const rows: [string, string][] = [
+            // A name means the rule whatever plugin it is written with.
+            [on(await_), `// oxlint-disable-next-line require-await\n${f}`],
+            [on(await_), `// oxlint-disable-next-line typescript/require-await\n${f}`],
+            [on(await_), `// oxlint-disable-next-line require-await, typescript/require-await\n${f}`],
+            // Nothing to disable.
+            [on(await_), "// oxlint-disable-next-line require-await\nexport function f() {\n  return 1;\n}\n"],
+            [on(throw_), "// oxlint-disable-next-line\nexport const a = 1;\n"],
+            // The two have different names. A comment for one leaves the report of the other, and is in use.
+            [on(throw_), '// oxlint-disable-next-line no-throw-literal\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line typescript/only-throw-error\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line no-throw-literal, typescript/only-throw-error\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line\nthrow "a";\n'],
+            [
+              on(find),
+              `${first}// oxlint-disable-next-line typescript/prefer-find\nexport const b = a.filter(Boolean)[0];\n`,
+            ],
+            [
+              on(find),
+              `${first}// oxlint-disable-next-line unicorn/prefer-array-find\nexport const b = a.filter(Boolean)[0];\n`,
+            ],
+            // The two report on different lines.
+            [
+              on(await_),
+              "export const g = async (\n  a: number,\n  // oxlint-disable-next-line require-await\n) => a;\n",
+            ],
+          ];
+          const reported = await lintRows(rows, ["--type-aware", "--report-unused-disable-directives"]);
+          expect(Object.fromEntries(rows.map(([, code], index) => [code, reported[index]]))).toMatchInlineSnapshot(`
+            {
+              "// oxlint-disable-next-line\\nexport const a = 1;\\n": [
+                "a.ts:1 undefined warning",
+              ],
+              "// oxlint-disable-next-line\\nthrow \\"a\\";\\n": [],
+              "// oxlint-disable-next-line no-throw-literal\\nthrow \\"a\\";\\n": [
+                "a.ts:2 typescript(only-throw-error) error",
+              ],
+              "// oxlint-disable-next-line no-throw-literal, typescript/only-throw-error\\nthrow \\"a\\";\\n": [],
+              "// oxlint-disable-next-line require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
+              "// oxlint-disable-next-line require-await\\nexport function f() {\\n  return 1;\\n}\\n": [
+                "a.ts:1 undefined warning",
+              ],
+              "// oxlint-disable-next-line require-await, typescript/require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
+              "// oxlint-disable-next-line typescript/only-throw-error\\nthrow \\"a\\";\\n": [
+                "a.ts:2 eslint(no-throw-literal) error",
+              ],
+              "// oxlint-disable-next-line typescript/require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
+              "declare const a: string[];\\n// oxlint-disable-next-line typescript/prefer-find\\nexport const b = a.filter(Boolean)[0];\\n": [
+                "a.ts:3 unicorn(prefer-array-find) error",
+              ],
+              "declare const a: string[];\\n// oxlint-disable-next-line unicorn/prefer-array-find\\nexport const b = a.filter(Boolean)[0];\\n": [
+                "a.ts:3 typescript(prefer-find) error",
+              ],
+              "export const g = async (\\n  a: number,\\n  // oxlint-disable-next-line require-await\\n) => a;\\n": [
+                "a.ts:1 eslint(require-await) error",
+              ],
+            }
+          `);
+        });
+
+        test("a file that is linted again for a rule about several files", async () => {
+          const files = {
+            ".oxlintrc.json": config(
+              { "no-throw-literal": "error", "typescript/only-throw-error": "error", "import/named": "error" },
+              { plugins: ["unicorn", "typescript", "import"] },
+            ),
+            "tsconfig.json": tsconfig,
+            "a.ts": 'import { b } from "./b";\n// oxlint-disable-next-line no-throw-literal\nthrow `${b}`;\n',
+            "b.ts": 'export const b = 1;\nthrow "b";\n',
+          };
+          const { raw } = await lint(files, ["-f", "json", "--type-aware", "--report-unused-disable-directives"]);
+          expect(places(raw)).toMatchInlineSnapshot(`
+            [
+              "a.ts:3 typescript(only-throw-error) error",
+              "b.ts:2 typescript(only-throw-error) error",
+            ]
+          `);
+        });
+
+        test("what a hidden report would change is changed", async () => {
+          const includes = ["unicorn/prefer-includes", "typescript/prefer-includes"];
+          const destructuring = ["prefer-destructuring", "typescript/prefer-destructuring"];
+          const rows: [rules: string[], flag: string, code: string][] = [
+            [throw_, "--fix-suggestions", 'throw "a";\n'],
+            [includes, "--fix-suggestions", 'declare const a: string[];\nexport const b = a.indexOf("b") !== -1;\n'],
+            [destructuring, "--fix", 'declare const o: { a: number };\nexport const a = o["a"];\n'],
+            // The comment is for the report that has the suggestion.
+            [throw_, "--fix-suggestions", '// oxlint-disable-next-line no-throw-literal\nthrow "a";\n'],
+          ];
+          const fixed = await Promise.all(
+            rows.map(async ([rules, flag, code]) => {
+              const project = { ".oxlintrc.json": on(rules), "tsconfig.json": tsconfig, "a.ts": code };
+              return (await lint(project, ["--type-aware", flag, "a.ts"], { reads: ["a.ts"] })).files["a.ts"];
+            }),
+          );
+          expect(fixed).toMatchInlineSnapshot(`
+            [
+              
+            "throw new Error("a");
+            "
+            ,
+              
+            "declare const a: string[];
+            export const b = a.includes("b");
+            "
+            ,
+              
+            "declare const o: { a: number };
+            export const {a} = o;
+            "
+            ,
+              
+            "// oxlint-disable-next-line no-throw-literal
+            throw "a";
+            "
+            ,
+            ]
+          `);
+        });
+
+        test("a report that a file of suppressions hides hides no other", async () => {
+          const project = { ".oxlintrc.json": on(throw_), "tsconfig.json": tsconfig, "a.ts": 'throw "a";\n' };
+          const suppress = (rule: string) => lint(project, ["--type-aware", "-f", "json", "--suppress-rule", rule]);
+          const [typed, untyped] = await Promise.all([
+            suppress("typescript/only-throw-error"),
+            suppress("no-throw-literal"),
+          ]);
+          expect([places(typed.raw), places(untyped.raw)]).toMatchInlineSnapshot(`
+            [
+              [
+                "a.ts:1 eslint(no-throw-literal) error",
+              ],
+              [
+                "a.ts:1 typescript(only-throw-error) error",
+              ],
+            ]
+          `);
+        });
+
+        // Without a configuration in the working directory the formats are ESLint's, whose JSON has the suggestions.
+        test("the configuration of the file counts, not that of the working directory", async () => {
+          const project = {
+            "throw/.oxlintrc.json": on(throw_),
+            "throw/tsconfig.json": tsconfig,
+            "throw/a.ts": 'throw "a";\n',
+            // Both rules suggest the same.
+            "await/.oxlintrc.json": on(await_),
+            "await/tsconfig.json": tsconfig,
+            "await/a.ts": f,
+          };
+          const results: { messages: { ruleId: string; suggestions?: { desc: string }[] }[] }[] = JSON.parse(
+            (await lint(project, ["--type-aware", "-f", "json"])).raw,
+          );
+          const reported = results.flatMap(it =>
+            it.messages.map(it => [it.ruleId, it.suggestions?.map(it => it.desc)]),
+          );
+          expect(reported).toMatchInlineSnapshot(`
+            [
+              [
+                "@typescript-eslint/require-await",
+                [
+                  "Remove 'async'.",
+                ],
+              ],
+              [
+                "@typescript-eslint/only-throw-error",
+                [
+                  "Expected an error object to be thrown",
+                ],
+              ],
+            ]
+          `);
+        });
+
+        test("dot-notation and consistent-return have no version without types", async () => {
+          const code =
+            'declare const o: { a: number };\nexport const a = o["a"];\nexport function f(x: boolean) {\n  if (x) return 1;\n  return;\n}\n';
+          const names = ["dot-notation", "consistent-return"];
+          const rows: [string, string][] = [
+            [on(names), code],
+            [on([...names, ...names.map(it => `typescript/${it}`)]), code],
+          ];
+          const [withTypes, without] = await Promise.all([lintRows(rows, ["--type-aware"]), lintRows(rows, [])]);
+          expect({ withTypes, without }).toMatchInlineSnapshot(`
+            {
+              "withTypes": [
+                [
+                  "a.ts:2 typescript(dot-notation) error",
+                  "a.ts:5 typescript(consistent-return) error",
+                ],
+                [
+                  "a.ts:2 typescript(dot-notation) error",
+                  "a.ts:5 typescript(consistent-return) error",
+                ],
+              ],
+              "without": [
+                [],
+                [],
+              ],
+            }
+          `);
+        });
+      });
+
+      // Recorded from oxlint 1.87.0.
+      test("--fix-suggestions alone applies the fixes of JS plugins, but not those of built-in rules", async () => {
+        const report = (more: string) => `node => context.report({ node, message: "no", ${more} })`;
+        const project = {
+          ".oxlintrc.json": rc({
+            jsPlugins: ["./plugin.js"],
+            rules: { "local/fixes": "error", "local/suggests": "error", "local/both": "error", "no-var": "error" },
+          }),
+          "plugin.js": `export default { meta: { name: "local" }, rules: {
+            fixes: { meta: { fixable: "code" }, create: context => ({
+              DebuggerStatement: ${report("fix: fixer => fixer.remove(node)")} }) },
+            suggests: { meta: { hasSuggestions: true }, create: context => ({
+              EmptyStatement: ${report('suggest: [{ desc: "remove", fix: fixer => fixer.remove(node) }]')} }) },
+            both: { meta: { fixable: "code", hasSuggestions: true }, create: context => ({
+              ThrowStatement: ${report('fix: fixer => fixer.replaceText(node, "fixed();"), suggest: [{ desc: "other", fix: fixer => fixer.replaceText(node, "suggested();") }]')} }) },
+          } };`,
+          "a.js": "var a = 1;\ndebugger;\n;\nthrow a;\n",
+        };
+        const { stdout, files, exitCode } = await lint(project, ["--fix-suggestions", "-f", "unix", "a.js"], {
+          reads: ["a.js"],
+        });
+        expect(stdout.split("\n").filter(it => it.includes("["))).toEqual([
+          "a.js:1:1: Unexpected var, use let or const instead. [Error/eslint(no-var)]",
+        ]);
+        expect(files["a.js"]).toBe("var a = 1;\n\n\nfixed();\n");
+        expect(exitCode).toBe(1);
+      });
+
+      // Recorded from oxlint 1.87.0.
+      test('"off" in `globals` does not hide a variable that an `env` defines', async () => {
+        const rules = { "no-undef": "error" };
+        const text = { "a.js": "alert(1);\nArray(2);\nmine(3);\n" };
+        const [alert, mine] = ["a.js:1 eslint(no-undef) error", "a.js:3 eslint(no-undef) error"];
+        const rows: [object, string[]][] = [
+          [{ env: { browser: true }, globals: { alert: "off" } }, [mine]],
+          [{ globals: { alert: "off", Array: "off", mine: "off" } }, [alert, mine]],
+          [{ globals: { alert: "readonly", mine: "readonly" } }, []],
+          [
+            {
+              env: { browser: true },
+              globals: { alert: "readonly" },
+              overrides: [
+                { files: ["*.js"], globals: { alert: "off", mine: "readonly" } },
+                { files: ["a.js"], globals: { mine: "off" } },
+              ],
+            },
+            [mine],
+          ],
+        ];
+        const results = await Promise.all(
+          rows.map(([config]) => lint({ ".oxlintrc.json": rc({ rules, ...config }), ...text }, ["-f", "json", "a.js"])),
+        );
+        expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[1]));
+      });
+
+      // Recorded from oxlint 1.87.0. The two fixes overlap, so --fix leaves the second report.
+      test("use-isnan reports both sides of NaN == NaN", async () => {
+        const files = {
+          ".oxlintrc.json": rc({ rules: { "use-isnan": "error" } }),
+          "a.js": "if (NaN == NaN) {\n}\nif (NaN !== (NaN)) {\n}\nx = a == NaN;\n",
+        };
+        const { stdout, exitCode } = await lint(files, ["-f", "unix", "a.js"]);
+        expect(
+          stdout
+            .split("\n")
+            .filter(it => it.includes("use-isnan"))
+            .map(it => it.split(": ")[0]),
+        ).toEqual(["a.js:1:5", "a.js:1:12", "a.js:3:5", "a.js:3:13", "a.js:5:10"]);
+        expect(exitCode).toBe(1);
+      });
+
       test("the rules that ESLint has given up and oxlint has in `node` run if that plugin is on", async () => {
         const texts: Record<string, string> = {
           "callback-return": "function f(err, callback) {\n  if (err) {\n    callback(err);\n  }\n  callback();\n}\n",
@@ -2004,8 +5246,18 @@ describe.concurrent("bun lint", () => {
         }
         return Object.fromEntries(names.map(it => [it, byProject[it].sort()]));
       };
+      // Reports from oxlint that `bun lint` omits. `declare var` declares an existing global, and changing it to `let`
+      // breaks the project's type check.
+      const notReported: Record<string, string[]> = {
+        "ambient/var": ["a.ts:19:9+3 eslint(no-var)", "a.ts:20:16+3 eslint(no-var)"],
+      };
       const expected = (names: string[]) =>
-        Object.fromEntries(names.map(it => [it, whatOxlintReports[it as keyof typeof whatOxlintReports]]));
+        Object.fromEntries(
+          names.map(it => [
+            it,
+            whatOxlintReports[it as keyof typeof whatOxlintReports].filter(line => !notReported[it]?.includes(line)),
+          ]),
+        );
       // All that is marked for a report, and what is said there, where that is more than one place without a text. labels.json has
       // only the projects in which there is such a report.
       const marked = (raw: string, names: string[]) => {
@@ -2047,11 +5299,11 @@ describe.concurrent("bun lint", () => {
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
-      // Each project is a program of its own. In four runs: one takes seconds in a debug build.
-      test.serial.each([0, 1, 2, 3])(
+      // Each project is a program of its own. In twelve runs: one takes seconds in a debug build.
+      test.serial.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])(
         "the rules that need types report what tsgolint's report: part %d",
         async part => {
-          const some = projects.filter(it => it.typed).filter((_, index) => index % 4 === part);
+          const some = projects.filter(it => it.typed).filter((_, index) => index % 12 === part);
           const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
           const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
           for (const { name, config, files: texts } of some) {
@@ -2066,6 +5318,20 @@ describe.concurrent("bun lint", () => {
         },
         isDebug || isASAN ? 120_000 : 30_000,
       );
+
+      // parentheses.json has code in parentheses that aren't needed, for the type-aware rules that used to treat it
+      // differently from the same code without them. parentheses.expected.json is what `bun lint` reports for it.
+      test("type-aware rules see through redundant parentheses", async () => {
+        const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        for (const { name, config, files: texts } of parentheses) {
+          files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+          files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions });
+          for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
+        }
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        expect(foundExactly(raw, Object.keys(parenthesesExpected))).toEqual(parenthesesExpected);
+      });
 
       // messages.json has what oxlint 1.87.0 with tsgolint 7.0.2003 says.
       test("the rules that oxlint shares with ESLint and typescript-eslint say what oxlint's say", async () => {
@@ -2108,6 +5374,26 @@ describe.concurrent("bun lint", () => {
           ([, hash, rule, id]) => ![...(byId.get(id) ?? [])].some(text => key(rule, id, text) === parseInt(hash, 16)),
         );
         expect(lost.map(it => it[0].trim())).toEqual([]);
+      });
+
+      test("the help table refers to lines of oxlint_help.txt", () => {
+        const root = join(import.meta.dir, "../../../src/lint");
+        const lines = readFileSync(join(root, "oxlint_help.txt"), "utf8").split("\n");
+        const table = readFileSync(join(root, "oxlint_help.rs"), "utf8");
+        const entries = [
+          ...table.matchAll(/^ {4}\(0x[0-9A-F]{8}, (One|Three|of_the_fix)\((?:\w+, \w+, )?(\d+)\), (\d)\), \/\//gm),
+        ];
+        expect(entries.length).toBe(table.match(/^ {4}\(0x/gm)!.length);
+        const wrong = entries.filter(([, kind, line, withValues]) => {
+          // Lines count from 1. A fix's note is optional, and 0 stands for none.
+          const at = Number(line) - 1;
+          if (kind === "of_the_fix" && at < 0) return withValues !== "0";
+          // By part: the help, the label, the note.
+          const texts = kind === "Three" ? lines.slice(at, at + 3) : kind === "One" ? [lines[at]] : ["", "", lines[at]];
+          const bits = texts.reduce((bits, text, part) => bits | (Number(text?.includes("{{")) << part), 0);
+          return !texts.some(Boolean) || bits !== Number(withValues);
+        });
+        expect(wrong.map(it => it[0])).toEqual([]);
       });
 
       // What oxlint 1.87.0 with tsgolint 7.0.2003 reports.
@@ -2187,9 +5473,39 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(1);
       });
 
+      // The order is oxlint 1.87.0's, with --fix and without types.
+      test.each([[["--fix"]], [["--fix", "--type-aware"]]])(
+        "what %j leaves is printed in the order in which the rules ran",
+        async flags => {
+          const names = ["eqeqeq", "no-empty", "no-unused-vars", "no-var", "no-debugger", "prefer-const"];
+          const { stdout, exitCode, files } = await lint(
+            {
+              ".oxlintrc.json": rc({ rules: Object.fromEntries(names.map(it => [it, "error"])) }),
+              "tsconfig.json": `{"compilerOptions":{"strict":true}}`,
+              "a.ts":
+                "export function f(a: number, b: number) {\n  if (a == b) {\n  }\n  var left = 1;\n  let kept = 2;\n" +
+                "  debugger;\n  return a != b;\n}\n",
+            },
+            ["-f", "unix", ...flags],
+            { reads: ["a.ts"] },
+          );
+          const found = [...stdout.matchAll(/^a\.ts:(\d+:\d+): .*\((.*)\)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
+          expect(found).toEqual([
+            "4:7 no-unused-vars",
+            "5:7 no-unused-vars",
+            "2:9 eqeqeq",
+            "2:15 no-empty",
+            "6:3 no-debugger",
+            "7:12 eqeqeq",
+          ]);
+          expect(files["a.ts"]).toContain("  const left = 1;\n  const kept = 2;\n");
+          expect(exitCode).toBe(1);
+        },
+      );
+
       // What oxlint 1.87.0 with tsgolint 7.0.2003 does. Added to the project as root files, the two .mjs would be errors of the
       // program (6504), and the tsconfig.json would be refused for them.
-      test("--tsconfig is the project of the files that it includes, the others are in no project", async () => {
+      test("--tsconfig adds no file to a project: one that no project includes is in none", async () => {
         const code = "async function f() { return 1; }\nf();\n";
         const { stdout, exitCode } = await lint(
           {
@@ -2212,6 +5528,376 @@ describe.concurrent("bun lint", () => {
           ),
         );
         expect(exitCode).toBe(1);
+      });
+
+      // What oxlint 1.87.0 with tsgolint 7.0.2003 does: tsgolint finds the project of each file itself, and is not told the flag.
+      describe("--tsconfig does not choose the project that a file is checked in", () => {
+        const compilerOptions = {
+          strict: true,
+          target: "es2023",
+          module: "esnext",
+          moduleResolution: "bundler",
+          noEmit: true,
+          types: [],
+        };
+        const on = (...rules: string[]) =>
+          rc({ plugins: ["typescript"], rules: Object.fromEntries(rules.map(it => [`typescript/${it}`, "error"])) });
+        const above = (more: object = {}) =>
+          JSON.stringify({ compilerOptions: { ...compilerOptions, ...more }, include: ["src/**/*"] });
+        const nearer = (compilerOptions: object, include: string[]) =>
+          JSON.stringify({ extends: "../tsconfig.json", compilerOptions, include });
+
+        // With each: what is reported if the file is checked with `tsconfig.json`. With `src/tsconfig.json` it is nothing.
+        test.each<[string, Record<string, string>, string[]]>([
+          [
+            "jsx, for a type that is imported from a .tsx",
+            {
+              ".oxlintrc.json": on("no-redundant-type-constituents"),
+              "package.json": `{"type":"module"}`,
+              "tsconfig.json": above({
+                module: "nodenext",
+                moduleResolution: undefined,
+                allowImportingTsExtensions: true,
+                rootDir: ".",
+              }),
+              "src/tsconfig.json": nearer({ jsx: "preserve" }, ["*.ts", "*.tsx"]),
+              "src/view.ts": `export type { Item } from "./view.tsx";\n`,
+              "src/view.tsx": `export interface Item { label: string }\ndeclare global { interface WidgetMap { control: Item } }\n`,
+              "src/consumer.ts":
+                `import type { Item } from "./view.ts";\nexport type MaybeItem = Item | null;\n` +
+                `type Properties<T> = {[K in keyof T]: T[K]};\n` +
+                `export type Control = Properties<WidgetMap["control"]> & {optional?: boolean};\n`,
+            },
+            [
+              "consumer.ts:2:25 typescript(no-redundant-type-constituents)",
+              "consumer.ts:4:23 typescript(no-redundant-type-constituents)",
+            ],
+          ],
+          [
+            "allowJs, for what is imported from a .mjs",
+            {
+              ".oxlintrc.json": on("no-unsafe-call", "no-unsafe-assignment"),
+              "tsconfig.json": above(),
+              "src/tsconfig.json": nearer({ allowJs: true }, ["*.ts", "*.mjs"]),
+              "src/lib.mjs": `export function make() { return "text"; }\n`,
+              "src/use.ts": `import { make } from "./lib.mjs";\nexport const value = make();\n`,
+            },
+            ["use.ts:2:22 typescript(no-unsafe-assignment)", "use.ts:2:22 typescript(no-unsafe-call)"],
+          ],
+          [
+            "jsx and jsxImportSource, for a type that is inferred from the children of an element",
+            {
+              ".oxlintrc.json": on("restrict-template-expressions"),
+              "tsconfig.json": above(),
+              "src/tsconfig.json": nearer({ jsx: "react-jsx", jsxImportSource: "mini" }, ["*.tsx"]),
+              "node_modules/mini/package.json": `{"name":"mini","version":"1.0.0","exports":{"./jsx-runtime":{"types":"./jsx-runtime.d.ts"}}}`,
+              "node_modules/mini/jsx-runtime.d.ts":
+                `export declare namespace JSX {\n  type Element = string;\n  interface ElementChildrenAttribute { children: {} }\n` +
+                `  interface IntrinsicElements {}\n}\nexport declare function jsx(type: unknown, props: unknown): string;\n`,
+              "src/view.tsx":
+                `declare function Memo<T>(props: { children: () => T; then: (value: T) => string }): string;\n` +
+                'export const view = <Memo then={value => `${value}`}>{() => "text"}</Memo>;\n',
+            },
+            ["view.tsx:2:45 typescript(restrict-template-expressions)"],
+          ],
+          [
+            "paths, to a declaration file in place of its source",
+            {
+              ".oxlintrc.json": on("unbound-method"),
+              "tsconfig.json": above({ paths: { lib: ["./lib/source.ts"] } }),
+              "src/tsconfig.json": nearer({ paths: { lib: ["../lib/emitted.d.ts"] } }, ["*.ts"]),
+              "lib/source.ts": `export function make() { return { release() {} } as const; }\n`,
+              "lib/emitted.d.ts": `export declare function make(): { readonly release: () => void };\n`,
+              "src/use.ts": `import { make } from "lib";\nexport const release = make().release;\n`,
+            },
+            ["use.ts:2:31 typescript(unbound-method)"],
+          ],
+        ])("a nearer tsconfig.json has %s", async (_, files, withTheOneAbove) => {
+          const { "src/tsconfig.json": _nearer, ...withoutTheNearer } = files;
+          const run = async (files: Record<string, string>, ...flags: string[]) =>
+            found((await lint(files, ["-f", "json", "--type-aware", ...flags, "src"])).raw, ["src"]).src;
+          expect(
+            await Promise.all([
+              run(files),
+              run(files, "--tsconfig=tsconfig.json"),
+              run(files, "--tsconfig=src/tsconfig.json"),
+              run(withoutTheNearer),
+            ]),
+          ).toEqual([[], [], [], withTheOneAbove]);
+        });
+
+        // `which` is declared in a file that only one project has, so its type says which project it was.
+        const project = (marker: string, include: string[], more: object = {}) =>
+          JSON.stringify({ compilerOptions: { strict: true, types: [], ...more }, include: [marker, ...include] });
+        const solution = (path: string) => JSON.stringify({ files: [], references: [{ path }] });
+        const names = ["top", "everything", "nearer", "leavesOut", "referenced", "ofFlag"];
+        const directories = ["src/included", "src/left-out", "src/none", "src/solution", "outside"];
+        const marked = {
+          ...Object.fromEntries(names.map(it => [`markers/${it}.d.ts`, `declare const which: { ${it}: 1 };\n`])),
+          ...Object.fromEntries(directories.map(it => [`${it}/a.ts`, "export const text = `${which}`;\n"])),
+          "tsconfig.json": project("markers/top.d.ts", ["src/**/*"]),
+          "everything.json": project("markers/everything.d.ts", ["src/**/*", "outside/**/*"]),
+          "src/included/tsconfig.json": project("../../markers/nearer.d.ts", ["*.ts"]),
+          "src/left-out/tsconfig.json": project("../../markers/leavesOut.d.ts", ["other.ts"]),
+          "src/left-out/other.ts": "export {};\n",
+          "src/solution/tsconfig.json": solution("./app.json"),
+          "src/solution/app.json": project("../../markers/referenced.d.ts", ["*.ts"], {
+            composite: true,
+            outDir: "out",
+          }),
+          "references.json": solution("./src/none/lib.json"),
+          "src/none/lib.json": project("../../markers/ofFlag.d.ts", ["*.ts"], { composite: true, outDir: "out" }),
+        };
+
+        test("it is the nearest tsconfig.json that includes the file, or one that it references, whatever the flag names", async () => {
+          const files = { ".oxlintrc.json": on("restrict-template-expressions"), ...marked };
+          const flags = [
+            [],
+            ["--tsconfig", "tsconfig.json"],
+            ["--tsconfig", "everything.json"],
+            ["--tsconfig", "references.json"],
+            ["--tsconfig", "src/included/tsconfig.json"],
+            ["--tsconfig", "src/left-out/tsconfig.json"],
+            ["--tsconfig", "src/solution/tsconfig.json"],
+            ["-p", "everything.json"],
+          ];
+          const runs = await Promise.all(
+            flags.map(it => lint(files, ["-f", "json", "--type-aware", ...it, ...directories])),
+          );
+          const types = (raw: string) =>
+            Object.fromEntries(
+              (JSON.parse(raw).diagnostics as { filename: string; labels: { label: string }[] }[])
+                .map((it): [string, string] => [it.filename, it.labels[0].label])
+                .sort(),
+            );
+          // outside/a.ts is in no project, where `which` is not declared.
+          const expected = {
+            "src/included/a.ts": "Type: { nearer: 1; }",
+            "src/left-out/a.ts": "Type: { top: 1; }",
+            "src/none/a.ts": "Type: { top: 1; }",
+            "src/solution/a.ts": "Type: { referenced: 1; }",
+          };
+          expect(runs.map(it => types(it.raw))).toEqual(flags.map(() => expected));
+        });
+
+        test("without an oxlint config it is the project of every file, also of one that it does not include", async () => {
+          const types = async (...flags: string[]) => {
+            const rule = ["--rule", "@typescript-eslint/restrict-template-expressions: error"];
+            const { stdout } = await lint(marked, ["-f", "unix", ...rule, ...flags, ...directories]);
+            return [...stdout.matchAll(/^<dir>\/(.*):1:24: Invalid type "\{ (\w+): 1; \}"/gm)].map(
+              it => `${it[1]} ${it[2]}`,
+            );
+          };
+          const all = (name: string) => directories.map(it => `${it}/a.ts ${name}`).sort();
+          expect(
+            await Promise.all([
+              types(),
+              types("--tsconfig", "everything.json"),
+              types("--tsconfig", "src/included/tsconfig.json"),
+            ]),
+          ).toEqual([
+            [
+              "outside/a.ts top",
+              "src/included/a.ts nearer",
+              "src/left-out/a.ts leavesOut",
+              "src/none/a.ts top",
+              "src/solution/a.ts referenced",
+            ],
+            all("everything"),
+            all("nearer"),
+          ]);
+        });
+
+        // What oxlint 1.87.0 does with it instead.
+        test("it is what the imports of every file are resolved with: the first that it references and that includes the file, or else itself", async () => {
+          const aliases = (to: string, more: object) =>
+            JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`${to}/*`] } }, ...more });
+          const code = `import * as lib from "@lib/x";\nexport const all = [lib.one, lib.two, lib.three];\n`;
+          const files = {
+            ".oxlintrc.json": rc({ plugins: ["import"], rules: { "import/namespace": "error" } }),
+            "one/x.ts": "export const one = 1;\n",
+            "two/x.ts": "export const two = 2;\n",
+            "three/x.ts": "export const three = 3;\n",
+            "tsconfig.json": JSON.stringify({ include: ["src/**/*"] }),
+            "aliases.json": aliases("./one", {
+              include: ["src/**/*"],
+              references: [{ path: "./src/sub/referenced.json" }],
+            }),
+            "src/a.ts": code,
+            "src/own/tsconfig.json": aliases("../../two", {}),
+            "src/own/b.ts": code,
+            "src/sub/referenced.json": aliases("../../three", { include: ["*.ts"] }),
+            "src/sub/c.ts": code,
+            "src/sub/deep/d.ts": code,
+            "outside/e.ts": code,
+            // Not what a package imports.
+            "node_modules/dep/package.json": `{"name":"dep","version":"1.0.0","main":"index.js","type":"module"}`,
+            "node_modules/dep/index.js": `export * from "@lib/x";\nexport const own = 1;\n`,
+            "src/f.js": `import * as dep from "dep";\nexport const all = [dep.own, dep.one];\n`,
+          };
+          const missing = async (...flags: string[]) => {
+            const { raw } = await lint(files, ["-f", "json", ...flags, "src", "outside"]);
+            const byFile: Record<string, string[]> = {};
+            for (const it of JSON.parse(raw).diagnostics as { filename: string; message: string }[])
+              (byFile[it.filename] ??= []).push(it.message.slice(1, it.message.indexOf('"', 1)));
+            return Object.fromEntries(Object.entries(byFile).map(([name, names]) => [name, names.sort().join(" ")]));
+          };
+          expect(
+            await Promise.all([
+              missing(),
+              missing("--tsconfig", "tsconfig.json"),
+              missing("--tsconfig", "aliases.json"),
+              missing("--tsconfig", join("src", "own", "tsconfig.json")),
+            ]),
+          ).toEqual([
+            { "src/f.js": "one", "src/own/b.ts": "one three" },
+            { "src/f.js": "one" },
+            {
+              "outside/e.ts": "three two",
+              "src/a.ts": "three two",
+              "src/f.js": "one",
+              "src/own/b.ts": "three two",
+              "src/sub/c.ts": "one two",
+              "src/sub/deep/d.ts": "three two",
+            },
+            {
+              "outside/e.ts": "one three",
+              "src/a.ts": "one three",
+              "src/f.js": "one",
+              "src/own/b.ts": "one three",
+              "src/sub/c.ts": "one three",
+              "src/sub/deep/d.ts": "one three",
+            },
+          ]);
+        });
+      });
+
+      describe("a file that the nearest tsconfig.json does not include", () => {
+        const compilerOptions = { strict: true, lib: ["es2022"], types: [] };
+        // A promise that is declared in a project is only one in the program of that project, so what is reported in
+        // `config.ts` says which program it was. `src/b.ts` is reported in any case.
+        const files = {
+          ".oxlintrc.json": rc({ rules: { "typescript/no-floating-promises": "error" } }),
+          // Without `include` it includes everything.
+          "tsconfig.json": JSON.stringify({ compilerOptions, exclude: ["dist"] }),
+          "other/top.d.ts": "declare const ofTheTop: Promise<void>;\n",
+          "packages/tsconfig.json": JSON.stringify({ compilerOptions, include: ["between"] }),
+          "packages/between/between.d.ts": "declare const ofTheOneBetween: Promise<void>;\n",
+          "packages/a/tsconfig.json": JSON.stringify({ compilerOptions, include: ["src"] }),
+          "packages/a/all.json": JSON.stringify({ extends: "./tsconfig.json", include: ["**/*"] }),
+          "packages/a/src.json": JSON.stringify({ extends: "./tsconfig.json", include: ["src"] }),
+          "packages/a/src/a.d.ts": "declare const ofThePackage: Promise<void>;\n",
+          "packages/a/src/b.ts": "ofThePackage;\nexport {};\n",
+          "packages/a/config.ts": "ofTheTop;\nofTheOneBetween;\nofThePackage;\nexport {};\n",
+        };
+        const between = JSON.stringify({ compilerOptions, include: ["between", "a/config.ts"] });
+
+        // What oxlint 1.87.0 with tsgolint 7.0.2003 does.
+        test.each([
+          ["is in the first project upwards that includes it", {}, [], [1, 2, 3]],
+          ["is not in one further up than that", { "packages/tsconfig.json": between }, [], [2]],
+          ["is not in the project of --tsconfig, which includes it", {}, ["--tsconfig", "all.json"], [1, 2, 3]],
+          ["is in a project if that of --tsconfig does not include it", {}, ["--tsconfig", "src.json"], [1, 2, 3]],
+        ])("%s", async (_, others, flags, lines) => {
+          const args = ["-f", "unix", "--type-aware", ...flags, "."];
+          const { stdout, stderr, exitCode } = await lint({ ...files, ...others }, args, { cwd: "packages/a" });
+          const places = stdout.split("\n").filter(it => it.includes("[Error/"));
+          expect({ places: places.map(it => it.replace(/: .* \[/, " [")), stderr, exitCode }).toEqual({
+            places: [...lines.map(line => `config.ts:${line}:1`), "src/b.ts:1:1"].map(
+              it => `${it} [Error/typescript(no-floating-promises)]`,
+            ),
+            stderr: "",
+            exitCode: 1,
+          });
+        });
+
+        const many = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`other/${i}.ts`, "export {};\n"]));
+        const withInclude = JSON.stringify({ compilerOptions, include: ["**/*"] });
+        const warning = `warn: Loaded 1,005 files in <time> to lint config.ts
+  ../../tsconfig.json has no "include", so it covers every file under it.
+  To speed this up, add "include" to it.`;
+        test.each([
+          ["a warning says that a thousand files were loaded for it", {}, [], "packages/a", warning],
+          ["not if the tsconfig.json says what it includes", { "tsconfig.json": withInclude }, [], "packages/a", ""],
+          ["also with --tsconfig", {}, ["--tsconfig", "all.json"], "packages/a", warning],
+          ["not with --silent", {}, ["--silent"], "packages/a", ""],
+          ["not if they are all linted", {}, [], ".", ""],
+          ["also if the file is named", {}, ["config.ts", "src/b.ts"], "packages/a", warning],
+        ])("%s", async (_, others, flags, cwd, expected) => {
+          const paths = flags.some(it => it.endsWith(".ts")) ? [] : ["."];
+          const args = ["-f", "unix", "--type-aware", ...flags, ...paths];
+          const { stderr, exitCode } = await lint({ ...files, ...many, ...others }, args, { cwd });
+          expect({ stderr: stderr.replace(/ in [\d.]+m?s /, " in <time> "), exitCode }).toEqual({
+            stderr: expected,
+            exitCode: 1,
+          });
+        });
+
+        // Without an oxlint config the flag names the project of every file, so it helps.
+        const forEslint = `export default [{
+          files: ["**/*.ts"],
+          plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+          languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+          rules: { "@typescript-eslint/no-floating-promises": "error" },
+        }];`;
+        describe.each([
+          ["no config", {}],
+          ["an ESLint config", { "eslint.config.js": forEslint }],
+        ])("with %s the warning", (_, configured) => {
+          const loaded = `warn: Loaded 1,001 files in <time> to lint sub/a.ts
+  tsconfig.json has no "include", so it covers every file under it.
+  To speed this up, add "include" to it`;
+          test.each([
+            ["names --tsconfig", [], `${loaded} or pass --tsconfig.`],
+            ["is not there with --tsconfig", ["--tsconfig", "sub.json"], ""],
+            ["does not name it if that one has no include either", ["--tsconfig", "tsconfig.json"], `${loaded}.`],
+          ])("%s", async (_, flags, expected) => {
+            const { stderr, exitCode } = await lint(
+              {
+                ...configured,
+                ...many,
+                "tsconfig.json": JSON.stringify({ compilerOptions }),
+                "sub.json": JSON.stringify({ compilerOptions, include: ["sub"] }),
+                "sub/a.ts": "debugger;\nexport {};\n",
+              },
+              ["--type-aware", "--rule", "no-debugger: error", ...flags, "sub"],
+            );
+            const warning = /^warn: .*(\n  .*)*/m.exec(stderr)?.[0] ?? "";
+            expect({ warning: warning.replace(/ in [\d.]+m?s /, " in <time> "), exitCode }).toEqual({
+              warning: expected,
+              exitCode: 1,
+            });
+          });
+        });
+
+        // A thousand files or more, and a hundred or more for each that is linted.
+        test.each([
+          [1000, 1, [], true],
+          [999, 1, [], false],
+          [1000, 10, [], true],
+          [1000, 11, [], false],
+          // The second pass is only about the one file that was fixed, which counts once. There is none with the
+          // configuration of oxlint.
+          [1000, 10, ["--fix"], true],
+          [1000, 11, ["--fix"], false],
+        ])("of %d files, %d are linted %j: a warning %p", async (all, linted, flags, warns) => {
+          const names = Array.from({ length: all }, (_, i) => (i < linted ? `sub/${i}.ts` : `other/${i}.ts`));
+          const { stderr, exitCode } = await lint(
+            {
+              "tsconfig.json": JSON.stringify({ compilerOptions }),
+              ...Object.fromEntries(names.map(name => [name, "export {};\n"])),
+              "sub/0.ts": "debugger;\nvar b = 1;\nexport { b };\n",
+            },
+            ["--type-aware", "--rule", "no-var: error", "--rule", "no-debugger: error", ...flags, "sub"],
+          );
+          const warnings = stderr.split("\n").filter(it => it.startsWith("warn: "));
+          const what = linted === 1 ? "sub/0.ts" : `${linted} files (sub/0.ts, ..)`;
+          const expected = `warn: Loaded ${all.toLocaleString("en-US")} files in <time> to lint ${what}`;
+          expect({
+            warnings: warnings.map(it => it.replace(/ in [\d.]+m?s /, " in <time> ")),
+            exitCode,
+          }).toEqual({ warnings: warns ? [expected] : [], exitCode: 1 });
+        });
       });
 
       // A file is parsed once for all projects of a run that read it alike. Each of these pairs reads it in two ways.
@@ -2340,6 +6026,41 @@ describe.concurrent("bun lint", () => {
         });
       });
 
+      // The projects of a run are loaded and checked at the same time.
+      test("with many projects, every thread count reports the same, and each file is checked in its own project", async () => {
+        const compilerOptions = { strict: true, lib: ["es2022"], types: [] };
+        const project = JSON.stringify({ compilerOptions, include: ["src"] });
+        const files: Record<string, string> = {
+          ".oxlintrc.json": rc({ rules: { "typescript/no-floating-promises": "error" } }),
+          "broken/tsconfig.json": JSON.stringify({ compilerOptions: { ...compilerOptions, lib: ["es1"] } }),
+          "broken/a.ts": "Promise.resolve();\n",
+          // In no project. The two are one program.
+          "outside/global.ts": "const ofNoProject = Promise.resolve();\n",
+          "outside/a.ts": "ofNoProject;\nof0;\n",
+          // It has most of the files, so it gets several threads.
+          "large/tsconfig.json": project,
+          "large/src/own.d.ts": "declare const ofLarge: Promise<void>;\n",
+        };
+        const expected = ["broken/tsconfig.json:1:42 tsconfig-error", "outside/a.ts:1:1 no-floating-promises"];
+        for (let i = 0; i < 40; i++) {
+          files[`large/src/${i}.ts`] = "ofLarge;\nof0;\nexport {};\n";
+          expected.push(`large/src/${i}.ts:1:1 no-floating-promises`);
+        }
+        // A promise that a project declares is only a promise in the program of that project.
+        for (let i = 0; i < 12; i++) {
+          files[`small/${i}/tsconfig.json`] = project;
+          files[`small/${i}/src/own.d.ts`] = `declare const of${i}: Promise<void>;\n`;
+          files[`small/${i}/src/a.ts`] = `of${i};\nof${(i + 1) % 12};\nofLarge;\nofNoProject;\nexport {};\n`;
+          expected.push(`small/${i}/src/a.ts:1:1 no-floating-promises`);
+        }
+        const runs = await Promise.all(
+          [1, 2, 3, 8, 32].map(threads => lint(files, ["-f", "unix", "--type-aware", "--threads", `${threads}`])),
+        );
+        const places = [...runs[0].stdout.matchAll(/^(\S+:\d+:\d+): .*\((.*)\)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
+        expect(places.sort()).toEqual(expected.sort());
+        expect(runs.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(runs.map(() => [runs[0].stdout, "", 1]));
+      });
+
       const kindsOfFixes = (Object.keys(flagSets) as (keyof typeof flagSets)[]).flatMap(flags =>
         [false, true].map((typed): [keyof typeof flagSets, boolean] => [flags, typed]),
       );
@@ -2357,17 +6078,195 @@ describe.concurrent("bun lint", () => {
           }
           const reads = some.map(({ it, directory }) => `${directory}/${it.file}`);
           const result = await lint(files, [...flagSets[flags], ...(typed ? ["--type-aware"] : [])], { reads });
+          // oxlint rewrites `declare var`. `bun lint` never does, because its no-var doesn't report it.
+          const leftAlone = ["76-no-var"];
           expect(result.files).toEqual(
             Object.fromEntries(
               some.map(({ it, directory }) => [
                 `${directory}/${it.file}`,
-                whatOxlintFixes[directory as keyof typeof whatOxlintFixes][flags],
+                leftAlone.includes(directory)
+                  ? it.text
+                  : whatOxlintFixes[directory as keyof typeof whatOxlintFixes][flags],
               ]),
             ),
           );
         },
         isDebug || isASAN ? 120_000 : 30_000,
       );
+
+      // tsgolint's fix writes code that does not parse, or that does something else. `bun lint` makes the same report and
+      // leaves the code, or writes the code that does the same.
+      test("a fix of tsgolint that changes what the code does is not copied", async () => {
+        const shapes: [rule: string, file: string, text: string, fixed?: string, options?: object][] = [
+          // One match where `match` gave all of them.
+          ["prefer-regexp-exec", "a.ts", "declare const s: string;\nexport const a = s.match(new RegExp(/x/g));\n"],
+          [
+            "prefer-regexp-exec",
+            "a.ts",
+            "declare const s: string;\nexport const a = s.match(new RegExp(/x/g, undefined));\n",
+          ],
+          // `p` is `/b+/` there, and tsgolint writes `s.includes('abc')`.
+          [
+            "prefer-includes",
+            "a.ts",
+            "declare const s: string;\nlet p = /abc/;\np = /b+/;\nexport const a = p.test(s);\n",
+          ],
+          [
+            "prefer-string-starts-ends-with",
+            "a.ts",
+            "declare const s: string;\nlet p = /^a/;\np = /b/;\nexport const a = p.test(s);\n",
+          ],
+          // `<Icons["default"] />` does not parse.
+          [
+            "dot-notation",
+            "a.tsx",
+            "declare const Icons: { default: () => null };\nexport const a = <Icons.default />;\n",
+            undefined,
+            { allowKeywords: false },
+          ],
+          // An `await` in a parameter does not parse.
+          [
+            "no-misused-spread",
+            "a.ts",
+            "declare const p: Promise<{ a: 1 }>;\nexport async function f(o = { ...p }) {\n  return o;\n}\n",
+          ],
+        ];
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        shapes.forEach(([rule, file, text, , options], index) => {
+          const it = {
+            rule: `typescript/${rule}`,
+            file,
+            text,
+            typed: true,
+            options,
+            compilerOptions: { jsx: "preserve" },
+          };
+          for (const [path, text] of Object.entries(filesOf(it))) files[`${index}/${path}`] = text;
+        });
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        const reported = shapes.map((_, index) =>
+          JSON.parse(raw)
+            .diagnostics.filter((it: { filename: string }) => it.filename.startsWith(`${index}/`))
+            .map((it: { code: string }) => it.code),
+        );
+        expect(reported).toEqual(shapes.map(([rule]) => [`typescript(${rule})`]));
+        const reads = shapes.map(([, file], index) => `${index}/${file}`);
+        const result = await lint(files, ["--fix-dangerously", "--type-aware"], { reads });
+        expect(result.files).toEqual(
+          Object.fromEntries(shapes.map(([, file, text, fixed], index) => [`${index}/${file}`, fixed ?? text])),
+        );
+      });
+
+      test("redundant parentheses don't change what a type-aware rule reports", async () => {
+        const pairs: [rule: string, plain: string, parenthesized: string, reports: number][] = [
+          [
+            "require-array-sort-compare",
+            "declare const a: number[];\na.sort();\n",
+            "declare const a: number[];\n(a.sort)();\n",
+            1,
+          ],
+          [
+            "dot-notation",
+            'declare const a: { b: number };\nexport const c = a["b"];\n',
+            'declare const a: { b: number };\nexport const c = a[("b")];\n',
+            1,
+          ],
+          [
+            "use-unknown-in-catch-callback-variable",
+            "declare const p: Promise<number>;\nvoid p.catch((e) => e);\n",
+            "declare const p: Promise<number>;\nvoid (p.catch)((e) => e);\n",
+            1,
+          ],
+          [
+            "prefer-reduce-type-parameter",
+            "declare const a: number[];\nexport const r = a.reduce((x, y) => x.concat(y), [] as number[]);\n",
+            "declare const a: number[];\nexport const r = a.reduce((x, y) => x.concat(y), ([] as number[]));\n",
+            1,
+          ],
+          ["no-implied-eval", 'setTimeout("alert(1)", 1);\n', '(setTimeout)("alert(1)", 1);\n', 1],
+          [
+            "no-duplicate-type-constituents",
+            "export function f(a?: string | undefined) {\n  return a;\n}\n",
+            "export function f(a?: (string | undefined)) {\n  return a;\n}\n",
+            1,
+          ],
+          [
+            "prefer-regexp-exec",
+            "declare const s: string;\nexport const m = s.match(/x/);\n",
+            "declare const s: string;\nexport const m = (s.match)(/x/);\n",
+            1,
+          ],
+          [
+            "prefer-regexp-exec",
+            'declare const s: string;\nconst r = RegExp("a");\nexport const m = s.match(r);\n',
+            'declare const s: string;\nconst r = (RegExp)("a");\nexport const m = s.match(r);\n',
+            1,
+          ],
+          [
+            "await-thenable",
+            "export async function f() {\n  await Promise.all([1, 2]);\n}\n",
+            "export async function f() {\n  await Promise.all(([1, 2]));\n}\n",
+            2,
+          ],
+        ];
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        pairs.forEach(([rule, plain, parenthesized], index) => {
+          for (const [name, text] of [
+            ["plain", plain],
+            ["parenthesized", parenthesized],
+          ]) {
+            const it = { rule: `typescript/${rule}`, file: "a.ts", text, typed: true };
+            for (const [path, text] of Object.entries(filesOf(it))) files[`${index}-${name}/${path}`] = text;
+          }
+        });
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        const reported = (directory: string) =>
+          JSON.parse(raw)
+            .diagnostics.filter((it: { filename: string }) => it.filename.startsWith(`${directory}/`))
+            .map((it: { code: string }) => it.code);
+        const expected = pairs.map(([rule, , , reports]) =>
+          Array.from({ length: reports }, () => `typescript(${rule})`),
+        );
+        expect(pairs.map((_, index) => reported(`${index}-plain`))).toEqual(expected);
+        expect(pairs.map((_, index) => reported(`${index}-parenthesized`))).toEqual(expected);
+      });
+
+      test("unbound-method knows RegExp.escape and the other newer built-ins that are bound", async () => {
+        const it = {
+          rule: "typescript/unbound-method",
+          file: "a.ts",
+          text: "export const all = [RegExp.escape, Atomics.pause, Math.f16round, Intl.DurationFormat];\n",
+          typed: true,
+          compilerOptions: { lib: ["esnext"] },
+        };
+        const { raw } = await lint(filesOf(it), ["-f", "json", "--type-aware"]);
+        expect(JSON.parse(raw).diagnostics.map((it: { code: string }) => it.code)).toEqual([]);
+      });
+
+      test("what is left after the fixes is reported once, where it was", async () => {
+        const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } });
+        const { files, raw } = await lint(
+          {
+            ".oxlintrc.json": JSON.stringify({
+              plugins: ["typescript"],
+              categories: { correctness: "off" },
+              rules: { "no-var": "error", "no-debugger": "error", "typescript/await-thenable": "error" },
+            }),
+            "tsconfig.json": tsconfig,
+            // `var` becomes `const` twice: a name that is declared twice, which is not said about the text that is written.
+            "a.ts": "var a = 1; debugger;\nvar a = 2;\nexport async function f() {\n  await a;\n}\n",
+          },
+          ["--fix", "--type-aware", "-f", "json"],
+          { reads: ["a.ts"] },
+        );
+        expect(files).toEqual({
+          "a.ts": "const a = 1; debugger;\nconst a = 2;\nexport async function f() {\n  await a;\n}\n",
+        });
+        const places = JSON.parse(raw).diagnostics.map(
+          (it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`,
+        );
+        expect(places.sort()).toEqual(["a.ts:1:12 eslint(no-debugger)", "a.ts:4:9 typescript(await-thenable)"]);
+      });
 
       test("the options that oxlint accepts are accepted", async () => {
         // A configuration that is refused ends the run. options.json is what oxlint 1.87.0 accepts. Each of the configurations has
@@ -2520,7 +6419,8 @@ describe.concurrent("bun lint", () => {
       expect(stdout).toContain(" errors and 0 warnings potentially fixable with the `--fix` option.");
     }
     expect(exitCode).toBe(1);
-    expect(proc.resourceUsage()!.maxRSS).toBeLessThan((isASAN || isDebug ? 700 : 300) * 1024 * 1024);
+    // On Linux a child's peak RSS starts at its parent's peak, which is about 300 MB for this test file.
+    expect(proc.resourceUsage()!.maxRSS).toBeLessThan((isASAN || isDebug ? 800 : 600) * 1024 * 1024);
   });
 
   // What matches a path with a pattern of `include` called itself for each `**`, and tried every number of directories for each
@@ -2798,6 +6698,294 @@ describe.concurrent("bun lint", () => {
     });
   });
 
+  // A rule for ESLint that takes the first reference to a name in a scope gets the one the scope manager makes first. That isn't
+  // always the one that is written first: it visits a type after the value, type arguments after the arguments, type parameters
+  // after the parameters, decorators after the member, and the `b` of `[a[b]] = c` before `a`. The two rules here take the first
+  // reference. What they report is what ESLint 10.12.0 reports with typescript-eslint 8.71.1 and eslint-plugin-react 7.37.5.
+  describe("the references of a scope are in the order in which the scope manager makes them", () => {
+    const reported = async (plugin: string, name: string, rule: string, sources: Record<string, string>) => {
+      const configuration = `export default [{
+        files: ["**/*.ts"],
+        plugins: { "${plugin}": { meta: { name: "${name}" } } },
+        languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+        settings: { react: { version: "18.0" } },
+        rules: { "${plugin}/${rule}": "error" },
+      }];`;
+      const files = Object.fromEntries(Object.entries(sources).map(([name, source]) => [`${name}.ts`, source]));
+      const { stdout } = await lint({ "eslint.config.mjs": configuration, ...files }, [
+        "-f",
+        "unix",
+        ...Object.keys(files),
+      ]);
+      return [...stdout.matchAll(/([\w-]+)\.ts:\d+:\d+: /g)].map(it => it[1]).sort();
+    };
+
+    // `size` is a type outside the class and a parameter property in it. The last line of the constructor is reported if the
+    // first reference to `size` in the constructor is to the parameter.
+    test("types", async () => {
+      const box = (parameters: string, body: string, typeParameters = "") =>
+        `type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor${typeParameters}(public size: number${parameters}) {\n    ${body}\n    this.size = size;\n  }\n}\n`;
+      const theParameterIsFirst = {
+        "nothing-else": box("", ""),
+        "variable": box("", "const w: size = size;"),
+        "variable-and-call": box("", "const w: size = g<number>(size);"),
+        "call-in-variable": box("", "const w: number = g<size>(size);"),
+        "call": box("", "g<size>(size);"),
+        "optional-call": box("", "g?.<size>(size);"),
+        "nested-calls": box("", "g<Array<size>>(g<number>(size));"),
+        "new": box("", "new Set<size>([size]);"),
+        "tagged-template": box("", "g<size>`${size}`;"),
+        "parameter": box(", w: size = size", ""),
+        "pattern-parameter": box(", { w = size }: size = size", ""),
+        "type-parameters": box(", w = size", "", "<T extends size>"),
+        "type-parameters-and-type": box(", w: number = size", "", "<T extends size>"),
+        "angle-brackets": box("", "<size>size;"),
+        "as": box("", "size as size;"),
+        "satisfies-assigned-to": box("", "(size satisfies size) = 0;"),
+        "as-and-non-null-assigned-to": box("", "((size as size)!) = 0;"),
+        "another-scope": box("", "const f = (w: size = size) => w;"),
+      };
+      const theTypeIsFirst = {
+        "variable-without-value": box("", "let w: size;"),
+        "type-parameters-alone": box("", "", "<T extends size>"),
+        "as-assigned-to": box("", "(size as size) = 0;"),
+        "as-added-to": box("", "(size as size) += 0;"),
+        "as-incremented": box("", "(size as size)++;"),
+        "member-as-assigned-to": box("", "(this.size as size) = size;"),
+        "member-as-incremented": box("", "let n = { m: 0 }; (n.m as size)++; size;"),
+        "angle-brackets-assigned-to": box("", "(<size>size) = 0;"),
+        "angle-brackets-incremented": box("", "(<size>size)++;"),
+      };
+      const found = await reported(
+        "@typescript-eslint",
+        "@typescript-eslint/eslint-plugin",
+        "no-unnecessary-parameter-property-assignment",
+        { ...theParameterIsFirst, ...theTypeIsFirst },
+      );
+      expect(found).toEqual(Object.keys(theParameterIsFirst).sort());
+    });
+
+    // `useState` is a parameter of the function, and `useMemo` is React's. The call of `useState` is reported if the first reference
+    // in its scope to one of the two is to `useMemo`.
+    test("members in patterns, decorators, and what a class extends", async () => {
+      const panel = (body: string) =>
+        `import { useMemo, useState } from "react";\nexport function Panel(useState: any, rows: any) {\n  ${body}\n}\n`;
+      const call = "const a = useState(0);";
+      const useMemoIsFirst = {
+        "written-first": panel(`useMemo; ${call}`),
+        "array-pattern": panel(`[useState[useMemo]] = rows; ${call}`),
+        "object-pattern": panel(`({ a: useState[useMemo] } = rows); ${call}`),
+        "nested-patterns": panel(`[{ a: [useState[useMemo]] }] = rows; ${call}`),
+        "with-default": panel(`[useState[useMemo] = 1] = rows; ${call}`),
+        "rest": panel(`[...useState[useMemo]] = rows; ${call}`),
+        "non-null": panel(`[useState[useMemo]!] = rows; ${call}`),
+        "last-index": panel(`[rows[useState][useMemo]] = rows; ${call}`),
+        "for-of": panel(`for (useState[useMemo] of rows); ${call}`),
+        "for-in": panel(`for (useState[useMemo] in rows); ${call}`),
+        "decorated-method": panel("class A { @useState(0) [useMemo]() {} }"),
+        "decorated-getter": panel("class A { @useState(0) get [useMemo]() { return 1; } }"),
+        "decorated-property": panel("class A { @useState(0) [useMemo] = 1; }"),
+        "decorated-static-property": panel("class A { @useState(0) static [useMemo] = 1; }"),
+        "decorated-accessor": panel("class A { @useState(0) accessor [useMemo] = 1; }"),
+        "decorated-parameter": panel("class A { @useState(0) a(@useMemo b: any) {} }"),
+        "decorated-class": panel("@useState(0) class A extends useMemo {}"),
+      };
+      const useStateIsFirst = {
+        "written-last": panel(`${call} useMemo;`),
+        "assignment": panel(`useState[useMemo] = rows; ${call}`),
+        "array": panel(`[useState[useMemo]]; ${call}`),
+        "index-before-a-name": panel(`[useState[useMemo].a] = rows; ${call}`),
+        "type-of-decorated-property": panel("class A { @useState(0) a: typeof useMemo = 1; }"),
+        "type-parameters-of-class": panel("class A<T extends typeof useMemo> extends useState(0) {}"),
+      };
+      const found = await reported("react", "eslint-plugin-react", "hook-use-state", {
+        ...useMemoIsFirst,
+        ...useStateIsFirst,
+      });
+      expect(found).toEqual(Object.keys(useMemoIsFirst).sort());
+    });
+  });
+
+  // typescript-eslint's scope manager doesn't visit the type of a `catch` parameter or the options of an import type: for it there
+  // are no scopes, no variables and no references in them. oxc visits both. For both, `["a"]` in an enum declares `a`.
+  describe("what only one of the two scope analyses visits", () => {
+    const sources = {
+      "catch-type.ts": `type Shape = unknown;\nconst width = 1;\ntry {} catch (e: Shape) { e; }\ntry {} catch (e: typeof width) { e; }\ntry {} catch (e: typeof missing) { e; }\ntry {} catch (e: (width: number) => void) { e; }\nexport {};\n`,
+      "import-type.ts": `const kind = "a";\nexport type A = import("./m", { with: { k: kind } });\nexport type B = import("./m", { with: { k: function (left: unknown) { const right = 1; return missing; } } });\nexport type C = import("./m", { with: { k: function (kind: unknown) { return kind; } } });\nexport type D = import("./m", { with: { k: class kind {} } });\n`,
+    };
+    const rules = (prefix: string) => ({
+      [`${prefix}no-unused-vars`]: "error",
+      [`${prefix}no-shadow`]: "error",
+      "no-undef": "error",
+    });
+    const reported = async (files: Record<string, string>) => {
+      const names = Object.keys(files).filter(it => it.endsWith(".ts"));
+      const { stdout } = await lint(files, ["-f", "unix", ...names]);
+      const found = [...stdout.matchAll(/([\w-]+\.ts:\d+:\d+): .*?([\w-]+)\)?\]$/gm)];
+      return found.map(it => `${it[1]} ${it[2]}`).sort();
+    };
+
+    test("as ESLint 10.12.0 with typescript-eslint 8.71.1", async () => {
+      const configuration = `export default [{
+        files: ["**/*.ts"],
+        plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+        languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+        rules: ${JSON.stringify(rules("@typescript-eslint/"))},
+      }];`;
+      expect(await reported({ "eslint.config.mjs": configuration, ...sources })).toEqual([
+        "catch-type.ts:1:6 no-unused-vars",
+        "import-type.ts:1:7 no-unused-vars",
+      ]);
+    });
+
+    test("as oxlint 1.87", async () => {
+      const configuration = JSON.stringify({ categories: { correctness: "off" }, rules: rules("") });
+      const enums = {
+        "enum-shadows.ts": `const size = 1;\nenum E { ["size"] = 1, other = size as any }\nexport { E };\n`,
+        "enum-declares.ts": `enum E { ["size"] = 1, other = size as any }\nenum F { a = 1, other = size as any }\nexport { E, F };\n`,
+      };
+      expect(await reported({ ".oxlintrc.json": configuration, ...sources, ...enums })).toEqual([
+        "catch-type.ts:5:25 no-undef",
+        "enum-declares.ts:2:25 no-undef",
+        "enum-shadows.ts:1:7 no-unused-vars",
+        "enum-shadows.ts:2:11 no-shadow",
+        "import-type.ts:3:54 no-unused-vars",
+        "import-type.ts:3:77 no-unused-vars",
+        "import-type.ts:3:95 no-undef",
+        "import-type.ts:4:54 no-shadow",
+        "import-type.ts:5:50 no-shadow",
+      ]);
+    });
+  });
+
+  // oxlint analyses a file twice. Its own rules see the scopes of oxc, a rule of a plugin in JavaScript those of typescript-eslint. They
+  // differ about `namespace A.B {}`, about a function in a block of sloppy JavaScript, and about what is in the type of a `catch`
+  // parameter and in the options of an import type. A rule that is built in here and that oxlint lacks, as `no-catch-shadow`, is
+  // one that oxlint could only run from a plugin. What is expected is what oxlint 1.87 reports, and for `no-catch-shadow` what
+  // it reports for the plugin's copy of that rule.
+  describe("with an oxlint config, which scopes a rule sees doesn't depend on the other rules", () => {
+    const sources = {
+      "namespace.ts": `let Inner = 0;\nnamespace Outer.Inner { Inner = 1; export const x = Inner; try {} catch (Inner) {} }\nconsole.log(Inner, Outer);\n`,
+      "namespace-used.ts": `namespace Shapes.Round { export const sides = 0; }\nexport { Shapes };\n`,
+      "block.cjs": `{ function helper() {} }\nhelper();\ntry {} catch (helper) {}\n`,
+      "block.js": `{ function helper() {} }\nhelper();\ntry {} catch (helper) {}\n`,
+      "switch.cjs": `switch (kind) { case 1: function helper() {} }\nhelper;\nfunction outer() { { function inner() {} } inner(); try {} catch (inner) {} }\nouter();\n`,
+      "import-type.ts": `export type A = import("./m", { with: { k: function (left: unknown) { try {} catch (left) {} } } });\n`,
+      "catch-type.ts": `type Shape = unknown;\ntry {} catch (e: (v: Shape) => void) { e; }\nexport {};\n`,
+      "empty.mjs": `export default { meta: { name: "q" }, rules: {} };\n`,
+      "plugin.mjs": `const shadow = { create(context) { return { CatchClause(node) {
+  let scope = context.sourceCode.getScope(node);
+  if (scope.block === node) scope = scope.upper;
+  for (; scope; scope = scope.upper) if (scope.set.has(node.param.name)) return context.report({ node, message: "shadows" });
+} }; } };
+const scopes = { create(context) { return { Program(node) {
+  const declared = it => it.variables.filter(it => it.defs.length).map(it => it.name);
+  context.report({ node, message: context.sourceCode.scopeManager.scopes.map(it => it.type + "[" + declared(it) + "]").join(" ") });
+} }; } };
+export default { meta: { name: "q" }, rules: { shadow, scopes } };\n`,
+    };
+    const ofOxlint = {
+      "no-undef": "error",
+      "no-unused-vars": "error",
+      "no-shadow": "error",
+      "prefer-const": "error",
+      "no-use-before-define": "error",
+      "no-useless-assignment": "error",
+    };
+    const reported = async (more: object, rules: object) => {
+      const configuration = {
+        categories: { correctness: "off" },
+        env: { node: true },
+        globals: { kind: "readonly" },
+        ignorePatterns: ["*.mjs"],
+        ...more,
+        rules: { ...ofOxlint, ...rules },
+      };
+      const { stdout } = await lint({ ".oxlintrc.json": JSON.stringify(configuration), ...sources }, ["-f", "unix"]);
+      const found = [...stdout.matchAll(/^([\w-]+\.\w+:\d+:\d+): (.*) \[Error\/(\w+)\(([\w-]+)\)\]$/gm)];
+      const all = found.map(it => `${it[1]} ${it[4]}` + (it[3] === "q" ? ` ${it[2]}` : "")).sort();
+      const isOfOxlint = (it: string) => it.split(" ")[1] in ofOxlint;
+      return { ofOxlint: all.filter(isOfOxlint), others: all.filter(it => !isOfOxlint(it)) };
+    };
+    const expected = [
+      "block.cjs:3:15 no-shadow",
+      "block.cjs:3:15 no-unused-vars",
+      "block.js:3:15 no-shadow",
+      "block.js:3:15 no-unused-vars",
+      "import-type.ts:1:54 no-unused-vars",
+      "import-type.ts:1:85 no-shadow",
+      "import-type.ts:1:85 no-unused-vars",
+      "namespace.ts:1:5 prefer-const",
+      "namespace.ts:2:17 no-shadow",
+      "namespace.ts:2:74 no-shadow",
+      "namespace.ts:2:74 no-unused-vars",
+      "switch.cjs:3:67 no-shadow",
+      "switch.cjs:3:67 no-unused-vars",
+    ];
+
+    test("only oxlint's rules", async () => {
+      expect(await reported({}, {})).toEqual({ ofOxlint: expected, others: [] });
+    });
+
+    test("beside a plugin without rules", async () => {
+      expect(await reported({ jsPlugins: ["./empty.mjs"] }, {})).toEqual({ ofOxlint: expected, others: [] });
+    });
+
+    test("beside a plugin that asks the scopes", async () => {
+      const rules = { "q/shadow": "error", "q/scopes": "error" };
+      expect(await reported({ jsPlugins: ["./plugin.mjs"] }, rules)).toEqual({
+        ofOxlint: expected,
+        others: [
+          "block.cjs:1:1 scopes global[] function[] block[helper] function[] block[] catch[helper] block[]",
+          "block.js:1:1 scopes global[] block[helper] function[] block[] catch[helper] block[]",
+          "catch-type.ts:1:1 scopes global[] module[Shape] block[] catch[e] block[]",
+          "import-type.ts:1:1 scopes global[] module[A]",
+          "namespace-used.ts:1:1 scopes global[] module[] tsModule[sides]",
+          "namespace.ts:1:1 scopes global[Inner] tsModule[x] block[] catch[Inner] block[]",
+          "namespace.ts:2:67 shadow shadows",
+          "switch.cjs:1:1 scopes global[] function[outer] switch[helper] function[] function[] block[inner] function[] block[] catch[inner] block[]",
+        ],
+      });
+    });
+
+    // The mark is on the plugin's variable.
+    test("`markVariableAsUsed` in a plugin doesn't silence oxlint's no-unused-vars", async () => {
+      const files = {
+        ".oxlintrc.json": JSON.stringify({
+          categories: { correctness: "off" },
+          jsPlugins: ["./marks.mjs"],
+          ignorePatterns: ["*.mjs"],
+          rules: { "no-unused-vars": "error", "q/marks": "error", "q/marked": "error" },
+        }),
+        "marks.mjs": `const marks = { create(context) { return { Program(node) {
+  for (const name of ["first", "work", "Kind"]) context.sourceCode.markVariableAsUsed(name, node);
+} }; } };
+const marked = { create(context) { return { "Program:exit"(node) {
+  const all = context.sourceCode.scopeManager.scopes.flatMap(it => it.variables).filter(it => it.defs.length);
+  context.report({ node, message: all.map(it => it.name + "=" + !!it.eslintUsed).join(" ") });
+} }; } };
+export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
+        "marked.ts": `const first = 1;\nconst second = 2;\nfunction work() {}\ntype Kind = 1;\nexport {};\n`,
+      };
+      const { stdout } = await lint(files, ["-f", "unix"]);
+      const found = [...stdout.matchAll(/^marked\.ts:(\d+:\d+): (.*) \[Error\/(\w+)\(([\w-]+)\)\]$/gm)];
+      expect(found.map(it => `${it[1]} ${it[4]}` + (it[3] === "q" ? ` ${it[2]}` : "")).sort()).toEqual([
+        "1:1 marked first=true second=false work=true Kind=true",
+        "1:7 no-unused-vars",
+        "2:7 no-unused-vars",
+        "3:10 no-unused-vars",
+        "4:6 no-unused-vars",
+      ]);
+    });
+
+    test("beside a built-in rule that oxlint lacks", async () => {
+      expect(await reported({}, { "no-catch-shadow": "error" })).toEqual({
+        ofOxlint: expected,
+        others: ["namespace.ts:2:67 no-catch-shadow"],
+      });
+    });
+  });
+
   // `namespace A.B { .. }` is one node, and what is between the braces is its body: a rule that looks at the statements beside a
   // statement says there what it says in `namespace B { .. }` and in `namespace A { export namespace B { .. } }`.
   describe("the statements of a namespace with dots in its name", () => {
@@ -2931,7 +7119,7 @@ describe.concurrent("bun lint", () => {
         const result = await lint(files, ["--fix", "-f", format, "."], { reads: ["a.js", "b.js"] });
         expect(result.files).toEqual({ "a.js": files["a.js"].replace("var", "let"), "b.js": files["b.js"] });
         expect(result.stderr).toContain(
-          "Fixes of mine/breaks would leave a.js with a syntax error. They are not applied.",
+          "Fixes from mine/breaks were not applied to a.js because they would cause a syntax error",
         );
         expect(result.exitCode).toBe(1);
       },
@@ -3436,7 +7624,7 @@ describe.concurrent("bun lint", () => {
 
     describe("fixes after which the text cannot be parsed are not written", () => {
       const warning = (rules: string, file: string) =>
-        `warn: Fixes of ${rules} would leave ${file} with a syntax error. They are not applied.`;
+        `warn: Fixes from ${rules} were not applied to ${file} because they would cause a syntax error`;
 
       // oxlint 1.87 writes `foo(,);`, `await x ^= y;` and "declare module String.raw`a\\b` {}".
       test.each([
@@ -3514,6 +7702,176 @@ describe.concurrent("bun lint", () => {
         const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.js"]);
         expect(JSON.parse(dry.raw)[0].output).toBe("let a = two;\nexport { a };\n");
       });
+
+      // TypeScript's parser accepts `var a,` at the end of a line. Only its checker reports the comma.
+      test("also rejects a fix whose syntax error the parser accepts, and doesn't count it as fixed", async () => {
+        const comma = `{
+          meta: { fixable: "code" },
+          create: context => ({
+            VariableDeclaration(node) {
+              const end = node.range[1];
+              if (context.sourceCode.text[end - 1] === ";")
+                context.report({ node, message: "comma", fix: fixer => fixer.replaceTextRange([end - 1, end], ",") });
+            },
+          }),
+        }`;
+        const all = {
+          "eslint.config.mjs": `export default [
+            { files: ["*.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+            { files: ["a.ts"], plugins: { p: { rules: { comma: ${comma} } } }, rules: { "p/comma": "error" } },
+            { files: ["b.ts"], rules: { "no-var": "error" } },
+          ];`,
+          "a.ts": "var a: number;\nexport { a };\n",
+          "b.ts": "var b = 1;\nexport { b };\n",
+        };
+        const result = await lint(all, ["--fix", "-f", "unix", "a.ts", "b.ts"], { reads: ["a.ts", "b.ts"] });
+        expect(result.files).toEqual({ "a.ts": all["a.ts"], "b.ts": "let b = 1;\nexport { b };\n" });
+        expect(result.stderr).toContain(warning("p/comma", "a.ts"));
+        expect(result.stderr).toContain("Fixed 1 problem in 1 file");
+        expect(result.stdout).toContain("[Error/p/comma]");
+        expect(result.exitCode).toBe(1);
+        const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.ts"]);
+        expect(JSON.parse(dry.raw)[0].output).toBeUndefined();
+      });
+
+      // In JavaScript the parser rejects these. In TypeScript only the type checker does.
+      describe("a fix that redeclares a name in TypeScript", () => {
+        /** Returns a config with `no-var` for `b.ts` and `p/adds`, whose fix appends the line `added`, for `a.ts`. */
+        const config = (added: string) => `
+          const adds = {
+            meta: { fixable: "code" },
+            create: context => ({
+              Program(node) {
+                const added = ${JSON.stringify(added)};
+                if (!context.sourceCode.text.includes(added))
+                  context.report({ node, message: "adds", fix: fixer => fixer.insertTextAfter(node.body.at(-1), "\\n" + added) });
+              },
+            }),
+          };
+          export default [
+            { files: ["*.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+            { files: ["a.ts"], plugins: { p: { rules: { adds } } }, rules: { "p/adds": "error" } },
+            { files: ["b.ts"], rules: { "no-var": "error" } },
+          ];`;
+
+        test.each([
+          [`import { a } from "./a";\nexport const b = a;\n`, `import { a } from "./b";`],
+          [`import { a } from "./a";\nexport const b = a;\n`, `const a = 1;`],
+          [`import a from "./a";\nexport const b = a;\n`, `class a {}`],
+          [`let a = 1;\nexport { a };\n`, `let a = 2;`],
+          [`class A {}\nexport { A };\n`, `const A = 1;`],
+        ])("%j and %j conflict, so the fix is rejected and isn't counted", async (text, added) => {
+          const all = { "eslint.config.mjs": config(added), "a.ts": text, "b.ts": "var b = 1;\nexport { b };\n" };
+          const result = await lint(all, ["--fix", "-f", "unix", "a.ts", "b.ts"], { reads: ["a.ts", "b.ts"] });
+          expect(result.files).toEqual({ "a.ts": text, "b.ts": "let b = 1;\nexport { b };\n" });
+          expect(result.stderr).toContain(warning("p/adds", "a.ts"));
+          expect(result.stderr).toContain("Fixed 1 problem in 1 file");
+          expect(result.stdout).toContain("[Error/p/adds]");
+          expect(result.exitCode).toBe(1);
+        });
+
+        test.each([
+          [`class A {}\nexport { A };\n`, `interface A {}`],
+          [`function f() {}\nexport { f };\n`, `namespace f { export const a = 1; }`],
+          [`const A = 1;\nexport { A };\n`, `type A = number;`],
+          [`import type { a } from "./a";\nexport type B = a;\n`, `const a = 1;`],
+          [`declare function f(a: string): void;\nexport { f };\n`, `declare function f(a: number): void;`],
+          [`var a = 1;\nexport { a };\n`, `var a = 2;`],
+        ])("%j and %j merge, so the fix is applied", async (text, added) => {
+          const all = { "eslint.config.mjs": config(added), "a.ts": text };
+          const result = await lint(all, ["--fix", "-f", "unix", "a.ts"], { reads: ["a.ts"] });
+          expect(result.files).toEqual({ "a.ts": `${text.trimEnd()}\n${added}\n` });
+          expect(result.stderr).not.toContain("syntax error");
+          expect(result.exitCode).toBe(0);
+        });
+
+        test("a file that already redeclares a name still gets its fixes", async () => {
+          const all = {
+            "eslint.config.mjs": config("unused"),
+            "b.ts": `import { a } from "./a";\nimport { a } from "./b";\nvar b = a;\nexport { b };\n`,
+          };
+          const result = await lint(all, ["--fix", "-f", "unix", "b.ts"], { reads: ["b.ts"] });
+          expect(result.files).toEqual({ "b.ts": all["b.ts"].replace("var", "let") });
+          expect(result.stderr).not.toContain("syntax error");
+          expect(result.stderr).toContain("Fixed 1 problem in 1 file");
+          expect(result.exitCode).toBe(0);
+        });
+      });
+    });
+
+    describe("import/no-namespace picks unused names", () => {
+      const config = `export default [{
+        files: ["*.ts"],
+        languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+        plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} } },
+        rules: { "import/no-namespace": "error" },
+      }];`;
+      const twoDeep = (call: string) => `run(() => {\n  run(() => {\n    ${call};\n  });\n});\n`;
+
+      test.each([
+        [
+          "two namespaces have a member with the same name, used two functions deep",
+          `import * as dns from "./dns";\nimport * as ip from "./ip";\n${twoDeep("log(dns.setup(), ip.setup())")}`,
+          `import { setup } from "./dns";\nimport { setup as ip_setup } from "./ip";\n${twoDeep("log(setup(), ip_setup())")}`,
+        ],
+        [
+          "the name is already imported, and the member is used two functions deep",
+          `import * as dns from "./dns";\nimport { setup } from "./ip";\n${twoDeep("log(setup() === dns.setup())")}`,
+          `import { setup as dns_setup } from "./dns";\nimport { setup } from "./ip";\n${twoDeep("log(setup() === dns_setup())")}`,
+        ],
+        [
+          "both namespaces are fixed in one pass",
+          `import * as dns from "./dns";\ndns.setup();\nimport * as ip from "./ip";\nip.setup();\n`,
+          `import { setup } from "./dns";\nsetup();\nimport { setup as ip_setup } from "./ip";\nip_setup();\n`,
+        ],
+        [
+          "the name refers to a global elsewhere in the file",
+          `import * as dns from "./dns";\n${twoDeep("dns.setup()")}setup();\n`,
+          `import { setup as dns_setup } from "./dns";\n${twoDeep("dns_setup()")}setup();\n`,
+        ],
+        [
+          "the name is unused",
+          `import * as dns from "./dns";\n${twoDeep("dns.setup()")}`,
+          `import { setup } from "./dns";\n${twoDeep("setup()")}`,
+        ],
+      ])("%s", async (_, text, fixed) => {
+        const all = { "eslint.config.mjs": config, "a.ts": text };
+        const result = await lint(all, ["--fix", "a.ts"], { reads: ["a.ts"] });
+        expect(result.files).toEqual({ "a.ts": fixed });
+        expect(result.stderr).not.toContain("syntax error");
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("one-var and `declare`", () => {
+      const bunfig = (option: string) => `[lint.rules]\n"one-var" = ["error", "${option}"]\n`;
+
+      test.each([
+        ["a.d.ts", "declare var a: number;\ndeclare var b: number;\n"],
+        ["a.ts", "declare const a: number;\nconst b = 1;\nexport { a, b };\n"],
+        ["a.ts", "const a = 1;\ndeclare const b: number;\nexport { a, b };\n"],
+      ])("%s: %j is reported but not combined", async (name, text) => {
+        const all = { "bunfig.toml": bunfig("always"), [name]: text };
+        const result = await lint(all, ["--fix", "-f", "unix", name], { reads: [name] });
+        expect(result.files).toEqual({ [name]: text });
+        expect(result.stdout).toContain("[Error/one-var]");
+        expect(result.stderr).not.toContain("syntax error");
+        expect(result.stderr).not.toContain("Fixed");
+        expect(result.exitCode).toBe(1);
+      });
+
+      test("splitting a declaration repeats `declare` on every statement", async () => {
+        const all = {
+          "bunfig.toml": bunfig("never"),
+          "a.d.ts": "declare var a: number, b: number;\nexport declare const c: 1,\n  d: 2;\n",
+        };
+        const result = await lint(all, ["--fix", "-f", "unix", "a.d.ts"], { reads: ["a.d.ts"] });
+        expect(result.files).toEqual({
+          "a.d.ts":
+            "declare var a: number; declare var b: number;\nexport declare const c: 1;\n  export declare const d: 2;\n",
+        });
+        expect(result.stdout).not.toContain("one-var");
+      });
     });
 
     test("--fix-type", async () => {
@@ -3590,7 +7948,9 @@ describe.concurrent("bun lint", () => {
         ]);
         expect([named.files, found.files, withoutRepository.files]).toEqual([outside, outside, outside]);
         for (const { stdout, stderr } of [named, found, withoutRepository]) {
-          expect(stdout + stderr).toContain("Cannot write <dir>/project/c/d.js: A link leads out of the repository.");
+          expect(stdout + stderr).toContain(
+            "Cannot write <dir>/project/c/d.js: it is a symlink to a file outside the repository",
+          );
         }
         // Beside an .oxlintrc.json what fails ends the run as it ends oxlint's.
         expect([named.exitCode, found.exitCode, withoutRepository.exitCode]).toEqual([2, 1, 2]);
@@ -4054,6 +8414,243 @@ describe.concurrent("bun lint", () => {
       });
       expect(JSON.parse(pruned.files["eslint-suppressions.json"]!)).toEqual(JSON.parse(suppressions(2, 1)));
     });
+
+    test("--suppress-all keeps other files' entries", async () => {
+      const others = {
+        "gone.js": { "no-var": { count: 4 } },
+        "b.js": { "no-debugger": { count: 7 }, "eqeqeq": { count: 1 } },
+      };
+      const existing = JSON.stringify({ ...others, "a.js": { "no-debugger": { count: 1 } } });
+      const result = await lint({ ...files, "eslint-suppressions.json": existing }, ["--suppress-all", "a.js"], {
+        reads: ["eslint-suppressions.json"],
+      });
+      expect(JSON.parse(result.files["eslint-suppressions.json"]!)).toEqual({
+        ...others,
+        "a.js": { "no-debugger": { count: 2 } },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // ESLint 10.12.0 accepts any object and writes it back without the values it doesn't understand.
+    test.each<[string[]]>([[["--suppress-all"]], [["--prune-suppressions"]], [[]]])(
+      "rejects a JSON file that isn't a suppressions file and doesn't modify it: %j",
+      async flags => {
+        const text = '{ "name": "mine", "version": "1.0.0", "scripts": { "build": "make" } }\n';
+        const result = await lint(
+          { ...files, "package.json": text },
+          [...flags, "--suppressions-location", "package.json"],
+          {
+            reads: ["package.json"],
+            mayFail: true,
+          },
+        );
+        expect(result.files).toEqual({ "package.json": text });
+        expect(result.stderr).toContain("Not a suppressions file: <dir>/package.json");
+        expect(result.exitCode).toBe(2);
+      },
+    );
+  });
+
+  // Same rule that --fix follows for source files.
+  describe("writing the suppressions file and --output-file", () => {
+    const inProject = {
+      ".git/HEAD": "ref: refs/heads/main\n",
+      "eslint.config.js": config({ "no-debugger": "error" }),
+      "a.js": "debugger;\n",
+    };
+    const tree = Object.fromEntries(Object.entries(inProject).map(([name, text]) => [`project/${name}`, text]));
+    // One more error than the file has, so --prune-suppressions has something to write.
+    const before = JSON.stringify({ "a.js": { "no-debugger": { count: 2 } } });
+    /** Flags that write the file at `name`, and the exit code when the write succeeds. */
+    const writers: [string, (name: string) => string[], number][] = [
+      ["--suppress-all", name => ["--suppress-all", "--suppressions-location", name], 0],
+      ["--prune-suppressions", name => ["--prune-suppressions", "--suppressions-location", name], 0],
+      ["--output-file", name => ["-f", "unix", "-o", name], 1],
+    ];
+    const refusal = "it is a symlink to a file outside the repository";
+    const link = (from: string, to: string, type?: "junction") => (dir: string) =>
+      symlinkSync(join(dir, to), join(dir, from), type);
+
+    describe.each(writers)("%s", (flag, flags, exitCode) => {
+      // A missing file has nothing to prune, so this flag never creates the file.
+      const prunes = flag === "--prune-suppressions";
+      const refusalOfNew = prunes ? "The suppressions file does not exist" : refusal;
+
+      test.skipIf(isWindows)("refuses to write through a symlink that points outside the repository", async () => {
+        const options = { cwd: "project", before: link("project/f", "outside/f"), reads: ["outside/f"], mayFail: true };
+        const [toFile, toNothing] = await Promise.all([
+          lint({ ...tree, "outside/f": before }, flags("f"), options),
+          lint({ ...tree, "outside/other": "" }, flags("f"), options),
+        ]);
+        expect([toFile.files, toNothing.files]).toEqual([{ "outside/f": before }, { "outside/f": null }]);
+        expect(toFile.stderr).toContain(refusal);
+        expect(toNothing.stderr).toContain(refusalOfNew);
+        expect([toFile.exitCode, toNothing.exitCode]).toEqual([2, 2]);
+      });
+
+      test("refuses to write in a linked directory that points outside the repository", async () => {
+        const reads = ["outside/f", "outside/new/f"];
+        const options = { cwd: "project", before: link("project/linked", "outside", "junction"), reads, mayFail: true };
+        const [existing, missing, inNewDirectory] = await Promise.all([
+          lint({ ...tree, "outside/f": before }, flags("linked/f"), options),
+          lint({ ...tree, "outside/other": "" }, flags("linked/f"), options),
+          lint({ ...tree, "outside/other": "" }, flags("linked/new/f"), options),
+        ]);
+        expect([existing.files, missing.files, inNewDirectory.files]).toEqual([
+          { "outside/f": before, "outside/new/f": null },
+          { "outside/f": null, "outside/new/f": null },
+          { "outside/f": null, "outside/new/f": null },
+        ]);
+        expect(existing.stderr).toContain(refusal);
+        expect(missing.stderr).toContain(refusalOfNew);
+        expect(inNewDirectory.stderr).toContain(refusalOfNew);
+        expect([existing.exitCode, missing.exitCode, inNewDirectory.exitCode]).toEqual([2, 2, 2]);
+      });
+
+      test("writes to a path outside the repository if it doesn't contain a link", async () => {
+        const result = await lint({ ...tree, "outside/f": before }, flags("../outside/f"), {
+          cwd: "project",
+          reads: ["outside/f"],
+        });
+        expect(result.files["outside/f"]).not.toBe(before);
+        expect(result.exitCode).toBe(exitCode);
+      });
+
+      test("writes in a linked directory that points inside the repository", async () => {
+        const result = await lint({ ...tree, "project/real/f": before }, flags("linked/f"), {
+          cwd: "project",
+          before: link("project/linked", "project/real", "junction"),
+          reads: ["project/real/f"],
+        });
+        expect(result.files["project/real/f"]).not.toBe(before);
+        expect(result.exitCode).toBe(exitCode);
+      });
+
+      test.skipIf(isWindows)("writes through a symlink that points inside the repository and keeps it", async () => {
+        using dir = tempDir("bun-lint", { ...tree, [prunes ? "project/real/f" : "project/real/other"]: before });
+        link("project/f", "project/real/f")(String(dir));
+        const result = await run(join(String(dir), "project"), flags("f"));
+        expect(readFileSync(join(String(dir), "project/real/f"), "utf8")).not.toBe(before);
+        expect(lstatSync(join(String(dir), "project/f")).isSymbolicLink()).toBe(true);
+        expect(result.exitCode).toBe(exitCode);
+      });
+    });
+
+    test.skipIf(isWindows)("refuses the default suppressions file if it links outside the repository", async () => {
+      const name = "eslint-suppressions.json";
+      const options = {
+        cwd: "project",
+        before: link(`project/${name}`, "outside/f"),
+        reads: ["outside/f"],
+        mayFail: true,
+      };
+      const results = await Promise.all([
+        lint({ ...tree, "outside/f": before }, ["--suppress-all"], options),
+        lint({ ...tree, "outside/f": before }, ["--prune-suppressions"], options),
+        lint({ ...tree, "outside/other": "" }, ["--suppress-all"], options),
+        lint({ ...tree, "outside/other": "" }, ["--prune-suppressions"], options),
+      ]);
+      expect(results.map(it => it.files["outside/f"])).toEqual([before, before, null, null]);
+      for (const result of results) {
+        expect(result.stderr).toContain(refusal);
+        expect(result.exitCode).toBe(2);
+      }
+    });
+
+    describe.skipIf(isWindows)("--output-file is a pipe or a device", () => {
+      const withOutside = { ...tree, "outside/other": "" };
+
+      /** Runs `bun lint -f unix -o <name>` in `dir`'s project through `sh`. `"$@"` in `script` is the command. */
+      async function throughShell(dir: string, script: string, name: string) {
+        await using proc = spawn({
+          cmd: ["sh", "-c", script, "sh", ...command, "-f", "unix", "-o", name],
+          env,
+          cwd: join(dir, "project"),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr };
+      }
+
+      /** Creates a named pipe with a reader open, so opening it for writing doesn't block and writes stay buffered. */
+      function pipeAt(path: string) {
+        expect(Bun.spawnSync(["mkfifo", path]).exitCode).toBe(0);
+        const reader = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+        return { read: () => readFileSync(reader, "utf8"), [Symbol.dispose]: () => closeSync(reader) };
+      }
+
+      /** Returns the report printed without the flag, and the exit code. A report file has no trailing newline. */
+      async function withoutFlag(dir: string) {
+        const { stdout, exitCode } = await run(join(dir, "project"), ["-f", "unix"]);
+        expect(stdout).toContain("[Error/no-debugger]");
+        return { report: stdout.trimEnd(), exitCode };
+      }
+
+      test.each([
+        ["/dev/stdout", '{ "$@" 2> /dev/null; echo "exit code $?"; } | cat'],
+        ["/dev/stderr", '{ "$@" 2>&1 > /dev/null; echo "exit code $?"; } | cat'],
+      ])("writes the report to %s when it's a pipe", async (name, script) => {
+        using dir = tempDir("bun-lint", tree);
+        const { report, exitCode } = await withoutFlag(String(dir));
+        const { stdout } = await throughShell(String(dir), script, name);
+        expect(stdout).toStartWith(report);
+        expect(stdout).toEndWith(`exit code ${exitCode}\n`);
+      });
+
+      // From these directories, /dev/stdout is a link below the working directory, like a link in a checkout.
+      test.skipIf(["/.git", "/.jj", "/dev/.git", "/dev/.jj"].some(it => existsSync(it))).each([
+        ["/", "/dev/stdout"],
+        ["/dev", "stdout"],
+      ])("in %s, outside any repository, writes the report to %s when it's a pipe", async (cwd, name) => {
+        using dir = tempDir("bun-lint", tree);
+        const script = `cd ${cwd}; { "$@" "$OLDPWD/a.js" 2> /dev/null; echo "exit code $?"; } | cat`;
+        const { stdout } = await throughShell(String(dir), script, name);
+        expect(stdout).toContain("a.js:1:1: Unexpected 'debugger' statement.");
+        expect(stdout).toEndWith("exit code 1\n");
+      });
+
+      test("-o /dev/null discards the report", async () => {
+        const result = await lint(tree, ["-f", "unix", "-o", "/dev/null"], { cwd: "project" });
+        expect(result.raw).toBe("");
+        expect(result.exitCode).toBe(1);
+      });
+
+      test.each([
+        ["in the project", "project/pipe", "pipe"],
+        ["in the project, through a link in the project", "project/pipe", "link"],
+        ["outside the repository, through a path without links", "outside/pipe", "../outside/pipe"],
+      ])("writes the report to a named pipe %s", async (_, at, name) => {
+        using dir = tempDir("bun-lint", withOutside);
+        const expected = await withoutFlag(String(dir));
+        using pipe = pipeAt(join(String(dir), at));
+        symlinkSync(join(String(dir), at), join(String(dir), "project/link"));
+        const { exitCode } = await run(join(String(dir), "project"), ["-f", "unix", "-o", name]);
+        expect({ report: pipe.read(), exitCode }).toEqual(expected);
+      });
+
+      test("refuses a link in the project to a named pipe outside the repository", async () => {
+        using dir = tempDir("bun-lint", withOutside);
+        using pipe = pipeAt(join(String(dir), "outside/pipe"));
+        link("project/link", "outside/pipe")(String(dir));
+        const { stderr, exitCode } = await run(join(String(dir), "project"), ["-f", "unix", "-o", "link"]);
+        expect(stderr).toContain(refusal);
+        expect({ written: pipe.read(), exitCode }).toEqual({ written: "", exitCode: 2 });
+      });
+
+      test.each([
+        ["/dev/stdout, which is a pipe", "/dev/stdout", '{ "$@"; echo "exit code $?"; } | cat'],
+        ["/dev/stdout, which is a device", "/dev/stdout", '"$@" > /dev/null; echo "exit code $?"'],
+        ["/dev/null", "/dev/null", '"$@"; echo "exit code $?"'],
+      ])("refuses a link in the project to %s", async (_, to, script) => {
+        using dir = tempDir("bun-lint", tree);
+        symlinkSync(to, join(String(dir), "project/link"));
+        const { stdout, stderr } = await throughShell(String(dir), script, "link");
+        expect(stderr).toContain(refusal);
+        expect(stdout).toBe("exit code 2\n");
+      });
+    });
   });
 
   describe("--stdin", () => {
@@ -4282,7 +8879,7 @@ describe.concurrent("bun lint", () => {
       expect(JSON.parse(sarif.raw).runs[0].tool.driver).toMatchObject({
         name: "bun lint",
         version: expect.not.stringContaining("1.87.0"),
-        informationUri: "https://bun.com/docs/runtime/lint",
+        informationUri: "https://bun.com/docs/lint",
         rules: [{ id: "eslint(no-var)" }, { id: "eslint(eqeqeq)" }, { id: "eslint(no-debugger)" }],
       });
       expect(JSON.parse(sarif.raw).runs[0].results.map((it: any) => [it.ruleId, it.level])).toEqual([
@@ -4318,9 +8915,30 @@ describe.concurrent("bun lint", () => {
       expect(result.exitCode).toBe(1);
     });
 
+    // Every write to /dev/full fails with ENOSPC, as on a full disk.
+    test
+      .skipIf(!isLinux)
+      .each([[["-f", "json"]], [["--fix-dry-run", "-f", "json"]], [["--print-config", "a.js"]], [["--rules"]]])(
+      "exits with code 2 when writing to standard output fails: %j",
+      async args => {
+        using dir = tempDir("bun-lint", { "eslint.config.js": basic, "a.js": "export {};\n" });
+        await using proc = spawn({
+          cmd: ["sh", "-c", 'exec "$0" "$@" > /dev/full', ...command, ...args],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("error: Cannot write standard output: ENOSPC: ");
+        expect(exitCode).toBe(2);
+      },
+    );
+
     test("an unknown format fails with 2", async () => {
       const { stderr, exitCode } = await lint(files, ["-f", "nothing"]);
-      expect(stderr).toContain('There is no formatter "nothing"');
+      expect(stderr).toContain('Unknown format "nothing"\n');
       expect(exitCode).toBe(2);
     });
 
@@ -4405,14 +9023,17 @@ describe.concurrent("bun lint", () => {
         .split("\n")
         .filter(line => line.endsWith("]"))
         .sort(),
-    ).toEqual(Object.entries(cases).flatMap(([name, [, at]]) => (at ? [`${name}:${at}: ${refused} [Error]`] : [])));
+    ).toEqual(
+      Object.entries(cases).flatMap(([name, [, at]]) => (at ? [`${name}:${at}: ${refused} [Error/TS(2309)]`] : [])),
+    );
   });
 
   // The same.
   test("only a namespace can be deferred, as for oxc", async () => {
-    const [ofDefault, ofNamed] = ["Default imports", "Named imports"].map(
-      it => `1:8: ${it} are not allowed in a deferred import.`,
-    );
+    const [ofDefault, ofNamed] = [
+      ["Default imports", 18058],
+      ["Named imports", 18059],
+    ].map(([it, code]) => `1:8: ${it} are not allowed in a deferred import. [Error/TS(${code})]`);
     const cases: Record<string, [code: string, refusal?: string]> = {
       "a0.ts": ['import defer x from "m";', ofDefault],
       "a1.ts": ['import defer { a } from "m";', ofNamed],
@@ -4435,13 +9056,13 @@ describe.concurrent("bun lint", () => {
         .split("\n")
         .filter(line => line.endsWith("]"))
         .sort(),
-    ).toEqual(Object.entries(cases).flatMap(([name, [, refusal]]) => (refusal ? [`${name}:${refusal} [Error]`] : [])));
+    ).toEqual(Object.entries(cases).flatMap(([name, [, refusal]]) => (refusal ? [`${name}:${refusal}`] : [])));
   });
 
   // The same.
   test("`declare` in what is ambient already, and `for await` where nothing waits, are refused as oxc refuses them", async () => {
-    const declared = "A 'declare' modifier cannot be used in an already ambient context.";
-    const waits = "`for await` loops are only allowed within async functions and at the top levels of modules";
+    const declared = "A 'declare' modifier cannot be used in an already ambient context. [Error/TS(1038)]";
+    const waits = "`for await` loops are only allowed within async functions and at the top levels of modules [Error]";
     const cases: Record<string, [code: string, refusal?: string]> = {
       "a0.ts": ["declare namespace A { declare const b: 1; }", `1:23: ${declared}`],
       "a1.ts": ['declare module "m" { declare function f(): void; }', `1:22: ${declared}`],
@@ -4478,7 +9099,7 @@ describe.concurrent("bun lint", () => {
         .split("\n")
         .filter(line => line.endsWith("]"))
         .sort(),
-    ).toEqual(Object.entries(cases).flatMap(([name, [, refusal]]) => (refusal ? [`${name}:${refusal} [Error]`] : [])));
+    ).toEqual(Object.entries(cases).flatMap(([name, [, refusal]]) => (refusal ? [`${name}:${refusal}`] : [])));
   });
 
   // The same.
@@ -4576,7 +9197,7 @@ describe.concurrent("bun lint", () => {
         return stderr.split("\n").filter(it => it.startsWith("note: "));
       };
       expect(await notes("5.8.3")).toEqual([
-        "note: typescript 5.8.3 is installed; bun lint checks types as TypeScript 7.",
+        "note: typescript 5.8.3 is installed, but bun lint checks types like TypeScript 7",
       ]);
       expect(await notes("7.0.2")).toEqual([]);
       expect(await notes("5.8.3", {}, "--quiet")).toEqual([]);
@@ -4645,7 +9266,7 @@ describe.concurrent("bun lint", () => {
       const reported = (stdout: string, rule: string) =>
         stdout
           .split("\n")
-          .filter(it => it.endsWith(`[Error/${rule}]`))
+          .filter(it => it.endsWith(`/${rule}]`))
           .map(it => `${it.split(":")[0].replace("<dir>/", "")} ${/'([^']+)'/.exec(it)![1]}`);
 
       test.concurrent.each([
@@ -4686,7 +9307,7 @@ describe.concurrent("bun lint", () => {
           ["fromTypes", "mineConst", "mineFn", "MineClass", "Array"].map(it => `a.js ${it}`),
         );
         expect(reported(stdout, "no-undef")).toEqual([]);
-        expect(exitCode).toBe(1);
+        expect(exitCode).toBe(0);
       });
 
       test("a project in which no file can declare a global has its libraries and its types", async () => {
@@ -5754,6 +10375,93 @@ describe.concurrent("bun lint", () => {
       );
     });
 
+    const floatingOn: [config: string, files: Record<string, string>, flags: string[]][] = [
+      ["no config", {}, ["--type-aware"]],
+      ["eslint.config.js", { "eslint.config.js": files["eslint.config.js"] }, []],
+      [
+        ".oxlintrc.json",
+        {
+          ".oxlintrc.json": JSON.stringify({
+            categories: { correctness: "off" },
+            rules: { "typescript/no-floating-promises": "error" },
+          }),
+        },
+        ["--type-aware"],
+      ],
+    ];
+    const saves = "export async function save() {\n  return 1;\n}\nsave();\n";
+
+    // `tsc -b` rejects these (TS6202). `tsc -p` and editors accept them, and `bun lint` doesn't build anything either.
+    describe("tsconfig.json files with circular references", () => {
+      const compilerOptions = {
+        ...JSON.parse(files["tsconfig.json"]).compilerOptions,
+        noEmit: false,
+        composite: true,
+        rootDir: "src",
+        outDir: "dist",
+      };
+      const project = (name: string, ...references: string[]) => ({
+        [`${name}/tsconfig.json`]: JSON.stringify({
+          compilerOptions,
+          include: ["src"],
+          references: references.map(path => ({ path })),
+        }),
+        [`${name}/src/index.ts`]: saves,
+      });
+      const shapes: [shape: string, files: Record<string, string>, expected: string[]][] = [
+        [
+          "a cycle of two",
+          {
+            ...project("a", "../b"),
+            ...project("b", "../a"),
+            "a/src/use.ts": `import { save } from "../../b/src/index";\nsave();\n`,
+          },
+          ["a/index.ts:4", "a/use.ts:2", "b/index.ts:4"],
+        ],
+        ["a project that references itself", project("a", "."), ["a/index.ts:4"]],
+        [
+          "a cycle of three, a project that references it and one that doesn't",
+          {
+            ...project("a", "../b"),
+            ...project("b", "../c"),
+            ...project("c", "../a"),
+            ...project("d", "../a"),
+            ...project("e"),
+          },
+          ["a/index.ts:4", "b/index.ts:4", "c/index.ts:4", "d/index.ts:4", "e/index.ts:4"],
+        ],
+      ];
+      describe.each(floatingOn)("%s", (_, config, flags) => {
+        describe.each(["1", "8"])("--threads %s", threads => {
+          test.each(shapes)("%s", async (_, projects, expected) => {
+            const args = ["-f", "unix", "--threads", threads, ...flags];
+            const { raw, stderr, exitCode } = await lint({ ...config, ...projects }, args);
+            const reports = raw.matchAll(/(\w)[\\/]src[\\/](\w+\.ts:\d+):\d+: .*no-floating-promises/g);
+            const found = Array.from(reports, it => `${it[1]}/${it[2]}`);
+            expect(found.sort()).toEqual(expected);
+            expect(stderr).not.toContain("without type information");
+            expect(exitCode).toBe(1);
+          });
+        });
+      });
+    });
+
+    // Opening the link succeeds but reading it fails, even for root.
+    test.skipIf(!isLinux).each(floatingOn.slice(0, 2))(
+      "reports an unreadable tsconfig.json and lints its files without types: %s",
+      async (_, config, flags) => {
+        const { raw, exitCode } = await lint(
+          { ...config, "src/index.ts": "debugger;\n" + saves },
+          ["-f", "unix", "--rule", "no-debugger: error", ...flags],
+          { before: dir => symlinkSync("/proc/self/mem", join(dir, "tsconfig.json")) },
+        );
+        expect(raw).toMatch(/tsconfig\.json:\d+:\d+: Invalid tsconfig: Cannot read file /);
+        expect(raw).toContain("no-debugger");
+        expect(raw).not.toContain("no-floating-promises");
+        expect(exitCode).toBe(1);
+      },
+    );
+
     // `subst` gives the directory a drive letter, as in test/cli/check/check.test.ts.
     test.skipIf(!isWindows)(
       "a project at the root of a drive",
@@ -5827,6 +10535,335 @@ describe.concurrent("bun lint", () => {
         comments.flatMap(([, reason], i) => (reason === undefined ? [] : [`\`f${i}\` is deprecated. ${reason}`])),
       );
     });
+
+    // In JavaScript `/** @type {T} */ (e)` is `(e as T)` for TypeScript 7.
+    describe("a JSDoc cast", () => {
+      const project = {
+        "package.json": `{ "type": "module" }`,
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            allowJs: true,
+            checkJs: true,
+            noEmit: true,
+            target: "es2023",
+            module: "nodenext",
+            lib: ["es2023"],
+            types: [],
+          },
+        }),
+      };
+      const oxlintrc = (rules: string[]) =>
+        JSON.stringify({
+          categories: { correctness: "off" },
+          plugins: ["typescript"],
+          rules: Object.fromEntries(rules.map(it => [`typescript/${it}`, "error"])),
+        });
+      /** `line:column rule` for each report. */
+      const reported = (stdout: string) =>
+        stdout
+          .split("\n")
+          .flatMap(it => /:(\d+:\d+): .*[/(]([a-z-]+)\)?\]$/.exec(it)?.slice(1).join(" ") ?? [])
+          .sort();
+      /** The same from the comments at the ends of the lines of `text`: `// column rule, column rule`. */
+      const marked = (text: string) =>
+        text
+          .split("\n")
+          .flatMap((line, i) => (line.split(" // ")[1]?.split(", ") ?? []).map(it => `${i + 1}:${it}`))
+          .sort();
+      const rules = [
+        "await-thenable",
+        "dot-notation",
+        "no-base-to-string",
+        "no-confusing-void-expression",
+        "no-floating-promises",
+        "no-for-in-array",
+        "no-misused-promises",
+        "no-misused-spread",
+        "no-unnecessary-condition",
+        "no-unsafe-argument",
+        "no-unsafe-assignment",
+        "no-unsafe-call",
+        "no-unsafe-member-access",
+        "no-unsafe-return",
+        "no-useless-default-assignment",
+        "only-throw-error",
+        "prefer-nullish-coalescing",
+        "prefer-optional-chain",
+        "prefer-promise-reject-errors",
+        "restrict-plus-operands",
+        "restrict-template-expressions",
+        "return-await",
+        "strict-boolean-expressions",
+        "strict-void-return",
+        "switch-exhaustiveness-check",
+        "use-unknown-in-catch-callback-variable",
+      ];
+
+      test("only-throw-error takes the type that a property access is cast to", async () => {
+        const { stdout, exitCode } = await lint(
+          {
+            ...project,
+            ".oxlintrc.json": oxlintrc(["only-throw-error"]),
+            "main.mjs": `/** @param {{error?: Error}} result */
+export function fail(result) {
+  throw /** @type {Error} */ (result.error);
+}
+`,
+            "control.mjs": `/** @param {{error?: Error}} result */
+export function fail(result) {
+  const error = /** @type {Error} */ (result.error);
+  throw error;
+}
+`,
+            "control.ts": `export function fail(result: {error?: Error}) {
+  throw result.error as Error;
+}
+`,
+          },
+          ["--type-aware", "-f", "unix"],
+        );
+        expect(reported(stdout)).toEqual([]);
+        expect(exitCode).toBe(0);
+      });
+
+      // What oxlint 1.87 with tsgolint reports.
+      test.each([
+        [
+          "the type of an operand is the one that it is cast to",
+          `/** @returns {Promise<number>} */
+async function later() { return 1; }
+function nothing() {}
+/** @param {() => void} callback */
+function run(callback) { callback(); }
+/**
+ * @param {any} any
+ * @param {string} text
+ * @param {string | undefined} maybe
+ * @param {number[]} list
+ * @param {{ error?: Error, inner?: { name: string } }} result
+ * @param {"a" | "b"} choice
+ */
+export async function f(any, text, maybe, list, result, choice) {
+  await /** @type {number} */ (/** @type {unknown} */ (later())); // 31 await-thenable
+  await /** @type {Promise<number>} */ (/** @type {unknown} */ (text));
+  /** @type {void} */ (/** @type {unknown} */ (later()));
+  /** @type {Promise<void>} */ (/** @type {unknown} */ (text)); // 56 no-floating-promises
+  if (/** @type {boolean} */ (/** @type {unknown} */ (later()))) nothing();
+  if (/** @type {Promise<boolean>} */ (/** @type {unknown} */ (text))) nothing(); // 63 no-misused-promises, 63 no-unnecessary-condition, 63 strict-boolean-expressions
+  if (/** @type {string} */ (maybe)) nothing();
+  if (/** @type {string | undefined} */ (text)) nothing(); // 42 strict-boolean-expressions
+  run(/** @type {() => void} */ (/** @type {unknown} */ (later)));
+  run(/** @type {() => Promise<void>} */ (/** @type {unknown} */ (nothing))); // 42 strict-void-return, 66 no-misused-promises
+  for (const key in /** @type {{}} */ (list)) run(() => void key);
+  for (const key in /** @type {number[]} */ (any)) run(() => void key); // 3 no-for-in-array
+  switch (/** @type {string} */ (choice)) { case "a": break; }
+  switch (/** @type {"a" | "b"} */ (text)) { case "a": break; } // 36 switch-exhaustiveness-check
+  /** @type {{ run(): void }} */ (any).run();
+  /** @type {any} */ (result).run(); // 22 no-unsafe-call, 31 no-unsafe-member-access
+  /** @type {() => void} */ (any)();
+  /** @type {any} */ (nothing)(); // 22 no-unsafe-call
+  run(/** @type {() => void} */ (any));
+  run(/** @type {any} */ (nothing)); // 26 no-unsafe-argument
+  return [
+    /** @type {string} */ (maybe) ?? "", // 28 no-unnecessary-condition
+    /** @type {string | undefined} */ (text) ?? "",
+    /** @type {string} */ (maybe) || "",
+    /** @type {string | undefined} */ (text) || "", // 40 strict-boolean-expressions, 46 prefer-nullish-coalescing
+    /** @type {{ name: string }} */ (result.inner)?.name, // 37 no-unnecessary-condition
+    /** @type {{ name: string } | undefined} */ (result)?.name,
+    \`\${/** @type {string} */ (any)} \${/** @type {{}} */ (text)}\`, // 57 no-base-to-string, 57 restrict-template-expressions
+    /** @type {number} */ (any) + 1,
+    /** @type {{}} */ (text) + "", // 23 no-base-to-string, 23 restrict-plus-operands
+    [.../** @type {string[]} */ (/** @type {unknown} */ (text))],
+    [.../** @type {string} */ (/** @type {unknown} */ (list))], // 6 no-misused-spread
+  ];
+}
+/** @param {any} any @returns {string} */
+export const safe = any => /** @type {string} */ (any);
+/** @param {string} text @returns {string} */
+export const unsafe = text => /** @type {any} */ (text); // 50 no-unsafe-return
+/** @param {{ error?: Error }} result */
+export function fail(result) { throw /** @type {Error} */ (result.error); }
+/** @param {Error} error */
+export function failWithText(error) { throw /** @type {string} */ (/** @type {unknown} */ (error)); } // 67 only-throw-error
+export const rejected = () => Promise.reject(/** @type {Error} */ (/** @type {unknown} */ ("text")));
+export const rejectedWithText = () => Promise.reject(/** @type {string} */ (/** @type {unknown} */ (new Error("text")))); // 39 prefer-promise-reject-errors
+export async function returned() {
+  try { return /** @type {number} */ (/** @type {unknown} */ (later())); } catch { return 1; }
+}
+export async function returnedPromise() {
+  try { return /** @type {Promise<number>} */ (/** @type {unknown} */ (1)); } catch { return 1; } // 71 return-await
+}
+`,
+        ],
+        [
+          "no rule looks into the cast or out of it, as with `as`",
+          `/** @returns {Promise<number>} */
+async function later() { return 1; }
+function nothing() {}
+/**
+ * @param {string | undefined} a
+ * @param {string | undefined} b
+ * @param {boolean} flag
+ * @param {{ inner?: { name?: string }, "key": number }} object
+ */
+export async function f(a, b, flag, object) {
+  if (/** @type {boolean} */ (/** @type {unknown} */ (a && b))) nothing(); // 55 strict-boolean-expressions
+  if (/** @type {boolean} */ (/** @type {unknown} */ (a || b))) nothing(); // 55 strict-boolean-expressions, 57 prefer-nullish-coalescing
+  if (/** @type {boolean} */ (/** @type {unknown} */ (later() && later()))) nothing(); // 55 no-misused-promises, 55 no-unnecessary-condition, 55 strict-boolean-expressions
+  /** @type {void} */ (/** @type {unknown} */ (flag ? later() : later()));
+  /** @type {Promise<void>} */ (/** @type {unknown} */ (void later())); // 56 no-floating-promises
+  /** @type {Promise<void>} */ (/** @type {unknown} */ (await later())); // 56 no-floating-promises
+  /** @type {Promise<void>} */ (later().then(nothing, nothing)); // 33 no-floating-promises
+  /** @type {unknown} */ (nothing()); // 27 no-confusing-void-expression
+  if (!(/** @type {{ name?: string }} */ (object).name)) { // 42 strict-boolean-expressions
+    /** @type {{ name?: string }} */ (object).name = "text";
+  }
+  return [
+    object.inner && /** @type {{ name?: string }} */ (object.inner).name,
+    /** @type {{ name?: string } | undefined} */ (object.inner) && object.inner.name,
+    /** @type {{ name?: string } | undefined} */ (object.inner) && /** @type {{ name?: string } | undefined} */ (object.inner).name, // 50 prefer-optional-chain
+    flag && /** @type {string | undefined} */ (object.inner && object.inner.name), // 48 prefer-optional-chain
+    object[/** @type {"key"} */ ("key")],
+    /** @type {number} */ (/** @type {unknown} */ (nothing())), // 52 no-confusing-void-expression
+  ];
+}
+export async function returned(/** @type {boolean} */ flag) {
+  try { return /** @type {number} */ (/** @type {unknown} */ (flag ? later() : later())); } catch { return 1; }
+}
+export async function awaited() { return /** @type {number} */ (await later()); }
+export const caught = () => later().catch(/** @type {(error: any) => void} */ (error => error)); // 89 no-unsafe-return
+export const made = () => new Promise((_, reject) => /** @type {(reason: string) => void} */ (reject)("text")); // 94 no-confusing-void-expression
+export function optional(value = /** @type {string | undefined} */ (undefined)) { return value; }
+`,
+        ],
+      ])("with an oxlint config, %s", async (_, text) => {
+        const { stdout, exitCode } = await lint({ ...project, ".oxlintrc.json": oxlintrc(rules), "a.mjs": text }, [
+          "--type-aware",
+          "-f",
+          "unix",
+        ]);
+        expect(reported(stdout)).toEqual(marked(text));
+        expect(exitCode).toBe(1);
+      });
+
+      // What oxlint 1.87 with tsgolint reports. It does not compare the types.
+      test("with an oxlint config, an optional chain can start with a cast, in TypeScript too", async () => {
+        const text = `type Inner = { name: string };
+export const f = (object: { inner?: Inner }) => [
+  (object.inner as Inner | undefined) && (object.inner as Inner | undefined).name, // 3 prefer-optional-chain
+  (object.inner as Inner | undefined) && (object.inner as Inner | null).name, // 3 prefer-optional-chain
+  (<Inner | undefined>object.inner) && (<Inner | undefined>object.inner).name, // 3 prefer-optional-chain
+  (object.inner satisfies Inner | undefined) && (object.inner satisfies Inner | undefined).name,
+  object.inner && (object.inner as Inner).name,
+  (object.inner as Inner | undefined) && object.inner.name,
+  (object.inner as Inner | undefined) != null && (object.inner as Inner | undefined).name, // 3 prefer-optional-chain
+  !(object.inner as Inner | undefined) || !(object.inner as Inner | undefined).name, // 3 prefer-optional-chain
+];
+`;
+        const { stdout, exitCode } = await lint(
+          { ...project, ".oxlintrc.json": oxlintrc(["prefer-optional-chain"]), "a.ts": text },
+          ["--type-aware", "-f", "unix"],
+        );
+        expect(reported(stdout)).toEqual(marked(text));
+        expect(exitCode).toBe(1);
+      });
+
+      test("--fix keeps the cast that an optional chain starts with", async () => {
+        const text = (value: string) =>
+          `/** @param {{ inner?: { name: string } }} object */\nexport const f = object => ${value};\n`;
+        const cast = "/** @type {{ name: string } | undefined} */ (object.inner)";
+        const { files } = await lint(
+          {
+            ...project,
+            ".oxlintrc.json": oxlintrc(["prefer-optional-chain"]),
+            "a.mjs": text(`${cast} && ${cast}.name`),
+          },
+          ["--type-aware", "--fix"],
+          { reads: ["a.mjs"] },
+        );
+        expect(files["a.mjs"]).toBe(text(`${cast}?.name`));
+      });
+
+      test("without a config", async () => {
+        const text = `async function later() {}
+/** @type {void} */ (/** @type {unknown} */ (later()));
+/** @type {Promise<void>} */ (/** @type {unknown} */ (1)); // 30 no-floating-promises
+`;
+        const { stdout, exitCode } = await lint({ ...project, "a.mjs": text }, [
+          "--type-aware",
+          "--rule",
+          "@typescript-eslint/no-floating-promises: error",
+          "-f",
+          "unix",
+        ]);
+        expect(reported(stdout)).toEqual(marked(text));
+        expect(exitCode).toBe(1);
+      });
+
+      // What typescript-eslint 8.71 reports. Its tree has no parentheses, and for TypeScript 6 the cast is in those, so it only
+      // counts where a rule goes from one node of TypeScript to the next: `tsNode.initializer`, `tsNode.expression`.
+      test("with an ESLint config, the type of an operand is its own", async () => {
+        const text = `/** @typedef {() => Promise<void>} Later */
+/** @typedef {() => void} Now */
+/** @returns {Promise<number>} */
+async function later() { return 1; } // 1 require-await
+/** @param {Now} callback */
+function run(callback) { callback(); }
+/**
+ * @param {Later} slow
+ * @param {Now} fast
+ * @param {{ error?: Error, callback: Now }} result
+ */
+export function f(slow, fast, result) {
+  /** @type {void} */ (/** @type {unknown} */ (later())); // 23 no-floating-promises
+  /** @type {Now} */
+  const a = /** @type {Later} */ (/** @type {unknown} */ (fast));
+  /** @type {Now} */
+  const b = /** @type {Now} */ (/** @type {unknown} */ (slow));
+  /** @type {{ callback: Now }} */
+  const c = { callback: /** @type {Later} */ (/** @type {unknown} */ (fast)) }; // 71 no-misused-promises
+  /** @type {{ callback: Now }} */
+  const d = { callback: /** @type {Now} */ (/** @type {unknown} */ (slow)) };
+  const e = { .../** @type {Promise<number>} */ (/** @type {unknown} */ ({})) }; // 74 no-misused-promises
+  const g = { .../** @type {{}} */ (later()) };
+  run(/** @type {Later} */ (/** @type {unknown} */ (fast)));
+  run(/** @type {Now} */ (/** @type {unknown} */ (slow))); // 51 no-misused-promises, 51 strict-void-return
+  /** @type {(callback: Later) => void} */ (/** @type {unknown} */ (run))(slow);
+  /** @type {(callback: Now) => void} */ (/** @type {unknown} */ (fast))(slow); // 74 no-misused-promises, 74 strict-void-return
+  result.callback = /** @type {Later} */ (/** @type {unknown} */ (fast)); // 67 no-misused-promises
+  result.callback = /** @type {Now} */ (/** @type {unknown} */ (slow));
+  if (a === b) throw /** @type {Error} */ (result.error); // 44 only-throw-error
+  return [c, d, e, g];
+}
+/** @param {Now} fast @returns {Now} */
+export function h(fast) { return /** @type {Later} */ (/** @type {unknown} */ (fast)); } // 80 no-misused-promises
+/** @param {Later} slow @returns {Now} */
+export function i(slow) { return /** @type {Now} */ (/** @type {unknown} */ (slow)); }
+export async function j() { return /** @type {Promise<number>} */ (/** @type {unknown} */ (1)); }
+export async function k() { return /** @type {number} */ (/** @type {unknown} */ (later())); } // 8 require-await
+`;
+        const config = `export default [{
+          files: ["**/*.mjs"],
+          plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+          languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+          rules: {
+            "@typescript-eslint/no-floating-promises": "error",
+            "@typescript-eslint/no-misused-promises": "error",
+            "@typescript-eslint/only-throw-error": "error",
+            "@typescript-eslint/require-await": "error",
+            "@typescript-eslint/strict-void-return": "error",
+          },
+        }];`;
+        const { stdout, exitCode } = await lint({ ...project, "eslint.config.js": config, "a.mjs": text }, [
+          "-f",
+          "unix",
+        ]);
+        expect(reported(stdout)).toEqual(marked(text));
+        expect(exitCode).toBe(1);
+      });
+    });
   });
 
   describe("the command line", () => {
@@ -5879,7 +10916,7 @@ describe.concurrent("bun lint", () => {
         "c.tsx": "<c />;\n",
       };
       const { stderr, exitCode } = await lint(files, ["--timing"]);
-      expect(stderr).toContain("without a filter of the names they mention: 0 files");
+      expect(stderr).toContain("linted without the name filter: 0 files");
       expect(exitCode).toBe(0);
     });
 
@@ -6604,7 +11641,9 @@ describe.concurrent("regular expressions in a configuration", () => {
     // JavaScriptCore, which has the regular expressions, prints its options when it is started.
     const env = { BUN_JSC_dumpOptions: "1", JSC_dumpOptions: "1" };
     // Without a configuration file: eslint:recommended.
-    const { stdout, stderr, exitCode } = await lint(files, ["--rule", "no-warning-comments: error"], { env });
+    const inComments = "no-irregular-whitespace: [error, { skipComments: false }]";
+    const rules = ["--rule", "no-warning-comments: error", "--rule", inComments];
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "stylish", ...rules], { env });
     expect(stdout).toMatchInlineSnapshot(`
       "<dir>/a.js
          4:11  error  Irregular whitespace not allowed            no-irregular-whitespace
@@ -6613,14 +11652,15 @@ describe.concurrent("regular expressions in a configuration", () => {
         11:4   error  Irregular whitespace not allowed            no-irregular-whitespace
 
       <dir>/b.ts
-        1:1  error  Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+        1:1  warning  Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
 
-      ✖ 5 problems (5 errors, 0 warnings)"
+      ✖ 5 problems (4 errors, 1 warning)"
     `);
     expect(stderr).not.toContain("JSC options");
     expect(exitCode).toBe(1);
 
-    const own = await lint(files, ["--rule", 'no-fallthrough: [error, { commentPattern: "fall +through" }]'], { env });
+    const pattern = 'no-fallthrough: [error, { commentPattern: "fall +through" }]';
+    const own = await lint(files, ["-f", "stylish", "--rule", pattern], { env });
     expect(own.stdout).toMatch(/ 5:3 +error +Expected a 'break' statement before 'case' +no-fallthrough\n/);
     expect(own.stderr).toContain("JSC options");
   });
@@ -6777,7 +11817,7 @@ describe.concurrent("a lint script in package.json", () => {
 });
 
 // What the linter takes from the process that it runs in. Where `bun lint` is developed something else is in Bun's place for each
-// of these. See "what bun format takes from Bun" in test/cli/format/format.test.ts.
+// of these. See "what bun fmt takes from Bun" in test/cli/format/format.test.ts.
 describe.concurrent("what bun lint takes from Bun", () => {
   const files = {
     "eslint.config.js": basic,
@@ -6909,6 +11949,30 @@ describe.concurrent("what bun lint takes from Bun", () => {
     const expected = { line: "/n\xff.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]", exitCode: 1 };
     expect(await run(".")).toEqual(expected);
     expect(await run(`"$(printf 'n\\377.js')"`)).toEqual(expected);
+  });
+
+  // Sorted the way JavaScript compares strings: U+40000, a lone surrogate, and an invalid byte, which becomes U+FFFD.
+  test.skipIf(!isLinux)("reports files whose names aren't valid UTF-8 in a consistent order", async () => {
+    const kinds = ["\xF1\x80\x80\x80", "\xED\xB0\x80", "\xF0A"];
+    const names = kinds.flatMap(kind =>
+      Array.from({ length: 16 }, (_, i) => `${kind}${String.fromCharCode(97 + i)}.js`),
+    );
+    using dir = tempDir("bun-lint-process", { "eslint.config.js": basic });
+    for (const name of names) writeFileSync(Buffer.from(`${dir}/${name}`, "latin1"), "debugger;\n");
+    await using proc = spawn({
+      // Don't write a core file if it crashes.
+      cmd: ["sh", "-c", 'ulimit -c 0; exec "$0" lint -f unix .', bunExe()],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+    const lines = Buffer.from(stdout).toString("latin1").split("\n");
+    const found = lines.filter(it => it.endsWith("[Error/no-debugger]"));
+    expect(found.map(it => it.slice(String(dir).length + 1, it.indexOf(":")))).toEqual(names);
+    expect(exitCode).toBe(1);
   });
 
   // `String(number)` and the value of a literal are WebKit's.
@@ -7054,8 +12118,11 @@ describe("bun lint on Windows, macOS and Linux", () => {
       .map(it => it.filePath.slice(String(dir).length + 1).replaceAll(sep, "/"))
       .sort();
   /** The same for oxlint's `json`, which has the path from the working directory. */
-  const reportedToOxlint = (stdout: string) =>
-    [...new Set((JSON.parse(stdout).diagnostics as { filename: string }[]).map(it => it.filename))].sort();
+  const reportedToOxlint = (stdout: string) => {
+    // The message shows the output if it isn't JSON.
+    expect(() => JSON.parse(stdout), stdout).not.toThrow();
+    return [...new Set((JSON.parse(stdout).diagnostics as { filename: string }[]).map(it => it.filename))].sort();
+  };
 
   const swapCase = (text: string) =>
     text.replace(/[a-z]/gi, letter => (letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()));
@@ -7573,7 +12640,8 @@ foo(b)
         lint(forOxlint, ["--threads", "8", "--fix", "-f", "json"]),
         lint(forEslint, [...eslint, "-f", "json"]),
       ]);
-      expect(asOxlint.stderr).not.toContain("Cannot write");
+      // Like oxlint, it says what went wrong on standard output.
+      expect(asOxlint.stdout).not.toContain("Cannot write");
       expect(reportedToOxlint(asOxlint.stdout).length).toBe(32);
       expect(reported(asEslint.stdout, forEslint).length).toBe(16);
       expect(everythingIn(join(String(forOxlint), "real")).length).toBe(16);
@@ -7723,8 +12791,8 @@ foo(b)
         };
         const isRunning = (pid: number) => {
           try {
-            // One that has ended, and that nobody has asked about yet, still has its number.
-            if (isLinux) return !/^\d+ \(.*\) Z /s.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
+            // An exited process keeps its pid until it's reaped: state Z (zombie), then briefly X (dead).
+            if (isLinux) return !/^\d+ \(.*\) [ZX] /s.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
             process.kill(pid, 0);
             return true;
           } catch {
@@ -7740,490 +12808,25 @@ foo(b)
           proc.kill("SIGKILL");
           await proc.exited;
           expect(await until(() => !isRunning(pid))).toBe(true);
+          // Windows reports a process as gone while it still holds its working directory, which can't be removed until then.
+          const isRemoved = () => {
+            try {
+              rmSync(String(dir), { recursive: true, force: true });
+              return true;
+            } catch {
+              return false;
+            }
+          };
+          expect(await until(isRemoved)).toBe(true);
         } finally {
-          if (isRunning(pid)) process.kill(pid, "SIGKILL");
+          // It may exit at any moment, so don't check first. ESRCH means it's already gone.
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
         }
       },
       timeout,
     );
-  });
-});
-
-// A key of `[lint]` is the default of the flag of the same name.
-describe.concurrent("[lint] in bunfig.toml", () => {
-  /** What a run leaves behind: what it prints but for the times, how it ends, and the files. */
-  async function run(files: Record<string, string>, args: string[]) {
-    const reads = Object.keys(files).filter(name => name !== "bunfig.toml");
-    const result = await lint(files, args, { reads, mayFail: true });
-    // In JSON the `\\` of a path of Windows are doubled, so the directory is not found in it and its random end stays.
-    const text = (printed: string) => printed.replace(/\d+(\.\d+)?m?s\b/g, "0ms").replace(/\bbun-lint_\w+/g, "<dir>");
-    return { stdout: text(result.stdout), stderr: text(result.stderr), exitCode: result.exitCode, files: result.files };
-  }
-
-  const eslint = { "eslint.config.js": basic, "a.js": bad };
-  const oxlint = { ".oxlintrc.json": `{ "rules": { "no-debugger": "error", "no-var": "warn" } }`, "a.js": bad };
-  const typed = {
-    ".oxlintrc.json": `{ "rules": { "typescript/no-floating-promises": "error" } }`,
-    "tsconfig.json": `{ "compilerOptions": { "strict": true }, "include": ["*.ts"] }`,
-    "a.ts": "async function f() {}\nf();\nconst a: string = 1;\n",
-  };
-  const many = Array.from({ length: 60 }, () => "debugger;\n").join("");
-  const suppressions = JSON.stringify({
-    "a.js": { "no-debugger": { count: 1 }, eqeqeq: { count: 1 }, yoda: { count: 1 } },
-  });
-
-  // Lines of the section, the flags that say the same, flags that say otherwise, the files, and the arguments.
-  const keys: [lines: string, flags: string[], opposite: string[], files: Record<string, string>, args: string[]][] = [
-    [
-      `config = "other.config.js"`,
-      ["--config", "other.config.js"],
-      ["-c", "eslint.config.js"],
-      { ...eslint, "other.config.js": config({ "no-var": "error" }) },
-      ["a.js"],
-    ],
-    [`configLookup = false`, ["--no-config-lookup"], ["--config-lookup"], eslint, ["a.js"]],
-    [`flavor = "oxlint"`, ["--flavor=oxlint"], ["--flavor=eslint"], { ...eslint, ...oxlint }, ["a.js"]],
-    [`flavor = "eslint"`, ["--flavor=eslint"], ["--flavor=oxlint"], { ...eslint, ...oxlint }, ["a.js"]],
-    [`ext = [".foo"]`, ["--ext", ".foo"], [], { ...eslint, "b.foo": bad }, ["."]],
-    [`ext = ".foo"`, ["--ext", ".foo"], [], { ...eslint, "b.foo": bad }, ["."]],
-    [
-      `ignorePatterns = ["b.js", "sub/"]`,
-      ["--ignore-pattern", "b.js", "--ignore-pattern=sub/"],
-      [],
-      { ...eslint, "b.js": bad, "sub/c.js": bad },
-      ["."],
-    ],
-    [`ignorePath = "mine"`, ["--ignore-path", "mine"], [], { ...oxlint, "b.js": bad, mine: "b.js\n" }, ["."]],
-    [
-      `ignore = false`,
-      ["--no-ignore"],
-      ["--ignore"],
-      {
-        "eslint.config.js": `export default [{ ignores: ["a.js"] }, { rules: { "no-debugger": "error" } }];`,
-        "a.js": bad,
-      },
-      ["a.js"],
-    ],
-    [
-      `warnIgnored = false`,
-      ["--no-warn-ignored"],
-      ["--warn-ignored"],
-      { "eslint.config.js": `export default [{ ignores: ["a.js"] }];`, "a.js": bad, "b.js": "" },
-      ["a.js", "b.js"],
-    ],
-    [`quiet = true`, ["--quiet"], ["--no-quiet"], eslint, ["a.js"]],
-    [`silent = true`, ["--silent"], ["--no-silent"], oxlint, ["a.js"]],
-    [
-      `maxWarnings = 0`,
-      ["--max-warnings", "0"],
-      ["--max-warnings=10"],
-      { ...eslint, "a.js": "var a = 1;\na;\n" },
-      ["a.js"],
-    ],
-    [
-      `denyWarnings = true`,
-      ["--deny-warnings"],
-      ["--no-deny-warnings"],
-      { ...oxlint, "a.js": "var a = 1;\na;\n" },
-      ["a.js"],
-    ],
-    [`format = "unix"`, ["-f", "unix"], ["--format=json"], eslint, ["a.js"]],
-    [`all = true`, ["--all"], ["--no-all"], { ...eslint, "a.js": many }, ["-f", "pretty", "a.js"]],
-    [
-      `inlineConfig = false`,
-      ["--no-inline-config"],
-      ["--inline-config"],
-      { ...eslint, "a.js": "// eslint-disable-next-line no-debugger\ndebugger;\n" },
-      ["a.js"],
-    ],
-    [
-      `reportUnusedDisableDirectives = true`,
-      ["--report-unused-disable-directives"],
-      ["--report-unused-disable-directives-severity=off"],
-      { ...eslint, "a.js": "// eslint-disable-next-line no-debugger\na;\n" },
-      ["a.js"],
-    ],
-    [
-      `reportUnusedDisableDirectives = "off"`,
-      ["--report-unused-disable-directives-severity", "off"],
-      ["--report-unused-disable-directives"],
-      { ...eslint, "a.js": "// eslint-disable-next-line no-debugger\na;\n" },
-      ["a.js"],
-    ],
-    [
-      `reportUnusedInlineConfigs = "error"`,
-      ["--report-unused-inline-configs=error"],
-      ["--report-unused-inline-configs=off"],
-      { ...eslint, "a.js": "/* eslint no-debugger: error */\na;\n" },
-      ["a.js"],
-    ],
-    [
-      `suppressionsLocation = "known.json"`,
-      ["--suppressions-location", "known.json"],
-      ["--suppressions-location=none.json"],
-      { ...eslint, "known.json": suppressions },
-      ["a.js"],
-    ],
-    [
-      `passOnUnprunedSuppressions = true`,
-      ["--pass-on-unpruned-suppressions"],
-      ["--no-pass-on-unpruned-suppressions"],
-      { ...eslint, "a.js": "a;\n", "eslint-suppressions.json": suppressions },
-      ["a.js"],
-    ],
-    [
-      `errorOnUnmatchedPattern = false`,
-      ["--no-error-on-unmatched-pattern"],
-      ["--error-on-unmatched-pattern"],
-      eslint,
-      ["none.js"],
-    ],
-    [`passOnNoPatterns = true`, ["--pass-on-no-patterns"], ["--no-pass-on-no-patterns"], eslint, []],
-    [
-      `exitOnFatalError = true`,
-      ["--exit-on-fatal-error"],
-      ["--no-exit-on-fatal-error"],
-      { ...eslint, "a.js": "a(" },
-      ["a.js"],
-    ],
-    [
-      `allowUnsupported = true`,
-      ["--allow-unsupported"],
-      ["--no-allow-unsupported"],
-      { ".eslintrc.json": `{ "rules": { "no-debugger": "error", "require-jsdoc": "warn" } }`, "a.js": bad },
-      ["a.js"],
-    ],
-    [
-      `inferGlobals = true`,
-      ["--infer-globals"],
-      ["--no-infer-globals"],
-      {
-        "eslint.config.js": config({ "no-undef": "error" }),
-        "tsconfig.json": `{ "compilerOptions": { "allowJs": true }, "include": ["*.ts", "*.js"] }`,
-        "globals.d.ts": "declare const mine: number;\n",
-        "a.js": "mine;\nother;\n",
-      },
-      ["a.js"],
-    ],
-    [`typeAware = true`, ["--type-aware"], ["--no-type-aware"], typed, ["a.ts"]],
-    [
-      `typeAware = false`,
-      ["--no-type-aware"],
-      ["--type-aware"],
-      {
-        ...typed,
-        ".oxlintrc.json": `{ "options": { "typeAware": true }, "rules": { "typescript/no-floating-promises": "error" } }`,
-      },
-      ["a.ts"],
-    ],
-    [`typeCheck = true`, ["--type-check"], ["--no-type-check"], typed, ["--type-aware", "a.ts"]],
-    [`project = "none.json"`, ["--project", "none.json"], ["-p", "tsconfig.json"], typed, ["--type-aware", "a.ts"]],
-    [
-      `disableNestedConfig = true`,
-      ["--disable-nested-config"],
-      ["--no-disable-nested-config"],
-      { ...oxlint, "sub/.oxlintrc.json": `{ "rules": { "no-debugger": "off" } }`, "sub/a.js": bad },
-      ["sub/a.js"],
-    ],
-    [
-      `fixType = ["suggestion"]`,
-      ["--fix-type", "suggestion"],
-      [],
-      { "eslint.config.js": config({ "unicode-bom": ["error", "always"], "no-var": "error" }), "a.js": bad },
-      ["--fix", "a.js"],
-    ],
-    [
-      `[lint.rules]\n"no-debugger" = "off"\neqeqeq = ["error", "smart"]\n"no-eval" = 2`,
-      ["--rule", `{"no-debugger": "off", "eqeqeq": ["error", "smart"], "no-eval": 2}`],
-      ["--rule", "no-debugger: warn"],
-      { ...eslint, "a.js": `${bad}eval(a == null);\n` },
-      ["a.js"],
-    ],
-    [
-      `[lint.rules]\n"no-debugger" = "off"\n"no-eval" = "error"`,
-      ["--rule", `{"no-debugger": "off", "no-eval": "error"}`, "--flavor=oxlint"],
-      ["--rule", "no-debugger: warn"],
-      { ...oxlint, "a.js": `${bad}eval(a);\n` },
-      ["a.js"],
-    ],
-    [
-      `[lint.rules]\n"no-restricted-imports" = ["error", { paths = ["lodash"], patterns = [{ group = ["a\\nb*"], message = "it's \\"so\\"" }] }]`,
-      ["--rule", `{"no-restricted-imports": ["error", { "paths": ["lodash"] }]}`],
-      [],
-      { ...eslint, "a.js": `import "lodash";\n` },
-      ["a.js"],
-    ],
-    [
-      `[lint.globals]\nmine = "readonly"\nyours = true\ntheirs = false\nours = "writable"`,
-      ["--global", "mine,yours:true", "--global", "theirs,ours:true"],
-      [],
-      {
-        "eslint.config.js": config({ "no-undef": "error", "no-global-assign": "error" }),
-        "a.js": "mine = yours = theirs = ours = other;\n",
-      },
-      ["a.js"],
-    ],
-    [
-      `[lint.parserOptions]\necmaFeatures = { jsx = true }`,
-      ["--parser-options", "ecmaFeatures: { jsx: true }"],
-      ["--parser-options", "ecmaFeatures: { jsx: false }"],
-      { ...eslint, "a.js": "<a />;\n" },
-      ["a.js"],
-    ],
-    [
-      `[lint.categories]\nstyle = "warn"\nall = "off"\ncorrectness = "error"`,
-      ["-A", "all", "-W", "style", "-D", "correctness"],
-      [],
-      { ".oxlintrc.json": "{}", "a.js": `${bad}for (;;) {}\n` },
-      ["a.js"],
-    ],
-  ];
-
-  test.each(keys)("%s", async (lines, flags, opposite, files, args) => {
-    const bunfig = { "bunfig.toml": lines.startsWith("[") ? `${lines}\n` : `[lint]\n${lines}\n` };
-    const [plain, byKey, byFlag, underFlag, byOtherFlag] = await Promise.all([
-      run(files, args),
-      run({ ...files, ...bunfig }, args),
-      run(files, [...flags, ...args]),
-      run({ ...files, ...bunfig }, [...opposite, ...args]),
-      // What takes a list or a table is added to.
-      run(files, [...(opposite.length === 0 || /^\[|= \[/.test(lines) ? flags : []), ...opposite, ...args]),
-    ]);
-    expect(byKey).toEqual(byFlag);
-    expect(byKey).not.toEqual(plain);
-    expect(underFlag).toEqual(byOtherFlag);
-  });
-
-  test("threads", async () => {
-    const [byKey, byFlag, wrong] = await Promise.all([
-      run({ ...eslint, "bunfig.toml": "[lint]\nthreads = 1\n" }, ["a.js"]),
-      run(eslint, ["--threads=1", "a.js"]),
-      run({ ...eslint, "bunfig.toml": "[lint]\nthreads = -1\n" }, ["a.js"]),
-    ]);
-    expect(byKey).toEqual(byFlag);
-    expect(wrong.stderr).toContain(`--threads takes a number, not "-1".`);
-    expect(wrong.exitCode).toBe(2);
-  });
-
-  // 288 bytes for each: 19 GB, and more than there is to address.
-  test.each(["67108864", "9007199254740991", "9223372036854775808"])(
-    "%s threads are as many as there can be",
-    async count => {
-      const [byKey, byFlag, few] = await Promise.all([
-        run({ ...eslint, "bunfig.toml": `[lint]\nthreads = ${count}\n` }, ["a.js"]),
-        run(eslint, [`--threads=${count}`, "a.js"]),
-        run(eslint, ["--threads=1", "a.js"]),
-      ]);
-      // Beyond 2^53 - 1 the file is refused before anybody asks for the key.
-      if (Number.isSafeInteger(Number(count))) expect(byKey).toEqual(few);
-      expect(byFlag).toEqual(few);
-    },
-  );
-
-  // ESLint refuses the flag in a run that fixes nothing.
-  test("fixType waits for a run that fixes", async () => {
-    const files = { ...eslint, "bunfig.toml": `[lint]\nfixType = ["layout"]\n` };
-    const [without, plain, dry, dryByFlag] = await Promise.all([
-      run(files, ["a.js"]),
-      run(eslint, ["a.js"]),
-      run(files, ["--fix-dry-run", "-f", "json", "a.js"]),
-      run(eslint, ["--fix-dry-run", "--fix-type=layout", "-f", "json", "a.js"]),
-    ]);
-    expect(without).toEqual(plain);
-    expect(dry).toEqual(dryByFlag);
-  });
-
-  // A flag that only one of the two tools has says whom a command line was written for. A key was written for Bun.
-  test("a key does not say which tool the run stands in for", async () => {
-    const both = { ...eslint, ...oxlint };
-    const asks = "Say which one this run is for: --flavor=oxlint or --flavor=eslint.";
-    const results = await Promise.all(
-      [
-        `denyWarnings = true`,
-        `typeAware = true`,
-        `ext = [".js"]`,
-        `[lint.rules]\n"no-var" = "off"`,
-        `[lint.categories]\nstyle = "warn"`,
-      ].map(lines =>
-        run({ ...both, "bunfig.toml": lines.startsWith("[") ? `${lines}\n` : `[lint]\n${lines}\n` }, ["a.js"]),
-      ),
-    );
-    for (const result of results) {
-      expect(result.stderr).toContain(asks);
-      expect(result.exitCode).toBe(2);
-    }
-    // With the configuration of ESLint alone, neither makes it a run of oxlint.
-    const [byKey, byFlag, plain] = await Promise.all([
-      run({ ...eslint, "bunfig.toml": "[lint]\ndenyWarnings = true\n" }, ["-f", "unix", "a.js"]),
-      run(eslint, ["--deny-warnings", "-f", "unix", "a.js"]),
-      run(eslint, ["-f", "unix", "a.js"]),
-    ]);
-    expect(byKey.stdout).toBe(plain.stdout);
-    expect(byFlag.stdout).toBe(plain.stdout);
-  });
-
-  test("bun/format holds a file against what bun format prints, with [format]", async () => {
-    const files = { "a.js": "a('b')\n", "bunfig.toml": "[format]\nsemi = false\nsingleQuote = true\n" };
-    const rule = (...options: unknown[]) => ({
-      ".oxlintrc.json": JSON.stringify({ rules: { "bun/format": ["error", ...options] } }),
-    });
-    const [withSection, without, overridden] = await Promise.all([
-      run({ ...files, ...rule() }, ["-f", "unix", "a.js"]),
-      run({ "a.js": files["a.js"], ...rule() }, ["-f", "unix", "a.js"]),
-      run({ ...files, ...rule({ semi: true }) }, ["-f", "unix", "a.js"]),
-    ]);
-    expect(withSection.stdout).toBe("");
-    expect(withSection.exitCode).toBe(0);
-    expect(without.stdout).toContain(`Replace \`'b')\` with \`"b");\``);
-    expect(overridden.stdout).toContain("Insert `;`");
-    expect(overridden.stdout).not.toContain("Replace");
-  });
-
-  test("the file is that of the working directory, after --cwd", async () => {
-    const files = {
-      ...eslint,
-      "sub/a.js": bad,
-      "bunfig.toml": `[lint]\nformat = "unix"\n`,
-      "sub/bunfig.toml": `[lint]\nquiet = true\nformat = "json"\n`,
-    };
-    const [above, below] = await Promise.all([run(files, ["sub/a.js"]), run(files, ["--cwd=sub", "a.js"])]);
-    expect(above.stdout).toContain("[Warning/no-var]");
-    expect(JSON.parse(below.stdout)[0].warningCount).toBe(0);
-  });
-
-  /** `bun ...args` in a directory with `files`. */
-  async function bun(files: Record<string, string>, args: string[]) {
-    using dir = tempDir("bun-lint-bunfig", files);
-    const stdio = { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const;
-    await using proc = spawn({ cmd: [bunExe(), ...args], env, cwd: String(dir), ...stdio });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  test("--config= before lint names another file than bunfig.toml", async () => {
-    const files = {
-      ...eslint,
-      "bunfig.toml": `[lint]\nformat = "unix"\n`,
-      "other.toml": `[lint]\nformat = "json"\n`,
-    };
-    const results = await Promise.all([
-      bun(files, ["lint", "a.js"]),
-      bun(files, ["--config=other.toml", "lint", "a.js"]),
-      bun(files, ["-c=other.toml", "lint", "a.js"]),
-      // What follows `lint` is the linter's.
-      bun(files, ["--config=other.toml", "lint", "-c", "eslint.config.js", "a.js"]),
-      bun(files, ["--config=none.toml", "lint", "a.js"]),
-    ]);
-    expect(results.map(it => [it.stdout.startsWith("[{"), it.exitCode])).toEqual([
-      [false, 1],
-      [true, 1],
-      [true, 1],
-      [true, 1],
-      [false, 2],
-    ]);
-    expect(results[4].stderr).toContain(`while reading config "`);
-  });
-
-  test("what is wrong with [lint] is shown where it is, as for every other section", async () => {
-    const bunfig = `[lint]\nquiet = true\n\n[lint.rules]\neqeqeq = ["error", "smart"]\n"no-var" = "always"\n`;
-    const result = await bun({ ...eslint, "bunfig.toml": bunfig }, ["lint", "a.js"]);
-    expect(result.stderr).toContain(`6 | "no-var" = "always"\n`);
-    expect(result.stderr).toMatch(
-      /error: Option rules: 'always' not one of off, warn, error, 0, 1, or 2\.\n\s+at .*bunfig\.toml:6:12\n/,
-    );
-    expect(result.stdout).toBe("");
-    expect(result.exitCode).toBe(2);
-  });
-
-  // The flags that say what one run does.
-  test.each([
-    ["fix = true", "--fix"],
-    ["fixDryRun = true", "--fix-dry-run"],
-    ["fixSuggestions = true", "--fix-suggestions"],
-    ["fixDangerously = true", "--fix-dangerously"],
-    ["init = true", "--init"],
-    ["stdin = true", "--stdin"],
-    [`stdinFilename = "a.js"`, "--stdin-filename"],
-    [`printConfig = "a.js"`, "--print-config"],
-    ["suppressAll = true", "--suppress-all"],
-    [`suppressRule = ["no-var"]`, "--suppress-rule"],
-    ["pruneSuppressions = true", "--prune-suppressions"],
-    [`outputFile = "report.txt"`, "--output-file"],
-    ["color = true", "--color"],
-    ["timing = true", "--timing"],
-    [`cwd = "sub"`, "--cwd"],
-  ])("%s is refused, and nothing is written", async (line, flag) => {
-    const key = line.split(" ")[0];
-    const result = await run({ ...eslint, "bunfig.toml": `[lint]\n${line}\n` }, ["a.js"]);
-    expect(result.stderr).toContain(
-      `"${key}" cannot be set in bunfig.toml, it says what one run does. Pass ${flag} on the command line`,
-    );
-    expect(result.stdout).toBe("");
-    expect(result.files["a.js"]).toBe(bad);
-    expect(result.exitCode).toBe(2);
-  });
-
-  test.each([
-    ["quiet = 1", "expected boolean but received number"],
-    [`maxWarnings = "0"`, "expected number but received string"],
-    ["maxWarnings = 1.5", "Invalid value for option 'max-warnings' - expected type Int, received value: 1.5."],
-    ["config = false", "expected string but received boolean"],
-    ["ignorePatterns = true", "expected array but received boolean"],
-    ["ignorePatterns = [1]", "expected string but received number"],
-    [`flavor = "biome"`, "Option flavor: 'biome' not one of eslint or oxlint."],
-    [`format = "fancy"`, `There is no formatter "fancy". Those that exist: stylish, pretty, json,`],
-    [`fixType = ["all"]`, `'fixTypes' must be an array of any of "directive", "problem", "suggestion", and "layout".`],
-    [`reportUnusedDisableDirectives = "loud"`, "'loud' not one of off, warn, error, 0, 1, or 2."],
-    ["reportUnusedDisableDirectives = 1", "expected string but received number"],
-    [`reportUnusedInlineConfigs = true`, "expected string but received boolean"],
-    ["rules = true", "expected object but received boolean"],
-    [`[lint.rules]\neqeqeq = "always"`, "Option rules: 'always' not one of off, warn, error, 0, 1, or 2."],
-    [`[lint.rules]\neqeqeq = ["smart"]`, "Option rules: 'smart' not one of off, warn, error, 0, 1, or 2."],
-    [`[lint.rules]\neqeqeq = []`, "expected string but received array"],
-    [`[lint.rules]\neqeqeq = true`, "expected string but received boolean"],
-    [`[lint.globals]\na = "off"`, `expected "readonly" or "writable" but received string`],
-    [`[lint.globals]\na = 1`, `expected "readonly" or "writable" but received number`],
-    [`[lint.categories]\nstyles = "warn"`, `unknown category "styles"`],
-    [`[lint.categories]\nstyle = "deny"`, "Option categories: 'deny' not one of off, warn, error, 0, 1, or 2."],
-    ["maxWarning = 0", `unknown key "maxWarning" in [lint]. Did you mean "maxWarnings"?`],
-    ["max-warnings = 0", `unknown key "max-warnings" in [lint]. Did you mean "maxWarnings"?`],
-    [`ignorePattern = ["a"]`, `unknown key "ignorePattern" in [lint]. Did you mean "ignorePatterns"?`],
-    [`plugins = ["import"]`, `unknown key "plugins" in [lint].`],
-    [`extends = ["a"]`, `unknown key "extends" in [lint].`],
-    ["overrides = []", `unknown key "overrides" in [lint].`],
-    ["cache = true", `unknown key "cache" in [lint].`],
-    [`env = ["node"]`, `unknown key "env" in [lint].`],
-  ])("%s is refused: %s", async (lines, message) => {
-    const bunfig = lines.startsWith("[") ? `${lines}\n` : `[lint]\n${lines}\n`;
-    const result = await run({ ...eslint, "bunfig.toml": bunfig }, ["a.js"]);
-    expect(result.stderr).toContain(message);
-    expect(result.stdout).toBe("");
-    expect(result.exitCode).toBe(2);
-  });
-
-  test("every flag in the help is a key, or is refused as a key with its name", async () => {
-    const help = await lint({}, ["--help"]);
-    const flags = [...help.stdout.matchAll(/^\s+(?:-\w, )?--([a-z-]+)/gm)].map(it => it[1]);
-    expect(flags.length).toBeGreaterThan(50);
-    const renamed: Record<string, string> = {
-      "ignore-pattern": "ignorePatterns",
-      "report-unused-disable-directives-severity": "reportUnusedDisableDirectives",
-      rule: "rules",
-      global: "globals",
-      allow: "categories",
-      warn: "categories",
-      deny: "categories",
-    };
-    const answers = await Promise.all(
-      flags.map(async flag => {
-        const positive = flag.replace(/^no-/, "");
-        const key = renamed[positive] ?? positive.replace(/-(\w)/g, (_, it) => it.toUpperCase());
-        // Of a type that no key takes: one that exists says what it expects.
-        const { stderr } = await run({ "bunfig.toml": `[lint]\n${key} = [[1]]\n` }, ["--list-files"]);
-        return [flag, /expected .+ but received|cannot be set in bunfig\.toml/.test(stderr)];
-      }),
-    );
-    expect(answers.filter(it => !it[1])).toEqual([]);
   });
 });
 
@@ -8672,7 +13275,9 @@ describe.concurrent("nativePluginRules", () => {
         lint({ ...flat, ...bunfig(`["import"]`) }, ["--print-config", "a.js"]),
       ]);
       expect(builtIn.stderr).toBe("");
-      expect(mixed.stderr).toBe("note: in JavaScript: react-hooks/rules-of-hooks. All other rules are built in.");
+      expect(mixed.stderr).toBe(
+        "note: these rules run in JavaScript: react-hooks/rules-of-hooks. All other rules are built in.",
+      );
       expect(JSON.parse(mixed.raw)).toEqual(JSON.parse(builtIn.raw));
     },
     timeout,
@@ -8690,7 +13295,7 @@ describe.concurrent("nativePluginRules", () => {
       };
       const result = await lint({ ...files, ...bunfig("false") }, ["a.js"], { mayFail: true });
       expect(result.stderr).toContain(
-        "1 rule in JavaScript did not run, only the built-in rules have types: @typescript-eslint/no-floating-promises. With --native-plugin-rules=@typescript-eslint the built-in ones run",
+        "1 rule did not run because rules that run in JavaScript cannot use type information: @typescript-eslint/no-floating-promises\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions.",
       );
       expect(result.exitCode).toBe(2);
     },
@@ -8703,7 +13308,7 @@ describe.concurrent("nativePluginRules", () => {
       lint(files, ["-f", "unix", "a.ts"]),
       lint({ ...files, ...bunfig("false") }, ["-f", "unix", "a.ts"]),
     ]);
-    expect(plain.stdout).toContain("[Error/@typescript-eslint/no-explicit-any]");
+    expect(plain.stdout).toContain("[Warning/@typescript-eslint/no-explicit-any]");
     expect(off.stdout).toBe(plain.stdout);
   });
 
@@ -8741,15 +13346,8810 @@ describe.concurrent("nativePluginRules", () => {
   test.each([
     [
       `["imprt"]`,
-      "Option native-plugin-rules: 'imprt' not one of @typescript-eslint, react-hooks, import, n, react, prettier.",
+      'Unknown plugin "imprt" in --native-plugin-rules\n  Available plugins: @typescript-eslint, react-hooks, import, n, react, prettier, json, markdown\n',
     ],
-    [`["unicorn"]`, "Option native-plugin-rules: 'unicorn' not one of"],
-    [`["true"]`, "Option native-plugin-rules: 'true' not one of"],
+    [`["unicorn"]`, 'Unknown plugin "unicorn" in --native-plugin-rules'],
+    [`["true"]`, 'Unknown plugin "true" in --native-plugin-rules'],
     [`"import"`, "expected boolean or array but received string"],
     ["[1]", "expected string but received number"],
   ])("nativePluginRules = %s is refused", async (value, message) => {
     const result = await lint({ ...flat, ...bunfig(value) }, ["a.js"], { mayFail: true });
     expect(result.stderr).toContain(message);
     expect(result.exitCode).toBe(2);
+  });
+});
+// tsc reports these errors from its checker (`checkGrammar*`). oxc reports them from its parser or its semantic pass, and oxlint
+// doesn't lint a file that has one. Every row was run on oxlint 1.87 with `-f json`.
+describe("TypeScript grammar errors under .oxlintrc.json", () => {
+  type Reported = {
+    filename: string;
+    code?: string;
+    message: string;
+    help?: string;
+    labels: { label?: string; span: { offset: number; length: number } }[];
+  };
+  /** `TS(1016) The message. @15+1 "what the label says", 3+2 help: The help.` */
+  const print = ({ code, message, help, labels }: Reported) => {
+    const places = labels.map(({ label, span }) => `${span.offset}+${span.length}${label ? ` "${label}"` : ""}`);
+    return `${code ? `${code} ` : ""}${message} @${places.join(", ")}${help ? ` help: ${help}` : ""}`;
+  };
+  const run = async (files: Record<string, string>, config: Record<string, string>) => {
+    const { raw, exitCode } = await lint({ ...config, ...files }, ["-f", "json"]);
+    const errors: Record<string, string[]> = {};
+    for (const it of JSON.parse(raw).diagnostics as Reported[]) (errors[it.filename] ??= []).push(print(it));
+    return { errors, exitCode };
+  };
+  const oxlintrc = { ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" } }) };
+
+  const rejected: Record<string, [code: string, ...errors: string[]][]> = {
+    "ts": [
+      [
+        "await <T,>(x) => 1; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @13+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function f(a?, b, c? = 1) {}",
+        "TS(1016) A required parameter cannot follow an optional parameter. @15+1",
+        "TS(1015) A parameter cannot have a question mark and an initializer. @18+1",
+      ],
+      [
+        "function f(a? = 1, b, c) {}",
+        "TS(1015) A parameter cannot have a question mark and an initializer. @11+1",
+        "TS(1016) A required parameter cannot follow an optional parameter. @19+1",
+        "TS(1016) A required parameter cannot follow an optional parameter. @22+1",
+      ],
+      [
+        "function f(a?, b, ...c?) {}",
+        "TS(1016) A required parameter cannot follow an optional parameter. @15+1",
+        "TS(1047) A rest parameter cannot be optional @22+1 help: Remove this `?`. The default value is an empty array",
+      ],
+      [
+        "function f(a?, b, ...c, d) {}",
+        "TS(1016) A required parameter cannot follow an optional parameter. @15+1",
+        "A rest parameter must be last in a parameter list @18+4",
+      ],
+      [
+        "function f(...a? = []) {}",
+        "TS(1047) A rest parameter cannot be optional @15+1 help: Remove this `?`. The default value is an empty array",
+        "A rest parameter cannot have an initializer. @14+7",
+      ],
+      [
+        "function f(...a?: any = []) {}",
+        "TS(1047) A rest parameter cannot be optional @15+1 help: Remove this `?`. The default value is an empty array",
+        'Expected `,` or `)` but found `=` @22+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "function f(a?, b, ...c = []) {}",
+        "TS(1016) A required parameter cannot follow an optional parameter. @15+1",
+        "A rest parameter cannot have an initializer. @21+6",
+      ],
+      [
+        "function f(a?, b = (x?, y) => 1, c) {}",
+        "TS(1016) A required parameter cannot follow an optional parameter. @24+1",
+        "TS(1016) A required parameter cannot follow an optional parameter. @33+1",
+      ],
+      [
+        "function f(private a?, b) {}",
+        "TS(1090) 'private' modifier cannot appear on a parameter. @11+7 help: No modifiers are allowed here.",
+        "TS(1016) A required parameter cannot follow an optional parameter. @23+1",
+      ],
+      [
+        "class A { constructor(private a?, b, public c? = 1) {} }",
+        "TS(1016) A required parameter cannot follow an optional parameter. @34+1",
+        "TS(1015) A parameter cannot have a question mark and an initializer. @44+1",
+      ],
+      [
+        "class A { constructor(a?, private b) {} }",
+        "TS(1016) A required parameter cannot follow an optional parameter. @26+9",
+      ],
+      [
+        "class A { constructor(a?, @d b) {} }",
+        "TS(1016) A required parameter cannot follow an optional parameter. @26+4",
+      ],
+      [
+        "function f(a?, b): asserts b is string {}",
+        "TS(1016) A required parameter cannot follow an optional parameter. @15+1",
+      ],
+      [
+        "function f(a?, /* c */ b /* d */ : number /* e */, c?) {}",
+        "TS(1016) A required parameter cannot follow an optional parameter. @23+18",
+      ],
+      [
+        "function f(...a /* x */ ? /* y */ : any) {}",
+        "TS(1047) A rest parameter cannot be optional @24+1 help: Remove this `?`. The default value is an empty array",
+      ],
+      [
+        "function f(a /* x */ ? /* y */ : any = 1) {}",
+        "TS(1015) A parameter cannot have a question mark and an initializer. @11+1",
+      ],
+      [
+        "function f([a, b] ? : any = 1) {}",
+        "TS(1015) A parameter cannot have a question mark and an initializer. @11+6",
+      ],
+      ["function f(...[a, b] = []) {}", "A rest parameter cannot have an initializer. @14+11"],
+      ["function f(... /*x*/ a = []) {}", "A rest parameter cannot have an initializer. @21+6"],
+      ["function f(...a: any[] /*x*/, b) {}", "A rest parameter must be last in a parameter list @11+11"],
+      [
+        "function f(...a /*x*/ , /*y*/ ) {}",
+        "A rest parameter or binding pattern may not have a trailing comma. @22+1 help: Remove the trailing comma here",
+      ],
+      ["function f(a?, this) {}", "Identifier expected. 'this' is a reserved word that cannot be used here. @15+4"],
+      [
+        "function f(a, this: any, b?, c) {}",
+        "Identifier expected. 'this' is a reserved word that cannot be used here. @14+4",
+      ],
+      [
+        "type F = (a?, this: any) => void;",
+        "Identifier expected. 'this' is a reserved word that cannot be used here. @14+4",
+      ],
+      [
+        "function f(this: any, this: any) {}",
+        "Identifier expected. 'this' is a reserved word that cannot be used here. @22+4",
+      ],
+      [
+        "let x = { m(a?, b) {}, set s(a?) {}, get g(a?) { return 1 } };",
+        "TS(1016) A required parameter cannot follow an optional parameter. @16+1",
+        "TS(1051) A 'set' accessor cannot have an optional parameter. @29+2",
+        "A 'get' accessor must not have any formal parameters. @42+4 help: Remove these parameters here",
+      ],
+      ["declare const a: number = 1;", "TS(1039) Initializers are not allowed in ambient contexts. @26+1"],
+      ["declare let a = 1;", "TS(1039) Initializers are not allowed in ambient contexts. @16+1"],
+      ["declare var a = 1;", "TS(1039) Initializers are not allowed in ambient contexts. @16+1"],
+      [
+        "declare class A { readonly y = 1; readonly z: number = 1; readonly w = f(); readonly v = -1; readonly u = [] }",
+        "TS(1039) Initializers are not allowed in ambient contexts. @55+1",
+      ],
+      [
+        "declare namespace N { export default 1; }",
+        "TS(1319) A default export can only be used in an ECMAScript-style module. @22+17",
+      ],
+      [
+        'declare module "m" { export default function f() {} }',
+        "TS(1183) An implementation cannot be declared in ambient contexts. @49+0",
+      ],
+      [
+        'declare module "m" { export default class { m() {} } }',
+        "TS(1183) An implementation cannot be declared in ambient contexts. @48+0",
+      ],
+      ["declare global { var a = 1; a; }", "TS(1039) Initializers are not allowed in ambient contexts. @25+1"],
+      ["declare function* g(): any;", "TS(1221) Generators are not allowed in an ambient context. @16+11"],
+      ["declare async function* f(): any;", "TS(1221) Generators are not allowed in an ambient context. @22+11"],
+      ["function* g(): any;", "TS(1222) An overload signature cannot be declared as a generator. @0+19"],
+      [
+        "function* g(): any; function* g() {}",
+        "TS(1222) An overload signature cannot be declared as a generator. @0+19",
+      ],
+      ["class A { *g(): any; *g() {} }", "TS(1222) An overload signature cannot be declared as a generator. @10+10"],
+      [
+        "declare class A { *g(): any; async m(): any; async *n(): any }",
+        "TS(1221) Generators are not allowed in an ambient context. @18+10",
+        "TS(1221) Generators are not allowed in an ambient context. @51+9",
+      ],
+      [
+        "declare const f = function () { a; let b = 1; function g() {} };",
+        "TS(1039) Initializers are not allowed in ambient contexts. @43+1",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @59+0",
+      ],
+      [
+        "declare const c = class { m() {} x = 1 };",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @30+0",
+        "TS(1039) Initializers are not allowed in ambient contexts. @37+1",
+      ],
+      [
+        "declare namespace N { namespace M { a; function f() {} } }",
+        "TS(1036) Statements are not allowed in ambient contexts. @36+2",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @52+0",
+      ],
+      [
+        "namespace N { declare const a = 1; declare function f() {} }",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @56+0",
+      ],
+      [
+        'declare namespace N { import a = b.c; export import d = b.c; export { a }; export * from "x"; }',
+        "TS(1194) Export declarations are not permitted in a namespace. @75+18",
+      ],
+      [
+        "class A { a!: number = 1; }",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @11+1",
+      ],
+      [
+        "class A { a! = 1; }",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @11+1",
+      ],
+      [
+        "class A { a!; }",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @11+1",
+      ],
+      [
+        "class A { static a!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @18+1",
+      ],
+      [
+        "abstract class A { abstract a!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @29+1",
+      ],
+      [
+        "declare class A { a!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @19+1",
+      ],
+      [
+        "class A { declare a!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @19+1",
+      ],
+      [
+        "class A { accessor a!: number; accessor b?: number; accessor c! = 1; accessor d!; }",
+        "TS(1276) An 'accessor' property cannot be declared optional. @41+1 help: Remove this `?`",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @62+1",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @79+1",
+      ],
+      [
+        "declare class A { accessor a!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @28+1",
+      ],
+      [
+        "class A { declare accessor a!: number; }",
+        "TS(1243) 'accessor' modifier cannot be used with 'declare' modifier. @10+7 help: Allowed modifiers are: private, protected, public, static, abstract, override",
+      ],
+      [
+        "abstract class A { abstract accessor a!: number; abstract accessor b = 1; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @38+1",
+      ],
+      [
+        "let a!: number = 1;",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @5+1",
+      ],
+      ["let a! = 1;", "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @5+1"],
+      ["let a!;", "TS(1264) Declarations with definite assignment assertions must also have type annotations. @5+1"],
+      [
+        "const a!: number = 1;",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @7+1",
+      ],
+      [
+        "declare let a!: number;",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @13+1",
+      ],
+      [
+        "class A { m(): void; }",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @10+1",
+      ],
+      [
+        "class A { m(): void; n() {} }",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @10+1",
+      ],
+      [
+        "class A { m(): void; m(): void; }",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @21+1",
+      ],
+      [
+        "class A { m(): void; x = 1; m() {} }",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @10+1",
+      ],
+      [
+        "class A { [m](): void; [n](): void; }",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @24+1",
+      ],
+      [
+        "class A { m(): void; m = 1 }",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @10+1",
+      ],
+      [
+        "class A { m(): void; abstract m(): void }",
+        "TS(1244) Abstract methods can only appear within an abstract class. @30+1",
+      ],
+      [
+        "abstract class A { abstract m(): void; m(): void; }",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @39+1",
+      ],
+      ["class A { constructor(); }", "TS(2390) Constructor implementation is missing. @10+11"],
+      ["class A { constructor(); m() {} }", "TS(2390) Constructor implementation is missing. @10+11"],
+      ["class A { constructor(); constructor(a); }", "TS(2390) Constructor implementation is missing. @25+11"],
+      [
+        "class A { m(): void; static {} m() {} }",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @10+1",
+      ],
+      [
+        "(class { m(): void; });",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @9+1",
+      ],
+      [
+        "class A { get a(): number; set a(v: number); }",
+        "Getters and setters must have an implementation. @14+1",
+        "Getters and setters must have an implementation. @31+1",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @31+1",
+      ],
+      [
+        "class A { declare m(): void; }",
+        "TS(1031) 'declare' modifier cannot appear on class elements of this kind. @10+7 help: Allowed modifiers are: private, protected, public, static, abstract, override, async",
+      ],
+      ["class A { get a(): number; get a() { return 1 } }", "Getters and setters must have an implementation. @14+1"],
+      [
+        "class A { m(); }",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @10+1",
+      ],
+      [
+        "class A { m() }",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @10+1",
+      ],
+      [
+        "class A { m()\n n() {} }",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @10+1",
+      ],
+      ["interface I { set a(v): void }", "TS(1095) A 'set' accessor cannot have a return type annotation. @22+6"],
+      ["interface I { set a(v?) }", "TS(1051) A 'set' accessor cannot have an optional parameter. @20+2"],
+      ["declare class A { set a(v = 1); }", "A 'set' accessor cannot have an initializer. @23+7"],
+      ["declare class A { set a(v): void; }", "TS(1095) A 'set' accessor cannot have a return type annotation. @26+6"],
+      ["abstract class A { abstract set a(v = 1); }", "A 'set' accessor cannot have an initializer. @33+7"],
+      [
+        "abstract class A { abstract set a(v): void; }",
+        "TS(1095) A 'set' accessor cannot have a return type annotation. @36+6",
+      ],
+      ["class A { set a(v = 1); }", "A 'set' accessor cannot have an initializer. @15+7"],
+      ['declare module "m" { namespace N { a; } }', "TS(1036) Statements are not allowed in ambient contexts. @35+2"],
+      ["declare global { namespace N { a; } }", "TS(1036) Statements are not allowed in ambient contexts. @31+2"],
+      ["let o = { set a(v): void {} };", "TS(1095) A 'set' accessor cannot have a return type annotation. @18+6"],
+      ["let o = { get a<T>() { return 1 } };", "TS(1094) An accessor cannot have type parameters. @15+3"],
+      [
+        "class A { constructor(): void; constructor() {} }",
+        "TS(1093) Type annotation cannot appear on a constructor declaration. @25+4",
+      ],
+      ["class A { constructor(): A {} }", "TS(1093) Type annotation cannot appear on a constructor declaration. @25+1"],
+      [
+        "declare class A { constructor(): A; }",
+        "TS(1093) Type annotation cannot appear on a constructor declaration. @33+1",
+      ],
+      [
+        "class A { constructor<T>(); constructor() {} }",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @21+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "let x: number?;",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @7+7 help: Did you mean to write 'number | null | undefined'?",
+      ],
+      [
+        "let x: ?number;",
+        "TS(17020) '?' at the start of a type is not valid TypeScript syntax. @7+7 help: Did you mean to write 'number | null | undefined'?",
+      ],
+      [
+        "let x: number!;",
+        "TS(17019) '!' at the end of a type is not valid TypeScript syntax. @7+7 help: Did you mean to write 'number'?",
+      ],
+      [
+        "let x: !number;",
+        "TS(17020) '!' at the start of a type is not valid TypeScript syntax. @7+7 help: Did you mean to write 'number'?",
+      ],
+      [
+        "let x: { a: number? };",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @12+7 help: Did you mean to write 'number | null | undefined'?",
+      ],
+      [
+        "let x: [a: number?];",
+        "TS(5086) A labeled tuple element is declared as optional with a question mark after the name and before the colon, rather than after the type. @11+7",
+      ],
+      [
+        "let x: [number?, string];",
+        'TS(1257) A required element cannot follow an optional element. @17+6 "Required element here", 8+7 "Optional element seen here"',
+      ],
+      [
+        "let x: [a?: number, b: string];",
+        'TS(1257) A required element cannot follow an optional element. @20+9 "Required element here", 8+10 "Optional element seen here"',
+      ],
+      [
+        "let x: [number?, ...string[], boolean];",
+        'TS(1257) A required element cannot follow an optional element. @30+7 "Required element here", 8+7 "Optional element seen here"',
+      ],
+      ["let x: [...a?: string[]];", "TS(5085) A tuple member cannot be both optional and rest. @8+15"],
+      [
+        "let x: [a: ...string[]];",
+        "TS(5087) A labeled tuple element is declared as rest with a '...' before the name, rather than before the type. @11+11",
+      ],
+      [
+        "let x: [a?: number?];",
+        "TS(5086) A labeled tuple element is declared as optional with a question mark after the name and before the colon, rather than after the type. @12+7",
+      ],
+      [
+        "let x: asserts a;",
+        "TS(1228) A type predicate is only allowed in return type position for functions and methods. @7+9",
+      ],
+      [
+        "let x: asserts a is string;",
+        "TS(1228) A type predicate is only allowed in return type position for functions and methods. @7+19",
+      ],
+      [
+        "let x: this is string;",
+        "TS(1228) A type predicate is only allowed in return type position for functions and methods. @7+14",
+      ],
+      [
+        "class A { get g(): this is string { return 1 } }",
+        "TS(1228) A type predicate is only allowed in return type position for functions and methods. @19+14",
+      ],
+      [
+        "let o = { m(a): a is string { return true }, get g(): a is string { return 1 } };",
+        "TS(1228) A type predicate is only allowed in return type position for functions and methods. @54+11",
+      ],
+      [
+        "type F = new (a) => a is string;",
+        "TS(1228) A type predicate is only allowed in return type position for functions and methods. @20+11",
+      ],
+      [
+        "let x: infer U;",
+        "TS(1338) 'infer' declarations are only permitted in the 'extends' clause of a conditional type. @7+7",
+      ],
+      [
+        "type T = infer U;",
+        "TS(1338) 'infer' declarations are only permitted in the 'extends' clause of a conditional type. @9+7",
+      ],
+      [
+        "type T<A> = A extends string ? infer U : never;",
+        "TS(1338) 'infer' declarations are only permitted in the 'extends' clause of a conditional type. @31+7",
+      ],
+      [
+        "type T<A> = infer U extends string ? 1 : 2;",
+        "TS(1338) 'infer' declarations are only permitted in the 'extends' clause of a conditional type. @12+7",
+      ],
+      [
+        "let x: readonly number;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+      ],
+      [
+        "let x: readonly Array<number>;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+      ],
+      [
+        "let x: readonly (number[]);",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+      ],
+      [
+        "let x: readonly readonly number[];",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+      ],
+      [
+        "let x: readonly string[] | readonly number;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @27+8",
+      ],
+      ["let x: A<>;", "TS(1099) Type argument list cannot be empty. @8+2"],
+      ["f<>();", "TS(1099) Type argument list cannot be empty. @1+2"],
+      ["new A<>();", "TS(1099) Type argument list cannot be empty. @5+2"],
+      ["let x = f<>;", "TS(1099) Type argument list cannot be empty. @9+2"],
+      ["class A extends B<> {}", "TS(1099) Type argument list cannot be empty. @17+2"],
+      ["class A implements B<> {}", "TS(1099) Type argument list cannot be empty. @20+2"],
+      ["interface A extends B<> {}", "TS(1099) Type argument list cannot be empty. @21+2"],
+      ["function f<>() {}", "TS(1098) Type parameter list cannot be empty. @10+2"],
+      ["class A<> {}", "TS(1098) Type parameter list cannot be empty. @7+2"],
+      ["interface A<> {}", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["type A<> = 1;", "TS(1098) Type parameter list cannot be empty. @6+2"],
+      ["let x: <>() => void;", "TS(1098) Type parameter list cannot be empty. @7+2"],
+      ["let x: typeof a<>;", "TS(1099) Type argument list cannot be empty. @15+2"],
+      ['let x: import("a")<>;', "TS(1099) Type argument list cannot be empty. @18+2"],
+      ["f<>``;", "TS(1099) Type argument list cannot be empty. @1+2"],
+      ["let x: import(a);", "TS(1141) String literal expected. @14+1"],
+      ["let x: import(`a`);", "TS(1141) String literal expected. @14+3"],
+      ["let x: typeof import(a);", "TS(1141) String literal expected. @21+1"],
+      ["let x: { [k: string] };", "TS(1021) An index signature must have a type annotation. @9+11"],
+      ["let x: { [k?: string]: number };", "TS(1019) An index signature parameter cannot have a question mark. @11+1"],
+      ["let x: { [...k: string[]]: number };", "Unexpected token @10+3"],
+      ["let x: { [public k: string]: number };", "Unexpected token @17+1"],
+      [
+        'let x: { [k: string = "a"]: number };',
+        'Expected `,` or `]` but found `=` @20+1 "`,` or `]` expected", 9+1 "Opened here"',
+      ],
+      [
+        "let x: { [k: string, j: string]: number };",
+        "TS(1096) An index signature must have exactly one parameter. @9+22",
+      ],
+      [
+        "let x: { [k: string,]: number };",
+        "Index signature declarations may not have a trailing comma. @19+1 help: Remove the trailing comma here",
+      ],
+      ["let x: { []: number };", "Unexpected token @10+1"],
+      [
+        "let x: { [k: boolean]: number };",
+        "TS(1268) An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type. @10+10",
+      ],
+      [
+        'let x: { [k: "a"]: number };',
+        "TS(1337) An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead. @13+3",
+      ],
+      [
+        "let x: { [k: 1]: number };",
+        "TS(1337) An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead. @13+1",
+      ],
+      ["class A { [k: string]; }", "TS(1021) An index signature must have a type annotation. @10+11"],
+      ["interface I { [k: string] }", "TS(1021) An index signature must have a type annotation. @14+11"],
+      ["enum E { [a] }", "TS(1164) Computed property names are not allowed in enums. @10+1"],
+      ["enum E { [`a${b}`] }", "TS(1164) Computed property names are not allowed in enums. @10+7"],
+      ["enum E { [1] }", "TS(2452) An enum member cannot have a numeric name. @10+1"],
+      ["enum E { 1 }", "TS(2452) An enum member cannot have a numeric name. @9+1"],
+      ["enum E { 1.5 = 2 }", "TS(2452) An enum member cannot have a numeric name. @9+3"],
+      ["enum E { 1n }", "TS(2452) An enum member cannot have a numeric name. @9+2"],
+      ["enum E { #a }", "Unexpected token @9+2"],
+      ["enum E { A = 'x', B }", "Enum member must have initializer. @18+1"],
+      ["enum E { A = f(), B }", "Enum member must have initializer. @18+1"],
+      ["enum E { A = `x`, B }", "Enum member must have initializer. @18+1"],
+      ["enum E { A = x as number, B }", "Enum member must have initializer. @26+1"],
+      [
+        "enum E { A = 'x', B, C }",
+        "Enum member must have initializer. @18+1",
+        "Enum member must have initializer. @21+1",
+      ],
+      ["declare enum E { A = 'x', B }", "Enum member must have initializer. @26+1"],
+      ["const enum E { A = 'x', B }", "Enum member must have initializer. @24+1"],
+      [
+        "enum E { A, A }",
+        'Identifier `A` has already been declared @9+1 "`A` has already been declared here", 12+1 "It can not be redeclared here"',
+      ],
+      ["enum any {}", "TS(2431) Enum name cannot be 'any' @5+3"],
+      [
+        "class A implements B extends C {}",
+        "TS(1173) 'extends' clause must precede 'implements' clause @8+10 \"'implements' clause found here\", 21+7 \"'extends' clause found here\" help: Move the 'extends' clause before the 'implements' clause",
+      ],
+      [
+        "class A implements B implements C {}",
+        "TS(1175) 'implements' clause already seen @8+10, 21+10 help: Merge the two 'implements' clauses into one by a ','",
+      ],
+      ["class A extends B extends C {}", "TS(1172) 'extends' clause already seen @18+7"],
+      [
+        "class A extends B, C {}",
+        "TS(1174) Classes can only extend a single class. @19+1 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      ["class A extends B implements C extends D {}", "TS(1172) 'extends' clause already seen @31+7"],
+      ["class A implements {}", "Unexpected token @19+1"],
+      [
+        "class A extends B implements C implements D implements E {}",
+        "TS(1175) 'implements' clause already seen @18+10, 31+10 help: Merge the two 'implements' clauses into one by a ','",
+        "TS(1175) 'implements' clause already seen @18+10, 44+10 help: Merge the two 'implements' clauses into one by a ','",
+      ],
+      ["interface A implements B {}", "TS(1176) Interface declaration cannot have 'implements' clause. @12+10"],
+      [
+        "interface A extends B implements C {}",
+        "TS(1176) Interface declaration cannot have 'implements' clause. @22+10",
+      ],
+      ["interface A extends B extends C {}", "TS(1172) 'extends' clause already seen @22+7"],
+      ["interface A extends {}", "TS(1097) 'extends' list cannot be empty. @12+7"],
+      [
+        "interface A extends f() {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+3",
+      ],
+      [
+        "interface A extends a?.b {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+4",
+      ],
+      [
+        "interface A extends a[b] {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+4",
+      ],
+      [
+        "interface A extends (a) {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+3",
+      ],
+      [
+        "interface A extends this {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+4",
+      ],
+      [
+        "(class implements B extends C {});",
+        "TS(1173) 'extends' clause must precede 'implements' clause @7+10 \"'implements' clause found here\", 20+7 \"'extends' clause found here\" help: Move the 'extends' clause before the 'implements' clause",
+      ],
+      ["interface string {}", "TS(2427) Interface name cannot be 'string' @10+6"],
+      ["type number = 1;", "TS(2457) Type alias name cannot be 'number' @5+6"],
+      ["class any {}", "TS(2414) Class name cannot be 'any' @6+3"],
+      ["class A<any> {}", "TS(2368) Type parameter name cannot be 'any' @8+3"],
+      ["type undefined = 1;", "TS(2457) Type alias name cannot be 'undefined' @5+9"],
+      ["interface object {}", "TS(2427) Interface name cannot be 'object' @10+6"],
+      ["type T<string> = 1;", "TS(2368) Type parameter name cannot be 'string' @7+6"],
+      ["type never = 1;", "TS(2457) Type alias name cannot be 'never' @5+5"],
+      ["module 'a' {}", "TS(1035) Only ambient modules can use quoted names. @7+3"],
+      ["module 'a';", "TS(1035) Only ambient modules can use quoted names. @7+3"],
+      ["namespace N { module 'a' {} }", "TS(1035) Only ambient modules can use quoted names. @21+3"],
+      [
+        "namespace N { declare module 'a' {} }",
+        "TS(2435) Ambient modules cannot be nested in other modules or namespaces. @14+21",
+      ],
+      [
+        "declare namespace N { module 'a' {} }",
+        "TS(2435) Ambient modules cannot be nested in other modules or namespaces. @22+13",
+      ],
+      [
+        "declare global { module 'b' {} }",
+        "TS(2435) Ambient modules cannot be nested in other modules or namespaces. @17+13",
+      ],
+      [
+        "function f() { declare module 'a' {} }",
+        "TS(1234) An ambient module declaration is only allowed at the top level in a file. @15+21",
+      ],
+      ["function f() { module 'a' {} }", "TS(1035) Only ambient modules can use quoted names. @22+3"],
+      [
+        "{ declare module 'a' {} }",
+        "TS(1234) An ambient module declaration is only allowed at the top level in a file. @2+21",
+      ],
+      [
+        "if (1) { declare module 'a' {} }",
+        "TS(1234) An ambient module declaration is only allowed at the top level in a file. @9+21",
+      ],
+      [
+        "global {}",
+        "TS(2670) Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context. @0+6",
+      ],
+      [
+        "namespace N { global {} }",
+        "TS(2670) Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context. @14+6",
+      ],
+      [
+        "function f() { declare global {} }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @15+17",
+      ],
+      [
+        "function f() { global {} }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @15+9",
+        "TS(2670) Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context. @15+6",
+      ],
+      [
+        "{ global {} }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @2+9",
+        "TS(2670) Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context. @2+6",
+      ],
+      [
+        "function f() { namespace N {} }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @15+14",
+      ],
+      [
+        "{ namespace N {} }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @2+14",
+      ],
+      [
+        "if (1) { namespace N {} }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @9+14",
+      ],
+      [
+        "if (1) namespace N {}",
+        "Declaration cannot appear in a single-statement context @7+14 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "class A { static { namespace N {} } }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @19+14",
+      ],
+      [
+        "class A { m() { namespace N {} } }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @16+14",
+      ],
+      [
+        "namespace A { { namespace B {} } }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @16+14",
+      ],
+      [
+        "label: namespace N {}",
+        "Declaration cannot appear in a single-statement context @7+14 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "function f() { { namespace N {} } }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @17+14",
+      ],
+      [
+        "let f = () => { namespace N {} };",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @16+14",
+      ],
+      [
+        "namespace N { export default 1; }",
+        "TS(1319) A default export can only be used in an ECMAScript-style module. @14+17",
+      ],
+      [
+        "namespace N { export default class {} }",
+        "TS(1319) A default export can only be used in an ECMAScript-style module. @14+23",
+      ],
+      [
+        "namespace N { export default function f() {} }",
+        "TS(1319) A default export can only be used in an ECMAScript-style module. @14+30",
+      ],
+      ["namespace N { export = a; }", "TS(1063) An export assignment cannot be used in a namespace. @14+11"],
+      [
+        'namespace N { export { a } from "b"; }',
+        "TS(1194) Export declarations are not permitted in a namespace. @14+22",
+      ],
+      ['namespace N { export * from "b"; }', "TS(1194) Export declarations are not permitted in a namespace. @14+18"],
+      [
+        'namespace N { export * as c from "b"; }',
+        "TS(1194) Export declarations are not permitted in a namespace. @14+23",
+      ],
+      ["namespace N { export as namespace X; }", "TS(1316) Global module exports may only appear at top level. @14+22"],
+      ['namespace N { import "a"; }', "TS(1147) Import declarations in a namespace cannot reference a module. @14+11"],
+      [
+        'namespace N { import a from "a"; }',
+        "TS(1147) Import declarations in a namespace cannot reference a module. @14+18",
+      ],
+      [
+        'namespace N { import * as a from "a"; }',
+        "TS(1147) Import declarations in a namespace cannot reference a module. @14+23",
+      ],
+      [
+        'namespace N { import type a from "a"; }',
+        "TS(1147) Import declarations in a namespace cannot reference a module. @14+23",
+      ],
+      [
+        'namespace N { import a = require("a"); }',
+        "TS(1147) Import declarations in a namespace cannot reference a module. @14+24",
+      ],
+      [
+        'namespace N { export import a = require("a"); }',
+        "TS(1147) Import declarations in a namespace cannot reference a module. @14+31",
+      ],
+      [
+        'namespace N { export type { a } from "b"; }',
+        "TS(1194) Export declarations are not permitted in a namespace. @14+27",
+      ],
+      [
+        'namespace N { namespace M { export default 1; import a from "a" } }',
+        "TS(1319) A default export can only be used in an ECMAScript-style module. @28+17",
+        "TS(1147) Import declarations in a namespace cannot reference a module. @46+17",
+      ],
+      [
+        "declare module 'a' { namespace M { export default 1; import a from \"a\" } }",
+        "TS(1319) A default export can only be used in an ECMAScript-style module. @35+17",
+        "TS(1147) Import declarations in a namespace cannot reference a module. @53+17",
+      ],
+      ["import type a = b.c;", "TS(1392) An import alias cannot use 'import type' @0+20"],
+      [
+        'import type a, { b } from "a";',
+        "TS(1363) A type-only import can specify a default import or named bindings, but not both. @12+1",
+      ],
+      [
+        'import type a, * as b from "a";',
+        "TS(1363) A type-only import can specify a default import or named bindings, but not both. @12+1",
+      ],
+      [
+        'import type { type a } from "a";',
+        "TS(2206) The 'type' modifier cannot be used on a named import when 'import type' is used on its import statement. @14+4 help: Remove this 'type' modifier",
+      ],
+      [
+        'export type { type a } from "a";',
+        "TS(2207) The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement. @14+4 help: Remove this 'type' modifier",
+      ],
+      [
+        "export type { type a };",
+        "TS(2207) The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement. @14+4 help: Remove this 'type' modifier",
+      ],
+      [
+        "let x: [a?: 1, b?: 2, c: 3];",
+        'TS(1257) A required element cannot follow an optional element. @22+4 "Required element here", 15+5 "Optional element seen here"',
+      ],
+      [
+        "let x: [a?: 1, b: 2, c: 3];",
+        'TS(1257) A required element cannot follow an optional element. @15+4 "Required element here", 8+5 "Optional element seen here"',
+        'TS(1257) A required element cannot follow an optional element. @21+4 "Required element here", 8+5 "Optional element seen here"',
+      ],
+      [
+        "let x: [a?: 1, b: 2, c?: 3, d: 4];",
+        'TS(1257) A required element cannot follow an optional element. @15+4 "Required element here", 8+5 "Optional element seen here"',
+        'TS(1257) A required element cannot follow an optional element. @28+4 "Required element here", 21+5 "Optional element seen here"',
+      ],
+      [
+        "let x: [1?, ...2[], 3?, 4];",
+        'TS(1257) A required element cannot follow an optional element. @24+1 "Required element here", 20+2 "Optional element seen here"',
+      ],
+      [
+        "interface I { readonly m(): void }",
+        "TS(1024) 'readonly' modifier can only appear on a property declaration or index signature. @14+8",
+      ],
+      [
+        "interface I { readonly m?(): void }",
+        "TS(1024) 'readonly' modifier can only appear on a property declaration or index signature. @14+8",
+      ],
+      [
+        "interface I { readonly new (): void }",
+        "TS(1024) 'readonly' modifier can only appear on a property declaration or index signature. @14+8",
+      ],
+      [
+        "type T = { readonly m(): void };",
+        "TS(1024) 'readonly' modifier can only appear on a property declaration or index signature. @11+8",
+      ],
+      ["interface I { get a<T>(): number }", 'Expected `(` but found `<` @19+1 "`(` expected"'],
+      ["interface I { set a<T>(v) }", 'Expected `(` but found `<` @19+1 "`(` expected"'],
+      ["type T = { get a<T>(): number };", 'Expected `(` but found `<` @16+1 "`(` expected"'],
+      [
+        "class A { constructor(private a?, b); constructor(a) {} }",
+        "TS(1016) A required parameter cannot follow an optional parameter. @34+1",
+      ],
+      [
+        "class A { constructor(readonly a); constructor(a) {} }",
+        "TS(2369) A parameter property is only allowed in a constructor implementation. @22+10",
+      ],
+      [
+        "class A { constructor(override a); constructor(a) {} }",
+        "TS(2369) A parameter property is only allowed in a constructor implementation. @22+10",
+      ],
+      [
+        "class A { constructor(private a, public b); constructor(a) {} }",
+        "TS(2369) A parameter property is only allowed in a constructor implementation. @22+9",
+        "TS(2369) A parameter property is only allowed in a constructor implementation. @33+8",
+      ],
+      [
+        "interface A<in T, out U, const W> {}",
+        "TS(1277) 'const' modifier can only appear on a type parameter of a function, method or class @25+7",
+      ],
+      [
+        "type A<in T, const W> = 1;",
+        "TS(1277) 'const' modifier can only appear on a type parameter of a function, method or class @13+7",
+      ],
+      [
+        "function f<const T, in U>() {}",
+        "TS(1274) 'in' modifier can only appear on a type parameter of a class, interface or type alias. @20+2",
+      ],
+      [
+        "class A { m<const T, out U>() {} }",
+        "TS(1274) 'out' modifier can only appear on a type parameter of a class, interface or type alias. @21+3",
+      ],
+      [
+        "type T<A> = A extends infer const U ? 1 : 2;",
+        "Identifier expected. 'const' is a reserved word that cannot be used here. @28+5",
+      ],
+      ["function f<T, const>() {}", "Identifier expected. 'const' is a reserved word that cannot be used here. @14+5"],
+      ["function f<public const T>() {}", "TS(1273) 'public' modifier cannot be used on a type parameter. @11+6"],
+      ["function f<const public T>() {}", "TS(1273) 'public' modifier cannot be used on a type parameter. @17+6"],
+      [
+        "function f<const const T>() {}",
+        "TS(1030) 'const' modifier already seen. @17+5 help: Remove the duplicate modifier.",
+      ],
+      [
+        "interface A<const in T> {}",
+        "TS(1277) 'const' modifier can only appear on a type parameter of a function, method or class @12+10",
+      ],
+      [
+        "let x: number ?;",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @7+8 help: Did you mean to write 'number  | null | undefined'?",
+      ],
+      [
+        "let x: ? number;",
+        "TS(17020) '?' at the start of a type is not valid TypeScript syntax. @7+8 help: Did you mean to write ' number | null | undefined'?",
+      ],
+      [
+        "let x: /*a*/ number /*b*/ ? /*c*/;",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @13+14 help: Did you mean to write 'number /*b*/  | null | undefined'?",
+      ],
+      [
+        "let f = (): number! => 1;",
+        "TS(17019) '!' at the end of a type is not valid TypeScript syntax. @12+7 help: Did you mean to write 'number'?",
+      ],
+      [
+        "function f(a: number!) {}",
+        "TS(17019) '!' at the end of a type is not valid TypeScript syntax. @14+7 help: Did you mean to write 'number'?",
+      ],
+      [
+        "class A { a: number!; m(): string! {} }",
+        "TS(17019) '!' at the end of a type is not valid TypeScript syntax. @13+7 help: Did you mean to write 'number'?",
+        "TS(17019) '!' at the end of a type is not valid TypeScript syntax. @27+7 help: Did you mean to write 'string'?",
+      ],
+      [
+        "let x: { [k: string]: number? };",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @22+7 help: Did you mean to write 'number | null | undefined'?",
+      ],
+      [
+        "try {} catch (e: any?) {}",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @17+4 help: Did you mean to write 'any | null | undefined'?",
+      ],
+      [
+        "function f(this: number?) {}",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @17+7 help: Did you mean to write 'number | null | undefined'?",
+      ],
+      [
+        "let x: (number)?;",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @7+9 help: Did you mean to write '(number) | null | undefined'?",
+      ],
+      [
+        "abstract class A { abstract a: number?; }",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @31+7 help: Did you mean to write 'number | null | undefined'?",
+      ],
+      [
+        "declare let x: number?;",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @15+7 help: Did you mean to write 'number | null | undefined'?",
+      ],
+      [
+        "type F = (a: number?) => void;",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @13+7 help: Did you mean to write 'number | null | undefined'?",
+      ],
+      [
+        "type F = () => number?;",
+        "TS(17019) '?' at the end of a type is not valid TypeScript syntax. @15+7 help: Did you mean to write 'number | null | undefined'?",
+      ],
+      ["function f<>() {}", "TS(1098) Type parameter list cannot be empty. @10+2"],
+      ["export function f<>() {}", "TS(1098) Type parameter list cannot be empty. @17+2"],
+      ["declare function f<>(): void;", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["(function <>() {});", "TS(1098) Type parameter list cannot be empty. @10+2"],
+      ["(function f<>() {});", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["class A { m<>() {} }", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["class A { static m<>() {} }", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["class A { m<>(): void; m() {} }", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["abstract class A { abstract m<>(): void }", "TS(1098) Type parameter list cannot be empty. @29+2"],
+      ["const o = { m<>() {} };", "TS(1098) Type parameter list cannot be empty. @13+2"],
+      ["class A<> {}", "TS(1098) Type parameter list cannot be empty. @7+2"],
+      ["(class <> {});", "TS(1098) Type parameter list cannot be empty. @7+2"],
+      ["(class A<> {});", "TS(1098) Type parameter list cannot be empty. @8+2"],
+      ["interface I<> {}", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["type T<> = 1;", "TS(1098) Type parameter list cannot be empty. @6+2"],
+      ["interface I { <>(): void }", "TS(1098) Type parameter list cannot be empty. @14+2"],
+      ["interface I { new <>(): void }", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["interface I { m<>(): void }", "TS(1098) Type parameter list cannot be empty. @15+2"],
+      ["type F = <>() => void;", "TS(1098) Type parameter list cannot be empty. @9+2"],
+      ["type F = new <>() => void;", "TS(1098) Type parameter list cannot be empty. @13+2"],
+      ["f<>();", "TS(1099) Type argument list cannot be empty. @1+2"],
+      ["new A<>();", "TS(1099) Type argument list cannot be empty. @5+2"],
+      ["new A<>;", "TS(1099) Type argument list cannot be empty. @5+2"],
+      ["f<>``;", "TS(1099) Type argument list cannot be empty. @1+2"],
+      ["let x = f<>;", "TS(1099) Type argument list cannot be empty. @9+2"],
+      ["let x: A<>;", "TS(1099) Type argument list cannot be empty. @8+2"],
+      ["let x: typeof f<>;", "TS(1099) Type argument list cannot be empty. @15+2"],
+      ['let x: import("a").B<>;', "TS(1099) Type argument list cannot be empty. @20+2"],
+      ["class A extends B<> {}", "TS(1099) Type argument list cannot be empty. @17+2"],
+      ["class A implements B<> {}", "TS(1099) Type argument list cannot be empty. @20+2"],
+      ["interface I extends B<> {}", "TS(1099) Type argument list cannot be empty. @21+2"],
+      ["function f< >() {}", "TS(1098) Type parameter list cannot be empty. @10+3"],
+      ["function f</**/>() {}", "TS(1098) Type parameter list cannot be empty. @10+6"],
+      ["let x: A< >;", "TS(1099) Type argument list cannot be empty. @8+3"],
+      [
+        "if (1) enum E {}",
+        "Declaration cannot appear in a single-statement context @7+9 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "if (1) interface I {}",
+        "Declaration cannot appear in a single-statement context @7+14 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "if (1) type T = 1;",
+        "Declaration cannot appear in a single-statement context @7+11 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "if (1) module N {}",
+        "Declaration cannot appear in a single-statement context @7+11 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "if (1) declare var a: number;",
+        "Declaration cannot appear in a single-statement context @7+22 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "if (1) declare function f(): void;",
+        "Declaration cannot appear in a single-statement context @7+27 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "if (1) declare enum E {}",
+        "Declaration cannot appear in a single-statement context @7+17 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "if (1) declare namespace N {}",
+        "Declaration cannot appear in a single-statement context @7+22 help: Wrap this declaration in a block statement",
+      ],
+      [
+        'if (1) declare module "m" {}',
+        "Declaration cannot appear in a single-statement context @7+21 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "if (1) declare global {}",
+        "Declaration cannot appear in a single-statement context @7+17 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "if (1) global {}",
+        "Declaration cannot appear in a single-statement context @7+9 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "if (1) {} else enum E {}",
+        "Declaration cannot appear in a single-statement context @15+9 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "while (1) enum E {}",
+        "Declaration cannot appear in a single-statement context @10+9 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "do enum E {} while (1)",
+        "Declaration cannot appear in a single-statement context @3+9 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "for (;;) type T = 1;",
+        "Declaration cannot appear in a single-statement context @9+11 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "for (a in b) interface I {}",
+        "Declaration cannot appear in a single-statement context @13+14 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "for (a of b) enum E {}",
+        "Declaration cannot appear in a single-statement context @13+9 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "with (a) enum E {}",
+        "Declaration cannot appear in a single-statement context @9+9 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "label: enum E {}",
+        "Declaration cannot appear in a single-statement context @7+9 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "label: type T = 1;",
+        "Declaration cannot appear in a single-statement context @7+11 help: Wrap this declaration in a block statement",
+      ],
+      [
+        "label: interface I {}",
+        "Declaration cannot appear in a single-statement context @7+14 help: Wrap this declaration in a block statement",
+      ],
+      ["if (1) async function f() {}", "Async functions can only be declared at the top level or inside a block @7+18"],
+      ["function f(@d a) {}", "Decorators are not valid here. @11+2"],
+      ["function f(@d() a, @e.f b) {}", "Decorators are not valid here. @11+4", "Decorators are not valid here. @19+4"],
+      ["const f = function (@d a) {};", "Decorators are not valid here. @20+2"],
+      ["const o = { m(@d a) {} };", "Decorators are not valid here. @14+2"],
+      ["interface I { m(@d a): void }", "Decorators are not valid here. @16+2"],
+      [
+        "class A { @d m(): void; m() {} }",
+        "TS(1249) A decorator can only decorate a method implementation, not an overload. @10+2 help: Move this after all the overloads",
+      ],
+      [
+        "class A { @d m(): void; @d m() {} }",
+        "TS(1249) A decorator can only decorate a method implementation, not an overload. @10+2 help: Move this after all the overloads",
+      ],
+      ["class A { @d static {} }", "Decorators are not valid here. @10+2"],
+      ["class A { @d [k: string]: any }", "Decorators are not valid here. @10+2"],
+      [
+        "abstract class A { @d abstract m(): void; @d abstract a: number }",
+        "TS(1249) A decorator can only decorate a method implementation, not an overload. @19+2 help: Move this after all the overloads",
+      ],
+      [
+        "declare class A { @d m(): void; @d a: number }",
+        "TS(1249) A decorator can only decorate a method implementation, not an overload. @18+2 help: Move this after all the overloads",
+      ],
+      ["@d function f() {}", "Unexpected token @3+8"],
+      ["@d const a = 1;", "Unexpected token @3+5"],
+      ["@d enum E {}", "Unexpected token @3+4"],
+      ["@d interface I {}", "Unexpected token @3+9"],
+      ["@d type T = 1;", "Unexpected token @3+4"],
+      ["@d namespace N {}", "Unexpected token @3+9"],
+      [
+        "@d export @e class A {}",
+        "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'. @10+2",
+      ],
+      [
+        "let x: { [k: object]: 1 };",
+        "TS(1268) An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type. @10+9",
+      ],
+      [
+        "let x: { [k: null]: 1 };",
+        "TS(1268) An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type. @10+7",
+      ],
+      [
+        "let x: { [k: undefined]: 1 };",
+        "TS(1268) An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type. @10+12",
+      ],
+      [
+        "let x: { [k: void]: 1 };",
+        "TS(1268) An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type. @10+7",
+      ],
+      [
+        "let x: { [k: never]: 1 };",
+        "TS(1268) An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type. @10+8",
+      ],
+      [
+        "let x: { [k: unknown]: 1 };",
+        "TS(1268) An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type. @10+10",
+      ],
+      [
+        "let x: { [k: bigint]: 1 };",
+        "TS(1268) An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type. @10+9",
+      ],
+      [
+        "let x: { [k: true]: 1 };",
+        "TS(1337) An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead. @13+4",
+      ],
+      [
+        "let x: { [k: false]: 1 };",
+        "TS(1337) An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead. @13+5",
+      ],
+      [
+        "let x: { [k: -1]: 1 };",
+        "TS(1337) An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead. @13+2",
+      ],
+      [
+        "let x: { [k: 1n]: 1 };",
+        "TS(1337) An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead. @13+2",
+      ],
+      [
+        "let x: { [k: this]: 1 };",
+        "TS(1268) An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type. @10+7",
+      ],
+      [
+        "let x: { [k: `a`]: 1 };",
+        "TS(1337) An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead. @13+3",
+      ],
+      [
+        "let [...a,] = b;",
+        "A rest parameter or binding pattern may not have a trailing comma. @9+1 help: Remove the trailing comma here",
+      ],
+      [
+        "let {...a,} = b;",
+        "A rest parameter or binding pattern may not have a trailing comma. @9+1 help: Remove the trailing comma here",
+      ],
+      [
+        "function f([...a,]) {}",
+        "A rest parameter or binding pattern may not have a trailing comma. @16+1 help: Remove the trailing comma here",
+      ],
+      [
+        "[...a,] = b;",
+        "A rest parameter or binding pattern may not have a trailing comma. @5+1 help: Remove the trailing comma here",
+      ],
+      [
+        "({...a,} = b);",
+        "A rest parameter or binding pattern may not have a trailing comma. @6+1 help: Remove the trailing comma here",
+      ],
+      [
+        "switch (a) { default: default: }",
+        "TS(1113) A 'default' clause cannot appear more than once in a 'switch' statement. @13+8 \"First 'default' clause is here.\", 22+8 \"Another 'default' clause cannot appear here.\"",
+      ],
+      [
+        "switch (a) { default: case 1: default: break; default: }",
+        "TS(1113) A 'default' clause cannot appear more than once in a 'switch' statement. @13+8 \"First 'default' clause is here.\", 30+15 \"Another 'default' clause cannot appear here.\"",
+      ],
+      [
+        "import.foo;",
+        "The only valid property accesses on import are `import.meta`, `import.source()`, and `import.defer()` @0+10",
+      ],
+      ["new.foo;", "The only valid meta property for new is new.target @0+7"],
+      ["function f() { new.foo; }", "The only valid meta property for new is new.target @15+7"],
+      [
+        "let x: { get a() { return 1 } };",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @16+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "interface I { get a() { return 1 } set a(v) {} }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @21+0 help: Try inserting a semicolon here",
+      ],
+      ["let x: *;", "Unexpected token @7+1"],
+      ["let x: A.<B>;", "Unexpected token @9+1"],
+      [
+        "class A extends B, C, D {}",
+        "TS(1174) Classes can only extend a single class. @19+1 help: Remove the extra base class or use interfaces for multiple inheritance",
+        "TS(1174) Classes can only extend a single class. @22+1 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      [
+        "class A extends B extends C extends D {}",
+        "TS(1172) 'extends' clause already seen @18+7",
+        "TS(1172) 'extends' clause already seen @28+7",
+      ],
+      [
+        "interface I extends A extends B extends C {}",
+        "TS(1172) 'extends' clause already seen @22+7",
+        "TS(1172) 'extends' clause already seen @32+7",
+      ],
+      ["class A extends B implements {}", "Unexpected token @29+1"],
+      [
+        "class A<> extends B<> {}",
+        "TS(1098) Type parameter list cannot be empty. @7+2",
+        "TS(1099) Type argument list cannot be empty. @19+2",
+      ],
+      ["let x: { [a: string, b: string]: 1 };", "TS(1096) An index signature must have exactly one parameter. @9+22"],
+      ["let x: { []: 1 };", "Unexpected token @10+1"],
+      ["class A { [a: string, b: string]: 1 }", "TS(1096) An index signature must have exactly one parameter. @10+22"],
+      [
+        "switch (a) { default: default: } let x: readonly number;",
+        "TS(1113) A 'default' clause cannot appear more than once in a 'switch' statement. @13+8 \"First 'default' clause is here.\", 22+8 \"Another 'default' clause cannot appear here.\"",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @40+8",
+      ],
+      [
+        "switch (a) { default: default: default: }",
+        "TS(1113) A 'default' clause cannot appear more than once in a 'switch' statement. @13+8 \"First 'default' clause is here.\", 22+8 \"Another 'default' clause cannot appear here.\"",
+      ],
+      [
+        "switch (a) { default: a; default: b; case 1: c; default: d; }",
+        "TS(1113) A 'default' clause cannot appear more than once in a 'switch' statement. @13+11 \"First 'default' clause is here.\", 25+11 \"Another 'default' clause cannot appear here.\"",
+      ],
+      [
+        "let [...a,] = b; let x: readonly number;",
+        "A rest parameter or binding pattern may not have a trailing comma. @9+1 help: Remove the trailing comma here",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @24+8",
+      ],
+      ["let x: *; let y: readonly number;", "Unexpected token @7+1"],
+      ["let x: A.<B>; let y: readonly number;", "Unexpected token @9+1"],
+      [
+        "let x: { get a() { return 1 } }; let y: readonly number;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @16+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "import.foo; let y: readonly number;",
+        "The only valid property accesses on import are `import.meta`, `import.source()`, and `import.defer()` @0+10",
+      ],
+      ["class A implements {} let y: readonly number;", "Unexpected token @19+1"],
+      ["let x: { []: 1 }; let y: readonly number;", "Unexpected token @10+1"],
+      [
+        "interface A extends {} let y: readonly number;",
+        "TS(1097) 'extends' list cannot be empty. @12+7",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @30+8",
+      ],
+      ["let x: Array<*>;", "Unexpected token @13+1"],
+      [
+        "a ?? b || c;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a || b ?? c;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a && b ?? c;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a ?? b && c;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a ?? b || c ?? d;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a || b ?? c || d;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+16 help: Wrap either expression by parentheses",
+      ],
+      [
+        "x = a ?? b || c;",
+        "Logical expressions and coalesce expressions cannot be mixed @4+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a ?? (b) || c;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+13 help: Wrap either expression by parentheses",
+      ],
+      ["a?.`x`;", "Tagged template expressions are not permitted in an optional chain @3+3"],
+      ["a?.b`x`;", "Tagged template expressions are not permitted in an optional chain @4+3"],
+      ["a?.b.c`x`;", "Tagged template expressions are not permitted in an optional chain @6+3"],
+      ["a?.()`x`;", "Tagged template expressions are not permitted in an optional chain @5+3"],
+      ["a?.[b]`x`;", "Tagged template expressions are not permitted in an optional chain @6+3"],
+      ["a?.b<T>`x`;", "Tagged template expressions are not permitted in an optional chain @7+3"],
+      ["a?.b!`x`;", "Tagged template expressions are not permitted in an optional chain @5+3"],
+      ["for (let a = 1 of []) {}", "for-of loop variable declaration may not have an initializer @5+9"],
+      ["for (var a = 1 of []) {}", "for-of loop variable declaration may not have an initializer @5+9"],
+      ["for (const a = 1 of []) {}", "for-of loop variable declaration may not have an initializer @5+11"],
+      ["for (let a = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @5+9"],
+      ["for (const a = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @5+11"],
+      ["for (var [a] = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @5+11"],
+      ["for (var {a} = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @5+11"],
+      ["'use strict'; for (var a = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @19+9"],
+      ["export {}; for (var a = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @16+9"],
+      ["for (let a, b of []) {}", "Only a single declaration is allowed in a `for...of` statement @5+8"],
+      [
+        "for (let a: number = 1 of []) {}",
+        "for-of loop variable declaration may not have an initializer @5+17",
+        "TS(2483) The left-hand side of a 'for...of' statement cannot use a type annotation. @9+1 help: This iterator's type will be inferred from the iterable. You can safely remove the type annotation.",
+      ],
+      ["for (using a = 1 of []) {}", "for-of loop variable declaration may not have an initializer @5+11"],
+      ["a\n=> 1;", "Line terminator not permitted before arrow @2+2 help: Remove the line break before here"],
+      ["(a, b)\n=> 1;", "Line terminator not permitted before arrow @7+2 help: Remove the line break before here"],
+      ["()\n=> 1;", "Line terminator not permitted before arrow @3+2 help: Remove the line break before here"],
+      ["async a\n=> 1;", "Line terminator not permitted before arrow @8+2 help: Remove the line break before here"],
+      ["async (a)\n=> 1;", "Line terminator not permitted before arrow @10+2 help: Remove the line break before here"],
+      [
+        "(a): number\n=> 1;",
+        "Line terminator not permitted before arrow @12+2 help: Remove the line break before here",
+      ],
+      ["<T>(a)\n=> 1;", "Line terminator not permitted before arrow @7+2 help: Remove the line break before here"],
+      ["(a) /*\n*/ => 1;", "Line terminator not permitted before arrow @10+2 help: Remove the line break before here"],
+      ["throw\n1;", 'Illegal newline after throw @0+5 "throw starts here", 6+1 "A newline is not expected here"'],
+      [
+        "throw /*\n*/ 1;",
+        'Illegal newline after throw @0+5 "throw starts here", 12+1 "A newline is not expected here"',
+      ],
+      ["throw // c\n1;", 'Illegal newline after throw @0+5 "throw starts here", 11+1 "A newline is not expected here"'],
+      ["import();", "import() requires a specifier. @0+8"],
+      ["import(...a);", "TS(1325) Argument of dynamic import cannot be a spread element. @7+3"],
+      ['import("a", ...b);', "TS(1325) Argument of dynamic import cannot be a spread element. @12+3"],
+      [
+        'import("a", "b", "c");',
+        "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments @0+16",
+      ],
+      ['new import("a");', "Cannot use new with dynamic import @4+11 help: Wrap this with parenthesis"],
+      ['new import("a")();', "Cannot use new with dynamic import @4+13 help: Wrap this with parenthesis"],
+      ["import.defer();", "import() requires a specifier. @0+14"],
+      [
+        'import.defer("a", "b", "c");',
+        "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments @0+22",
+      ],
+      [
+        "class A { static { return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @19+6",
+      ],
+      [
+        "class A { static { return 1; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @19+6",
+      ],
+      [
+        "class A { static { if (a) return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @26+6",
+      ],
+      [
+        "let [a];",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "let {a};",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "const [a];",
+        "Missing initializer in destructuring declaration @6+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "var [a];",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "let [a], b;",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "let a, [b];",
+        "Missing initializer in destructuring declaration @7+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "let [a]: number[];",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "for (let [a];;) {}",
+        "Missing initializer in destructuring declaration @9+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "export let [a];",
+        "Missing initializer in destructuring declaration @11+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      ["`\\01`;", "Bad escape sequence in untagged template literal @1+3"],
+      ["`\\1`;", "Bad escape sequence in untagged template literal @1+2"],
+      ["`\\08`;", "Bad escape sequence in untagged template literal @1+3"],
+      ["`\\u`;", "Bad escape sequence in untagged template literal @1+2"],
+      ["`\\u{110000}`;", "Bad escape sequence in untagged template literal @1+10"],
+      ["`\\xg`;", "Bad escape sequence in untagged template literal @1+3"],
+      ["`\\u{}`;", "Bad escape sequence in untagged template literal @1+4"],
+      ["`${a}\\01`;", "Bad escape sequence in untagged template literal @5+3"],
+      ["`\\01${a}`;", "Bad escape sequence in untagged template literal @1+3"],
+      ["type T = `\\01`;", "Bad escape sequence in untagged template literal @10+3"],
+      ["type T = `\\u`;", "Bad escape sequence in untagged template literal @10+2"],
+      [
+        "for (async of []) {}",
+        "The left-hand side of a `for...of` statement may not be `async` @5+5 help: Did you mean to use a for await...of statement?",
+      ],
+      [
+        "for await (async of []) {}",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["for (let of []) {}", 'Expected `;` but found `[` @12+1 "`;` expected"'],
+      ["for (let.a of []) {}", "The left-hand side of a `for...of` statement may not start with `let` @5+5"],
+      [
+        "let zz; let zz; a ?? b || c; let y: readonly number;",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @36+8",
+      ],
+      [
+        "let zz; let zz; a?.b`x`; let y: readonly number;",
+        "Tagged template expressions are not permitted in an optional chain @20+3",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @32+8",
+      ],
+      [
+        "let zz; let zz; for (let a = 1 of []) {} let y: readonly number;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @48+8",
+      ],
+      [
+        "let zz; let zz; for (let a = 1 of []) {}",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        "for-of loop variable declaration may not have an initializer @21+9",
+      ],
+      [
+        "let zz; let zz; for (let a = 1 in {}) {}",
+        "for-in loop variable declaration may not have an initializer @21+9",
+      ],
+      [
+        "let zz; let zz; (a)\n=> 1; let y: readonly number;",
+        "Line terminator not permitted before arrow @20+2 help: Remove the line break before here",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @33+8",
+      ],
+      [
+        "let zz; let zz; throw\n1; let y: readonly number;",
+        'Illegal newline after throw @16+5 "throw starts here", 22+1 "A newline is not expected here"',
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @32+8",
+      ],
+      ["let zz; let zz; import(); let y: readonly number;", "import() requires a specifier. @16+8"],
+      [
+        "let zz; let zz; import(...a); let y: readonly number;",
+        "TS(1325) Argument of dynamic import cannot be a spread element. @23+3",
+      ],
+      [
+        'let zz; let zz; import("a", "b", "c"); let y: readonly number;',
+        "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments @16+16",
+      ],
+      [
+        'let zz; let zz; new import("a"); let y: readonly number;',
+        "Cannot use new with dynamic import @20+11 help: Wrap this with parenthesis",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @40+8",
+      ],
+      [
+        "let zz; let zz; class A { static { return; } } let y: readonly number;",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @35+6",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @54+8",
+      ],
+      [
+        "let zz; let zz; let [a]; let y: readonly number;",
+        "Missing initializer in destructuring declaration @20+3 help: Add an initializer (e.g. ` = undefined`) here",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @32+8",
+      ],
+      [
+        "let zz; let zz; `\\01`; let y: readonly number;",
+        "Bad escape sequence in untagged template literal @17+3",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @30+8",
+      ],
+      [
+        "let zz; let zz; for (async of []) {} let y: readonly number;",
+        "The left-hand side of a `for...of` statement may not be `async` @21+5 help: Did you mean to use a for await...of statement?",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @44+8",
+      ],
+      [
+        "let zz; let zz; for (let a: number of []) {}",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        "TS(2483) The left-hand side of a 'for...of' statement cannot use a type annotation. @25+1 help: This iterator's type will be inferred from the iterable. You can safely remove the type annotation.",
+      ],
+      [
+        "let zz; let zz; for (let a, b of []) {} let y: readonly number;",
+        "Only a single declaration is allowed in a `for...of` statement @21+8",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @47+8",
+      ],
+      [
+        "let zz; let zz; for (let a = 1 in {}) {} let y: readonly number;",
+        "for-in loop variable declaration may not have an initializer @21+9",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @48+8",
+      ],
+      [
+        "let zz; let zz; for (const a = 1 in {}) {} let y: readonly number;",
+        "for-in loop variable declaration may not have an initializer @21+11",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @50+8",
+      ],
+      [
+        "let zz; let zz; for (var [a] = 1 in {}) {} let y: readonly number;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @50+8",
+      ],
+      [
+        "let zz; let zz; for (var [a] = 1 in {}) {}",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        "for-in loop variable declaration may not have an initializer @21+11",
+      ],
+      [
+        "let zz; let zz; 'use strict'; for (var a = 1 in {}) {}",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+      ],
+      [
+        "let zz; let zz; export {}; for (var a = 1 in {}) {}",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        "for-in loop variable declaration may not have an initializer @32+9",
+      ],
+      [
+        "let zz; let zz; function f() { 'use strict'; for (var a = 1 in {}) {} }",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        "for-in loop variable declaration may not have an initializer @50+9",
+      ],
+      [
+        "let zz; let zz; class A { m() { for (var a = 1 in {}) {} } }",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        "for-in loop variable declaration may not have an initializer @37+9",
+      ],
+      [
+        "for (let a: number of []) {}",
+        "TS(2483) The left-hand side of a 'for...of' statement cannot use a type annotation. @9+1 help: This iterator's type will be inferred from the iterable. You can safely remove the type annotation.",
+      ],
+      [
+        "for (let a: number in {}) {}",
+        "TS(2404) The left-hand side of a 'for...in' statement cannot use a type annotation. @9+1 help: This iterator's type will be inferred from the iterable. You can safely remove the type annotation.",
+      ],
+      [
+        "for (const [a]: number[] of []) {}",
+        "TS(2483) The left-hand side of a 'for...of' statement cannot use a type annotation. @11+3 help: This iterator's type will be inferred from the iterable. You can safely remove the type annotation.",
+      ],
+      ["for (var a: number of [], b) {}", 'Expected `)` but found `,` @24+1 "`)` expected", 4+1 "Opened here"'],
+      ["for (let a: number = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @5+17"],
+      [
+        "for (using a: number of []) {}",
+        "TS(2483) The left-hand side of a 'for...of' statement cannot use a type annotation. @11+1 help: This iterator's type will be inferred from the iterable. You can safely remove the type annotation.",
+      ],
+      ["for (var a = 1, b in {}) {}", "Only a single declaration is allowed in a `for...in` statement @5+12"],
+      ["for (let a = 1, b of []) {}", "Only a single declaration is allowed in a `for...of` statement @5+12"],
+      ["`ab\\01cd`;", "Bad escape sequence in untagged template literal @1+7"],
+      [
+        "`ab\\01cd${a}ef\\u`;",
+        "Bad escape sequence in untagged template literal @1+7",
+        "Bad escape sequence in untagged template literal @12+4",
+      ],
+      [
+        "`${a}\\u${b}\\x`;",
+        "Bad escape sequence in untagged template literal @5+2",
+        "Bad escape sequence in untagged template literal @11+2",
+      ],
+      [
+        "`\\01` + `\\u`;",
+        "Bad escape sequence in untagged template literal @1+3",
+        "Bad escape sequence in untagged template literal @9+2",
+      ],
+      [
+        "let zz; let zz; `\\u`; `\\x`; let y: readonly number;",
+        "Bad escape sequence in untagged template literal @17+2",
+        "Bad escape sequence in untagged template literal @23+2",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @35+8",
+      ],
+      ["type T = `a${B}\\u`;", "Bad escape sequence in untagged template literal @15+2"],
+      ["type T = `a\\u${B}`;", "Bad escape sequence in untagged template literal @10+3"],
+      ["let x: `\\x`;", "Bad escape sequence in untagged template literal @8+2"],
+      ["let o = { [`\\u`]: 1 };", "Bad escape sequence in untagged template literal @12+2"],
+      ["class A { [`\\u`]() {} }", "Bad escape sequence in untagged template literal @12+2"],
+      ["import(`\\u`);", "Bad escape sequence in untagged template literal @8+2"],
+      ["f(`\\8`);", "Bad escape sequence in untagged template literal @3+2"],
+      ["f(`\\9`);", "Bad escape sequence in untagged template literal @3+2"],
+      ["f(`\\00`);", "Bad escape sequence in untagged template literal @3+3"],
+      ["`\\u{`;", "Bad escape sequence in untagged template literal @1+3"],
+      ["`\\u{1`;", "Bad escape sequence in untagged template literal @1+4"],
+      ["`\\u12`;", "Bad escape sequence in untagged template literal @1+4"],
+      ["`\\x1`;", "Bad escape sequence in untagged template literal @1+3"],
+      ["throw;", "Unexpected token @5+1"],
+      ["function f() { throw }", "Unexpected token @21+1"],
+      ["throw\n/a/;", 'Illegal newline after throw @0+5 "throw starts here", 6+1 "A newline is not expected here"'],
+      ["throw\n+1;", 'Illegal newline after throw @0+5 "throw starts here", 6+1 "A newline is not expected here"'],
+      [
+        "throw\nclass A {};",
+        'Illegal newline after throw @0+5 "throw starts here", 6+5 "A newline is not expected here"',
+      ],
+      ["for (let().a of []) {}", "The left-hand side of a `for...of` statement may not start with `let` @5+7"],
+      ["for (let.a.b of []) {}", "The left-hand side of a `for...of` statement may not start with `let` @5+7"],
+      [
+        "let zz; let zz; for (let.a of []) {} let y: readonly number;",
+        "The left-hand side of a `for...of` statement may not start with `let` @21+5",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @44+8",
+      ],
+      [
+        "let zz; let zz; for (let.a of []) {}",
+        "The left-hand side of a `for...of` statement may not start with `let` @21+5",
+      ],
+      [
+        "x = async a\n=> 1;",
+        "Line terminator not permitted before arrow @12+2 help: Remove the line break before here",
+      ],
+      ["f(async a\n=> 1);", "Line terminator not permitted before arrow @10+2 help: Remove the line break before here"],
+      [
+        "let zz; let zz; async a\n=> 1; let y: readonly number;",
+        "Line terminator not permitted before arrow @24+2 help: Remove the line break before here",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @37+8",
+      ],
+      ["a?.b!.c`x`;", "Tagged template expressions are not permitted in an optional chain @7+3"],
+      ["a?.b!!`x`;", "Tagged template expressions are not permitted in an optional chain @6+3"],
+      ["a?.b![0]`x`;", "Tagged template expressions are not permitted in an optional chain @8+3"],
+      ["a?.b!<T>`x`;", "Tagged template expressions are not permitted in an optional chain @8+3"],
+      ["a!?.b`x`;", "Tagged template expressions are not permitted in an optional chain @5+3"],
+      ["a?.()!`x`;", "Tagged template expressions are not permitted in an optional chain @6+3"],
+      ["a?.[0]!`x`;", "Tagged template expressions are not permitted in an optional chain @7+3"],
+      [
+        "class A { static { if (a) return; else return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @26+6",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @39+6",
+      ],
+      [
+        "class A { static { for (;;) return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @28+6",
+      ],
+      [
+        "class A { static { try { return; } catch { return; } finally { return; } } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @25+6",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @43+6",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @63+6",
+      ],
+      [
+        "class A { static { switch (a) { case 1: return; } } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @40+6",
+      ],
+      [
+        "class A { static { a: return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @22+6",
+      ],
+      [
+        "class A { static { { return; } } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @21+6",
+      ],
+      [
+        "class A { static { while (a) return; do return; while (a) } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @29+6",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @40+6",
+      ],
+      [
+        "class A { static { with (a) return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @28+6",
+      ],
+      [
+        "class A { static { for (a in b) return; for (a of b) return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @32+6",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @53+6",
+      ],
+      [
+        "class A { static { return; return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @19+6",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @27+6",
+      ],
+      [
+        "class A { static { class B { static { return; } } } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @38+6",
+      ],
+      [
+        "static class A {}",
+        "'static' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "static function f() {}",
+        "'static' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, async",
+      ],
+      ["static let a;", "'static' modifier cannot be used here. @0+6 help: Only 'declare' modifier is allowed here."],
+      ["type as any = 1;", 'Expected `=` but found `any` @8+3 "`=` expected"'],
+      ["namespace as any = 1;", 'Expected `{` but found `any` @13+3 "`{` expected"'],
+      ["module as any = 1;", 'Expected `{` but found `any` @10+3 "`{` expected"'],
+      ["interface as any = 1;", 'Expected `{` but found `any` @13+3 "`{` expected"'],
+      ["export = await;", "Unexpected token @14+1"],
+      ["export {}; export = await;", "Unexpected token @25+1"],
+      ["export {}; let x: await;", "The keyword 'await' is reserved @18+5"],
+      [
+        "async function w() { x as T ? await y : z; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function f() { throw\n}",
+        'Illegal newline after throw @15+5 "throw starts here", 21+1 "A newline is not expected here"',
+        "Unexpected token @21+1",
+      ],
+      ['import("a",,);', "Unexpected token @11+1"],
+      ['import<T>("a");', 'Expected `from` but found `<` @6+1 "`from` expected"'],
+      [
+        'let zz; let zz; import<T>("a"); let y: readonly number;',
+        'Expected `from` but found `<` @22+1 "`from` expected"',
+      ],
+      [
+        'declare module "m" { export default 1; a; export = a; }',
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @42+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export default 1; export = a; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @39+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export default 1; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export const b: number; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export { b }; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export * from \"b\"; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export type T = 1; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export interface I {} }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export import b = c; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export function f(): void; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export class C {} }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export namespace N {} }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export enum E {} }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export type { T }; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export type * from \"b\"; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export declare const b: number; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export const b: number; } declare module 'b' { export = a; export const b: number; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @80+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export const b: number; } export = c; export const d = 1;",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @59+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare namespace N { export = a; export const b: number; }",
+        "TS(1063) An export assignment cannot be used in a namespace. @22+11",
+      ],
+      [
+        "namespace N { export = a; export const b = 1; }",
+        "TS(1063) An export assignment cannot be used in a namespace. @14+11",
+      ],
+      [
+        "let zz; let zz; declare module 'a' { export = a; export const b: number; }",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @37+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "let zz; let zz; declare module 'a' { export = a; export const b: number; } let y: readonly number;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @82+8",
+      ],
+      [
+        "class A { 'constructor'<T>() {} }",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @23+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        'class A { "constructor"<T>() {} }',
+        "TS(1092) Type parameters cannot appear on a constructor declaration @23+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "class A { 'constructor'(): void {} }",
+        "TS(1093) Type annotation cannot appear on a constructor declaration. @27+4",
+      ],
+      [
+        "class A { 'constructor'() {} constructor() {} }",
+        'Multiple constructor implementations are not allowed. @10+13 "constructor has already been declared here", 29+11 "it cannot be redeclared here"',
+      ],
+      [
+        "class A { 'constructor'<T>(); }",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @23+3 help: Instead, add type parameters to the class itself",
+      ],
+      ["class A { get 'constructor'() { return 1 } }", "Constructor can't have get/set modifier @14+13"],
+      ["class A { async 'constructor'() {} }", "Constructor can't be an async method @16+13"],
+      ["class A { *'constructor'() {} }", "Constructor can't be a generator @11+13"],
+      ["class A { 'constructor': number; }", "Classes can't have a field named 'constructor' @10+13"],
+      [
+        "declare class A { 'constructor'<T>(); }",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @31+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "class A { 'constructor'(a?, b) {} }",
+        "TS(1016) A required parameter cannot follow an optional parameter. @28+1",
+      ],
+      [
+        "class A { abstract 'constructor'() {} }",
+        "TS(1242) 'abstract' modifier can only appear on a class, method, or property declaration. @19+13",
+      ],
+      ["class A { 'constructor'(); }", "TS(2390) Constructor implementation is missing. @10+13"],
+      [
+        "class A { m(private a) {} }",
+        "TS(1090) 'private' modifier cannot appear on a parameter. @12+7 help: No modifiers are allowed here.",
+      ],
+      ["class A implements f() {}", 'Expected `{` but found `(` @20+1 "`{` expected"'],
+      ["class A implements a?.b {}", 'Expected `{` but found `?.` @20+2 "`{` expected"'],
+      ["class A implements B, {} {}", "Unexpected token @22+1"],
+      ["class A implements B, {}", "Unexpected token @22+1"],
+      ["class A implements B, { }", "Unexpected token @22+1"],
+      ["class A implements {} {}", "Unexpected token @19+1"],
+      ["class A implements a.b() {}", 'Expected `{` but found `(` @22+1 "`{` expected"'],
+      ["class A implements a[b] {}", 'Expected `{` but found `[` @20+1 "`{` expected"'],
+      ["class A implements a! {}", 'Expected `{` but found `!` @20+1 "`{` expected"'],
+      ["class A implements (a) {}", "Unexpected token @19+1"],
+      ["class A implements 1 {}", "Unexpected token @19+1"],
+      ['class A implements "a" {}', "Unexpected token @19+3"],
+      ["class A implements function() {} {}", 'Expected `{` but found `(` @27+1 "`{` expected"'],
+      ["class A implements new B {}", 'Expected `{` but found `Identifier` @23+1 "`{` expected"'],
+      ["class A implements B, {} { m() {} }", "Unexpected token @22+1"],
+      ["class A implements B C {}", 'Expected `{` but found `Identifier` @21+1 "`{` expected"'],
+      ["class A implements B, , C {}", "Unexpected token @22+1"],
+      ["class A implements B, {", "Unexpected token @22+1"],
+      ["class A implements a.#b {}", "Unexpected token @21+2"],
+      ['class A implements import("a") {}', 'Expected `{` but found `(` @25+1 "`{` expected"'],
+      ["class A implements typeof a {}", 'Expected `{` but found `Identifier` @26+1 "`{` expected"'],
+      ["class A implements B | C {}", 'Expected `{` but found `|` @21+1 "`{` expected"'],
+      ["class A implements B[] {}", 'Expected `{` but found `[` @20+1 "`{` expected"'],
+      ["class A implements a`b` {}", 'Expected `{` but found `${}` @20+3 "`{` expected"'],
+      ["class A implements a<T>() {}", 'Expected `{` but found `(` @23+1 "`{` expected"'],
+      ["class A implements a as b {}", 'Expected `{` but found `as` @21+2 "`{` expected"'],
+      ["class A implements [] {}", "Unexpected token @19+1"],
+      ["class A implements yield {}", "The keyword 'yield' is reserved @19+5"],
+      ["class A implements let {}", "The keyword 'let' is reserved @19+3"],
+      [
+        "class A extends B, {} {}",
+        "TS(1174) Classes can only extend a single class. @19+2 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      [
+        "class A extends B, {}",
+        "TS(1174) Classes can only extend a single class. @19+2 help: Remove the extra base class or use interfaces for multiple inheritance",
+        'Expected `{` but found `EOF` @22+0 "`{` expected"',
+      ],
+      [
+        "class A extends B, {} { m() {} }",
+        "TS(1174) Classes can only extend a single class. @19+2 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      [
+        "class A extends B, f() {}",
+        "TS(1174) Classes can only extend a single class. @19+3 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      ["class A extends B, {", 'Expected `}` but found `EOF` @21+0 "`}` expected"'],
+      ["class A extends B, , C {}", "Unexpected token @19+1"],
+      [
+        "class A extends B, {} implements C {}",
+        "TS(1174) Classes can only extend a single class. @19+2 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      [
+        "class A extends B, 1 {}",
+        "TS(1174) Classes can only extend a single class. @19+1 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      [
+        "class A extends B, class {} {}",
+        "TS(1174) Classes can only extend a single class. @19+8 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      [
+        "let x = class extends B, {} {};",
+        "TS(1174) Classes can only extend a single class. @25+2 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      ["let x = class implements B, {} {};", "Unexpected token @28+1"],
+      ["interface A extends B, {} {}", "TS(1009) Trailing comma not allowed. @21+1"],
+      ["interface A extends B, {}", "TS(1009) Trailing comma not allowed. @21+1"],
+      ["interface A extends B, { }", "TS(1009) Trailing comma not allowed. @21+1"],
+      ["interface A extends B, { a: 1 }", "TS(1009) Trailing comma not allowed. @21+1"],
+      ["interface A extends B, , C {}", "Unexpected token @23+1"],
+      ["interface A extends {} {}", "TS(1097) 'extends' list cannot be empty. @12+7"],
+      [
+        "interface A extends B, f() {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @23+3",
+      ],
+      [
+        "interface A extends B, 1 {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @23+1",
+      ],
+      [
+        "interface A extends 1 {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+1",
+      ],
+      ["interface A extends B<T>, {}", "TS(1009) Trailing comma not allowed. @24+1"],
+      [
+        "let zz; let zz; interface A extends B, {} let y: readonly number;",
+        "TS(1009) Trailing comma not allowed. @37+1",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @49+8",
+      ],
+      ["let zz; let zz; class A implements B, {} let y: readonly number;", "Unexpected token @38+1"],
+      [
+        "let zz; let zz; class A extends B, {} let y: readonly number;",
+        "TS(1174) Classes can only extend a single class. @35+2 help: Remove the extra base class or use interfaces for multiple inheritance",
+        'Expected `{` but found `let` @38+3 "`{` expected"',
+      ],
+      [
+        "let zz; let zz; class A implements f() {} let y: readonly number;",
+        'Expected `{` but found `(` @36+1 "`{` expected"',
+      ],
+      [
+        "let zz; let zz; class A { 'constructor'<T>() {} } let y: readonly number;",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @39+3 help: Instead, add type parameters to the class itself",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @57+8",
+      ],
+      [
+        "export @d default class {}",
+        "'default' modifier cannot be used here. @10+7 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "export @d default class A {}",
+        "'default' modifier cannot be used here. @10+7 help: Allowed modifiers are: declare, abstract",
+      ],
+      ["export @d default function f() {}", 'Expected `{` but found `(` @28+1 "`{` expected"'],
+      [
+        "export @d @e default class A {}",
+        "'default' modifier cannot be used here. @13+7 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "@d export @e default class A {}",
+        "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'. @10+2",
+        "'default' modifier cannot be used here. @13+7 help: Allowed modifiers are: declare, abstract",
+      ],
+      ["export @d function f() {}", 'Expected `{` but found `(` @20+1 "`{` expected"'],
+      ["export @d const a = 1;", 'Expected `{` but found `=` @18+1 "`{` expected"'],
+      [
+        "export @d default abstract class A {}",
+        "'default' modifier cannot be used here. @10+7 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "export @d default interface I {}",
+        "'default' modifier cannot be used here. @10+7 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "export @d() default class A {}",
+        "'default' modifier cannot be used here. @12+7 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "export @d.e default class A {}",
+        "'default' modifier cannot be used here. @12+7 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "let zz; let zz; export @d default class A {} let y: readonly number;",
+        "'default' modifier cannot be used here. @26+7 help: Allowed modifiers are: declare, abstract",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @52+8",
+      ],
+      ["import(...a, b);", "TS(1325) Argument of dynamic import cannot be a spread element. @7+3"],
+      [
+        'import("a", b, ...c);',
+        "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments @0+14",
+      ],
+      ["import.defer(...a);", "TS(1325) Argument of dynamic import cannot be a spread element. @13+3"],
+      ["import.source(...a);", "TS(1325) Argument of dynamic import cannot be a spread element. @14+3"],
+      ["let x: import(...a);", "Unexpected token @14+3"],
+      ["let x = import(...a);", "TS(1325) Argument of dynamic import cannot be a spread element. @15+3"],
+      ["f(import(...a));", "TS(1325) Argument of dynamic import cannot be a spread element. @9+3"],
+      [
+        "throw\n;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+1 "A newline is not expected here"',
+        "Unexpected token @6+1",
+      ],
+      [
+        "throw\n",
+        'Illegal newline after throw @0+5 "throw starts here", 7+0 "A newline is not expected here"',
+        "Unexpected token @7+0",
+      ],
+      [
+        "{ throw\n}",
+        'Illegal newline after throw @2+5 "throw starts here", 8+1 "A newline is not expected here"',
+        "Unexpected token @8+1",
+      ],
+      [
+        "throw\n) ;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+1 "A newline is not expected here"',
+        "Unexpected token @6+1",
+      ],
+      [
+        "throw\n=> 1;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+2 "A newline is not expected here"',
+        "Unexpected token @6+2",
+      ],
+      [
+        "throw\nif (a) b;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+2 "A newline is not expected here"',
+        "Unexpected token @6+2",
+      ],
+      [
+        "throw\nlet a;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+3 "A newline is not expected here"',
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "throw\nvar a;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+3 "A newline is not expected here"',
+        "Unexpected token @6+3",
+      ],
+      [
+        "throw\nreturn;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+6 "A newline is not expected here"',
+        "Unexpected token @6+6",
+      ],
+      [
+        "let zz; let zz; throw\n} let y: readonly number;",
+        'Illegal newline after throw @16+5 "throw starts here", 22+1 "A newline is not expected here"',
+        "Unexpected token @22+1",
+      ],
+      ["f(a,,b);", "Unexpected token @4+1"],
+      ["f(,a);", "Unexpected token @2+1"],
+      ["f(,);", "Unexpected token @2+1"],
+      ["new F(a,,b);", "Unexpected token @8+1"],
+      ["import(,);", "Unexpected token @7+1"],
+      ['import(,"a");', "Unexpected token @7+1"],
+      ['x = import<T>("a");', "Unexpected token @10+1"],
+      ['f(import<T>("a"));', "Unexpected token @8+1"],
+      ["import<T>;", 'Expected `from` but found `<` @6+1 "`from` expected"'],
+      ['import<T>("a").then();', 'Expected `from` but found `<` @6+1 "`from` expected"'],
+      ["x = import<T>;", "Unexpected token @10+1"],
+      ["x = import;", "Unexpected token @10+1"],
+      ["import;", 'Expected `from` but found `;` @6+1 "`from` expected"'],
+      ["for (let of x) {}", 'Expected `;` but found `Identifier` @12+1 "`;` expected"'],
+      [
+        "for (let?.a of []) {}",
+        "The left-hand side of a `for...of` statement may not start with `let` @5+6",
+        "Cannot assign to this expression @5+6",
+      ],
+      [
+        "static foo;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "private foo;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "readonly foo;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "accessor foo;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "static of;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "public static;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      ["export {}; static as any = 1;", "The keyword 'static' is reserved @11+6"],
+      ["'use strict'; static as any = 1;", "The keyword 'static' is reserved @14+6"],
+      ["class A { m() { static as any = 1; } }", "The keyword 'static' is reserved @16+6"],
+      ["export {}; namespace await {}", "The keyword 'await' is reserved @21+5"],
+      ["export {}; export declare namespace await {}", "Cannot use `await` as an identifier in an async context @36+5"],
+      ["export {}; export namespace await {}", "Cannot use `await` as an identifier in an async context @28+5"],
+      [
+        "async function f() { declare namespace await {} }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @21+26",
+      ],
+      [
+        "async function f() { namespace await {} }",
+        "TS(1235) A namespace declaration is only allowed at the top level of a namespace or module. @21+18",
+      ],
+      ["function* f() { namespace yield {} }", "Cannot use `yield` as an identifier in a generator context @26+5"],
+      [
+        "declare module 'w' { export = await a; }",
+        "`await` is only allowed within async functions and at the top levels of modules @30+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "declare namespace N { export = await; }",
+        "TS(1063) An export assignment cannot be used in a namespace. @22+15",
+      ],
+      ["export {}; let x: A<await>;", "The keyword 'await' is reserved @20+5"],
+      ["class W { static { let x: A<await>; } }", "Cannot use await in class static initialization block @28+5"],
+      [
+        "async function w() { class A extends await {} }",
+        "Cannot use `await` as an identifier in an async context @37+5",
+      ],
+      ["function* w() { class A implements yield {} }", "The keyword 'yield' is reserved @35+5"],
+      ["export {}; class A implements await {}", "The keyword 'await' is reserved @30+5"],
+      ["({ async get a(){} });", "'async' modifier cannot be used here. @3+5 help: No modifiers are allowed here."],
+      ["({ async set a(v){} });", "'async' modifier cannot be used here. @3+5 help: No modifiers are allowed here."],
+      ["({ static a: 1 });", "'static' modifier cannot be used here. @3+6 help: No modifiers are allowed here."],
+      ["({ private a: 1 });", "'private' modifier cannot be used here. @3+7 help: No modifiers are allowed here."],
+      ["({ async a: 1 });", "'async' modifier cannot be used here. @3+5 help: No modifiers are allowed here."],
+      [
+        "({ public m() {} });",
+        "'public' modifier cannot be used here. @3+6 help: Only 'async' modifier is allowed here.",
+      ],
+      ["({ readonly a });", "'readonly' modifier cannot be used here. @3+8 help: No modifiers are allowed here."],
+      [
+        "let zz; let zz; ({ async get a(){} });",
+        "'async' modifier cannot be used here. @19+5 help: No modifiers are allowed here.",
+      ],
+      [
+        "namespace N { import a from 'a'; }",
+        "TS(1147) Import declarations in a namespace cannot reference a module. @14+18",
+      ],
+      [
+        "declare using a: any;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare await using a: any;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare using a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare using\na;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare namespace N { using a: any; }",
+        "TS(1545) 'using' declarations are not allowed in ambient contexts. @28+1",
+      ],
+      ["let x: { [K in 'a']: 1; b: 2 };", 'Expected `}` but found `Identifier` @24+1 "`}` expected"'],
+      ["let x: { [K in 'a']: 1\n b: 2 };", 'Expected `}` but found `Identifier` @24+1 "`}` expected"'],
+      ["let x: { [K in 'a']: 1; [L in 'b']: 2 };", 'Expected `}` but found `[` @24+1 "`}` expected"'],
+      ["let x: { [K in 'a']: 1; m(): void };", 'Expected `}` but found `Identifier` @24+1 "`}` expected"'],
+      ["let x: { [K in 'a']: 1; \"b\": 2 };", 'Expected `}` but found `string` @24+3 "`}` expected"'],
+      [
+        "class A { declare constructor: Function; }",
+        "TS(1031) 'declare' modifier cannot appear on a constructor declaration. @10+7",
+        'Expected `(` but found `:` @29+1 "`(` expected"',
+      ],
+      ["class A { constructor: Function; }", 'Expected `(` but found `:` @21+1 "`(` expected"'],
+      [
+        "class A { declare constructor; }",
+        "TS(1031) 'declare' modifier cannot appear on a constructor declaration. @10+7",
+        'Expected `(` but found `;` @29+1 "`(` expected"',
+      ],
+      ["class A { private constructor: Function; }", 'Expected `(` but found `:` @29+1 "`(` expected"'],
+      [
+        "class A { readonly constructor: Function; }",
+        "TS(1024) 'readonly' modifier can only appear on a property declaration or index signature. @10+8",
+        'Expected `(` but found `:` @30+1 "`(` expected"',
+      ],
+      ["class A { constructor = 1; }", 'Expected `(` but found `=` @22+1 "`(` expected"'],
+      [
+        "class A { declare constructor() {} }",
+        "TS(1031) 'declare' modifier cannot appear on a constructor declaration. @10+7",
+      ],
+      [
+        "declare foo;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare foo bar;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        'declare "a";',
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare {};",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare using;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare await;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare await using;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare async;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare module 'a' { export = a; export const b: number; let q; let q; } let zz; let zz;",
+        'Identifier `q` has already been declared @61+1 "`q` has already been declared here", 68+1 "It can not be redeclared here"',
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+        'Identifier `zz` has already been declared @77+2 "`zz` has already been declared here", 85+2 "It can not be redeclared here"',
+      ],
+      [
+        "let zz; let zz; declare module 'a' { let q; let q; export = a; export const b: number; }",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        'Identifier `q` has already been declared @41+1 "`q` has already been declared here", 48+1 "It can not be redeclared here"',
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @51+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export const b: number; namespace N { let q; let q; } }",
+        'Identifier `q` has already been declared @75+1 "`q` has already been declared here", 82+1 "It can not be redeclared here"',
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { namespace N { export = a; export const b: number; } }",
+        "TS(1063) An export assignment cannot be used in a namespace. @35+11",
+      ],
+      [
+        "declare module 'a' { export = a; export default class {} }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export default function f(): void; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export default interface I {} }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export abstract class C {} }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export const enum E {} }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export import b = require(\"b\"); }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export { b } from \"b\"; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "declare module 'a' { export = a; export * as b from \"b\"; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "class A { constructor<T>(); }",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @21+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "class A { constructor<T>() {} }",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @21+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "class A { 'constructor'<T>(); 'constructor'<T>() {} }",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @23+3 help: Instead, add type parameters to the class itself",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @43+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "class A { 'constructor'<T>(a?, b) {} }",
+        "TS(1016) A required parameter cannot follow an optional parameter. @31+1",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @23+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "class A { private 'constructor'<T>() {} }",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @31+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "class A { 'constructor'<T>(): void {} }",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @23+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "class A { 'constructor'<>() {} }",
+        "TS(1098) Type parameter list cannot be empty. @23+2",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @23+2 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "class A { 'constructor'<T>(private a) {} }",
+        "TS(1090) 'private' modifier cannot appear on a parameter. @27+7 help: No modifiers are allowed here.",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @23+3 help: Instead, add type parameters to the class itself",
+      ],
+      ["class A implements implements {}", "The keyword 'implements' is reserved @19+10"],
+      ["class A implements B. {}", "Unexpected token @22+1"],
+      ["class A implements B.1 {}", 'Expected `{` but found `float` @20+2 "`{` expected"'],
+      ["class A implements B<T><U> {}", 'Expected `{` but found `<` @23+1 "`{` expected"'],
+      ["class A implements B<T> C {}", 'Expected `{` but found `Identifier` @24+1 "`{` expected"'],
+      [
+        "interface A extends null {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+4",
+      ],
+      [
+        "interface A extends new B {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+5",
+      ],
+      [
+        'interface A extends import("a") {}',
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+11",
+      ],
+      [
+        'interface A extends "a" {}',
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+3",
+      ],
+      [
+        "interface A extends [] {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+2",
+      ],
+      [
+        "interface A extends a! {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+2",
+      ],
+      [
+        "interface A extends a`b` {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+4",
+      ],
+      [
+        "interface A extends a<T>() {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+6",
+      ],
+      [
+        "interface A extends a.#b {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+4",
+      ],
+      ["interface A extends B, C, {}", "TS(1009) Trailing comma not allowed. @24+1"],
+      ["interface A extends , B {}", "Unexpected token @20+1"],
+      [
+        "class A extends B, implements C {}",
+        "TS(1174) Classes can only extend a single class. @19+10 help: Remove the extra base class or use interfaces for multiple inheritance",
+        'Expected `{` but found `Identifier` @30+1 "`{` expected"',
+      ],
+      ["class A extends , B {}", "Unexpected token @16+1"],
+      [
+        "class A extends B, C, {}",
+        "TS(1174) Classes can only extend a single class. @19+1 help: Remove the extra base class or use interfaces for multiple inheritance",
+        "TS(1174) Classes can only extend a single class. @22+2 help: Remove the extra base class or use interfaces for multiple inheritance",
+        'Expected `{` but found `EOF` @25+0 "`{` expected"',
+      ],
+      [
+        "class A extends B, {} , C {}",
+        "TS(1174) Classes can only extend a single class. @19+2 help: Remove the extra base class or use interfaces for multiple inheritance",
+        "TS(1174) Classes can only extend a single class. @24+1 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      ["class A implements , B {}", "Unexpected token @19+1"],
+      ["class A implements B, C, {}", "Unexpected token @25+1"],
+      ["class A implements B, implements C {}", 'Expected `{` but found `Identifier` @33+1 "`{` expected"'],
+      ["class A implements B, extends C {}", 'Expected `{` but found `Identifier` @30+1 "`{` expected"'],
+      ["@d let a;", "Unexpected token @3+3"],
+      ["@d export function f() {}", "Decorators are not valid here. @0+2"],
+      ["@d export default function f() {}", "Decorators are not valid here. @0+2"],
+      ["@d export const a = 1;", "Decorators are not valid here. @0+2"],
+      ["@d export default 1;", "Decorators are not valid here. @0+2"],
+      ["@d export interface I {}", "Decorators are not valid here. @0+2"],
+      ["@d export type T = 1;", "Decorators are not valid here. @0+2"],
+      ["@d export enum E {}", "Decorators are not valid here. @0+2"],
+      ["@d export namespace N {}", "Decorators are not valid here. @0+2"],
+      ["@d export declare function f(): void;", "Decorators are not valid here. @0+2"],
+      ["@d @e export function f() {}", "Decorators are not valid here. @0+2", "Decorators are not valid here. @3+2"],
+      [
+        "@d export function f() {} let y: readonly number;",
+        "Decorators are not valid here. @0+2",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @33+8",
+      ],
+      ["let zz; let zz; @d export function f() {}", "Decorators are not valid here. @16+2"],
+      ["@d declare function f(): void;", "Unexpected token @11+8"],
+      ['@d import a from "a";', "Unexpected token @3+6"],
+      ["@d async function f() {}", "Unexpected token @9+8"],
+      [
+        "@d static class A {}",
+        "'static' modifier cannot be used here. @3+6 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "@d export static class A {}",
+        "'static' modifier cannot be used here. @10+6 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "export @d static class A {}",
+        "'static' modifier cannot be used here. @10+6 help: Allowed modifiers are: declare, abstract",
+      ],
+      ["export @d async function f() {}", 'Expected `{` but found `(` @26+1 "`{` expected"'],
+      ["export @d default function () {}", 'Expected `{` but found `(` @27+1 "`{` expected"'],
+      ["export @d let a;", 'Expected `{` but found `;` @15+1 "`{` expected"'],
+      ["export @d type T = 1;", 'Expected `{` but found `=` @17+1 "`{` expected"'],
+      ["export default @d function f() {}", "Decorators are not valid here. @15+2"],
+      ["();", "Empty parenthesized expression @0+2"],
+      ["(  );", "Empty parenthesized expression @0+4"],
+      ["a = ();", "Empty parenthesized expression @4+2"],
+      ["if () {}", "Unexpected token @4+1"],
+      ["while () {}", "Unexpected token @7+1"],
+      ["switch () {}", "Unexpected token @8+1"],
+      ["do {} while ();", "Unexpected token @13+1"],
+      ["with () {}", "Unexpected token @6+1"],
+      ["for (;;()) {}", "Empty parenthesized expression @7+2"],
+      ["for (() of a) {}", "Empty parenthesized expression @5+2"],
+      ["f(());", "Empty parenthesized expression @2+2"],
+      ["[()];", "Empty parenthesized expression @1+2"],
+      ["new ();", "Empty parenthesized expression @4+2"],
+      ["() + 1;", "Empty parenthesized expression @0+2"],
+      ["a ? () : b;", 'Expected `=>` but found `;` @10+1 "`=>` expected"'],
+      ["`${()}`;", "Empty parenthesized expression @3+2"],
+      ["async function f() { await (); }", "Empty parenthesized expression @27+2"],
+      ["function* f() { yield (); }", "Empty parenthesized expression @22+2"],
+      ["let zz; let zz; (); let y: readonly number;", "Empty parenthesized expression @16+2"],
+      [
+        "a ?? b || c; ();",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+        "Empty parenthesized expression @13+2",
+      ],
+      ["(/* c */);", "Empty parenthesized expression @0+9"],
+      ["class A { get a?() { return 1; } }", 'Expected `(` but found `?` @15+1 "`(` expected"'],
+      ["class A { set a?(v) {} }", 'Expected `(` but found `?` @15+1 "`(` expected"'],
+      ["class A { constructor?() {} }", 'Expected `(` but found `?` @21+1 "`(` expected"'],
+      ["class A { `constructor`<T>() {} }", "Unexpected token @10+13"],
+      [
+        "interface A extends B C {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+1",
+        'Expected `{` but found `Identifier` @22+1 "`{` expected"',
+      ],
+      ["interface A extends B, extends C {}", "Unexpected token @23+7"],
+      ["export @d default 1;", 'Expected `{` but found `;` @19+1 "`{` expected"'],
+      ["`\\", "Unterminated string @0+3"],
+      ["`;", "Unterminated string @0+3"],
+      ["enum E { `\\u` }", "TS(1164) Computed property names are not allowed in enums. @9+4"],
+      [
+        "export declare using a: any;",
+        "Using declarations cannot be exported directly. @7+15 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      ["let x: { [K in 'a']: 1, b: 2 };", 'Expected `}` but found `,` @22+1 "`}` expected"'],
+      ["let x: { [K in 'a']: 1;; };", 'Expected `}` but found `;` @23+1 "`}` expected"'],
+      ["let x: { [K in 'a']: 1, };", 'Expected `}` but found `,` @22+1 "`}` expected"'],
+      ["let x: { [K in 'a']: 1 b: 2 };", 'Expected `}` but found `Identifier` @23+1 "`}` expected"'],
+      ["class A { static constructor: Function; }", "Classes can't have a field named 'constructor' @17+11"],
+      [
+        "class A { async 'constructor'<T>() {} }",
+        "Constructor can't be an async method @16+13",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @29+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "class A { 'constructor'<T>() {} constructor() {} }",
+        "TS(1092) Type parameters cannot appear on a constructor declaration @23+3 help: Instead, add type parameters to the class itself",
+      ],
+      [
+        "class A implements implements implements {}",
+        "TS(1175) 'implements' clause already seen @8+10, 30+10 help: Merge the two 'implements' clauses into one by a ','",
+        "Unexpected token @41+1",
+      ],
+      ["class A implements B<T>.C {}", 'Expected `{` but found `.` @23+1 "`{` expected"'],
+      [
+        "interface A extends void {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+7",
+        'Expected `{` but found `EOF` @28+0 "`{` expected"',
+      ],
+      [
+        "interface A extends B, void {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @23+7",
+        'Expected `{` but found `EOF` @31+0 "`{` expected"',
+      ],
+      [
+        "interface A extends typeof a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+8",
+      ],
+      [
+        "interface A extends class {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+8",
+        'Expected `{` but found `EOF` @29+0 "`{` expected"',
+      ],
+      [
+        "interface A extends B, implements C {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @23+10",
+        'Expected `{` but found `Identifier` @34+1 "`{` expected"',
+      ],
+      ["interface A implements B, {}", "Unexpected token @26+1"],
+      ["export @d const { a } = b;", "Unexpected token @22+1"],
+      [
+        "export @d export class A {}",
+        "'export' modifier cannot be used here. @10+6 help: Allowed modifiers are: declare, abstract",
+      ],
+      ["x = @d function() {};", "Unexpected token @7+8"],
+      [
+        "class A { default default a; }",
+        "TS(1030) 'default' modifier already seen. @18+7 help: Remove the duplicate modifier.",
+      ],
+      [
+        "class A { default [k: string]: any; }",
+        "TS(1071) 'default' modifier cannot appear on an index signature. @10+7 help: Allowed modifiers are: static, readonly",
+      ],
+      ["class A { default static {} }", "TS(1184) Modifiers cannot appear here. @10+7"],
+      ["class A { static constructor; }", "Classes can't have a field named 'constructor' @17+11"],
+      ["class A { static constructor = 1; }", "Classes can't have a field named 'constructor' @17+11"],
+      ["class A { static readonly constructor: Function; }", "Classes can't have a field named 'constructor' @26+11"],
+      ["class A { static 'constructor': Function; }", "Classes can't have a field named 'constructor' @17+13"],
+      ["class A { 'constructor': Function; }", "Classes can't have a field named 'constructor' @10+13"],
+      ["class A { 'constructor'; }", "Classes can't have a field named 'constructor' @10+13"],
+      ["class A { static constructor?: Function; }", "Classes can't have a field named 'constructor' @17+11"],
+      [
+        "class A { accessor constructor = 1; }",
+        "TS(1275) 'accessor' modifier can only appear on a property declaration. @10+8",
+        'Expected `(` but found `=` @31+1 "`(` expected"',
+      ],
+      [
+        "export export class A {}",
+        "TS(1030) 'export' modifier already seen. @7+6 help: Remove the duplicate modifier.",
+      ],
+      [
+        "export @d export default class A {}",
+        "'export' modifier cannot be used here. @10+6 help: Allowed modifiers are: declare, abstract",
+        "'default' modifier cannot be used here. @17+7 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "@d export export class A {}",
+        "TS(1030) 'export' modifier already seen. @10+6 help: Remove the duplicate modifier.",
+      ],
+      [
+        "export @d declare export class A {}",
+        "TS(1029) 'export' modifier must precede 'declare' modifier. @18+6",
+        "'export' modifier cannot be used here. @18+6 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "export using a = b;",
+        "Using declarations cannot be exported directly. @7+7 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "export declare using a;",
+        "Using declarations cannot be exported directly. @7+15 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "export declare using a = b;",
+        "Using declarations cannot be exported directly. @7+15 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "export declare using a: any, b: any;",
+        "Using declarations cannot be exported directly. @7+15 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "export declare await using a: any;",
+        "Using declarations cannot be exported directly. @7+21 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "export using a: any = b;",
+        "Using declarations cannot be exported directly. @7+7 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "export await using a = b;",
+        "Using declarations cannot be exported directly. @7+13 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "export using a = b, c = d;",
+        "Using declarations cannot be exported directly. @7+7 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "export using a = b; let y: readonly number;",
+        "Using declarations cannot be exported directly. @7+7 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "let y: readonly number; export using a = b;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+        "Using declarations cannot be exported directly. @31+7 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      ["export using;", "Unexpected token @7+5"],
+      [
+        "export using a;",
+        "Using declarations cannot be exported directly. @7+7 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "namespace N { export using a = b; }",
+        "Using declarations cannot be exported directly. @21+7 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "export declare using a: any; let y: readonly number;",
+        "Using declarations cannot be exported directly. @7+15 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "interface A extends B, C D {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @23+1",
+        'Expected `{` but found `Identifier` @25+1 "`{` expected"',
+      ],
+      [
+        "interface A extends B.C D {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+3",
+        'Expected `{` but found `Identifier` @24+1 "`{` expected"',
+      ],
+      [
+        "interface A extends B<T> D {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+6",
+      ],
+      [
+        "interface A extends B 1 {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+1",
+        'Expected `{` but found `decimal` @22+1 "`{` expected"',
+      ],
+      [
+        "interface A extends B;",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+1",
+        'Expected `{` but found `;` @21+1 "`{` expected"',
+      ],
+      ["interface A extends B", 'Expected `{` but found `EOF` @22+0 "`{` expected"'],
+      [
+        "interface A extends B = {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+6",
+        'Expected `{` but found `EOF` @27+0 "`{` expected"',
+      ],
+      [
+        "interface A extends B, C;",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @23+1",
+        'Expected `{` but found `;` @24+1 "`{` expected"',
+      ],
+      [
+        "interface A extends B.C.D E {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+5",
+        'Expected `{` but found `Identifier` @26+1 "`{` expected"',
+      ],
+      [
+        "interface A extends -a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+2",
+      ],
+      [
+        "interface A extends !a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+2",
+      ],
+      [
+        "interface A extends +a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+2",
+      ],
+      [
+        "interface A extends ~a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+2",
+      ],
+      [
+        "interface A extends delete a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+8",
+      ],
+      [
+        "interface A extends ++a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+3",
+      ],
+      [
+        "interface A extends a++ {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+3",
+      ],
+      [
+        "interface A extends a + b {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+5",
+      ],
+      [
+        "interface A extends new B() {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+7",
+      ],
+      [
+        "interface A extends <T>a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+4",
+      ],
+      [
+        "interface A extends void a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+6",
+      ],
+      [
+        "interface A extends void a, B {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+6",
+      ],
+      [
+        "interface A extends B, typeof a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @23+8",
+      ],
+      [
+        "interface A extends typeof a, B {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+8",
+      ],
+      [
+        "interface A extends typeof a<T> {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+14",
+        'Expected `{` but found `EOF` @35+0 "`{` expected"',
+      ],
+      [
+        "interface A extends function() {} {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+13",
+      ],
+      [
+        "interface A extends class {} {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+8",
+      ],
+      [
+        "interface A extends true {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+4",
+      ],
+      [
+        "interface A extends import.meta {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+11",
+      ],
+      ["interface A extends if {}", "Unexpected token @20+2"],
+      ["interface A extends in {}", "Unexpected token @20+2"],
+      ["interface A extends var {}", "Unexpected token @20+3"],
+      ["interface A extends B, if {}", "Unexpected token @23+2"],
+      ["interface A extends B, extends {}", "Unexpected token @23+7"],
+      ["interface A extends extends B {}", "Unexpected token @20+7"],
+      [
+        "interface A extends implements B {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+10",
+        'Expected `{` but found `Identifier` @31+1 "`{` expected"',
+      ],
+      ["interface A implements B, C {}", "TS(1176) Interface declaration cannot have 'implements' clause. @12+10"],
+      ["interface A implements {}", "Unexpected token @23+1"],
+      [
+        "interface A implements B extends C {}",
+        "TS(1173) 'extends' clause must precede 'implements' clause @12+10 \"'implements' clause found here\", 25+7 \"'extends' clause found here\" help: Move the 'extends' clause before the 'implements' clause",
+        "TS(1176) Interface declaration cannot have 'implements' clause. @12+10",
+      ],
+      ["interface A implements void {}", "TS(1176) Interface declaration cannot have 'implements' clause. @12+10"],
+      ["interface A implements f() {}", 'Expected `{` but found `(` @24+1 "`{` expected"'],
+      ["interface A implements B C {}", 'Expected `{` but found `Identifier` @25+1 "`{` expected"'],
+      ["interface A extends B, C extends D {}", "TS(1172) 'extends' clause already seen @25+7"],
+      [
+        "let zz; let zz; interface A extends typeof a {} let y: readonly number;",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+8",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @55+8",
+      ],
+      [
+        "let zz; let zz; interface A extends B C {} let y: readonly number;",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+1",
+        'Expected `{` but found `Identifier` @38+1 "`{` expected"',
+      ],
+      [
+        "interface A extends a?.b c {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+4",
+        'Expected `{` but found `Identifier` @25+1 "`{` expected"',
+      ],
+      [
+        "interface A extends a[0] {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+4",
+      ],
+      [
+        "interface A extends a() {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+3",
+      ],
+      [
+        "interface A extends `a` {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+3",
+      ],
+      [
+        "interface A extends @d class {} {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+11",
+      ],
+      ["class A { static declare constructor: Function; }", "Classes can't have a field named 'constructor' @25+11"],
+      [
+        "class A { static constructor!: Function; }",
+        "Classes can't have a field named 'constructor' @17+11",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @28+1",
+      ],
+      [
+        "export using {a} = b;",
+        "Using declarations cannot be exported directly. @7+7 help: Remove the `export` here and add `export { { }` as a separate statement to export the declaration",
+      ],
+      ["interface A extends B {", 'Expected `}` but found `EOF` @24+0 "`}` expected", 22+1 "Opened here"'],
+      [
+        "interface A extends await a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+7",
+      ],
+      [
+        "interface A extends super {}",
+        "'super' can only be used with function calls or in property accesses @20+5 help: Replace with `super()` or `super.prop` or `super[prop]`",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+5",
+      ],
+      ["interface A extends #b {}", 'Expected `in` but found `{` @23+1 "`in` expected"'],
+      ["interface A extends / {}", "Unterminated regular expression @20+5"],
+      [
+        "class A { static 'a'!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @20+1",
+      ],
+      [
+        "class A { static get!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @20+1",
+      ],
+      [
+        "class A { static static!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @23+1",
+      ],
+      [
+        "class A { static readonly a!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @27+1",
+      ],
+      [
+        "class A { static declare a!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @26+1",
+      ],
+      [
+        "class A { static accessor a!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @27+1",
+      ],
+      [
+        "class A { static a!; }",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @18+1",
+      ],
+      [
+        "class A { static a! = 1; }",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @18+1",
+      ],
+      [
+        "class A { static a!: number = 1; }",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @18+1",
+      ],
+      [
+        "declare class A { static a!: number; }",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @26+1",
+      ],
+      [
+        "abstract class A { static abstract a!: number; }",
+        "TS(1243) 'static' modifier cannot be used with 'abstract' modifier. @26+8",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @36+1",
+      ],
+      ["export using [a] = b;", "Unexpected token @7+5"],
+      ["export using\na = b;", "Unexpected token @7+5"],
+      ["export using in b;", "Unexpected token @7+5"],
+      [
+        "export using of = b;",
+        "Using declarations cannot be exported directly. @7+8 help: Remove the `export` here and add `export { of }` as a separate statement to export the declaration",
+      ],
+      [
+        "export using await = b;",
+        "Using declarations cannot be exported directly. @7+11 help: Remove the `export` here and add `export { await }` as a separate statement to export the declaration",
+      ],
+      [
+        "export using a",
+        "Using declarations cannot be exported directly. @7+7 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      ['export using "a";', "Unexpected token @7+5"],
+      ["export using 1;", "Unexpected token @7+5"],
+      ["export using (a);", "Unexpected token @7+5"],
+      [
+        "export await using {a} = b;",
+        "Using declarations cannot be exported directly. @7+13 help: Remove the `export` here and add `export { { }` as a separate statement to export the declaration",
+      ],
+      [
+        "export default interface\nA {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @26+0 help: Try inserting a semicolon here",
+      ],
+      ["export default interface\nA\n{}", "The keyword 'interface' is reserved @15+9"],
+      [
+        "interface A extends #b in c {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+7",
+      ],
+      [
+        "interface A extends /a/ {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+3",
+      ],
+      [
+        "interface A extends super.a {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+7",
+      ],
+      [
+        "interface A extends super() {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @20+7",
+      ],
+      ["x = / {}", "Unterminated regular expression @4+5", "Unexpected token @4+5"],
+      ["class A extends / {}", "Unterminated regular expression @16+5"],
+      ["interface A extends B, / {}", "Unterminated regular expression @23+5"],
+      ["interface A extends /a", "Unterminated regular expression @20+3"],
+      ["f(/ {}", "Unterminated regular expression @2+5"],
+      ["class A implements / {}", "Unexpected token @19+1"],
+      ["let x: / {}", "Unexpected token @7+1"],
+      [
+        "class A { accessor a!; }",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @20+1",
+      ],
+      [
+        "class A { accessor a! = 1; }",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @20+1",
+      ],
+      [
+        "export = a; export const b = 1; export = c;",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @0+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @32+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "interface A extends B, {",
+        "TS(1009) Trailing comma not allowed. @21+1",
+        'Expected `}` but found `EOF` @25+0 "`}` expected", 23+1 "Opened here"',
+      ],
+      [
+        "for await (let.a of []) {}",
+        "The left-hand side of a `for...of` statement may not start with `let` @11+5",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["for (const of a);", 'Expected `;` but found `Identifier` @14+1 "`;` expected"'],
+      [
+        "declare namespace N { a b; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @23+0 help: Try inserting a semicolon here",
+      ],
+      ["000000k000;", "Invalid characters after number @6+1"],
+      ["0k0;", "Invalid characters after number @1+1"],
+      ["class {}", "A class name is required. @0+5"],
+      [
+        "class {} a ?? b || c;",
+        "Logical expressions and coalesce expressions cannot be mixed @9+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "let zz; let zz; class {}",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        "A class name is required. @16+5",
+      ],
+      ["export class {}", "A class name is required. @7+5"],
+      ["{ class {} }", "A class name is required. @2+5"],
+      ["abstract class {}", "A class name is required. @0+5"],
+      ["declare class {}", "A class name is required. @0+5"],
+      ["class {} let a = ;", "Unexpected token @17+1"],
+      ["namespace N { export class {} }", "A class name is required. @21+5"],
+      ["class implements A {}", "A class name is required. @0+5"],
+      ["declare namespace N { a; b; }", "TS(1036) Statements are not allowed in ambient contexts. @22+2"],
+      [
+        "(static satisfies any) = 1;",
+        "TS(1090) 'static' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `any` @18+3 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(public a b);",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @10+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(readonly a b);",
+        "TS(1090) 'readonly' modifier cannot appear on a parameter. @1+8 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @12+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(declare a b);",
+        "TS(1090) 'declare' modifier cannot appear on a parameter. @1+7 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @11+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(abstract a b);",
+        "TS(1090) 'abstract' modifier cannot appear on a parameter. @1+8 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @12+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(override a b);",
+        "TS(1090) 'override' modifier cannot appear on a parameter. @1+8 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @12+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(static a, b c);",
+        "TS(1090) 'static' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @13+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(static static a b);",
+        "TS(1090) 'static' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @15+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      ["(async a b);", 'Expected `,` or `)` but found `Identifier` @7+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      ["(a, static b c);", 'Expected `,` or `)` but found `Identifier` @11+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      [
+        "(static a);",
+        "TS(1090) 'static' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `=>` but found `;` @10+1 "`=>` expected"',
+      ],
+      [
+        "(static a) = 1;",
+        "TS(1090) 'static' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `=>` but found `=` @11+1 "`=>` expected"',
+      ],
+      [
+        "(public a) => 1;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+      ],
+      [
+        "(public a, b c) => 1;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @13+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(yield a b);",
+        "A 'yield' expression is only allowed in a generator body. @1+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `Identifier` @9+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(yield as any)++;",
+        "A 'yield' expression is only allowed in a generator body. @1+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `any` @10+3 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "{ (yield as any)++; }",
+        "A 'yield' expression is only allowed in a generator body. @3+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `any` @12+3 "`,` or `)` expected", 2+1 "Opened here"',
+      ],
+      [
+        "f(yield a b);",
+        "A 'yield' expression is only allowed in a generator body. @2+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `Identifier` @10+1 "`,` or `)` expected", 1+1 "Opened here"',
+      ],
+      [
+        "[yield a b];",
+        "A 'yield' expression is only allowed in a generator body. @1+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `]` but found `Identifier` @9+1 "`,` or `]` expected", 0+1 "Opened here"',
+      ],
+      [
+        "x = yield a b;",
+        "A 'yield' expression is only allowed in a generator body. @4+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function f() { (await a b); }",
+        "`await` is only allowed within async functions and at the top levels of modules @16+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        'Expected `,` or `)` but found `Identifier` @24+1 "`,` or `)` expected", 15+1 "Opened here"',
+      ],
+      ["(await as any)++;", 'Expected `,` or `)` but found `any` @10+3 "`,` or `)` expected", 0+1 "Opened here"'],
+      [
+        "class A { a?! }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @12+1",
+      ],
+      [
+        "class A { a?!; b c }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @12+1",
+        'Expected `;` but found `Identifier` @17+1 "`;` expected"',
+      ],
+      [
+        "class A { a?!: number; b c }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        'Expected `;` but found `Identifier` @25+1 "`;` expected"',
+      ],
+      [
+        "class A { a?!: number; m() { const a; } }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        "Missing initializer in const declaration @35+1 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "class A { a?!(): void }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        'Expected `;` but found `(` @13+1 "`;` expected"',
+      ],
+      [
+        "let a?!: number;",
+        "Optional declaration is not allowed here @5+1 help: Remove the `?`",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "class A { a?!: number; }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+      ],
+      ["class A { a!?: number; }", 'Expected `;` but found `?` @12+1 "`;` expected"'],
+      [
+        "class A { a?! = 1; }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @12+1",
+      ],
+      [
+        "class A { static a?!: number; }",
+        "A property cannot be both optional and definite. @18+2 help: Remove either the `?` or the `!`",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @19+1",
+      ],
+      [
+        "class A { a? !: number; }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+      ],
+      [
+        "class A { a?\n!: number; }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+      ],
+      ["let a?: number;", "Optional declaration is not allowed here @5+1 help: Remove the `?`"],
+      ["let a?;", "Optional declaration is not allowed here @5+1 help: Remove the `?`"],
+      ["let a? = 1;", "Optional declaration is not allowed here @5+1 help: Remove the `?`"],
+      ["const a?: number = 1;", "Optional declaration is not allowed here @7+1 help: Remove the `?`"],
+      ["let a, b?: number;", "Optional declaration is not allowed here @8+1 help: Remove the `?`"],
+      [
+        "let [a]?: number;",
+        "Optional declaration is not allowed here @7+1 help: Remove the `?`",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      ["for (let a? of b) {}", "Optional declaration is not allowed here @10+1 help: Remove the `?`"],
+      [
+        "let a?: number; let y: readonly number;",
+        "Optional declaration is not allowed here @5+1 help: Remove the `?`",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @23+8",
+      ],
+      ["import {", 'Expected `}` but found `EOF` @9+0 "`}` expected"'],
+      ["function enum() {}", 'Expected `Identifier` but found `enum` @9+4 "`Identifier` expected"'],
+      [
+        "(public a, b) => 1;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+      ],
+      [
+        "(public a b) => 1;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @10+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "function f(public a b) {}",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @20+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "function f(public a, b c) {}",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @23+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "class A { m(public a b) {} }",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @12+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @21+1 "`,` or `)` expected", 11+1 "Opened here"',
+      ],
+      [
+        "function f(a?, b c) {}",
+        "TS(1016) A required parameter cannot follow an optional parameter. @15+1",
+        'Expected `,` or `)` but found `Identifier` @17+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "function f(a?, b, c d) {}",
+        "TS(1016) A required parameter cannot follow an optional parameter. @15+1",
+        "TS(1016) A required parameter cannot follow an optional parameter. @18+1",
+        'Expected `,` or `)` but found `Identifier` @20+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "(public a b",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @10+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "function f(public a) {} x y;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @25+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function f(public a, b = ) {}",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        "Unexpected token @25+1",
+      ],
+      [
+        "function f(public a) { x y; }",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @24+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function f(public a, b c) { }",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @23+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "function f(public a, b: ) { }",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        "Unexpected token @24+1",
+      ],
+      [
+        "function f(public a, 1) { }",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        "Unexpected token @21+1",
+      ],
+      [
+        "function f(public a b) { } let y: readonly number;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @20+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "let y: readonly number; function f(a b) { }",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+        'Expected `,` or `)` but found `Identifier` @37+1 "`,` or `)` expected", 34+1 "Opened here"',
+      ],
+      [
+        "function f(y: readonly number, a b) { }",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @14+8",
+        'Expected `,` or `)` but found `Identifier` @33+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      ["function* enum() {}", 'Expected `Identifier` but found `enum` @10+4 "`Identifier` expected"'],
+      ["function* if() {}", 'Expected `Identifier` but found `if` @10+2 "`Identifier` expected"'],
+      [
+        "function* () {}",
+        "Expected function name @10+1 help: Function name is required in function declaration or named export",
+      ],
+      ["function* f();", "TS(1222) An overload signature cannot be declared as a generator. @0+14"],
+      [
+        "function* f(); let y: readonly number;",
+        "TS(1222) An overload signature cannot be declared as a generator. @0+14",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @22+8",
+      ],
+      ["class A { *enum(); }", "TS(1222) An overload signature cannot be declared as a generator. @10+8"],
+      ["a?.<;", "Identifier expected after '?.' @1+2 help: Add an identifier after '?.'"],
+      ["class A { a: T() }", 'Expected `;` but found `(` @14+1 "`;` expected"'],
+      ["class A { a: T(); }", 'Expected `;` but found `(` @14+1 "`;` expected"'],
+      ["class A { a!() {} }", 'Expected `;` but found `(` @12+1 "`;` expected"'],
+      [
+        "class A { a?!() {} }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        'Expected `;` but found `(` @13+1 "`;` expected"',
+      ],
+      ["class A { a: T(b) {} }", 'Expected `;` but found `(` @14+1 "`;` expected"'],
+      [
+        "function* w() { interface A extends yield {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+8",
+        'Expected `{` but found `}` @45+1 "`{` expected"',
+      ],
+      [
+        "function* w() { interface A extends yield { a: 1 } }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+14",
+        'Expected `{` but found `}` @51+1 "`{` expected"',
+      ],
+      [
+        "function* w() { interface A extends yield {} x; }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+8",
+        'Expected `{` but found `Identifier` @45+1 "`{` expected"',
+      ],
+      [
+        "function* w() { interface A extends yield {} {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+8",
+      ],
+      [
+        "function* w() { interface A extends yield {} { a: 1 } }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+8",
+      ],
+      [
+        "function* w() { interface A extends yield, B {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+5",
+      ],
+      [
+        "function* w() { interface A extends yield\n{} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+5",
+      ],
+      [
+        "function* w() { interface A extends B, yield {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @39+8",
+        'Expected `{` but found `}` @48+1 "`{` expected"',
+      ],
+      [
+        "function* w() { interface A extends yield<T> {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+11",
+        'Expected `{` but found `}` @48+1 "`{` expected"',
+      ],
+      [
+        "function* w() { interface A<T> extends yield {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @39+8",
+        'Expected `{` but found `}` @48+1 "`{` expected"',
+      ],
+      [
+        "function* w() { declare interface A extends yield {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @44+8",
+        'Expected `{` but found `}` @53+1 "`{` expected"',
+      ],
+      ["function* w() { interface A extends yield.b {} }", "Unexpected token @41+1"],
+      [
+        "function* w() { interface A extends yield { a; b } }",
+        'Expected `,` or `}` but found `;` @45+1 "`,` or `}` expected", 42+1 "Opened here"',
+      ],
+      [
+        "function* w() { interface A extends (yield) {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+7",
+      ],
+      [
+        "function* w() { interface A extends yield a {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+7",
+      ],
+      [
+        "function* w() { interface A extends yield* a {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+8",
+      ],
+      [
+        "function* w() { class A extends yield {} }",
+        "Cannot use `yield` as an identifier in a generator context @32+5",
+      ],
+      ["let \\u12 = 1;", "Invalid Unicode escape sequence @5+3"],
+      ["let a,\nfunction f() {}", "Identifier expected. 'function' is a reserved word that cannot be used here. @7+8"],
+      ["let a,\nif (x) y;", "Identifier expected. 'if' is a reserved word that cannot be used here. @7+2"],
+      ["const a = 1,\nclass B {}", "Identifier expected. 'class' is a reserved word that cannot be used here. @13+5"],
+      ["let a, function", "Identifier expected. 'function' is a reserved word that cannot be used here. @7+8"],
+      ["let a, if;", "Identifier expected. 'if' is a reserved word that cannot be used here. @7+2"],
+      ["let \\u12;", "Invalid Unicode escape sequence @5+3"],
+      ["const \\u12 = 1;", "Invalid Unicode escape sequence @7+3"],
+      ["let x, \\u12 = 1;", "Invalid Unicode escape sequence @8+3"],
+      ["var x, \\u12 = 1;", "Invalid Unicode escape sequence @8+3"],
+      ["let \\u12", "Invalid Unicode escape sequence @5+3"],
+      [
+        "foo \\u12 = 1;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      ["let\n\\u12 = 1;", "Invalid Unicode escape sequence @5+3"],
+      ["{ let \\u12 = 1; }", "Invalid Unicode escape sequence @7+3"],
+      ["let \\x = 1;", "Invalid Unicode escape sequence @5+1"],
+      ["let \\ = 1;", "Invalid Unicode escape sequence @5+1"],
+      ["let @ = 1;", "Unexpected token @4+1"],
+      ["var @ = 1;", "Unexpected token @4+1"],
+      ["let # = 1;", "Invalid Character ` ` @5+1"],
+      ["export static as any = 1;", "Unexpected token @14+2"],
+      ["namespace W { export static as any = 1; }", "Unexpected token @28+2"],
+      ["export static a;", "Unexpected token @14+1"],
+      ["export static;", "Unexpected token @7+6"],
+      ["export static readonly a;", "Unexpected token @23+1"],
+      ["export public static as;", "Unexpected token @21+2"],
+      ["export static\nas;", "Unexpected token @14+2"],
+      ["export declare as;", "Unexpected token @15+2"],
+      ["export abstract as;", "Unexpected token @16+2"],
+      ["export async as;", "Unexpected token @13+2"],
+      ["export let => 1;", "Unexpected token @11+2"],
+      ["namespace W { export let => 1; }", "Unexpected token @25+2"],
+      ["var => 1;", "Unexpected token @4+2"],
+      ["const => 1;", "Unexpected token @6+2"],
+      ["let a, => 1;", "Unexpected token @7+2"],
+      ["let g: keyof (a: any) => void;", 'Expected `)` but found `:` @15+1 "`)` expected"'],
+      ["let g: keyof (a, b) => void;", 'Expected `)` but found `,` @15+1 "`)` expected"'],
+      ["let g: keyof (a = 1) => void;", 'Expected `)` but found `=` @16+1 "`)` expected"'],
+      ["let g: keyof (a", 'Expected `)` but found `EOF` @16+0 "`)` expected"'],
+      ["let g: (a b);", 'Expected `)` but found `Identifier` @10+1 "`)` expected"'],
+      ["let g: 1 | (a: any) => void;", 'Expected `)` but found `:` @13+1 "`)` expected"'],
+      ["let g: 1 | () => void;", "Unexpected token @12+1"],
+      [
+        "let g: 1 | (a) => void;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @14+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let g: 1 | new () => void;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @14+0 help: Try inserting a semicolon here",
+      ],
+      ["type G = (a b);", 'Expected `)` but found `Identifier` @12+1 "`)` expected"'],
+      ["x as (a b);", 'Expected `)` but found `Identifier` @8+1 "`)` expected"'],
+      ["let g: [(a b)];", 'Expected `)` but found `Identifier` @11+1 "`)` expected"'],
+      [
+        "foo \\u12;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      ["foo\n\\u12;", "Invalid Unicode escape sequence @5+3"],
+      [
+        "a.b \\u12;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "f() \\u12;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "1 \\u12;",
+        "Invalid Unicode escape sequence @3+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @1+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a[0] \\u12;",
+        "Invalid Unicode escape sequence @6+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
+      ],
+      [
+        '"a" \\u12;',
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      ["typeof \\u12;", "Invalid Unicode escape sequence @8+3"],
+      ["return \\u12;", "Invalid Unicode escape sequence @8+3"],
+      [
+        "foo \\u12 bar;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "\\u12 bar;",
+        "Invalid Unicode escape sequence @1+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let \\u12 bar;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      ["let ! y;", "Unexpected token @4+1"],
+      ["let 1;", "Unexpected token @4+1"],
+      ['let "a";', "Unexpected token @4+3"],
+      ["let @d class A {}", "Unexpected token @4+1"],
+      ["let ) ;", "Unexpected token @4+1"],
+      ["let ? a : b;", "Unexpected token @4+1"],
+      ["let `a`;", "Unexpected token @4+3"],
+      ["let => 1;", "Unexpected token @4+2"],
+      ["let , a;", "Unexpected token @4+1"],
+      ["let #a;", "Unexpected token @4+2"],
+      ["let ...a;", "Unexpected token @4+3"],
+      ["let\n@d class A {}", "Unexpected token @4+1"],
+      ["let\n1;", "Unexpected token @4+1"],
+      [
+        "await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await as any;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await ~x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await ++x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await { a: 1 };",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await of;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      ["function w() { let !x; }", "Unexpected token @19+1"],
+      ["{ let !x; }", "Unexpected token @6+1"],
+      ["let !x;", "Unexpected token @4+1"],
+      ["function w() { let 1; }", "Unexpected token @19+1"],
+      ["function w() { let ~x; }", "Unexpected token @19+1"],
+      ["() => { let !x; };", "Unexpected token @12+1"],
+      ["class A { m() { let !x; } }", "Unexpected token @20+1"],
+      [
+        "static function () {};",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+        "'static' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, async",
+      ],
+      ["declare function () {};", "TS(1183) An implementation cannot be declared in ambient contexts. @20+0"],
+      [
+        "export function () {};",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "async function () {};",
+        "Expected function name @15+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "static function* () {};",
+        "Expected function name @17+1 help: Function name is required in function declaration or named export",
+        "'static' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, async",
+      ],
+      [
+        "public function () {};",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+        "'public' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, async",
+      ],
+      [
+        "function () {} let y: readonly number;",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @22+8",
+      ],
+      [
+        "function () {} let a = ;",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        "Unexpected token @23+1",
+      ],
+      [
+        "function* () {} let y: readonly number;",
+        "Expected function name @10+1 help: Function name is required in function declaration or named export",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @23+8",
+      ],
+      [
+        "let zz; let zz; function () {}",
+        "Expected function name @25+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "export function () {} let y: readonly number;",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @29+8",
+      ],
+      [
+        "function () {}",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "function (a b) {}",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        'Expected `,` or `)` but found `Identifier` @12+1 "`,` or `)` expected", 9+1 "Opened here"',
+      ],
+      ["function;", 'Expected `(` but found `;` @8+1 "`(` expected"'],
+      ["function {}", 'Expected `(` but found `{` @9+1 "`(` expected"'],
+      [
+        "static function () {} let y: readonly number;",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+        "'static' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, async",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @29+8",
+      ],
+      ["declare function* ();", "TS(1221) Generators are not allowed in an ambient context. @16+5"],
+      ["declare function;", 'Expected `(` but found `;` @16+1 "`(` expected"'],
+      [
+        "declare namespace N { function (); }",
+        "Expected function name @31+1 help: Function name is required in function declaration or named export",
+      ],
+      ["{ x = { await }; } import.meta;", "The keyword 'await' is reserved @8+5"],
+      ["({ await = 1 } = {}); import.meta;", "The keyword 'await' is reserved @3+5"],
+      ["{ ({ await = 1 } = {}); } import.meta;", "The keyword 'await' is reserved @5+5"],
+      ["class A { a = await !x; }", 'Expected `;` but found `Identifier` @21+1 "`;` expected"'],
+      [
+        "for await (const a of b) {} await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @35+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} a b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["class A { [b c] = 1; }", 'Expected `]` but found `Identifier` @13+1 "`]` expected"'],
+      ["x = { [b c]: 1 };", 'Expected `]` but found `Identifier` @9+1 "`]` expected"'],
+      [
+        "for await (const a of b) {}",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} await (x);",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} await;",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) { c d }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @28+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "new.target;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; new.target;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "export {}; new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x);",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; await (x); new.target;",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await x; new.target;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await x;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "{ new.target; }",
+        "Unexpected new.target expression @2+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "() => new.target;",
+        "Unexpected new.target expression @6+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "{ await (x); new.target; } import.meta;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x), new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "f(await (x), new.target); import.meta;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target, await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; a; await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await; new.target; import.meta;", "Unexpected token @5+1"],
+      ["x = await; new.target; import.meta;", "Unexpected token @9+1"],
+      [
+        "let await; new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await: a; new.target; import.meta;", "Unexpected token @5+1"],
+      [
+        "x = { await }; new.target; import.meta;",
+        "Unexpected new.target expression @15+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); class A { m(): void; } import.meta;",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @21+1",
+      ],
+      ["await (x); enum E { A = 'x', B } import.meta;", "Enum member must have initializer. @29+1"],
+      [
+        "let y: readonly number; await (x); import.meta;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+      ],
+      [
+        "type A = typeof await; new.target; import.meta;",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "let a: typeof await; new.target; import.meta;",
+        "Unexpected new.target expression @21+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "declare const a: typeof await; new.target; import.meta;",
+        "Unexpected new.target expression @31+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["namespace N { await (x); } new.target; import.meta;", "The keyword 'await' is reserved @14+5"],
+      ["enum E { A = await (x) } new.target; import.meta;", "The keyword 'await' is reserved @13+5"],
+      [
+        "await (x); declare function f() {} import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @34+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x); import a = require('a'); new.target;",
+        "Unexpected new.target expression @36+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); declare module 'a' {} new.target;",
+        "Unexpected new.target expression @33+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { a = new.target; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @28+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { static { new.target; } } new.target; let zz; let zz;",
+        "Unexpected new.target expression @35+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "let y: readonly number; new.target; let zz; let zz;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f(a?: number, b: number) {} new.target; let zz; let zz;",
+        "TS(1016) A required parameter cannot follow an optional parameter. @23+9",
+        "Unexpected new.target expression @37+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { m(): void; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "enum E { A = 'x', B } new.target; let zz; let zz;",
+        "Unexpected new.target expression @22+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "static function f() {} new.target; let zz; let zz;",
+        "'static' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, async",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "abstract class A { abstract m() {} } new.target; let zz; let zz;",
+        "TS(1245) Method 'm' cannot have an implementation because it is marked abstract. @28+1",
+        "Unexpected new.target expression @37+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "interface A implements B {} new.target; let zz; let zz;",
+        "TS(1176) Interface declaration cannot have 'implements' clause. @12+10",
+        "Unexpected new.target expression @28+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { constructor(public a?, b) {} } new.target; let zz; let zz;",
+        "TS(1016) A required parameter cannot follow an optional parameter. @33+1",
+        "Unexpected new.target expression @41+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "declare function f() {} new.target; let zz; let zz;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @23+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let a?: number; new.target; let zz; let zz;",
+        "Optional declaration is not allowed here @5+1 help: Remove the `?`",
+        "Unexpected new.target expression @16+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "let a!: number = 1; new.target; let zz; let zz;",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @5+1",
+        "Unexpected new.target expression @20+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { declare a = 1; } new.target; let zz; let zz;",
+        "TS(1039) Initializers are not allowed in ambient contexts. @22+1",
+        "Unexpected new.target expression @27+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A<in T> {} function f<in T>() {} new.target; let zz; let zz;",
+        "TS(1274) 'in' modifier can only appear on a type parameter of a class, interface or type alias. @28+2",
+        "Unexpected new.target expression @39+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f(this) {} x = (this) => 1; new.target; let zz; let zz;",
+        "TS(2730) An arrow function cannot have a `this` parameter. @25+4 help: Arrow function does not bind `this` and inherits `this` from the outer scope",
+        "Unexpected new.target expression @37+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "type A = { readonly m(): void }; new.target; let zz; let zz;",
+        "TS(1024) 'readonly' modifier can only appear on a property declaration or index signature. @11+8",
+        "Unexpected new.target expression @33+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = <T>a; let y: readonly number; new.target; let zz; let zz;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @17+8",
+        "Unexpected new.target expression @34+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "declare function f() {} a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @23+0 help: Try inserting a semicolon here",
+      ],
+      ["declare function f() {}", "TS(1183) An implementation cannot be declared in ambient contexts. @21+0"],
+      ["declare function f() {}\na;", "TS(1183) An implementation cannot be declared in ambient contexts. @21+0"],
+      ["declare function f() {};", "TS(1183) An implementation cannot be declared in ambient contexts. @21+0"],
+      [
+        "declare function f() {} declare function g() {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @23+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare namespace N { function f() {} a; }",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @35+0",
+        "TS(1036) Statements are not allowed in ambient contexts. @38+2",
+      ],
+      [
+        "declare namespace N { function f() {} }",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @35+0",
+      ],
+      [
+        "declare class A { m() {} n() {} }",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @22+0",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @29+0",
+      ],
+      [
+        "export declare function f() {} a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @30+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare function f(): void {} a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare async function f() {} a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare function* f() {} a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @24+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x); new.target; import a = require('a');",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; import type a = require('a');",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; declare global {}",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await!; new.target; import.meta;", "Unexpected token @6+1"],
+      [
+        "await as any; new.target; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await satisfies any; new.target; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @15+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let a = await as any; new.target; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @16+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare namespace N { a; } await (x); import.meta;",
+        "TS(1036) Statements are not allowed in ambient contexts. @22+2",
+      ],
+      [
+        "declare namespace N { await (x); } import.meta;",
+        "TS(1036) Statements are not allowed in ambient contexts. @22+10",
+      ],
+      [
+        "declare namespace N { await (x); a; } import.meta;",
+        "TS(1036) Statements are not allowed in ambient contexts. @22+10",
+      ],
+      [
+        "declare namespace N { a; await (x); } import.meta;",
+        "TS(1036) Statements are not allowed in ambient contexts. @22+2",
+      ],
+      ["await!; import.meta;", "Unexpected token @6+1"],
+      [
+        "await !x; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["await ![]; import.meta;", "Unexpected token @8+1"],
+      [
+        "await !!x; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await !{}; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["await !.a; import.meta;", "Unexpected token @7+1"],
+      ["await!.a; import.meta;", "Unexpected token @6+1"],
+      [
+        "f(await !x); import.meta;",
+        'Expected `,` or `)` but found `Identifier` @9+1 "`,` or `)` expected", 1+1 "Opened here"',
+      ],
+      ["f(await!); import.meta;", "Unexpected token @8+1"],
+      ["f(await!, a); import.meta;", "Unexpected token @8+1"],
+      [
+        "await ! as any; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @10+0 help: Try inserting a semicolon here",
+      ],
+      ["await /k/; import.meta;", "Unexpected token @9+1"],
+      ["await /k/.test(a); import.meta;", "Unexpected token @9+1"],
+      ["await /=k/; import.meta;", "Unexpected token @10+1"],
+      [
+        "await <T>(x) => 1; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @12+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await <T>x y; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @10+0 help: Try inserting a semicolon here",
+      ],
+      ["f(await /k/); import.meta;", "Unexpected token @11+1"],
+      ["await /k/;", "Unexpected token @9+1"],
+      [
+        "function <T>() {} let y: readonly number;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @25+8",
+      ],
+      ["declare function <T>;", 'Expected `(` but found `;` @20+1 "`(` expected"'],
+      ["declare function ()\n{}", "TS(1183) An implementation cannot be declared in ambient contexts. @20+0"],
+      ["d\\u0065clare function f();", "Keywords cannot contain escape characters @0+12"],
+      ["t\\u0079pe A = 1;", "Keywords cannot contain escape characters @0+9"],
+      ["int\\u0065rface A {}", "Keywords cannot contain escape characters @0+14"],
+      ["n\\u0061mespace A {}", "Keywords cannot contain escape characters @0+14"],
+      ["\\u0061bstract class A {}", "Keywords cannot contain escape characters @0+13"],
+      ["class A { r\\u0065adonly a; }", "Keywords cannot contain escape characters @10+13"],
+      ["class A { p\\u0075blic a; }", "Keywords cannot contain escape characters @10+11"],
+      ["let a = b \\u0061s c;", "Keywords cannot contain escape characters @10+7"],
+      ["let a: k\\u0065yof b;", "Keywords cannot contain escape characters @7+10"],
+      ["f(await); g(await); export {};", "Unexpected token @17+1"],
+      ["f(await); g(await); h(await); export {};", "Unexpected token @27+1"],
+      ["await (x); await; export {};", "Unexpected token @16+1"],
+      ["f(await); a; export {};", "Unexpected token @7+1"],
+      ["f(await); new.target; g(await); export {};", "Unexpected token @29+1"],
+      [
+        "new.target; f(await); g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; f(await); g(await); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Unexpected token @29+1",
+      ],
+      [
+        "new.target, f(await); g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target, f(await); new.target; g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["typeof await; function f() { await(x); } import.meta;", "The keyword 'await' is reserved @29+5"],
+      ["await / x, class await {}; import.meta;", "Unterminated regular expression @6+34", "Unexpected token @6+34"],
+      ["await / x; import.meta;", "Unterminated regular expression @6+18", "Unexpected token @6+18"],
+      ["await / x\nimport.meta;", "Unterminated regular expression @6+4", "Unexpected token @6+17"],
+      [
+        "await / x / y; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "f(await); let a; let a; g(await (x)); export {};",
+        'Identifier `a` has already been declared @14+1 "`a` has already been declared here", 21+1 "It can not be redeclared here"',
+      ],
+      [
+        "f(await); g(await (x)); let a; let a; export {};",
+        'Identifier `a` has already been declared @28+1 "`a` has already been declared here", 35+1 "It can not be redeclared here"',
+      ],
+    ],
+    "d.ts": [
+      ["const a: number = 1;", "TS(1039) Initializers are not allowed in ambient contexts. @18+1"],
+      ["let a = 1;", "TS(1039) Initializers are not allowed in ambient contexts. @8+1"],
+      ['export const a = 1, b: string = "x";', "TS(1039) Initializers are not allowed in ambient contexts. @32+3"],
+      ["a;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      [";", "TS(1036) Statements are not allowed in ambient contexts. @0+1"],
+      ["{}", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["if (1) {}", "TS(1036) Statements are not allowed in ambient contexts. @0+9"],
+      ["label: a;", "TS(1036) Statements are not allowed in ambient contexts. @0+9"],
+      ["debugger;", "TS(1036) Statements are not allowed in ambient contexts. @0+9"],
+      [
+        "declare namespace N { const a = 1; let b = 2; function f() {} ; class C { m() {} x = 1 } }",
+        "TS(1039) Initializers are not allowed in ambient contexts. @43+1",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @59+0",
+        "TS(1036) Statements are not allowed in ambient contexts. @62+1",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @78+0",
+        "TS(1039) Initializers are not allowed in ambient contexts. @85+1",
+      ],
+      ["namespace N { a; }", "TS(1036) Statements are not allowed in ambient contexts. @14+2"],
+      [
+        'class A { x = 1; readonly y = 1; readonly z: number = 1; static s = 1; static readonly t = "a"; declare u = 1 }',
+        "TS(1039) Initializers are not allowed in ambient contexts. @14+1",
+        "TS(1039) Initializers are not allowed in ambient contexts. @54+1",
+        "TS(1039) Initializers are not allowed in ambient contexts. @68+1",
+        "TS(1039) Initializers are not allowed in ambient contexts. @108+1",
+      ],
+      ["using a: any;", "TS(1545) 'using' declarations are not allowed in ambient contexts. @6+1"],
+      ["for (;;) {}", "TS(1036) Statements are not allowed in ambient contexts. @0+11"],
+      ['"use strict"; a;', "TS(1036) Statements are not allowed in ambient contexts. @14+2"],
+      ["let a!: number;", "TS(1255) A definite assignment assertion '!' is not permitted in this context. @5+1"],
+      [
+        "class A { set a(v = 1); set b(v): void; set c(v?) }",
+        "A 'set' accessor cannot have an initializer. @15+7",
+        "TS(1095) A 'set' accessor cannot have a return type annotation. @32+6",
+        "TS(1051) A 'set' accessor cannot have an optional parameter. @46+2",
+      ],
+      ['declare module "m" { namespace N { a; } }', "TS(1036) Statements are not allowed in ambient contexts. @35+2"],
+      ["interface A {};", "TS(1036) Statements are not allowed in ambient contexts. @14+1"],
+      ["declare function f(): void;;", "TS(1036) Statements are not allowed in ambient contexts. @27+1"],
+      [
+        "namespace N { module 'a' {} }",
+        "TS(2435) Ambient modules cannot be nested in other modules or namespaces. @14+13",
+      ],
+      [
+        "function f<>() {}",
+        "TS(1098) Type parameter list cannot be empty. @10+2",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @15+0",
+      ],
+      [
+        "export function f<>() {}",
+        "TS(1098) Type parameter list cannot be empty. @17+2",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @22+0",
+      ],
+      ["declare function f<>(): void;", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      [
+        "(function <>() {});",
+        "TS(1098) Type parameter list cannot be empty. @10+2",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+19",
+      ],
+      [
+        "(function f<>() {});",
+        "TS(1098) Type parameter list cannot be empty. @11+2",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+20",
+      ],
+      [
+        "class A { m<>() {} }",
+        "TS(1098) Type parameter list cannot be empty. @11+2",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @16+0",
+      ],
+      [
+        "class A { static m<>() {} }",
+        "TS(1098) Type parameter list cannot be empty. @18+2",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @23+0",
+      ],
+      [
+        "class A { m<>(): void; m() {} }",
+        "TS(1098) Type parameter list cannot be empty. @11+2",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @27+0",
+      ],
+      ["abstract class A { abstract m<>(): void }", "TS(1098) Type parameter list cannot be empty. @29+2"],
+      ["const o = { m<>() {} };", "TS(1098) Type parameter list cannot be empty. @13+2"],
+      ["class A<> {}", "TS(1098) Type parameter list cannot be empty. @7+2"],
+      [
+        "(class <> {});",
+        "TS(1098) Type parameter list cannot be empty. @7+2",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+14",
+      ],
+      [
+        "(class A<> {});",
+        "TS(1098) Type parameter list cannot be empty. @8+2",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+15",
+      ],
+      ["interface I<> {}", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["type T<> = 1;", "TS(1098) Type parameter list cannot be empty. @6+2"],
+      ["interface I { <>(): void }", "TS(1098) Type parameter list cannot be empty. @14+2"],
+      ["interface I { new <>(): void }", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["interface I { m<>(): void }", "TS(1098) Type parameter list cannot be empty. @15+2"],
+      ["type F = <>() => void;", "TS(1098) Type parameter list cannot be empty. @9+2"],
+      ["type F = new <>() => void;", "TS(1098) Type parameter list cannot be empty. @13+2"],
+      [
+        "f<>();",
+        "TS(1099) Type argument list cannot be empty. @1+2",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+6",
+      ],
+      [
+        "new A<>();",
+        "TS(1099) Type argument list cannot be empty. @5+2",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+10",
+      ],
+      [
+        "new A<>;",
+        "TS(1099) Type argument list cannot be empty. @5+2",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+8",
+      ],
+      [
+        "f<>``;",
+        "TS(1099) Type argument list cannot be empty. @1+2",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+6",
+      ],
+      [
+        "let x = f<>;",
+        "TS(1099) Type argument list cannot be empty. @9+2",
+        "TS(1039) Initializers are not allowed in ambient contexts. @8+3",
+      ],
+      ["let x: A<>;", "TS(1099) Type argument list cannot be empty. @8+2"],
+      ["let x: typeof f<>;", "TS(1099) Type argument list cannot be empty. @15+2"],
+      ['let x: import("a").B<>;', "TS(1099) Type argument list cannot be empty. @20+2"],
+      ["class A extends B<> {}", "TS(1099) Type argument list cannot be empty. @17+2"],
+      ["class A implements B<> {}", "TS(1099) Type argument list cannot be empty. @20+2"],
+      ["interface I extends B<> {}", "TS(1099) Type argument list cannot be empty. @21+2"],
+      [
+        "function f< >() {}",
+        "TS(1098) Type parameter list cannot be empty. @10+3",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @16+0",
+      ],
+      [
+        "function f</**/>() {}",
+        "TS(1098) Type parameter list cannot be empty. @10+6",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @19+0",
+      ],
+      ["let x: A< >;", "TS(1099) Type argument list cannot be empty. @8+3"],
+      [
+        "for (var a = 1 in {}) {}",
+        "TS(1039) Initializers are not allowed in ambient contexts. @13+1",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+24",
+      ],
+      ["export = await;", "Unexpected token @14+1"],
+      [
+        "declare module 'a' { export = a; export const b: number; }",
+        "TS(2309) An export assignment cannot be used in a module with other exported elements @21+11 help: If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+      ],
+      [
+        "'use strict'; await as any = 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @22+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @1+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a; b c;",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+2",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "{} b c;",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+2",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a\nb c;",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+1",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "if (a) b; c d;",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+9",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a; b; c d;",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+2",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["a; b;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["a; b; c;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["a; {} if (x) y;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["a; declare let z: 1; b;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      [
+        "namespace N { a; b; } c; d;",
+        "TS(1036) Statements are not allowed in ambient contexts. @14+2",
+        "TS(1036) Statements are not allowed in ambient contexts. @22+2",
+      ],
+      [
+        "a; b; c; d e;",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+2",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @10+0 help: Try inserting a semicolon here",
+      ],
+      ["(await as any) = 1;", 'Expected `,` or `)` but found `any` @10+3 "`,` or `)` expected", 0+1 "Opened here"'],
+      [
+        "(yield as any)++;",
+        "A 'yield' expression is only allowed in a generator body. @1+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `any` @10+3 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      ["f(a b);", 'Expected `,` or `)` but found `Identifier` @4+1 "`,` or `)` expected", 1+1 "Opened here"'],
+      ["[a b];", 'Expected `,` or `]` but found `Identifier` @3+1 "`,` or `]` expected", 0+1 "Opened here"'],
+      ["a ? b;", 'Expected `:` but found `;` @5+1 "`:` expected", 2+1 "Conditional starts here"'],
+      [
+        "await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function ();",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "export function ();",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "declare const a: 1; let y: readonly number; export {};",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @27+8",
+      ],
+      ["await (x);", "TS(1036) Statements are not allowed in ambient contexts. @0+10"],
+      ["a; import.meta;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["a; export {};", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["a; await (x); import.meta;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["await x;", "TS(1036) Statements are not allowed in ambient contexts. @0+8"],
+      ["await x; a;", "TS(1036) Statements are not allowed in ambient contexts. @0+8"],
+      [
+        "let y: readonly number; await (x); export {};",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+      ],
+      [
+        "declare const a: typeof await; let y: readonly number; export {};",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @38+8",
+      ],
+      ["function f() { new.target; }", "TS(1183) An implementation cannot be declared in ambient contexts. @13+0"],
+    ],
+    "tsx": [
+      ["function f<>() {}", "TS(1098) Type parameter list cannot be empty. @10+2"],
+      ["export function f<>() {}", "TS(1098) Type parameter list cannot be empty. @17+2"],
+      ["declare function f<>(): void;", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["(function <>() {});", "TS(1098) Type parameter list cannot be empty. @10+2"],
+      ["(function f<>() {});", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["class A { m<>() {} }", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["class A { static m<>() {} }", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["class A { m<>(): void; m() {} }", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["abstract class A { abstract m<>(): void }", "TS(1098) Type parameter list cannot be empty. @29+2"],
+      ["const o = { m<>() {} };", "TS(1098) Type parameter list cannot be empty. @13+2"],
+      ["class A<> {}", "TS(1098) Type parameter list cannot be empty. @7+2"],
+      ["(class <> {});", "TS(1098) Type parameter list cannot be empty. @7+2"],
+      ["(class A<> {});", "TS(1098) Type parameter list cannot be empty. @8+2"],
+      ["interface I<> {}", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["type T<> = 1;", "TS(1098) Type parameter list cannot be empty. @6+2"],
+      ["interface I { <>(): void }", "TS(1098) Type parameter list cannot be empty. @14+2"],
+      ["interface I { new <>(): void }", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["interface I { m<>(): void }", "TS(1098) Type parameter list cannot be empty. @15+2"],
+      ["type F = <>() => void;", "TS(1098) Type parameter list cannot be empty. @9+2"],
+      ["type F = new <>() => void;", "TS(1098) Type parameter list cannot be empty. @13+2"],
+      ["f<>();", "TS(1099) Type argument list cannot be empty. @1+2"],
+      ["new A<>();", "TS(1099) Type argument list cannot be empty. @5+2"],
+      ["new A<>;", "TS(1099) Type argument list cannot be empty. @5+2"],
+      ["f<>``;", "TS(1099) Type argument list cannot be empty. @1+2"],
+      ["let x = f<>;", "TS(1099) Type argument list cannot be empty. @9+2"],
+      ["let x: A<>;", "TS(1099) Type argument list cannot be empty. @8+2"],
+      ["let x: typeof f<>;", "TS(1099) Type argument list cannot be empty. @15+2"],
+      ['let x: import("a").B<>;', "TS(1099) Type argument list cannot be empty. @20+2"],
+      ["class A extends B<> {}", "TS(1099) Type argument list cannot be empty. @17+2"],
+      ["class A implements B<> {}", "TS(1099) Type argument list cannot be empty. @20+2"],
+      ["interface I extends B<> {}", "TS(1099) Type argument list cannot be empty. @21+2"],
+      ["function f< >() {}", "TS(1098) Type parameter list cannot be empty. @10+3"],
+      ["function f</**/>() {}", "TS(1098) Type parameter list cannot be empty. @10+6"],
+      ["let x: A< >;", "TS(1099) Type argument list cannot be empty. @8+3"],
+      ["<T>a;", "Unexpected token @3+3"],
+      ["<T>(a) => a;", "Unexpected token. Did you mean `{'>'}` or `&gt;`? @8+0"],
+      ["<T>a}b;", "Unexpected token. Did you mean `{'}'}` or `&rbrace;`? @4+0"],
+      ["<a.b-c />;", "Identifiers in JSX cannot contain hyphens @3+3 help: Remove the hyphen from the identifier"],
+      [
+        "<a.b-c />; let y: readonly number;",
+        "Identifiers in JSX cannot contain hyphens @3+3 help: Remove the hyphen from the identifier",
+      ],
+      [
+        "let zz; let zz; <a.b-c />;",
+        "Identifiers in JSX cannot contain hyphens @19+3 help: Remove the hyphen from the identifier",
+      ],
+      ["<a-b.c-d />;", "Identifiers in JSX cannot contain hyphens @5+3 help: Remove the hyphen from the identifier"],
+      [
+        "<a.b-c></a.b-c>;",
+        "Identifiers in JSX cannot contain hyphens @3+3 help: Remove the hyphen from the identifier",
+      ],
+      ["<a.b-c.d-e />;", "Identifiers in JSX cannot contain hyphens @3+3 help: Remove the hyphen from the identifier"],
+      ["<a.b- />;", "Identifiers in JSX cannot contain hyphens @3+2 help: Remove the hyphen from the identifier"],
+      ["<a:b.c />;", "Unexpected token @4+1"],
+      ["<a-b:c.d />;", "Unexpected token @6+1"],
+      ["<a b={} />;", "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @5+2"],
+      [
+        "<a b={} />; let y: readonly number;",
+        "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @5+2",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @19+8",
+      ],
+      ["<a b={/* c */} />;", "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @5+9"],
+      [
+        "<a b={} c={} />;",
+        "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @5+2",
+        "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @10+2",
+      ],
+      ["let zz; let zz; <a b={} />;", "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @21+2"],
+      ["< />;", "Unexpected token @2+1"],
+      ["await <a />; import.meta;", "Unexpected token @10+1"],
+      [
+        "await <T,>(x) => 1; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @13+0 help: Try inserting a semicolon here",
+      ],
+    ],
+    "mts": [
+      ["function f<>() {}", "TS(1098) Type parameter list cannot be empty. @10+2"],
+      ["export function f<>() {}", "TS(1098) Type parameter list cannot be empty. @17+2"],
+      ["declare function f<>(): void;", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["(function <>() {});", "TS(1098) Type parameter list cannot be empty. @10+2"],
+      ["(function f<>() {});", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["class A { m<>() {} }", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["class A { static m<>() {} }", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["class A { m<>(): void; m() {} }", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["abstract class A { abstract m<>(): void }", "TS(1098) Type parameter list cannot be empty. @29+2"],
+      ["const o = { m<>() {} };", "TS(1098) Type parameter list cannot be empty. @13+2"],
+      ["class A<> {}", "TS(1098) Type parameter list cannot be empty. @7+2"],
+      ["(class <> {});", "TS(1098) Type parameter list cannot be empty. @7+2"],
+      ["(class A<> {});", "TS(1098) Type parameter list cannot be empty. @8+2"],
+      ["interface I<> {}", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["type T<> = 1;", "TS(1098) Type parameter list cannot be empty. @6+2"],
+      ["interface I { <>(): void }", "TS(1098) Type parameter list cannot be empty. @14+2"],
+      ["interface I { new <>(): void }", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["interface I { m<>(): void }", "TS(1098) Type parameter list cannot be empty. @15+2"],
+      ["type F = <>() => void;", "TS(1098) Type parameter list cannot be empty. @9+2"],
+      ["type F = new <>() => void;", "TS(1098) Type parameter list cannot be empty. @13+2"],
+      ["f<>();", "TS(1099) Type argument list cannot be empty. @1+2"],
+      ["new A<>();", "TS(1099) Type argument list cannot be empty. @5+2"],
+      ["new A<>;", "TS(1099) Type argument list cannot be empty. @5+2"],
+      ["f<>``;", "TS(1099) Type argument list cannot be empty. @1+2"],
+      ["let x = f<>;", "TS(1099) Type argument list cannot be empty. @9+2"],
+      ["let x: A<>;", "TS(1099) Type argument list cannot be empty. @8+2"],
+      ["let x: typeof f<>;", "TS(1099) Type argument list cannot be empty. @15+2"],
+      ['let x: import("a").B<>;', "TS(1099) Type argument list cannot be empty. @20+2"],
+      ["class A extends B<> {}", "TS(1099) Type argument list cannot be empty. @17+2"],
+      ["class A implements B<> {}", "TS(1099) Type argument list cannot be empty. @20+2"],
+      ["interface I extends B<> {}", "TS(1099) Type argument list cannot be empty. @21+2"],
+      ["function f< >() {}", "TS(1098) Type parameter list cannot be empty. @10+3"],
+      ["function f</**/>() {}", "TS(1098) Type parameter list cannot be empty. @10+6"],
+      ["let x: A< >;", "TS(1099) Type argument list cannot be empty. @8+3"],
+      [
+        "<T>x;",
+        "TS(7059) This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead. @0+4",
+      ],
+      [
+        "<T>() => 1;",
+        "TS(7060) This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma or explicit constraint. @1+1",
+      ],
+      [
+        "<const T>() => 1;",
+        "TS(7060) This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma or explicit constraint. @7+1",
+      ],
+      [
+        "<T>(a: T) => a;",
+        "TS(7060) This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma or explicit constraint. @1+1",
+      ],
+      [
+        "async <T>() => 1;",
+        "TS(7060) This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma or explicit constraint. @7+1",
+      ],
+      [
+        'let x = <const>["a"];',
+        "TS(7059) This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead. @8+12",
+      ],
+      ["for (var a = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @5+9"],
+      ["export = await;", "Unexpected token @14+1"],
+      ["static as any = 1;", "The keyword 'static' is reserved @0+6"],
+      ["namespace await {}", "The keyword 'await' is reserved @10+5"],
+      ["let x: A<await>;", "The keyword 'await' is reserved @9+5"],
+      ["class A implements await {}", "The keyword 'await' is reserved @19+5"],
+      [
+        "await (x); new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+    ],
+    "cts": [
+      ["function f<>() {}", "TS(1098) Type parameter list cannot be empty. @10+2"],
+      ["export function f<>() {}", "TS(1098) Type parameter list cannot be empty. @17+2"],
+      ["declare function f<>(): void;", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["(function <>() {});", "TS(1098) Type parameter list cannot be empty. @10+2"],
+      ["(function f<>() {});", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["class A { m<>() {} }", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["class A { static m<>() {} }", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["class A { m<>(): void; m() {} }", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["abstract class A { abstract m<>(): void }", "TS(1098) Type parameter list cannot be empty. @29+2"],
+      ["const o = { m<>() {} };", "TS(1098) Type parameter list cannot be empty. @13+2"],
+      ["class A<> {}", "TS(1098) Type parameter list cannot be empty. @7+2"],
+      ["(class <> {});", "TS(1098) Type parameter list cannot be empty. @7+2"],
+      ["(class A<> {});", "TS(1098) Type parameter list cannot be empty. @8+2"],
+      ["interface I<> {}", "TS(1098) Type parameter list cannot be empty. @11+2"],
+      ["type T<> = 1;", "TS(1098) Type parameter list cannot be empty. @6+2"],
+      ["interface I { <>(): void }", "TS(1098) Type parameter list cannot be empty. @14+2"],
+      ["interface I { new <>(): void }", "TS(1098) Type parameter list cannot be empty. @18+2"],
+      ["interface I { m<>(): void }", "TS(1098) Type parameter list cannot be empty. @15+2"],
+      ["type F = <>() => void;", "TS(1098) Type parameter list cannot be empty. @9+2"],
+      ["type F = new <>() => void;", "TS(1098) Type parameter list cannot be empty. @13+2"],
+      ["f<>();", "TS(1099) Type argument list cannot be empty. @1+2"],
+      ["new A<>();", "TS(1099) Type argument list cannot be empty. @5+2"],
+      ["new A<>;", "TS(1099) Type argument list cannot be empty. @5+2"],
+      ["f<>``;", "TS(1099) Type argument list cannot be empty. @1+2"],
+      ["let x = f<>;", "TS(1099) Type argument list cannot be empty. @9+2"],
+      ["let x: A<>;", "TS(1099) Type argument list cannot be empty. @8+2"],
+      ["let x: typeof f<>;", "TS(1099) Type argument list cannot be empty. @15+2"],
+      ['let x: import("a").B<>;', "TS(1099) Type argument list cannot be empty. @20+2"],
+      ["class A extends B<> {}", "TS(1099) Type argument list cannot be empty. @17+2"],
+      ["class A implements B<> {}", "TS(1099) Type argument list cannot be empty. @20+2"],
+      ["interface I extends B<> {}", "TS(1099) Type argument list cannot be empty. @21+2"],
+      ["function f< >() {}", "TS(1098) Type parameter list cannot be empty. @10+3"],
+      ["function f</**/>() {}", "TS(1098) Type parameter list cannot be empty. @10+6"],
+      ["let x: A< >;", "TS(1099) Type argument list cannot be empty. @8+3"],
+      [
+        "<T>x;",
+        "TS(7059) This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead. @0+4",
+      ],
+      [
+        "<T>() => 1;",
+        "TS(7060) This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma or explicit constraint. @1+1",
+      ],
+      ["await /k/;", "Unexpected token @9+1"],
+      [
+        "await !k;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await k;",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await (k); await k;",
+        "`await` is only allowed within async functions and at the top levels of modules @11+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        'import a from "a"; await k;',
+        "`await` is only allowed within async functions and at the top levels of modules @19+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        'import a = require("a"); await k;',
+        "`await` is only allowed within async functions and at the top levels of modules @25+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "export = a; await k;",
+        "`await` is only allowed within async functions and at the top levels of modules @12+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ['import a from "a"; let b = ;', "Unexpected token @27+1"],
+      [
+        "namespace N { await k; }",
+        "`await` is only allowed within async functions and at the top levels of modules @14+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await (x); new.target; import.meta;",
+        "Unexpected import.meta expression @23+11 help: import.meta is only allowed in module code",
+      ],
+    ],
+    "js": [
+      [
+        "let [...a,] = b;",
+        "A rest parameter or binding pattern may not have a trailing comma. @9+1 help: Remove the trailing comma here",
+      ],
+      [
+        "[...a,] = b;",
+        "A rest parameter or binding pattern may not have a trailing comma. @5+1 help: Remove the trailing comma here",
+      ],
+      [
+        "switch (a) { default: default: }",
+        "TS(1113) A 'default' clause cannot appear more than once in a 'switch' statement. @13+8 \"First 'default' clause is here.\", 22+8 \"Another 'default' clause cannot appear here.\"",
+      ],
+      [
+        "import.foo;",
+        "The only valid property accesses on import are `import.meta`, `import.source()`, and `import.defer()` @0+10",
+      ],
+      [
+        "a ?? b || c;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a || b ?? c;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a && b ?? c;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a ?? b && c;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a ?? b || c ?? d;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a || b ?? c || d;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+16 help: Wrap either expression by parentheses",
+      ],
+      [
+        "x = a ?? b || c;",
+        "Logical expressions and coalesce expressions cannot be mixed @4+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a ?? (b) || c;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+13 help: Wrap either expression by parentheses",
+      ],
+      ["a?.`x`;", "Tagged template expressions are not permitted in an optional chain @3+3"],
+      ["a?.b`x`;", "Tagged template expressions are not permitted in an optional chain @4+3"],
+      ["a?.b.c`x`;", "Tagged template expressions are not permitted in an optional chain @6+3"],
+      ["a?.()`x`;", "Tagged template expressions are not permitted in an optional chain @5+3"],
+      ["a?.[b]`x`;", "Tagged template expressions are not permitted in an optional chain @6+3"],
+      ["for (let a = 1 of []) {}", "for-of loop variable declaration may not have an initializer @5+9"],
+      ["for (var a = 1 of []) {}", "for-of loop variable declaration may not have an initializer @5+9"],
+      ["for (const a = 1 of []) {}", "for-of loop variable declaration may not have an initializer @5+11"],
+      ["for (let a = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @5+9"],
+      ["for (const a = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @5+11"],
+      ["for (var [a] = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @5+11"],
+      ["for (var {a} = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @5+11"],
+      ["'use strict'; for (var a = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @19+9"],
+      ["export {}; for (var a = 1 in {}) {}", "for-in loop variable declaration may not have an initializer @16+9"],
+      ["for (let a, b of []) {}", "Only a single declaration is allowed in a `for...of` statement @5+8"],
+      ["for (using a = 1 of []) {}", "for-of loop variable declaration may not have an initializer @5+11"],
+      ["a\n=> 1;", "Line terminator not permitted before arrow @2+2 help: Remove the line break before here"],
+      ["(a, b)\n=> 1;", "Line terminator not permitted before arrow @7+2 help: Remove the line break before here"],
+      ["()\n=> 1;", "Line terminator not permitted before arrow @3+2 help: Remove the line break before here"],
+      ["async a\n=> 1;", "Line terminator not permitted before arrow @8+2 help: Remove the line break before here"],
+      ["async (a)\n=> 1;", "Line terminator not permitted before arrow @10+2 help: Remove the line break before here"],
+      ["(a) /*\n*/ => 1;", "Line terminator not permitted before arrow @10+2 help: Remove the line break before here"],
+      ["throw\n1;", 'Illegal newline after throw @0+5 "throw starts here", 6+1 "A newline is not expected here"'],
+      [
+        "throw /*\n*/ 1;",
+        'Illegal newline after throw @0+5 "throw starts here", 12+1 "A newline is not expected here"',
+      ],
+      ["throw // c\n1;", 'Illegal newline after throw @0+5 "throw starts here", 11+1 "A newline is not expected here"'],
+      ["import();", "import() requires a specifier. @0+8"],
+      ["import(...a);", "TS(1325) Argument of dynamic import cannot be a spread element. @7+3"],
+      ['import("a", ...b);', "TS(1325) Argument of dynamic import cannot be a spread element. @12+3"],
+      [
+        'import("a", "b", "c");',
+        "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments @0+16",
+      ],
+      ['new import("a");', "Cannot use new with dynamic import @4+11 help: Wrap this with parenthesis"],
+      ['new import("a")();', "Cannot use new with dynamic import @4+13 help: Wrap this with parenthesis"],
+      ["import.defer();", "import() requires a specifier. @0+14"],
+      [
+        'import.defer("a", "b", "c");',
+        "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments @0+22",
+      ],
+      [
+        "class A { static { return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @19+6",
+      ],
+      [
+        "class A { static { return 1; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @19+6",
+      ],
+      [
+        "class A { static { if (a) return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @26+6",
+      ],
+      ["`\\01`;", "Bad escape sequence in untagged template literal @1+3"],
+      ["`\\1`;", "Bad escape sequence in untagged template literal @1+2"],
+      ["`\\08`;", "Bad escape sequence in untagged template literal @1+3"],
+      ["`\\u`;", "Bad escape sequence in untagged template literal @1+2"],
+      ["`\\u{110000}`;", "Bad escape sequence in untagged template literal @1+10"],
+      ["`\\xg`;", "Bad escape sequence in untagged template literal @1+3"],
+      ["`\\u{}`;", "Bad escape sequence in untagged template literal @1+4"],
+      ["`${a}\\01`;", "Bad escape sequence in untagged template literal @5+3"],
+      ["`\\01${a}`;", "Bad escape sequence in untagged template literal @1+3"],
+      [
+        "for (async of []) {}",
+        "The left-hand side of a `for...of` statement may not be `async` @5+5 help: Did you mean to use a for await...of statement?",
+      ],
+      [
+        "for await (async of []) {}",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["for (let of []) {}", 'Expected `;` but found `[` @12+1 "`;` expected"'],
+      ["for (let.a of []) {}", "The left-hand side of a `for...of` statement may not start with `let` @5+5"],
+      ['x = import<T>("a");', "Unexpected token @10+1"],
+      ["for (let.a.b of []) {}", "The left-hand side of a `for...of` statement may not start with `let` @5+7"],
+      ["for (let().a of []) {}", "The left-hand side of a `for...of` statement may not start with `let` @5+7"],
+      [
+        "let zz; let zz; for (let.a of []) {}",
+        "The left-hand side of a `for...of` statement may not start with `let` @21+5",
+      ],
+      [
+        "class A { static { with (a) return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @28+6",
+      ],
+      [
+        "class A { static { return; return; } }",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @19+6",
+        "TS(18041) A 'return' statement cannot be used inside a class static block. @27+6",
+      ],
+      [
+        "function f() { throw\n}",
+        'Illegal newline after throw @15+5 "throw starts here", 21+1 "A newline is not expected here"',
+        "Unexpected token @21+1",
+      ],
+      ['import("a",,);', "Unexpected token @11+1"],
+      [
+        "let [a];",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "let {a};",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "const [a];",
+        "Missing initializer in destructuring declaration @6+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "var [a];",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "let [a], b;",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "let a, [b];",
+        "Missing initializer in destructuring declaration @7+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "for (let [a];;) {}",
+        "Missing initializer in destructuring declaration @9+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "export let [a];",
+        "Missing initializer in destructuring declaration @11+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "export @d default class {}",
+        "'default' modifier cannot be used here. @10+7 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "export @d default class A {}",
+        "'default' modifier cannot be used here. @10+7 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "@d export @e class A {}",
+        "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'. @10+2",
+      ],
+      ["import(...a, b);", "TS(1325) Argument of dynamic import cannot be a spread element. @7+3"],
+      ["import.defer(...a);", "TS(1325) Argument of dynamic import cannot be a spread element. @13+3"],
+      [
+        "let a: number = 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let a: number;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "const a: number = 1;",
+        "Missing initializer in const declaration @6+1 help: Add an initializer (e.g. ` = undefined`) here",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "var a: string, b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let [a]: number[] = [];",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let {a}: T = b;",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let a!: number;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      ["function f(a: number) {}", 'Expected `,` or `)` but found `:` @12+1 "`,` or `)` expected", 10+1 "Opened here"'],
+      [
+        "function f(a?: number) {}",
+        'Expected `,` or `)` but found `?` @12+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      ["function f(a?) {}", 'Expected `,` or `)` but found `?` @12+1 "`,` or `)` expected", 10+1 "Opened here"'],
+      ["function f(a, b?) {}", 'Expected `,` or `)` but found `?` @15+1 "`,` or `)` expected", 10+1 "Opened here"'],
+      ["function f(): void {}", "Expected function body @0+12 help: Add a function body (`{}`)."],
+      ["function f<T>() {}", 'Expected `(` but found `<` @10+1 "`(` expected"'],
+      ["function f<T>(a: T): T { return a; }", 'Expected `(` but found `<` @10+1 "`(` expected"'],
+      ["function f(this: T) {}", "Identifier expected. 'this' is a reserved word that cannot be used here. @11+4"],
+      ["function f(this) {}", "Identifier expected. 'this' is a reserved word that cannot be used here. @11+4"],
+      [
+        "function f(...a: number[]) {}",
+        'Expected `,` or `)` but found `:` @15+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "function f(a: number = 1) {}",
+        'Expected `,` or `)` but found `:` @12+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      ["function f({a}: T) {}", 'Expected `,` or `)` but found `:` @14+1 "`,` or `)` expected", 10+1 "Opened here"'],
+      ["function f();", "Expected function body @0+12 help: Add a function body (`{}`)."],
+      ["function f(); function f() {}", "Expected function body @0+12 help: Add a function body (`{}`)."],
+      [
+        "function f(private a) {}",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @11+7 help: No modifiers are allowed here.",
+      ],
+      [
+        "function f(readonly a) {}",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @11+8 help: No modifiers are allowed here.",
+      ],
+      ["(a: number) => a;", 'Expected `,` or `)` but found `:` @2+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      ["(a?: number) => a;", 'Expected `,` or `)` but found `?` @2+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      ["(a?) => a;", 'Expected `,` or `)` but found `?` @2+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      [
+        "(a): number => a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      ["<T,>(a) => a;", 'Expected `(` but found `<` @0+1 "`(` expected"'],
+      [
+        "async <T>(a) => a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @12+0 help: Try inserting a semicolon here",
+      ],
+      ["async (a: number) => a;", 'Expected `,` or `)` but found `:` @8+1 "`,` or `)` expected", 6+1 "Opened here"'],
+      [
+        "async (a): number => a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let f = function (a: number) {};",
+        'Expected `,` or `)` but found `:` @19+1 "`,` or `)` expected", 17+1 "Opened here"',
+      ],
+      ["let f = function <T>() {};", 'Expected `(` but found `<` @17+1 "`(` expected"'],
+      ["let f = function (): void {};", 'Expected `{` but found `:` @19+1 "`{` expected"'],
+      [
+        "interface A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "interface A { a: number }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "interface A extends B {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "interface A<T> {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      ["export interface A {}", "Unexpected token @7+9"],
+      [
+        "interface\nA {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "type A = number;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "type A<T> = T;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
+      ],
+      ["export type A = number;", "Unexpected token @7+4"],
+      ["enum A {}", "Unexpected token @0+4"],
+      ["enum A { a, b }", "Unexpected token @0+4"],
+      ["const enum A {}", "Identifier expected. 'enum' is a reserved word that cannot be used here. @6+4"],
+      ["export enum A {}", "Unexpected token @7+4"],
+      ["export const enum A {}", "Identifier expected. 'enum' is a reserved word that cannot be used here. @13+4"],
+      [
+        "declare enum A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["enum;", "Unexpected token @0+4"],
+      ["a as b;", "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+6"],
+      ["a as const;", "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+10"],
+      [
+        "a as any as b;",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+8",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+13",
+      ],
+      ["(a as b);", "TS(8016) Type assertion expressions can only be used in TypeScript files. @1+6"],
+      ["let x = a as b;", "TS(8016) Type assertion expressions can only be used in TypeScript files. @8+6"],
+      ["f(a as b);", "TS(8016) Type assertion expressions can only be used in TypeScript files. @2+6"],
+      ["[a as b];", "TS(8016) Type assertion expressions can only be used in TypeScript files. @1+6"],
+      ["a satisfies b;", "TS(8037) Type satisfaction expressions can only be used in TypeScript files. @0+13"],
+      ["let x = a satisfies b;", "TS(8037) Type satisfaction expressions can only be used in TypeScript files. @8+13"],
+      ["f(a satisfies b);", "TS(8037) Type satisfaction expressions can only be used in TypeScript files. @2+13"],
+      [
+        "a!;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @1+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a!.b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @1+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a!();",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @1+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a![0];",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @1+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let x = a!;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      ["f<T>();", "Empty parenthesized expression @4+2"],
+      ["new F<T>();", "Empty parenthesized expression @8+2"],
+      ["new F<T>;", "Unexpected token @8+1"],
+      ["f<T>;", "Unexpected token @4+1"],
+      ["a.b<T>();", "Empty parenthesized expression @6+2"],
+      ["a?.b<T>();", "Empty parenthesized expression @7+2"],
+      ["a?.<T>();", "Identifier expected after '?.' @1+2 help: Add an identifier after '?.'"],
+      [
+        "declare let a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare const a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare var a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare function f();",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare function f(): void;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare class A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        'declare module "a" {}',
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        'declare module "a";',
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare module A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare namespace A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare global {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare interface A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare type A = 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["export declare let a;", "Unexpected token @7+7"],
+      ["export declare const a;", "Unexpected token @7+7"],
+      ["export declare function f();", "Unexpected token @7+7"],
+      ["export declare class A {}", "Unexpected token @7+7"],
+      [
+        "abstract class A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      ["export abstract class A {}", "Unexpected token @7+8"],
+      [
+        "class A { abstract m(); }",
+        "TS(8009) The 'abstract' modifier can only be used in TypeScript files. @10+8",
+        "Expected function body @20+2 help: Add a function body (`{}`).",
+      ],
+      ["class A { abstract a; }", "TS(8009) The 'abstract' modifier can only be used in TypeScript files. @10+8"],
+      [
+        "class A { abstract m() {} }",
+        "TS(8009) The 'abstract' modifier can only be used in TypeScript files. @10+8",
+        "TS(1245) Method 'm' cannot have an implementation because it is marked abstract. @19+1",
+      ],
+      [
+        "namespace A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "namespace A.B {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "module A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      [
+        'module "a" {}',
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      ["export namespace A {}", "Unexpected token @7+9"],
+      [
+        "namespace\nA {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "global {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      ["class A<T> {}", 'Expected `{` but found `<` @7+1 "`{` expected"'],
+      ["class A extends B<T> {}", "TS(8011) Type arguments can only be used in TypeScript files. @17+3"],
+      ["class A implements B {}", "TS(8005) 'implements' clauses can only be used in TypeScript files. @8+10"],
+      [
+        "class A extends B implements C {}",
+        "TS(8005) 'implements' clauses can only be used in TypeScript files. @18+10",
+      ],
+      ["let x = class<T> {};", 'Expected `{` but found `<` @13+1 "`{` expected"'],
+      ["let x = class A<T> {};", 'Expected `{` but found `<` @15+1 "`{` expected"'],
+      ["let x = class implements B {};", "TS(8005) 'implements' clauses can only be used in TypeScript files. @14+10"],
+      ["class A { a: number; }", 'Expected `;` but found `:` @11+1 "`;` expected"'],
+      ["class A { a: number = 1; }", 'Expected `;` but found `:` @11+1 "`;` expected"'],
+      ["class A { a?: number; }", 'Expected `;` but found `:` @12+1 "`;` expected"'],
+      ["class A { a!: number; }", 'Expected `;` but found `:` @12+1 "`;` expected"'],
+      [
+        "class A { a!; }",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @11+1",
+      ],
+      ["class A { private a; }", "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7"],
+      ["class A { private a = 1; }", "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7"],
+      ["class A { public a; }", "TS(8009) The 'public' modifier can only be used in TypeScript files. @10+6"],
+      ["class A { protected a; }", "TS(8009) The 'protected' modifier can only be used in TypeScript files. @10+9"],
+      ["class A { readonly a; }", "TS(8009) The 'readonly' modifier can only be used in TypeScript files. @10+8"],
+      ["class A { readonly a = 1; }", "TS(8009) The 'readonly' modifier can only be used in TypeScript files. @10+8"],
+      ["class A { declare a; }", "TS(8009) The 'declare' modifier can only be used in TypeScript files. @10+7"],
+      ["class A { override a; }", "TS(8009) The 'override' modifier can only be used in TypeScript files. @10+8"],
+      ["class A { override m() {} }", "TS(8009) The 'override' modifier can only be used in TypeScript files. @10+8"],
+      ["class A { private m() {} }", "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7"],
+      ["class A { public m() {} }", "TS(8009) The 'public' modifier can only be used in TypeScript files. @10+6"],
+      [
+        "class A { public static m() {} }",
+        "TS(8009) The 'public' modifier can only be used in TypeScript files. @10+6",
+      ],
+      [
+        "class A { static readonly a = 1; }",
+        "TS(8009) The 'readonly' modifier can only be used in TypeScript files. @17+8",
+      ],
+      ["class A { private static a; }", "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7"],
+      [
+        "class A { private constructor() {} }",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7",
+      ],
+      ["class A { m(): void {} }", "Expected function body @11+2 help: Add a function body (`{}`)."],
+      ["class A { m<T>() {} }", 'Expected `(` but found `<` @11+1 "`(` expected"'],
+      [
+        "class A { m(a: number) {} }",
+        'Expected `,` or `)` but found `:` @13+1 "`,` or `)` expected", 11+1 "Opened here"',
+      ],
+      ["class A { m(a?) {} }", 'Expected `,` or `)` but found `?` @13+1 "`,` or `)` expected", 11+1 "Opened here"'],
+      ["class A { m(); }", "Expected function body @11+2 help: Add a function body (`{}`)."],
+      ["class A { m(); m() {} }", "Expected function body @11+2 help: Add a function body (`{}`)."],
+      [
+        "class A { constructor(private a) {} }",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @22+7 help: No modifiers are allowed here.",
+      ],
+      [
+        "class A { constructor(public a) {} }",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @22+6 help: No modifiers are allowed here.",
+      ],
+      [
+        "class A { constructor(readonly a) {} }",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @22+8 help: No modifiers are allowed here.",
+      ],
+      ["class A { constructor(); }", "Expected function body @21+2 help: Add a function body (`{}`)."],
+      ["class A { [k: string]: number; }", "Unexpected token @12+1"],
+      ["class A { static [k: string]: number; }", "Unexpected token @19+1"],
+      ["class A { get a(): number { return 1; } }", "Expected function body @15+2 help: Add a function body (`{}`)."],
+      [
+        "class A { set a(v: number) {} }",
+        'Expected `,` or `)` but found `:` @17+1 "`,` or `)` expected", 15+1 "Opened here"',
+      ],
+      [
+        "class A { accessor a: number; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @20+0 help: Try inserting a semicolon here",
+      ],
+      ["class A { static a: number; }", 'Expected `;` but found `:` @18+1 "`;` expected"'],
+      ["class A { #a: number; }", 'Expected `;` but found `:` @12+1 "`;` expected"'],
+      ["class A { private #a; }", "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7"],
+      [
+        "class A { in a; }",
+        "TS(8009) The 'in' modifier can only be used in TypeScript files. @10+2",
+        "TS(1274) 'in' modifier can only appear on a type parameter of a class, interface or type alias. @10+2",
+      ],
+      [
+        "class A { out a; }",
+        "TS(8009) The 'out' modifier can only be used in TypeScript files. @10+3",
+        "TS(1274) 'out' modifier can only appear on a type parameter of a class, interface or type alias. @10+3",
+      ],
+      [
+        "class A { const a; }",
+        "TS(8009) The 'const' modifier can only be used in TypeScript files. @10+5",
+        "TS(1248) A class member cannot have the 'const' keyword. @10+5 help: Did you mean `readonly`?",
+      ],
+      ["class A { export a; }", "TS(1031) 'export' modifier cannot appear on class elements of this kind. @10+6"],
+      ["class A { async a; }", "'async' modifier cannot be used here. @10+5"],
+      ['import type A from "a";', 'Expected `from` but found `Identifier` @12+1 "`from` expected"'],
+      ['import type { A } from "a";', 'Expected `from` but found `{` @12+1 "`from` expected"'],
+      ['import type * as A from "a";', 'Expected `from` but found `*` @12+1 "`from` expected"'],
+      [
+        'import { type A } from "a";',
+        'Expected `,` or `}` but found `Identifier` @14+1 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      [
+        'import { type A as B } from "a";',
+        'Expected `,` or `}` but found `Identifier` @14+1 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      ['import { type as } from "a";', "Unexpected token @17+1"],
+      [
+        'import { type as as as } from "a";',
+        'Expected `,` or `}` but found `as` @20+2 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      [
+        'import a = require("a");',
+        "TS(8002) 'import ... =' can only be used in TypeScript files. @0+24 help: TypeScript transforms 'import ... =' to 'const ... ='",
+      ],
+      [
+        "import a = b.c;",
+        "TS(8002) 'import ... =' can only be used in TypeScript files. @0+15 help: TypeScript transforms 'import ... =' to 'const ... ='",
+      ],
+      ['import type a = require("a");', 'Expected `from` but found `Identifier` @12+1 "`from` expected"'],
+      [
+        'export import a = require("a");',
+        "TS(8002) 'import ... =' can only be used in TypeScript files. @7+24 help: TypeScript transforms 'import ... =' to 'const ... ='",
+      ],
+      [
+        "export import a = b.c;",
+        "TS(8002) 'import ... =' can only be used in TypeScript files. @7+15 help: TypeScript transforms 'import ... =' to 'const ... ='",
+      ],
+      ["export type { A };", "Unexpected token @7+4"],
+      ['export type { A } from "a";', "Unexpected token @7+4"],
+      ['export type * from "a";', "Unexpected token @7+4"],
+      ['export type * as A from "a";', "Unexpected token @7+4"],
+      [
+        "export { type A };",
+        'Expected `,` or `}` but found `Identifier` @14+1 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      [
+        'export { type A } from "a";',
+        'Expected `,` or `}` but found `Identifier` @14+1 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      [
+        "export { type A as B };",
+        'Expected `,` or `}` but found `Identifier` @14+1 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      ["export = a;", "Unexpected token @7+1"],
+      ["export as namespace A;", "Unexpected token @7+2"],
+      ["let o = { m(): void {} };", "Expected function body @11+2 help: Add a function body (`{}`)."],
+      ["let o = { m<T>() {} };", 'Expected `(` but found `<` @11+1 "`(` expected"'],
+      [
+        "let o = { m(a: number) {} };",
+        'Expected `,` or `)` but found `:` @13+1 "`,` or `)` expected", 11+1 "Opened here"',
+      ],
+      ["let o = { m?() {} };", 'Expected `,` or `}` but found `?` @11+1 "`,` or `}` expected", 8+1 "Opened here"'],
+      ["let o = { a?: 1 };", 'Expected `,` or `}` but found `?` @11+1 "`,` or `}` expected", 8+1 "Opened here"'],
+      ["let o = { a!: 1 };", 'Expected `,` or `}` but found `!` @11+1 "`,` or `}` expected", 8+1 "Opened here"'],
+      ["let o = { get a(): number { return 1; } };", "Expected function body @15+2 help: Add a function body (`{}`)."],
+      [
+        "let o = { private a: 1 };",
+        "'private' modifier cannot be used here. @10+7 help: No modifiers are allowed here.",
+      ],
+      [
+        "let o = { readonly a: 1 };",
+        "'readonly' modifier cannot be used here. @10+8 help: No modifiers are allowed here.",
+      ],
+      ["let o = { async m<T>() {} };", 'Expected `(` but found `<` @17+1 "`(` expected"'],
+      ["try {} catch (e: unknown) {}", 'Expected `)` but found `:` @15+1 "`)` expected"'],
+      ["try {} catch (e: any) {}", 'Expected `)` but found `:` @15+1 "`)` expected"'],
+      ["for (let a: number of []) {}", 'Expected `;` but found `:` @10+1 "`;` expected"'],
+      ["for (const a: number in {}) {}", 'Expected `;` but found `:` @12+1 "`;` expected"'],
+      ["for (let a: number = 0;;) {}", 'Expected `;` but found `:` @10+1 "`;` expected"'],
+      [
+        "let x: typeof a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let x: A.B;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let x: A<B>;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let x: { a: 1 };",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let x: () => void;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let x: [a, b];",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        'let x: "a";',
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let x: 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let x: a | b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let x: a[];",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      ["function f(a): a is string {}", "Expected function body @0+13 help: Add a function body (`{}`)."],
+      ["function f(a): asserts a {}", "Expected function body @0+13 help: Add a function body (`{}`)."],
+      ["function* f(): T {}", "Expected function body @0+13 help: Add a function body (`{}`)."],
+      ["async function f(): Promise<void> {}", "Expected function body @0+18 help: Add a function body (`{}`)."],
+      ["async function f<T>() {}", 'Expected `(` but found `<` @16+1 "`(` expected"'],
+      ["export default function f(): void {}", "Expected function body @15+12 help: Add a function body (`{}`)."],
+      ["export default function <T>() {}", 'Expected `(` but found `<` @24+1 "`(` expected"'],
+      ["export default class<T> {}", 'Expected `{` but found `<` @20+1 "`{` expected"'],
+      [
+        "export function f(a: number) {}",
+        'Expected `,` or `)` but found `:` @19+1 "`,` or `)` expected", 17+1 "Opened here"',
+      ],
+      [
+        "export const a: number = 1;",
+        "Missing initializer in const declaration @13+1 help: Add an initializer (e.g. ` = undefined`) here",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @14+0 help: Try inserting a semicolon here",
+      ],
+      ["export class A<T> {}", 'Expected `{` but found `<` @14+1 "`{` expected"'],
+      ["export class A implements B {}", "TS(8005) 'implements' clauses can only be used in TypeScript files. @15+10"],
+      ["@d class A { @d a: number; }", 'Expected `;` but found `:` @17+1 "`;` expected"'],
+      ["class A { m(@d a) {} }", "Decorators are not valid here. @12+2"],
+      ["class A { constructor(@d a) {} }", "Decorators are not valid here. @22+2"],
+      ["function f(@d a) {}", "Decorators are not valid here. @11+2"],
+      [
+        "accessor a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "unique symbol;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "keyof a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "using a: T = b;",
+        "Using declarations must have an initializer. @6+1 help: Add an initializer (e.g. ` = undefined`) here",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let zz; let zz; let a: number = 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @21+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let zz; let zz; interface A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @25+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let zz; let zz; class A { private a; } a ?? b || c;",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @26+7",
+        "Logical expressions and coalesce expressions cannot be mixed @39+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "let zz; let zz; a ?? b || c; class A { private a; }",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @39+7",
+      ],
+      [
+        "let zz; let zz; a ?? b || c; let a: number;",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @34+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let zz; let zz; a ?? b || c; abstract class A {}",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @37+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let zz; let zz; a ?? b || c; declare let x;",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @36+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let zz; let zz; a ?? b || c; function f(a?) {}",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        'Expected `,` or `)` but found `?` @41+1 "`,` or `)` expected", 39+1 "Opened here"',
+      ],
+      [
+        "let zz; let zz; a ?? b || c; enum A {}",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "Unexpected token @29+4",
+      ],
+      [
+        "let zz; let zz; a ?? b || c; a as b;",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @29+6",
+      ],
+      [
+        "let zz; let zz; a ?? b || c; f<T>();",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "Empty parenthesized expression @33+2",
+      ],
+      [
+        "let zz; let zz; a ?? b || c; class A { constructor(private a) {} }",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @51+7 help: No modifiers are allowed here.",
+      ],
+      [
+        "let zz; let zz; a ?? b || c; class A implements B {}",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "TS(8005) 'implements' clauses can only be used in TypeScript files. @37+10",
+      ],
+      [
+        'let zz; let zz; a ?? b || c; import type A from "a";',
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        'Expected `from` but found `Identifier` @41+1 "`from` expected"',
+      ],
+      [
+        "let zz; let zz; a ?? b || c; export = a;",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "Unexpected token @36+1",
+      ],
+      [
+        'let zz; let zz; a ?? b || c; import a = require("a");',
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+        "TS(8002) 'import ... =' can only be used in TypeScript files. @29+24 help: TypeScript transforms 'import ... =' to 'const ... ='",
+      ],
+      [
+        "throw\n;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+1 "A newline is not expected here"',
+        "Unexpected token @6+1",
+      ],
+      [
+        "throw\n",
+        'Illegal newline after throw @0+5 "throw starts here", 7+0 "A newline is not expected here"',
+        "Unexpected token @7+0",
+      ],
+      [
+        "throw\nvar a;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+3 "A newline is not expected here"',
+        "Unexpected token @6+3",
+      ],
+      [
+        "throw\nif (a) b;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+2 "A newline is not expected here"',
+        "Unexpected token @6+2",
+      ],
+      ['import<T>("a");', 'Expected `from` but found `<` @6+1 "`from` expected"'],
+      ["function f(); a ?? b || c;", "Expected function body @0+12 help: Add a function body (`{}`)."],
+      ["class A { m(); } a ?? b || c;", "Expected function body @11+2 help: Add a function body (`{}`)."],
+      ["class A { m(); n(); }", "Expected function body @11+2 help: Add a function body (`{}`)."],
+      ["class A { m(): void {} } a ?? b || c;", "Expected function body @11+2 help: Add a function body (`{}`)."],
+      ["function f(): void {} a ?? b || c;", "Expected function body @0+12 help: Add a function body (`{}`)."],
+      ["let o = { m(); };", "Expected function body @11+2 help: Add a function body (`{}`)."],
+      ["let o = { m() };", "Expected function body @11+2 help: Add a function body (`{}`)."],
+      [
+        "class A { a!; } a ?? b || c;",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @11+1",
+        "Logical expressions and coalesce expressions cannot be mixed @16+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "let zz; let zz; class A { a!; }",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @27+1",
+      ],
+      [
+        "class A { a! = 1; }",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @11+1",
+      ],
+      [
+        "class A { static a!; }",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @18+1",
+      ],
+      ["class A { a?: number; b: string; }", 'Expected `;` but found `:` @12+1 "`;` expected"'],
+      ["class A { get a?() { return 1; } }", 'Expected `(` but found `?` @15+1 "`(` expected"'],
+      ["class A { constructor?() {} }", 'Expected `(` but found `?` @21+1 "`(` expected"'],
+      [
+        "class A { accessor a?; }",
+        "TS(1276) An 'accessor' property cannot be declared optional. @20+1 help: Remove this `?`",
+      ],
+      ["f(a!);", 'Expected `,` or `)` but found `!` @3+1 "`,` or `)` expected", 1+1 "Opened here"'],
+      ["(a!);", 'Expected `,` or `)` but found `!` @2+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      ["[a!];", 'Expected `,` or `]` but found `!` @2+1 "`,` or `]` expected", 0+1 "Opened here"'],
+      ["let o = { a: b! };", 'Expected `,` or `}` but found `!` @14+1 "`,` or `}` expected", 8+1 "Opened here"'],
+      ["if (a!) {}", 'Expected `)` but found `!` @5+1 "`)` expected", 3+1 "Opened here"'],
+      [
+        "a! + b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @1+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a!\n;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @1+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "x = a!;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      ["f(a!, b);", 'Expected `,` or `)` but found `!` @3+1 "`,` or `)` expected", 1+1 "Opened here"'],
+      [
+        "a!!;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @1+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "return a!;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function f() { return a!; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @23+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "() => a!;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["a ? b! : c;", 'Expected `:` but found `!` @5+1 "`:` expected", 2+1 "Conditional starts here"'],
+      ["for (a! of b) {}", 'Expected `;` but found `!` @6+1 "`;` expected"'],
+      [
+        "function f(private readonly a) {}",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @11+7 help: No modifiers are allowed here.",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @19+8 help: No modifiers are allowed here.",
+      ],
+      [
+        "class A { constructor(private readonly a, public b) {} }",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @22+7 help: No modifiers are allowed here.",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @30+8 help: No modifiers are allowed here.",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @42+6 help: No modifiers are allowed here.",
+      ],
+      [
+        "class A { constructor(@d private a) {} }",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @25+7 help: No modifiers are allowed here.",
+        "Decorators are not valid here. @22+2",
+      ],
+      [
+        "class A { constructor(private @d a) {} }",
+        'Expected `,` or `)` but found `@` @30+1 "`,` or `)` expected", 21+1 "Opened here"',
+      ],
+      [
+        "function f(@d @e a, @g b) {}",
+        "Decorators are not valid here. @11+2",
+        "Decorators are not valid here. @14+2",
+        "Decorators are not valid here. @20+2",
+      ],
+      ["let zz; let zz; function f(@d a) {}", "Decorators are not valid here. @27+2"],
+      [
+        "let zz; let zz; function f(private a) {}",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @27+7 help: No modifiers are allowed here.",
+      ],
+      [
+        "let zz; let zz; class A { private a; }",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @26+7",
+      ],
+      ["let zz; let zz; a as b;", "TS(8016) Type assertion expressions can only be used in TypeScript files. @16+6"],
+      [
+        "let zz; let zz; class A implements B {}",
+        "TS(8005) 'implements' clauses can only be used in TypeScript files. @24+10",
+      ],
+      [
+        "let zz; let zz; class A extends B<T> {}",
+        "TS(8011) Type arguments can only be used in TypeScript files. @33+3",
+      ],
+      [
+        'let zz; let zz; import a = require("a");',
+        "TS(8002) 'import ... =' can only be used in TypeScript files. @16+24 help: TypeScript transforms 'import ... =' to 'const ... ='",
+      ],
+      [
+        "function f(private a: number) {}",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @11+7 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `:` @20+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "function f(private a?) {}",
+        "TS(8012) Parameter modifiers can only be used in TypeScript files. @11+7 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `?` @20+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "class A { private readonly a; }",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7",
+        "TS(8009) The 'readonly' modifier can only be used in TypeScript files. @18+8",
+      ],
+      [
+        "class A { private static readonly a; }",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7",
+        "TS(8009) The 'readonly' modifier can only be used in TypeScript files. @25+8",
+      ],
+      [
+        "class A { private private a; }",
+        "TS(1028) Accessibility modifier already seen. @18+7 help: Remove the duplicate modifier.",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @18+7",
+      ],
+      [
+        "class A { readonly private a; }",
+        "TS(1029) 'private' modifier must precede 'readonly' modifier. @19+7",
+        "TS(8009) The 'readonly' modifier can only be used in TypeScript files. @10+8",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @19+7",
+      ],
+      [
+        "class A { static private a; }",
+        "TS(1029) 'private' modifier must precede 'static' modifier. @17+7",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @17+7",
+      ],
+      [
+        "class A { declare readonly a; }",
+        "TS(8009) The 'declare' modifier can only be used in TypeScript files. @10+7",
+        "TS(8009) The 'readonly' modifier can only be used in TypeScript files. @18+8",
+      ],
+      [
+        "class A { private a: number; }",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7",
+        'Expected `;` but found `:` @19+1 "`;` expected"',
+      ],
+      [
+        "class A { private m(): void {} }",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7",
+        "Expected function body @19+2 help: Add a function body (`{}`).",
+      ],
+      [
+        "class A { private get a() { return 1; } }",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7",
+      ],
+      [
+        "class A { private async m() {} }",
+        "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7",
+      ],
+      ["class A { private *m() {} }", "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7"],
+      ["class A { private [a]; }", "TS(8009) The 'private' modifier can only be used in TypeScript files. @10+7"],
+      ["class A { private static {} }", "TS(1184) Modifiers cannot appear here. @10+7"],
+      [
+        "class A { abstract a = 1; }",
+        "TS(8009) The 'abstract' modifier can only be used in TypeScript files. @10+8",
+        "TS(1267) Property 'a' cannot have an initializer because it is marked abstract. @19+1",
+      ],
+      [
+        "abstract class A { abstract m(); }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      ["class A { static async a; }", "'async' modifier cannot be used here. @17+5"],
+      [
+        "class A { async static a; }",
+        "TS(1029) 'static' modifier must precede 'async' modifier. @16+6",
+        "'async' modifier cannot be used here. @10+5",
+      ],
+      ["class A { async static m() {} }", "TS(1029) 'static' modifier must precede 'async' modifier. @16+6"],
+      ["class A { accessor static a; }", "TS(1029) 'static' modifier must precede 'accessor' modifier. @19+6"],
+      [
+        "class A { accessor accessor a; }",
+        "TS(1030) 'accessor' modifier already seen. @19+8 help: Remove the duplicate modifier.",
+      ],
+      [
+        "class A { accessor m() {} }",
+        "TS(1275) 'accessor' modifier can only appear on a property declaration. @10+8 help: Allowed modifiers are: private, protected, public, static, abstract, override, async",
+      ],
+      ["class A { async get a() { return 1; } }", "'async' modifier cannot be used here. @10+5"],
+      ["class A { async constructor() {} }", "Constructor can't be an async method @16+11"],
+      ["class A { export m() {} }", "TS(1031) 'export' modifier cannot appear on class elements of this kind. @10+6"],
+      [
+        "class A extends B<T> implements C {}",
+        "TS(8011) Type arguments can only be used in TypeScript files. @17+3",
+        "TS(8005) 'implements' clauses can only be used in TypeScript files. @21+10",
+      ],
+      ["class A extends B<T, U> {}", "TS(8011) Type arguments can only be used in TypeScript files. @17+6"],
+      ["class A extends B.C<T> {}", "TS(8011) Type arguments can only be used in TypeScript files. @19+3"],
+      ["class A extends f()<T> {}", "TS(8011) Type arguments can only be used in TypeScript files. @19+3"],
+      ["class A implements B, C {}", "TS(8005) 'implements' clauses can only be used in TypeScript files. @8+10"],
+      ["class A implements B<T> {}", "TS(8005) 'implements' clauses can only be used in TypeScript files. @8+10"],
+      [
+        "class A implements {}",
+        "TS(8005) 'implements' clauses can only be used in TypeScript files. @8+10",
+        "Unexpected token @19+1",
+      ],
+      [
+        "class A implements B implements C {}",
+        "TS(8005) 'implements' clauses can only be used in TypeScript files. @8+10",
+        "TS(1175) 'implements' clause already seen @8+10, 21+10 help: Merge the two 'implements' clauses into one by a ','",
+        "TS(8005) 'implements' clauses can only be used in TypeScript files. @21+10",
+      ],
+      [
+        "class A implements B extends C {}",
+        "TS(8005) 'implements' clauses can only be used in TypeScript files. @8+10",
+        "TS(1173) 'extends' clause must precede 'implements' clause @8+10 \"'implements' clause found here\", 21+7 \"'extends' clause found here\" help: Move the 'extends' clause before the 'implements' clause",
+      ],
+      [
+        "class A extends B, C {}",
+        "TS(1174) Classes can only extend a single class. @19+1 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      [
+        "class A extends B, C, D {}",
+        "TS(1174) Classes can only extend a single class. @19+1 help: Remove the extra base class or use interfaces for multiple inheritance",
+        "TS(1174) Classes can only extend a single class. @22+1 help: Remove the extra base class or use interfaces for multiple inheritance",
+      ],
+      ["class A extends B extends C {}", "TS(1172) 'extends' clause already seen @18+7"],
+      ["class A extends {}", 'Expected `{` but found `EOF` @19+0 "`{` expected"'],
+      ["let o = { static a: 1 };", "'static' modifier cannot be used here. @10+6 help: No modifiers are allowed here."],
+      ["let o = { async a: 1 };", "'async' modifier cannot be used here. @10+5 help: No modifiers are allowed here."],
+      [
+        "let o = { public m() {} };",
+        "'public' modifier cannot be used here. @10+6 help: Only 'async' modifier is allowed here.",
+      ],
+      [
+        "let o = { async get a() { return 1; } };",
+        "'async' modifier cannot be used here. @10+5 help: No modifiers are allowed here.",
+      ],
+      [
+        "let o = { static m() {} };",
+        "'static' modifier cannot be used here. @10+6 help: Only 'async' modifier is allowed here.",
+      ],
+      ["let o = { declare a };", "'declare' modifier cannot be used here. @10+7 help: No modifiers are allowed here."],
+      [
+        "let o = { abstract m() {} };",
+        "'abstract' modifier cannot be used here. @10+8 help: Only 'async' modifier is allowed here.",
+      ],
+      [
+        "let o = { async async m() {} };",
+        "TS(1030) 'async' modifier already seen. @16+5 help: Remove the duplicate modifier.",
+      ],
+      ["({ async get a(){} });", "'async' modifier cannot be used here. @3+5 help: No modifiers are allowed here."],
+      ["function f(a, ...b, c){}", "A rest parameter must be last in a parameter list @14+4"],
+      ["(...a, b) => 1;", "A rest parameter must be last in a parameter list @1+4"],
+      ["function f(...a = []){}", "A rest parameter cannot have an initializer. @14+6"],
+      [
+        "function f(...a,){}",
+        "A rest parameter or binding pattern may not have a trailing comma. @15+1 help: Remove the trailing comma here",
+      ],
+      [
+        "(...a,) => 1;",
+        "A rest parameter or binding pattern may not have a trailing comma. @5+1 help: Remove the trailing comma here",
+      ],
+      ["(...a = []) => 1;", "A rest parameter cannot have an initializer. @4+6"],
+      ["class A { m(...a, b) {} }", "A rest parameter must be last in a parameter list @12+4"],
+      [
+        "let o = { m(...a,) {} };",
+        "A rest parameter or binding pattern may not have a trailing comma. @16+1 help: Remove the trailing comma here",
+      ],
+      ["function f(...[a] = []) {}", "A rest parameter cannot have an initializer. @14+8"],
+      ["function f(...a, ...b) {}", "A rest parameter must be last in a parameter list @11+4"],
+      ["let zz; let zz; function f(...a = []){}", "A rest parameter cannot have an initializer. @30+6"],
+      [
+        "let zz; let zz; function f(...a,){}",
+        "A rest parameter or binding pattern may not have a trailing comma. @31+1 help: Remove the trailing comma here",
+      ],
+      ["class A { set a(...v) {} }", "A 'set' accessor cannot have rest parameter. @16+4"],
+      ["{ import a from 'a'; }", "'import statement' declaration can only be used at the top level of a module @2+6"],
+      [
+        "function f(){ export {}; }",
+        "'export statement' declaration can only be used at the top level of a module @14+6",
+      ],
+      ["if (1) export {};", "'export statement' declaration can only be used at the top level of a module @7+6"],
+      ["{ export const a = 1; }", "'export statement' declaration can only be used at the top level of a module @2+6"],
+      ["{ export default 1; }", "'export statement' declaration can only be used at the top level of a module @2+6"],
+      ['{ export * from "a"; }', "'export statement' declaration can only be used at the top level of a module @2+6"],
+      ['{ import "a"; }', "'import statement' declaration can only be used at the top level of a module @2+6"],
+      [
+        'if (1) import a from "a";',
+        "'import statement' declaration can only be used at the top level of a module @7+6",
+      ],
+      [
+        'function f() { import a from "a"; }',
+        "'import statement' declaration can only be used at the top level of a module @15+6",
+      ],
+      ["() => { export {}; };", "'export statement' declaration can only be used at the top level of a module @8+6"],
+      [
+        'class A { static { import a from "a"; } }',
+        "'import statement' declaration can only be used at the top level of a module @19+6",
+      ],
+      [
+        "let zz; let zz; { import a from 'a'; }",
+        "'import statement' declaration can only be used at the top level of a module @18+6",
+      ],
+      [
+        "{ import a from 'a'; } a ?? b || c;",
+        "'import statement' declaration can only be used at the top level of a module @2+6",
+        "Logical expressions and coalesce expressions cannot be mixed @23+11 help: Wrap either expression by parentheses",
+      ],
+      ['a: import b from "b";', "'import statement' declaration can only be used at the top level of a module @3+6"],
+      ["while (1) export {};", "'export statement' declaration can only be used at the top level of a module @10+6"],
+      ["export async class A {}", "Unexpected token @7+5"],
+      [
+        "export export class A {}",
+        "TS(1030) 'export' modifier already seen. @7+6 help: Remove the duplicate modifier.",
+      ],
+      ["export static class A {}", "Unexpected token @7+6"],
+      [
+        "export default declare class A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @22+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export default static class A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @21+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export default async class A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @20+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare export class A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["export public class A {}", "Unexpected token @7+6"],
+      ["export readonly a;", "Unexpected token @7+8"],
+      ["export accessor a;", "Unexpected token @7+8"],
+      [
+        "public class A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "static function f() {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "static let a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "readonly let a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "private function f() {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare const enum A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["export declare const enum A {}", "Unexpected token @7+7"],
+      ["export default enum A {}", "Unexpected token @15+4"],
+      [
+        "export default type A = 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @19+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export default namespace A {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @24+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export default abstract class A { abstract m(); }",
+        "TS(8009) The 'abstract' modifier can only be used in TypeScript files. @34+8",
+        "Expected function body @44+2 help: Add a function body (`{}`).",
+      ],
+      ["export default abstract class A<T> {}", 'Expected `{` but found `<` @31+1 "`{` expected"'],
+      ["@d function f() {}", "Unexpected token @3+8"],
+      ["@d let a;", "Unexpected token @3+3"],
+      ["@d export function f() {}", "Decorators are not valid here. @0+2"],
+      ["@d export default function f() {}", "Decorators are not valid here. @0+2"],
+      ["@d export const a = 1;", "Decorators are not valid here. @0+2"],
+      ['@d import a from "a";', "Unexpected token @3+6"],
+      ["@d export default 1;", "Decorators are not valid here. @0+2"],
+      ["export @d function f() {}", 'Expected `{` but found `(` @20+1 "`{` expected"'],
+      ["export @d const a = 1;", 'Expected `{` but found `=` @18+1 "`{` expected"'],
+      ["export @d default function f() {}", 'Expected `{` but found `(` @28+1 "`{` expected"'],
+      ["class A { @d static {} }", "Decorators are not valid here. @10+2"],
+      ["class A { @d [k: string]: number; }", "Decorators are not valid here. @10+2", "Unexpected token @15+1"],
+      [
+        "class A { get a(v) {} }",
+        "A 'get' accessor must not have any formal parameters. @15+3 help: Remove these parameters here",
+      ],
+      [
+        "class A { set a() {} }",
+        "TS(1049) A 'set' accessor must have exactly one parameter. @15+2 help: Add a parameter here",
+      ],
+      ["class A { constructor(...a, b) {} }", "A rest parameter must be last in a parameter list @22+4"],
+      ["class A { get a<T>() { return 1; } }", 'Expected `(` but found `<` @15+1 "`(` expected"'],
+      [
+        "declare foo;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare foo bar;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["export default @d function f() {}", "Decorators are not valid here. @15+2"],
+      ["@d @e export function f() {}", "Decorators are not valid here. @0+2", "Decorators are not valid here. @3+2"],
+      [
+        "@d export function f() {} a ?? b || c;",
+        "Decorators are not valid here. @0+2",
+        "Logical expressions and coalesce expressions cannot be mixed @26+11 help: Wrap either expression by parentheses",
+      ],
+      ["let zz; let zz; @d export function f() {}", "Decorators are not valid here. @16+2"],
+      ["@d async function f() {}", "Unexpected token @9+8"],
+      [
+        "@d static class A {}",
+        "'static' modifier cannot be used here. @3+6 help: Allowed modifiers are: declare, abstract",
+      ],
+      ["@d export abstract class A {}", "Decorators are not valid here. @0+2", "Unexpected token @10+8"],
+      ["@d export declare class A {}", "Decorators are not valid here. @0+2", "Unexpected token @10+7"],
+      [
+        "export @d static class A {}",
+        "'static' modifier cannot be used here. @10+6 help: Allowed modifiers are: declare, abstract",
+      ],
+      ["export @d let a;", 'Expected `{` but found `;` @15+1 "`{` expected"'],
+      ["export @d async function f() {}", 'Expected `{` but found `(` @26+1 "`{` expected"'],
+      ["();", "Empty parenthesized expression @0+2"],
+      ["a > ();", "Empty parenthesized expression @4+2"],
+      ["if () {}", "Unexpected token @4+1"],
+      ["function f<>() {}", 'Expected `(` but found `<` @10+1 "`(` expected"'],
+      ["class A<> {}", 'Expected `{` but found `<` @7+1 "`{` expected"'],
+      ["class A { m<>() {} }", 'Expected `(` but found `<` @11+1 "`(` expected"'],
+      ["enum A {} a ?? b || c;", "Unexpected token @0+4"],
+      [
+        "a ?? b || c; enum;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+        "Unexpected token @13+4",
+      ],
+      ["export enum;", "Unexpected token @7+4"],
+      ["x = enum;", "Unexpected token @4+4"],
+      ["enum = 1;", "Unexpected token @0+4"],
+      ["let enum;", "Identifier expected. 'enum' is a reserved word that cannot be used here. @4+4"],
+      [
+        "interface A {} a ?? b || c;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      ["export = a; a ?? b || c;", "Unexpected token @7+1"],
+      [
+        "type A = 1; a ?? b || c;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
+      ],
+      ['import type A from "a"; a ?? b || c;', 'Expected `from` but found `Identifier` @12+1 "`from` expected"'],
+      [
+        'import { type A } from "a"; a ?? b || c;',
+        'Expected `,` or `}` but found `Identifier` @14+1 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      [
+        'import { a, type B } from "a";',
+        'Expected `,` or `}` but found `Identifier` @17+1 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      [
+        'import { type "a" as b } from "a";',
+        'Expected `,` or `}` but found `string` @14+3 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      [
+        'import { type default as b } from "a";',
+        'Expected `,` or `}` but found `default` @14+7 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      [
+        'import { type a, b } from "a";',
+        'Expected `,` or `}` but found `Identifier` @14+1 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      [
+        "export { a, type B };",
+        'Expected `,` or `}` but found `Identifier` @17+1 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      ["export { type as };", "Unexpected token @17+1"],
+      ["export { type as as };", "Export 'type' is not defined @9+4"],
+      [
+        "export { type as as as };",
+        'Expected `,` or `}` but found `as` @20+2 "`,` or `}` expected", 7+1 "Opened here"',
+      ],
+      ['import type from from "a";', "Unexpected token @17+4"],
+      ['import type a, { b } from "a";', 'Expected `from` but found `Identifier` @12+1 "`from` expected"'],
+      ["export type A<T> = T;", "Unexpected token @7+4"],
+      ["export type;", "Unexpected token @7+4"],
+      ["export type = 1;", "Unexpected token @7+4"],
+      ["function f(this, a) {}", "Identifier expected. 'this' is a reserved word that cannot be used here. @11+4"],
+      ["function f(a, this) {}", "Identifier expected. 'this' is a reserved word that cannot be used here. @14+4"],
+      [
+        "(this) => 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      ["class A { m(this) {} }", "Identifier expected. 'this' is a reserved word that cannot be used here. @12+4"],
+      [
+        "let a!;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let a! = 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "var a!: T, b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let a, b!: T;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "const a!: T = 1;",
+        "Missing initializer in const declaration @6+1 help: Add an initializer (e.g. ` = undefined`) here",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "namespace A { export const a = 1; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "module A.B {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      ["export module A {}", "Unexpected token @7+6"],
+      ['export module "a" {}', "Unexpected token @7+6"],
+      ['export declare module "a" {}', "Unexpected token @7+7"],
+      ["export declare global {}", "Unexpected token @7+7"],
+      ["export global {}", "Unexpected token @7+6"],
+      ["export as namespace A; a ?? b || c;", "Unexpected token @7+2"],
+      ["let f = async function <T>() {};", 'Expected `(` but found `<` @23+1 "`(` expected"'],
+      ["let f = async function (): T {};", 'Expected `{` but found `:` @25+1 "`{` expected"'],
+      ["let f = function* (): T {};", 'Expected `{` but found `:` @20+1 "`{` expected"'],
+      ["let o = { async m(): T {} };", "Expected function body @17+2 help: Add a function body (`{}`)."],
+      ["let o = { *m(): T {} };", "Expected function body @12+2 help: Add a function body (`{}`)."],
+      ["let o = { set a(v): void {} };", "Expected function body @15+3 help: Add a function body (`{}`)."],
+      ["class A { constructor(): void {} }", "Expected function body @21+2 help: Add a function body (`{}`)."],
+      ["class A { static m(): void {} }", "Expected function body @18+2 help: Add a function body (`{}`)."],
+      ["class A { async *m(): T {} }", "Expected function body @18+2 help: Add a function body (`{}`)."],
+      ["class A { #m(): T {} }", "Expected function body @12+2 help: Add a function body (`{}`)."],
+      ["class A { [a](): T {} }", "Expected function body @13+2 help: Add a function body (`{}`)."],
+      ["export async function f(): T {}", "Expected function body @7+18 help: Add a function body (`{}`)."],
+      ["export default async function (): T {}", "Expected function body @15+17 help: Add a function body (`{}`)."],
+      ["export default function (): T {}", "Expected function body @15+11 help: Add a function body (`{}`)."],
+      ["export function f();", "Expected function body @7+12 help: Add a function body (`{}`)."],
+      ["export default function f();", "Expected function body @15+12 help: Add a function body (`{}`)."],
+      ["export default function ();", "Expected function body @15+11 help: Add a function body (`{}`)."],
+      ["async function f();", "Expected function body @0+18 help: Add a function body (`{}`)."],
+      ["function* f();", "Expected function body @0+13 help: Add a function body (`{}`)."],
+      ["function f(): void;", "Expected function body @0+12 help: Add a function body (`{}`)."],
+      ["function f()\nfoo();", "Expected function body @0+12 help: Add a function body (`{}`)."],
+      ["class A { m()\n n() {} }", "Expected function body @11+2 help: Add a function body (`{}`)."],
+      ["class A { get a(); }", "Expected function body @15+2 help: Add a function body (`{}`)."],
+      ["class A { static m(); }", "Expected function body @18+2 help: Add a function body (`{}`)."],
+      ["class A { async m(); }", "Expected function body @17+2 help: Add a function body (`{}`)."],
+      ["class A { m(): void; }", "Expected function body @11+2 help: Add a function body (`{}`)."],
+      ["(a, b: T) => a;", 'Expected `,` or `)` but found `:` @5+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      ["({a}: T) => a;", 'Expected `,` or `)` but found `:` @4+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      ["([a]: T) => a;", 'Expected `,` or `)` but found `:` @4+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      ["(...a: T[]) => a;", 'Expected `,` or `)` but found `:` @5+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      ["async (a?: T) => a;", 'Expected `,` or `)` but found `?` @8+1 "`,` or `)` expected", 6+1 "Opened here"'],
+      ["(): T => a;", "Empty parenthesized expression @0+2"],
+      ["(a: T): U => a;", 'Expected `,` or `)` but found `:` @2+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      ["f((a: T) => a);", 'Expected `,` or `)` but found `:` @4+1 "`,` or `)` expected", 2+1 "Opened here"'],
+      [
+        "x = (a): T => a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["f((a): T => a);", 'Expected `,` or `)` but found `:` @5+1 "`,` or `)` expected", 1+1 "Opened here"'],
+      ["[(a): T => a];", 'Expected `,` or `]` but found `:` @4+1 "`,` or `]` expected", 0+1 "Opened here"'],
+      ["for (var a: T;;) {}", 'Expected `;` but found `:` @10+1 "`;` expected"'],
+      ["for (var a: T, b;;) {}", 'Expected `;` but found `:` @10+1 "`;` expected"'],
+      ["for (using a: T of b) {}", 'Expected `;` but found `:` @12+1 "`;` expected"'],
+      ["try {} catch ({a}: T) {}", 'Expected `)` but found `:` @17+1 "`)` expected"'],
+      [
+        "let { a }: T = b, c;",
+        "Missing initializer in destructuring declaration @4+5 help: Add an initializer (e.g. ` = undefined`) here",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export let a: T;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @12+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export var a: T = 1, b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @12+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "class A { static accessor a: T; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @27+0 help: Try inserting a semicolon here",
+      ],
+      ["class A { a: T\n b; }", 'Expected `;` but found `:` @11+1 "`;` expected"'],
+      ['class A { "a": T; }', 'Expected `;` but found `:` @13+1 "`;` expected"'],
+      ["class A { [a]: T; }", 'Expected `;` but found `:` @13+1 "`;` expected"'],
+      ["class A { 1: T; }", 'Expected `;` but found `:` @11+1 "`;` expected"'],
+      ["class A { a: T = 1 }", 'Expected `;` but found `:` @11+1 "`;` expected"'],
+      [
+        "class A { readonly a: T; }",
+        "TS(8009) The 'readonly' modifier can only be used in TypeScript files. @10+8",
+        'Expected `;` but found `:` @20+1 "`;` expected"',
+      ],
+      [
+        "x = a as b as c;",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @4+6",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @4+11",
+      ],
+      ["x = (a as b).c;", "TS(8016) Type assertion expressions can only be used in TypeScript files. @5+6"],
+      [
+        "f(a as b, c as d);",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @2+6",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @10+6",
+      ],
+      ["a as b + 1;", "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+6"],
+      ["a + b as c;", "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+10"],
+      [
+        "a as const as b;",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+10",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+15",
+      ],
+      [
+        "a satisfies b as c;",
+        "TS(8037) Type satisfaction expressions can only be used in TypeScript files. @0+13",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+18",
+      ],
+      ["a as\nb;", "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+6"],
+      [
+        "a\nas b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
+      ],
+      ["(a as b) = 1;", "TS(8016) Type assertion expressions can only be used in TypeScript files. @1+6"],
+      ["for (a as b of c) {}", "TS(8016) Type assertion expressions can only be used in TypeScript files. @5+6"],
+      ["let { a = b as c } = d;", "TS(8016) Type assertion expressions can only be used in TypeScript files. @10+6"],
+      ["x = <a>b</a> as c;", "TS(8016) Type assertion expressions can only be used in TypeScript files. @4+13"],
+      ["<T>(a) => a;", "Unexpected token. Did you mean `{'>'}` or `&gt;`? @8+0"],
+      ["<T>a;", "Unexpected token @3+3"],
+      ["let x = <T>a;", "Unexpected token @11+3"],
+      [
+        "let x = a ? (b): c => d : e;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @23+0 help: Try inserting a semicolon here",
+      ],
+      ["let a = <const>b;", "Unexpected token @15+3"],
+      ["`${a!}`;", 'Expected `}` but found `!` @4+1 "`}` expected"'],
+      ["(@d a) => 1;", "Unexpected token @4+1"],
+      ["class A { static static a; }", 'Expected `;` but found `Identifier` @24+1 "`;` expected"'],
+      [
+        "class A extends B<> {}",
+        "TS(1099) Type argument list cannot be empty. @17+2",
+        "TS(8011) Type arguments can only be used in TypeScript files. @17+2",
+      ],
+      [
+        "export default interface A { a: number }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @30+0 help: Try inserting a semicolon here",
+      ],
+      ["export default interface A<T> {}", 'Expected `{` but found `<` @26+1 "`{` expected"'],
+      ["@d;", "Unexpected token @2+1"],
+      ["@d a;", "Unexpected token @3+1"],
+      ["export @d default 1;", 'Expected `{` but found `;` @19+1 "`{` expected"'],
+      ["class A { @d; }", "Unexpected token @12+1"],
+      ["<>() => 1;", "Unexpected token. Did you mean `{'>'}` or `&gt;`? @6+0"],
+      ['import type "a";', 'Expected `from` but found `string` @12+3 "`from` expected"'],
+      ["import type;", 'Expected `from` but found `;` @11+1 "`from` expected"'],
+      ["(a = 1, b?: T) => a;", "Unexpected token @10+1"],
+      [
+        "x = a ? (b): T => c : d;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @19+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await using a: T = b;",
+        "Using declarations must have an initializer. @12+1 help: Add an initializer (e.g. ` = undefined`) here",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @13+0 help: Try inserting a semicolon here",
+      ],
+      ["<T>", "Unexpected token @3+1"],
+      ["<T>a", "Unexpected token @3+2"],
+      ["<T>{a}", "Unexpected token @6+1"],
+      ["<T>{a} b", "Unexpected token @6+3"],
+      ["<T><U>a", "Unexpected token @6+2"],
+      ["<T><U></U>a;", "Unexpected token @10+3"],
+      ["<T>a</U>;", 'Expected corresponding JSX closing tag for \'T\'. @6+1 "Expected `</T>`", 1+1 "Opened here"'],
+      ["<T>a<", "Unexpected token @6+0"],
+      ["<T>a</", "Unexpected token @7+0"],
+      ["<T>a</T", 'Expected `>` but found `EOF` @8+0 "`>` expected"'],
+      ["x = <T>a; b; c;", "Unexpected token @7+9"],
+      ["<T.U>a;", "Unexpected token @5+3"],
+      ["<>a;", "Unexpected token @2+3"],
+      ['<T a="b">c;', "Unexpected token @9+3"],
+      [
+        "<T />a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      ["f(<T>a);", "Unexpected token @5+4"],
+      ["<T>(a) => a;\nb > c;", "Unexpected token. Did you mean `{'>'}` or `&gt;`? @8+0"],
+      ["<T>(a) => { return a; };", "Unexpected token. Did you mean `{'>'}` or `&gt;`? @8+0"],
+      ["<T>a}b;", "Unexpected token. Did you mean `{'}'}` or `&rbrace;`? @4+0"],
+      ["(a, b?) => 1;", "Unexpected token @6+1"],
+      ["(a, b? = 1) => 1;", "Unexpected token @7+1"],
+      ["(a, b?, c) => 1;", "Unexpected token @6+1"],
+      ["({a}?: T) => 1;", "Unexpected token @5+1"],
+      ["([a]?) => 1;", "Unexpected token @5+1"],
+      ["(a = 1, b?) => 1;", "Unexpected token @10+1"],
+      ["async (a, b?) => 1;", "Unexpected token @12+1"],
+      ["async (a, b?: T) => 1;", "Unexpected token @12+1"],
+      ["async ({a}?: T) => 1;", "Unexpected token @11+1"],
+      ["async (a = 1, b: T) => 1;", 'Expected `,` or `)` but found `:` @15+1 "`,` or `)` expected", 6+1 "Opened here"'],
+      ["(a?, b?) => 1;", 'Expected `,` or `)` but found `?` @2+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      [
+        "(a, b): T => 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      ["(this, a?) => 1;", "Unexpected token @9+1"],
+      [
+        "(a, this) => 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      ["f((a, b?) => 1);", "Unexpected token @8+1"],
+      [
+        "x = a ? (b, c): T => d : e;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @22+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "x = a ? (b): T => c : d ? e : f;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @19+0 help: Try inserting a semicolon here",
+      ],
+      ["f(a ? (b): T => c : d);", 'Expected `,` or `)` but found `:` @18+1 "`,` or `)` expected", 1+1 "Opened here"'],
+      ["x = a ? (): T => c : d;", "Empty parenthesized expression @8+2"],
+      [
+        "x = a ? (b: U): T => c : d;",
+        'Expected `,` or `)` but found `:` @10+1 "`,` or `)` expected", 8+1 "Opened here"',
+      ],
+      [
+        "x = a ? async (b): T => c : d;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @25+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "class A { default default a; }",
+        "TS(1030) 'default' modifier already seen. @18+7 help: Remove the duplicate modifier.",
+      ],
+      [
+        "class A extends B<> implements C {}",
+        "TS(1099) Type argument list cannot be empty. @17+2",
+        "TS(8011) Type arguments can only be used in TypeScript files. @17+2",
+        "TS(8005) 'implements' clauses can only be used in TypeScript files. @20+10",
+      ],
+      [
+        "class A extends B< > {}",
+        "TS(1099) Type argument list cannot be empty. @17+3",
+        "TS(8011) Type arguments can only be used in TypeScript files. @17+3",
+      ],
+      [
+        "class A implements B<> {}",
+        "TS(8005) 'implements' clauses can only be used in TypeScript files. @8+10",
+        "TS(1099) Type argument list cannot be empty. @20+2",
+      ],
+      [
+        "let x = class extends B<> {};",
+        "TS(1099) Type argument list cannot be empty. @23+2",
+        "TS(8011) Type arguments can only be used in TypeScript files. @23+2",
+      ],
+      ["class A { static constructor; }", "Classes can't have a field named 'constructor' @17+11"],
+      ["class A { static constructor = 1; }", "Classes can't have a field named 'constructor' @17+11"],
+      ["class A { constructor; }", 'Expected `(` but found `;` @21+1 "`(` expected"'],
+      [
+        "export @d export class A {}",
+        "'export' modifier cannot be used here. @10+6 help: Allowed modifiers are: declare, abstract",
+      ],
+      [
+        "export using a = b;",
+        "Using declarations cannot be exported directly. @7+7 help: Remove the `export` here and add `export { a }` as a separate statement to export the declaration",
+      ],
+      [
+        "export default interface A { a b }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @30+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export default interface A { a?: T }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @31+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export default interface A { m(a: T) }",
+        'Expected `,` or `)` but found `:` @32+1 "`,` or `)` expected", 30+1 "Opened here"',
+      ],
+      ["export default interface A { m<T>() }", 'Expected `(` but found `<` @30+1 "`(` expected"'],
+      ["export default interface A { [k: string]: T }", "Unexpected token @31+1"],
+      [
+        "export default interface A { [k]: T }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @32+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export default interface A { readonly a: T }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @39+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export default interface A { set a(v: T) }",
+        'Expected `,` or `)` but found `:` @36+1 "`,` or `)` expected", 34+1 "Opened here"',
+      ],
+      [
+        'export default interface A { "a": T }',
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @32+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export default interface A { a; b: T }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @33+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export default interface A extends f() {}",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @35+3",
+      ],
+      ["export default interface A<T> extends B {}", 'Expected `{` but found `<` @26+1 "`{` expected"'],
+      ["export default interface {}", "Unexpected token @25+1"],
+      [
+        "export default interface A {} a ?? b || c;",
+        "Logical expressions and coalesce expressions cannot be mixed @30+11 help: Wrap either expression by parentheses",
+      ],
+      ["<a.b-c />;", "Identifiers in JSX cannot contain hyphens @3+3 help: Remove the hyphen from the identifier"],
+      ["<a b={} />;", "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @5+2"],
+      [
+        "<a b={} />; a ?? b || c;",
+        "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @5+2",
+        "Logical expressions and coalesce expressions cannot be mixed @12+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "for await (const a: T of b) {}",
+        'Expected `;` but found `:` @18+1 "`;` expected"',
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["try {} catch (e?) {}", 'Expected `)` but found `?` @15+1 "`)` expected"'],
+      ["x = a ? (b): T[] => c : d;", "Unexpected token @15+1"],
+      [
+        "export default interface A extends B<T> {}",
+        "TS(8011) Type arguments can only be used in TypeScript files. @36+3",
+      ],
+      [
+        "export default interface\nA {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @26+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "export using {a} = b;",
+        "Using declarations cannot be exported directly. @7+7 help: Remove the `export` here and add `export { { }` as a separate statement to export the declaration",
+      ],
+      ["x = a ? (b): T[][] => c : d;", "Unexpected token @15+1"],
+      [
+        "x = a ? (b): T.U => c : d;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @16+0 help: Try inserting a semicolon here",
+      ],
+      ["x = a ? (b): T<U> => c : d;", "Unexpected token @18+2"],
+      [
+        "x = a ? (b): [T] => c : d;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @16+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "x = a ? (b): {} => c : d;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @15+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "x = a ? (b): () => T => c : d;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @25+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "x = a ? (b): T | U => c : d;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @18+0 help: Try inserting a semicolon here",
+      ],
+      [
+        'x = a ? (b): "a" => c : d;',
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @16+0 help: Try inserting a semicolon here",
+      ],
+      ["x = a ? (b): void => c : d;", "Unexpected token @18+2"],
+      [
+        "x = a ? (b): typeof T => c : d;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @21+0 help: Try inserting a semicolon here",
+      ],
+      ["export default interface\nA\n{}", "The keyword 'interface' is reserved @15+9"],
+      [
+        "export default interface\nA extends B {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @26+0 help: Try inserting a semicolon here",
+      ],
+      ["export default interface\nA;", "The keyword 'interface' is reserved @15+9"],
+      [
+        "export default interface A extends B<T>, C<U> {}",
+        "TS(8011) Type arguments can only be used in TypeScript files. @36+3",
+        "TS(8011) Type arguments can only be used in TypeScript files. @42+3",
+      ],
+      [
+        "export default interface A extends B<> {}",
+        "TS(1099) Type argument list cannot be empty. @36+2",
+        "TS(8011) Type arguments can only be used in TypeScript files. @36+2",
+      ],
+      [
+        "export default interface A extends B.C<T> {}",
+        "TS(8011) Type arguments can only be used in TypeScript files. @38+3",
+      ],
+      ["let x = 1;\nconst", "Unexpected token @17+0"],
+      ["export var", "Unexpected token @11+0"],
+      ["for (const of a);", 'Expected `;` but found `Identifier` @14+1 "`;` expected"'],
+      ["class extends A {}", "A class name is required. @0+5"],
+      ["x = {a?: 1}", 'Expected `,` or `}` but found `?` @6+1 "`,` or `}` expected", 4+1 "Opened here"'],
+      ["x = {async a}", "'async' modifier cannot be used here. @5+5 help: No modifiers are allowed here."],
+      ["class A { async a }", "'async' modifier cannot be used here. @10+5"],
+      ["try {} catch (a = 1) {}", 'Expected `)` but found `=` @16+1 "`)` expected"'],
+      [
+        "let a!",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        'declare module "a"',
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["export as namespace a", "Unexpected token @7+2"],
+      ["for (let of a);", 'Expected `;` but found `Identifier` @12+1 "`;` expected"'],
+      ["for (var of a);", 'Expected `;` but found `Identifier` @12+1 "`;` expected"'],
+      ["for (const of);", 'Expected `;` but found `)` @13+1 "`;` expected"'],
+      ["export default function f<T extends string>(a: {}): T {}", 'Expected `(` but found `<` @25+1 "`(` expected"'],
+      ["export default function f<T>(): Promise<T> {}", 'Expected `(` but found `<` @25+1 "`(` expected"'],
+      [
+        "function g() {\n  function init(config: {}): void {}\n}",
+        'Expected `,` or `)` but found `:` @37+1 "`,` or `)` expected", 30+1 "Opened here"',
+      ],
+      [
+        "function V0({v1, v2}: V3<{v1: any, v2: V4}>): V12.V11 {}",
+        'Expected `,` or `)` but found `:` @20+1 "`,` or `)` expected", 11+1 "Opened here"',
+      ],
+      [
+        "function V0({v1}: V2<{v1?: V3}>): V2b.V2a {}",
+        'Expected `,` or `)` but found `:` @16+1 "`,` or `)` expected", 11+1 "Opened here"',
+      ],
+      ["class A { m<T>(a: T): T {} }", 'Expected `(` but found `<` @11+1 "`(` expected"'],
+      [
+        "class A { m(a: T): T {} }",
+        'Expected `,` or `)` but found `:` @13+1 "`,` or `)` expected", 11+1 "Opened here"',
+      ],
+      [
+        "let o = { m(a: T): T {} };",
+        'Expected `,` or `)` but found `:` @13+1 "`,` or `)` expected", 11+1 "Opened here"',
+      ],
+      [
+        "let f = function (a: T): T {};",
+        'Expected `,` or `)` but found `:` @19+1 "`,` or `)` expected", 17+1 "Opened here"',
+      ],
+      ["let f = function <T>(): T {};", 'Expected `(` but found `<` @17+1 "`(` expected"'],
+      ["function f(a?): T {}", 'Expected `,` or `)` but found `?` @12+1 "`,` or `)` expected", 10+1 "Opened here"'],
+      ["function f(this: T): U {}", "Identifier expected. 'this' is a reserved word that cannot be used here. @11+4"],
+      ["0k0;", "Invalid characters after number @1+1"],
+      ["00k0;", "Invalid characters after number @2+1"],
+      ["000000k000;", "Invalid characters after number @6+1"],
+      ["1k;", "Invalid characters after number @1+1"],
+      ["x = 000k0;", "Invalid characters after number @7+1"],
+      ["0k", "Invalid characters after number @1+1"],
+      ["09k;", "Invalid characters after number @2+1"],
+      ["08.5k;", "Invalid characters after number @4+1"],
+      ["0.5k;", "Invalid characters after number @3+1"],
+      ["1e3k;", "Invalid characters after number @3+1"],
+      ["0x1k;", "Invalid characters after number @3+1"],
+      ["0b1k;", "Invalid characters after number @3+1"],
+      ["0o1k;", "Invalid characters after number @3+1"],
+      ["1nk;", "Invalid characters after number @2+1"],
+      ["1_0k;", "Invalid characters after number @3+1"],
+      ['"use strict"; 000k;', "Invalid characters after number @17+1"],
+      [
+        "00 k;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @2+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "007.5;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      ["007n;", "Invalid characters after number @3+1"],
+      ["007e1;", "Invalid characters after number @3+1"],
+      ["007_1;", "Invalid characters after number @3+1"],
+      ["class {}", "A class name is required. @0+5"],
+      [
+        "class {} a ?? b || c;",
+        "Logical expressions and coalesce expressions cannot be mixed @9+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a ?? b || c; class {}",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "let zz; let zz; class {}",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        "A class name is required. @16+5",
+      ],
+      ["export class {}", "A class name is required. @7+5"],
+      ["export class extends A {}", "A class name is required. @7+5"],
+      ["{ class {} }", "A class name is required. @2+5"],
+      ["function f() { class {} }", "A class name is required. @15+5"],
+      [
+        "if (a) class {}",
+        "Invalid class declaration @7+6 help: Classes can only be declared at top level or inside a block",
+      ],
+      ["@d class {}", "A class name is required. @0+5"],
+      ["class { m(): void {} }", "Expected function body @9+2 help: Add a function body (`{}`)."],
+      ["class {} let a = ;", "Unexpected token @17+1"],
+      ["class implements A {}", "TS(8005) 'implements' clauses can only be used in TypeScript files. @6+10"],
+      [
+        "(yield a b);",
+        "A 'yield' expression is only allowed in a generator body. @1+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `Identifier` @9+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "let a?;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "class A { a?! }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @12+1",
+      ],
+      ["import {", 'Expected `}` but found `EOF` @9+0 "`}` expected"'],
+      ["import { a", 'Expected `}` but found `EOF` @11+0 "`}` expected"'],
+      ["import { a,", 'Expected `}` but found `EOF` @12+0 "`}` expected"'],
+      ["export {", 'Expected `}` but found `EOF` @9+0 "`}` expected"'],
+      ["import a, {", 'Expected `}` but found `EOF` @12+0 "`}` expected"'],
+      ["import {} from", "Unexpected token @15+0"],
+      ["function enum() {}", 'Expected `Identifier` but found `enum` @9+4 "`Identifier` expected"'],
+      ["function* enum() {}", 'Expected `Identifier` but found `enum` @10+4 "`Identifier` expected"'],
+      ["async function enum() {}", 'Expected `Identifier` but found `enum` @15+4 "`Identifier` expected"'],
+      ["x = function enum() {};", 'Expected `(` but found `enum` @13+4 "`(` expected"'],
+      ["function if() {}", 'Expected `Identifier` but found `if` @9+2 "`Identifier` expected"'],
+      ["export function enum() {}", 'Expected `Identifier` but found `enum` @16+4 "`Identifier` expected"'],
+      ["export default function enum() {}", 'Expected `(` but found `enum` @24+4 "`(` expected"'],
+      ["import a from b;", "Unexpected token @14+1"],
+      ["import a from", "Unexpected token @14+0"],
+      ["export * from b;", "Unexpected token @14+1"],
+      ["export { a } from b;", "Unexpected token @18+1"],
+      ["import { a } from 1;", "Unexpected token @18+1"],
+      ["a?.<T>;", "Identifier expected after '?.' @1+2 help: Add an identifier after '?.'"],
+      ["a?.<;", "Identifier expected after '?.' @1+2 help: Add an identifier after '?.'"],
+      ["a?.1;", 'Expected `:` but found `;` @4+1 "`:` expected", 1+1 "Conditional starts here"'],
+      ["a?.;", "Identifier expected after '?.' @1+2 help: Add an identifier after '?.'"],
+      ["a?.<T>(); b", "Identifier expected after '?.' @1+2 help: Add an identifier after '?.'"],
+      ["let \\u12 = 1;", "Invalid Unicode escape sequence @5+3"],
+      ["var \\u12 = 1;", "Invalid Unicode escape sequence @5+3"],
+      ["x = \\u12;", "Invalid Unicode escape sequence @5+3"],
+      ["let a\\u12 = 1;", "Invalid Unicode escape sequence @6+3"],
+      ["let \\u{zz} = 1;", "Invalid Unicode escape sequence @5+2", "Unexpected token @9+1"],
+      ["let a,\nfunction f() {}", "Identifier expected. 'function' is a reserved word that cannot be used here. @7+8"],
+      ["let @ = 1;", "Unexpected token @4+1"],
+      ["let 1;", "Unexpected token @4+1"],
+      ["await; import.meta;", "Unexpected token @5+1"],
+      ["await.y; import.meta;", "Unexpected token @5+1"],
+      ["await = 1; import.meta;", "Unexpected token @6+1"],
+      [
+        "await / x / g; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      ["{ await(); } import.meta;", "Empty parenthesized expression @7+2"],
+      ["{ class A extends await {} } import.meta;", "Cannot use `await` as an identifier in an async context @18+5"],
+      ["function w() { await (x); } import.meta;", "The keyword 'await' is reserved @15+5"],
+      ["const w = () => await (x); import.meta;", "The keyword 'await' is reserved @16+5"],
+      ["var await; import.meta;", "The keyword 'await' is reserved @4+5"],
+      ["x = { await }; import.meta;", "The keyword 'await' is reserved @6+5"],
+      ["a <!--b\nimport.meta;", "HTML comments are not allowed in modules @2+4"],
+      [
+        "await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await ~x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await ++x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await { a: 1 };",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await of;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await () => 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await #x in y;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      ["f(await !x);", 'Expected `,` or `)` but found `!` @8+1 "`,` or `)` expected", 1+1 "Opened here"'],
+      [
+        "y = await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "{ await !x; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "if (a) await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @12+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await !x; export {};",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await !x; await y;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await !x; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x); await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @16+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await --x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await !x\nexport {};",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        'await !x; import "a";',
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function f() {} await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @21+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "async function f() { await !x; } await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @38+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await ...x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await @d class {};",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      ["await <a />;", "Unexpected token @10+1"],
+      ["await /x/;", "Unexpected token @9+1"],
+      [
+        "await async () => 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @14+0 help: Try inserting a semicolon here",
+      ],
+      ["await yield;", "The keyword 'yield' is reserved @6+5"],
+      ["class A { static { await !x; } }", "Cannot use await in class static initialization block @19+5"],
+      [
+        "await of x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await of; export {};",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      ["x = { await }; export {};", "The keyword 'await' is reserved @6+5"],
+      ["export {}; x = { await };", 'Expected `:` but found `}` @23+1 "`:` expected"'],
+      ["import.meta; x = { await };", 'Expected `:` but found `}` @25+1 "`:` expected"'],
+      ["async function f() { x = { await }; }", 'Expected `:` but found `}` @33+1 "`:` expected"'],
+      ["await(); import.meta;", "Empty parenthesized expression @5+2"],
+      ["await(); export {};", "Empty parenthesized expression @5+2"],
+      ["export {}; await();", "Empty parenthesized expression @16+2"],
+      ["{ class A extends await {} } export {};", "Cannot use `await` as an identifier in an async context @18+5"],
+      ["export {}; { class A extends await {} }", "Cannot use `await` as an identifier in an async context @29+5"],
+      ["import.meta; { class A extends await {} }", "Cannot use `await` as an identifier in an async context @31+5"],
+      ["class A extends await {} import.meta;", "Cannot use `await` as an identifier in an async context @16+5"],
+      ["new await; import.meta;", "Cannot use `await` as an identifier in an async context @4+5"],
+      ["new await; export {};", "Cannot use `await` as an identifier in an async context @4+5"],
+      ["export {}; new await;", "Cannot use `await` as an identifier in an async context @15+5"],
+      ["a <!--b\nexport {};", "HTML comments are not allowed in modules @2+4"],
+      ["import.meta;\na <!--b", "HTML comments are not allowed in modules @15+4"],
+      ["export {};\na <!--b", "HTML comments are not allowed in modules @13+4"],
+      ["var await; export {};", "The keyword 'await' is reserved @4+5"],
+      ["await; export {};", "Unexpected token @5+1"],
+      ["await = 1; export {};", "Unexpected token @6+1"],
+      ["(await) => 1; import.meta;", "The keyword 'await' is reserved @1+5"],
+      ["(await) => 1; export {};", "The keyword 'await' is reserved @1+5"],
+      ["({ await } = x); import.meta;", "The keyword 'await' is reserved @3+5"],
+      ["let { await } = x; import.meta;", "The keyword 'await' is reserved @6+5"],
+      ["class A { a = await !x; }", 'Expected `;` but found `!` @20+1 "`;` expected"'],
+      [
+        "for await (const a of b) {} await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @33+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["function w() { let !x; }", "Unexpected token @19+1"],
+      [
+        "static function () {};",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      ["for (await of []) {} import.meta;", "Unexpected token @15+1"],
+      ["await++; import.meta;", "Unexpected token @7+1"],
+      ["for (await of []) {} await y;", "Unexpected token @15+1"],
+      ["await++; await y;", "Unexpected token @7+1"],
+      ["await++; export {};", "Unexpected token @7+1"],
+      ["for (await of []) {} export {};", "Unexpected token @15+1"],
+      ["for (await in x) {} import.meta;", "Unexpected token @11+2"],
+      ["await.x = 1; import.meta;", "Unexpected token @5+1"],
+      ["[await] = x; import.meta;", "Unexpected token @6+1"],
+      [
+        "new.target; import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class W { static { await (await x); } }",
+        "Cannot use await in class static initialization block @26+5",
+        "Cannot use await in class static initialization block @19+5",
+      ],
+      [
+        "class W { static { await x; await y; } }",
+        "Cannot use await in class static initialization block @19+5",
+        "Cannot use await in class static initialization block @28+5",
+      ],
+      [
+        "class W { static { f(await x, await y); } }",
+        "Cannot use await in class static initialization block @21+5",
+        "Cannot use await in class static initialization block @30+5",
+      ],
+      [
+        "function f() { await (await x); }",
+        "`await` is only allowed within async functions and at the top levels of modules @22+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "function f() { await x + await y; }",
+        "`await` is only allowed within async functions and at the top levels of modules @15+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "`await` is only allowed within async functions and at the top levels of modules @25+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "function () {} a ?? b || c;",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        "Logical expressions and coalesce expressions cannot be mixed @15+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "function () {}",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+      ],
+      ["{ x = { await }; } import.meta;", "The keyword 'await' is reserved @8+5"],
+      ["({ await = 1 } = {}); import.meta;", "The keyword 'await' is reserved @3+5"],
+      ["{ ({ await = 1 } = {}); } import.meta;", "The keyword 'await' is reserved @5+5"],
+      ["({ await = 1 } = {}); export {};", "The keyword 'await' is reserved @3+5"],
+      ["{ x = { await }; } export {};", "The keyword 'await' is reserved @8+5"],
+      ["if (a) { x = { await }; } import.meta;", "The keyword 'await' is reserved @15+5"],
+      ["x = { await }; await y;", "The keyword 'await' is reserved @6+5"],
+      ["x = { a: await }; import.meta;", "Unexpected token @15+1"],
+      ["class A { a = await !x; } export {};", 'Expected `;` but found `!` @20+1 "`;` expected"'],
+      ["class A { a = await ~x; }", 'Expected `;` but found `~` @20+1 "`;` expected"'],
+      ["class A { a = await", 'Expected `}` but found `EOF` @20+0 "`}` expected", 8+1 "Opened here"'],
+      ["class A { a = b !x; }", 'Expected `;` but found `!` @16+1 "`;` expected"'],
+      ["class A { a = b c; }", 'Expected `;` but found `Identifier` @16+1 "`;` expected"'],
+      ["class A { static a = await !x; }", 'Expected `;` but found `!` @27+1 "`;` expected"'],
+      ["class A { a = () => await !x; }", 'Expected `;` but found `!` @26+1 "`;` expected"'],
+      [
+        "for await (const a of b) {}",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} await ~x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @33+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} a b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} let a = ;",
+        "Unexpected token @36+1",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await !x; for await (const a of b) {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "for await (const a of b) {} await (x);",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} await;",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} for await (const c of d) {} a b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @57+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @32+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["class A { a = b as c; }", "TS(8016) Type assertion expressions can only be used in TypeScript files. @14+6"],
+      [
+        "class A { a = b satisfies c; }",
+        "TS(8037) Type satisfaction expressions can only be used in TypeScript files. @14+13",
+      ],
+      ["class A { a = b<c>; }", "Unexpected token @18+1"],
+      ["class A { a = b!; }", 'Expected `;` but found `!` @15+1 "`;` expected"'],
+      ["class A { a = b!.c; }", 'Expected `;` but found `!` @15+1 "`;` expected"'],
+      ["class A { c; a = b !x; }", 'Expected `;` but found `!` @19+1 "`;` expected"'],
+      ["class A { c() {} a = b !x; }", 'Expected `;` but found `!` @23+1 "`;` expected"'],
+      [
+        "class A { a = () => { b !x; }; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @23+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "class A { static { b !x; } }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @20+0 help: Try inserting a semicolon here",
+      ],
+      ["class A { a = (b !x); }", 'Expected `,` or `)` but found `!` @17+1 "`,` or `)` expected", 14+1 "Opened here"'],
+      ["class A { a = [b !x]; }", 'Expected `,` or `]` but found `!` @17+1 "`,` or `]` expected", 14+1 "Opened here"'],
+      [
+        "class A { a = { c: b !x }; }",
+        'Expected `,` or `}` but found `!` @21+1 "`,` or `}` expected", 14+1 "Opened here"',
+      ],
+      ["x = class { a = b !x; };", 'Expected `;` but found `!` @18+1 "`;` expected"'],
+      [
+        "class A { a = b ? c !x : d; }",
+        'Expected `:` but found `!` @20+1 "`:` expected", 16+1 "Conditional starts here"',
+      ],
+      ["class A { [b !x] = 1; }", 'Expected `]` but found `!` @13+1 "`]` expected"'],
+      ["class A { @b !x a; }", "Unexpected token @13+1"],
+      ["x = { [b !x]: 1 };", 'Expected `]` but found `!` @9+1 "`]` expected"'],
+      ["class A { [b !x]() {} }", 'Expected `]` but found `!` @13+1 "`]` expected"'],
+      ["class A { static [b !x] = 1; }", 'Expected `]` but found `!` @20+1 "`]` expected"'],
+      ["class A { get [b !x]() {} }", 'Expected `]` but found `!` @17+1 "`]` expected"'],
+      ["x = { get [b !x]() {} };", 'Expected `]` but found `!` @13+1 "`]` expected"'],
+      ["x = { [b c]: 1 };", 'Expected `]` but found `Identifier` @9+1 "`]` expected"'],
+      ["class A { [b c] = 1; }", 'Expected `]` but found `Identifier` @13+1 "`]` expected"'],
+      ["a[b !x];", 'Expected `]` but found `!` @4+1 "`]` expected"'],
+      ["a[b c];", 'Expected `]` but found `Identifier` @4+1 "`]` expected"'],
+      ["const { [b !x]: c } = d;", 'Expected `]` but found `!` @11+1 "`]` expected"'],
+      ["const { [b c]: d } = e;", 'Expected `]` but found `Identifier` @11+1 "`]` expected"'],
+      ["@b !x class A {}", "Unexpected token @3+1"],
+      ["class A { @b c d; }", 'Expected `;` but found `Identifier` @15+1 "`;` expected"'],
+      [
+        "for await (const a of b) {} await /x/;",
+        "Unexpected token @37+1",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} await [x];",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) { await (x); }",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of await (b)) {}",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} function f() { await x; }",
+        "`await` is only allowed within async functions and at the top levels of modules @43+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) { c d }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @28+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b c) {}",
+        'Expected `)` but found `Identifier` @24+1 "`)` expected", 10+1 "Opened here"',
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (a in b) {}",
+        "await can only be used in conjunction with `for...of` statements @0+18 help: Did you mean to use a for...of statement?",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (;;) {}",
+        "await can only be used in conjunction with `for...of` statements @0+14 help: Did you mean to use a for...of statement?",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["let !x;", "Unexpected token @4+1"],
+      ["{ let !x; }", "Unexpected token @6+1"],
+      ["function w() { a; let !x; }", "Unexpected token @22+1"],
+      ["function w() { let !x; } a b;", "Unexpected token @19+1"],
+      ["() => { let !x; };", "Unexpected token @12+1"],
+      ["class A { m() { let !x; } }", "Unexpected token @20+1"],
+      ["function w() { let ~x; }", "Unexpected token @19+1"],
+      ["function w() { let 1; }", "Unexpected token @19+1"],
+      [
+        "function w() { foo !x; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @18+0 help: Try inserting a semicolon here",
+      ],
+      ["if (a) { let !x; }", "Unexpected token @13+1"],
+      [
+        "new.target;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; new.target;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "export {}; new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x);",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; await (x); new.target;",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await x; new.target;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await x;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "{ new.target; }",
+        "Unexpected new.target expression @2+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "() => new.target;",
+        "Unexpected new.target expression @6+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "{ await (x); new.target; } import.meta;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x), new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "f(await (x), new.target); import.meta;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target, await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; a; await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await; new.target; import.meta;", "Unexpected token @5+1"],
+      ["x = await; new.target; import.meta;", "Unexpected token @9+1"],
+      [
+        "let await; new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await: a; new.target; import.meta;", "Unexpected token @5+1"],
+      [
+        "x = { await }; new.target; import.meta;",
+        "Unexpected new.target expression @15+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await (x); function* g() { yield\n* 2; } import.meta;", "Unexpected token @33+1"],
+      [
+        "await (x); 08; import.meta;",
+        "Decimals with leading zeros are not allowed in strict mode @11+2 help: remove the leading zero",
+      ],
+      [
+        "await (x); '\\08'; import.meta;",
+        "'0'-prefixed octal literals and octal escape sequences are deprecated @11+5 help: for octal literals use the '0o' prefix instead",
+      ],
+      ["await (x); with (a) {} import.meta;", "'with' statements are not allowed @11+4"],
+      [
+        "await (x); let a; let a; import.meta;",
+        'Identifier `a` has already been declared @15+1 "`a` has already been declared here", 22+1 "It can not be redeclared here"',
+      ],
+      [
+        "await (x); break; import.meta;",
+        "Illegal break statement @11+6 help: A `break` statement can only be used within an enclosing iteration or switch statement.",
+      ],
+      [
+        "await (x); super.a; import.meta;",
+        "'super' can only be referenced in members of derived classes or object literal expressions. @11+5",
+      ],
+      [
+        "await (x); class A { constructor() {} constructor() {} } import.meta;",
+        'Multiple constructor implementations are not allowed. @21+11 "constructor has already been declared here", 38+11 "it cannot be redeclared here"',
+      ],
+      [
+        "await (x); ({ a = 1 }); import.meta;",
+        "Invalid assignment in object literal @14+5 help: Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.",
+      ],
+      ["await (x); a?.b = 1; import.meta;", "Cannot assign to this expression @11+4"],
+      ["await (x); delete a; import.meta;", "Delete of an unqualified identifier in strict mode. @18+1"],
+      [
+        "await (x); x = { __proto__: 1, __proto__: 2 }; import.meta;",
+        'Identifier `__proto__` has already been declared @17+9 "`__proto__` has already been declared here", 31+9 "It can not be redeclared here"',
+      ],
+      [
+        "await (x); function f(a, a) { 'use strict'; } import.meta;",
+        'Identifier `a` has already been declared @22+1 "`a` has already been declared here", 25+1 "It can not be redeclared here"',
+      ],
+      ["await (x); yield = 1; import.meta;", "The keyword 'yield' is reserved @11+5"],
+      ["await (x); let let = 1; import.meta;", "The keyword 'let' is reserved @15+3"],
+      [
+        "await (x); class A extends B { m() { super(); } } import.meta;",
+        "TS(2337) Super calls are not permitted outside constructors or in nested functions inside constructors. @37+7",
+      ],
+      [
+        "a ?? b || c; await (x); import.meta;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      ["function f() { await (x); } new.target; import.meta;", "The keyword 'await' is reserved @15+5"],
+      ["function f() { await; } new.target; import.meta;", "The keyword 'await' is reserved @15+5"],
+      ["() => await (x); new.target; import.meta;", "The keyword 'await' is reserved @6+5"],
+      [
+        "async function f() { await (x); } new.target; import.meta;",
+        "Unexpected new.target expression @34+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "async () => await (x); new.target; import.meta;",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["class A { a = await (x); } new.target; import.meta;", "The keyword 'await' is reserved @14+5"],
+      ["class A { m() { await (x); } } new.target; import.meta;", "The keyword 'await' is reserved @16+5"],
+      [
+        "class A extends await {} new.target; import.meta;",
+        "Cannot use `await` as an identifier in an async context @16+5",
+      ],
+      [
+        "await y; await (x); new.target;",
+        "Unexpected new.target expression @20+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; a b; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @24+0 help: Try inserting a semicolon here",
+      ],
+      ["await (x); new.target; await; import.meta;", "Unexpected token @28+1"],
+      [
+        "await (x); new.target; await (y) z; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @32+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x) y; new.target; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "new.target; await (x); new.target; await; import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Unexpected token @40+1",
+      ],
+      [
+        "await (x), new.target; new.target; await (y); import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x), new.target; await (y); import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x), new.target, new.target; await (y); import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; await (y), new.target; import.meta;",
+        "Unexpected new.target expression @34+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await (x), function await() {}; import.meta;", "The keyword 'await' is reserved @20+5"],
+      ["await (x), function await() {}; await (y); import.meta;", "The keyword 'await' is reserved @20+5"],
+      ["await (x), function await() {}; new.target; await (y); import.meta;", "The keyword 'await' is reserved @20+5"],
+      ["await (x), class await {}; await (y); import.meta;", "The keyword 'await' is reserved @17+5"],
+      [
+        "export const a = await (x); new.target;",
+        "Unexpected new.target expression @28+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; export const a = await (x);",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "export default await (x); new.target;",
+        "Unexpected new.target expression @26+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["typeof await; new.target; import.meta;", "Unexpected token @12+1"],
+      [
+        "x = { await: 1 }; new.target; import.meta;",
+        "Unexpected new.target expression @18+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "a.await; new.target; import.meta;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "({ await } = {}); new.target; import.meta;",
+        "Unexpected new.target expression @18+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "({ await = 1 } = {}); new.target; import.meta;",
+        "Unexpected new.target expression @22+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await /k/; new.target; import.meta;", "Unexpected token @9+1"],
+      ["await in k; new.target; import.meta;", "Unexpected token @6+2"],
+      ["await instanceof k; new.target; import.meta;", "Unexpected token @6+10"],
+      ["await = 1; new.target; import.meta;", "Unexpected token @6+1"],
+      ["await.a; new.target; import.meta;", "Unexpected token @5+1"],
+      ["await ? a : b; new.target; import.meta;", "Unexpected token @6+1"],
+      ["await, a; new.target; import.meta;", "Unexpected token @5+1"],
+      ["await (x); 1_; import.meta;", "Invalid Character `;` @13+0"],
+      ["await (x); '\\u{110000}'; import.meta;", "Invalid escape sequence @12+9"],
+      ["await (x); 0b12; import.meta;", "Invalid characters after number @14+1"],
+      [
+        "await (x); export { a as b, c as b }; var a, c;",
+        'Duplicated export \'b\' @25+1 "Export has already been declared here", 33+1 "It cannot be redeclared here"',
+      ],
+      ["await (x); export { zz };", "Export 'zz' is not defined @20+2"],
+      [
+        "await (x); import { a, a } from 'a';",
+        'Identifier `a` has already been declared @20+1 "`a` has already been declared here", 23+1 "It can not be redeclared here"',
+      ],
+      [
+        "await (x); l: l: a; import.meta;",
+        'Label `l` has already been declared @11+1 "`l` has already been declared here", 14+1 "It can not be redeclared here"',
+      ],
+      [
+        "await (x); continue; import.meta;",
+        "Illegal continue statement: no surrounding iteration statement @11+9 help: A `continue` statement can only be used within an enclosing `for`, `while` or `do while` ",
+      ],
+      [
+        "await (x); class A { #a; #a; } import.meta;",
+        'Identifier `#a` has already been declared @21+2 "`#a` has already been declared here", 25+2 "It can not be redeclared here"',
+      ],
+      ["await (x); a.#b; import.meta;", "Private identifier '#b' is not allowed outside class bodies @13+2"],
+      [
+        "await (x); function f() { 'use strict'; 08; } import.meta;",
+        "Decimals with leading zeros are not allowed in strict mode @40+2 help: remove the leading zero",
+      ],
+      [
+        "await (x); function f(a = 1) { 'use strict'; } import.meta;",
+        "Illegal 'use strict' directive in function with non-simple parameter list @31+13 help: Wrap this function with an IIFE with a 'use strict' directive that returns this function",
+      ],
+      [
+        "await (x); function* g(a = yield) {} import.meta;",
+        'yield expression not allowed in formal parameter @27+5 "yield expression not allowed in formal parameter"',
+      ],
+      [
+        "await (x); async function g(a = await 1) {} import.meta;",
+        'await expression not allowed in formal parameter @32+7 "await expression not allowed in formal parameter"',
+      ],
+      [
+        "await (x); for (let a = 1 of b); import.meta;",
+        "for-of loop variable declaration may not have an initializer @16+9",
+      ],
+      ["await (x); for (let of b); import.meta;", 'Expected `;` but found `Identifier` @23+1 "`;` expected"'],
+      [
+        "await (x); if (a) function f() {} import.meta;",
+        "Invalid function declaration @18+15 help: In strict mode code, functions can only be declared at top level or inside a block",
+      ],
+      [
+        "await (x); if (a) let b; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @21+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x); while (a) function f() {} import.meta;",
+        "Invalid function declaration @21+15 help: In strict mode code, functions can only be declared at top level or inside a block",
+      ],
+      [
+        "await (x); try {} catch ([a, a]) {} import.meta;",
+        'Identifier `a` has already been declared @26+1 "`a` has already been declared here", 29+1 "It can not be redeclared here"',
+      ],
+      ["await (x); new a?.b(); import.meta;", "Invalid optional chain from new expression. @16+2"],
+      ["await (x); (a, ...b); import.meta;", "Unexpected token @15+3"],
+      ["await (x); function f(...a, b) {} import.meta;", "A rest parameter must be last in a parameter list @22+4"],
+      [
+        "await (x); import('a', 'b', 'c'); import.meta;",
+        "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments @11+16",
+      ],
+      [
+        "await (x); import(...a); import.meta;",
+        "TS(1325) Argument of dynamic import cannot be a spread element. @18+3",
+      ],
+      [
+        "await (x); x = <a.b-c />; import.meta;",
+        "Identifiers in JSX cannot contain hyphens @18+3 help: Remove the hyphen from the identifier",
+      ],
+      ["await (x); arguments = 1; import.meta;", "Cannot assign to 'arguments' in strict mode @11+9"],
+      ["await (x); eval = 1; import.meta;", "Cannot assign to 'eval' in strict mode @11+4"],
+      [
+        "await (x); class A { a = arguments; } import.meta;",
+        "'arguments' is not allowed in class field initializer @25+9 help: Assign the 'arguments' variable to a temporary variable outside",
+      ],
+      ["await (x); function f() { new.target = 1; } import.meta;", "Cannot assign to this expression @26+10"],
+      ["await (x); import.meta = 1;", "Cannot assign to this expression @11+11"],
+      [
+        "await (x); import.foo; import.meta;",
+        "The only valid property accesses on import are `import.meta`, `import.source()`, and `import.defer()` @11+10",
+      ],
+      ["await (x); new.foo; import.meta;", "The only valid meta property for new is new.target @11+7"],
+      ["await (x); x = async function await() {}; import.meta;", "The keyword 'await' is reserved @30+5"],
+      [
+        "class A { a = new.target; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @28+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { static { new.target; } } new.target; let zz; let zz;",
+        "Unexpected new.target expression @35+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "a ?? b || c; new.target; let zz; let zz;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f() { await y; } new.target; let zz; let zz;",
+        "`await` is only allowed within async functions and at the top levels of modules @15+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "Unexpected new.target expression @26+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["function* g() { yield\n* 2; } new.target; let zz; let zz;", "Unexpected token @22+1"],
+      [
+        "08; new.target; let zz; let zz;",
+        "Unexpected new.target expression @4+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "'\\08'; new.target; let zz; let zz;",
+        "Unexpected new.target expression @7+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "with (a) {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @12+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "let a; let a; new.target; let zz; let zz;",
+        "Unexpected new.target expression @14+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "break; new.target; let zz; let zz;",
+        "Unexpected new.target expression @7+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "return; new.target; let zz; let zz;",
+        "Unexpected new.target expression @8+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "super.a; new.target; let zz; let zz;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { constructor() {} constructor() {} } new.target; let zz; let zz;",
+        "Unexpected new.target expression @46+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "({ a = 1 }); new.target; let zz; let zz;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Invalid assignment in object literal @3+5 help: Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.",
+      ],
+      [
+        "function () {} new.target; let zz; let zz;",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        "Unexpected new.target expression @15+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "/(/; new.target; let zz; let zz;",
+        "Invalid regular expression: Unterminated capturing group @1+1 help: Add the missing closing delimiter",
+        "Unexpected new.target expression @5+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["a?.b = 1; new.target; let zz; let zz;", "Cannot assign to this expression @0+4"],
+      [
+        "delete a; new.target; let zz; let zz;",
+        "Unexpected new.target expression @10+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = { __proto__: 1, __proto__: 2 }; new.target; let zz; let zz;",
+        "Unexpected new.target expression @36+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f(a, a) { 'use strict'; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @35+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "yield = 1; new.target; let zz; let zz;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "let let = 1; new.target; let zz; let zz;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A extends B { m() { super(); } } new.target; let zz; let zz;",
+        "Unexpected new.target expression @39+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "'\\u{110000}'; new.target; let zz; let zz;",
+        "Invalid escape sequence @1+9",
+        "Unexpected new.target expression @14+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "`\\u{110000}`; new.target; let zz; let zz;",
+        "Bad escape sequence in untagged template literal @1+10",
+        "Unexpected new.target expression @14+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["0b12; new.target; let zz; let zz;", "Invalid characters after number @3+1"],
+      [
+        "a as b; new.target; let zz; let zz;",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+6",
+        "Unexpected new.target expression @8+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "const a; new.target; let zz; let zz;",
+        "Missing initializer in const declaration @6+1 help: Add an initializer (e.g. ` = undefined`) here",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "l: l: a; new.target; let zz; let zz;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "continue; new.target; let zz; let zz;",
+        "Unexpected new.target expression @10+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { get constructor() {} } new.target; let zz; let zz;",
+        "Constructor can't have get/set modifier @14+11",
+        "Unexpected new.target expression @33+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { static prototype() {} } new.target; let zz; let zz;",
+        "Classes may not have a static property named 'prototype' @17+9",
+        "Unexpected new.target expression @34+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { #a; #a; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @20+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "a.#b; new.target; let zz; let zz;",
+        "Unexpected new.target expression @6+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f() { 'use strict'; 08; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @35+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f(a = 1) { 'use strict'; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @36+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function* g(a = yield) {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @26+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "async function g(a = await 1) {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @33+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = { get a(b) {} }; new.target; let zz; let zz;",
+        "A 'get' accessor must not have any formal parameters. @11+3 help: Remove these parameters here",
+        "Unexpected new.target expression @21+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = { set a() {} }; new.target; let zz; let zz;",
+        "TS(1049) A 'set' accessor must have exactly one parameter. @11+2 help: Add a parameter here",
+        "Unexpected new.target expression @20+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "for (let a = 1 of b); new.target; let zz; let zz;",
+        "Unexpected new.target expression @22+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["for (let of b); new.target; let zz; let zz;", 'Expected `;` but found `Identifier` @12+1 "`;` expected"'],
+      [
+        "for (async of b); new.target; let zz; let zz;",
+        "The left-hand side of a `for...of` statement may not be `async` @5+5 help: Did you mean to use a for await...of statement?",
+        "Unexpected new.target expression @18+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "if (a) function f() {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "if (a) class A {} new.target; let zz; let zz;",
+        "Invalid class declaration @7+8 help: Classes can only be declared at top level or inside a block",
+        "Unexpected new.target expression @18+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "if (a) let b; new.target; let zz; let zz;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @10+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "while (a) function f() {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @26+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "try {} catch ([a, a]) {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @25+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["new a?.b(); new.target; let zz; let zz;", "Invalid optional chain from new expression. @5+2"],
+      [
+        "a?.`b`; new.target; let zz; let zz;",
+        "Tagged template expressions are not permitted in an optional chain @3+3",
+        "Unexpected new.target expression @8+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "-a ** b; new.target; let zz; let zz;",
+        "A unary expression with the '-' operator cannot be used as the left operand of an exponentiation expression @0+2 help: Wrap the unary expression in parentheses to make the precedence explicit",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "[a, ...b,] = c; new.target; let zz; let zz;",
+        "A rest parameter or binding pattern may not have a trailing comma. @8+1 help: Remove the trailing comma here",
+        "Unexpected new.target expression @16+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["(a, ...b); new.target; let zz; let zz;", "Unexpected token @4+3"],
+      ["function f(...a, b) {} new.target; let zz; let zz;", "A rest parameter must be last in a parameter list @11+4"],
+      [
+        "function f(...a = 1) {} new.target; let zz; let zz;",
+        "A rest parameter cannot have an initializer. @14+5",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "({ ...a, } = b); new.target; let zz; let zz;",
+        "A rest parameter or binding pattern may not have a trailing comma. @7+1 help: Remove the trailing comma here",
+        "Unexpected new.target expression @17+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import('a', 'b', 'c'); new.target; let zz; let zz;",
+        "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments @0+16",
+      ],
+      [
+        "import(...a); new.target; let zz; let zz;",
+        "TS(1325) Argument of dynamic import cannot be a spread element. @7+3",
+      ],
+      [
+        "new import('a'); new.target; let zz; let zz;",
+        "Cannot use new with dynamic import @4+11 help: Wrap this with parenthesis",
+        "Unexpected new.target expression @17+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "throw\na; new.target; let zz; let zz;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+1 "A newline is not expected here"',
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "using a = b; new.target; let zz; let zz;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "@a export @b class A {} new.target; let zz; let zz;",
+        "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'. @10+2",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = <a b={} />; new.target; let zz; let zz;",
+        "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @9+2",
+        "Unexpected new.target expression @16+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = <a.b-c />; new.target; let zz; let zz;",
+        "Identifiers in JSX cannot contain hyphens @7+3 help: Remove the hyphen from the identifier",
+      ],
+      [
+        "arguments = 1; new.target; let zz; let zz;",
+        "Unexpected new.target expression @15+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "eval = 1; new.target; let zz; let zz;",
+        "Unexpected new.target expression @10+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { a = arguments; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @27+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["function f() { new.target = 1; } new.target; let zz; let zz;", "Cannot assign to this expression @15+10"],
+      [
+        "import.foo; new.target; let zz; let zz;",
+        "The only valid property accesses on import are `import.meta`, `import.source()`, and `import.defer()` @0+10",
+      ],
+      ["new.foo; new.target; let zz; let zz;", "The only valid meta property for new is new.target @0+7"],
+      [
+        "x = async function await() {}; new.target; let zz; let zz;",
+        "Cannot use `await` as an identifier in an async context @19+5",
+        "Unexpected new.target expression @31+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f() { for await (a of b); } new.target; let zz; let zz;",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @19+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "Unexpected new.target expression @37+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f() { await using a = b; } new.target; let zz; let zz;",
+        "`await` is only allowed within async functions and at the top levels of modules @15+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "Unexpected new.target expression @36+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f() { yield 1; } new.target; let zz; let zz;",
+        "A 'yield' expression is only allowed in a generator body. @15+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        "Unexpected new.target expression @26+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await ('\\u{110000}'); import.meta;", "Invalid escape sequence @8+9"],
+      ["await ('\\u{110000}'); a; import.meta;", "Invalid escape sequence @8+9"],
+      ["await (x); '\\u{110000}'; await (y); import.meta;", "Invalid escape sequence @12+9"],
+      ["await (x); '\\xg'; import.meta;", "Invalid escape sequence @12+2"],
+      ["await (x); '\\u12'; import.meta;", "Invalid escape sequence @12+4"],
+      ["await (x); a\\u12; import.meta;", "Invalid Unicode escape sequence @13+3"],
+      [
+        "await (x); \\u{61}wait; import.meta;",
+        "Keywords cannot contain escape characters @11+10",
+        "Unexpected token @21+1",
+      ],
+      ["await (x); 0x; import.meta;", "Invalid Character `;` @13+0"],
+      ["await (x); 1e; import.meta;", "Invalid Character `;` @13+0"],
+      ["await (x); 0_1; import.meta;", "Invalid characters after number @12+1"],
+      ["await (x); 1_000_; import.meta;", "Invalid Character `;` @17+0"],
+      [
+        "await (x); 09.5; import.meta;",
+        "Decimals with leading zeros are not allowed in strict mode @11+4 help: remove the leading zero",
+      ],
+      ["await (x); 1n2; import.meta;", "Invalid characters after number @13+1"],
+      ["await (x); 01n; import.meta;", "Invalid characters after number @13+1"],
+      ["await (x); #; import.meta;", "Invalid Character `;` @12+1"],
+      ["await (x); a # b; import.meta;", "Invalid Character ` ` @14+1"],
+      [
+        "await (x); /a/gg; import.meta;",
+        "Flag g is mentioned twice in regular expression literal @15+1 help: Remove the duplicated flag here",
+        "Unexpected token @11+5",
+      ],
+      [
+        "await (x); /a/x; import.meta;",
+        "Unexpected flag x in regular expression literal @14+1 help: The allowed flags are `gimsuydv`",
+        "Unexpected token @11+4",
+      ],
+      ["await (x); /a; import.meta;", "Unterminated regular expression @11+17", "Unexpected token @11+17"],
+      ["await (x); 'a; import.meta;", "Unterminated string @11+17"],
+      ["await (x); `a; import.meta;", "Unterminated string @11+17"],
+      ["await (x); /* a; import.meta;", "Unterminated multiline comment @11+19"],
+      [
+        "await (x); v\\u0061r; import.meta;",
+        "Keywords cannot contain escape characters @11+8",
+        "Unexpected token @19+1",
+      ],
+      ["await (x); a <!--b\nimport.meta;", "HTML comments are not allowed in modules @13+4"],
+      [
+        "await (/(/); import.meta;",
+        "Invalid regular expression: Unterminated capturing group @8+1 help: Add the missing closing delimiter",
+      ],
+      [
+        "await (/(/); await (y); import.meta;",
+        "Invalid regular expression: Unterminated capturing group @8+1 help: Add the missing closing delimiter",
+      ],
+      [
+        "await (x); new.target; export = a;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Unexpected token @30+1",
+      ],
+      [
+        "await (x); new.target; import a = require('a');",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "TS(8002) 'import ... =' can only be used in TypeScript files. @23+24 help: TypeScript transforms 'import ... =' to 'const ... ='",
+      ],
+      [
+        "await using a = b; await (x); new.target;",
+        "Unexpected new.target expression @30+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; for await (a of b);",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @27+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "f(await (x), import.meta), new.target;",
+        "Unexpected new.target expression @27+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x) => 1; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x) => 1; new.target; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await /k/ 1; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      ["await <a>b</a>; import.meta;", "Unterminated regular expression @11+18", "Unexpected token @11+18"],
+      ["yi\\u0065ld; export {};", "The keyword 'yield' is reserved @0+10"],
+      ["await < a; import.meta;", "Unexpected token @9+1"],
+      ["await (x), class await {}; import.meta;", "Cannot use `await` as an identifier in an async context @17+5"],
+      ["await <a />; import.meta;", "Unexpected token @10+1"],
+      ["await <a />; new.target; import.meta;", "Unexpected token @10+1"],
+      ["await /k/; import.meta;", "Unexpected token @9+1"],
+      ["await /k/.test(a); import.meta;", "Unexpected token @9+1"],
+      ["await /=k/; import.meta;", "Unexpected token @10+1"],
+      ["f(await /k/); import.meta;", "Unexpected token @11+1"],
+      ["f(await <a />); import.meta;", "Unexpected token @12+1"],
+      ["await <a></a>; import.meta;", "Unexpected token @10+1"],
+      ["await <></>; import.meta;", "Unexpected token @7+1"],
+      [
+        "await <a b='c' />; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      ["await <a>{b}</a>; import.meta;", "Unterminated regular expression @13+18", "Unexpected token @13+18"],
+      ["await <a>b</a>;", "Unterminated regular expression @11+5", "Unexpected token @11+5"],
+      ["x = await /k/; export {};", "Unexpected token @13+1"],
+      ["v\\u0061r;", "Keywords cannot contain escape characters @0+8", "Unexpected token @8+1"],
+      ["\\;", "Invalid Unicode escape sequence @1+1"],
+      [
+        "function () {} let a = ;",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        "Unexpected token @23+1",
+      ],
+      ["cl\\u0061ss A {}", "Keywords cannot contain escape characters @0+10"],
+      [
+        "cl\\u0061ss A {} new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @0+10",
+        "Unexpected new.target expression @16+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["x = { g\\u0065t a() {} };", "Keywords cannot contain escape characters @6+8"],
+      [
+        "x = { g\\u0065t a() {} }; new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @6+8",
+        "Unexpected new.target expression @25+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["\\u0061sync function f() {}", "Keywords cannot contain escape characters @0+10"],
+      [
+        "\\u0061sync function f() {} new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @0+10",
+        "Unexpected new.target expression @27+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["v\\u0061r a;", "Keywords cannot contain escape characters @0+8"],
+      [
+        "v\\u0061r a; new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @0+8",
+        "Unexpected new.target expression @12+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["c\\u006fnst a = 1;", "Keywords cannot contain escape characters @0+10"],
+      ["\\u0069f (a) b;", "Keywords cannot contain escape characters @0+7"],
+      ["x = n\\u0065w A;", "Keywords cannot contain escape characters @4+8"],
+      [
+        "x = n\\u0065w A; new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @4+8",
+        "Unexpected new.target expression @16+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["x = typ\\u0065of a;", "Keywords cannot contain escape characters @4+11"],
+      ["x = tru\\u0065;", "Keywords cannot contain escape characters @4+9"],
+      ["x = th\\u0069s;", "Keywords cannot contain escape characters @4+9"],
+      ["x = n\\u0075ll;", "Keywords cannot contain escape characters @4+9"],
+      ["f\\u0075nction f() {}", "Keywords cannot contain escape characters @0+13"],
+      ["r\\u0065turn;", "Keywords cannot contain escape characters @0+11"],
+      ["class A { st\\u0061tic a; }", "Keywords cannot contain escape characters @10+11"],
+      [
+        "class A { st\\u0061tic a; } new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @10+11",
+        "Unexpected new.target expression @27+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["class A { g\\u0065t a() {} }", "Keywords cannot contain escape characters @10+8"],
+      ["for (a \\u006ff b);", "Keywords cannot contain escape characters @7+7"],
+      ["for (a \\u0069n b);", "Keywords cannot contain escape characters @7+7"],
+      ["\\u{61}wait x;", "Keywords cannot contain escape characters @0+10"],
+      ["\\u{61}wait; export {};", "Keywords cannot contain escape characters @0+10", "Unexpected token @10+1"],
+      ["\\u{61}wait (x); export {};", "Keywords cannot contain escape characters @0+10"],
+      ["\\u{61}wait x; export {};", "Keywords cannot contain escape characters @0+10"],
+      ["async function f() { \\u{61}wait x; }", "Keywords cannot contain escape characters @21+10"],
+      [
+        "async function f() { \\u{61}wait; }",
+        "Keywords cannot contain escape characters @21+10",
+        "Unexpected token @31+1",
+      ],
+      ["function* g() { yi\\u0065ld; }", "Keywords cannot contain escape characters @16+10"],
+      ["\\u0061sync () => 1;", "Keywords cannot contain escape characters @0+10"],
+      ["x = \\u0061sync () => 1;", "Keywords cannot contain escape characters @4+10"],
+      ["export {}; \\u{61}wait;", "Keywords cannot contain escape characters @11+10", "Unexpected token @21+1"],
+      ["im\\u0070ort 'a';", "Keywords cannot contain escape characters @0+11"],
+      ["exp\\u006frt {};", "Keywords cannot contain escape characters @0+11"],
+      ["import a fr\\u006fm 'a';", "Keywords cannot contain escape characters @9+9"],
+      ["import * \\u0061s a from 'a';", "Keywords cannot contain escape characters @9+7"],
+      ["export { a \\u0061s b }; var a;", "Keywords cannot contain escape characters @11+7"],
+      ["f(await); g(await); export {};", "Unexpected token @17+1"],
+      ["f(await); g(await); h(await); export {};", "Unexpected token @27+1"],
+      ["await (x); await; export {};", "Unexpected token @16+1"],
+      ["f(await); a; export {};", "Unexpected token @7+1"],
+      ["f(await); new.target; g(await); export {};", "Unexpected token @29+1"],
+      [
+        "new.target; f(await); g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; f(await); g(await); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Unexpected token @29+1",
+      ],
+      [
+        "new.target, f(await); g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target, f(await); new.target; g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["typeof await; function f() { await(x); } import.meta;", "The keyword 'await' is reserved @29+5"],
+      ["await / x, class await {}; import.meta;", "Unterminated regular expression @6+34", "Unexpected token @6+34"],
+      ["await / x; import.meta;", "Unterminated regular expression @6+18", "Unexpected token @6+18"],
+      ["await / x\nimport.meta;", "Unterminated regular expression @6+4", "Unexpected token @6+17"],
+      [
+        "await / x / y; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "f(await); let a; let a; g(await (x)); export {};",
+        'Identifier `a` has already been declared @14+1 "`a` has already been declared here", 21+1 "It can not be redeclared here"',
+      ],
+      [
+        "f(await); g(await (x)); let a; let a; export {};",
+        'Identifier `a` has already been declared @28+1 "`a` has already been declared here", 35+1 "It can not be redeclared here"',
+      ],
+    ],
+    "cjs": [
+      ["await /k/;", "Unexpected token @9+1"],
+      [
+        "await !k;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await k;",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await (k); await k;",
+        "`await` is only allowed within async functions and at the top levels of modules @11+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        'await "k";',
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await 1;",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await this;",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await new K;",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await function () {};",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await class {};",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await ~k;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await typeof k;",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "function f() { await k; }",
+        "`await` is only allowed within async functions and at the top levels of modules @15+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await k; a ?? b || c;",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "Logical expressions and coalesce expressions cannot be mixed @9+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        'import a from "a"; await k;',
+        "Cannot use import statement outside a module @0+6",
+        "`await` is only allowed within async functions and at the top levels of modules @19+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ['import a from "a";', "Cannot use import statement outside a module @0+6"],
+      ["export {};", "Cannot use export statement outside a module @0+6"],
+      ['import a from "a"; let b = ;', "Cannot use import statement outside a module @0+6", "Unexpected token @27+1"],
+      [
+        "await await k;",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {}",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await using a = b;",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} await (x);",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "new.target; import.meta;",
+        "Unexpected import.meta expression @12+11 help: import.meta is only allowed in module code",
+      ],
+      [
+        "import.meta; new.target;",
+        "Unexpected import.meta expression @0+11 help: import.meta is only allowed in module code",
+      ],
+      ["new.target; export {};", "Cannot use export statement outside a module @12+6"],
+      ["export {}; new.target;", "Cannot use export statement outside a module @0+6"],
+      [
+        "await (x); new.target; import.meta;",
+        "Unexpected import.meta expression @23+11 help: import.meta is only allowed in module code",
+      ],
+      ["await (x); new.target; export {};", "Cannot use export statement outside a module @23+6"],
+      [
+        "new.target; await (x); import.meta;",
+        "Unexpected import.meta expression @23+11 help: import.meta is only allowed in module code",
+      ],
+      ["new.target; await (x); export {};", "Cannot use export statement outside a module @23+6"],
+      [
+        "await (x); import.meta; new.target;",
+        "Unexpected import.meta expression @11+11 help: import.meta is only allowed in module code",
+      ],
+      ["await (x); export {}; new.target;", "Cannot use export statement outside a module @11+6"],
+      [
+        "import.meta; await (x); new.target;",
+        "Unexpected import.meta expression @0+11 help: import.meta is only allowed in module code",
+      ],
+      [
+        "await (x); new.target; await y;",
+        "`await` is only allowed within async functions and at the top levels of modules @23+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await x; new.target;",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "new.target; await x;",
+        "`await` is only allowed within async functions and at the top levels of modules @12+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+    ],
+    "jsx": [
+      ["< />;", "Unexpected token @2+1"],
+      ["<1 />;", "Unexpected token @1+1"],
+      ["</>;", "Unexpected token @1+1"],
+      ["await <a />; import.meta;", "Unexpected token @10+1"],
+    ],
+    "mjs": [
+      ["x = { await };", 'Expected `:` but found `}` @12+1 "`:` expected"'],
+      ["{ class A extends await {} }", "Cannot use `await` as an identifier in an async context @18+5"],
+      [
+        "new.target;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; new.target;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "export {}; new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x);",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; export {};",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); import.meta; new.target;",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); export {}; new.target;",
+        "Unexpected new.target expression @22+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; await (x); new.target;",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; await y;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await x; new.target;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await x;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+    ],
+  };
+
+  const accepted: Record<string, string[]> = {
+    "ts tsx mts cts": [
+      "function f(a: number, b?: string, c?: boolean) {}",
+      "function f(a?: number, b = 1, ...c: number[]) {}",
+      "function f(a = 1, b: number) {}",
+      "function f(this: Window, a?: number) {}",
+      "function f(a: number): void; function f(a: number, b?: string): void; function f(a: any, b?: any) {}",
+      "export function f(a: number): void; export function f(a: any) {}",
+      "export default function f(a: number): void; export default function f(a: any) {}",
+      "async function f(a?: number): Promise<void> {}",
+      "function* g(a?: number): Generator<number> { yield 1; }",
+      "class A { constructor(private a: number, public readonly b?: string, protected c = 1, readonly d?: number, override e?: number) {} }",
+      "class A { constructor(a: number); constructor(a: number, b?: string); constructor(a: any, b?: any) {} }",
+      "class A { m(a: number): void; m(a: string): void; m(a: any) {} }",
+      "class A { static m(a: number): void; static m(a: any) {} }",
+      "class A { async m(a: number): Promise<void>; async m(a: any) {} }",
+      "class A { private m(a: number): void; private m(a: any) {} }",
+      "class A { #m(a: number): void; #m(a: any) {} }",
+      "class A { [Symbol.iterator](): Iterator<number>; [Symbol.iterator](): any { return null } }",
+      'class A { "m"(a: number): void; "m"(a: any) {} }',
+      "class A { m?(): void; a?: number; b!: number; readonly c: number = 1; static d = 1; static readonly e = 2 }",
+      "class A { public static readonly a = 1; private static b = 2; protected static override c = 3 }",
+      "class A { public async m() {} private static async n() {} protected override async o() {} static async *p() {} }",
+      "class A { get a(): number { return 1 } set a(v: number) {} static get b() { return 1 } static set b(v) {} }",
+      "class A { public get a() { return 1 } private set a(v) {} protected static get b() { return 1 } override get c() { return 1 } }",
+      "class A { m<const T>(a: T) {} }",
+      "abstract class A { m(a: number): void; m(a: any) {} abstract n(): void }",
+      "abstract class A { constructor(protected a: number) {} }",
+      "namespace N { export const a = 1; export function f() {} export class C {} export namespace M { export const b = 2 } const c = 3; f(); if (a) {} }",
+      "namespace N { declare const a: number; declare function f(): void; export declare class C {} }",
+      "function f(a: unknown): a is string { return true }",
+      "function f(a: unknown): asserts a is string {}",
+      "function f(a: unknown): asserts a {}",
+      "class A { m(a: unknown): a is string { return true } is(): this is B { return true } assert(): asserts this is B {} static s(a: unknown): a is A { return true } }",
+      "function f(a: unknown): a is string; function f(a: unknown): boolean { return true }",
+      'let x: A<B>; let y = f<A>(); let z = new C<A>(); let w = f<A>; let v: typeof f<A>; let u: import("a").B<C>;',
+      "function f<T>() {} class A<T> {} interface I<T> {} type U<T> = T; const g = <T,>() => 1; let h: <T>() => void;",
+      "function f<const T extends readonly unknown[]>(a: T) {}",
+      "let a!: number; var b!: string; let c!: number, d!: string;",
+      "export default function () {}",
+      "export default async function () {}",
+      "@dec class A { @dec m() {} @dec a = 1; @dec static b = 2; @dec get c() { return 1 } @dec accessor d = 1; constructor(@dec a: number, @dec private b: number) {} n(@dec a: number) {} }",
+      "for (const a of b) {} for (const a in b) {} for (let i = 0, j: number = 1; ; ) {}",
+      "try {} catch (e: unknown) {} try {} catch (e: any) {}",
+      "function f() { type T = 1; interface I {} enum E {} abstract class C {} declare const a: number; declare function g(): void; }",
+      "class A { constructor(); constructor(a?: number) {} m() {} }",
+      "class A { m(): void; m() {} n(): void; n() {} }",
+      "let o = { get a() { return 1 }, set a(v: number) {}, async m() {}, *g() {}, async *h() {}, [k]: 1 };",
+      "function f(a: number,) {} f(1,); class A { m(a: number,) {} } type F = (a: number,) => void;",
+      "function f([a, b]: number[], { c, d }: any, [e]?: number[]) {}",
+      "class A { static async *[Symbol.asyncIterator]() {} }",
+      "class A { protected constructor() {} } class B { private constructor(a: number); private constructor(a: any) {} }",
+      "class A { static override m() {} override readonly a = 1; static override readonly b = 2; public override c = 3 }",
+      "class A { static accessor #a = 1; accessor #b = 2; static #c = 3; readonly #d = 4; static readonly #e = 5; async #m() {} static async #n() {} }",
+      "@Injectable() export class A { constructor(@Inject(TOKEN) private readonly a: B, @Optional() public c?: D, @Self() @Host() e?: F) {} }",
+      '@Component({ selector: "a" }) class A { @Input() a!: string; @Output() b = new E(); @HostListener("click", ["$event"]) on(@Arg() e: Event) {} }',
+      "class A { m(@dec a: number, @dec() b?: string, @dec.c ...d: number[]) {} static n(@dec a: number) {} set s(@dec v: number) {} }",
+      "class A { constructor(@dec a: number); constructor(@dec a: any) {} }",
+      "abstract class A { abstract m(@dec a: number): void; constructor(@dec protected a: number) {} }",
+      "const A = class { constructor(@dec a: number) {} m(@dec b: number) {} };",
+      "export default class { constructor(@dec a: number) {} }",
+      "class A { m(@dec a: number) { return function (b: number) {} } }",
+      'class A { @dec() m() {} @dec static n() {} @dec async o() {} @dec *p() {} @dec get q() { return 1 } @dec set q(v) {} @dec accessor r = 1; @dec #s = 1; @dec ["t"]() {} }',
+      "class A { m(): void; @dec m() {} }",
+      "const x = a as T; const y = a as const; const z = a satisfies T; function f<T>(a: T) {} class A<T> { m<U>() {} }",
+      "interface String2 {} type Number2 = 1; class Any {} enum Unknown {} function f<Never>() {} interface Object {} type Symbol = 1; class Boolean {}",
+      "interface type {} type of = 1; class async {} enum get {} function f<as>() {} type readonly = 1; interface declare {} type abstract = 1; type namespace = 1; type module = 1;",
+      "switch (a) { case 1: break; default: break } switch (b) { default: switch (c) { default: } }",
+      "let [a, ...b] = c; let { d, ...e } = f; function g([h, ...i]: any[], { j, ...k }: any) {} [a, ...b] = c; ({ d, ...e } = f);",
+    ],
+    "ts tsx mts cts d.ts": [
+      "const f = (a?: number, ...b: string[]) => a;",
+      "const f = async (a?: number) => a;",
+      "const f = function (this: any, a?: number) {};",
+      "const f = <T,>(a?: T) => a;",
+      "type F = (a?: number, ...b: string[]) => void;",
+      "type F = new (a?: number) => object;",
+      "type F = abstract new (a?: number) => object;",
+      "type F = (this: Window, a?: number) => void;",
+      "interface I { m(a?: number, ...b: string[]): void; (a?: number): void; new (a?: number): I; readonly [k: string]: unknown }",
+      "interface I { get a(): number; set a(v: number) }",
+      "interface I { m?(): void; a?: number; readonly b: string; readonly c?: string }",
+      "class A { declare a: number; declare readonly b: string; declare static c: number; public declare d: number; declare public e: number }",
+      "class A { accessor a = 1; static accessor b = 2; public accessor c = 3; override accessor d = 4; private static accessor e = 5 }",
+      "class A { static { this.a = 1; } static a: number }",
+      "class A { [k: string]: unknown; static [k: number]: string; readonly [k: symbol]: number }",
+      "class A { static readonly [k: string]: unknown }",
+      "class A<in T, out U, in out V, const W> {}",
+      "abstract class A { abstract m(): void; abstract a: number; abstract get b(): number; abstract set b(v: number); abstract readonly c: string }",
+      "abstract class A { protected abstract m(): void; public abstract a: number; abstract override n(): void; protected abstract override o(): void }",
+      "abstract class A { abstract m(a: number): void; abstract m(a: string): void }",
+      "abstract class A { abstract accessor a: number; protected abstract readonly b: number }",
+      "export abstract class A { abstract m(): void }",
+      "export default abstract class A { abstract m(): void }",
+      "declare abstract class A { abstract m(): void; n(): void }",
+      "export declare abstract class A { abstract m(): void }",
+      'declare class A { constructor(a?: number); m(a?: number): void; get a(): number; set a(v: number); static b: number; readonly c = 1; static readonly d = "x"; private e; protected f?: number }',
+      "declare class A { m(): void; m(a: number): void; [k: string]: unknown; static s(): void }",
+      "declare class A<T> extends B<T> implements C, D { }",
+      "declare function f(a?: number, ...b: string[]): void;",
+      "declare function f(a: number): void; declare function f(a: string): void;",
+      "declare async function f(): Promise<void>;",
+      "declare const a: number, b: string;",
+      'declare const a = 1, b = "x", c = -1, d = 1n, e = true, g = E.A;',
+      "declare let a: number; declare var b: string;",
+      'declare enum E { A = 1, B, C = "x" }',
+      "declare const enum E { A, B }",
+      "export declare const enum E { A = 1 }",
+      "declare namespace N { const a: number; let b: string; function f(): void; class C { m(): void } interface I {} type T = 1; enum E { A } namespace M {} export const c: number; export {}; }",
+      "declare namespace N.M.O { const a: number }",
+      'declare module "m" { const a: number; export = a; }',
+      'declare module "m";',
+      'declare module "*.css" { const s: string; export default s }',
+      "declare global { interface Window { a: number } var b: string; namespace N {} function f(): void } export {};",
+      "namespace N { export import a = M.b; import c = M.d; export { a }; export type { T }; export type T = 1 }",
+      "namespace A.B.C { export const a = 1 }",
+      "export namespace N { export const a = 1 }",
+      "export declare namespace N { const a: number }",
+      "module N { export const a = 1 }",
+      'enum E { A, B = 1, C, D = 1 << 2, E = A | B, F = -1, G = ~1, H = "x".length, I, "J" = 5, K }',
+      'enum E { A = "a", B = "b" }',
+      'enum E { A = "a", B = 1, C }',
+      'enum E { ["A"] = 1, [`B`] = 2 }',
+      "const enum E { A = 1, B = A * 2, C }",
+      "export enum E { A }",
+      "let x: [a: number, b?: string, ...c: boolean[]];",
+      "let x: [number, string?, ...boolean[]];",
+      "let x: [...number[], string];",
+      "let x: [number?, string?];",
+      "let x: readonly number[]; let y: readonly [number, string]; let z: readonly (number | string)[]; let w: readonly number[][];",
+      "let x: readonly string[] | undefined; let y: Array<readonly string[]>; let z: keyof readonly string[];",
+      "let x: unique symbol; declare const y: unique symbol; class A { static readonly z: unique symbol }",
+      "type T<A> = A extends infer U ? U : never;",
+      "type T<A> = A extends (infer U)[] ? U : A extends Promise<infer V> ? V : never;",
+      "type T<A> = A extends (...a: infer P) => infer R ? [P, R] : never;",
+      "type T<A> = A extends { a: infer U; b: infer V extends string } ? [U, V] : never;",
+      "type T<A> = A extends `${infer H}.${infer R}` ? [H, R] : never;",
+      "type T<A> = A extends [infer H, ...infer R] ? R : never;",
+      "type T<A> = A extends (B extends infer U ? U : never) ? 1 : 2;",
+      "type T<A> = A extends new (...a: infer P) => any ? P : never;",
+      "type T<A> = A extends infer U extends string ? U : never;",
+      "const f = (a: unknown): a is string => true;",
+      "const f = function (a: unknown): a is string { return true };",
+      "abstract class A { abstract m(a: unknown): a is string }",
+      "const o = { m(a: unknown): a is string { return true } };",
+      "interface I { m(a: unknown): a is string; (a: unknown): a is string; n(): this is I; o(a: unknown): asserts a }",
+      "type F = (a: unknown) => a is string; type G = (a: unknown) => asserts a; type H = (this: I) => this is I;",
+      "declare function f(a: unknown): a is string;",
+      "let x: { [k: string]: number; [k: number]: number; [k: symbol]: number; [k: `a${string}`]: number };",
+      "let x: { [k: string | number]: number; [k: K]: number };",
+      "let x: { readonly [k: string]: number };",
+      "let x: { [K in keyof T]?: T[K] }; let y: { readonly [K in keyof T]-?: T[K] }; let z: { -readonly [K in keyof T as `a${K}`]+?: T[K] };",
+      "interface I<in T, out U, in out V> {} type A<in T, out U> = (a: T) => U;",
+      "class A extends B implements C, D {} class E implements C {} class F extends B {} class G extends f() {} class H extends a.b<c> {}",
+      "interface I extends A, B.C, D<E> {}",
+      'import type a from "a"; import type { b } from "b"; import type * as c from "c"; import { type d, type e as g } from "d";',
+      'export type { a } from "a"; export type * from "b"; export type * as c from "c"; export { type d } from "d";',
+      'import a = require("a"); import type b = require("b"); export import c = require("c"); import d = e.f;',
+      "export = a;",
+      "export as namespace N;",
+      "export default interface I {}",
+      "export default class {}",
+      "export default abstract class {}",
+      "@dec export class A {}",
+      "export @dec class A {}",
+      "@dec export default class A {}",
+      "@dec abstract class A {}",
+      'let x: typeof import("a"); let y: import("a", { with: { "resolution-mode": "import" } }).B;',
+      "type T = A extends B ? C : D; type U = (A extends B ? C : D)[]; type V = keyof (A | B);",
+      "let x: abstract new () => void;",
+      "let x: (new () => void) | (() => void);",
+      'interface I { "a": number; 1: string; [Symbol.iterator](): void; readonly "b": number }',
+      "type T = { a: number, b?: string; readonly c: boolean, m(): void; get d(): number; set d(v: number) };",
+      "declare class A { constructor(@dec a: number); m(@dec a: number): void }",
+      "@dec class A {} @dec() class B {} @dec.a.b class C {} @(dec) class D {}",
+      "@dec @dec2 export abstract class A {}",
+      "export default @dec class A {}",
+      "@dec declare class A {}",
+      "const f = <T,>(a: T) => a; const g = <T extends unknown>(a: T) => a; const h = <T, U>(a: T, b: U) => a; const i = async <T,>(a: T) => a;",
+      "type keyof2 = 1; interface infer {} type is = 1; type asserts = 1; type unique = 1; type global = 1; type satisfies = 1; type out = 1; type accessor = 1; type override = 1;",
+      "let x: { [k: string]: 1; [k: number]: 2; [k: symbol]: 3; [k: any]: 4; [k: K]: 5; [k: A.B]: 6; [k: `a${string}`]: 7; [k: string | number]: 8; [k: (string)]: 9 };",
+      "class A { [k: string]: unknown; static [k: number]: unknown; readonly [k: symbol]: unknown; static readonly [k: K]: unknown }",
+      'import type a from "a"; import type { b, c as d } from "b"; import type * as e from "e"; import { type f, type g as h, i } from "f"; import j, { type k } from "k";',
+      'export type { a, b as c }; export type { d } from "d"; export { type e, type f as g }; export type * from "h"; export type * as i from "i";',
+      'import a = require("a"); import type b = require("b"); import c = d.e; export import f = g.h; export import type i = require("i");',
+      'let x: import("a"); let y: import("a").B; let z: typeof import("a"); let w: import("a").B<C>; let v: import("a", { with: { "resolution-mode": "require" } }).B;',
+      "interface I extends A, B.C, D<E>, F.G<H> {} class J extends f() implements A, B.C, D<E> {}",
+      "let x: Array<?>; let y: Map<?, ?>;",
+      'enum E { A, "B", ["C"], [`D`], E = 1, F = "x" }',
+      "class A extends B {} class C extends B implements D {} class E implements D, F {} class G extends (B) {} class H extends B<I> {}",
+      "let x: [a?: 1, b?: 2, ...c: 3[]]; let y: [1, 2?, ...3[]]; let z: [...1[], 2, 3]; let w: [a: 1, b: 2];",
+      "type A = { get a(): number; set a(v: number) }; interface B { get a(): number; set a(v: number) }",
+    ],
+    "ts": [
+      'let x = a satisfies B; let y = a as const; let z = a!; let w = <const>["a"];',
+      "declare function f(...a,): void;",
+      "declare const a = 1;",
+      'declare const a = "x", b = -1, c = 1n, d = true, e = `t`, f = E.A, g = null, h = a.b.c, i = -1n, j = +1, k = E["A"], l = (1), m = 1 + 2, n = undefined, o = [], p = {};',
+      "declare const [a] = [1];",
+      "declare const {a} = x;",
+      "declare class A { static {} }",
+      "declare class A { static { a; } }",
+      "declare function f(a = 1): void;",
+      "declare function f(a: number = 1): void;",
+      "declare class A { m(a = 1): void; constructor(a = 1); }",
+      "declare async function f(): any;",
+      "declare const f = () => { a; };",
+      "namespace N { a; function f() {} let b = 1; }",
+      "declare enum E { A = f() }",
+      "declare namespace N { interface I { m(): void } type T = 1; enum E {} abstract class C { abstract m(): void } }",
+      'declare let x: typeof import("a");',
+      "class A { a!: number; }",
+      "class A { 'a'!: number; [b]!: number; #c!: number; 1!: number }",
+      "class A { readonly a!: number; }",
+      "let a!: number;",
+      "var a!: number;",
+      "class A { m(): void; m() {} }",
+      "class A { m?(): void; }",
+      "class A { m(): void; static m() {} }",
+      "class A { static m(): void; m() {} }",
+      "class A { 'm'(): void; m() {} }",
+      "class A { m(): void; 'm'() {} }",
+      "class A { [m](): void; [m]() {} }",
+      "class A { [m](): void; }",
+      "class A { [m](): void; [n]() {} }",
+      "class A { [m](): void; n() {} }",
+      "class A { ['m'](): void; m() {} }",
+      "class A { [`m`](): void; m() {} }",
+      "class A { 1(): void; 1() {} }",
+      "class A { 1(): void; '1'() {} }",
+      "class A { 1.0(): void; 1() {} }",
+      "class A { #m(): void; #m() {} }",
+      "class A { #m(): void; }",
+      "class A { #m(): void; #n() {} }",
+      "class A { #m(): void; [n]() {} }",
+      "class A { m(): void; get m() { return 1 } }",
+      "abstract class A { m(): void; abstract m(): void; }",
+      "class A { constructor(); constructor() {} }",
+      "class A { constructor(); 'constructor'() {} }",
+      "class A { m(): void; ; m() {} }",
+      "class A { async m(): Promise<void>; async m() {} }",
+      "declare class A { m(): void; }",
+      "namespace N { declare class A { m(): void } }",
+      "declare namespace N { class A { m(): void; get a(): number } }",
+      "function f(): void;",
+      "function f(): void; function g() {}",
+      "export function f(): void;",
+      "namespace N { function f(): void; }",
+      "export default function f(): void;",
+      "interface I { set a(v = 1) }",
+      "type T = { set a(v = 1) }",
+      "class A { get a(): number { return 1 } set a(v: number) {} }",
+      "class A { static constructor<T>(): void {} }",
+      "class A { ['constructor']<T>(): void {} }",
+      "let x: Array<number?>;",
+      "type T = number?;",
+      "type T = ?number;",
+      "let x = y as number?;",
+      "let x = <number?>y;",
+      "let x: [number?];",
+      "let x: [a?: number, ...b: string[]];",
+      "let x: [...a: string[], b?: number];",
+      "let x: [...string[], number?];",
+      "let x: [...string[], ...number[]];",
+      "let x: [...a: string[], ...b: number[]];",
+      "let x: [...string[], number];",
+      "let x: [a: number, string];",
+      "let x: [number, b: string];",
+      "let x: [a?: number, string?];",
+      "function f(a): a is string {}",
+      "function f(a): asserts a {}",
+      "function f(a): a is string | b {}",
+      "let f = (a): a is string => true;",
+      "let f = function (a): a is string { return true };",
+      "type F = (a) => a is string;",
+      "type F = (a) => (b) => b is string;",
+      "declare function f(a): asserts a is string;",
+      "type T<A> = A extends infer U ? U : never;",
+      "type T<A> = A extends (infer U)[] ? U : never;",
+      "type T<A> = A extends { a: infer U extends string } ? U : never;",
+      "type T<A> = A extends (B extends infer U ? U : never) ? 1 : 2;",
+      "type T<A> = A extends string ? (A extends infer U ? U : never) : never;",
+      "type T<A> = A extends [infer U, ...infer V] ? [U, V] : never;",
+      "type T<A> = A extends (...a: infer P) => infer R ? [P, R] : never;",
+      "let x: readonly number[];",
+      "let x: readonly [number];",
+      "let x: readonly number[][];",
+      "let x: keyof readonly number[];",
+      "let x: unique symbol;",
+      "let x: unique number;",
+      "const x: unique symbol = Symbol();",
+      'let x: import("a").b<c>;',
+      'let x: import("a", { with: { "resolution-mode": "import" } });',
+      "let x: { [k]: number };",
+      "let x: { [k: T]: number };",
+      "let x: { [k: string | number]: number };",
+      "let x: { [k: `a${string}`]: number };",
+      "let x: { [k: symbol]: number };",
+      "let x: { [k: number]: number };",
+      "let x: { [k: any]: number };",
+      "let x: { [k: A.B]: number };",
+      "class A { static [k: string]: number; readonly [j: number]: string }",
+      "enum E { ['a'] }",
+      "enum E { [`a`] }",
+      "enum E { 'a', \"b\" = 1 }",
+      "enum E { A = 1, B }",
+      "enum E { A = x, B }",
+      "enum E { A = x.y, B }",
+      "enum E { A = 1 + 2, B }",
+      "enum E { A = -1, B }",
+      "enum E { A = (1), B }",
+      "enum E { A = 'x', B = 1, C }",
+      'enum E { A = x["y"], B }',
+      "enum E { A = 1, }",
+      "class A implements B, C {}",
+      "interface A extends B, C {}",
+      "interface A extends a.b.c<d> {}",
+      "class A extends f() {}",
+      "class A extends a?.b {}",
+      "declare module 'a' {}",
+      "declare module 'a';",
+      "declare module 'a' { module 'b' {} }",
+      "declare global {}",
+      "export {}; declare global {}",
+      "namespace N { declare global {} }",
+      "declare namespace N { global {} }",
+      "declare module 'a' { global {} }",
+      "namespace A { namespace B {} }",
+      "namespace A { export namespace B {} }",
+      "namespace A.B.C {}",
+      "export namespace A {}",
+      "export declare namespace A {}",
+      "declare module 'a' { namespace B {} export namespace C {} }",
+      "namespace N { export { a }; }",
+      "namespace N { import a = b.c; }",
+      "namespace N { export import a = b.c; }",
+      "namespace N { export type { a }; }",
+      'declare module \'a\' { import a from "a"; import b = require("b"); export * from "c"; export as namespace X; }',
+      'declare global { import a from "a"; export default 1; export * from "c"; }',
+      "export as namespace X;",
+      "function f() { export as namespace X; }",
+      "function f() { export = a; }",
+      'function f() { import a = require("a"); }',
+      "function f() { import a = b.c; }",
+      "function f() { export default 1; }",
+      "function f() { type T = 1; interface I {} enum E {} declare const a: number; declare function g(): void; abstract class C {} }",
+      'import type a = require("a");',
+      'export import type a = require("a");',
+      'import { type a, type default as b } from "a";',
+      "interface I { readonly (): void }",
+      "class A<in T, out U, in out V, const W> {}",
+      "let f = <const T,>() => 1;",
+      "type F = <const T>() => void;",
+      "interface I { m<const T>(): void; <const T>(): void; new <const T>(): void }",
+      "if (1) const enum E {}",
+      "if (1) import a = b.c;",
+      "if (1) export = a;",
+      "if (1) type",
+      "T = 1;",
+      "if (1) interface",
+      "class A { m(@d a) {} constructor(@d a) {} set s(@d a) {} static n(@d a) {} }",
+      "class A { m(@d a): void; m(a) {} }",
+      "abstract class A { abstract m(@d a): void }",
+      "declare class A { m(@d a): void }",
+      "(class { m(@d a) {} });",
+      "class A { @d constructor() {} }",
+      "class A { @d declare a: number }",
+      "@d declare class A {}",
+      "@d export default class {}",
+      "@d export default abstract class {}",
+      "@d export abstract class A {}",
+      "@d abstract class A {}",
+      "export default @d class {}",
+      "const a = @d class {};",
+      "@d @e class A {}",
+      "class A { @d get a() { return 1 } @d set a(v) {} }",
+      'let x: { [k: "a" | "b"]: 1 };',
+      "let x: { [k: string[]]: 1 };",
+      "let x: { [k: {}]: 1 };",
+      "let x: { [k: () => void]: 1 };",
+      "let x: { [k: keyof T]: 1 };",
+      "let x: { [k: typeof a]: 1 };",
+      "let x: { [k: T[K]]: 1 };",
+      "let x: { [k: `a${b}`]: 1 };",
+      "let x: { [k: string & {}]: 1 };",
+      "let x: { [k: (string)]: 1 };",
+      "let x: { [k: readonly string[]]: 1 };",
+      "let x: { [k: unique symbol]: 1 };",
+      "let x: { [k: A<B>]: 1 };",
+      "let x: { [k: string | boolean]: 1 };",
+      "let x: { [k: boolean | string]: 1 };",
+      "let x: { [k: [string]]: 1 };",
+      "let x: { [k: T extends U ? 1 : 2]: 1 };",
+      'let x: { [k: import("a")]: 1 };',
+      "let x: { [k: intrinsic]: 1 };",
+      "let x: { [k: String]: 1 };",
+      'let x: { [k: number | "a"]: 1 };',
+      "let x: { [k: symbol | number]: 1 };",
+      'import("a", );',
+      "import.meta.a;",
+      "let x: Array<?>;",
+      "type M = { [K in T]: 1; };",
+      "type M = { [K in T] };",
+      "let x: A<B,>;",
+      "f<A,>();",
+      "function f<T,>() {}",
+      "let x: Array<?>; let y: Map<?, ?>; function f(a: Array<?>): Promise<?> {}",
+      "let x: ? | string;",
+      "let x: (?);",
+      "(a ?? b) || c;",
+      "a ?? (b || c);",
+      "a ?? b ?? c;",
+      "a || b && c;",
+      "a ?? b | c;",
+      "(a?.b)`x`;",
+      "a?.b(`x`);",
+      "a.b`x`;",
+      "for (var a = 1 in {}) {}",
+      "for (var a = 1; ;) {}",
+      "(a) =>\n1;",
+      "throw 1;",
+      'import("a", "b");',
+      'import("a", );',
+      'import("a", "b", );',
+      'new (import("a"));',
+      "new import.meta.a;",
+      "new (import.meta.a);",
+      'import("a").then;',
+      'import.defer("a");',
+      'import.source("a");',
+      "class A { static { function f() { return; } } }",
+      "class A { static { () => { return; } } }",
+      "class A { static { class B { m() { return; } } } }",
+      "return;",
+      "function f() { return; }",
+      "namespace N { return; }",
+      "{ return; }",
+      "declare let [a]: number[];",
+      "for (let [a] of b) {}",
+      "for (let [a] in b) {}",
+      "`\\0`;",
+      "f`\\01`;",
+      "f`\\u`;",
+      "a.b`\\xg`;",
+      "let x = `\\u{1}`;",
+      "String.raw`\\u`;",
+      "for (async of => 1;;) {}",
+      "for ((async) of []) {}",
+      "for (async in {}) {}",
+      "for (async.a of []) {}",
+      "async function f() { for await (async of []) {} }",
+      "for (let in {}) {}",
+      "for (let of of []) {}",
+      "for (let a: number;;) {}",
+      "for (var a = 1 in {}, b) {}",
+      "f(`\\0a`);",
+      "x = import.meta<T>;",
+      "for (let[a] of []) {}",
+      "for (let.a in {}) {}",
+      "for (let.a;;) {}",
+      "for (let in x) {}",
+      "for ((let) of []) {}",
+      "for ((let).a of []) {}",
+      "async\na => 1;",
+      "async a =>\n1;",
+      "(a?.b)!`x`;",
+      "class A { static { class B { [(() => { return; })()]; } } }",
+      "class A { static { ({ m() { return; } }); } }",
+      "a as any = 1;",
+      "static as any = 1;",
+      "private as any = 1;",
+      "public as any = 1;",
+      "protected as any = 1;",
+      "readonly as any = 1;",
+      "accessor as any = 1;",
+      "static satisfies any;",
+      "static as any;",
+      "private as any;",
+      "static in a;",
+      "static instanceof a;",
+      "private in a;",
+      "readonly instanceof a;",
+      "static;",
+      "static = 1;",
+      "static\nfoo;",
+      "abstract as any = 1;",
+      "declare as any = 1;",
+      "async as any = 1;",
+      "global as any = 1;",
+      "override as any = 1;",
+      "export {}; declare namespace await {}",
+      "declare namespace await {}",
+      "export {}; declare namespace await.b {}",
+      "export {}; declare namespace a.await {}",
+      "export {}; declare module await {}",
+      "export {}; declare namespace yield {}",
+      "export {}; declare global { export = await; }",
+      "declare module 'w' { export = await; }",
+      "declare module 'w' { export = await.b; }",
+      "declare module 'w' { export default await; }",
+      "declare module 'w' { let a: typeof await; }",
+      "declare module 'w' { export = yield; }",
+      "declare module 'w' { export = await; } export {};",
+      "declare module 'w' { a = await; }",
+      "declare module 'w' { await; }",
+      "declare global { await; }",
+      "export {}; declare global { await; }",
+      "async function w() { let x: A<await>; }",
+      "async function w() { let x: await; }",
+      "async function w() { let x: A<B, await>; }",
+      "async function w() { let x: A<await, B>; }",
+      "async function w() { let x: A<await.b>; }",
+      "async function w() { let x: A<await[]>; }",
+      "async function w() { let x: A<await<B>>; }",
+      "async function w() { f<await>(); }",
+      "async function w() { new F<await>(); }",
+      "async function w() { let x = a as await; }",
+      "async function w() { let x: [await]; }",
+      "async function w() { let x: await | B; }",
+      "async function w() { let x: B | await; }",
+      "async function w() { let x: (await); }",
+      "async function w() { let x: { a: await }; }",
+      "async function w() { let x: (a: await) => await; }",
+      "async function w() { let x: typeof await; }",
+      "async function w() { let x: keyof await; }",
+      "async function w() { type T = await; }",
+      "async function w() { type T = A<await>; }",
+      "async function w(a: A<await>) {}",
+      "async function w(): Promise<await> {}",
+      "function* w() { let x: A<yield>; }",
+      "function* w() { let x: yield; }",
+      "function* w() { let x: [yield]; }",
+      "function* w() { let x: B | yield; }",
+      "function* w() { f<yield>(); }",
+      "async function w() { class A implements await {} }",
+      "async function w() { class A implements B, await {} }",
+      "async function w() { class A implements await.b {} }",
+      "async function w() { class A implements await<T> {} }",
+      "async function w() { class A extends B implements await {} }",
+      "async function w() { interface A extends await {} }",
+      "class W { static { class A implements await {} } }",
+      "class A implements await {}",
+      "namespace W { a as any = 1; }",
+      "namespace W { static = 1; }",
+      "class W { static { class A implements B {} } }",
+      "async function w() { if (a < await b()) {} }",
+      "async function w() { if (a < await b > c) {} }",
+      "async function w() { a < await (b); }",
+      "async function w() { a < await [b]; }",
+      "class W { static { interface A<await> {} } }",
+      "class W { static { type A<await> = 1; } }",
+      "async function* w() { class A implements await {} }",
+      "(async () => { class A implements await {} });",
+      "class W { static { interface A extends await {} } }",
+      "async function* w() { let x: A<yield>; }",
+      "async function* w() { let x: A<await>; }",
+      "(async () => { let x: A<await>; });",
+      "class W { static { type A = { [await in 'a']: 1 }; } }",
+      "class W { static { type A<T> = T extends infer await ? 1 : 2; } }",
+      "class W { static { enum E { A = await } } }",
+      "namespace W { static as any = 1; }",
+      "function* w() { static as any = 1; }",
+      "function w() { static as any = 1; }",
+      "declare module 'w' { static as any = 1; }",
+      "export {}; declare global { static as any = 1; }",
+      "{ static as any = 1; }",
+      "async function* w() { static as any = 1; }",
+      "(async () => { static as any = 1; });",
+      "async function w() { static as any = 1; }",
+      "(() => { static as any = 1; });",
+      "declare module 'a' { export = a; export {}; }",
+      "declare module 'a' { export = a; export as namespace N; }",
+      "declare module 'a' { export = a; export = b; }",
+      "declare module 'a' { export = a; }",
+      "declare module 'a' { export = a; } export const b = 1;",
+      "declare global { export = a; export const b: number; }",
+      "export = a; export = b;",
+      "class A { ['constructor']<T>() {} }",
+      "class A { 'constructor'() {} }",
+      "class A { static 'constructor'<T>() {} }",
+      "class A { 'constructor'(private a) {} }",
+      "class A { 'constructor'?() {} }",
+      "class A { 'constructor'(); 'constructor'() {} }",
+      "class A implements B<T>, C.D<U> {}",
+      "class A implements class {} {}",
+      "class A implements this {}",
+      "class A implements null {}",
+      "class A implements void {}",
+      "class A implements a.b.c {}",
+      "class A implements async {}",
+      "class A implements string {}",
+      "class A extends {} {}",
+      "interface A extends a.b {}",
+      "export @d class A {}",
+      "@d export default class A {}",
+      "@d export class A {}",
+      "export default @d class A {}",
+      "export @d abstract class A {}",
+      "export @d declare class A {}",
+      "{ import a from 'a'; }",
+      "function f(){ export {}; }",
+      "if (1) export {};",
+      "{ export = a; }",
+      '{ import a = require("a"); }',
+      "{ import a = b.c; }",
+      "{ export import a = b.c; }",
+      "{ export type T = 1; }",
+      "{ export interface I {} }",
+      '{ import type a from "a"; }',
+      "let x: { [K in 'a']: 1; };",
+      "let x: { b: 2; [K in 'a']: 1 };",
+      "declare [a];",
+      "declare (a);",
+      "declare = 1;",
+      "declare.a;",
+      "declare async function f(): void;",
+      "declare module 'a' { export = a; namespace N { export const b: number; } }",
+      "declare module 'a' { export = a; import b from \"b\"; }",
+      "declare module 'a' { export = a; const b: number; }",
+      "declare module 'a' { export = a; export {} from \"b\"; }",
+      "class A implements void, B {}",
+      "class A implements B, void {}",
+      "class A implements typeof {}",
+      "class A implements new {}",
+      "class A implements delete {}",
+      "class A implements in {}",
+      "class A implements if {}",
+      "class A implements class {}",
+      "class A implements function {}",
+      "class A implements import {}",
+      "class A implements super {}",
+      "class A implements this.a {}",
+      "class A implements true {}",
+      "class A implements extends {}",
+      "class A implements B.void {}",
+      "class A implements B.class {}",
+      "class A implements B\n{}",
+      "class A implements B,\nC {}",
+      "interface A extends a.b.c<T> {}",
+      "@d export {};",
+      '@d export * from "a";',
+      "@d export = a;",
+      "@d export declare class A {}",
+      "@d export import a = b.c;",
+      "@d export as namespace N;",
+      "export @d interface I {}",
+      "export @d enum E {}",
+      "export @d namespace N {}",
+      "export default @d abstract class A {}",
+      "x = @d abstract class {};",
+      "x = @d declare class {};",
+      "new (a)();",
+      "() => 1;",
+      "class A { default a; }",
+      "class A { default m() {} }",
+      "class A { default; }",
+      "class A { default = 1; }",
+      "class A { static default a; }",
+      "class A { default static a; }",
+      "class A { default constructor() {} }",
+      "class A { default get a() { return 1; } }",
+      "class A { static constructor() {} }",
+      "interface A extends yield {}",
+      "interface A extends implements {}",
+      "interface A extends B, implements {}",
+      "class A { static accessor constructor = 1; }",
+      "class A { 'a'!: number; }",
+      "class A { [a]!: number; }",
+      "class A { 1!: number; }",
+      "class A { #a!: number; }",
+      "class A { accessor a!: number; }",
+      "for (const of of a);",
+      "(static as any) = 1;",
+      "class A { a = 1() }",
+      "let a = 1;",
+      "let g: (a: any) => void;",
+      "let + 1;",
+      "let (a);",
+      "let .a;",
+      "let = 1;",
+      "let;",
+      "let * 2;",
+      "let / 2;",
+      "let < 1;",
+      "let in a;",
+      "let instanceof a;",
+      "await (x); import.meta;",
+      "await <T>x;",
+      "declare function ();",
+      "declare function (): void;",
+      "export declare function ();",
+      "declare async function ();",
+      "await (x); new.target; import.meta;",
+      "await (x); new.target; export {};",
+      "await (x); import.meta; new.target;",
+      "await (x); export {}; new.target;",
+      "await (x); new.target; await y;",
+      "await (x); { new.target; } import.meta;",
+      "await (x); () => new.target; import.meta;",
+      "await (x); class A { a = new.target; } import.meta;",
+      "await (x); class A { static { new.target; } } import.meta;",
+      "class A { a = new.target; }",
+      "class A { static { new.target; } }",
+      "{ await (x); } new.target; import.meta;",
+      "a; await (x); new.target; import.meta;",
+      "await (x); a; new.target; import.meta;",
+      "await (x); new.target; new.target; import.meta;",
+      "await (x); new.target; await (y); new.target; import.meta;",
+      "await + 1; new.target; import.meta;",
+      "await (x); let y: readonly number; import.meta;",
+      "await (x); function f(a?: number, b: number) {} import.meta;",
+      "await (x); static function f() {} import.meta;",
+      "await (x); abstract class A { abstract m() {} } import.meta;",
+      "await (x); import.meta; let y: readonly number;",
+      "await (x); interface A implements B {} import.meta;",
+      "await (x); class A { constructor(public a?, b) {} } import.meta;",
+      "await (x); let a?: number; import.meta;",
+      "await (x); let a!: number = 1; import.meta;",
+      "await (x); class A { declare a = 1; } import.meta;",
+      "await (x); class A<in T> {} function f<in T>() {} import.meta;",
+      "await (x); function f(this) {} x = (this) => 1; import.meta;",
+      "await (x); type A = { readonly m(): void }; import.meta;",
+      "await (x); export = a;",
+      "await (x); export import a = b.c; new.target;",
+      "await (x); export as namespace a; new.target;",
+      "await (x); import type a from 'a'; new.target;",
+      "await (x); export type { a }; new.target;",
+      "await (x); x = <T>a; let y: readonly number; import.meta;",
+      "await (x); declare function f() {}\nimport.meta;",
+      "await (x); new.target; export = a;",
+      "await (x); new.target; export declare const a: 1;",
+      "await <T>(x); new.target; import.meta;",
+      "await <T>x; new.target; import.meta;",
+      "await (x); declare namespace N { a; } import.meta;",
+      "await!;",
+      "await !(x); import.meta;",
+      "await !(x);",
+      "await !-x; import.meta;",
+      "await !\nx; import.meta;",
+      "await /k/g.test(a); import.meta;",
+      "await /=k/g; import.meta;",
+      "f(await /k/g); import.meta;",
+      "await /k/g;",
+      "function <T>() {}",
+      "declare function <T>();",
+      "export declare function <T>(a: T): T;",
+      "export default function <T>() {}",
+      "\\u{61}wait;",
+      "f(await); g(await (x)); export {};",
+      "f(await); await (x); export {};",
+      "await; await (x); export {};",
+      "f(await); new.target; g(await (x)); export {};",
+      "f(await); new.target; new.target; g(await (x)); export {};",
+      "f(await), new.target; g(await (x)); export {};",
+      "await = 1; await (x); import.meta;",
+      "await.a; await (x); import.meta;",
+      "await / x; await (y); import.meta;",
+      "await < x; await (y); import.meta;",
+    ],
+    "ts tsx mts": [
+      "using a = b; await using c = d; export {};",
+      'import.meta.url; function f() { new.target } import("a"); import("a", { with: {} }); import.meta;',
+    ],
+    "ts tsx cts": [
+      "if (a) var b = 1; if (a) function f() {} while (a) b++; for (;;) break; label: for (;;) break label; if (a) { enum E {} interface I {} type T = 1 }",
+      "if (a) type; if (a) interface; if (a) declare; if (a) namespace; if (a) module; if (a) abstract; if (a) global; if (a) enum2;",
+    ],
+    "d.ts": [
+      "const a = 1;",
+      "export default 1;",
+      "export default a;",
+      "export = a;",
+      'import a from "a"; export { a }; export * from "b";',
+      "namespace N { export const a = 1; }",
+      "enum E { A = 1, B = f() }",
+      "class A { static {} }",
+      "function f(a = 1): void;",
+      "class A { async m(): any; }",
+      "async function f(): any;",
+      '"use strict";',
+      'declare namespace N { "use strict"; }',
+      'declare module "m" { a; }',
+      "declare global { a; }",
+      "export {}; declare global { interface A {} }",
+      "module 'a' {}",
+      "global {}",
+      "export {}; global {}",
+      "export as namespace X;",
+      "let [a]: number[];",
+      "declare module 'w' { export = await; }",
+      "class W { static { let x: A<await>; } }",
+      "class W { static { let x: await; } }",
+      "class W { static { let x: A<B>; } }",
+      "class W { static { a as any = 1; } }",
+      "class W { static { class A implements B {} } }",
+      "export {}; declare global { a as any = 1; }",
+      "declare module 'w' { a as any = 1; }",
+      "declare module 'w' { export = a; }",
+      "export {}; declare global { export = a; }",
+      "class W { static { class A implements await {} } }",
+      "export {}; declare global { export = await; }",
+      "class W { static { static as any = 1; } }",
+      "declare module 'w' { static as any = 1; }",
+      "export {}; declare global { static as any = 1; }",
+      "await (x); new.target; import.meta;",
+      "await (x); import.meta;",
+      "await (x); export {};",
+      "await (x); a; import.meta;",
+      "await (x); let y: readonly number; export {};",
+      "declare namespace N { const a = await (x); } let y: readonly number; export {};",
+      "declare function ();",
+    ],
+    "mts": [
+      "<T,>() => 1;",
+      "<T extends unknown>() => 1;",
+      "<T, U>() => 1;",
+      "function f<T>() {}",
+      "class A { m<T>() {} }",
+      "declare namespace await {}",
+      "export {}; declare global { a as any = 1; }",
+      "declare module 'w' { a as any = 1; }",
+      "declare module 'w' { static = 1; }",
+      "export {}; declare global { static = 1; }",
+      "declare module 'w' { export = a; }",
+      "declare module 'w' { a = await; }",
+      "export {}; declare global { a = await; }",
+      "'use strict'; declare namespace yield {}",
+      "declare namespace yield {}",
+    ],
+    "tsx": [
+      "<T,>() => 1;",
+      "<T extends unknown>() => 1;",
+      "<a-b.c />;",
+      "<a-b.c></a-b.c>;",
+      "<a-b.c.d />;",
+      "<a>{}</a>;",
+      "await (x); new.target; import.meta;",
+    ],
+    "js": [
+      "(a ?? b) || c;",
+      "a ?? (b || c);",
+      "a ?? b ?? c;",
+      "a || b && c;",
+      "a ?? b | c;",
+      "(a?.b)`x`;",
+      "a?.b(`x`);",
+      "a.b`x`;",
+      "for (var a = 1 in {}) {}",
+      "for (var a = 1; ;) {}",
+      "(a) =>\n1;",
+      "throw 1;",
+      'import("a", "b");',
+      'import("a", );',
+      'import("a", "b", );',
+      'new (import("a"));',
+      "new import.meta.a;",
+      "new (import.meta.a);",
+      'import("a").then;',
+      'import.defer("a");',
+      'import.source("a");',
+      "class A { static { function f() { return; } } }",
+      "class A { static { () => { return; } } }",
+      "class A { static { class B { m() { return; } } } }",
+      "return;",
+      "function f() { return; }",
+      "{ return; }",
+      "for (let [a] of b) {}",
+      "for (let [a] in b) {}",
+      "`\\0`;",
+      "f`\\01`;",
+      "f`\\u`;",
+      "a.b`\\xg`;",
+      "let x = `\\u{1}`;",
+      "String.raw`\\u`;",
+      "for (async of => 1;;) {}",
+      "for ((async) of []) {}",
+      "for (async in {}) {}",
+      "for (async.a of []) {}",
+      "async function f() { for await (async of []) {} }",
+      "for (let in {}) {}",
+      "for (let of of []) {}",
+      "export @d class A {}",
+      "@d export default class A {}",
+      "export default @d class A {}",
+      "export default interface A {}",
+      "interface;",
+      "interface = 1;",
+      "type\nA = number;",
+      "type = 1;",
+      "type;",
+      "f<T>(a);",
+      "f<T>`a`;",
+      "f<T, U>(a);",
+      "let x = f<T>(a);",
+      "declare;",
+      "declare\nlet a;",
+      "export default abstract class A {}",
+      "abstract\nclass A {}",
+      "abstract;",
+      "namespace;",
+      "class A { a?; }",
+      "class A { m?() {} }",
+      "class A { private; }",
+      "class A { private() {} }",
+      "class A { readonly() {} }",
+      "class A { declare; }",
+      "class A { abstract; }",
+      "class A { private\na; }",
+      'import { type } from "a";',
+      'import { type as as } from "a";',
+      'import type from "a";',
+      'import type, { a } from "a";',
+      "class A { a? = 1; }",
+      "class A { *m?() {} }",
+      "class A { async m?() {} }",
+      "class A { static m?() {} }",
+      "class A { #a?; }",
+      "class A { [a]?; }",
+      'class A { "a"?; }',
+      "class A { 1?; }",
+      "class A { a?\n b; }",
+      "class A { override; }",
+      "class A { static accessor a; }",
+      "class A { static constructor() {} }",
+      "let o = { readonly };",
+      "let o = { private, b };",
+      '{ import("a"); }',
+      "{ import.meta; }",
+      "export default abstract class {}",
+      "export default abstract\nclass A {}",
+      "@d declare class A {}",
+      "@d abstract class A {}",
+      "export @d abstract class A {}",
+      "export default interface A extends B {}",
+      "@d export {};",
+      '@d export * from "a";',
+      "class A { @d constructor() {} }",
+      "class A { set a(v = 1) {} }",
+      "let o = { set a(v = 1) {} };",
+      "declare\nfoo;",
+      "export @d declare class A {}",
+      "x = @d class {};",
+      "x = @d abstract class {};",
+      "class A { default a; }",
+      "class A { default m() {} }",
+      "class A { default; }",
+      "class A { static default a; }",
+      "class A { default static a; }",
+      "class A { default\na; }",
+      "export default interface A { a }",
+      "export default interface A { a; b }",
+      "export default interface A { a, b }",
+      "export default interface A { a? }",
+      "export default interface A { m() }",
+      "export default interface A { m(): void }",
+      "export default interface A { m?() }",
+      "export default interface A { (): void }",
+      "export default interface A { () }",
+      "export default interface A { new () }",
+      "export default interface A { new (): T }",
+      "export default interface A { [k] }",
+      "export default interface A { readonly a }",
+      "export default interface A { get a() }",
+      "export default interface A { get a(): T }",
+      "export default interface A { set a(v) }",
+      "export default interface A extends B, C {}",
+      "export default interface A extends B.C {}",
+      "export default interface A\n{}",
+      "<a-b.c />;",
+      "007;",
+      "export default class {}",
+      "await (x); import.meta;",
+      "await (async () => {})(); import.meta.url;",
+      "import.meta; await (x);",
+      "await (x); function f() { import.meta; }",
+      "await [x]; import.meta;",
+      "await + x; import.meta;",
+      "await `x`; import.meta;",
+      "y = await (x); import.meta;",
+      "f(await (x)); import.meta;",
+      "{ await (x); } import.meta;",
+      "export {}; await !x;",
+      "await y; await !x;",
+      "import.meta; await !x;",
+      "await\n!x;",
+      'import "a"; await !x;',
+      "async function f() { await !x; }",
+      "await -x;",
+      "await +x;",
+      "await `x`;",
+      "await [x];",
+      "await new X;",
+      "await typeof x;",
+      "await void x;",
+      "await delete x.y;",
+      "await function () {};",
+      "await class {};",
+      "await this;",
+      "await null;",
+      "await in x;",
+      "await instanceof x;",
+      "await as;",
+      "await using a = b; await !x;",
+      "x = { await };",
+      "await();",
+      "{ class A extends await {} }",
+      "x = { await: 1 }; import.meta;",
+      "x = { await() {} }; import.meta;",
+      "await++;",
+      "for (await of []) {}",
+      "({ await = 1 } = {});",
+      "{ x = { await }; }",
+      "class A { a = await x; }",
+      "class A { a = await; }",
+      "for await (const a of b) {} await x;",
+      "for await (const a of b) { await x; }",
+      "for await (const a of await b) {}",
+      "await (x); new.target; import.meta;",
+      "await (x); new.target; export {};",
+      "await (x); import.meta; new.target;",
+      "await (x); export {}; new.target;",
+      "await (x); new.target; await y;",
+      "await (x); { new.target; } import.meta;",
+      "await (x); () => new.target; import.meta;",
+      "await (x); class A { a = new.target; } import.meta;",
+      "await (x); class A { static { new.target; } } import.meta;",
+      "class A { a = new.target; }",
+      "class A { static { new.target; } }",
+      "{ await (x); } new.target; import.meta;",
+      "a; await (x); new.target; import.meta;",
+      "await (x); a; new.target; import.meta;",
+      "await (x); new.target; new.target; import.meta;",
+      "await (x); new.target; await (y); new.target; import.meta;",
+      "await + 1; new.target; import.meta;",
+      "await (x); a ?? b || c; import.meta;",
+      "await (x); function f() { await y; } import.meta;",
+      "await (x); for await (const a of b) {} import.meta;",
+      "await (x); return; import.meta;",
+      "await (x); function () {} import.meta;",
+      "await (x); /(/; import.meta;",
+      "await (x); import.meta; a ?? b || c;",
+      "class A { [await (x)] = 1; } new.target; import.meta;",
+      "await (x); import.meta; await (y), new.target;",
+      "await (x); export {}; await (y), new.target;",
+      "await (x); await y; await (z), new.target;",
+      "await (x); await y; new.target;",
+      "await (x); new.target; export const a = await (y);",
+      "await `k`; new.target; import.meta;",
+      "await [k]; new.target; import.meta;",
+      "await - k; new.target; import.meta;",
+      "await\nk; new.target; import.meta;",
+      "await (x); `\\u{110000}`; import.meta;",
+      "await (x); a as b; import.meta;",
+      "await (x); const a; import.meta;",
+      "await (x); class A { get constructor() {} } import.meta;",
+      "await (x); class A { static prototype() {} } import.meta;",
+      "await (x); x = { get a(b) {} }; import.meta;",
+      "await (x); x = { set a() {} }; import.meta;",
+      "await (x); for (async of b); import.meta;",
+      "await (x); if (a) class A {} import.meta;",
+      "await (x); a?.`b`; import.meta;",
+      "await (x); -a ** b; import.meta;",
+      "await (x); [a, ...b,] = c; import.meta;",
+      "await (x); function f(...a = 1) {} import.meta;",
+      "await (x); ({ ...a, } = b); import.meta;",
+      "await (x); new import('a'); import.meta;",
+      "await (x); throw\na; import.meta;",
+      "await (x); using a = b; import.meta;",
+      "await (x); @a export @b class A {} import.meta;",
+      "await (x); x = <a b={} />; import.meta;",
+      "await (x); function f() { for await (a of b); } import.meta;",
+      "await (x); function f() { await using a = b; } import.meta;",
+      "await (x); function f() { yield 1; } import.meta;",
+      "await (x); /[b-a]/; import.meta;",
+      "await (x); x = <a b='\\u{110000}' />; import.meta;",
+      "await (x); x`\\u{110000}`; import.meta;",
+      "await (x); cl\\u0061ss A {} import.meta;",
+      "await (x); x = { g\\u0065t a() {} }; import.meta;",
+      "await (x); \\u0061sync function f() {} import.meta;",
+      "await (x); new.target; await using a = b;",
+      "f(await (x), import.meta); new.target;",
+      "f(await (x), await y); new.target;",
+      "f(await y, await (x)); new.target;",
+      "await /k/g; import.meta;",
+      "await /k/g; new.target; import.meta;",
+      "await /k/g.test(a); import.meta;",
+      "await /=k/g; import.meta;",
+      "await <a>b</a>/g; import.meta;",
+      "import.meta; await <a />;",
+      "await x; await <a />;",
+      "await /k/\nimport.meta;",
+      "\\u{61}wait;",
+      "\\u{61}wait (x);",
+      "function f() { \\u{61}wait; }",
+      "yi\\u0065ld;",
+      "f(await); g(await (x)); export {};",
+      "f(await); await (x); export {};",
+      "await; await (x); export {};",
+      "f(await); new.target; g(await (x)); export {};",
+      "f(await); new.target; new.target; g(await (x)); export {};",
+      "f(await), new.target; g(await (x)); export {};",
+      "await = 1; await (x); import.meta;",
+      "await.a; await (x); import.meta;",
+      "await / x; await (y); import.meta;",
+      "await < x; await (y); import.meta;",
+    ],
+    "cts": [
+      "for (var a = 1 in {}) {}",
+      "let await: any;",
+      "declare const await: any;",
+      "export const await = 1;",
+      "class A extends await {}",
+      "type A = typeof await;",
+    ],
+    "cjs": [
+      "await (k);",
+      "await [k];",
+      "await + k;",
+      "await - k;",
+      "await `k`;",
+      "await;",
+      "await = 1;",
+      "var await = 1; await / 2;",
+      "await\nk;",
+      "async function f() { await k; }",
+      "a <!--b",
+      "let await;",
+      "new.target;",
+      "await (x); new.target;",
+      "new.target; await (x);",
+    ],
+    "jsx": ["< a />;", "await (x); new.target; import.meta;"],
+    "mjs": ["await !x;", "a <!--b", "for await (const a of b) {} await !x;"],
+  };
+
+  test("every error of a file is printed like oxlint's, in its order", async () => {
+    const files: Record<string, string> = {};
+    const expected: Record<string, string[]> = {};
+    for (const [kind, rows] of Object.entries(rejected)) {
+      rows.forEach(([code, ...errors], index) => {
+        files[`${index}.${kind}`] = code + "\n";
+        expected[`${index}.${kind}`] = errors;
+      });
+    }
+    const { errors, exitCode } = await run(files, oxlintrc);
+    expect(errors).toEqual(expected);
+    expect(exitCode).toBe(1);
+  });
+
+  test("code that oxlint accepts is accepted", async () => {
+    const files: Record<string, string> = {};
+    for (const [kinds, snippets] of Object.entries(accepted)) {
+      for (const kind of kinds.split(" ")) {
+        snippets.forEach((code, index) => (files[`${kinds.replaceAll(/\W/g, "_")}/${index}.${kind}`] = code + "\n"));
+      }
+    }
+    expect(await run(files, oxlintrc)).toEqual({ errors: {}, exitCode: 0 });
+  });
+
+  // What oxlint 1.87 prints and `bun lint` does not yet. Both refuse each of these files.
+  const knownDifferences: [extension: string, code: string, ...errors: string[]][] = [
+    // oxc has given up before the `export`, so the file is no module to it.
+    [
+      "js",
+      "for await (const a of b) {} await !x; export {};",
+      "Expected a semicolon or an implicit semicolon after a statement, but found none @33+0 help: Try inserting a semicolon here",
+      "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+    ],
+    [
+      "js",
+      "for await (const a of b) {} a b; export {};",
+      "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
+      "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+    ],
+    // The second `await` is a reference, so oxc reads the statement again once it knows that the file is a module.
+    ["js", "x = { await, b: await }; import.meta;", 'Expected `:` but found `,` @11+1 "`:` expected"'],
+    // After a name `<` compares. oxc reads the statement again, where an element starts.
+    ["js", "await < a > b; import.meta;", "Unexpected token @11+17"],
+    // `-->` at the start of a line.
+    [
+      "js",
+      "await (x);\n--> b\nimport.meta;",
+      "HTML comments are not allowed in modules @11+3",
+      "HTML comments are not allowed in modules @11+3",
+    ],
+    ["js", "\n--> b\nimport.meta;", "HTML comments are not allowed in modules @1+3"],
+    // `let` with an escape is a name.
+    [
+      "js",
+      "l\\u0065t a;",
+      "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+    ],
+    // `new.target` in a declaration file.
+    [
+      "d.ts",
+      "new.target;",
+      "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      "TS(1036) Statements are not allowed in ambient contexts. @0+11",
+    ],
+    [
+      "d.ts",
+      "declare const a: 1; new.target;",
+      "Unexpected new.target expression @20+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      "TS(1036) Statements are not allowed in ambient contexts. @20+11",
+    ],
+    // What the lexer says next.
+    ["js", "await (x); 1__0; import.meta;", "Invalid Character `_` @13+0", "Invalid characters after number @13+1"],
+    ["js", "await (x); 3in []; import.meta;", "Invalid characters after number @12+2"],
+    ["js", "1__0; new.target; let zz; let zz;", "Invalid Character `_` @2+0", "Invalid characters after number @2+1"],
+    ["js", "3in []; new.target; let zz; let zz;", "Invalid characters after number @1+2"],
+    [
+      "js",
+      "await (x); \\; import.meta;",
+      "Invalid Unicode escape sequence @12+1",
+      "Expected a semicolon or an implicit semicolon after a statement, but found none @13+0 help: Try inserting a semicolon here",
+    ],
+    [
+      "js",
+      "1_; new.target; let zz; let zz;",
+      "Invalid Character `;` @2+0",
+      "Unexpected new.target expression @4+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+    ],
+    // In a .tsx file `</` is one token here, and a `<` before a regular expression to oxc.
+    ["tsx", "await <a>b</a>; import.meta;", "Unterminated regular expression @11+18", "Unexpected token @11+18"],
+    // Type parameters that do not start.
+    ["ts", "declare function <;", "Unexpected token @18+1"],
+  ];
+  test.todo.each(knownDifferences)("%s: %j", async (extension, code, ...errors) => {
+    const name = `a.${extension}`;
+    expect(await run({ [name]: code + "\n" }, oxlintrc)).toEqual({ errors: { [name]: errors }, exitCode: 1 });
+  });
+
+  test("without a config file this code is linted, as typescript-eslint's parser takes it", async () => {
+    const files = {
+      "a.ts": "export function f(a?: number, b: number) {}\n",
+      "b.ts": "export class A { m(): void; }\n",
+      "c.ts": "export enum E { A = 'x', B }\n",
+      "d.ts": "export let a: readonly number;\n",
+    };
+    const { stdout, exitCode } = await lint(files, ["-f", "unix"]);
+    expect(stdout.split("\n").filter(line => line.endsWith("]"))).toEqual([
+      "<dir>/a.ts:1:19: 'a' is defined but never used. [Warning/@typescript-eslint/no-unused-vars]",
+      "<dir>/a.ts:1:31: 'b' is defined but never used. [Warning/@typescript-eslint/no-unused-vars]",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });

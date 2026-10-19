@@ -281,13 +281,10 @@ impl Parser<'_> {
                         && self.current_block.is_none()
                         && self.last_header_opens_list_item
                     {
+                        // The line leaves the list item, so it gets back the indentation that the item consumed.
                         n_parents -= 1;
-                        line.indent = total_indent;
-                        if n_parents > 0 {
-                            line.indent -= line
-                                .indent
-                                .min(self.containers[(n_parents - 1) as usize].contents_indent);
-                        }
+                        line.indent =
+                            remaining_indent + self.containers[n_parents as usize].contents_indent;
                     }
                     self.last_list_item_starts_with_two_blank_lines = false;
                 }
@@ -605,7 +602,7 @@ impl Parser<'_> {
             if let Some(extensions) = self.extensions
                 && line.indent < self.code_indent_offset
                 && off < self.size
-                && self.starts_extension_leaf[self.text[off as usize] as usize]
+                && self.starts_extension_leaf.has(self.text[off as usize])
             {
                 let interrupts_paragraph = effective_pivot_type == LineType::Text;
                 let end = (extensions.leaf)(&types::LeafStart {

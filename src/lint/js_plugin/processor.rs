@@ -10,7 +10,8 @@ use super::wire::{self, result};
 use crate::context::Severity;
 use crate::fix::{Fix, SuggestionKind};
 use crate::linter::{
-    LintMessage, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets, write_json,
+    Data, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets,
+    write_json,
 };
 use crate::options::Json;
 use crate::span::Span;
@@ -32,7 +33,8 @@ mod call {
 /// The first byte of what a call returns, after those of [`wire::result`].
 const NEEDS_PROCESSOR: u8 = b'3';
 
-const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
+const OUT_OF_STEP: &[u8] =
+    b"Internal error while running JavaScript plugins. This is a bug in Bun.";
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 
@@ -41,10 +43,12 @@ static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 pub enum Route {
     /// It is JavaScript or TypeScript as it is.
     Native,
+    /// It's in another [language](crate::languages) that Bun parses itself, and all the rules that are on are built in.
+    Language,
     /// A processor takes blocks out of it, each of which goes its own way.
     Processor,
-    /// By the `Linter` of the `eslint` that the project has installed: it has a `language` other than JavaScript, or a parser that
-    /// is not known here is to read what is not called like JavaScript.
+    /// The `Linter` of the project's installed `eslint` lints it. The file has a `language` that Bun can't parse, a
+    /// rule for that language that isn't built in, or an unknown parser and a name that doesn't look like JavaScript.
     Eslint,
     /// Not at all: it is for a processor or for `eslint`, and the configuration is not ESLint's or the package is not installed.
     Unsupported,
@@ -112,19 +116,15 @@ fn fix_of(json: Option<&Json>, offsets: &Utf16OffsetTable) -> Option<Fix> {
 }
 
 fn suggestion_of(json: &Json, offsets: &Utf16OffsetTable) -> Option<Suggestion> {
-    let data = json.get(b"data").and_then(Json::as_object);
-    let has_data = data.is_some();
-    let data = data.unwrap_or_default().iter().filter_map(|(key, value)| {
-        Some((
-            Cow::Owned(std::str::from_utf8(key).ok()?.to_owned()),
-            value.as_str()?.to_vec(),
-        ))
+    let data = json.get(b"data").map_or(Data::None, |data| {
+        let mut written = Vec::new();
+        write_json(&mut written, data);
+        Data::Json(written)
     });
     Some(Suggestion {
         message_id: text_of(json.get(b"messageId")).map_or(Cow::Borrowed(""), Cow::Owned),
         message: json.get(b"desc")?.as_str()?.to_vec(),
-        data: data.collect(),
-        has_data,
+        data,
         fix: fix_of(json.get(b"fix"), offsets)?,
         kind: SuggestionKind::Suggestion,
     })
@@ -168,6 +168,10 @@ fn message_of(json: &Json, offsets: &Utf16OffsetTable, find_rule: &FindRule) -> 
             .filter_map(|it| suggestion_of(it, offsets))
             .collect(),
         suppressions: list(b"suppressions").iter().map(suppression_of).collect(),
+        not_numbers: NotNumbers {
+            line: matches!(json.get(b"line"), Some(Json::Null)),
+            column: matches!(json.get(b"column"), Some(Json::Null)),
+        },
         ..LintMessage::default()
     }
 }
@@ -226,7 +230,7 @@ impl Host<'_> {
         processor: &Processor,
         path: &[u8],
         text: &[u8],
-        lint: &mut dyn FnMut(bool, Vec<Block>) -> Result<Vec<u8>, Vec<u8>>,
+        lint: &mut (dyn FnMut(bool, Vec<Block>) -> Result<Vec<u8>, Vec<u8>> + Send),
     ) -> Result<Json, Vec<u8>> {
         let mut outcome = Err(OUT_OF_STEP.to_vec());
         // Both calls are for the same realm: a processor remembers the blocks of a file.
@@ -278,11 +282,10 @@ impl Host<'_> {
         processor: &Processor,
         path: &[u8],
         text: &[u8],
-        lint: &mut dyn FnMut(bool, Vec<Block>) -> Result<Vec<u8>, Vec<u8>>,
+        lint: &mut (dyn FnMut(bool, Vec<Block>) -> Result<Vec<u8>, Vec<u8>> + Send),
     ) -> Result<Json, Vec<u8>> {
-        let Json::Array(mut parts) =
-            self.call_processor(vm, call::PREPROCESS, processor, path, text)?
-        else {
+        let returned = self.call_processor(vm, call::PREPROCESS, processor, path, text)?;
+        let Some(mut parts) = returned.into_array() else {
             return Err(OUT_OF_STEP.to_vec());
         };
         let (Some(found), Some(supports_autofix)) = (parts.pop(), parts.pop()) else {
@@ -292,15 +295,18 @@ impl Host<'_> {
         let Some(supports_autofix) = supports_autofix.as_bool() else {
             return Ok(Json::Array(vec![found]));
         };
-        let Json::Array(found) = found else {
+        let Some(found) = found.into_array() else {
             return Err(OUT_OF_STEP.to_vec());
         };
         let mut blocks = Vec::with_capacity(found.len());
-        for block in found {
-            blocks.push(match block {
-                Json::String(text) => Block::Unnamed(text),
-                Json::Array(parts) => match <[Json; 2]>::try_from(parts) {
-                    Ok([Json::String(path), Json::String(text)]) => Block::Named { path, text },
+        for mut block in found {
+            blocks.push(match &mut block {
+                Json::String(text) => Block::Unnamed(std::mem::take(text)),
+                Json::Array(parts) => match &mut parts[..] {
+                    [Json::String(path), Json::String(text)] => Block::Named {
+                        path: std::mem::take(path),
+                        text: std::mem::take(text),
+                    },
                     _ => return Err(OUT_OF_STEP.to_vec()),
                 },
                 _ => return Err(OUT_OF_STEP.to_vec()),

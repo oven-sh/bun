@@ -1,10 +1,10 @@
 //! ESLint's `apply-disable-directives.js`: which messages the `eslint-disable` comments of a file
 //! suppress, and which of these comments do nothing.
 
-use super::message::{LintMessage, RuleId, Suppression};
+use super::message::{LintMessage, NotNumbers, RuleId, Suppression};
 use crate::ast::File;
 use crate::context::Severity;
-use crate::fix::Fix;
+use crate::fix::{Around, Fix};
 use crate::span::Span;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
@@ -22,11 +22,14 @@ pub(crate) struct Parent<'a> {
     pub(crate) comment: Span,
     /// The list of rules as it is written, trimmed.
     pub(crate) list: &'a [u8],
+    pub(crate) list_span: Span,
     /// The names in `list`, of rules that exist and of others.
     pub(crate) names: Vec<&'a [u8]>,
     pub(crate) justification: &'a [u8],
     /// Where the comment starts.
     pub(crate) start: (u32, u32),
+    /// `eslint`, or `oxlint`: what it is called after.
+    pub(crate) tool: &'static str,
 }
 
 /// One rule of such a comment, or all rules if it names none.
@@ -63,6 +66,9 @@ pub(crate) struct Input<'i, 'a> {
     pub(crate) rules_to_ignore: &'i [RuleId],
     /// There are more of them, which have no name here.
     pub(crate) has_skipped_rules: bool,
+    /// Rules that are off, when there's no config file. An unused directive that names one isn't reported, because it may be
+    /// there for another tool.
+    pub(crate) off: &'i [RuleId],
 }
 
 impl Input<'_, '_> {
@@ -74,15 +80,21 @@ impl Input<'_, '_> {
         match rule {
             // What applies to all rules may be used by one that did not run.
             None => !self.rules_to_ignore.is_empty() || self.has_skipped_rules,
-            Some(rule) => self.rules_to_ignore.contains(rule),
+            Some(rule) => self.rules_to_ignore.contains(rule) || self.off.contains(rule),
         }
     }
 
     /// `createIndividualDirectivesRemoval`: removes `name` from the list of `parent`.
     fn removal_from_list(&self, parent: &Parent, name: &[u8]) -> Option<Span> {
         let (text, list) = (self.file.text(), parent.list);
-        let list_start = parent.comment.start as usize
-            + strings::index_of(text.get(parent.comment.start as usize..)?, list)?;
+        let joined = self.file.joined_comment(parent.list_span);
+        let list_start = match joined {
+            Some(joined) => joined.index_of(parent.list_span.start),
+            None => {
+                parent.comment.start as usize
+                    + strings::index_of(text.get(parent.comment.start as usize..)?, list)?
+            }
+        };
         // `(?:^|\s*,\s*)(?<quote>['"]?)name\k<quote>(?:\s*,\s*|$)`
         let mut from = 0;
         while let Some(found) = strings::index_of(&list[from..], name) {
@@ -129,12 +141,30 @@ impl Input<'_, '_> {
                 (Some(before), Some(after)) => (before, after),
                 _ => (start, end),
             };
-            return Some(Span::new(
-                (list_start + start) as u32,
-                (list_start + end) as u32,
-            ));
+            let (start, end) = (list_start + start, list_start + end);
+            return Some(match joined {
+                Some(joined) => joined.span_of(start..end),
+                None => Span::new(start as u32, end as u32),
+            });
         }
         None
+    }
+
+    /// Removes a whole comment. ESLint puts a space in its place, which leaves a line with only a space on it, or a space at the
+    /// end of a line, and `bun fmt --check` fails on both. With no config file, a comment that ends its line goes with the
+    /// spaces around it, and with the line break too if nothing else is on the line.
+    fn removal_of(&self, comment: Span) -> Fix {
+        let around = Around::of(self.file.text(), comment);
+        if !self.file.language().stands_alone || around.line_break.is_none() {
+            return Fix {
+                span: comment,
+                text: b" ".to_vec(),
+            };
+        }
+        Fix {
+            span: around.whole_lines().unwrap_or(around.with_blanks),
+            text: Vec::new(),
+        }
     }
 
     /// `processUnusedDirectives`, and the messages that `applyDirectives` makes of its result.
@@ -192,10 +222,7 @@ impl Input<'_, '_> {
                 description.extend_from_slice(name);
                 description.push(b'\'');
             }
-            let fix = Fix {
-                span: parent.comment,
-                text: b" ".to_vec(),
-            };
+            let fix = self.removal_of(parent.comment);
             out.push(self.message(group[0], parent, &description, fix));
         }
     }
@@ -208,15 +235,14 @@ impl Input<'_, '_> {
         fix: Fix,
     ) -> LintMessage {
         let directive = &self.directives[directive as usize];
-        let (what, why) = match directive.kind {
-            Kind::Enable => (
-                "enable",
-                &b"no matching eslint-disable directives were found"[..],
+        let tool = parent.tool;
+        let mut message = match directive.kind {
+            Kind::Enable => format!(
+                "Unused {tool}-enable directive (no matching {tool}-disable directives were found"
             ),
-            _ => ("disable", &b"no problems were reported"[..]),
-        };
-        let mut message = format!("Unused eslint-{what} directive (").into_bytes();
-        message.extend_from_slice(why);
+            _ => format!("Unused {tool}-disable directive (no problems were reported"),
+        }
+        .into_bytes();
         if !description.is_empty() {
             message.extend_from_slice(if directive.kind == Kind::Enable {
                 b" for "
@@ -239,12 +265,15 @@ impl Input<'_, '_> {
             column,
             end: None,
             is_fatal: false,
+            claim: None,
             fix: self.wants_fixes.then_some(fix),
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
+            not_numbers: NotNumbers::default(),
             details: None,
             constant_help: None,
+            reported: 0,
         }
     }
 
@@ -295,8 +324,9 @@ impl Input<'_, '_> {
         let mut enabled_at: FxHashMap<&RuleId, u32> = FxHashMap::default();
         let mut next = 0;
         for message in messages {
+            let place = (message.line as i32, message.column as i32);
             while let Some(switch) = switches.get(next)
-                && (switch.line, switch.column) <= (message.line, message.column)
+                && (switch.line as i32, switch.column as i32) <= place
             {
                 match (switch.disables, self.rule(switch)) {
                     (true, None) => active_for_all.push(next as u32),
@@ -418,8 +448,8 @@ pub(crate) fn apply_disable_directives(input: &Input, messages: &mut Vec<LintMes
             source,
         });
     }
-    crate::utils::sort::sort_by_key(&mut blocks, |it| (it.line, it.column));
-    crate::utils::sort::sort_by_key(&mut lines, |it| (it.line, it.column));
+    crate::utils::sort::sort_by_key(&mut blocks, |it| (it.line as i32, it.column as i32));
+    crate::utils::sort::sort_by_key(&mut lines, |it| (it.line as i32, it.column as i32));
     let mut unused = Vec::new();
     input.apply(&blocks, messages, &mut unused);
     input.apply(&lines, messages, &mut unused);

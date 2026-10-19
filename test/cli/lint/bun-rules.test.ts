@@ -724,7 +724,7 @@ const rules: Record<string, Case[]> = {
     `readJson("a.json");`,
   ],
 
-  "prefer-lazy-schema": [
+  "zod-prefer-lazy-schema": [
     ...[
       `const A = «z.string()»;`,
       `const A = «z.string().min(1).optional()»;`,
@@ -760,6 +760,11 @@ const rules: Record<string, Case[]> = {
     { code: `const A = z.string();`, options: [{ roots: ["v"] }] },
     `const A = userSchema();`,
     `const B = A.extend({ b: 1 });`,
+    // `lazySchema` itself ends with the factory suffix.
+    {
+      code: `${zod}const A = lazySchema(() => z.object({ a: userSchema() }));`,
+      options: [{ factorySuffix: "Schema", lazyWrapper: "lazySchema" }],
+    },
   ],
 
   "no-side-effects-on-import": [
@@ -830,7 +835,7 @@ const rules: Record<string, Case[]> = {
     `import "a";`,
   ],
 
-  "no-unseeded-random-in-property-test": [
+  "fast-check-no-unseeded-random": [
     { code: `${fastCheck}fc.property(fc.integer(), a => «fc.sample(fc.integer(), 1)»);`, ids: ["sample"] },
     { code: `${fastCheck}fc.property(fc.integer(), a => a > «Math.random()»);`, ids: ["random"] },
     `${fastCheck}fc.assert(\n  fc.property(fc.integer(), a => {\n    const [b] = «fc.sample(fc.integer(), 1)»;\n    return a + b === b + a;\n  }),\n);`,
@@ -1216,7 +1221,7 @@ const rules: Record<string, Case[]> = {
     `import axios from "axios";`,
   ],
 
-  "no-unbounded-requests": [
+  "axios-no-unbounded-requests": [
     `${axios}«axios.get»("/a");`,
     `${axios}await «axios.get»("/a");`,
     `${axios}«axios.get»("/a", {});`,
@@ -1411,6 +1416,8 @@ const rules: Record<string, Case[]> = {
     `${processes}const child = spawn("a");\nconst other = child;`,
     `${processes}const child = spawn("a");\nthis.child = child;`,
     `${processes}const child = spawn("a");\nexport { child };`,
+    `${processes}export const child = spawn("a");`,
+    `${processes}export let child;\nchild = spawn("a");`,
     `${files}await pipeline(createReadStream("a"), createWriteStream("b"));`,
     `${files}const source = createReadStream("a");\nfinished(source, done);`,
     `${files}const source = createReadStream("a");\nfor await (const piece of source) use(piece);`,
@@ -1717,7 +1724,12 @@ const testRules: Record<string, Case[]> = {
     `test(«" a"», () => {\n  expect(1).toMatchSnapshot();\n});`,
     `test(«a», () => {});`,
     { code: `describe(«add», () => {});`, options: [{ ignoreTypeOfDescribeName: false }] },
+    { code: `test(«"adds"», () => {});`, options: [{ mustMatch: "/^ADDS/" }] },
+    { code: `test(«"Adds"», () => {});`, options: [{ mustNotMatch: "/^adds/i" }] },
+    { code: `it(«"adds"», () => {});\ntest("adds", () => {});`, options: [{ mustMatch: { it: "^should " } }] },
 
+    { code: `test("adds", () => {});`, options: [{ mustMatch: "/^ADDS/i" }] },
+    { code: `it("should add", () => {});`, options: [{ mustMatch: { it: "^should " } }] },
     `test("a", () => {});`,
     `test(() => {});`,
     `test(callback);`,
@@ -1741,6 +1753,33 @@ const testRules: Record<string, Case[]> = {
     `test.skip("a", () => {});`,
     `test.todo("a", () => {});`,
     `test.todoIf(a)("b");`,
+    `own("a", () => {});`,
+    // `**` also matches zero segments, and `*` matches any character of a name.
+    ...[
+      `test("a", () => {\n  request(b).expect(200);\n});`,
+      `test("a", () => {\n  request(b).get("/").set("c").expect(200);\n});`,
+      `test("a", () => {\n  check_all$(b);\n});`,
+      `test("a", () => {\n  b.c.verify();\n});`,
+      `test("a", () => {\n  verify();\n});`,
+      `test("a", () => {\n  $assert(b);\n});`,
+      `«test»("a", () => {\n  request(b).get("/");\n});`,
+      `«test»("a", () => {\n  requests.expect(200);\n});`,
+      `«test»("a", () => {\n  recheck(b);\n});`,
+      `«test»("a", () => {\n  assert(b);\n});`,
+    ].map(code => ({
+      code,
+      options: [{ assertFunctionNames: ["request.**.expect", "check*", "**.verify", "$ass*"] }],
+    })),
+    // A custom wrapper, a method and a hook.
+    ...[
+      `«own»("a", () => {});`,
+      `«helpers.own»("a", () => {});`,
+      `«beforeAll»(() => {});`,
+      `own("a", () => {\n  expect(1).toBe(1);\n});`,
+      `other("a", () => {});`,
+      `own.skip("a", () => {});`,
+      `own;`,
+    ].map(code => ({ code, options: [{ additionalTestBlockFunctions: ["own", "helpers.own", "beforeAll"] }] })),
   ].map(inBunTest),
 
   "no-done-callback": [
@@ -1764,6 +1803,13 @@ const testRules: Record<string, Case[]> = {
 
   "prefer-ending-with-an-expect": [
     `«test»(() => {\n  expect(1).toBe(1);\n  a();\n});`,
+    `own("a", () => {\n  b();\n});`,
+    ...[
+      `«own»("a", () => {\n  expect(1).toBe(1);\n  b();\n});`,
+      `«beforeAll»(() => {\n  b();\n});`,
+      `own("a", () => {\n  b();\n  expect(1).toBe(1);\n});`,
+      `other("a", () => {\n  b();\n});`,
+    ].map(code => ({ code, options: [{ additionalTestBlockFunctions: ["own", "beforeAll"] }] })),
     `«test»("a", { retry: 1 }, () => {\n  expect(1).toBe(1);\n  a();\n});`,
     `test(() => {\n  a();\n  expect(1).toBe(1);\n});`,
   ].map(inBunTest),
@@ -1777,6 +1823,9 @@ const testRules: Record<string, Case[]> = {
     `«test»("a", 1000, () => {});`,
     `«test.if(a)»("b", () => {});`,
     `«test.each([1])»("a", () => {});`,
+    // The fix doesn't delete a comment either. It's often the test body, commented out.
+    `«test»("a", () => {\n  // expect(b()).toBe(1);\n});`,
+    `«test»("a", /* later */ () => {});`,
     `test(() => {});`,
     `test("a", { retry: 1 }, () => {\n  b();\n});`,
     `test.todoIf(a)("b");`,
@@ -1796,6 +1845,66 @@ const testRules: Record<string, Case[]> = {
       ),
     }))
     .map(it => (it.code.includes("«") ? it : it.code))
+    .map(inBunTest),
+
+  // A test's count includes its nested blocks and the callbacks it passes to other functions.
+  "max-expects": [
+    `test("a", () => {\n  expect(1).toBe(1);\n  «expect»(2).toBe(2);\n});`,
+    `test("a", () => {\n  expect(1).toBe(1);\n  for (const b of c) {\n    «expect»(b).toBe(2);\n  }\n});`,
+    `test("a", () => {\n  expect(1).toBe(1);\n  c.forEach(b => {\n    «expect»(b).toBe(2);\n  });\n});`,
+    `test("a", () => {\n  if (b) expect(1).toBe(1);\n  else «expect»(2).toBe(2);\n});`,
+    `function check() {\n  expect(1).toBe(1);\n  «expect»(2).toBe(2);\n}`,
+
+    `test("a", () => {\n  expect(1).toBe(1);\n});\ntest("b", () => {\n  expect(2).toBe(2);\n});`,
+    `describe("a", () => {\n  test("b", () => {\n    expect(1).toBe(1);\n  });\n  test("c", () => {\n    expect(2).toBe(2);\n  });\n});`,
+    `test("a", () => {\n  expect(1).toBe(1);\n  function check() {\n    expect(2).toBe(2);\n  }\n});`,
+    `test("a", () => {\n  expect.assertions(1);\n  expect.hasAssertions();\n  expect(1).toBe(1);\n});`,
+  ]
+    .map(code => ({ code, options: [{ max: 1 }] }))
+    .map(inBunTest),
+
+  "no-conditional-expect": [
+    `test("a", () => {\n  if (b) «expect»(1).toBe(1);\n});`,
+    `test("a", function () {\n  if (b) «expect»(1).toBe(1);\n});`,
+    `test("a", function named() {\n  if (b) «expect»(1).toBe(1);\n});`,
+    `test("a", () => {\n  each(function () {\n    if (b) «expect»(1).toBe(1);\n  });\n});`,
+    // Functions that a test calls, or that are passed as the test itself.
+    `function check() {\n  if (b) «expect»(1).toBe(1);\n}\ntest("a", () => check());`,
+    `function check() {\n  if (b) «expect»(1).toBe(1);\n}\ntest("a", check);`,
+    `const check = () => {\n  if (b) «expect»(1).toBe(1);\n};\ntest("a", () => check());`,
+    `const check = function () {\n  if (b) «expect»(1).toBe(1);\n};\ntest("a", check);`,
+
+    `if (b) {\n  test("a", function () {\n    expect(1).toBe(1);\n  });\n}`,
+    `test("a", () => {\n  if (b) {\n    const check = () => expect(1).toBe(1);\n  }\n});`,
+    `function check() {\n  if (b) expect(1).toBe(1);\n}`,
+    `const check = () => {\n  if (b) expect(1).toBe(1);\n};\ncheck();`,
+    `const checks = {\n  check() {\n    if (b) expect(1).toBe(1);\n  },\n};\ntest("a", () => checks.check());`,
+  ].map(inBunTest),
+
+  // The condition for running a test, its title and its timeout aren't part of the test body.
+  "no-conditional-in-test": [
+    `test("a", () => {\n  «if (a) b();»\n});`,
+    `test.skipIf(a)("b", () => {\n  const c = «d || e»;\n});`,
+    `test("a", { timeout: 1000 }, function () {\n  return «b ? c : d»;\n});`,
+    `test(() => {\n  «a ?? b»;\n}, 1000);`,
+
+    `test.skipIf(a || b)("c", () => {});`,
+    `test.if(a && b)("c", () => {});`,
+    `test.todoIf(a ? b : c)("d", () => {});`,
+    `test.each(a ?? b)("c", () => {});`,
+    `test(a || "b", () => {});`,
+    `test("a", () => {}, b ? 1000 : 5000);`,
+    `test("a", { timeout: b ?? 1000 }, () => {});`,
+  ].map(inBunTest),
+
+  "no-large-snapshots": [
+    inTest("expect(a).«toMatchInlineSnapshot»(`\n1\n2\n3\n`);"),
+    inTest("expect(a).«toMatchInlineSnapshot»({ b: expect.any(Number) }, `\n1\n2\n3\n`);"),
+    inTest("expect(a).toMatchInlineSnapshot({\n  b: expect.any(Number),\n  c: expect.any(Number),\n}, `1`);"),
+    inTest("expect(a).toMatchInlineSnapshot(`1`);"),
+    inTest("expect(a).toMatchInlineSnapshot();"),
+  ]
+    .map(code => ({ code, options: [{ inlineMaxSize: 2 }] }))
     .map(inBunTest),
 
   "no-identical-title": [
@@ -1818,6 +1927,16 @@ const testRules: Record<string, Case[]> = {
     `import { it } from "bun:test";\n«it»("a", () => {});`,
     `import { test, xit } from "bun:test";\n«xit»("a", () => {});`,
     `import { describe, test } from "bun:test";\ndescribe("a", () => {\n  «test»("b", () => {});\n});`,
+    {
+      code: `const { it, test } = require("bun:test");\n«it»("a", () => {});`,
+      output: `const { it, test } = require("bun:test");\ntest("a", () => {});`,
+    },
+    // At the call site, `test` isn't the `test` that "bun:test" exports.
+    `import { it } from "bun:test";\n«it».concurrent("a", () => {});\nfunction test(name: string) {\n  «it»(name, () => {});\n}`,
+    `import { it } from "bun:test";\nimport { test } from "./helpers";\n«it»("a", () => {});`,
+    `import { it, expect as test } from "bun:test";\n«it»("a", () => {});`,
+    inBunTest(`for (const test of cases) {\n  «it»(test.name, () => {});\n}`),
+    inBunTest(`function each(test: { name: string }) {\n  «it»(test.name, () => {});\n}`),
   ],
 
   "no-test-prefixes": [
@@ -1829,6 +1948,9 @@ const testRules: Record<string, Case[]> = {
     ].map(inBunTest),
     `import { xtest } from "bun:test";\n«xtest»("a", () => {});`,
     `import { xdescribe } from "bun:test";\n«xdescribe»("a", () => {});`,
+    `import { xit } from "bun:test";\n«xit»("a", () => {});\nfunction it() {}`,
+    inBunTest(`for (const it of cases) {\n  «xit»(it.name, () => {});\n}`),
+    inBunTest(`function each(test: string) {\n  «xtest»(test, () => {});\n}`),
   ],
 
   "no-export": [
@@ -1899,6 +2021,13 @@ const testRules: Record<string, Case[]> = {
     },
   ].map(inBunTest),
 
+  "prefer-to-be": [
+    { code: inTest(`expect(a).«toEqual»(1);`), output: inTest(`expect(a).toBe(1);`) },
+    { code: inTest(`expect(a).«toEqual»(-1);`), output: inTest(`expect(a).toBe(-1);`) },
+    inTest(`expect(a).toEqual(0.5);`),
+    inTest(`expect(a).toEqual(-0.5);`),
+  ].map(inBunTest),
+
   "prefer-to-contain": [
     {
       code: inTest(`expect(a.includes(1), "why").«toBe»(true);`),
@@ -1920,11 +2049,56 @@ const testRules: Record<string, Case[]> = {
     },
   ].map(inBunTest),
 
+  "prefer-mock-return-shorthand": [
+    { code: `a.«mockImplementation»(() => 1);`, output: `a.mockReturnValue(1);` },
+    { code: `a.«mockImplementationOnce»(() => ({ b: [c] }));`, output: `a.mockReturnValueOnce({ b: [c] });` },
+    { code: `a.«mockImplementation»(function () {\n  return 1;\n});`, output: `a.mockReturnValue(1);` },
+    // These run each time the mock is called.
+    `a.mockImplementation(() => create());`,
+    `a.mockImplementation(() => new User());`,
+    `a.mockImplementation(() => ({ id: next() }));`,
+    "a.mockImplementation(() => sql`b`);",
+    `a.mockImplementation(() => import("b"));`,
+    // It returns nothing.
+    `a.mockImplementation(function () {\n  b;\n});`,
+  ].map(inBunTest),
+
+  "prefer-spy-on": [
+    ...[
+      { code: `a.b = «jest.fn»();`, suggestions: [`jest.spyOn(a, 'b').mockImplementation();`] },
+      // No suggestion, because `spyOn` isn't imported.
+      `a.b = «mock»();`,
+      `a.b = other();`,
+      `const a = mock();`,
+      `const a = { b: mock() };`,
+      `function f(mock) {\n  a.b = mock();\n}`,
+    ].map(inBunTest),
+    ...[
+      { code: `a.b = «mock»();`, suggestions: [`spyOn(a, 'b').mockImplementation();`] },
+      { code: `a.b = «mock»(() => 1);`, suggestions: [`spyOn(a, 'b').mockImplementation(() => 1);`] },
+      { code: `a[b] = «mock»(c);`, suggestions: [`spyOn(a, b).mockImplementation(c);`] },
+    ].map(({ code, suggestions }) => {
+      const head = `import { mock, spyOn } from "bun:test";\n`;
+      return { code: head + code, suggestions: suggestions.map(it => head + it) };
+    }),
+    {
+      code: `import { mock as fake, spyOn } from "bun:test";\na.b = «fake»();`,
+      suggestions: [`import { mock as fake, spyOn } from "bun:test";\nspyOn(a, 'b').mockImplementation();`],
+    },
+    `import { test } from "bun:test";\nimport { mock } from "./mock";\na.b = mock();`,
+    `import { mock } from "bun:test";\nfunction spyOn() {}\na.b = «mock»();`,
+    `import { mock, spyOn } from "bun:test";\nfor (const spyOn of c) {\n  a.b = «mock»(spyOn);\n}`,
+    `import { mock, spyOn } from "bun:test";\nfunction f(spyOn) {\n  a.b = «mock»();\n}`,
+  ],
+
   "prefer-describe-function-title": [
     {
       code: `import { add } from "./add";\ndescribe(«"add"», () => {});`,
       suggestions: [`import { add } from "./add";\ndescribe(add, () => {});`],
     },
+    // A type can't be passed as a value.
+    `import type { Add } from "./add";\ndescribe("Add", () => {});`,
+    `import { type Add } from "./add";\ndescribe("Add", () => {});`,
   ].map(inBunTest),
 
   // oxlint applies these, and the fixes above of what is awaited, included and compared. A test that passes can fail afterwards.
@@ -1935,6 +2109,14 @@ const testRules: Record<string, Case[]> = {
   "prefer-strict-boolean-matchers": [
     { code: inTest(`expect(1).«toBeTruthy()»;`), suggestions: [inTest(`expect(1).toBe(true);`)] },
     { code: inTest(`expect(0, "why").«toBeFalsy()»;`), suggestions: [inTest(`expect(0, "why").toBe(false);`)] },
+    // `.not.toBe(true)` passes for everything but `true`.
+    { code: inTest(`expect(a).not.«toBeTruthy()»;`), suggestions: [inTest(`expect(a).toBe(false);`)] },
+    { code: inTest(`expect(a).not.«toBeFalsy()»;`), suggestions: [inTest(`expect(a).toBe(true);`)] },
+    {
+      code: inTest(`await expect(a).resolves.not.«toBeTruthy()»;`),
+      suggestions: [inTest(`await expect(a).resolves.toBe(false);`)],
+    },
+    inTest(`expect(a)["not"].«toBeTruthy()»;`),
   ].map(inBunTest),
 
   "require-hook": [
@@ -1979,6 +2161,37 @@ const testRules: Record<string, Case[]> = {
     `jest.setTimeout(1000);\ntest("a", () => {});`,
     `test.todo("a", () => {});`,
     `xtest("a", () => {});`,
+  ].map(inBunTest),
+
+  "no-unneeded-async-expect-function": [
+    {
+      code: inTest(`await expect(«async () => {\n    await load("a");\n  }»).rejects.toThrow();`),
+      output: inTest(`await expect(load("a")).rejects.toThrow();`),
+    },
+    {
+      code: inTest(`await expect(«async () => await load("a")»).resolves.toBe(1);`),
+      output: inTest(`await expect(load("a")).resolves.toBe(1);`),
+    },
+    {
+      code: inTest(`await expect(«async function () {\n    await load("a");\n  }»).rejects.not.toThrow("b");`),
+      output: inTest(`await expect(load("a")).rejects.not.toThrow("b");`),
+    },
+    // A comment inside the call is kept.
+    {
+      code: inTest(`await expect(«async () => {\n    await load(/* no name */);\n  }»).rejects.toThrow();`),
+      output: inTest(`await expect(load(/* no name */)).rejects.toThrow();`),
+    },
+    // Any other comment would be deleted, so these have no fix.
+    inTest(`await expect(«async () => {\n    // @ts-expect-error\n    await load(1);\n  }»).rejects.toThrow();`),
+    inTest(`await expect(«async () => {\n    await load(1); // not a name\n  }»).rejects.toThrow();`),
+    inTest(`await expect(«async (/* nothing */) => await load(1)»).rejects.toThrow();`),
+
+    // Without `.rejects` or `.resolves`, `bun test` needs the function: `expect(promise).toThrow()` fails.
+    inTest(`await expect(async () => {\n    await load("a");\n  }).toThrow();`),
+    inTest(`expect(async () => await load("a")).toThrow("b");`),
+    inTest(`expect(async () => await load("a")).not.toThrow();`),
+    inTest(`await expect(load("a")).rejects.toThrow();`),
+    inTest(`await expect(async () => {\n    await load("a");\n    await load("b");\n  }).rejects.toThrow();`),
   ].map(inBunTest),
 };
 
@@ -2260,14 +2473,13 @@ describe.concurrent("the plugin bun", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("--rules lists them, without a category and without a page", async () => {
+  test("--rules lists them, without a category", async () => {
     const { stdout } = await lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]);
     const listed = (JSON.parse(stdout) as Record<string, unknown>[]).filter(it => it.scope === "bun");
     // `bun/format` is tested with `prettier/prettier`: prettier-rule.test.ts.
     expect(listed.map(it => it.value)).toEqual([...Object.keys(rules), "format"].toSorted());
-    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default, it.docs_url])))]).toEqual([
-      "[null,false,null]",
-    ]);
+    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default])))]).toEqual(["[null,false]"]);
+    expect(listed.map(it => it.docs_url)).toEqual(listed.map(it => `https://bun.com/docs/lint/rules/bun/${it.value}`));
   });
 
   test("options that a rule does not have are refused", async () => {
@@ -2291,8 +2503,150 @@ describe.concurrent("the plugin bun", () => {
     const options = { patterns: [{ pattern: "(" }] };
     const files = { "eslint.config.mjs": flat({ "bun/no-restricted-text": ["error", options] }), "a.js": eager };
     const { stderr, exitCode } = await lint(files, ["a.js"]);
-    expect(stderr).toContain(`The pattern "(" is not a regular expression`);
+    expect(stderr).toContain(`Invalid pattern "(": Invalid regular expression: `);
     expect(exitCode).toBe(2);
+  });
+
+  test("each rule's message", async () => {
+    const files = {
+      "bunfig.toml": `[lint.rules]
+"bun/no-eager-dynamic-import" = "error"
+"bun/no-eager-native-addon" = "error"
+"bun/no-env-at-module-scope" = "error"
+"bun/no-literal-temp-dir" = "error"
+"bun/no-negative-repeat-count" = "error"
+"bun/no-redundant-catch-type" = "error"
+"bun/no-useless-spread-fallback" = "error"
+"bun/no-array-just-to-count" = "error"
+"bun/prefer-builtin-sleep" = "error"
+"bun/react-prefer-updater-function" = "error"
+"bun/no-console-window-flash" = "error"
+"bun/no-unportable-commands" = "error"
+"bun/no-cwd-dependent-path" = "error"
+"bun/zod-prefer-lazy-schema" = "error"
+"bun/no-side-effects-on-import" = "error"
+"bun/fast-check-no-unseeded-random" = "error"
+"bun/react-no-namespace-hooks" = "error"
+"bun/react-no-latest-value-ref" = "error"
+"bun/jsx-no-forbidden-nesting" = "error"
+"bun/consistent-directive-prefix" = "error"
+"bun/no-restricted-text" = ["error", { patterns = [{ pattern = "foo" }] }]
+"bun/prefer-timeout-signal" = "error"
+"bun/prefer-url-for-sibling-files" = "error"
+"bun/react-no-local-render-helpers" = "error"
+"bun/prefer-local-module" = ["error", { modules = [{ package = "axios", use = "@/http" }] }]
+"bun/axios-no-unbounded-requests" = "error"
+"bun/no-unhandled-emitter-errors" = "error"
+"bun/no-cast-to-brand" = ["error", { branded = [{ module = "src/ids", type = "UserId", mint = ["toUserId"], mintedIn = ["src/session.ts"] }] }]
+`,
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "jsx": "preserve" } }\n`,
+      "a.tsx": `import { exec, spawn } from "node:child_process";
+import fs from "node:fs";
+import { join } from "node:path";
+import { z } from "zod";
+import fc from "fast-check";
+import React, { useRef, useEffect, useState } from "react";
+import axios from "axios";
+const a1 = import("a");
+const addon = require("./addon.node");
+const port = process.env.PORT;
+const env = { ...process.env };
+const t = "/tmp/a.txt";
+const r = " ".repeat(width - text.length);
+try {} catch (error: unknown) {}
+const s = { ...(b ? { c: 1 } : {}) };
+const n = b.split(",").length;
+await new Promise(done => setTimeout(done, 250));
+spawn("npm", ["install"]);
+spawn("ls", ["-l"]);
+exec("a && b");
+exec("ps -ef");
+fs.readFileSync("a.txt");
+const A = z.string();
+start();
+a.b = 1;
+fc.property(fc.integer(), a => fc.sample(fc.integer(), 1));
+fc.property(fc.integer(), a => a > Math.random());
+React.useState(0);
+function C({ count }) {
+  const saved = useRef(count);
+  saved.current = count;
+  useEffect(() => {
+    saved.current = count;
+  });
+  const [rows, setRows] = useState([]);
+  setRows([...rows, 1]);
+}
+const x = <a><a /></a>;
+// oxlint-disable-next-line no-debugger
+debugger;
+const f = "a foo b";
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 2000);
+await fetch(address, { signal: controller.signal });
+const j = join(import.meta.dirname, "a.txt");
+function Table({ rows }) {
+  const renderCell = row => <tr key={row.id} />;
+  return <table>{rows.map(renderCell)}</table>;
+}
+axios.get("/a");
+axios.get("/a", { timeout: 0 });
+const ps = "ps -ef";
+`,
+      "src/ids.ts": `export type UserId = string & { brand: 1 };
+export const toUserId = (a: string) => a as UserId;
+`,
+      "src/views/page.ts": `import type { UserId } from "../ids";
+import { toUserId } from "../ids";
+const a = text as UserId;
+const b = toUserId(text);
+`,
+    };
+    const { stdout, exitCode } = await lint(files, ["-f", "json"]);
+    const messages = (JSON.parse(stdout) as { messages: { ruleId: string | null; message: string }[] }[])
+      .flatMap(it => it.messages)
+      .filter(it => it.ruleId?.startsWith("bun/"));
+    expect([...new Set(messages.map(it => `${it.ruleId}: ${it.message}`))].sort()).toEqual([
+      "bun/axios-no-unbounded-requests: This axios request has no time limit. Set `timeout` or pass a `signal`.",
+      "bun/axios-no-unbounded-requests: `timeout: 0` means no time limit.",
+      "bun/consistent-directive-prefix: Use `eslint` instead of `oxlint`.",
+      "bun/fast-check-no-unseeded-random: `Math.random()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
+      "bun/fast-check-no-unseeded-random: `sample()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
+      "bun/jsx-no-forbidden-nesting: `<a>` cannot be inside `<a>`.",
+      "bun/no-array-just-to-count: `split()` builds an array only to read its length. Count the separators instead.",
+      "bun/no-cast-to-brand: This cast creates a `UserId` from an unchecked value. Only `src/ids` should create one.",
+      "bun/no-cast-to-brand: `toUserId` turns any value into a `UserId`, and this file is not allowed to import it.",
+      "bun/no-console-window-flash: On Windows, this process briefly opens a console window. Set `windowsHide: true`.",
+      'bun/no-cwd-dependent-path: "a.txt" is relative to the working directory of the process. Resolve it from `import.meta.dirname`.',
+      "bun/no-eager-dynamic-import: This `import()` runs as soon as the module is imported. Call it where it is needed, or use an `import` statement.",
+      "bun/no-eager-native-addon: The native addon `./addon.node` loads as soon as the module is imported. Load it inside the function that needs it.",
+      "bun/no-env-at-module-scope: The environment is read as soon as the module is imported. Read it inside the function that needs it.",
+      "bun/no-env-at-module-scope: `process.env.PORT` is read as soon as the module is imported. Read it inside the function that needs it.",
+      "bun/no-literal-temp-dir: `/tmp` is not the temporary directory on every system. Use `os.tmpdir()`.",
+      "bun/no-negative-repeat-count: `repeat()` throws a `RangeError` if this count is negative. Give it a lower bound.",
+      "bun/no-redundant-catch-type: With `strict` or `useUnknownInCatchVariables`, a `catch` variable is already `unknown`. Remove the annotation.",
+      "bun/no-restricted-text: `foo` matches the restricted pattern `foo`.",
+      "bun/no-side-effects-on-import: This changes an object as soon as the module is imported. Move it into an exported function.",
+      "bun/no-side-effects-on-import: This runs as soon as the module is imported. Move it into an exported function.",
+      "bun/no-unhandled-emitter-errors: `spawn()` emits `error` when it fails, which crashes the process if nothing listens. Add an `error` listener.",
+      "bun/no-unportable-commands: On Windows, `npm` is the script `npm.cmd`, which cannot run without a shell.",
+      "bun/no-unportable-commands: `&&` is shell syntax, and the shell differs between systems.",
+      "bun/no-unportable-commands: `ls` does not exist on Windows.",
+      "bun/no-unportable-commands: `ps` does not exist on Windows.",
+      "bun/no-unportable-commands: `ps` options differ between systems, and `ps` does not exist on Windows.",
+      "bun/no-useless-spread-fallback: This empty object is not needed. Spreading `false`, `null` or `undefined` into an object does nothing.",
+      "bun/prefer-builtin-sleep: This promise only waits. Use `Bun.sleep(ms)` or `setTimeout(ms)` from `node:timers/promises`.",
+      "bun/prefer-local-module: Import from `@/http` instead of `axios`.",
+      "bun/prefer-timeout-signal: Only a timer aborts this controller. Use `AbortSignal.timeout(ms)` instead.",
+      'bun/prefer-url-for-sibling-files: Bundlers cannot follow this path. Use `new URL("./file", import.meta.url)`.',
+      "bun/react-no-latest-value-ref: This effect only copies a value into `saved.current`. Use `useEffectEvent()` to read the latest values without a ref.",
+      "bun/react-no-latest-value-ref: `saved.current` is set during render. React may render more than once, or throw the result away.",
+      "bun/react-no-local-render-helpers: `renderCell` is created again on every render, and React does not see it as a component. Move it out and make it a component.",
+      'bun/react-no-namespace-hooks: Import `useState` by name from "react".',
+      "bun/react-prefer-updater-function: `rows` may be out of date when `setRows` is called. Pass a function: `setRows(previous => ..)`.",
+      "bun/zod-prefer-lazy-schema: This schema is built as soon as the module is imported. Build it when it is first used.",
+    ]);
+    expect(exitCode).toBe(1);
   });
 
   test("bun/prefer-local-module leaves the files in exemptFiles alone", async () => {
@@ -2540,6 +2894,91 @@ describe.concurrent("bun:test/, jest/ and vitest/ are one implementation", () =>
       ),
     );
   });
+
+  // Jest and Vitest accept a promise with or without `.rejects`. `bun test` only accepts one with `.rejects`.
+  test.each([
+    ["bun:test", "bun:test", []],
+    ["jest", "@jest/globals", ["10 load(3)"]],
+    ["vitest", "vitest", ["10 load(3)"]],
+  ])("%s/no-unneeded-async-expect-function: comments and `.rejects`", async (plugin, source, withoutRejects) => {
+    const rule = `${plugin}/no-unneeded-async-expect-function`;
+    const code = `import { expect, test } from "${source}";
+test("a", async () => {
+  await expect(async () => {
+    // @ts-expect-error
+    await load(1);
+  }).rejects.toThrow();
+  await expect(async () => {
+    await load(2);
+  }).rejects.toThrow();
+  await expect(async () => {
+    await load(3);
+  }).toThrow();
+});
+`;
+    const files = { "bunfig.toml": `[lint.rules]\n"${rule}" = "error"\n`, "a.test.ts": code };
+    const { stdout } = await lint(files, ["-f", "json", "a.test.ts"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    // The fix would delete the comment, so the first report has no fix.
+    expect(messages.filter(it => it.ruleId === rule).map(it => `${it.line} ${it.fix?.text}`)).toEqual([
+      "3 undefined",
+      "7 load(2)",
+      ...withoutRejects,
+    ]);
+  });
+
+  // For Jest and Vitest, `test` is a global, and a local variable in scope at the call shadows it.
+  test.each([
+    ["jest", "@jest/globals"],
+    ["vitest", "vitest"],
+  ])("%s/consistent-test-it doesn't rename to `test` where `test` is a local variable", async (plugin, source) => {
+    const rule = `${plugin}/consistent-test-it`;
+    const code = `import { it } from "${source}";
+for (const test of cases) {
+  it(test.name, () => {});
+}
+it("a", () => {});
+`;
+    const files = { "bunfig.toml": `[lint.rules]\n"${rule}" = "error"\n`, "a.test.ts": code };
+    const { stdout } = await lint(files, ["-f", "json", "a.test.ts"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    expect(messages.filter(it => it.ruleId === rule).map(it => `${it.line} ${it.fix?.text}`)).toEqual([
+      "3 undefined",
+      "5 test",
+    ]);
+  });
+
+  // Only calls to globals are reported. oxlint 1.87 writes the names regardless of what they refer to.
+  test.each([
+    ["jest", `const { it, describe } = require("@jest/globals");`, true],
+    ["vitest", `const { it, describe } = require("vitest");`, true],
+    ["vitest", `const { it, describe } = require("vite-plus/test");`, true],
+    ["vitest", `const { it, describe } = require("@effect/vitest");`, true],
+    ["vitest", `const { it, describe } = await import("vitest");`, true],
+    ["jest", `const { it, describe } = require("./helpers");`, false],
+    ["jest", `const { test: it, suite: describe } = require("@jest/globals");`, false],
+    ["jest", `const [it, describe] = require("@jest/globals");`, false],
+    ["jest", `const it = require("@jest/globals"), describe = it;`, false],
+  ])("%s: a fix uses the names from `%s`: %p", async (plugin, declaration, isWritten) => {
+    const code = `${declaration}
+xdescribe("a", () => {
+  test("b", () => {});
+});
+function inner() {
+  const { describe } = require("@jest/globals");
+  xdescribe("c", () => {});
+}
+`;
+    const rules = ["consistent-test-it", "no-test-prefixes"].map(rule => `"${plugin}/${rule}" = "error"\n`);
+    const files = { "bunfig.toml": `[lint.rules]\n${rules.join("")}`, "a.test.mjs": code };
+    const { stdout } = await lint(files, ["-f", "json", "a.test.mjs"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    expect(messages.filter(it => it.ruleId.startsWith(plugin)).map(it => `${it.line} ${it.fix?.text}`)).toEqual([
+      `2 ${isWritten ? "describe.skip" : undefined}`,
+      `3 ${isWritten ? "it" : undefined}`,
+      "7 undefined",
+    ]);
+  });
 });
 
 describe.concurrent("the plugin bun:test", () => {
@@ -2593,10 +3032,13 @@ expect(1).toBe(1);
         "8 bun:test/valid-expect-in-promise",
       ]);
       expect(own(reported(stdout, "quiet.test.js"))).toEqual([]);
-      // Errors, as what else is on, but for one.
+      // Skipping a test and exporting from a test file are often done on purpose. The rest are errors.
       const files = JSON.parse(stdout) as { messages: { ruleId: string; severity: number }[] }[];
-      const warnings = files.flatMap(it => it.messages).filter(it => it.severity !== 2);
-      expect(warnings.map(it => it.ruleId)).toEqual(["bun:test/no-disabled-tests"]);
+      const ofBunTest = files.flatMap(it => it.messages).filter(it => it.ruleId.startsWith("bun:test/"));
+      expect(ofBunTest.filter(it => it.severity !== 2).map(it => it.ruleId)).toEqual([
+        "bun:test/no-disabled-tests",
+        "bun:test/no-export",
+      ]);
     }
     // A test that is skipped on purpose does not fail the run.
     expect(unix(skipped.stdout)).toEqual(["2 Warning/bun:test/no-disabled-tests"]);
@@ -2701,6 +3143,24 @@ expect(1).toBe(1);
     expect(unix(andTheRule.stdout)).toEqual(["2 Warning/bun:test(no-focused-tests)"]);
     expect(named.stdout).toContain("Unknown plugin: 'bun:test'.");
     expect(named.exitCode).toBe(1);
+  });
+
+  test("`settings.vitest` doesn't apply to it", async () => {
+    const code = `import { describe } from "bun:test";\nimport { add } from "./add";\ndescribe("add", () => {});\ndescribe("", () => {});\n`;
+    const config = {
+      settings: { vitest: { typecheck: true } },
+      rules: { "bun:test/prefer-describe-function-title": 2, "bun:test/valid-title": 2 },
+    };
+    const { stdout } = await lint({ ".oxlintrc.json": JSON.stringify(config), "a.test.ts": code }, ["-f", "unix", "."]);
+    expect(unix(stdout)).toEqual(["3 Error/bun:test(prefer-describe-function-title)", "4 Error/bun:test(valid-title)"]);
+  });
+
+  test("valid-title prints the pattern exactly as the option spells it", async () => {
+    const code = `import { it, test } from "bun:test";\nit("a", () => {});\ntest("b", () => {});\n`;
+    const rules = { "bun:test/valid-title": ["error", { mustMatch: { it: "^should ", test: "/^ADDS /i" } }] };
+    const { stdout } = await lint({ "eslint.config.mjs": flat(rules), "a.test.js": code }, ["-f", "unix", "."]);
+    expect(stdout).toContain(":2:4: it should match ^should  [");
+    expect(stdout).toContain(":3:6: test should match /^ADDS /i [");
   });
 
   test("comments turn a rule off", async () => {
@@ -2863,7 +3323,7 @@ var a = b;
     ]);
     expect(Object.entries(JSON.parse(plain.stdout).rules).filter(it => it[0].startsWith("bun:test/"))).toEqual([
       ["bun:test/no-disabled-tests", [1]],
-      ["bun:test/no-export", [2]],
+      ["bun:test/no-export", [1]],
       ["bun:test/no-focused-tests", [2]],
       ["bun:test/valid-describe-callback", [2]],
       ["bun:test/valid-expect", [2]],
@@ -2875,7 +3335,7 @@ var a = b;
     expect(JSON.parse(oxlint.stdout).plugins).toEqual([]);
   });
 
-  test("--rules lists them, without a category and without a page", async () => {
+  test("--rules lists them, without a category", async () => {
     const [json, lines, alone] = await Promise.all([
       lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]),
       lint({}, ["--rules"]),
@@ -2885,9 +3345,10 @@ var a = b;
     expect(alone.stdout).toBe(json.stdout);
     const listed = (JSON.parse(json.stdout) as Record<string, unknown>[]).filter(it => it.scope === "bun:test");
     expect(listed.map(it => it.value)).toEqual(Object.keys(twins));
-    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default, it.docs_url])))]).toEqual([
-      "[null,false,null]",
-    ]);
+    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default])))]).toEqual(["[null,false]"]);
+    expect(listed.map(it => it.docs_url)).toEqual(
+      listed.map(it => `https://bun.com/docs/lint/rules/bun-test/${it.value}`),
+    );
     expect(lines.stdout.split("\n").filter(it => it.startsWith("bun:test/"))).toEqual(
       Object.keys(twins).map(it => `bun:test/${it}`),
     );
@@ -2937,7 +3398,7 @@ var a = b;
     expect(taken.stderr).not.toContain("Key");
     expect(taken.exitCode).toBe(0);
     const missing = await check({ "bun:test/no-mocks-import": "error" });
-    expect(missing.stderr).toContain(`1 rule of the plugin "bun:test" did not run: bun:test/no-mocks-import`);
+    expect(missing.stderr).toContain("1 rule in eslint.config.mjs is not supported: bun:test/no-mocks-import");
     expect(missing.exitCode).toBe(2);
   });
 

@@ -1,6 +1,7 @@
 //! `postcss-selector-parser` 2.2.3 (`dist/tokenize.js`, `dist/parser.js`), and Prettier's
 //! `parse/parse-selector.js`.
 
+use super::misc::{ends_before_escaped_blank, ends_with_hex_escape};
 use crate::stack::Stack;
 use crate::text::{self, ByteSet};
 
@@ -161,7 +162,7 @@ pub(crate) struct SelectorNode {
     pub(crate) kind: SelectorKind,
     pub(crate) value: Span,
     pub(crate) namespace: Option<Namespace>,
-    parent: SelectorId,
+    pub(crate) parent: SelectorId,
     /// `nodes`: the first, the last, and how many there are.
     pub(crate) first_child: SelectorId,
     last_child: SelectorId,
@@ -363,12 +364,19 @@ impl<'t> Parser<'t> {
             let value = &string[operator_end..];
             if !value.is_empty() {
                 // `parts[2].split(/(\s+i\s*?)$/)`
+                // The parser mistakes the `i` of `x\31 i`, which means `x1i`, and of `x\ i` for the flag.
                 let trimmed = bun_core::strings::trim_js_whitespace_end(value);
                 let before_flag = trimmed.strip_suffix(b"i").filter(|rest| {
-                    bun_core::strings::trim_js_whitespace_end(rest).len() < rest.len()
+                    let unflagged = bun_core::strings::trim_js_whitespace_end(rest);
+                    let is_escape =
+                        ends_before_escaped_blank(unflagged) || ends_with_hex_escape(unflagged);
+                    unflagged.len() + usize::from(is_escape) < rest.len()
                 });
                 let value_len = match before_flag {
-                    Some(rest) => bun_core::strings::trim_js_whitespace_end(rest).len(),
+                    Some(rest) => {
+                        let unflagged = bun_core::strings::trim_js_whitespace_end(rest);
+                        unflagged.len() + usize::from(ends_before_escaped_blank(unflagged))
+                    }
                     None => value.len(),
                 };
                 node.insensitive = before_flag.is_some();
@@ -388,6 +396,10 @@ impl<'t> Parser<'t> {
         while let Some(token) = self.token(self.position)
             && matches!(token.kind, TokenKind::Space | TokenKind::Combinator)
         {
+            // `a |b`: the parser takes the `|` for the combinator, and Prettier prints `a|b`. It stays as it is written.
+            if self.text_of(token) == b"|" {
+                return Err(ParseError);
+            }
             let is_combinator =
                 |token: Option<Token>| token.is_some_and(|it| it.kind == TokenKind::Combinator);
             if !is_combinator(self.next_token()) && !is_combinator(self.prev_token()) {
@@ -406,8 +418,12 @@ impl<'t> Parser<'t> {
     /// At a `|`. In `a|b|c`, `b` is the namespace of `c`, and `a` is lost.
     fn namespace(&mut self) -> Result<(), ParseError> {
         loop {
+            // The parser takes whatever is before the `|` for the namespace: of `a,|b` Prettier prints `a, ,|b`.
             let before = match self.prev_token() {
-                Some(prev) if prev.end > prev.start => {
+                Some(prev)
+                    if prev.end > prev.start
+                        && matches!(prev.kind, TokenKind::Word | TokenKind::Control(b'*')) =>
+                {
                     Namespace::Name((self.base + prev.start, self.base + prev.end))
                 }
                 _ => Namespace::Empty,

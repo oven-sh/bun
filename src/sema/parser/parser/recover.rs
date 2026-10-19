@@ -5,7 +5,7 @@
 //! Only with `Options::recovers`. Without it the first error ends the file, or the speculative parse
 //! that is going on: a text without errors pays one test of a flag at each list.
 
-use super::{Parser, ctx};
+use super::{Checkpoint, Parser, ctx};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -175,7 +175,36 @@ enum ListStep {
     Over,
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+/// What oxc calls the token `token`, which is written `text`, in "Expected `,` but found `Identifier`".
+#[inline(never)]
+pub(super) fn name_for_oxc(token: T, text: &[u8]) -> Vec<u8> {
+    let has_any = |of: &[u8]| bun_core::strings::index_of_any(text, of).is_some();
+    let number: &[u8] = match text {
+        [b'0', b'x' | b'X', ..] => b"hex",
+        [b'0', b'b' | b'B', ..] => b"binary",
+        [b'0', b'o' | b'O', ..] => b"octal",
+        [b'0', _, ..] if token == T::Number && !has_any(b"89.eE") => b"octal",
+        _ if has_any(b".eE") => b"float",
+        _ => b"decimal",
+    };
+    match token {
+        T::Eof => b"EOF".to_vec(),
+        T::String => b"string".to_vec(),
+        T::Number => number.to_vec(),
+        T::BigInt => [number, b" bigint"].concat(),
+        T::NoSubstitutionTemplate => b"${}".to_vec(),
+        T::TemplateHead => b"${".to_vec(),
+        T::PrivateIdentifier => b"#identifier".to_vec(),
+        // Keywords of its lexer alone.
+        T::Identifier if matches!(text, b"target" | b"meta" | b"source") => text.to_vec(),
+        T::Identifier => b"Identifier".to_vec(),
+        // It splits these.
+        _ if text.starts_with(b">") => b">".to_vec(),
+        _ => text.to_vec(),
+    }
+}
+
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseErrorAtRange`. Without recovery: `fail`.
     #[cold]
     #[inline(never)]
@@ -207,15 +236,27 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
-    /// `parseToplevelStatement`. `parsePropertyName` restores `statementHasAwaitIdentifier`, so that no statement is parsed
-    /// again for an `await` in a name: there it is a name. For another `await` `reparseTopLevelAwait` parses all of the
-    /// statement again, in the await context.
+    /// `parseToplevelStatement`. `parsePropertyName` restores `statementHasAwaitIdentifier`, so an `await` in a
+    /// property name stays a name and doesn't trigger a reparse. `parseBindingIdentifier` restores it too, which
+    /// matters for the first parameter of `(await) => {}`. Any other `await` identifier makes `reparseTopLevelAwait`
+    /// reparse the whole statement in the await context.
     #[cold]
     #[inline(never)]
     pub(crate) fn top_level_statement(&mut self) -> StmtId {
         (self.has_await_in_name, self.has_await_identifier) = (false, false);
         let before = self.checkpoint();
+        let had_plain_await = self.has_plain_top_level_await;
+        let reparsed_rest = self.reparses_rest_of_file;
         let statement = self.statement();
+        if self.has_await_identifier
+            && self.options.is_module_or_script
+            && !had_plain_await
+            && !reparsed_rest
+            && !self.f.has_module_syntax
+            && let Some(statement) = self.first_reading_of_oxc(&before, statement)
+        {
+            return statement;
+        }
         if !(self.has_await_in_name && self.has_await_identifier) || self.has_failed() {
             return statement;
         }
@@ -224,6 +265,47 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let statement = self.statement();
         self.names_are_in_await_context = false;
         statement
+    }
+
+    /// After `statement`, which starts at `before` and has an `await` that can be a name, in a file that can still be a
+    /// script. That is how oxc reads it first, and what is wrong with that reading is what it says. Only when it is through
+    /// with the file does it try the operator.
+    #[cold]
+    #[inline(never)]
+    fn first_reading_of_oxc(&mut self, before: &Checkpoint, statement: StmtId) -> Option<StmtId> {
+        self.take_errors_of_scanner();
+        let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
+        let said_before = before.file.diagnostics as usize;
+        let said = self.f.diagnostics.get(said_before..).unwrap_or_default();
+        let gives_up =
+            |it: &&Diagnostic| matches!(it.kind, DiagnosticKind::Parse | DiagnosticKind::OxcFatal);
+        let second: Vec<Diagnostic> = said.iter().filter(gives_up).cloned().collect();
+        let start = self.f.stmts.get(statement.idx())?.start;
+        let is_import_meta = |it: &Expr| it.pos < start && matches!(it.kind, ExprKind::ImportMeta);
+        if !second.iter().any(|it| is_of_parser(&it))
+            || self.has_failed()
+            || self.f.exprs.iter().any(is_import_meta)
+        {
+            return None;
+        }
+        self.rollback(before);
+        self.has_plain_top_level_await = false;
+        (self.has_await_in_statement, self.was_await_refused) = (false, false);
+        self.reparses_rest_of_file = false;
+        let saved = self.enter_context(0, ctx::AWAIT);
+        let statement = self.statement();
+        self.context = saved;
+        self.take_errors_of_scanner();
+        // `file_of` tries a script.
+        self.has_top_level_await = true;
+        let said = self.f.diagnostics.get(said_before..).unwrap_or_default();
+        if !said.iter().any(|it| is_of_parser(&it)) {
+            let end = self.prev_end();
+            let mut found = Diagnostic::new(DiagnosticKind::OxcSecondReading, (start, end), 0, &[]);
+            found.related = second;
+            self.f.diagnostics.push(found);
+        }
+        Some(statement)
     }
 
     /// `scanError`: what the scanner has reported goes where the errors of the parser go, before
@@ -274,7 +356,20 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(never)]
     #[track_caller]
     pub(crate) fn expected(&mut self, token: T) {
-        self.error_at_token(1005, &[token.text()]);
+        self.expected_in_list(token, b"");
+    }
+
+    /// The same. For oxc the diagnostic also has what it calls the token that is there and, after an element of a list, what
+    /// closes the list: "Expected `,` or `)` but found `Identifier`".
+    fn expected_in_list(&mut self, token: T, closer: &[u8]) {
+        if !self.options.dialect.oxc {
+            return self.error_at_token(1005, &[token.text()]);
+        }
+        let found = name_for_oxc(self.token(), self.lx.text());
+        match closer {
+            b"" => self.error_at_token(1005, &[token.text(), &found]),
+            _ => self.error_at_token(1005, &[token.text(), &found, closer]),
+        }
     }
 
     /// `parseExpectedMatchingBrackets`, at another token than `close`.
@@ -375,6 +470,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(never)]
     #[track_caller]
     pub(crate) fn missing_expression(&mut self, code: u32) -> ExprId {
+        if self.token() == T::CloseParen && self.options.dialect.oxc && self.recovers() {
+            self.empty_parentheses_like_oxc();
+        }
         self.missing_identifier(code, 0);
         match self.recovers() {
             true => self.add_expr(ExprKind::Missing, self.pos(), self.full_start()),
@@ -405,7 +503,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let is_parenthesized = self.is_parenthesized(expression);
         match kind {
             ExprKind::TaggedTemplate(call) if !is_parenthesized => {
-                let template = self.f[call].template;
+                let template = self.f.template_of(call);
                 let from = self.f.exprs.get(template.idx()).map_or(pos, |it| it.pos);
                 self.error(1443, (from, end), &[]);
             }
@@ -420,6 +518,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn missing_semicolon_after_identifier(&mut self, name: Atom, (pos, end): (u32, u32)) {
         let word = self.lx.text_of(name).to_vec();
         let (here, token) = (self.range_of_token(), self.token());
+        // To oxc the word is a name like any other.
+        if self.options.dialect.oxc && !word.is_empty() && token != T::Invalid {
+            return self.error(1434, (pos, end), &[]);
+        }
         // `parseErrorForInvalidName`
         let invalid_name = |blank: T, code_if_blank: u32, code: u32| match token == blank {
             true => (here, code_if_blank),
@@ -471,7 +573,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return self.error_at_token(1436, &[]);
         }
         if self.token() == T::OpenParen {
-            self.error_at_token(1441, &[]);
+            match self.options.dialect.oxc {
+                true => self.expected(T::Semicolon),
+                false => self.error_at_token(1441, &[]),
+            }
             return self.next();
         }
         match (has_initializer, has_type, name) {
@@ -569,9 +674,26 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.is_list_terminator(kind) {
             return false;
         }
+        let closer: &[u8] = match kind {
+            ListKind::ArgumentExpressions | ListKind::Parameters => b")",
+            ListKind::ArrayBindingElements
+            | ListKind::ArrayLiteralMembers
+            | ListKind::TupleElementTypes => b"]",
+            ListKind::TypeParameters | ListKind::TypeArguments => b">",
+            _ => b"}",
+        };
         match kind {
-            ListKind::EnumMembers => self.error_at_token(1357, &[]),
-            _ => self.expected(T::Comma),
+            // oxc ends these lists where no comma follows.
+            ListKind::VariableDeclarations if self.options.dialect.oxc => {
+                self.expected(T::Semicolon);
+                return false;
+            }
+            ListKind::HeritageClauseElement if self.options.dialect.oxc => {
+                self.expected(T::OpenBrace);
+                return false;
+            }
+            ListKind::EnumMembers if !self.options.dialect.oxc => self.error_at_token(1357, &[]),
+            _ => self.expected_in_list(T::Comma, closer),
         }
         // `{ a; b }`
         if matches!(
@@ -641,6 +763,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn parsing_context_error(&mut self, kind: ListKind) {
         let word = self.lx.text();
         let code = match kind {
+            // `import;`, which oxc takes for a declaration.
+            ListKind::SourceElements | ListKind::BlockStatements
+                if self.token() == T::Import && self.options.dialect.oxc =>
+            {
+                let start = self.pos();
+                return self.look_ahead(|p| {
+                    p.next();
+                    p.import_without_call_like_oxc(start);
+                });
+            }
             ListKind::SourceElements if self.token() == T::Default => {
                 return self.error_at_token(1005, &[b"export"]);
             }
@@ -648,6 +780,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             ListKind::SwitchClauses => 1130,
             ListKind::SwitchClauseStatements => 1129,
             ListKind::TypeMembers => 1131,
+            ListKind::ClassMembers if self.options.dialect.oxc => 1109,
             ListKind::ClassMembers => 1068,
             ListKind::EnumMembers => 1132,
             ListKind::HeritageClauseElement => 1109,
@@ -656,9 +789,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 let word = self.lx.text_of(self.lx.atom).to_vec();
                 return self.error_at_token(1389, &[&word]);
             }
+            // "Expression expected.", which is told in oxc's words.
+            ListKind::VariableDeclarations if self.options.dialect.oxc => 1109,
             ListKind::VariableDeclarations => 1134,
             ListKind::ObjectBindingElements => 1180,
             ListKind::ArrayBindingElements => 1181,
+            ListKind::ArgumentExpressions if self.options.dialect.oxc => 1109,
             ListKind::ArgumentExpressions => 1135,
             ListKind::ObjectLiteralMembers => 1136,
             ListKind::ArrayLiteralMembers => 1137,
@@ -728,7 +864,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             | T::Global
             | T::Defer => true,
             T::Accessor | T::Public | T::Private | T::Protected | T::Static | T::Readonly => {
-                self.is_start_of_declaration()
+                self.options.dialect.oxc
+                    || self.is_start_of_declaration()
                     || !self.look_ahead(|p| {
                         p.next();
                         p.token().is_identifier_or_keyword() && !p.newline_before()
@@ -856,7 +993,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             ListKind::ArgumentExpressions => token == T::DotDotDot || self.is_start_of_expression(),
             ListKind::Parameters => self.is_start_of_parameter(),
             ListKind::TypeArguments | ListKind::TupleElementTypes => {
-                token == T::Comma || self.is_start_of_type(false)
+                token == T::Comma || self.is_start_of_type(false) || self.is_name_in_type_for_oxc()
             }
             ListKind::HeritageClauses => matches!(token, T::Extends | T::Implements),
             ListKind::ImportOrExportSpecifiers => {
@@ -891,8 +1028,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             ListKind::HeritageClauseElement => {
                 matches!(token, T::OpenBrace | T::Extends | T::Implements)
             }
+            // "For better error recovery, if we see an '=>' then we just stop immediately." oxc does not.
             ListKind::VariableDeclarations => {
-                self.can_parse_semicolon() || matches!(token, T::In | T::Of | T::EqualsGreaterThan)
+                self.can_parse_semicolon()
+                    || matches!(token, T::In | T::Of)
+                    || token == T::EqualsGreaterThan && !self.options.dialect.oxc
             }
             ListKind::TypeParameters => matches!(
                 token,

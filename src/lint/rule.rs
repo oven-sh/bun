@@ -91,6 +91,9 @@ enum UnderEslint {
     /// here. Without a name: whatever the plugin of the configuration says it is called. And the version of the package that
     /// the rules here do the same as.
     InPlaceOf(Option<&'static str>, &'static str),
+    /// Like `InPlaceOf`, for a plugin that defines [languages](crate::languages) and rules for files in those
+    /// languages. Only ESLint has languages, so the plugin doesn't exist with any other config, or without a config.
+    Languages(&'static str, &'static str),
     /// The package of the project, which has other messages and other options: the rules here are those of oxlint,
     /// for a configuration of oxlint.
     Package,
@@ -127,7 +130,7 @@ macro_rules! plugins {
             pub(crate) const ALL: &'static [Plugin] = &[$(Plugin::$plugin),*];
 
             const fn names(self) -> Names {
-                use UnderEslint::{Always, Here, InPlaceOf, Package};
+                use UnderEslint::{Always, Here, InPlaceOf, Languages, Package};
                 match self {
                     $(Plugin::$plugin => Names {
                         prefixes: &$prefixes,
@@ -183,6 +186,10 @@ plugins! {
     BunTest: ["bun:test"], Always, Whole;
     /// `prettier/prettier`
     Prettier: ["prettier"], InPlaceOf(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
+    /// `json/no-duplicate-keys`
+    Json: ["json"], Languages("@eslint/json", "2.1.1"), Whole;
+    /// `markdown/no-html`
+    Markdown: ["markdown"], Languages("@eslint/markdown", "8.0.3"), Whole;
 }
 
 impl Plugin {
@@ -241,6 +248,7 @@ impl Plugin {
         let mut all = Plugin::ALL.iter().copied();
         all.find(|it| it.is_only_of_oxlint() && it.is_called(prefix))
             .or_else(|| Plugin::of_prefix(prefix))
+            .filter(|it| !matches!(it.names().under_eslint, UnderEslint::Languages(..)))
             .map(Plugin::in_oxlint)
     }
 
@@ -254,15 +262,68 @@ impl Plugin {
                     && (usual.zip(package))
                         .is_none_or(|(usual, package)| usual.as_bytes() == package)
             }
+            // The prefix alone isn't enough: `json` is also the prefix that ESLint derives from eslint-plugin-json.
+            UnderEslint::Languages(usual, _) => {
+                it.prefix().as_bytes() == prefix && package == Some(usual.as_bytes())
+            }
             UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => false,
         })
+    }
+
+    /// Whether, with a configuration of ESLint, the rules here answer for the plugin that is usually called `prefix`.
+    pub fn is_native_under_eslint(prefix: &[u8]) -> bool {
+        Plugin::answers_in_place_of(prefix, None)
     }
 
     /// The version of the package that the rules here do the same as, if they answer in place of one.
     pub fn follows(self) -> Option<&'static str> {
         match self.names().under_eslint {
-            UnderEslint::InPlaceOf(_, version) => Some(version),
+            UnderEslint::InPlaceOf(_, version) | UnderEslint::Languages(_, version) => {
+                Some(version)
+            }
             UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => None,
+        }
+    }
+
+    /// The package that the built-in rules replace, if they only replace that specific package.
+    pub fn package(self) -> Option<&'static str> {
+        match self.names().under_eslint {
+            UnderEslint::InPlaceOf(package, _) => package,
+            UnderEslint::Languages(package, _) => Some(package),
+            UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => None,
+        }
+    }
+
+    /// Prefixes accepted for this plugin's rules when there's no ESLint or oxlint config. Includes every name that either
+    /// tool uses. The first one is [`Plugin::prefix`].
+    pub const fn spellings(self) -> &'static [&'static str] {
+        match self {
+            // oxlint accepts both prefixes for both plugins. Here `react-hooks/` only works for the hooks rules.
+            Plugin::ReactHooks => &["react-hooks", "react_hooks", "react"],
+            Plugin::React => &["react"],
+            plugin => match plugin.names().under_eslint {
+                UnderEslint::Languages(..) => &[],
+                _ => plugin.names().prefixes,
+            },
+        }
+    }
+
+    /// Plugins that accept `prefix` as one of their [spellings](Plugin::spellings).
+    pub fn spelled(prefix: &[u8]) -> impl Iterator<Item = Plugin> {
+        let has = move |it: &Plugin| it.spellings().iter().any(|it| it.as_bytes() == prefix);
+        Plugin::ALL.iter().copied().filter(has)
+    }
+
+    /// The framework or test runner this plugin's rules target. Empty for general-purpose plugins.
+    pub const fn framework(self) -> Frameworks {
+        match self {
+            Plugin::React | Plugin::ReactHooks | Plugin::ReactPerf | Plugin::JsxA11y => {
+                Frameworks::REACT
+            }
+            Plugin::Nextjs => Frameworks::NEXT,
+            Plugin::Jest => Frameworks::JEST,
+            Plugin::Vitest => Frameworks::VITEST,
+            _ => Frameworks::empty(),
         }
     }
 
@@ -273,6 +334,33 @@ impl Plugin {
             plugin => plugin,
         }
     }
+}
+
+bitflags::bitflags! {
+    /// Frameworks and test runners that have their own lint plugin. `bun lint` detects them from package.json, so that
+    /// `[lint.categories]` doesn't enable Next.js rules in a project that doesn't use Next.js.
+    #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+    pub struct Frameworks: u8 {
+        const REACT = 1 << 0;
+        const NEXT = 1 << 1;
+        const JEST = 1 << 2;
+        const VITEST = 1 << 3;
+        /// Not a framework. Set if the nearest package.json has `"type": "module"`. It's a flag here because it's read
+        /// from the same file, and config objects test for it the same way.
+        const TYPE_MODULE = 1 << 4;
+        /// Monorepos usually list these only in the root package.json, so nested packages inherit them.
+        const TEST_RUNNERS = Self::JEST.bits() | Self::VITEST.bits();
+    }
+}
+
+impl Frameworks {
+    /// The npm package name for each flag.
+    pub const PACKAGES: [(&'static str, Frameworks); 4] = [
+        ("react", Frameworks::REACT),
+        ("next", Frameworks::NEXT),
+        ("jest", Frameworks::JEST),
+        ("vitest", Frameworks::VITEST),
+    ];
 }
 
 /// The major and the minor version in `version`.
@@ -354,17 +442,32 @@ pub struct Meta {
     /// It runs only on a file of a program that has been type checked, and
     /// [`File::types`](crate::ast::File::types) never fails in it.
     pub requires_types: bool,
+    /// The rule also runs without types, and uses them in files that have them.
+    pub uses_types: bool,
     pub is_deprecated: bool,
     /// The rule of ESLint that this rule of typescript-eslint replaces.
     pub extends_base_rule: Option<&'static str>,
+    /// For a rule without types: the rule of typescript-eslint that looks for the same with types. See
+    /// [`Pairs`](crate::rule_set::Pairs), which is made of it when the linter is compiled.
+    pub(crate) with_types: Option<&'static str>,
     /// It is about several files: see [`modules`](crate::modules).
     pub needs_modules: bool,
-    /// It is a port of the rule that oxlint has, not of the rule of the plugin for ESLint: the messages, the places, the fixes and
-    /// the options are oxlint's. It exists only with a configuration of oxlint.
+    /// The rule is a port of oxlint's version, not of the ESLint plugin's, so the messages, locations, fixes and options are
+    /// oxlint's. It doesn't exist with an ESLint config. The project's installed package runs there instead.
     pub follows_oxlint: bool,
     /// The rule stands in for that of a package only for some files: for the others it calls `File::hand_back`, and the
     /// rule of the package is asked.
     pub hands_back: bool,
+    /// Upstream sets `fixable`, but the rule never attaches a fix. `--rules` and the docs don't list it as fixable.
+    pub never_fixes: bool,
+    /// Upstream sets `hasSuggestions`, but the rule never attaches a suggestion.
+    pub never_suggests: bool,
+    /// [`Meta::hints`]
+    pub has_hints: bool,
+    /// [`Meta::languages`]
+    pub languages: &'static [&'static str],
+    /// [`Meta::on_in_any_language`]
+    pub is_on_in_any_language: bool,
     pub reports: When,
     /// A hash of `name`.
     pub(crate) key: u32,
@@ -380,11 +483,18 @@ impl Meta {
             has_suggestions: false,
             presets: Presets::empty(),
             requires_types: false,
+            uses_types: false,
             is_deprecated: false,
             extends_base_rule: None,
+            with_types: None,
             needs_modules: false,
             follows_oxlint: false,
             hands_back: false,
+            never_fixes: false,
+            never_suggests: false,
+            has_hints: false,
+            languages: &[],
+            is_on_in_any_language: false,
             reports: When::Entering,
             key: hash_const(0, name.as_bytes()) as u32,
         }
@@ -420,6 +530,16 @@ impl Meta {
         self
     }
 
+    pub const fn never_fixes(mut self) -> Meta {
+        self.never_fixes = true;
+        self
+    }
+
+    pub const fn never_suggests(mut self) -> Meta {
+        self.never_suggests = true;
+        self
+    }
+
     pub const fn recommended(mut self) -> Meta {
         self.presets = self.presets.union(Presets::RECOMMENDED);
         self
@@ -435,6 +555,16 @@ impl Meta {
         self
     }
 
+    pub const fn uses_types(mut self) -> Meta {
+        self.uses_types = true;
+        self
+    }
+
+    /// Whether enabling this rule gets a file type checked, if the file's config asks for types.
+    pub const fn asks_types(&self) -> bool {
+        self.requires_types || self.uses_types
+    }
+
     pub const fn needs_modules(mut self) -> Meta {
         self.needs_modules = true;
         self
@@ -442,6 +572,26 @@ impl Meta {
 
     pub const fn hands_back(mut self) -> Meta {
         self.hands_back = true;
+        self
+    }
+
+    /// Some of the rule's reports have a [`Report::hint`](crate::context::Report::hint). Hints aren't shown without this.
+    pub const fn hints(mut self) -> Meta {
+        self.has_hints = true;
+        self
+    }
+
+    /// ESLint's `meta.languages`, for a rule about a [language](crate::languages) other than JavaScript, such as
+    /// `json/json`. The rule only runs on files in these languages, and it only exists with an ESLint config.
+    pub const fn languages(mut self, languages: &'static [&'static str]) -> Meta {
+        self.languages = languages;
+        self
+    }
+
+    /// Upstream's `meta` has no `languages`, so ESLint allows the rule to be enabled for a file in any language. It
+    /// reports nothing in a language that isn't in [`Meta::languages`].
+    pub const fn on_in_any_language(mut self) -> Meta {
+        self.is_on_in_any_language = true;
         self
     }
 
@@ -478,6 +628,12 @@ impl Meta {
         self
     }
 
+    /// [`Meta::with_types`]
+    pub const fn with_types(mut self, name: &'static str) -> Meta {
+        self.with_types = Some(name);
+        self
+    }
+
     pub const fn extends_base_rule(mut self, name: &'static str) -> Meta {
         self.extends_base_rule = Some(name);
         self
@@ -494,7 +650,9 @@ pub trait Rule: Send + Sync + Sized + 'static {
     /// [`Rule::start`] for a rule that keeps nothing.
     type State<'a>;
 
-    /// `options`: what follows the severity in the configuration.
+    /// `options`: what follows the severity in the configuration. They have passed the schema and not yet [`Rule::validate`],
+    /// which is asked afterwards: this takes whatever the schema lets through, without a panic. What it makes of options that
+    /// `validate` refuses lints nothing.
     fn new(options: &Options) -> Self;
 
     /// What is wrong with `options` that the schema of the rule cannot tell, where ESLint's rule throws: the message.

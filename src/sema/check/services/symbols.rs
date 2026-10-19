@@ -126,7 +126,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     None => Key::Symbol(symbol),
                 }
             }
-            ref source => Key::Property(source, prop.name, self.c.compose(prop.mapper, mapper)),
+            ref source => {
+                let own = self.c.mapper_of_prop(prop);
+                Key::Property(source, prop.name, self.c.compose(own, mapper))
+            }
         };
         self.intern_symbol(key, Some((prop, mapper)))
     }
@@ -756,16 +759,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         self.sym_of(symbol) == Some(self.c.files().unknown_symbol)
     }
 
-    pub fn symbol_to_string(&mut self, symbol: SymbolRef) -> Vec<u8> {
-        match self.entry(symbol) {
-            Some((Key::Symbol(sym) | Key::Instantiated(sym, _), None)) => {
-                self.c.symbol_to_string(sym)
-            }
-            Some((_, Some((prop, _)))) => self.c.prop_to_string(prop),
-            _ => self.symbol_info(symbol).name.to_vec(),
-        }
-    }
-
     // ───────────────────────────── members of types ─────────────────────────────
 
     pub fn properties_of_type(&mut self, ty: TypeId) -> &'c [SymbolRef] {
@@ -782,7 +775,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let Some(members) = self.c.members(ty) else {
             return &[];
         };
-        let shape: &'p Shape<'p> = members.shape();
+        let shape: &'p Listed<'p> = members.shape();
         let mut symbols = Vec::with_capacity(shape.props.len());
         for prop in shape.props.iter() {
             symbols.push(self.symbol_of_prop(prop, members.mapper));

@@ -1,13 +1,15 @@
-//! `.gitignore` and the files in its format. ESLint does not read them. oxlint does, so they count
-//! where an `.oxlintrc.json` is the configuration, and where there is none. Prettier reads those of
-//! the working directory.
+//! `.gitignore` and other files in its format. ESLint doesn't read them. oxlint does, so they apply
+//! when the config is an `.oxlintrc.json` and when there's no config. Prettier only reads the ones in
+//! the working directory. With a Prettier config, `bun fmt` reads those plus the `info/exclude` of
+//! the repository that contains the working directory. Without another tool's config, it reads
+//! every `.gitignore`, like Git.
 //!
-//! Here is which files there are, and which directory their lines belong to. What a line matches is
-//! said by [`bun_glob::ignore`].
+//! This module finds the files and tracks which directory each file's lines belong to.
+//! [`bun_lint::ignore`] decides what a line matches.
 
 use crate::{fs, paths};
 use bun_core::strings;
-use bun_glob::ignore::{IgnoreOptions, IgnoreRules, IgnoreSyntax, Verdict};
+use bun_lint::ignore::{IgnoreOptions, IgnoreRules, Verdict};
 use bun_sema::util::FxHashSet;
 use std::sync::Arc;
 
@@ -18,6 +20,8 @@ pub(crate) struct Ignores {
     rules: IgnoreRules,
     /// As Prettier reads them.
     is_of_prettier: bool,
+    /// `info/exclude`: it says nothing about what is not in the working tree.
+    is_of_repository: bool,
     above: Option<Arc<Ignores>>,
 }
 
@@ -39,18 +43,24 @@ pub(crate) type Chain = Option<Arc<Ignores>>;
 
 /// As oxlint and oxfmt read the lines, with the crate `ignore`: `{a,b}` is `a` or `b`.
 const OF_OXC: IgnoreOptions = IgnoreOptions {
-    syntax: IgnoreSyntax::Globset,
+    has_braces: true,
     ignores_case: false,
 };
 
 /// As Prettier reads them, with the package `ignore`: the braces are taken as they are, and
 /// `readme.md` is `README.md` too.
 const OF_PRETTIER: IgnoreOptions = IgnoreOptions {
-    syntax: IgnoreSyntax::Npm705,
+    has_braces: false,
     ignores_case: true,
 };
 
-fn with_rules(chain: Chain, directory: &[u8], rules: IgnoreRules, is_for_oxc: bool) -> Chain {
+fn with_rules(
+    chain: Chain,
+    directory: &[u8],
+    rules: IgnoreRules,
+    is_for_oxc: bool,
+    is_of_repository: bool,
+) -> Chain {
     if rules.is_empty() {
         return chain;
     }
@@ -58,16 +68,20 @@ fn with_rules(chain: Chain, directory: &[u8], rules: IgnoreRules, is_for_oxc: bo
         directory: directory.to_vec(),
         rules,
         is_of_prettier: !is_for_oxc,
+        is_of_repository,
         above: chain,
     }))
+}
+
+fn rules_of(text: &[u8], is_for_oxc: bool) -> IgnoreRules {
+    IgnoreRules::from_text(text, if is_for_oxc { OF_OXC } else { OF_PRETTIER })
 }
 
 /// `chain` and the lines of `text`, which is what a file has. They are relative to `directory`.
 /// `is_for_oxc`: as oxlint and oxfmt read them. Otherwise as Prettier does.
 pub(crate) fn with_text(chain: Chain, directory: &[u8], text: &[u8], is_for_oxc: bool) -> Chain {
-    let options = if is_for_oxc { OF_OXC } else { OF_PRETTIER };
-    let rules = IgnoreRules::from_text(text, options);
-    with_rules(chain, directory, rules, is_for_oxc)
+    let rules = rules_of(text, is_for_oxc);
+    with_rules(chain, directory, rules, is_for_oxc, false)
 }
 
 /// `chain` and `lines`, which are arguments of oxlint or oxfmt, or the elements of an array in a
@@ -83,27 +97,42 @@ pub(crate) fn with_lines<'l>(
         directory,
         IgnoreRules::from_lines(lines, OF_OXC),
         is_for_oxc,
+        false,
     )
 }
 
 /// The first of `lines` that oxlint and oxfmt do not take.
 pub(crate) fn refused_line<'l>(lines: impl IntoIterator<Item = &'l [u8]>) -> Option<Box<[u8]>> {
     let rules = IgnoreRules::from_lines(lines, OF_OXC);
-    rules.refused().first().map(|it| it.line.clone())
+    rules.refused().first().cloned()
 }
 
 /// `chain` and `file`, whose lines are relative to `directory`.
-pub(crate) fn with_file(chain: Chain, directory: &[u8], file: &[u8], is_for_oxc: bool) -> Chain {
+fn with_file(chain: Chain, directory: &[u8], file: &[u8], is_for_oxc: bool) -> Chain {
     match fs::read(file) {
         Ok(text) => with_text(chain, directory, &text, is_for_oxc),
         Err(_) => chain,
     }
 }
 
-/// Where the repository with the `.git` at `dot_git` has `info/exclude`, as the crate `ignore` finds it. In a working tree of
-/// `git worktree add`, `.git` is a file. That of a submodule names a directory without `commondir`, and nothing is read. A path
-/// that is not absolute is taken from where the process is, not from the repository.
-fn common_directory(dot_git: Vec<u8>, kind: fs::Kind) -> Option<Vec<u8>> {
+/// `chain` and `text`, which is what the `info/exclude` of a repository has. The lines are relative to `root`, the root of the
+/// working tree.
+pub(crate) fn with_excludes(chain: Chain, root: &[u8], text: &[u8], is_for_oxc: bool) -> Chain {
+    let is_of_repository = true;
+    with_rules(
+        chain,
+        root,
+        rules_of(text, is_for_oxc),
+        is_for_oxc,
+        is_of_repository,
+    )
+}
+
+/// Where the repository with the `.git` at `dot_git` has `info/exclude`. In a working tree of `git worktree add` and in a
+/// submodule, `.git` is a file. That of a submodule names a directory without `commondir`, which has `info/exclude` itself.
+/// `is_for_oxc`: as the crate `ignore` finds it. Without `commondir` nothing is read, and a path that is not absolute is taken
+/// from where the process is, not from the repository.
+fn common_directory(dot_git: Vec<u8>, kind: fs::Kind, is_for_oxc: bool) -> Option<Vec<u8>> {
     if kind == fs::Kind::Directory {
         return Some(dot_git);
     }
@@ -119,6 +148,16 @@ fn common_directory(dot_git: Vec<u8>, kind: fs::Kind) -> Option<Vec<u8>> {
     };
     let pointer = first_line(&dot_git)?;
     let git_directory = pointer.strip_prefix(b"gitdir: ")?;
+    if !is_for_oxc {
+        let from = |directory: &[u8], it: &[u8]| paths::resolve(directory, &paths::from_native(it));
+        let git_directory = from(paths::dirname(&dot_git), git_directory);
+        return Some(
+            match first_line(&paths::join(&git_directory, b"commondir")) {
+                Some(common) => from(&git_directory, &common),
+                None => git_directory,
+            },
+        );
+    }
     let common = first_line(&paths::join(git_directory, b"commondir"))?;
     Some(match common.starts_with(b".") {
         true => paths::join(git_directory, &common),
@@ -126,7 +165,44 @@ fn common_directory(dot_git: Vec<u8>, kind: fs::Kind) -> Option<Vec<u8>> {
     })
 }
 
-fn is_root(directory: &[u8]) -> bool {
+/// The root of the working tree that `directory` is in, and the `info/exclude` of its repository.
+fn exclude_file_above(directory: &[u8]) -> Option<(&[u8], Vec<u8>)> {
+    let (root, dot_git, kind) = paths::ancestors(directory).find_map(|root| {
+        let dot_git = paths::join(root, b".git");
+        fs::kind(&dot_git).map(|kind| (root, dot_git, kind))
+    })?;
+    let common = common_directory(dot_git, kind, false)?;
+    Some((root, paths::join(&common, b"info/exclude")))
+}
+
+/// The `info/exclude` of the repository that `directory` is in, as Prettier would read it. Or the file that is there and
+/// cannot be read.
+pub(crate) fn excludes_above(directory: &[u8]) -> Result<Chain, (Vec<u8>, bun_sys::Error)> {
+    let Some((root, file)) = exclude_file_above(directory) else {
+        return Ok(None);
+    };
+    match fs::read(&file) {
+        Ok(text) => Ok(with_excludes(None, root, &text, false)),
+        Err(error) if error.get_errno() == bun_sys::E::ENOENT => Ok(None),
+        Err(error) => Err((file, error)),
+    }
+}
+
+/// If `file` is the `info/exclude` of a repository, the root of its working tree. A repository can have several: then it is the
+/// one that `cwd` is in.
+pub(crate) fn root_of_exclude_file(file: &[u8], cwd: &[u8]) -> Option<Vec<u8>> {
+    if !file.ends_with(b"/info/exclude") {
+        return None;
+    }
+    if let Some((root, _)) = exclude_file_above(cwd).filter(|it| it.1 == file) {
+        return Some(root.to_vec());
+    }
+    let dot_git = paths::dirname(paths::dirname(file));
+    (paths::basename(dot_git) == b".git").then(|| paths::dirname(dot_git).to_vec())
+}
+
+/// True if `directory` is the top of a Git or Jujutsu repository.
+pub(crate) fn is_root(directory: &[u8]) -> bool {
     [&b".git"[..], b".jj"]
         .iter()
         .any(|name| bun_sys::exists(&paths::join(directory, name)))
@@ -145,11 +221,13 @@ pub(crate) fn are_all_in_repositories<'p>(
         known.extend(paths::ancestors(directory).take_while(|it| it.len() >= shortest));
         root.is_some()
     };
-    let is_left_out = |it: &[u8]| OfGit::above_and_in(it, true).is_directory_ignored_anywhere(it);
+    let is_for_oxc = true;
+    let is_left_out =
+        |it: &[u8]| OfGit::above_and_in(it, true, is_for_oxc).is_directory_ignored_anywhere(it);
     searched.all(|it| is_in_one(it) || is_left_out(it)) && named.all(is_in_one)
 }
 
-/// `.gitignore` and `info/exclude` for a search of oxlint or oxfmt, as the crate `ignore` reads them.
+/// `.gitignore` and `info/exclude` for a search like those of oxlint and oxfmt, as the crate `ignore` reads them.
 #[derive(Clone, Default)]
 pub(crate) struct OfGit {
     ignores: Chain,
@@ -157,6 +235,10 @@ pub(crate) struct OfGit {
     excludes: Chain,
     /// What is above the root of a repository does not count in it.
     stops_at_roots: bool,
+    /// `info/exclude` is found as the crate does: [`common_directory`].
+    is_for_oxc: bool,
+    /// Parse the lines the way Prettier does. See [`OF_PRETTIER`].
+    reads_like_prettier: bool,
 }
 
 impl OfGit {
@@ -164,43 +246,66 @@ impl OfGit {
     /// With one search of the run that is in no repository, no root stops any of them.
     pub(crate) fn for_search(
         directory: &[u8],
+        is_for_oxc: bool,
         are_all_in_repositories: impl FnOnce() -> bool,
     ) -> Option<Self> {
-        let own = Self::above_and_in(directory, true);
+        let own = Self::above_and_in(directory, true, is_for_oxc);
         if own.is_directory_ignored_anywhere(directory) {
             return None;
         }
         Some(match own.stops_at_roots && !are_all_in_repositories() {
-            true => Self::above_and_in(directory, false),
+            true => Self::above_and_in(directory, false, is_for_oxc),
             false => own,
         })
     }
 
     /// The files in `directory` and above it, up to the root of the repository. Outside of one, all the way up.
-    pub(crate) fn above_and_in(directory: &[u8], stops_at_roots: bool) -> Self {
+    pub(crate) fn above_and_in(directory: &[u8], stops_at_roots: bool, is_for_oxc: bool) -> Self {
+        Self {
+            stops_at_roots,
+            is_for_oxc,
+            ..Self::default()
+        }
+        .with_all_above_and_in(directory, None)
+    }
+
+    /// Like [`OfGit::above_and_in`], for `bun fmt` without another tool's config. Lines are parsed the same way as in
+    /// `.prettierignore`. Outside a repository, Git ignores nothing and Prettier only reads the file in `cwd`, so files
+    /// above `cwd` are skipped.
+    pub(crate) fn above_and_in_for_fmt(directory: &[u8], cwd: &[u8]) -> Self {
+        Self {
+            stops_at_roots: true,
+            reads_like_prettier: true,
+            ..Self::default()
+        }
+        .with_all_above_and_in(directory, Some(cwd))
+    }
+
+    /// Outside a repository, the walk up stops at `top`. If `directory` isn't inside `top`, only `directory` is read.
+    fn with_all_above_and_in(mut self, directory: &[u8], top: Option<&[u8]>) -> Self {
         let mut directories: Vec<&[u8]> = paths::ancestors(directory).collect();
         let nearest = directories.iter().position(|it| is_root(it));
-        let stops_at_roots = stops_at_roots && nearest.is_some();
-        if let Some(nearest) = nearest.filter(|_| stops_at_roots) {
+        self.stops_at_roots &= nearest.is_some();
+        if let Some(nearest) = nearest.filter(|_| self.stops_at_roots) {
             directories.truncate(nearest + 1);
+        } else if let Some(top) = top {
+            let is_in_top = |it: &&&[u8]| paths::is_at_or_inside(top, it);
+            directories.truncate(directories.iter().take_while(is_in_top).count().max(1));
         }
-        let mut files = Self {
-            stops_at_roots,
-            ..Self::default()
-        };
         for (index, directory) in directories.iter().enumerate().rev() {
             let can_be_root = nearest.is_some_and(|nearest| nearest <= index);
-            files = files.and_in(directory, |name| can_be_root || name == b".gitignore");
+            self = self.and_in(directory, |name| can_be_root || name == b".gitignore");
         }
-        files
+        self
     }
 
     /// The same with the files in `directory`, which the search has come to. `has`: whether an entry of it can be called so.
     pub(crate) fn and_in(mut self, directory: &[u8], has: impl Fn(&[u8]) -> bool) -> Self {
-        let own = |chain, file: &[u8]| with_file(chain, directory, file, true);
+        let is_for_oxc = !self.reads_like_prettier;
+        let own = |chain, file: &[u8]| with_file(chain, directory, file, is_for_oxc);
         let dot_git = has(b".git").then(|| paths::join(directory, b".git"));
         let kind = match &dot_git {
-            Some(dot_git) if self.stops_at_roots => fs::kind(dot_git),
+            Some(dot_git) if self.stops_at_roots || !self.is_for_oxc => fs::kind(dot_git),
             // Where no root stops it, the crate does not look at what `.git` is.
             Some(_) => Some(fs::Kind::Directory),
             None => None,
@@ -210,7 +315,7 @@ impl OfGit {
             (self.ignores, self.excludes) = (None, None);
         }
         if let (Some(dot_git), Some(kind)) = (dot_git, kind)
-            && let Some(common) = common_directory(dot_git, kind)
+            && let Some(common) = common_directory(dot_git, kind, self.is_for_oxc)
         {
             self.excludes = own(self.excludes, &paths::join(&common, b"info/exclude"));
         }
@@ -234,6 +339,11 @@ impl OfGit {
     pub(crate) fn is_directory_ignored_anywhere(&self, path: &[u8]) -> bool {
         paths::ancestors(path).any(|directory| self.is_ignored(directory, true))
     }
+
+    /// True if the file at `path` or any directory above it is ignored.
+    pub(crate) fn is_file_ignored_anywhere(&self, path: &[u8]) -> bool {
+        self.is_directory_ignored_anywhere(paths::dirname(path)) || self.is_ignored(path, false)
+    }
 }
 
 /// The files that a search of `bun lint` asks, in the order of the crate `ignore`, with which oxlint walks: wherever they are,
@@ -248,7 +358,12 @@ impl Files {
     /// What counts in `directory`, which is where a search starts. `name`: `.eslintignore`, or what `--ignore-path` has. The
     /// root of a repository does not end the way up for it. Above `directory` it is joined to each directory, so a path is
     /// found too, and an absolute one is read for each. From `directory` on it is looked for among the entries.
-    pub(crate) fn above_and_in(directory: &[u8], name: Option<&[u8]>, of_git: OfGit) -> Self {
+    pub(crate) fn above_and_in(
+        directory: &[u8],
+        name: Option<&[u8]>,
+        of_git: OfGit,
+        pipes: &fs::NamedPipes,
+    ) -> Self {
         let mut named = None;
         if let Some(name) = name {
             let is_path = strings::contains_char(name, b'/');
@@ -256,7 +371,9 @@ impl Files {
                 .skip(usize::from(is_path))
                 .collect();
             for directory in directories.iter().rev() {
-                named = with_file(named, directory, &paths::resolve(directory, name), true);
+                if let Ok(text) = pipes.read(&paths::resolve(directory, name)) {
+                    named = with_text(named, directory, &text, true);
+                }
             }
         }
         Self { named, of_git }
@@ -285,13 +402,11 @@ impl Files {
     }
 }
 
-/// Whether `file` has a line for `argument`, a file that oxlint is to lint. It asks the crate `ignore` with both as they are
-/// spelled, `Gitignore::new(file).matched(argument, false)`: where `argument` does not start with the directory in `file`, the
-/// lines are compared with all of it.
-pub(crate) fn has_argument(cwd: &[u8], file: &[u8], argument: &[u8]) -> bool {
-    let Ok(text) = fs::read(&paths::resolve(cwd, file)) else {
-        return false;
-    };
+/// True if the ignore file `file`, whose contents are `text`, ignores `argument`, a file passed to oxlint on the
+/// command line. oxlint calls the `ignore` crate with both paths as typed:
+/// `Gitignore::new(file).matched(argument, false)`. If `argument` doesn't start with `file`'s directory, the lines are
+/// matched against all of `argument`.
+pub(crate) fn has_argument(text: &[u8], file: &[u8], argument: &[u8]) -> bool {
     let mut root = &file[..strings::last_index_of_char(file, b'/').unwrap_or(0)];
     while let [rest @ .., b'/'] = root {
         root = rest;
@@ -305,7 +420,7 @@ pub(crate) fn has_argument(cwd: &[u8], file: &[u8], argument: &[u8]) -> bool {
     {
         path = rest.strip_prefix(b"/").unwrap_or(rest);
     }
-    IgnoreRules::from_text(&text, OF_OXC).verdict(path, false) == Verdict::Ignored
+    IgnoreRules::from_text(text, OF_OXC).verdict(path, false) == Verdict::Ignored
 }
 
 /// Whether `path` is ignored, if the directory that it is in is not. The nearest file that says
@@ -315,7 +430,7 @@ pub(crate) fn is_ignored(chain: &Chain, path: &[u8], is_directory: bool) -> bool
     decide(chain, path, is_directory, is_in_search).unwrap_or(false)
 }
 
-/// The same for what a search of `bun format` comes to. There oxfmt hands the crate `ignore` a path that is not in the directory
+/// The same for what a search of `bun fmt` comes to. There oxfmt hands the crate `ignore` a path that is not in the directory
 /// of the file as it is: a pattern without a `/` finds the name. About an argument that is not in the directory it does not ask.
 pub(crate) fn is_ignored_in_search(chain: &Chain, path: &[u8], is_directory: bool) -> bool {
     let is_in_search = true;
@@ -336,7 +451,7 @@ fn decide(chain: &Chain, path: &[u8], is_directory: bool, is_in_search: bool) ->
         let inside = match paths::inside(directory, path) {
             Some(inside) => Some(inside),
             // No pattern is about the directory of the file, or about one that it is in.
-            None if is_at_or_above(path, directory) => None,
+            None if is_at_or_above(path, directory) || ignores.is_of_repository => None,
             // Prettier asks the package `ignore` about `../src/a.js`, in which a pattern without a `/` finds the name.
             None if ignores.is_of_prettier => {
                 from_outside = paths::relative(directory, path);

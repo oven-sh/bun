@@ -144,7 +144,7 @@ pub(crate) struct Parser<'a> {
     // The index of the one of them that was asked about last.
     pub(crate) inline_line: usize,
     // `Extensions::leaf_bytes`
-    pub(crate) starts_extension_leaf: [bool; 256],
+    pub(crate) starts_extension_leaf: bun_collections::ByteSet,
     // Where the lines of the document start.
     pub(crate) line_starts: Vec<OFF>,
     // The labels of the footnotes that are defined, normalized.
@@ -191,8 +191,7 @@ impl core::error::Error for ParserError {}
 
 /// The longest `OFF`-typed fixed lookahead the parser performs from an
 /// in-bounds offset: the `<![CDATA[` probe in `is_html_block_start_condition`
-/// checks `off + MAX_LOOKAHEAD <= size`. (Probes that add in `usize`, like
-/// `match_html_tag`, cannot wrap and do not bound this.)
+/// checks `off + MAX_LOOKAHEAD <= size`.
 pub(crate) const MAX_LOOKAHEAD: OFF = 1 + crate::line_analysis::CDATA_OPEN.len() as OFF;
 
 /// The largest input `input_size` accepts. Every offset, mark and span
@@ -368,7 +367,7 @@ impl<'a> Parser<'a> {
             extensions: None,
             inline_lines: Vec::new(),
             inline_line: 0,
-            starts_extension_leaf: [false; 256],
+            starts_extension_leaf: bun_collections::ByteSet::init_empty(),
             line_starts: Vec::new(),
             footnote_labels: bun_collections::StringSet::new(),
         };
@@ -431,7 +430,7 @@ impl<'a> Parser<'a> {
             self.mark_char_map[c as usize] |= MARK_HIDES | MARK_EXTENSION;
         }
         for &c in extensions.leaf_bytes {
-            self.starts_extension_leaf[c as usize] = true;
+            self.starts_extension_leaf.set(c as usize);
         }
         self.extensions = Some(extensions);
     }
@@ -474,7 +473,7 @@ impl<'a> Parser<'a> {
     //   is_setext_underline, is_hr_line, is_atx_header_line,
     //   is_opening_code_fence, is_closing_code_fence,
     //   is_html_block_start_condition, is_html_block_end_condition,
-    //   match_html_tag, is_block_level_html_tag, is_complete_html_tag,
+    //   html_tag_name, is_block_level_html_tag, is_complete_html_tag,
     //   is_table_underline, count_table_row_columns, is_container_mark
     //
     // ref_defs.rs — impl Parser:

@@ -4,18 +4,21 @@
 //! for everything in it that the configuration has `files` for. Directories are listed on all
 //! threads, one level of the tree at a time, and one that the configuration ignores is not entered.
 
-use crate::configs::{Flavor, Loaded, Loader};
+use crate::configs::{Flavor, Loaded, Loader, inherit_frameworks, read_frameworks};
 use crate::embedded::Framework;
+use crate::fmt::Negative;
 use crate::gitignore::{self, Files};
 use crate::run::{Environment, Fatal, Pool};
 use crate::{Linter, fs, paths};
 use bun_core::strings;
-use bun_glob::{Options, Pattern};
+use bun_lint::glob::{Minimatch, MinimatchOptions};
 use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::config::{Dotfiles, Seen};
 use bun_lint::linter::{FileConfig, ResolvedConfig};
 use bun_lint::modules::Listed;
+use bun_lint::rule::Frameworks;
 use bun_threading::Guarded;
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 
@@ -67,15 +70,26 @@ impl Target {
 enum Matcher {
     /// `**`
     Everything,
-    /// `new Minimatch(pattern, { dot: true })`
-    Pattern(Pattern),
+    Pattern(Minimatch),
 }
 
 impl Matcher {
     fn new(relative: &[u8]) -> Matcher {
         match relative {
             b"**" => Matcher::Everything,
-            relative => Matcher::Pattern(Pattern::new(relative, Options::MINIMATCH_DOT)),
+            relative => {
+                // `src/!(a).js` is searched for as `!(a).js`. Without `nonegate`, minimatch would read that as the
+                // negation of `(a).js`.
+                let (dot, nonegate) = (true, true);
+                Matcher::Pattern(Minimatch::with(
+                    relative,
+                    MinimatchOptions {
+                        dot,
+                        nonegate,
+                        ..MinimatchOptions::default()
+                    },
+                ))
+            }
         }
     }
 
@@ -153,6 +167,8 @@ struct Directory {
     /// `inherited` ignores it. It is only read for the configuration files of oxlint in it and below it, each of which is asked
     /// alone about what it is nearest to.
     is_hidden: bool,
+    /// [`Loader::detect_frameworks`] of the parent directory, or of the directory itself if it's the search root.
+    frameworks: Frameworks,
 }
 
 fn no_files_found(pattern: &[u8]) -> Fatal {
@@ -189,8 +205,8 @@ fn thrown_by_eslint_8(error: &bun_sys::Error, path: &[u8]) -> Option<Fatal> {
 /// ESLint's `assertConfigurationExists`, for the file at `path`.
 fn config_file_missing(path: &[u8]) -> Fatal {
     let path = paths::to_native(path.to_vec());
-    let rest: &[u8] = b" has no eslint.config.* in its directory or above it.";
-    Fatal([b"Could not find config file. ", &path[..], rest].concat())
+    let start: &[u8] = b"Could not find config file.\n  No eslint.config.* was found next to ";
+    Fatal([start, &path[..], b" or in a parent directory."].concat())
 }
 
 fn all_files_ignored(pattern: &[u8]) -> Fatal {
@@ -238,6 +254,7 @@ fn search(
     loader: &Loader,
     pool: &Pool,
     search: &Search,
+    negative: &Negative,
     are_all_in_repositories: &(dyn Fn() -> bool + Sync),
     found: &mut Vec<Target>,
 ) -> Result<Option<usize>, Fatal> {
@@ -277,6 +294,7 @@ fn search(
                 relative: Vec::new(),
                 seen: None,
                 ignores,
+                frameworks: loader.detect_frameworks(&inherited, &search.base_path),
                 inherited,
                 is_hidden,
             });
@@ -326,6 +344,17 @@ fn search(
                 return;
             }
             let is_hidden = directory.is_hidden && Arc::ptr_eq(&own, &directory.inherited);
+            // The listing already tells us whether there's a package.json, so most directories inherit the answer.
+            let has_package = || entries.iter().any(|it| it.name == b"package.json");
+            let detects = !directory.relative.is_empty() && own.flavor == Flavor::BuiltIn;
+            let decides = detects && has_package();
+            let own_frameworks = decides.then(|| read_frameworks(&directory.path)).flatten();
+            let is_repository_root = detects
+                && entries
+                    .iter()
+                    .any(|it| matches!(&it.name[..], b".git" | b".jj"));
+            let frameworks =
+                inherit_frameworks(directory.frameworks, own_frameworks, is_repository_root);
             let reads_ignore_files = loader.reads_ignore_files(&own);
             let mut ignores = directory.ignores.clone();
             if reads_ignore_files && !loader.reads_ignore_files(&directory.inherited) {
@@ -343,7 +372,8 @@ fn search(
                 Some(seen) if Arc::ptr_eq(&own, &directory.inherited) => seen,
                 _ => &own.config.see(&directory.path),
             };
-            let mut within = own.config.within(&directory.path, seen);
+            let within = own.config.within(&directory.path, seen);
+            let mut within = within.with_frameworks(frameworks);
             for mut entry in entries {
                 let path = paths::join(&directory.path, &entry.name);
                 let (mut real, mut is_loop) = (None, false);
@@ -377,6 +407,9 @@ fn search(
                     }
                 }
                 if reads_ignore_files && ignores.is_ignored(&path, entry.is_directory) {
+                    continue;
+                }
+                if negative.matches(&loader.environment().cwd, &path) {
                     continue;
                 }
                 let relative = match directory.relative.is_empty() {
@@ -414,6 +447,7 @@ fn search(
                             inherited: Arc::clone(&own),
                             ignores: ignores.clone(),
                             is_hidden,
+                            frameworks,
                         });
                     }
                     continue;
@@ -503,6 +537,32 @@ pub(crate) fn list_as_eslint_8(
     Ok(listed.collect())
 }
 
+/// Splits the arguments in `patterns` into those that select files and those that exclude files. An argument excludes
+/// files if it starts with `!` and no file or directory has that name, as in `bun fmt`. ESLint rejects these arguments
+/// and oxlint ignores them. If every argument is an exclusion, oxfmt searches the working directory, so a run with an
+/// oxlint config does too.
+fn split_negative<'p>(loader: &Loader, patterns: &'p [Vec<u8>]) -> (Cow<'p, [Vec<u8>]>, Negative) {
+    let mut negative = Negative::default();
+    if !patterns.iter().any(|it| it.starts_with(b"!")) {
+        return (Cow::Borrowed(patterns), negative);
+    }
+    let cwd = &loader.environment().cwd;
+    let mut selecting = Vec::new();
+    for written in patterns {
+        let pattern = paths::from_native(written);
+        match pattern.strip_prefix(b"!") {
+            Some(rest) if fs::kind(&paths::resolve(cwd, &pattern)).is_none() => negative.push(rest),
+            _ => selecting.push(written.clone()),
+        }
+    }
+    if selecting.is_empty()
+        && (loader.for_directory(cwd)).is_ok_and(|it| it.flavor == Flavor::Oxlint)
+    {
+        selecting.push(b".".to_vec());
+    }
+    (Cow::Owned(selecting), negative)
+}
+
 /// ESLint's `findFiles`. `patterns`: the arguments. The files are in no particular order, and
 /// each is there once.
 pub(crate) fn find_files(
@@ -512,6 +572,12 @@ pub(crate) fn find_files(
     error_on_unmatched_pattern: bool,
 ) -> Result<Vec<Target>, Fatal> {
     let cwd = &loader.environment().cwd;
+    let first = patterns.first();
+    let (patterns, negative) = split_negative(loader, patterns);
+    let patterns = &patterns[..];
+    if let (true, Some(first)) = (patterns.is_empty() && error_on_unmatched_pattern, first) {
+        return Err(no_files_found(first));
+    }
     let mut found = Vec::new();
     let mut searches = vec![Search {
         base_path: cwd.clone(),
@@ -550,7 +616,7 @@ pub(crate) fn find_files(
             None => {}
         }
     }
-    let mut missing = None;
+    let (mut missing, mut left_out) = (None, None);
     for pattern in patterns {
         let pattern = paths::from_native(pattern);
         let path = paths::resolve(cwd, &pattern);
@@ -563,14 +629,17 @@ pub(crate) fn find_files(
             return Err(thrown);
         }
         match there {
+            Some((fs::Kind::File, _)) if negative.matches(cwd, &path) => {
+                left_out.get_or_insert(pattern);
+            }
             Some((fs::Kind::File, size)) => {
                 let loaded = loader.for_directory(paths::dirname(&path))?;
                 if loader.lacks_file_of_eslint(&loaded) {
                     return Err(config_file_missing(&path));
                 }
-                let status = match loader.ignores_named_file(&pattern, &loaded) {
+                let status = match loader.ignores_named_file(&pattern, &path, &loaded) {
                     true => Status::Ignored,
-                    false => loaded.config.get(loader.linter.registry(), &path).into(),
+                    false => loader.config_of(&loaded, &path).into(),
                 };
                 found.push(Target {
                     path,
@@ -608,6 +677,11 @@ pub(crate) fn find_files(
     {
         return Err(no_files_found(&missing));
     }
+    if let Some(left_out) = left_out
+        && error_on_unmatched_pattern
+    {
+        return Err(all_files_ignored(&left_out));
+    }
     let mut unmatched = None;
     let wanted = || searches.iter().filter(|it| !it.patterns.is_empty());
     let are_all_in_repositories = LazyLock::new(|| {
@@ -630,6 +704,7 @@ pub(crate) fn find_files(
             loader,
             pool,
             it,
+            &negative,
             &|| *are_all_in_repositories,
             &mut searched,
         )? {
@@ -650,5 +725,55 @@ pub(crate) fn find_files(
     }
     bun_lint::utils::sort::sort_by(&mut found, |a, b| a.path.cmp(&b.path));
     found.dedup_by(|a, b| a.path == b.path);
+    Ok(found)
+}
+
+/// Returns the `files` that [`find_files`] would find if they were on disk. `files` are absolute paths, each with the
+/// size of its text. `--staged` reads them from the index. A file is included if it's an argument, is inside a
+/// directory argument, or matches a pattern, and neither the config nor an ignore file excludes it.
+pub(crate) fn find_files_not_on_disk<'f>(
+    loader: &Loader,
+    patterns: &[Vec<u8>],
+    files: impl Iterator<Item = (&'f [u8], u64)>,
+) -> Result<Vec<Target>, Fatal> {
+    let cwd = &loader.environment().cwd;
+    let (patterns, negative) = split_negative(loader, patterns);
+    // A search doesn't enter an excluded directory.
+    let is_left_out = |file: &[u8]| paths::ancestors(file).any(|it| negative.matches(cwd, it));
+    let is_wanted = |file: &[u8]| {
+        !is_left_out(file)
+            && patterns.iter().any(|pattern| {
+                let pattern = paths::from_native(pattern);
+                let resolved = paths::resolve(cwd, &pattern);
+                if paths::is_at_or_inside(&resolved, file) {
+                    return true;
+                }
+                let base_path = paths::resolve(cwd, &bun_glob::scan::glob_parent(&pattern));
+                bun_glob::scan::is_glob(&pattern)
+                    && paths::inside(&base_path, file).is_some_and(|relative| {
+                        Matcher::new(&paths::relative(&base_path, &resolved)).matches(relative)
+                    })
+            })
+    };
+    let mut found = Vec::new();
+    for (file, size) in files.filter(|it| is_wanted(it.0)) {
+        let directory = paths::dirname(file);
+        let loaded = loader.for_directory(directory)?;
+        if loader.lacks_file_of_eslint(&loaded) {
+            return Err(config_file_missing(file));
+        }
+        let is_ignored = (loader.ignore_files_at(directory, &loaded, &|| true)).is_none_or(|it| {
+            it.is_ignored(file, false)
+                || paths::ancestors(directory).any(|above| it.is_ignored(above, true))
+        });
+        if !is_ignored && let FileConfig::Matched(config) = loader.config_of(&loaded, file) {
+            found.push(Target {
+                path: file.to_vec(),
+                size,
+                loaded,
+                status: Status::Matched(config),
+            });
+        }
+    }
     Ok(found)
 }

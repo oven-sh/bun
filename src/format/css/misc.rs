@@ -1,6 +1,8 @@
 //! Prettier's `print/misc.js`, and the utilities of Prettier that it uses: strings, numbers, units.
 
-use crate::text::{self, ByteSet, make_string};
+use crate::html::in_js::PLACEHOLDER_START;
+use crate::text::make_string;
+use bun_core::strings;
 use std::borrow::Cow;
 
 /// The units of `css-units-list`, as they are written.
@@ -110,8 +112,7 @@ pub(crate) fn print_string(raw: &[u8], single_quote: bool, out: &mut Vec<u8>) {
 
 /// `adjustStrings`
 pub(crate) fn adjust_strings(value: &[u8], single_quote: bool) -> Cow<'_, [u8]> {
-    static QUOTES: ByteSet = ByteSet::new(b"\"'");
-    if QUOTES.find(value, 0).is_none() {
+    if !strings::contains_any(value, b"\"'") {
         return Cow::Borrowed(value);
     }
     let mut out = Vec::with_capacity(value.len());
@@ -243,10 +244,13 @@ pub(crate) fn quote_attribute_value(value: Cow<'_, [u8]>, single_quote: bool) ->
         .and_then(|flag| {
             let before = &value[..value.len() - 1];
             let unflagged = bun_core::strings::trim_js_whitespace_end(before);
-            let is_match = unflagged.len() < before.len()
+            // Prettier turns `b\ c` into `"b\" c`. It turns `b\31 c`, which means `b1c`, into `"b\31" c`.
+            let is_escaped = ends_before_escaped_blank(unflagged);
+            let blank_of_escape = usize::from(is_escaped || ends_with_hex_escape(unflagged));
+            let is_match = unflagged.len() + blank_of_escape < before.len()
                 && !unflagged.is_empty()
                 && bun_core::strings::index_of_any(unflagged, b"\n\r").is_none();
-            is_match.then_some((unflagged.len(), flag))
+            is_match.then_some((unflagged.len() + usize::from(is_escaped), flag))
         });
     let unflagged = &value[..flag.map_or(value.len(), |(len, _)| len)];
     let has_quotes = bun_core::strings::index_of_any(unflagged, b"\"'").is_some();
@@ -268,19 +272,87 @@ pub(crate) fn quote_attribute_value(value: Cow<'_, [u8]>, single_quote: bool) ->
     Cow::Owned(out)
 }
 
+/// `value.toLowerCase()`, of the letters of ASCII: to CSS, the others are not the same in the other case. Prettier makes a
+/// `k` of a Kelvin sign.
+pub(crate) fn to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
+    match value.iter().any(u8::is_ascii_uppercase) {
+        true => Cow::Owned(value.to_ascii_lowercase()),
+        false => Cow::Borrowed(value),
+    }
+}
+
 /// `maybeToLowerCase`
 pub(crate) fn maybe_to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
-    static SIGNS: ByteSet = ByteSet::new(b"$@#");
-    static OPEN: ByteSet = ByteSet::new(b"(");
-    static CLOSE: ByteSet = ByteSet::new(b")");
-    let keeps_case = SIGNS.find(value, 0).is_some()
+    // The last stands for a substitution in a template of JavaScript. Prettier does not find it again in lower case.
+    let keeps_case = strings::contains_any(value, b"$@#")
         || value.starts_with(b"%")
         || value.starts_with(b"--")
         || value.starts_with(b":--")
-        || (OPEN.find(value, 0).is_some() && CLOSE.find(value, 0).is_some());
+        || (strings::contains_char(value, b'(') && strings::contains_char(value, b')'))
+        || (value.len() > PLACEHOLDER_START.len() && strings::contains(value, PLACEHOLDER_START));
     match keeps_case {
         true => Cow::Borrowed(value),
-        false => text::to_lower_case(value),
+        false => to_lower_case(value),
+    }
+}
+
+/// Whether `text` ends with a backslash that is not escaped itself. If `text` is all of a value or of the parameters of an
+/// at-rule, what it escapes is white space, which `postcss` takes for what is behind them: anything else would be in `text`.
+/// Not so for a word of a value: `\@a` is `\` and `@a`.
+pub(crate) fn ends_before_escaped_blank(text: &[u8]) -> bool {
+    text.ends_with(b"\\") && text.iter().rev().take_while(|byte| **byte == b'\\').count() % 2 == 1
+}
+
+/// True if `text` ends with `\` and one to six hex digits. One whitespace character after that is part of the escape:
+/// `\31 0` means `10`.
+pub(crate) fn ends_with_hex_escape(text: &[u8]) -> bool {
+    let digits = (text.iter().rev())
+        .take_while(|byte| byte.is_ascii_hexdigit())
+        .count();
+    (1..=6).contains(&digits) && ends_before_escaped_blank(&text[..text.len() - digits])
+}
+
+/// Returns the offset of the first SCSS or Less `//` comment in `text` at or after `at`. Skips strings, `/* */`
+/// comments and unquoted `url()`s.
+pub(crate) fn next_line_comment(text: &[u8], mut at: usize) -> Option<usize> {
+    while let Some(found) = strings::index_of_any(text.get(at..)?, b"/\"'(") {
+        at += found;
+        match text[at] {
+            quote @ (b'"' | b'\'') => {
+                at += 1;
+                while text.get(at).is_some_and(|it| *it != quote) {
+                    at += 1 + usize::from(text[at] == b'\\');
+                }
+            }
+            b'(' if at >= 3
+                && text[at - 3..at].eq_ignore_ascii_case(b"url")
+                && !matches!(
+                    strings::trim_js_whitespace_start(&text[at + 1..]).first(),
+                    Some(b'"' | b'\'')
+                ) =>
+            {
+                at += strings::index_of_char_usize(&text[at..], b')')?;
+            }
+            b'/' if text.get(at + 1) == Some(&b'*') => {
+                at += 3 + strings::index_of(text.get(at + 2..)?, b"*/")?;
+            }
+            b'/' if text.get(at + 1) == Some(&b'/') => return Some(at),
+            _ => {}
+        }
+        at += 1;
+    }
+    None
+}
+
+/// Returns the offset of the `//` comment that `text` ends with.
+pub(crate) fn line_comment_at_end(text: &[u8]) -> Option<usize> {
+    let mut at = 0;
+    loop {
+        let start = next_line_comment(text, at)?;
+        match strings::index_of_any(&text[start..], b"\n\r") {
+            Some(len) => at = start + len,
+            None => return Some(start),
+        }
     }
 }
 

@@ -1,408 +1,513 @@
-//! A pattern that has been read, in the syntax of Bun or of another tool.
+//! A compiled pattern for matching many paths. Cheap prefilters reject most paths before [`crate::match`] runs.
 
-use crate::matcher;
-use crate::node::Program;
-use crate::read_ignore;
-use crate::read_minimatch3;
-use crate::read_picomatch;
-use crate::segments::{self, Expansion};
-use crate::unit::{Subject, Text, well_formed};
+use crate::matcher::{self, Dots, Shape, Token};
 use bun_core::strings;
 use std::borrow::Cow;
+use std::ops::Range;
 
-pub use crate::segments::Candidate;
-
-/// Whose patterns these are.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Syntax {
-    /// [`crate::match`]: `Bun.Glob`, and `glob_match` of the crate `fast-glob`.
-    Bun,
-    /// minimatch 10.2.6.
-    Minimatch,
-    /// picomatch 2.3.2, which micromatch 4.0.8 and fast-glob 3.3.3 call.
-    Picomatch,
-    /// minimatch 3.1.5: `.*` takes `.` and `..`, `a/../b` is not folded, the pattern is trimmed.
-    Minimatch3,
-    /// `makeRe(pattern).test(path)` of minimatch 3.1.5: nothing is cut at a `/`, and a `**` keeps the `/` behind it.
-    Minimatch3MakeRe,
+/// A path that is matched against many patterns. It uses `/` as its separator.
+#[derive(Copy, Clone)]
+pub struct Candidate<'p> {
+    path: &'p [u8],
+    /// Index where the last segment starts. A trailing `/` belongs to that segment.
+    name_at: usize,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Options {
-    pub syntax: Syntax,
-    /// `dot`: `*`, `?`, `**` and a class take a `.` at the start of a name. `Syntax::Bun` does not read it: there they do.
-    pub dot: bool,
-    /// `posix: true` of picomatch: `[!a]` is `[^a]`.
-    pub posix: bool,
-    /// Braces are expanded before the pattern is read, as fast-glob does. minimatch always does.
-    pub expands_braces_first: bool,
-    /// `nocomment` of minimatch: a `#` at the start is a character.
-    pub nocomment: bool,
-    /// `nonegate` of minimatch: so is a `!`.
-    pub nonegate: bool,
-    /// These four are read for minimatch 3.1.5 only. `nocase`: the flag `i`.
-    pub nocase: bool,
-    /// `noext`: `+(` is two characters.
-    pub noext: bool,
-    /// `nobrace`: braces are characters.
-    pub nobrace: bool,
-    /// `noglobstar`: `**` is `*`.
-    pub noglobstar: bool,
-}
+impl<'p> Candidate<'p> {
+    pub fn new(path: &'p [u8]) -> Candidate<'p> {
+        let names = path.strip_suffix(b"/").unwrap_or(path);
+        Candidate {
+            path,
+            name_at: strings::last_index_of_char(names, b'/').map_or(0, |slash| slash + 1),
+        }
+    }
 
-impl Options {
-    /// `bun_glob::match(pattern, path)`.
-    pub const BUN: Options = Options {
-        syntax: Syntax::Bun,
-        dot: true,
-        posix: false,
-        expands_braces_first: false,
-        nocomment: false,
-        nonegate: false,
-        nocase: false,
-        noext: false,
-        nobrace: false,
-        noglobstar: false,
-    };
-    /// `new Minimatch(pattern, { dot: true })`: @eslint/config-array, the command line of ESLint, `.editorconfig`.
-    pub const MINIMATCH_DOT: Options = Options {
-        syntax: Syntax::Minimatch,
-        dot: true,
-        posix: false,
-        expands_braces_first: true,
-        nocomment: false,
-        nonegate: false,
-        nocase: false,
-        noext: false,
-        nobrace: false,
-        noglobstar: false,
-    };
-    /// `minimatch(path, pattern)`: @trivago/prettier-plugin-sort-imports.
-    pub const MINIMATCH: Options = Options {
-        dot: false,
-        ..Options::MINIMATCH_DOT
-    };
-    /// `minimatch(path, pattern, { dot: true })` of 3.1.5: eslint-plugin-import.
-    pub const MINIMATCH_3_DOT: Options = Options {
-        syntax: Syntax::Minimatch3,
-        ..Options::MINIMATCH_DOT
-    };
-    /// `minimatch(path, pattern)` of 3.1.5: eslint-plugin-import.
-    pub const MINIMATCH_3: Options = Options {
-        dot: false,
-        ..Options::MINIMATCH_3_DOT
-    };
-    /// `minimatch.makeRe(pattern).test(path)`: import/no-internal-modules.
-    pub const MINIMATCH_3_MAKE_RE: Options = Options {
-        syntax: Syntax::Minimatch3MakeRe,
-        ..Options::MINIMATCH
-    };
-    /// `micromatch.isMatch(path, pattern, { dot: true })`: `overrides` of Prettier.
-    pub const MICROMATCH_DOT: Options = Options {
-        syntax: Syntax::Picomatch,
-        dot: true,
-        posix: false,
-        expands_braces_first: false,
-        nocomment: false,
-        nonegate: false,
-        nocase: false,
-        noext: false,
-        nobrace: false,
-        noglobstar: false,
-    };
-    /// What fast-glob makes of a pattern with `{ dot: true }`: the command line of Prettier.
-    pub const FAST_GLOB_DOT: Options = Options {
-        posix: true,
-        expands_braces_first: true,
-        ..Options::MICROMATCH_DOT
-    };
-}
+    /// Builds the candidate for an entry of this directory. `path` is this path (empty or ending in `/`) plus one segment.
+    pub fn entry<'e>(&self, path: &'e [u8]) -> Candidate<'e> {
+        let name_at = self.path.len();
+        debug_assert_eq!(name_at, Candidate::new(path).name_at);
+        Candidate { path, name_at }
+    }
 
-/// How a path is matched.
-#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
-pub struct How {
-    /// `flipNegate` of minimatch: a `!` at the start of the pattern is left out of the answer.
-    pub flip_negate: bool,
-    /// `match(path, true)` of minimatch: something in the directory `path` can match. Never `false` where the reference says `true`.
-    pub partial: bool,
-}
+    /// The whole path.
+    pub fn path(&self) -> &'p [u8] {
+        self.path
+    }
 
-/// A pattern of picomatch, without braces if they are expanded first.
-struct Alternative {
-    written: Box<[u8]>,
-    program: Program,
-    is_negated: bool,
-    /// `written` has U+FFFD, which a bad byte of a path is too.
-    has_replacement: bool,
-}
+    /// The last segment.
+    pub fn name(&self) -> &'p [u8] {
+        &self.path[self.name_at..]
+    }
 
-impl Alternative {
-    /// Whether `path` is the same string as the pattern, which is well formed.
-    #[inline]
-    fn is_written(&self, path: &[u8]) -> bool {
-        path == &self.written[..] || self.has_replacement && well_formed(path) == &self.written[..]
+    /// The same path without its trailing `/`, if it has one.
+    pub fn without_slash(&self) -> Option<Candidate<'p>> {
+        let path = self.path.strip_suffix(b"/")?;
+        Some(Candidate { path, ..*self })
     }
 }
 
-enum Kind {
-    /// It can match nothing: a comment of minimatch, too long.
-    Never,
-    /// The empty pattern of minimatch, which matches the empty path.
-    Empty,
-    /// There is no second reading of Bun's syntax: it is `matcher::match`, behind two filters.
-    Bun {
-        pattern: Box<[u8]>,
-        /// The names at the start that are without magic, joined by slashes: what matches starts with them.
-        head: Box<[u8]>,
-        /// What matches ends with.
-        tail: Box<[u8]>,
-    },
-    /// One for each expansion of the braces, and the option `dot`.
-    Minimatch(Vec<Expansion>, bool),
-    /// `is_asked_directly`: as fast-glob asks the expressions themselves, without what `picomatch.test` puts before them.
-    Picomatch {
-        alternatives: Vec<Alternative>,
-        is_asked_directly: bool,
-    },
-}
-
-/// A pattern that has been read. `Send + Sync`. Matching allocates only for a group on a long path.
+/// A compiled pattern. `Send + Sync`.
 pub struct Pattern {
-    kind: Kind,
-    /// An odd number of `!` at its start.
+    pattern: Box<[u8]>,
+    /// Shapes of the whole pattern and of the part after a leading `**/`.
+    shapes: Box<[Shape; 2]>,
+    dots: Dots,
+    /// The pattern starts with an odd number of `!`.
     is_negated: bool,
+    /// Every match starts with one of these, followed by `/` or the end of the path. Empty if unknown.
+    heads: Box<[Box<[u8]>]>,
+    /// Every match starts with this many bytes of the pattern and ends with this many.
+    start_len: u32,
+    tail_len: u32,
+    /// Every match ends with one of these. Set instead of `tail_len` for a pattern that ends like `.{js,ts}`.
+    tails: Box<[Box<[u8]>]>,
+    /// The pattern is `**/*` followed by the tail, so a file name that ends with a tail is a match.
+    is_star_and_tail: bool,
+    /// Every match contains this range of the pattern.
+    inner: Range<u32>,
+    /// The pattern is `**/name`, so only the last segment of a path matters.
+    is_for_name: bool,
+    /// The leading segments that each match exactly one path segment.
+    names: Box<[Range<u32>]>,
+    /// `names` covers the whole pattern.
+    is_names_only: bool,
 }
 
-/// minimatch and picomatch throw beyond it. They count UTF-16 units.
-pub(crate) const MAX_PATTERN_LENGTH: usize = 65_536;
+/// Returns true for a class of letters and digits like `[jt]` or `[a-z]`, which can't match `/`.
+fn is_plain_class(class: &[u8]) -> bool {
+    let inside = &class[1..class.len() - 1];
+    let is_bound = |at: usize| inside.get(at).is_some_and(u8::is_ascii_alphanumeric);
+    (0..inside.len()).all(|at| {
+        is_bound(at) || inside[at] == b'-' && at > 0 && is_bound(at - 1) && is_bound(at + 1)
+    })
+}
 
-fn bun(pattern: &[u8]) -> Pattern {
-    let bangs = pattern.iter().take_while(|b| **b == b'!').count();
-    let head = match strings::index_of_any(pattern, b"*?[{\\") {
-        _ if bangs > 0 => &b""[..],
-        None => pattern,
-        Some(magic) => {
-            &pattern[..strings::last_index_of_char(&pattern[..magic], b'/').unwrap_or(0)]
+/// Returns true if `part` of `pattern` can only match within one path segment. With `is_in_group`, a nested group counts as unknown.
+fn stays_in_a_name(pattern: &[u8], part: Range<usize>, shape: &Shape, is_in_group: bool) -> bool {
+    let mut at = part.start;
+    while at < part.end {
+        let (token, end) = matcher::token_at(pattern, at, shape);
+        let stays = match token {
+            Token::Literal => pattern[at] != b'/',
+            Token::Star | Token::Any => true,
+            Token::Class => is_plain_class(&pattern[at..end]),
+            // `,` and `|` show up as literals here, which doesn't change the answer.
+            Token::Group { first } if !is_in_group => {
+                stays_in_a_name(pattern, first..end - 1, shape, true)
+            }
+            _ => false,
+        };
+        if !stays {
+            return false;
         }
-    };
-    // What is behind a group can be part of one that is not closed. `**/` can be nothing.
-    let tail = match strings::index_of_any(pattern, b"{}\\") {
-        None if bangs == 0 => {
-            let tail =
-                &pattern[strings::last_index_of_any(pattern, b"*?]").map_or(0, |at| at + 1)..];
-            tail.strip_prefix(b"/").unwrap_or(tail)
-        }
-        _ => &b""[..],
-    };
-    Pattern {
-        kind: Kind::Bun {
-            pattern: pattern.into(),
-            head: head.into(),
-            tail: tail.into(),
-        },
-        is_negated: bangs % 2 == 1,
+        at = end;
     }
+    true
 }
 
 impl Pattern {
-    /// Never fails. What the reference refuses, or what is beyond a limit, matches nothing.
-    pub fn new(pattern: &[u8], options: Options) -> Pattern {
-        let of = |kind: Kind| Pattern {
-            kind,
+    /// Compiles `pattern` for `match(pattern, path)`.
+    pub fn new(pattern: &[u8]) -> Pattern {
+        let mut read = Pattern {
+            pattern: pattern.into(),
+            shapes: Box::new([
+                Shape::of(pattern),
+                Shape::of(pattern.strip_prefix(b"**/").unwrap_or_default()),
+            ]),
+            dots: Dots::Match,
             is_negated: false,
+            heads: Box::default(),
+            start_len: 0,
+            tail_len: 0,
+            tails: Box::default(),
+            is_star_and_tail: false,
+            inner: 0..0,
+            is_for_name: false,
+            names: Box::default(),
+            is_names_only: false,
         };
-        let pattern: &[u8] = &match options.syntax {
-            Syntax::Bun => Cow::Borrowed(pattern),
-            _ => well_formed(pattern),
-        };
-        let pattern = match options.syntax {
-            Syntax::Minimatch3 => strings::trim_js_whitespace(pattern),
-            _ => pattern,
-        };
-        match options.syntax {
-            Syntax::Bun => bun(pattern),
-            _ if pattern.len() > MAX_PATTERN_LENGTH => of(Kind::Never),
-            Syntax::Minimatch | Syntax::Minimatch3
-                if pattern.starts_with(b"#") && !options.nocomment =>
-            {
-                of(Kind::Never)
-            }
-            Syntax::Minimatch | Syntax::Minimatch3 if pattern.is_empty() => of(Kind::Empty),
-            Syntax::Minimatch | Syntax::Minimatch3 => {
-                let bangs = (pattern.iter())
-                    .take_while(|b| **b == b'!' && !options.nonegate)
-                    .count();
-                Pattern {
-                    kind: Kind::Minimatch(segments::read(&pattern[bangs..], options), options.dot),
-                    is_negated: bangs % 2 == 1,
-                }
-            }
-            // The `!` is in the expression.
-            Syntax::Minimatch3MakeRe => of(Kind::Picomatch {
-                alternatives: vec![Alternative {
-                    written: Box::default(),
-                    program: read_minimatch3::pattern(pattern, options),
-                    is_negated: false,
-                    has_replacement: false,
-                }],
-                is_asked_directly: true,
-            }),
-            // picomatch throws for the empty pattern.
-            Syntax::Picomatch if pattern.is_empty() => of(Kind::Never),
-            Syntax::Picomatch => {
-                let written = match options.expands_braces_first {
-                    true => read_picomatch::expand_for_fast_glob(pattern),
-                    false => vec![pattern.to_vec()],
-                };
-                let alternative = |written: Vec<u8>| {
-                    let (program, is_negated) =
-                        read_picomatch::pattern(&written, options.dot, options.posix);
-                    Alternative {
-                        has_replacement: Text::UTF16.has_replacement(&written),
-                        written: written.into(),
-                        program,
-                        is_negated,
+        let bangs = matcher::negations(pattern);
+        if bangs > 0 {
+            read.is_negated = bangs % 2 == 1;
+            return read;
+        }
+        let shape = Shape::of(pattern);
+        // Runs of literal bytes, and the start of each segment that is outside of all groups.
+        let mut runs: Vec<Range<usize>> = Vec::new();
+        let mut starts = vec![0];
+        let mut first_group = None;
+        let (mut at, mut is_in_run) = (0, false);
+        while at < pattern.len() {
+            let (token, mut end) = matcher::token_at(pattern, at, &shape);
+            match token {
+                Token::Literal => {
+                    match runs.last_mut().filter(|_| is_in_run) {
+                        Some(run) => run.end = end,
+                        None => runs.push(at..end),
                     }
-                };
-                let alternatives: Vec<Alternative> = written.into_iter().map(alternative).collect();
-                Pattern {
-                    is_negated: matches!(&alternatives[..], [only] if only.is_negated),
-                    kind: Kind::Picomatch {
-                        alternatives,
-                        is_asked_directly: options.expands_braces_first,
-                    },
+                    if pattern[at] == b'/' {
+                        starts.push(end);
+                    }
                 }
+                // The `/` after `**` can match nothing.
+                Token::Globstar if pattern.get(end) == Some(&b'/') => {
+                    end += 1;
+                    starts.push(end);
+                }
+                Token::Group { first } => {
+                    first_group.get_or_insert((at, first, end));
+                    // So can the `/` after `{**,a}`.
+                    if pattern.get(end) == Some(&b'/') {
+                        end += 1;
+                        starts.push(end);
+                    }
+                }
+                _ => {}
             }
+            is_in_run = token == Token::Literal;
+            at = end;
+        }
+        if is_in_run && let Some(run) = runs.last() {
+            read.tail_len = run.len() as u32;
+        }
+        if let Some(run) = runs.first().filter(|it| it.start == 0) {
+            read.start_len = run.end as u32;
+        }
+        let between = (runs.iter()).filter(|it| it.start > 0 && it.end < pattern.len());
+        if let Some(run) = between.max_by_key(|it| it.len()) {
+            read.inner = run.start as u32..run.end as u32;
+        }
+        read.heads = heads(pattern, &runs, first_group, &shape);
+
+        let stays = |part: &Range<usize>| {
+            pattern.get(part.start) != Some(&b'!')
+                && stays_in_a_name(pattern, part.clone(), &shape, false)
+        };
+        let ends = (starts.iter().skip(1).map(|it| it - 1)).chain([pattern.len()]);
+        let parts = starts.iter().zip(ends).map(|(start, end)| *start..end);
+        let names = parts.take_while(stays);
+        read.names = names.map(|it| it.start as u32..it.end as u32).collect();
+        read.is_names_only = read.names.len() == starts.len();
+        read.is_for_name = pattern.starts_with(b"**/") && stays(&(3..pattern.len()));
+        let (tails, tail_start) = tails(pattern, &shape);
+        read.is_star_and_tail = read.is_for_name
+            && tail_start == 4
+            && pattern.is_ascii()
+            && matcher::token_at(pattern, 3, &shape) == (Token::Star, 4);
+        if tails.len() > 1 || tails[0].len() != read.tail_len as usize {
+            read.tail_len = 0;
+            read.tails = tails.into_iter().map(Vec::into_boxed_slice).collect();
+        }
+        read
+    }
+
+    pub fn with_dots(pattern: &[u8], dots: Dots) -> Pattern {
+        Pattern {
+            dots,
+            ..Pattern::new(pattern)
         }
     }
 
-    /// `Glob::new(written)` of globset 0.4.18: a `*` crosses `/`. `None`: it is refused. A section of `.editorconfig` for oxfmt.
-    pub fn of_globset(written: &[u8]) -> Option<Pattern> {
-        Some(Pattern {
-            kind: Kind::Picomatch {
-                alternatives: vec![Alternative {
-                    written: Box::default(),
-                    program: read_ignore::globset_matcher(written)?,
-                    is_negated: false,
-                    has_replacement: false,
-                }],
-                is_asked_directly: true,
-            },
-            is_negated: false,
-        })
+    /// One element of oxc's `GlobSet::new`. A leading `./` is dropped, and a pattern without `/` matches in any directory.
+    /// oxc puts the `**/` in front of a leading `!` too, which makes the `!` a literal, so `!a.js` matches no `a.js` there.
+    pub fn of_oxfmt(written: &[u8]) -> Pattern {
+        Pattern::new(&in_any_directory(&of_fast_glob(written)))
     }
 
-    /// `GlobSet::new` of oxc for one element: `./` is dropped, a pattern without `/` is for a name in any directory.
-    pub fn of_oxc_glob_set(written: &[u8]) -> Pattern {
-        match written.strip_prefix(b"./") {
-            Some(rest) => bun(rest),
-            None if strings::contains_char(written, b'/') => bun(written),
-            None => bun(&[b"**/", written].concat()),
-        }
+    /// The same for an oxlint config, where `@(a|b)` is a group. See [`fast_glob_match_with_groups`]. The `!` of `!(a).js` isn't
+    /// at the start once the `**/` is in front, so it starts a group.
+    pub fn of_oxlint(written: &[u8]) -> Pattern {
+        Pattern::new(&from_fast_glob(&in_any_directory(written), true))
     }
 
-    /// `path` is separated by `/`.
+    /// A pattern from `overrides` in bunfig.toml. It has all of `Bun.Glob`'s syntax. A leading `./` is dropped, and a pattern
+    /// without `/` matches in any directory.
+    pub fn of_bunfig(written: &[u8]) -> Pattern {
+        // Leading `!`s negate the whole pattern, so they stay in front.
+        let (bangs, rest) = written.split_at(matcher::negations(written));
+        Pattern::new(&[bangs, &in_any_directory(rest)].concat())
+    }
+
+    #[inline]
+    fn asks(&self, pattern: &[u8], path: &[u8]) -> matcher::MatchResult {
+        let of_part;
+        let shape = match self.pattern.len() - pattern.len() {
+            0 => &self.shapes[0],
+            3 if self.is_for_name => &self.shapes[1],
+            _ => {
+                of_part = Shape::of(pattern);
+                &of_part
+            }
+        };
+        matcher::match_prepared::<false>(pattern, shape, path, self.dots)
+    }
+
+    /// `path` uses `/` as its separator.
     pub fn matches(&self, path: &[u8]) -> bool {
-        self.matches_with(path, How::default())
-    }
-
-    /// `matches_with` with the option `matchBase` of minimatch.
-    pub fn matches_base_with(&self, path: &[u8], how: How) -> bool {
-        match &self.kind {
-            Kind::Minimatch(set, dot) if !(how.partial && path == b"/") => {
-                let hit = segments::matches_base(set, &Candidate::new(path), how.partial, *dot);
-                hit != (self.is_negated && !how.flip_negate)
-            }
-            _ => self.matches_with(path, how),
-        }
-    }
-
-    pub fn matches_with(&self, path: &[u8], how: How) -> bool {
-        match &self.kind {
-            // `match("/", true)`
-            Kind::Minimatch(..) if how.partial && path == b"/" => true,
-            Kind::Minimatch(..) | Kind::Empty => self.matches_candidate(&Candidate::new(path), how),
-            _ => self.matches_path(path, how),
+        match self.is_for_name {
+            true => self.matches_candidate(&Candidate::new(path)),
+            false => self.matches_candidate(&Candidate { path, name_at: 0 }),
         }
     }
 
     #[inline]
-    pub fn matches_candidate(&self, path: &Candidate<'_>, how: How) -> bool {
-        match &self.kind {
-            Kind::Empty => path.path().is_empty(),
-            Kind::Minimatch(set, dot) => {
-                let hit = segments::matches(set, path, how.partial, *dot);
-                hit != (self.is_negated && !how.flip_negate)
-            }
-            _ => self.matches_path(path.path(), how),
-        }
+    pub fn matches_candidate(&self, candidate: &Candidate<'_>) -> bool {
+        let path = candidate.path;
+        // Most tails are a few bytes. Compare them inline.
+        let tail = self.pattern.iter().rev().take(self.tail_len as usize);
+        let ends_with_tail = path.len() >= self.tail_len as usize
+            && path.iter().rev().zip(tail).all(|(a, b)| a == b)
+            && (self.tails.is_empty() || self.tails.iter().any(|it| path.ends_with(it)));
+        ends_with_tail && self.matches_whole(candidate)
     }
 
-    /// For a syntax that does not split the path.
-    fn matches_path(&self, path: &[u8], how: How) -> bool {
-        match &self.kind {
-            // It does not say what can match in a directory, so anything can.
-            Kind::Bun { .. } if how.partial => true,
-            Kind::Bun { pattern, tail, .. } => {
-                if !path.ends_with(tail) {
-                    return false;
-                }
-                let result = matcher::r#match(pattern, path);
-                result.matches() != (how.flip_negate && result.is_negated())
-            }
-            Kind::Picomatch { alternatives, .. } if how.partial => {
-                let directory = Subject {
-                    bytes: path,
-                    slash: !path.is_empty() && !path.ends_with(b"/"),
+    fn matches_whole(&self, candidate: &Candidate<'_>) -> bool {
+        let path = candidate.path;
+        let inner = &self.pattern[self.inner.start as usize..self.inner.end as usize];
+        if !path.starts_with(&self.pattern[..self.start_len as usize])
+            || !(inner.is_empty() || strings::contains(path, inner))
+        {
+            return false;
+        }
+        match path.last() {
+            // `**` can't cross some dot segments. Ask the full pattern if the directory has one.
+            Some(last) if self.is_for_name && *last != b'/' => {
+                let (before, name) = path.split_at(candidate.name_at);
+                let is_name_match = match self.is_star_and_tail {
+                    true => match self.dots {
+                        Dots::Match => true,
+                        Dots::SkipTraversal => !matches!(name, b"." | b".."),
+                        Dots::Hide => !name.starts_with(b"."),
+                    },
+                    false => self.asks(&self.pattern[3..], name).matches(),
                 };
-                alternatives
-                    .iter()
-                    .any(|it| it.is_negated || it.program.may_match_inside(directory))
+                is_name_match
+                    && (self.dots == Dots::Match
+                        || !matcher::has_closed_segment::<false>(before, self.dots)
+                        || self.asks(&self.pattern, path).matches())
             }
-            // `picomatch.test`: the empty path matches nothing.
-            Kind::Picomatch {
-                is_asked_directly: false,
-                ..
-            } if path.is_empty() => false,
-            Kind::Picomatch {
-                alternatives,
-                is_asked_directly,
-            } => alternatives.iter().any(|it| {
-                // `picomatch.test`: a path that is the pattern, letter for letter, matches, whatever the pattern means.
-                if !is_asked_directly && it.is_written(path) {
-                    return true;
-                }
-                let hit = it.program.matches(Subject::of(path));
-                match it.is_negated && !how.flip_negate {
-                    // `^(?!^(?:..)$).*$`: `.` takes no line terminator.
-                    true => !hit && !strings::contains_js_line_break(path),
-                    false => hit,
-                }
-            }),
-            Kind::Never | Kind::Empty | Kind::Minimatch(..) => false,
+            _ => self.asks(&self.pattern, path).matches(),
         }
     }
 
-    /// `matches_with(directory, How { partial: true, flip_negate: false })`.
+    /// Returns false only if nothing inside `directory` can match.
     pub fn may_match_inside(&self, directory: &[u8]) -> bool {
-        self.matches_with(
-            directory,
-            How {
-                partial: true,
-                flip_negate: false,
-            },
-        )
+        if self.is_negated || directory.is_empty() {
+            return true;
+        }
+        let mut names = self.names.iter();
+        for name in strings::split(directory, b"/") {
+            match names.next() {
+                Some(it) => {
+                    let part = &self.pattern[it.start as usize..it.end as usize];
+                    if !self.asks(part, name).matches() {
+                        return false;
+                    }
+                }
+                None => return !self.is_names_only,
+            }
+        }
+        // Anything inside has at least one more segment.
+        !self.is_names_only || names.next().is_some()
     }
 
-    /// What a path that matches starts with, up to a `/` or to its end: one of these. `None`: the pattern does not say.
+    /// Every match starts with one of these, followed by `/` or the end of the path. `None` if unknown.
     pub fn heads(&self) -> Option<Vec<&[u8]>> {
-        let heads: Vec<&[u8]> = match &self.kind {
-            _ if self.is_negated => return None,
-            Kind::Bun { head, .. } => vec![&head[..]],
-            Kind::Minimatch(set, _) => set.iter().map(Expansion::head).collect(),
-            _ => return None,
+        (!self.heads.is_empty()).then(|| self.heads.iter().map(|it| &it[..]).collect())
+    }
+}
+
+/// Drops a leading `./`, or else puts `**/` in front of a pattern without `/` so that it matches in any directory.
+fn in_any_directory(pattern: &[u8]) -> Cow<'_, [u8]> {
+    match pattern.strip_prefix(b"./") {
+        Some(rest) => Cow::Borrowed(rest),
+        None if strings::contains_char(pattern, b'/') => Cow::Borrowed(pattern),
+        None => Cow::Owned([b"**/", pattern].concat()),
+    }
+}
+
+/// `glob_match` of the `fast-glob` crate. A pattern with an unclosed `[` or `{` or a trailing `\` never matches there.
+pub fn fast_glob_match(pattern: &[u8], text: &[u8]) -> bool {
+    unclosed(pattern).is_none()
+        && matcher::match_on::<false>(&of_fast_glob(pattern), text).matches()
+}
+
+/// [`fast_glob_match`], except that `?(a)`, `*(a)`, `+(a)`, `@(a|b)` and `!(a)` are groups, as they are for ESLint. oxlint takes
+/// the parentheses literally, so the patterns of a config that was migrated from ESLint match nothing there.
+pub fn fast_glob_match_with_groups(pattern: &[u8], text: &[u8]) -> bool {
+    unclosed(pattern).is_none()
+        && matcher::match_on::<false>(&from_fast_glob(pattern, true), text).matches()
+}
+
+/// Converts a pattern for the `fast-glob` crate, which oxlint and oxfmt use. It has no `@(a|b)` groups and no `{1..3}` sequences.
+pub fn of_fast_glob(written: &[u8]) -> Cow<'_, [u8]> {
+    from_fast_glob(written, false)
+}
+
+/// Marks the `(` of every group like `@(a|b)` that is closed, and closed before the braces around it are.
+fn group_starts(written: &[u8]) -> Vec<bool> {
+    let mut is_start = vec![false; written.len()];
+    // Where the `{` and the `(` are that are open.
+    let mut open: Vec<usize> = Vec::new();
+    let mut braces = 0_usize;
+    // Every `!` at the start negates, for the crate and for ESLint, also the one of `!(a)`.
+    let mut at = written.iter().take_while(|it| **it == b'!').count();
+    while let Some(&byte) = written.get(at) {
+        match byte {
+            b'\\' => at += 1,
+            b'[' => at = matcher::class_end(written, at).map_or(at, |end| end - 1),
+            b'{' => {
+                open.push(at);
+                braces += 1;
+            }
+            b'}' if braces > 0 => {
+                while open.pop().is_some_and(|it| written[it] == b'(') {}
+                braces -= 1;
+            }
+            b'?' | b'*' | b'+' | b'@' | b'!' if written.get(at + 1) == Some(&b'(') => {
+                at += 1;
+                open.push(at);
+            }
+            b')' => {
+                if let Some(start) = open.pop_if(|it| written[*it] == b'(') {
+                    is_start[start] = true;
+                }
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    is_start
+}
+
+fn from_fast_glob(written: &[u8], has_groups: bool) -> Cow<'_, [u8]> {
+    if strings::index_of_char_usize(written, b'(').is_none() && !strings::contains(written, b"..") {
+        return Cow::Borrowed(written);
+    }
+    let is_group_start = match has_groups {
+        true => group_starts(written),
+        false => Vec::new(),
+    };
+    let mut pattern = Vec::with_capacity(written.len() + 2);
+    let mut at = 0;
+    while let Some(&byte) = written.get(at) {
+        let len = match byte {
+            b'\\' => 2,
+            b'[' => matcher::class_end(written, at).map_or(1, |end| end - at),
+            _ => 1,
         };
-        heads.iter().all(|it| !it.is_empty()).then_some(heads)
+        // An escaped `.` still matches `.`, and `{1\..3}` no longer parses as a sequence.
+        if byte == b'(' && is_group_start.get(at) != Some(&true)
+            || byte == b'.' && written.get(at + 1) == Some(&b'.')
+        {
+            pattern.push(b'\\');
+        }
+        pattern.extend_from_slice(&written[at..(at + len).min(written.len())]);
+        at += len;
+    }
+    Cow::Owned(pattern)
+}
+
+/// Expands the literals and groups of literals at the end of the pattern, like `.d.{ts,mts}`. Every match ends with one of
+/// the returned strings. Also returns the index where that part of the pattern starts.
+fn tails(pattern: &[u8], shape: &Shape) -> (Vec<Vec<u8>>, usize) {
+    // More tails than this cost more to compare than they save.
+    const MOST: usize = 16;
+    let mut tokens = Vec::new();
+    let mut at = 0;
+    while at < pattern.len() {
+        let (token, end) = matcher::token_at(pattern, at, shape);
+        tokens.push((token, at, end));
+        at = end;
+    }
+    // Built back to front.
+    let mut reversed = vec![Vec::new()];
+    let mut start = pattern.len();
+    for (index, &(token, at, end)) in tokens.iter().enumerate().rev() {
+        match token {
+            Token::Literal => {
+                // The `/` after `**` or after a group like `{**,a}` can match nothing.
+                let before = index.checked_sub(1).map(|it| tokens[it].0);
+                if pattern[at] == b'/'
+                    && matches!(before, Some(Token::Globstar | Token::Group { .. }))
+                {
+                    break;
+                }
+                for tail in &mut reversed {
+                    tail.push(pattern[at]);
+                }
+            }
+            Token::Group { first } if matches!(pattern[at], b'{' | b'@') => {
+                let mut inside = (first..end - 1).map(|it| matcher::token_at(pattern, it, shape).0);
+                if shape.is_sequence_at(first) || !inside.all(|it| it == Token::Literal) {
+                    break;
+                }
+                let alternatives = || shape.alternatives_at(first).map(|it| &pattern[it]);
+                if alternatives().count() * reversed.len() > MOST {
+                    break;
+                }
+                let longer = |tail: &Vec<u8>| {
+                    alternatives()
+                        .map(|it| tail.iter().chain(it.iter().rev()).copied().collect())
+                        .collect::<Vec<Vec<u8>>>()
+                };
+                reversed = reversed.iter().flat_map(longer).collect();
+            }
+            _ => break,
+        }
+        start = at;
+    }
+    for tail in &mut reversed {
+        tail.reverse();
+    }
+    (reversed, start)
+}
+
+/// Computes [`Pattern::heads`]. `runs` are the literal runs. `group` is the first group's start, first alternative and end.
+fn heads(
+    pattern: &[u8],
+    runs: &[Range<usize>],
+    group: Option<(usize, usize, usize)>,
+    shape: &Shape,
+) -> Box<[Box<[u8]>]> {
+    let run_from = |at: usize| {
+        runs.iter()
+            .find(|it| it.start == at)
+            .map_or(at..at, Range::clone)
+    };
+    let start = run_from(0);
+    // A head is made of whole segments, so cut at the last `/` unless the pattern ends here.
+    let whole_names = |text: Vec<u8>, is_all: bool| match is_all {
+        true => text,
+        false => text[..strings::last_index_of_char(&text, b'/').unwrap_or(0)].to_vec(),
+    };
+    let mut found = Vec::new();
+    match group {
+        // `{a,b}/..`, `@(a|b)/..`
+        Some((at, first, end)) if at == start.end && matches!(pattern[at], b'{' | b'@') => {
+            let after = run_from(end);
+            let mut tokens = (first..end - 1).map(|it| matcher::token_at(pattern, it, shape).0);
+            if shape.is_sequence_at(first) || !tokens.all(|it| it == Token::Literal) {
+                return Box::default();
+            }
+            for alternative in shape.alternatives_at(first).map(|it| &pattern[it]) {
+                let text = [
+                    &pattern[start.clone()],
+                    alternative,
+                    &pattern[after.clone()],
+                ]
+                .concat();
+                found.push(whole_names(text, after.end == pattern.len()));
+            }
+        }
+        _ => found.push(whole_names(
+            pattern[start.clone()].to_vec(),
+            start.end == pattern.len(),
+        )),
+    }
+    match found.iter().all(|it| !it.is_empty()) {
+        true => found.into_iter().map(Vec::into_boxed_slice).collect(),
+        false => Box::default(),
     }
 }
 
@@ -410,20 +515,20 @@ impl Pattern {
 pub enum UnclosedKind {
     Class,
     Braces,
-    /// A `\` as the last byte.
+    /// A trailing `\`.
     Escape,
 }
 
-/// What starts at byte `at` is not closed.
+/// The construct that starts at byte `at` isn't closed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Unclosed {
     pub kind: UnclosedKind,
     pub at: usize,
 }
 
-/// `validate` of the crate `fast-glob` 1.1.1, with which oxlint and oxfmt refuse a pattern.
+/// Port of `validate` from the `fast-glob` crate 1.1.1. oxlint and oxfmt reject a pattern that fails it.
 pub fn unclosed(pattern: &[u8]) -> Option<Unclosed> {
-    // How many groups are open, and where the outermost of them starts.
+    // Number of open groups, and the start of the outermost one.
     let (mut depth, mut outermost) = (0_usize, 0);
     let mut at = 0;
     while let Some(&byte) = pattern.get(at) {
@@ -436,7 +541,7 @@ pub fn unclosed(pattern: &[u8]) -> Option<Unclosed> {
             b'[' => {
                 let mut end = at + 1;
                 end += usize::from(matches!(pattern.get(end), Some(b'!' | b'^')));
-                // Here it is a character of the class.
+                // A `]` here is a member of the class.
                 end += usize::from(pattern.get(end) == Some(&b']'));
                 loop {
                     match pattern.get(end) {

@@ -11,12 +11,15 @@ use crate::ast::{
     UnOp, VarKind,
 };
 use crate::language::SourceType;
+use crate::linter::syntax::oxc::{closest, private_name_as_operand};
+use crate::linter::syntax::{Stage, SyntaxError};
 use crate::regex;
 use crate::tokens::skip_trivia;
+use crate::types::IdMap;
 use crate::utils::ancestor_memo::AncestorMemo;
 use bun_core::strings;
 use bun_sema::bind::Parent;
-use bun_sema::hir::{self, DiagnosticKind, Flags, ModifierKind};
+use bun_sema::hir::{self, DiagnosticKind, Flags, ModifierKind, rare};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::collections::hash_map::Entry;
@@ -66,7 +69,7 @@ impl<'a> Checks<'a, '_> {
         self.meta_properties();
         self.regular_expressions();
         self.functions();
-        self.defaults_that_suspend();
+        self.defaults_that_suspend(false);
         self.supers();
         self.private_names();
         self.jumps();
@@ -92,18 +95,48 @@ impl<'a> Checks<'a, '_> {
     /// Those of [`Checks::early_errors`] of which it is known that OXC has them, and has them for the same code. It knows
     /// decorators, `accessor` and `import defer`, and it lets much pass that acorn does not.
     pub(super) fn early_errors_of_oxc(&mut self) {
+        // Where only the parser counts, what only the other pass reports is not looked for.
+        let all = !self.only_parser;
+        let file = self.file;
+        let (kinds, counts) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
+        let are_counted = kinds.len() == file.hir.exprs.len();
+        let has_none = |tag: ExprTag| are_counted && counts.get(2 * tag as usize) == Some(&0);
         self.early_errors_of_oxc_parser();
-        // In TypeScript `a as T` can be assigned to.
-        if self.file.is_javascript() {
-            self.assignment_targets();
+        if !self.is_oxfmt && !has_none(ExprTag::Regex) {
+            self.regular_expressions();
         }
-        self.regular_expressions();
-        self.jumps();
-        self.labels();
+        if all {
+            self.defaults_that_suspend(true);
+            self.suspensions_in_static_blocks();
+            self.jumps();
+            self.labels();
+        }
+        // Nearly no file has any of what the rest looks for, and nothing in a declaration file runs.
+        // The other bits are for other checks.
+        let bits = (0x00ff & !rare::SUSPENDS_IN_PARAMETERS) | rare::NEW_TARGET;
+        let has_nothing_rare = !file.has_rare_syntax(bits)
+            && (!all || has_none(ExprTag::Super))
+            && file.hir.diagnostics.is_empty()
+            && !file.mentions("__proto__");
+        if has_nothing_rare || file.is_declaration_file() {
+            return;
+        }
+        if all {
+            self.strict_mode();
+            self.octals_in_strict_code();
+            self.deleted_private_fields();
+            self.supers();
+        }
+        self.statement_positions();
+        self.new_targets();
+        self.functions();
+        self.private_names();
+        self.classes();
+        self.object_literals();
     }
 
     /// Those of them that its parser reports, not the pass that builds the scopes.
-    pub(super) fn early_errors_of_oxc_parser(&mut self) {
+    fn early_errors_of_oxc_parser(&mut self) {
         // In TypeScript a variable can be only declared.
         if self.file.is_javascript() {
             self.declarations();
@@ -491,6 +524,9 @@ impl<'a> Checks<'a, '_> {
 
     /// `parseVar`, `parseForStatement`
     fn declarations(&mut self) {
+        if self.lacks(rare::ODD_DECLARATION | rare::ODD_LOOP_HEAD) {
+            return;
+        }
         let (file, hir, bound) = (self.file, &self.file.hir, &self.file.bound);
         for (i, raw) in hir.var_decls.iter().enumerate() {
             let is_pattern = || {
@@ -499,7 +535,9 @@ impl<'a> Checks<'a, '_> {
                     Some(hir::PatKind::Object(_) | hir::PatKind::Array(_))
                 )
             };
-            if raw.init.is_some()
+            // For oxc see `declarations_without_initializer`.
+            if self.is_oxc
+                || raw.init.is_some()
                 || raw.kind == VarKind::Let && !is_pattern()
                 || raw.kind == VarKind::Var && !is_pattern()
             {
@@ -541,7 +579,8 @@ impl<'a> Checks<'a, '_> {
             let Some(list) = it.as_var() else {
                 continue;
             };
-            if list.is_empty() {
+            // For oxc see `declaration_list`, here and below.
+            if list.is_empty() && !self.is_oxc {
                 self.unexpected(self.after_token(it.span().start));
             }
             if matches!(
@@ -562,7 +601,9 @@ impl<'a> Checks<'a, '_> {
                 };
                 let (Some(first), 1) = (list.first(), list.len()) else {
                     // It takes it for the head of a `for`, in which a `;` follows.
-                    self.unexpected(left.span().end);
+                    if !self.is_oxc {
+                        self.unexpected(left.span().end);
+                    }
                     continue;
                 };
                 // Allowed again since ES2017.
@@ -582,9 +623,16 @@ impl<'a> Checks<'a, '_> {
                         " loop variable declaration may not have an initializer",
                     ]
                     .concat();
-                    self.when_read_to(left.span().end, |checks| {
-                        checks.fail(left.span().start, message)
-                    });
+                    let stage = match tag == StmtTag::ForIn && first.var_kind() != VarKind::Var {
+                        true => Stage::Parser,
+                        false => Stage::Semantic,
+                    };
+                    match self.is_oxc {
+                        true => self.report(SyntaxError::of_oxc(left.span(), message).stage(stage)),
+                        false => self.when_read_to(left.span().end, |checks| {
+                            checks.fail(left.span().start, message)
+                        }),
+                    }
                 }
             }
         }
@@ -628,6 +676,9 @@ impl<'a> Checks<'a, '_> {
     /// `parseStatement` with a `context`: what cannot be the body of an `if`, a loop, a `with` or a label.
     fn statement_positions(&mut self) {
         let file = self.file;
+        if self.lacks(rare::DECLARATION_AS_BODY) {
+            return;
+        }
         for tag in [StmtTag::Var, StmtTag::Fn, StmtTag::Class] {
             for it in file.stmts_of_kind(tag) {
                 let Node::Stmt(parent) = it.parent() else {
@@ -682,18 +733,45 @@ impl<'a> Checks<'a, '_> {
                 // `let` is a name there, unless a `[` follows.
                 Some(VarKind::Let) => {
                     let next = self.after_token(start);
+                    let between = self.file.slice(crate::span::Span::new(start, next));
                     match self.token_at(next) {
-                        b"[" => self.unexpected(start),
+                        b"[" => self.lexical_as_body(it),
+                        // A semicolon is inserted after the name. TypeScript's parser reads a declaration.
+                        _ if strings::contains_js_line_break(between) => {}
+                        _ if self.is_oxc => {
+                            let after = start + "let".len() as u32;
+                            self.report(SyntaxError::semicolon_after(after));
+                        }
                         _ => self.unexpected(next),
                     }
                 }
-                Some(VarKind::Const) => self.unexpected(start),
+                Some(VarKind::Const) => self.lexical_as_body(it),
+                Some(_) if self.is_oxc => self.lexical_as_body(it),
                 Some(_) => self.fail(
                     start,
                     "Using declaration is not allowed in single-statement positions",
                 ),
             },
+            StmtKind::Class(class) if self.is_oxc => {
+                let head = crate::span::Span::new(start, class.body_span().start);
+                self.report(
+                    SyntaxError::of_oxc(head, "Invalid class declaration")
+                        .help("Classes can only be declared at top level or inside a block")
+                        .stage(Stage::Parser),
+                );
+            }
             StmtKind::Class(_) => self.unexpected(start),
+            StmtKind::Fn(func) if self.is_oxc && (func.is_async() || func.is_generator()) => {
+                let end = func.close_paren().map_or(start, |it| it + 1);
+                let message = match func.is_async() {
+                    true => {
+                        "Async functions can only be declared at the top level or inside a block"
+                    }
+                    false => "Generators can only be declared at the top level or inside a block",
+                };
+                let head = crate::span::Span::new(start, end);
+                self.report(SyntaxError::of_oxc(head, message).stage(Stage::Parser));
+            }
             StmtKind::Fn(func) => {
                 // After `if (a)` and after a label that is not itself such a body, in sloppy mode.
                 let is_allowed = !func.is_async()
@@ -721,7 +799,19 @@ impl<'a> Checks<'a, '_> {
                         }
                         _ => false,
                     };
-                if !is_allowed {
+                if !is_allowed && self.is_oxc {
+                    let help = match self.is_strict(Node::Stmt(parent)) {
+                        true => {
+                            "In strict mode code, functions can only be declared at top level or inside a block"
+                        }
+                        false => {
+                            "In non-strict mode code, functions can only be declared at top level, inside a block, or as the body of an if statement"
+                        }
+                    };
+                    self.report(
+                        SyntaxError::of_oxc(it.span(), "Invalid function declaration").help(help),
+                    );
+                } else if !is_allowed {
                     self.unexpected(start);
                 } else if func.is_generator() {
                     self.unexpected(self.after_token(start));
@@ -729,6 +819,22 @@ impl<'a> Checks<'a, '_> {
             }
             _ => {}
         }
+    }
+
+    /// `let [a] = b`, `const a = 1` or `using a = b` as a body.
+    fn lexical_as_body(&mut self, it: Stmt<'a>) {
+        if !self.is_oxc {
+            return self.unexpected(it.span().start);
+        }
+        let message = match it.flags().contains(Flags::AMBIENT) {
+            true => "Declaration cannot appear in a single-statement context",
+            false => "Lexical declaration cannot appear in a single-statement context",
+        };
+        self.report(
+            SyntaxError::of_oxc(it.span(), message)
+                .help("Wrap this declaration in a block statement")
+                .stage(Stage::Parser),
+        );
     }
 
     fn nested_module_syntax(&mut self) {
@@ -741,16 +847,15 @@ impl<'a> Checks<'a, '_> {
                     | hir::StmtKind::ExportNamed(_)
                     | hir::StmtKind::ExportStar { .. }
                     | hir::StmtKind::ExportDefault(_)
-            ) || !raw.modifiers.is_empty()
-                && hir
-                    .modifiers
-                    .get(raw.modifiers.range())
-                    .unwrap_or_default()
-                    .iter()
-                    .any(is_export);
+            ) || hir
+                .modifiers
+                .get(hir.stmt_modifiers(hir::StmtId(i as u32)).range())
+                .unwrap_or_default()
+                .iter()
+                .any(is_export);
             let is_nested = !matches!(
-                bound.stmt_parent.get(i),
-                None | Some(Parent::None | Parent::File)
+                bound.parent_of_stmt(hir::StmtId(i as u32)),
+                Parent::None | Parent::File
             );
             if is_module_syntax && is_nested && !self.file.is_in_jsdoc(raw.start) {
                 self.fail(
@@ -765,6 +870,9 @@ impl<'a> Checks<'a, '_> {
 
     /// `isPrivateFieldAccess`
     fn deleted_private_fields(&mut self) {
+        if self.lacks(rare::DELETES_A_NAME) {
+            return;
+        }
         for it in self.exprs_of(ExprTag::Unary) {
             let ExprKind::Unary {
                 op: UnOp::Delete,
@@ -777,6 +885,20 @@ impl<'a> Checks<'a, '_> {
             if matches!(operand.kind(), ExprKind::Dot { name, .. } if name.bytes().starts_with(b"#"))
                 && !(self.is_babel && operand.is_parenthesized())
             {
+                if let (true, ExprKind::Dot { name, .. }) = (self.is_oxc, operand.kind()) {
+                    let is_chained = matches!(
+                        operand.try_raw().map(|it| it.kind),
+                        Some(hir::ExprKind::Dot { chain, .. }) if chain != hir::Chain::No
+                    );
+                    let label = match is_chained {
+                        true => name.span(),
+                        false => operand.span(),
+                    };
+                    let message =
+                        "The operand of a 'delete' operator cannot be a private identifier.";
+                    self.report(SyntaxError::of_oxc(label, message));
+                    continue;
+                }
                 self.when_read_to(it.span().end, |checks| {
                     checks.fail(it.span().start, "Private fields can not be deleted")
                 });
@@ -845,6 +967,15 @@ impl<'a> Checks<'a, '_> {
                 _ => {}
             }
         }
+        self.new_targets();
+    }
+
+    fn new_targets(&mut self) {
+        let file = self.file;
+        if self.lacks(rare::NEW_TARGET) {
+            return;
+        }
+        let of_new = "The only valid meta property for new is 'new.target'";
         for it in self.exprs_of(ExprTag::NewTarget) {
             // acorn throws the first of its three complaints about one `new.target`, wherever the others are.
             let name = self.after_token(self.after_token(it.span().start));
@@ -852,8 +983,19 @@ impl<'a> Checks<'a, '_> {
                 it.try_raw().map(|it| it.kind),
                 Some(hir::ExprKind::NewTarget(name)) if file.name(name).bytes() == b"target"
             );
+            if !is_target && self.is_oxc {
+                let message = "The only valid meta property for new is new.target";
+                self.report(SyntaxError::of_oxc(it.span(), message).stage(Stage::Fatal));
+                continue;
+            }
             if !is_target || self.is_babel && self.token_at(name) != b"target" {
                 self.fail(name, of_new);
+                continue;
+            }
+            if self.token_at(name) != b"target" && self.is_oxc {
+                let message = "Keywords cannot contain escape characters";
+                let name = self.token_span(name);
+                self.report(SyntaxError::of_oxc(name, message).stage(Stage::Parser));
                 continue;
             }
             if self.token_at(name) != b"target" {
@@ -865,8 +1007,15 @@ impl<'a> Checks<'a, '_> {
             }
             // `allowNewDotTarget`: in a function that is not an arrow function, in the initializer of a field, in a static block.
             let is_allowed = Self::this_scope(&mut self.tops, Node::Expr(it)).is_some();
-            // For acorn the top level of a CommonJS file is a function.
-            if !is_allowed && file.language().source_type != SourceType::CommonJs {
+            // The top level of a CommonJS file is a function.
+            if !is_allowed && self.source_type() != SourceType::CommonJs && self.is_oxc {
+                let help = "new.target is only allowed in constructors, functions, and class field initializers";
+                self.report(
+                    SyntaxError::of_oxc(it.span(), "Unexpected new.target expression")
+                        .help(help)
+                        .stage(Stage::Parser),
+                );
+            } else if !is_allowed && self.source_type() != SourceType::CommonJs {
                 self.fail(
                     it.span().start,
                     "'new.target' can only be used in functions and class static block",
@@ -882,6 +1031,10 @@ impl<'a> Checks<'a, '_> {
                 continue;
             };
             let (pattern, flags, at) = (literal.pattern(), literal.flags(), it.span().start + 1);
+            if self.is_oxc {
+                self.regular_expression_of_oxc(it.span(), pattern, flags);
+                continue;
+            }
             let is_valid = |flag: &u8| strings::contains_char(b"dgimsuvy", *flag);
             if !flags.iter().all(is_valid) {
                 self.fail(at, "Invalid regular expression flag");
@@ -917,6 +1070,98 @@ impl<'a> Checks<'a, '_> {
                 self.fail(at, message);
             }
         }
+    }
+
+    /// What oxc says about the regular expression at `literal`. Its lexer reads the flags, and what that reports is printed
+    /// before all that the parser reports.
+    fn regular_expression_of_oxc(
+        &mut self,
+        literal: crate::span::Span,
+        pattern: &[u8],
+        flags: &[u8],
+    ) {
+        use crate::span::Span;
+        // One without an end has no flags: see `oxc::of_typescript`.
+        let has_no_end = |it: &hir::Diagnostic| it.code == 1161 && it.start == literal.start;
+        if self.file.hir.diagnostics.iter().any(has_no_end) {
+            return;
+        }
+        let first_flag = literal.end - flags.len() as u32;
+        let before = self.all.len();
+        for (i, flag) in flags.iter().enumerate() {
+            let at = first_flag + i as u32;
+            if !flag.is_ascii() {
+                return self.report(SyntaxError::semicolon_after(at));
+            }
+            let (message, help) = if !strings::contains_char(b"gimsuydv", *flag) {
+                let message = format!(
+                    "Unexpected flag {} in regular expression literal",
+                    *flag as char
+                );
+                (message, "The allowed flags are `gimsuydv`")
+            } else if strings::contains_char(&flags[..i], *flag) {
+                let message = format!(
+                    "Flag {} is mentioned twice in regular expression literal",
+                    *flag as char
+                );
+                (message, "Remove the duplicated flag here")
+            } else {
+                continue;
+            };
+            self.report(
+                SyntaxError::of_oxc(Span::new(at, at + 1), message)
+                    .help(help)
+                    .stage(Stage::Parser)
+                    .noticed_at(0),
+            );
+        }
+        if self.all.len() > before {
+            return self
+                .report(SyntaxError::of_oxc(literal, "Unexpected token").stage(Stage::Fatal));
+        }
+        let both = strings::index_of_char_usize(flags, b'u')
+            .zip(strings::index_of_char_usize(flags, b'v'));
+        if let Some((u, v)) = both {
+            let second = first_flag + u.max(v) as u32;
+            self.report(
+                SyntaxError::of_oxc(
+                    Span::new(second, second + 1),
+                    "Invalid regular expression: Invalid unicode flags combination `u` and `v`",
+                )
+                .help("The `v` flag is a superset of `u`. Use only either of them")
+                .stage(Stage::Parser)
+                .noticed_at(literal.end),
+            );
+            let message =
+                "The 'u' and 'v' regular expression flags cannot be enabled at the same time";
+            return self.report(
+                SyntaxError::of_oxc(literal, message)
+                    .code(1502)
+                    .help("v flag enables additional syntax over u flag")
+                    .stage(Stage::Parser)
+                    .noticed_at(literal.end),
+            );
+        }
+        let validated = regex::validate_pattern(
+            pattern,
+            regex::Mode::of_flags(flags),
+            regex::Options::default(),
+            &mut regex::Ignore,
+        );
+        // It takes some of what is refused here.
+        let Some(said) = validated.err().and_then(|it| it.oxc) else {
+            return;
+        };
+        let start = literal.start + 1;
+        let message = format!("Invalid regular expression: {}", said.message);
+        let marked = Span::new(start + said.start, start + said.end);
+        let mut error = SyntaxError::of_oxc(marked, message)
+            .help(said.help)
+            .stage(Stage::Parser);
+        if let Some(also) = said.also {
+            error = error.and(Span::new(start + also.0, start + also.1), "");
+        }
+        self.report(error);
     }
 
     /// `??` beside `&&` or `||`, a template after an optional chain.
@@ -1054,7 +1299,15 @@ impl<'a> Checks<'a, '_> {
 
     fn functions(&mut self) {
         let file = self.file;
+        let may_have_directive =
+            !self.lacks(rare::DIRECTIVE_IN_FUNCTION) && file.mentions("use strict");
+        if !may_have_directive && self.lacks(rare::ODD_ACCESSOR) {
+            return;
+        }
         for it in file.funcs() {
+            if !may_have_directive && !matches!(it.kind(), FnKind::Getter | FnKind::Setter) {
+                continue;
+            }
             let params = it.params();
             let wrong = match it.kind() {
                 FnKind::Getter if !params.is_empty() => {
@@ -1068,7 +1321,36 @@ impl<'a> Checks<'a, '_> {
                     .map(|it| (it.span().start, "Setter cannot use rest params")),
                 _ => None,
             };
-            if let Some((at, message)) = wrong {
+            if self.is_oxc
+                && wrong.is_some()
+                && let Some(list) = it.params_span()
+            {
+                self.report(
+                    match (it.kind(), params.len()) {
+                        (FnKind::Getter, _) => {
+                            let message = "A 'get' accessor must not have any formal parameters.";
+                            SyntaxError::of_oxc(list, message).help("Remove these parameters here")
+                        }
+                        (_, 1) => {
+                            let rest = params.first().map_or(list, |it| it.span());
+                            SyntaxError::of_oxc(
+                                rest,
+                                "A 'set' accessor cannot have rest parameter.",
+                            )
+                        }
+                        (_, count) => {
+                            let message = "A 'set' accessor must have exactly one parameter.";
+                            SyntaxError::of_oxc(list, message)
+                                .code(1049)
+                                .help(match count {
+                                    0 => "Add a parameter here",
+                                    _ => "Remove parameters except the first one here",
+                                })
+                        }
+                    }
+                    .stage(Stage::Parser),
+                );
+            } else if let Some((at, message)) = wrong {
                 self.when_read_to(it.span().end, |checks| checks.fail(at, message));
             }
             let is_simple = |it: Param<'a>| {
@@ -1080,32 +1362,115 @@ impl<'a> Checks<'a, '_> {
             if params.iter().all(is_simple) || file.language().ecma_version < 2016 {
                 continue;
             }
-            let has_directive = it.body_statements().is_some_and(|body| {
+            let directive = it.body_statements().and_then(|body| {
                 body.iter()
-                    .map_while(Stmt::directive)
-                    .any(|it| it == b"use strict")
+                    .take_while(|it| it.directive().is_some())
+                    .find(|it| it.directive() == Some(b"use strict"))
             });
-            if has_directive {
-                let message =
-                    "Illegal 'use strict' directive in function with non-simple parameter list";
+            let has_directive = directive.is_some();
+            let message =
+                "Illegal 'use strict' directive in function with non-simple parameter list";
+            if let (true, Some(directive)) = (self.is_oxc, directive) {
+                let help = "Wrap this function with an IIFE with a 'use strict' directive that returns this function";
+                self.report(SyntaxError::of_oxc(directive.span(), message).help(help));
+            } else if has_directive {
                 let body = it.body_span().map_or(0, |it| it.start);
                 self.when_read_to(body, |checks| checks.fail(it.estree_span().start, message));
             }
         }
     }
 
-    /// `checkYieldAwaitInDefaultParams`
-    fn defaults_that_suspend(&mut self) {
-        for (tag, message) in [
-            (ExprTag::Yield, "Yield expression cannot be a default value"),
-            (ExprTag::Await, "Await expression cannot be a default value"),
-        ] {
+    /// `checkYieldAwaitInDefaultParams`. `of_oxc`: in oxc's words. It labels the whole expression, and has the error for a
+    /// computed key in a parameter's type too.
+    fn defaults_that_suspend(&mut self, of_oxc: bool) {
+        if self.lacks(rare::SUSPENDS_IN_PARAMETERS) {
+            return;
+        }
+        let words = [
+            (ExprTag::Yield, "Yield", "yield"),
+            (ExprTag::Await, "Await", "await"),
+        ];
+        for (tag, of_acorn, word) in words {
             for it in self.exprs_of(tag) {
-                let first = (self.tops.outward(Node::Expr(it)))
-                    .find(|it| matches!(it, Node::Param(_) | Node::Func(_)));
-                if matches!(first, Some(Node::Param(_))) {
-                    self.fail(it.span().start, message);
+                // For oxc neither `this` nor the key of an index signature is a formal parameter, and a signature in a type does
+                // not end the parameter that the type is of.
+                let first = self.tops.outward(Node::Expr(it)).find(|&it| match it {
+                    Node::Param(param) => {
+                        let function = param.func();
+                        !(of_oxc
+                            && function.is_some_and(|it| {
+                                it.kind() == FnKind::IndexSignature
+                                    || it.this_param() == Some(param)
+                            }))
+                    }
+                    // Within a type nothing else is without a body.
+                    Node::Func(function) => !of_oxc || function.has_body(),
+                    _ => false,
+                });
+                if !matches!(first, Some(Node::Param(_))) {
+                    continue;
                 }
+                let span = it.span();
+                match of_oxc {
+                    true => {
+                        let message = format!("{word} expression not allowed in formal parameter");
+                        self.report(SyntaxError::of_oxc(span, message.clone()).says(message));
+                    }
+                    false => {
+                        let message = format!("{of_acorn} expression cannot be a default value");
+                        self.fail(span.start, message);
+                    }
+                }
+            }
+        }
+    }
+
+    /// For oxc: `await` and `await using` in a static block. A function in the block starts anew.
+    fn suspensions_in_static_blocks(&mut self) {
+        if self.lacks(rare::SUSPENDS_IN_STATIC_BLOCK) {
+            return;
+        }
+        // A signature in a type starts nothing.
+        let is_signature = |it: &Func| match it.kind() {
+            FnKind::CallSignature
+            | FnKind::ConstructSignature
+            | FnKind::FunctionType
+            | FnKind::ConstructorType
+            | FnKind::IndexSignature => true,
+            // Of an interface or a type literal. A class has them without a body too.
+            FnKind::Method | FnKind::Getter | FnKind::Setter => {
+                let mut around = Node::Func(*it).ancestors();
+                !it.has_body()
+                    && !matches!(
+                        around.find(|it| !matches!(it, Node::Member(_))),
+                        Some(Node::Class(_))
+                    )
+            }
+            _ => false,
+        };
+        let is_in_block = |node: Node<'a>| {
+            let mut function = node.enclosing_function();
+            while let Some(signature) = function.filter(is_signature) {
+                function = Node::Func(signature).enclosing_function();
+            }
+            function.is_some_and(|it| it.kind() == FnKind::StaticBlock)
+        };
+        for it in self.exprs_of(ExprTag::Await) {
+            if is_in_block(Node::Expr(it)) {
+                let start = it.span().start;
+                let keyword = crate::span::Span::new(start, start + 5);
+                let message = "Cannot use await in class static initialization block";
+                // oxc says it when it has the operand.
+                self.report(SyntaxError::of_oxc(keyword, message).noticed_at(it.span().end));
+            }
+        }
+        for it in self.file.stmts_of_kind(StmtTag::Var) {
+            let first = it.as_var().and_then(|it| it.first());
+            if first.is_some_and(|it| it.var_kind() == VarKind::AwaitUsing)
+                && is_in_block(Node::Stmt(it))
+            {
+                let message = b"Cannot use 'await using' in class static initialization block";
+                self.fail_for(it.span(), message.to_vec());
             }
         }
     }
@@ -1145,6 +1510,23 @@ impl<'a> Checks<'a, '_> {
                 Some(_) => true,
                 None => false,
             };
+            let call = match it.parent() {
+                Node::Expr(parent) if matches!(parent.kind(), ExprKind::Call(call) if call.callee() == it) => {
+                    Some(parent)
+                }
+                _ => None,
+            };
+            let outside_constructor = "Super calls are not permitted outside constructors or in nested functions inside constructors.";
+            if !allows_super && self.is_oxc {
+                self.report(match call {
+                    Some(call) => SyntaxError::of_oxc(call.span(), outside_constructor).code(2337),
+                    None => SyntaxError::of_oxc(
+                        it.span(),
+                        "'super' can only be referenced in members of derived classes or object literal expressions.",
+                    ),
+                });
+                continue;
+            }
             if !allows_super {
                 match self.is_babel && scope.is_some() {
                     // At the top level Prettier has Babel allow it.
@@ -1166,7 +1548,27 @@ impl<'a> Checks<'a, '_> {
                 }
                 _ => false,
             };
-            if is_called && !is_in_constructor_of_subclass {
+            let class_of_constructor = match scope {
+                Some(Node::Func(func)) if func.kind() == FnKind::Constructor => {
+                    match func.owner().parent() {
+                        Node::Class(class) => Some(class),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let (true, Some(call), false) = (self.is_oxc, call, is_in_constructor_of_subclass) {
+                self.report(match class_of_constructor {
+                    Some(class) => {
+                        let message = "'super' can only be referenced in a derived class.";
+                        SyntaxError::of_oxc(it.span(), message)
+                            .and(class.estree_span(), "class does not have `extends`")
+                            .help("either remove this super, or extend the class")
+                            .noticed_at(start)
+                    }
+                    None => SyntaxError::of_oxc(call.span(), outside_constructor).code(2337),
+                });
+            } else if is_called && !is_in_constructor_of_subclass {
                 self.fail(start, "super() call outside constructor of a subclass");
             }
         }
@@ -1177,25 +1579,32 @@ impl<'a> Checks<'a, '_> {
     /// A `#a` has to be declared by a class around it.
     fn private_names(&mut self) {
         let file = self.file;
-        if !strings::contains_char(file.text(), b'#') {
+        let is_oxc = self.is_oxc;
+        if self.lacks(rare::ODD_PRIVATE_NAME) || !strings::contains_char(file.text(), b'#') {
             return;
         }
         // The private names of a class are collected once: there can be as many of them as there are uses.
-        let mut names_of: FxHashMap<Class<'a>, FxHashSet<&'a [u8]>> = FxHashMap::default();
+        let mut names_of: IdMap<Class<'a>, FxHashSet<&'a [u8]>> = IdMap::default();
         let mut is_declared = |tops: &mut Tops<'a>, node: Node<'a>, name: &[u8]| {
             let mut inside = node;
             tops.outward(node).any(|it| {
                 let from = std::mem::replace(&mut inside, it);
                 match it {
-                    // What a class extends is outside of it.
-                    Node::Class(class) if class.extends().map(Node::Expr) != Some(from) => {
+                    // What a class extends is outside of it. For oxc its decorators are, too.
+                    Node::Class(class)
+                        if match is_oxc {
+                            true => matches!(from, Node::Member(_)),
+                            false => class.extends().map(Node::Expr) != Some(from),
+                        } =>
+                    {
                         let private = |member: Member<'a>| match member.key().map(|it| it.kind()) {
                             Some(KeyKind::Private(declared)) => Some(declared.bytes()),
                             _ => None,
                         };
                         names_of
-                            .entry(class)
-                            .or_insert_with(|| class.members().iter().filter_map(private).collect())
+                            .get_or_insert_with(class, || {
+                                class.members().iter().filter_map(private).collect()
+                            })
                             .contains(name)
                     }
                     _ => false,
@@ -1219,15 +1628,42 @@ impl<'a> Checks<'a, '_> {
             }
             if matches!(it.kind(), ExprKind::Dot { obj, .. } if matches!(obj.kind(), ExprKind::Super))
             {
-                match self.is_babel {
-                    true => self.fail(name.start(), "Private fields can't be accessed on super"),
-                    false => self.unexpected(name.start()),
+                match (self.is_babel, self.is_oxc) {
+                    (true, _) => {
+                        self.fail(name.start(), "Private fields can't be accessed on super")
+                    }
+                    (_, true) => {
+                        let message = "Private fields cannot be accessed on super";
+                        self.report(SyntaxError::of_oxc(it.span(), message).stage(Stage::Parser));
+                    }
+                    _ => self.unexpected(name.start()),
                 }
             } else if !is_declared(&mut self.tops, Node::Expr(it), name.bytes()) {
                 // Noticed at the end of the outermost class.
+                let mut inside = Node::Expr(it);
                 let outermost = (self.tops.outward(Node::Expr(it)))
-                    .filter(|it| matches!(it, Node::Class(_)))
+                    .filter(|&outer| {
+                        let from = std::mem::replace(&mut inside, outer);
+                        // oxc: what a class extends and its decorators are outside of it.
+                        matches!(outer, Node::Class(_))
+                            && (!is_oxc || matches!(from, Node::Member(_)))
+                    })
                     .last();
+                if self.is_oxc && outermost.is_none() {
+                    let message = [
+                        b"Private identifier '",
+                        name.bytes(),
+                        b"' is not allowed outside class bodies",
+                    ];
+                    self.report(SyntaxError::of_oxc(name.span(), message.concat()));
+                    continue;
+                }
+                if self.is_oxc {
+                    let error = SyntaxError::of_oxc(name.span(), undeclared(name.bytes()));
+                    let help = self.private_name_like(Node::Expr(it), name.bytes());
+                    self.report(error.help(help));
+                    continue;
+                }
                 let noticed = outermost.map_or(0, |it| it.span().end);
                 self.when_read_to(noticed, |checks| {
                     checks.fail(name.start(), undeclared(name.bytes()))
@@ -1238,29 +1674,111 @@ impl<'a> Checks<'a, '_> {
             let ExprKind::PrivateIdentifier(name) = it.kind() else {
                 continue;
             };
+            if is_oxc && let Some(error) = private_name_as_operand(file, it.span()) {
+                self.report(error);
+                continue;
+            }
             // Only the left operand of `in` can be one.
             let is_left_of_in = matches!(it.parent(), Node::Expr(parent)
                 if matches!(parent.kind(), ExprKind::Binary { op: BinOp::In, left, .. } if left == it));
             if !is_left_of_in {
                 self.unexpected(it.span().start);
             } else if !is_declared(&mut self.tops, Node::Expr(it), name.bytes()) {
+                let mut inside = Node::Expr(it);
+                let is_in_class_body = self.tops.outward(Node::Expr(it)).any(|outer| {
+                    let from = std::mem::replace(&mut inside, outer);
+                    matches!(outer, Node::Class(_)) && matches!(from, Node::Member(_))
+                });
+                if is_oxc && !is_in_class_body {
+                    let message = [
+                        b"Private identifier '",
+                        name.bytes(),
+                        b"' is not allowed outside class bodies",
+                    ];
+                    self.report(SyntaxError::of_oxc(it.span(), message.concat()));
+                    continue;
+                }
+                if is_oxc {
+                    let error = SyntaxError::of_oxc(it.span(), undeclared(name.bytes()));
+                    let help = self.private_name_like(Node::Expr(it), name.bytes());
+                    self.report(error.help(help));
+                    continue;
+                }
                 self.fail(it.span().start, undeclared(name.bytes()));
             }
+        }
+    }
+
+    /// For oxc: "Did you mean '#a'?", if a class around `node` declares a private name that is nearly `name`. Of two that are as
+    /// near it is the one of the inner class, and in a class the first.
+    fn private_name_like(&mut self, node: Node<'a>, name: &[u8]) -> String {
+        let mut inside = node;
+        let classes = self.tops.outward(node).filter_map(|outer| {
+            let from = std::mem::replace(&mut inside, outer);
+            match (outer, from) {
+                (Node::Class(class), Node::Member(_)) => Some(class),
+                _ => None,
+            }
+        });
+        let declared = classes.flat_map(|class| {
+            class
+                .members()
+                .iter()
+                .filter_map(|member| match member.key().map(|it| it.kind()) {
+                    Some(KeyKind::Private(declared)) => Some(declared.bytes()),
+                    _ => None,
+                })
+        });
+        match closest(name, declared) {
+            Some(it) => format!("Did you mean '{}'?", bstr::BStr::new(it)),
+            None => String::new(),
         }
     }
 
     /// `parseClass`, `parseClassElement`
     fn classes(&mut self) {
         let file = self.file;
+        if self.lacks(rare::NOTABLE_CLASS_MEMBER) {
+            return;
+        }
         // The private names of the class so far, each with the accessor that another can complete.
         let mut private: FxHashMap<&'a [u8], Option<(bool, MemberKind)>> = FxHashMap::default();
+        // For oxc: where each is declared first, and whether that is static.
+        let mut first_private: FxHashMap<&'a [u8], (crate::span::Span, bool)> =
+            FxHashMap::default();
+        // oxc lets what is only declared be called `prototype`, and be there twice: `declare class A { static prototype: A }`.
+        let is_oxc = self.is_oxc;
+        let is_only_declared = |flags: Flags| is_oxc && flags.contains(Flags::AMBIENT);
         for class in file.classes() {
+            let is_class_declared = is_only_declared(class.flags());
             let mut has_constructor = false;
+            let mut constructors = 0;
+            let mut first_constructor = crate::span::Span::default();
             private.clear();
+            first_private.clear();
             for member in class.members() {
-                self.class_element(member);
+                let is_declared = is_class_declared || is_only_declared(member.flags());
+                self.as_parser(|checks| checks.class_element(member, is_declared));
+                if is_declared {
+                    continue;
+                }
                 if member.is_constructor() && member.func().is_some_and(Func::has_body) {
-                    if has_constructor {
+                    let name = member.try_raw().map_or(0, |it| it.name_pos);
+                    constructors += 1;
+                    match (is_oxc, constructors) {
+                        (true, 1) => first_constructor = self.token_span(name),
+                        (true, 2) => {
+                            let message = "Multiple constructor implementations are not allowed.";
+                            let again = self.token_span(name);
+                            self.report(
+                                SyntaxError::of_oxc(first_constructor, message)
+                                    .says("constructor has already been declared here")
+                                    .and(again, "it cannot be redeclared here"),
+                            );
+                        }
+                        _ => {}
+                    }
+                    if has_constructor && !is_oxc {
                         self.fail(
                             member.span().start,
                             "Duplicate constructor in the same class",
@@ -1272,16 +1790,37 @@ impl<'a> Checks<'a, '_> {
                 else {
                     continue;
                 };
+                // An overload in TypeScript: `#m(): void; #m() {}`.
+                if member.func().is_some_and(|it| !it.has_body()) {
+                    continue;
+                }
                 let half = matches!(member.kind(), MemberKind::Getter | MemberKind::Setter)
                     .then(|| (member.is_static(), member.kind()));
                 match private.entry(name.bytes()) {
                     Entry::Vacant(place) => {
                         place.insert(half);
+                        first_private.insert(name.bytes(), (key.span(file), member.is_static()));
                     }
                     Entry::Occupied(mut seen) => {
                         let completes = matches!((*seen.get(), half), (Some(a), Some(b)) if a.0 == b.0 && a.1 != b.1);
                         seen.insert(None);
-                        if !completes {
+                        let first = first_private.get(name.bytes()).copied();
+                        if let (true, false, Some((first, was_static))) = (is_oxc, completes, first)
+                        {
+                            let again = key.span(file);
+                            let mut error =
+                                self.redeclared("Identifier", name.bytes(), first, again);
+                            if was_static != member.is_static() && !file.is_javascript() {
+                                error.message = [
+                                    b"Duplicate identifier `",
+                                    name.bytes(),
+                                    b"`. Static and instance elements cannot share the same private name.",
+                                ]
+                                .concat();
+                                error = error.code(2804);
+                            }
+                            self.report(error.noticed_at(u32::MAX));
+                        } else if !completes {
                             let message = [
                                 b"Identifier '",
                                 name.bytes(),
@@ -1296,13 +1835,24 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    fn class_element(&mut self, member: Member<'a>) {
+    /// `is_declared`: for oxc, it is only declared.
+    fn class_element(&mut self, member: Member<'a>, is_declared: bool) {
         let Some(key) = member.key() else {
             // A constructor.
             let (Some(keyword), Some(func)) = (member.constructor_keyword(), member.func()) else {
                 return;
             };
-            if member.is_constructor() && func.is_generator() {
+            if is_declared {
+                return;
+            }
+            if member.is_constructor() && self.is_oxc {
+                if func.is_async() {
+                    self.fail(keyword.start(), "Constructor can't be an async method");
+                }
+                if func.is_generator() {
+                    self.fail(keyword.start(), "Constructor can't be a generator");
+                }
+            } else if member.is_constructor() && func.is_generator() {
                 self.fail(keyword.start(), "Constructor can't be a generator");
             } else if member.is_constructor() && func.is_async() {
                 self.fail(keyword.start(), "Constructor can't be an async method");
@@ -1313,10 +1863,19 @@ impl<'a> Checks<'a, '_> {
         // `checkKeyName`
         let is_named = |name: &str| matches!(key.kind(), KeyKind::Ident(it) | KeyKind::String(it) if it.is(name));
         let is_field = member.kind() == MemberKind::Property;
+        // oxc looks at the name of an `accessor` only if it is private.
+        let is_passed_over = self.is_oxc && member.flags().contains(Flags::ACCESSOR);
         if matches!(key.kind(), KeyKind::Private(name) if name.is("#constructor")) {
             self.fail(start, "Classes can't have an element named '#constructor'");
+        } else if is_passed_over || is_declared && !(is_field && is_named("constructor")) {
+            // Nothing is said about its name.
         } else if is_field && is_named("constructor") {
             self.fail(start, "Classes can't have a field named 'constructor'");
+        } else if self.is_oxc && member.is_static() && is_named("prototype") {
+            self.fail(
+                start,
+                "Classes may not have a static property named 'prototype'",
+            );
         } else if is_field && member.is_static() && is_named("prototype") {
             self.fail(start, "Classes can't have a static field named 'prototype'");
         } else if !is_field && member.is_static() && is_named("prototype") {
@@ -1328,6 +1887,14 @@ impl<'a> Checks<'a, '_> {
             // Not a constructor.
         } else if matches!(member.kind(), MemberKind::Getter | MemberKind::Setter) {
             self.fail(start, "Constructor can't have get/set modifier");
+        } else if self.is_oxc {
+            // It has both to say about `async *constructor() {}`.
+            if member.func().is_some_and(Func::is_async) {
+                self.fail(start, "Constructor can't be an async method");
+            }
+            if member.func().is_some_and(Func::is_generator) {
+                self.fail(start, "Constructor can't be a generator");
+            }
         } else if member.func().is_some_and(Func::is_generator) {
             self.fail(start, "Constructor can't be a generator");
         } else if member.func().is_some_and(Func::is_async) {
@@ -1408,15 +1975,35 @@ impl<'a> Checks<'a, '_> {
 
     fn object_literals(&mut self) {
         let file = self.file;
-        let may_have_proto = strings::contains(file.text(), b"__proto__");
+        let proto = file.find_name("__proto__");
+        let proto = proto.map(|it| hir::PropKey::Name(it.atom()));
+        let may_have_proto = proto.is_some();
+        // The rest is about private names as keys, which the parser of oxc stumbles over, and `accessor`, which it knows.
+        if !may_have_proto && self.lacks(rare::DEFAULT_IN_OBJECT | rare::ODD_PRIVATE_NAME) {
+            return;
+        }
+        // Outside a class the parser forgets a key that is a private name.
+        let is_oxc = self.is_oxc;
+        let is_private_name = |at: u32| is_oxc && file.text().get(at as usize) == Some(&b'#');
+        let private_key = |at: u32, name: &[u8]| {
+            let message = [
+                b"Private identifier '",
+                name,
+                b"' is not allowed in property names",
+            ];
+            let key = crate::span::Span::new(at, at + name.len() as u32);
+            SyntaxError::of_oxc(key, message.concat()).stage(Stage::Parser)
+        };
         for (i, raw) in file.hir.props.iter().enumerate() {
             let is_default = raw.kind == PropKind::Shorthand
                 && matches!(
                     file.hir.exprs.get(raw.value.idx()).map(|it| it.kind),
                     Some(hir::ExprKind::Assign { .. })
                 );
-            let is_private = matches!(raw.key, hir::PropKey::Private(_));
-            if !is_default && !is_private && !(may_have_proto && raw.kind == PropKind::Init) {
+            let is_private =
+                matches!(raw.key, hir::PropKey::Private(_)) || is_private_name(raw.pos);
+            let may_be_proto = raw.kind == PropKind::Init && Some(raw.key) == proto;
+            if !is_default && !is_private && !may_be_proto {
                 continue;
             }
             let prop = Prop::from_raw(file, i as u32);
@@ -1424,6 +2011,11 @@ impl<'a> Checks<'a, '_> {
                 continue;
             };
             if !prop.is_in_tree() || prop.is_jsx_attribute() {
+                continue;
+            }
+            if is_private && self.is_oxc {
+                let error = private_key(raw.pos, self.token_at(raw.pos));
+                self.report(error);
                 continue;
             }
             if is_private {
@@ -1434,6 +2026,16 @@ impl<'a> Checks<'a, '_> {
                 && let Some(ExprKind::Assign { target, .. }) = prop.value().map(|it| it.kind())
                 && !object.is_assignment_target()
             {
+                if let (true, Some(value)) = (self.is_oxc, prop.value()) {
+                    let help = "Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.";
+                    self.report(
+                        SyntaxError::of_oxc(value.span(), "Invalid assignment in object literal")
+                            .help(help)
+                            .stage(Stage::Parser)
+                            .noticed_at(u32::MAX),
+                    );
+                    continue;
+                }
                 let equals = skip_trivia(file.text(), target.span().end);
                 let message =
                     "Shorthand property assignments are valid only in destructuring patterns";
@@ -1449,7 +2051,19 @@ impl<'a> Checks<'a, '_> {
                 let ExprKind::Object(props) = object.kind() else {
                     continue;
                 };
-                if props.iter().take_while(|it| *it != prop).any(is_proto) {
+                let before = props.iter().take_while(|it| *it != prop);
+                let mut before = before.filter(|it| is_proto(*it));
+                // oxc holds each against the one before it.
+                let first = match self.is_oxc {
+                    true => before.last(),
+                    false => before.next(),
+                };
+                let keys =
+                    first.and_then(|it| Some((it.key()?.span(file), prop.key()?.span(file))));
+                if let (true, Some((first, again))) = (self.is_oxc, keys) {
+                    let error = self.redeclared("Identifier", b"__proto__", first, again);
+                    self.report(error);
+                } else if first.is_some() {
                     self.when_read_to(object.outer_span().end, |checks| {
                         checks.fail(raw.pos, "Redefinition of __proto__ property")
                     });
@@ -1457,20 +2071,27 @@ impl<'a> Checks<'a, '_> {
             }
         }
         for (i, raw) in file.hir.pat_props.iter().enumerate() {
-            if matches!(raw.key, hir::PropKey::Private(_))
+            if (matches!(raw.key, hir::PropKey::Private(_)) || is_private_name(raw.key_pos))
                 && file
                     .pat_in_tree(PatProp::from_raw(file, i as u32).value().id().idx())
                     .is_some()
             {
-                self.unexpected(raw.key_pos);
+                match self.is_oxc {
+                    true => {
+                        let error = private_key(raw.key_pos, self.token_at(raw.key_pos));
+                        self.report(error);
+                    }
+                    false => self.unexpected(raw.key_pos),
+                }
             }
         }
         // acorn has no `accessor`: it is the name of a field.
+        let has_accessors = self.is_oxc;
         for raw in file
             .hir
             .members
             .iter()
-            .filter(|it| it.flags.contains(Flags::ACCESSOR))
+            .filter(|it| it.flags.contains(Flags::ACCESSOR) && !has_accessors)
         {
             self.unexpected(raw.name_pos);
         }
@@ -1479,7 +2100,7 @@ impl<'a> Checks<'a, '_> {
     /// `checkExport`, `checkLocalExport`
     fn exports(&mut self) {
         let file = self.file;
-        // To Prettier a file is a module, also one that `bun format` could only parse as a script.
+        // To Prettier a file is a module, also one that `bun fmt` could only parse as a script.
         if !self.is_babel && file.language().source_type != SourceType::Module {
             return;
         }
@@ -1551,6 +2172,9 @@ impl<'a> Checks<'a, '_> {
     /// `parseBreakContinueStatement`
     fn jumps(&mut self) {
         let file = self.file;
+        if self.lacks(rare::ODD_JUMP) {
+            return;
+        }
         for (tag, is_break) in [(StmtTag::Break, true), (StmtTag::Continue, false)] {
             for it in file.stmts_of_kind(tag) {
                 let label = it.label().map(|it| it.name());
@@ -1578,7 +2202,9 @@ impl<'a> Checks<'a, '_> {
                         break;
                     }
                 }
-                if !has_target {
+                if !has_target && self.is_oxc {
+                    self.jump_of_oxc(it, is_break);
+                } else if !has_target {
                     self.fail(
                         it.span().start,
                         if is_break {
@@ -1592,15 +2218,96 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
+    /// A `break` or a `continue` without a target, in the words of oxc.
+    fn jump_of_oxc(&mut self, it: Stmt<'a>, is_break: bool) {
+        let Some(label) = it.label() else {
+            let (message, help) = match is_break {
+                true => (
+                    "Illegal break statement",
+                    "A `break` statement can only be used within an enclosing iteration or switch statement.",
+                ),
+                false => (
+                    "Illegal continue statement: no surrounding iteration statement",
+                    "A `continue` statement can only be used within an enclosing `for`, `while` or `do while` ",
+                ),
+            };
+            return self.report(SyntaxError::of_oxc(it.span(), message).help(help));
+        };
+        let mut crosses_function = false;
+        let target = Node::Stmt(it).ancestors().find_map(|outer| match outer {
+            Node::Func(_) => {
+                crosses_function = true;
+                None
+            }
+            Node::Stmt(outer) => outer
+                .label()
+                .filter(|it| outer.tag() == StmtTag::Labeled && it.name() == label.name()),
+            _ => None,
+        });
+        self.report(match target {
+            None => SyntaxError::of_oxc(label.span(), "Use of undefined label"),
+            Some(_) if crosses_function => {
+                SyntaxError::of_oxc(label.span(), "Jump target cannot cross function boundary.")
+            }
+            Some(target) => SyntaxError::of_oxc(
+                target.span(),
+                "A `continue` statement can only jump to a label of an enclosing `for`, `while` or `do while` statement.",
+            )
+            .says("This is an non-iteration statement")
+            .and(label.span(), "for this label"),
+        });
+    }
+
     fn labels(&mut self) {
-        for it in self.file.stmts_of_kind(StmtTag::Labeled) {
-            let StmtKind::Labeled { label, .. } = it.kind() else {
+        if self.lacks(rare::ODD_JUMP) {
+            return;
+        }
+        let labeled: Vec<_> = (self.file.stmts_of_kind(StmtTag::Labeled))
+            .filter_map(|it| match it.kind() {
+                StmtKind::Labeled { label, .. } => Some((it, label)),
+                _ => None,
+            })
+            .collect();
+        // Walking up from each label of `a: b: c: ..` to look for a duplicate name is quadratic. Instead, visit the
+        // labels from the outermost in and track the open ones by name. Nested labels in the same function share an
+        // outermost label, which is part of the key.
+        let mut from_outside: Vec<usize> = (0..labeled.len()).collect();
+        from_outside.sort_unstable_by_key(|&index| labeled[index].0.span().start);
+        let mut label_around: AncestorMemo<'a, Option<Stmt<'a>>> = AncestorMemo::default();
+        let mut outermost_of: FxHashMap<u32, u32> = FxHashMap::default();
+        let mut open: FxHashMap<_, SmallVec<[usize; 1]>> = FxHashMap::default();
+        let mut first_of: Vec<Option<Stmt<'a>>> = vec![None; labeled.len()];
+        for index in from_outside {
+            let (it, label) = labeled[index];
+            let around = label_around.find(Node::Stmt(it), |_, parent| match parent {
+                Node::Func(_) => Some(None),
+                Node::Stmt(outer) if outer.tag() == StmtTag::Labeled => Some(Some(outer)),
+                _ => None,
+            });
+            let outermost = (around.flatten())
+                .and_then(|outer| outermost_of.get(&outer.id().0).copied())
+                .unwrap_or_else(|| it.id().0);
+            outermost_of.insert(it.id().0, outermost);
+            let same_name = open.entry((outermost, label)).or_default();
+            let start = it.span().start;
+            while (same_name.last()).is_some_and(|&outer| labeled[outer].0.span().end <= start) {
+                same_name.pop();
+            }
+            first_of[index] = same_name.last().map(|&outer| labeled[outer].0);
+            same_name.push(index);
+        }
+        for (&(it, label), first) in labeled.iter().zip(first_of) {
+            let Some(first) = first else {
                 continue;
             };
-            let is_repeated = (Node::Stmt(it).ancestors())
-                .take_while(|it| !matches!(it, Node::Func(_)))
-                .any(|it| matches!(it, Node::Stmt(outer) if matches!(outer.kind(), StmtKind::Labeled { label: name, .. } if name == label)));
-            if is_repeated {
+            if self.is_oxc {
+                let (first, again) = (
+                    self.token_span(first.span().start),
+                    self.token_span(it.span().start),
+                );
+                let error = self.redeclared("Label", label.bytes(), first, again);
+                self.report(error);
+            } else {
                 self.fail(
                     it.span().start,
                     [b"Label '", label.bytes(), b"' is already declared"].concat(),

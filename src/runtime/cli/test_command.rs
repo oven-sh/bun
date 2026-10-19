@@ -38,17 +38,17 @@ mod coverage {
     }
 
     pub(super) fn is_ignored(
-        opts: &bun_options_types::code_coverage_options::CodeCoverageOptions,
+        ignore_patterns: &[bun_glob::Prepared<&[u8]>],
         relative_dir: &[u8],
         source_url: &[u8],
     ) -> bool {
-        if opts.ignore_patterns.is_empty() {
+        if ignore_patterns.is_empty() {
             return false;
         }
         let relative_path = bun_paths::resolve_path::relative(relative_dir, source_url);
-        opts.ignore_patterns
+        ignore_patterns
             .iter()
-            .any(|pattern| bun_glob::r#match(pattern, relative_path).matches())
+            .any(|pattern| pattern.r#match(relative_path).matches())
     }
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
@@ -1474,9 +1474,14 @@ impl CommandLineReporter {
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
         let relative_dir = FileSystem::get().top_level_dir;
+        let ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = (opts
+            .ignore_patterns
+            .iter()
+            .map(|it| bun_glob::Prepared::new(&**it)))
+        .collect();
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
-            if !coverage::is_ignored(opts, relative_dir, entry.source_url.slice()) {
+            if !coverage::is_ignored(&ignore_patterns, relative_dir, entry.source_url.slice()) {
                 byte_ranges.push(entry);
             }
         }
@@ -1812,23 +1817,23 @@ impl TestCommand {
         // backing `Vec`s live in `ctx` for the process lifetime, so each element
         // is detached to `&'static [u8]` up front (lets the outer view detach to
         // `&'static [&'static [u8]]` below without a nested-lifetime bitcast).
-        let concurrent_test_glob_view: Option<Vec<&'static [u8]>> =
+        let concurrent_test_glob_view: Option<Vec<bun_glob::Prepared<&'static [u8]>>> =
             ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
                 v.iter()
                     .map(|b| {
                         // SAFETY: backing bytes are owned by `ctx.test_options`
                         // (process-lifetime) and `exec()` never returns.
-                        unsafe { bun_ptr::detach_lifetime::<u8>(b) }
+                        bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) })
                     })
                     .collect()
             });
         // SAFETY: backing bytes are owned by `ctx.test_options` (process-lifetime)
         // and `exec()` never returns, so detaching to `'static` is sound.
-        let path_ignore_patterns_view: Vec<&'static [u8]> = ctx
+        let path_ignore_patterns_view: Vec<bun_glob::Prepared<&'static [u8]>> = ctx
             .test_options
             .path_ignore_patterns
             .iter()
-            .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+            .map(|b| bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) }))
             .collect();
 
         // Keep an owned `Box` local — `exec()` never returns before process

@@ -11,6 +11,7 @@ use bun_sema::json::Json;
 use bun_sema::messages::text;
 use bun_sema::resolve::{Host, displayed_path, join, to_path};
 use bun_sema::session::Session;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::{Category, Diagnostic, Report, Request};
 use bun_threading::Guarded;
 use std::borrow::Cow;
@@ -1258,7 +1259,7 @@ fn heads(top: &str) -> Vec<String> {
             Some(line[..code_end].to_owned())
         })
         .collect();
-    heads.sort();
+    heads.shared_sort();
     heads
 }
 
@@ -1394,7 +1395,7 @@ impl Setup<'_> {
                 files_under(&disk, dir, &mut found);
             }
         }
-        found.sort_unstable();
+        found.shared_sort_unstable();
         found
     }
 }
@@ -1485,8 +1486,8 @@ fn run_one(
         match bun_sema::config_options::from_text(name.as_bytes(), value.as_bytes()) {
             // `getOptionValue`: an option declared `IsFilePath` is resolved against the current
             // directory.
-            Some((name @ (b"outDir" | b"rootDir" | b"declarationDir"), Json::String(path))) => {
-                let path = absolute(&text(&path), &cwd).into_bytes();
+            Some((name @ (b"outDir" | b"rootDir" | b"declarationDir"), Json::String(ref path))) => {
+                let path = absolute(&text(path), &cwd).into_bytes();
                 reported.push((name.to_owned(), Json::String(path)))
             }
             Some((name, value)) => reported.push((name.to_owned(), value)),
@@ -1612,10 +1613,11 @@ fn run_one(
 
     // `CompileFiles`: the default options of a test, unless it overrides them.
     let defaults = |compiler: &mut Vec<(Vec<u8>, Json)>| {
-        if !compiler.iter().any(|o| o.0 == b"skipDefaultLibCheck") {
-            compiler.push((b"skipDefaultLibCheck".to_vec(), Json::Bool(true)));
+        for name in [&b"skipDefaultLibCheck"[..], b"noErrorTruncation"] {
+            if !compiler.iter().any(|o| o.0 == name) {
+                compiler.push((name.to_vec(), Json::Bool(true)));
+            }
         }
-        compiler.push((b"noErrorTruncation".to_vec(), Json::Bool(true)));
     };
     if let Some(unit) = &config_unit {
         host.add_file(absolute(&unit.name, &cwd).as_bytes(), unit.content.clone());
@@ -1652,8 +1654,8 @@ fn run_one(
         return None;
     }
 
-    // What is found in each file. An invalid task is retried, so a file can be visited twice: the
-    // last visit replaces the first, in place.
+    // What is found in each file. A discarded task's files are rechecked, so a file can be visited
+    // twice: the last visit replaces the first, in place.
     type Sections = Vec<(bun_sema::program::FileId, Vec<Walked>)>;
     let sections: Guarded<Sections> = Guarded::new(Vec::new());
     let write_unit = |checker: &mut bun_sema::check::Checker<'_, '_>,
@@ -1799,15 +1801,7 @@ fn run_one(
             progress: None,
             only: None,
             order: 1,
-            digests: false,
-            task_clock: None,
-            plan_options: bun_sema_driver::PlanOptions {
-                reproduces_symbol_ids: false,
-                // The tests run side by side, each on one thread. The plan of several threads is the
-                // one with steps, publishing and validation.
-                tasks_on_one_thread: true,
-                ..Default::default()
-            },
+            plan_options: bun_sema_driver::PlanOptions::default(),
             retains_everything: false,
             script_kinds: &[],
             script_kinds_by_extension: &[],
@@ -1883,7 +1877,7 @@ fn run_one(
     declarations.retain(|it| !blocked.contains(&&it.2[..]));
     // `newCompilationResult`: in the order of the inputs, then "any unhandled outputs, ordered by
     // unit name".
-    declarations.sort_by(|a, b| match (a.1, b.1) {
+    declarations.shared_sort_by(|a, b| match (a.1, b.1) {
         (true, true) => a.0.cmp(&b.0),
         (false, false) => a.2.cmp(&b.2),
         (a_is_found, _) => (!a_is_found).cmp(&a_is_found),
@@ -2287,7 +2281,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
         }
     });
     let mut outcomes = std::mem::take(&mut *outcomes.lock());
-    outcomes.sort_by(|a, b| a.name.cmp(&b.name));
+    outcomes.shared_sort_by(|a, b| a.name.cmp(&b.name));
     outcomes
 }
 
@@ -2418,7 +2412,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         all.len()
     );
     let mut failed: Vec<&Outcome> = all.iter().filter(|o| o.level < Level::All).collect();
-    failed.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    failed.shared_sort_unstable_by(|a, b| a.name.cmp(&b.name));
     for outcome in failed.iter().take(50) {
         output_line!(
             "FAIL Errors {} {:?} {}",

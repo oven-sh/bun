@@ -19,10 +19,9 @@ use bun_lint_oxlint::ast_util::{
     scope_made_by, static_property_info, static_property_name, static_string,
 };
 use bun_lint_oxlint::codegen::Codegen;
-use bun_lint_oxlint::hash_order::HashOrder;
+use bun_lint_oxlint::hash_order::UnresolvedOrder;
 use bun_lint_oxlint::import::{common_js_require, import_entries};
 use bun_lint_oxlint::regex_flags::rust_regex;
-use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::cell::OnceCell;
 
@@ -34,8 +33,17 @@ pub(crate) struct Ctx<'a, 'r> {
     pub(crate) report: &'r dyn Fn(Span, Message) -> Report<'a>,
 }
 
+/// To be called before a rule that oxlint calls with the calls of Jest reports: [`File::calls_in_turns`].
+#[inline]
+pub(crate) fn note_turns<'a>(file: &'a File<'a>, runner: Runner) {
+    if file.language().is_oxlint {
+        file.calls_in_turns(|| OxlintOrder::turns(file, runner));
+    }
+}
+
 impl<'a> Ctx<'a, '_> {
     pub(crate) fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
+        note_turns(self.file, self.runner);
         (self.report)(at.span(), message)
     }
 
@@ -65,12 +73,39 @@ impl<'a> Ctx<'a, '_> {
         };
     }
 
-    /// Whether a fix may write the name `name`. In a file that imports from `bun:test` nothing else is declared than what it
-    /// imports: `bun test` declares `it` and the like only where nothing is imported from there.
-    pub(crate) fn can_write(&self, name: &[u8]) -> bool {
-        self.runner != Runner::Bun
-            || (std::str::from_utf8(name).ok())
-                .is_some_and(|it| self.file.top_level_scope().get(it).is_some())
+    /// True if a fix may write `name` at `at`, because `name` refers to the runner's function there. For Jest and
+    /// Vitest it can be a global, imported, or required at the top level. For `bun:test` it has to be imported or
+    /// required: `bun test` only declares `it` and the other globals in files that don't import from `bun:test`.
+    pub(crate) fn can_write(&self, name: &[u8], at: Expr<'a>) -> bool {
+        let is_bun = self.runner == Runner::Bun;
+        let Some(symbol) = Node::Expr(at).scope().resolve_bytes(name) else {
+            return !is_bun;
+        };
+        let is_of_runner = |source: &[u8]| match is_bun {
+            true => source == BUN_TEST,
+            false => source == b"@jest/globals" || is_vitest_import_source(source),
+        };
+        let is_required = || {
+            let properties =
+                all_required(self.file).filter_map(|(pattern, source)| match pattern.kind() {
+                    PatKind::Object(properties) if is_of_runner(source.bytes()) => Some(properties),
+                    _ => None,
+                });
+            properties.flatten().any(|it| {
+                it.value().symbol() == Some(symbol)
+                    && (it.key().and_then(|it| it.name())).is_some_and(|it| it.bytes() == name)
+            })
+        };
+        symbol.declarations().all(|it| match it {
+            Declaration::ImportSpec(it) => {
+                it.imported().bytes() == name
+                    && is_of_runner(it.import().spec().bytes())
+                    && !it.is_type_only()
+                    && !it.import().is_type_only()
+            }
+            Declaration::Var(_) => is_required(),
+            _ => false,
+        })
     }
 
     /// Whether a fix may change a title. A snapshot in a file of its own is found by the titles.
@@ -358,8 +393,9 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
     })
 }
 
-/// The `{ test: t }` of `const { test: t } = require("bun:test")` and of `.. = await import("bun:test")`.
-fn required_from_bun_test(declarator: VarDecl<'_>) -> Option<Pat<'_>> {
+/// Returns the pattern and the module specifier: `{ test: t }` and `a` for `const { test: t } = require("a")` or
+/// `.. = await import("a")`.
+fn required(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
     let init = declarator.init()?;
     let source = match init.kind() {
         ExprKind::Call(call) => common_js_require(call),
@@ -369,13 +405,18 @@ fn required_from_bun_test(declarator: VarDecl<'_>) -> Option<Pat<'_>> {
         },
         _ => None,
     };
-    (static_string(source?)?.bytes() == BUN_TEST).then(|| declarator.pat())
+    Some((declarator.pat(), static_string(source?)?))
 }
 
-/// The declarations at the top level of [`required_from_bun_test`].
-fn all_required_from_bun_test<'a>(file: &'a File<'a>) -> impl Iterator<Item = Pat<'a>> {
+/// Runs [`required`] on every top-level variable declaration.
+fn all_required<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Pat<'a>, Name<'a>)> {
     let declarators = file.body().iter().filter_map(Stmt::as_var).flatten();
-    declarators.filter_map(required_from_bun_test)
+    declarators.filter_map(required)
+}
+
+fn all_required_from_bun_test<'a>(file: &'a File<'a>) -> impl Iterator<Item = Pat<'a>> {
+    all_required(file)
+        .filter_map(|(pattern, source)| (source.bytes() == BUN_TEST).then_some(pattern))
 }
 
 fn imports_bun_test<'a>(file: &'a File<'a>) -> bool {
@@ -609,9 +650,12 @@ fn collect_possible_jest_call_node<'a>(
         .map(|id| Expr::from_raw(file, *id))
         .filter(is_global)
         .for_each(|it| found.add_calls_of(it, u32::MAX, u32::MAX, frameworks));
-    utils::sort::sort_unstable_by_key(&mut found.calls, |it| {
-        (it.span.start, std::cmp::Reverse(it.span.end))
-    });
+    // A test file has hundreds, so not through a call for each comparison.
+    let keys = found.calls.iter().enumerate();
+    let mut keys: Vec<u128> = keys.map(|(at, it)| it.span.sort_key(0, at)).collect();
+    keys.sort();
+    let mut order: Vec<u32> = keys.iter().map(|&key| key as u32).collect();
+    utils::sort::apply_permutation_in_place(&mut found.calls, &mut order);
     found
 }
 
@@ -672,8 +716,8 @@ pub(crate) fn for_each_call_named_like<'a>(
     }
 }
 
-/// The calls that are tests by what is written, whatever `it` and `test` refer to: those that are in no other, in the order of
-/// the source.
+/// Calls that look like tests by name, whatever `it` and `test` actually refer to. Only the outermost ones, in source order.
+/// For `bun:test` each span is the test's callback, so `a || b` in `test.skipIf(a || b)(..)` isn't a condition in the test.
 pub(crate) fn tests_as_written<'a>(file: &'a File<'a>, runner: Runner) -> &'a [Span] {
     let find = || {
         let mut tests: Vec<Span> = Vec::new();
@@ -683,7 +727,13 @@ pub(crate) fn tests_as_written<'a>(file: &'a File<'a>, runner: Runner) -> &'a [S
                 PossibleJestNode::new(call_expr, runner),
                 &[JestFnKind::General(JestGeneralFnKind::Test)],
             ) {
-                tests.push(call_expr.span());
+                tests.extend(match runner {
+                    Runner::Jest | Runner::Vitest => Some(call_expr.span()),
+                    Runner::Bun => (call_expr.as_call())
+                        .and_then(|it| Arguments::of(it.args(), runner).callback)
+                        .filter(|it| it.tag() == ExprTag::Fn)
+                        .map(|it| it.span()),
+                });
             }
         });
         utils::sort::sort_unstable_by_key(&mut tests, |it| (it.start, std::cmp::Reverse(it.end)));
@@ -1540,6 +1590,24 @@ pub(crate) fn run_on_jest_nodes<'a>(
     iter_possible_jest_call_node(ctx.file, ctx.runner).for_each(|node| run(node, ctx));
 }
 
+/// For `bun:test`: calls to the functions in `names` that [`iter_possible_jest_call_node`] doesn't return. Those are the user's
+/// own wrappers around `test`. oxlint only compares `additionalTestBlockFunctions` with the names the runner declares.
+pub(crate) fn calls_of_own_test_blocks<'a>(
+    ctx: &Ctx<'a, '_>,
+    names: &[String],
+) -> impl Iterator<Item = PossibleJestNode<'a>> {
+    let (file, runner) = (ctx.file, ctx.runner);
+    file.exprs_of_kind(ExprTag::Call)
+        .take_while(move |_| runner == Runner::Bun && !names.is_empty())
+        .filter(move |it| {
+            let name = it.callee().map(get_node_name).unwrap_or_default();
+            names.iter().any(|it| it.as_bytes() == name)
+                && !is_in_call_or_member(*it)
+                && possible_jest_node_of(file, runner, *it).is_none()
+        })
+        .map(move |it| PossibleJestNode::new(it, runner))
+}
+
 /// Whether [`iter_possible_jest_call_node`] can have anything, by what the file mentions. It computes nothing.
 pub(crate) fn may_have_possible_jest_call_node(file: &File) -> bool {
     mentions_jest_method(file) || mentions_any(file, &SOURCE_BITS)
@@ -1741,18 +1809,48 @@ pub(crate) fn print_expression(out: &mut Vec<u8>, e: Expr) {
     out.append(&mut codegen.code);
 }
 
-/// `request.*.expect` is `/^request\.[a-z\d]*\.expect(\.|$)/iu`, and `**` is also for dots. `None` if that is not valid.
-pub(crate) fn convert_pattern(pattern: &str) -> Option<Regex> {
+/// Converts `request.*.expect` to `/^request\.[a-z\d]*\.expect(\.|$)/iu`. `**` also matches dots. Returns `None` if the result
+/// isn't a valid regex.
+///
+/// For `bun:test`, stars also match `_` and `$`, and `**` can match nothing: `request.**.expect` matches `request.expect`.
+pub(crate) fn convert_pattern(pattern: &str, runner: Runner) -> Option<Regex> {
+    let is_bun = runner == Runner::Bun;
     let mut converted = "^".to_owned();
+    let mut follows_optional_dot = false;
     for (i, part) in strings::split(pattern.as_bytes(), b".").enumerate() {
-        converted.push_str(if i > 0 { "\\." } else { "" });
+        if part == b"**" && is_bun {
+            follows_optional_dot = i == 0;
+            converted.push_str(if i == 0 {
+                "(?:[\\w$.]*\\.)?"
+            } else {
+                "(?:\\.[\\w$.]*)?"
+            });
+            continue;
+        }
+        converted.push_str(if i > 0 && !follows_optional_dot {
+            "\\."
+        } else {
+            ""
+        });
+        follows_optional_dot = false;
         if part == b"**" {
             converted.push_str("[a-z\\d\\.]*");
             continue;
         }
         for (i, literal) in strings::split(part, b"*").enumerate() {
-            converted.push_str(if i > 0 { "[a-z\\d]*" } else { "" });
-            converted.push_str(std::str::from_utf8(literal).unwrap_or_default());
+            converted.push_str(match (i > 0, is_bun) {
+                (false, _) => "",
+                (true, false) => "[a-z\\d]*",
+                (true, true) => "[\\w$]*",
+            });
+            for (i, plain) in strings::split(literal, b"$").enumerate() {
+                converted.push_str(match (i > 0, is_bun) {
+                    (false, _) => "",
+                    (true, false) => "$",
+                    (true, true) => "\\$",
+                });
+                converted.push_str(std::str::from_utf8(plain).unwrap_or_default());
+            }
         }
     }
     converted.push_str("(\\.|$)");
@@ -1761,71 +1859,15 @@ pub(crate) fn convert_pattern(pattern: &str) -> Option<Regex> {
 
 // ───────────────────────────── the order of hash tables ─────────────────────────────
 
-/// How oxc hashes the name of an identifier: `IdentHasher`, after `ident_hash`.
-fn ident_hash(name: &[u8]) -> u64 {
-    const SEED1: u32 = 0x9E37_79B9;
-    const SEED2: u32 = 0x85EB_CA6B;
-    let byte = |i: usize| name.get(i).map_or(0, |it| u32::from(*it));
-    let read_u32 =
-        |i: usize| byte(i) | (byte(i + 1) << 8) | (byte(i + 2) << 16) | (byte(i + 3) << 24);
-    let mix = |a: u32, b: u32| {
-        let m = u64::from(a) * u64::from(b);
-        (m as u32) ^ ((m >> 32) as u32)
-    };
-    let len = name.len();
-    let hash = match len {
-        0 => 0,
-        1..=3 => {
-            let packed = (byte(0) << 16) | (byte(len >> 1) << 8) | byte(len - 1);
-            mix(packed ^ SEED1, packed ^ SEED2)
-        }
-        4..=8 => mix(read_u32(0) ^ SEED1, read_u32(len - 4) ^ SEED2),
-        9..=16 => mix(
-            read_u32(0) ^ read_u32((len >> 1) - 2) ^ SEED1,
-            read_u32(len - 4) ^ SEED2,
-        ),
-        _ => mix(
-            read_u32(0) ^ read_u32(len / 3) ^ SEED1,
-            read_u32(2 * len / 3) ^ read_u32(len - 4) ^ SEED2,
-        ),
-    };
-    u64::from(hash ^ (len as u32).rotate_left(16)) | (u64::from(hash) << 32)
-}
-
-/// The order of `scoping.root_unresolved_references()`, which is a hash table of all the names that the file refers to and does not
-/// declare, and with it the order of oxlint's `collect_possible_jest_call_node`.
+/// The order of oxlint's `collect_possible_jest_call_node`, which goes through `scoping.root_unresolved_references()`.
 pub(crate) struct OxlintOrder<'a> {
-    /// The place of each name in the table.
-    ranks: FxHashMap<Name<'a>, u32>,
+    names: UnresolvedOrder<'a>,
 }
 
 impl<'a> OxlintOrder<'a> {
     pub(crate) fn new(file: &'a File<'a>) -> Self {
-        // The names, where each is first referred to: they get into the table in this order.
-        let mut seen = FxHashSet::default();
-        let mut names: Vec<(u32, Name<'a>)> = (file.unresolved_references())
-            .filter(|it| seen.insert(it.name()))
-            .map(|it| (it.span().start, it.name()))
-            .collect();
-        // For oxc nothing declares the `arguments` of a function.
-        let arguments = file.name_of("arguments");
-        if file.mentions("arguments") && !seen.contains(&arguments) {
-            let is_arguments =
-                |it: &Expr<'a>| it.as_ident() == Some(arguments) && it.symbol().is_none();
-            let first = file
-                .exprs_of_kind(ExprTag::Ident)
-                .filter(is_arguments)
-                .map(|it| it.span().start)
-                .min();
-            names.extend(first.map(|start| (start, arguments)));
-            utils::sort::sort_unstable_by_key(&mut names, |it| it.0);
-        }
-        let mut table = HashOrder::new();
-        names
-            .iter()
-            .for_each(|it| table.insert(ident_hash(it.1.bytes()), it.1));
         OxlintOrder {
-            ranks: table.iter().zip(0..).collect(),
+            names: UnresolvedOrder::new(file),
         }
     }
 
@@ -1851,9 +1893,27 @@ impl<'a> OxlintOrder<'a> {
         nodes.iter().copied().min_by_key(|it| order.key(*it))
     }
 
+    /// [`File::calls_in_turns`]
+    #[cold]
+    fn turns(file: &'a File<'a>, runner: Runner) -> Box<[(Span, u32)]> {
+        let order = OxlintOrder::new(file);
+        let nodes: Vec<PossibleJestNode<'a>> = iter_possible_jest_call_node(file, runner).collect();
+        let mut by_turn: Vec<u32> = (0..nodes.len() as u32).collect();
+        utils::sort::sort_by_cached_key(&mut by_turn, |it| {
+            nodes.get(*it as usize).map(|it| order.key(*it))
+        });
+        let mut calls: Box<[(Span, u32)]> = nodes.iter().map(|it| (it.node.span(), 0)).collect();
+        for (turn, at) in (0..).zip(by_turn) {
+            if let Some(call) = calls.get_mut(at as usize) {
+                call.1 = turn;
+            }
+        }
+        calls
+    }
+
     /// The place of `name` in the table.
     pub(crate) fn rank(&self, name: Name<'a>) -> u32 {
-        self.ranks.get(&name).copied().unwrap_or(u32::MAX)
+        self.names.rank(name)
     }
 
     /// What is less for what oxlint has earlier in its list of possible nodes. First what is imported, in the order of the imports,

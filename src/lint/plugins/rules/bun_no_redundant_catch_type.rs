@@ -6,7 +6,7 @@ pub struct NoRedundantCatchType;
 
 const REDUNDANT_TYPE: Message = Message::new(
     "redundantType",
-    "With `strict` or `useUnknownInCatchVariables` the variable of a `catch` clause is `unknown` without an annotation.",
+    "With `strict` or `useUnknownInCatchVariables`, a `catch` variable is already `unknown`. Remove the annotation.",
 );
 
 impl Rule for NoRedundantCatchType {

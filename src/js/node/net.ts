@@ -205,10 +205,16 @@ function uv() {
 }
 const isWindows = process.platform === "win32";
 
-const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
-const setDefaultAutoSelectFamily = $rust("node_net_binding.rs", "setDefaultAutoSelectFamily");
-const getDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const setDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const getDefaultAutoSelectFamily = $bindgen("node_net_binding.bind.ts", "getDefaultAutoSelectFamily");
+const setDefaultAutoSelectFamily = $bindgen("node_net_binding.bind.ts", "setDefaultAutoSelectFamily");
+const getDefaultAutoSelectFamilyAttemptTimeout = $bindgen(
+  "node_net_binding.bind.ts",
+  "getDefaultAutoSelectFamilyAttemptTimeout",
+);
+const setDefaultAutoSelectFamilyAttemptTimeout = $bindgen(
+  "node_net_binding.bind.ts",
+  "setDefaultAutoSelectFamilyAttemptTimeout",
+);
 
 /**
  * `--tls-keylog=<file>`: every TLS socket appends its NSS key-log lines here,
@@ -262,22 +268,18 @@ let BlockList, SocketAddress;
 function lazyBlockList() {
   return (BlockList ??= $rust("node_net_binding.rs", "BlockList"));
 }
-const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
+const newDetachedSocket = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
-const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
+const addServerName = $bindgen("Listener.bind.ts", "addServerName");
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
-const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
-const checkServerIdentityInHandshake = $newRustFunction(
-  "runtime/socket/socket.rs",
-  "jsCheckServerIdentityInHandshake",
-  2,
-);
+const upgradeTLSDeferred = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred");
+const checkServerIdentityInHandshake = $bindgen("socket_body.bind.ts", "checkServerIdentityInHandshake");
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
-const releaseHeldFlight = $newRustFunction("runtime/socket/socket.rs", "jsReleaseHeldFlight", 1);
-const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
-const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
+const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
+const getBufferedAmount = $bindgen("socket_body.bind.ts", "getBufferedAmount");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -822,14 +824,15 @@ const SocketHandlers = {
     self.bytesRead += buffer.length;
     pushDataToSocket(self, socket, buffer);
   },
-  drain(socket) {
+  // `rejected`: the -errno of the send that failed for what a TLS handle still held of the pending write.
+  drain(socket, rejected?: number) {
     const self = socket.data;
     if (!self) return;
     const callback = self[kwriteCallback];
     self.connecting = false;
     if (callback && self[kRejectedWrite] === undefined) {
       const writeChunk = self._pendingData;
-      const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      const res = rejected ?? socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
         if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
@@ -1166,7 +1169,7 @@ const ServerHandlers = {
     if (typeof cb !== "function") return false;
     const wire = Buffer.isBuffer(protocolsWire) ? protocolsWire : Buffer.from(protocolsWire);
     const protocols: string[] = [];
-    for (let i = 0; i + 1 <= wire.length; ) {
+    for (let i = 0; i + 1 <= wire.length;) {
       const n = wire[i];
       protocols.push(wire.toString("latin1", i + 1, i + 1 + n));
       i += 1 + n;
@@ -1469,8 +1472,8 @@ const ServerHandlers = {
   timeout(socket) {
     SocketHandlers.timeout(socket);
   },
-  drain(socket) {
-    SocketHandlers.drain(socket);
+  drain(socket, rejected?: number) {
+    SocketHandlers.drain(socket, rejected);
   },
   binaryType: "buffer",
 } as const satisfies InternalServerHandler<SocketInstance>;
@@ -1679,14 +1682,15 @@ const SocketHandlers2 = {
     self.bytesRead += buffer.length;
     pushDataToSocket(self, socket, buffer);
   },
-  drain(socket) {
+  // See SocketHandlers.drain.
+  drain(socket, rejected?: number) {
     $debug("Bun.Socket drain");
     const { self } = socket.data;
     const callback = self[kwriteCallback];
     self.connecting = false;
     if (callback && self[kRejectedWrite] === undefined) {
       const writeChunk = self._pendingData;
-      const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      const res = rejected ?? socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
         self[kBytesWritten] = socket.bytesWritten;

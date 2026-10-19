@@ -6,6 +6,7 @@
 use super::scopes::{self, Block, NONE, ScopeTree};
 use super::{DeclarationKind, ScopeKind};
 use crate::ast::File;
+use crate::tokens::skip_trivia;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{ClassOwner, Decl, FnOwner, Parent, PatParent};
 use bun_sema::hir::{self, FnKind, NameKind, PatKind, StmtKind, VarKind};
@@ -51,6 +52,11 @@ pub(crate) struct Variables {
     by_name: Vec<u32>,
     /// The declarations of the variables that have several, in the order they are written.
     declarations: Vec<Decl>,
+    /// The indices in `list` of the variables that have several declarations.
+    pub(crate) several: Vec<u32>,
+    /// A block has a declaration of what is a variable of the function around: a `var`, or a function that is not where it is
+    /// written (`scope_of_function_in_block`).
+    pub(crate) has_names_that_leave_blocks: bool,
     pub(crate) deep_patterns: DeepPatterns,
 }
 
@@ -285,6 +291,12 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
             let m = hir.enum_members.get(m.idx())?;
             match m.name_kind {
                 NameKind::StringLiteral if m.name.is_some() => return Some((m.name, m.pos)),
+                // `["a"]`, which typescript-estree refuses. The name is the string. A template is a name for oxc alone.
+                NameKind::ComputedString if m.name.is_some() => {
+                    let pos = skip_trivia(file.text(), m.pos + 1);
+                    let is_string = matches!(file.text().get(pos as usize), Some(b'"' | b'\''));
+                    return (is_string || file.has_scopes_of_oxc()).then_some((m.name, pos));
+                }
                 NameKind::Identifier => (m.name, m.pos),
                 _ => return None,
             }
@@ -294,7 +306,7 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
             match m.name {
                 // `namespace A.B { }` declares nothing that a name can refer to.
                 hir::ModuleName::Ident(name)
-                    if file.language().has_scopes_of_oxc
+                    if file.has_scopes_of_oxc()
                         || !scopes::is_after_dot(file, m)
                             && scopes::after_dot(file, m).is_none() =>
                 {
@@ -324,7 +336,11 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
 
 /// Every declaration of a variable, and the position and the index of each, sorted.
 #[inline(never)]
-fn entries_in_order(file: &File, deep_patterns: &mut DeepPatterns) -> (Vec<Entry>, Vec<u64>) {
+fn entries_in_order(
+    file: &File,
+    unvisited: &[(u32, u32)],
+    deep_patterns: &mut DeepPatterns,
+) -> (Vec<Entry>, Vec<u64>) {
     let (hir, bound) = (&file.hir, &file.bound);
     let room = hir.pats.len()
         + hir.fns.len() / 4
@@ -335,7 +351,9 @@ fn entries_in_order(file: &File, deep_patterns: &mut DeepPatterns) -> (Vec<Entry
     // The position and the index of each entry.
     let mut in_order: Vec<u64> = Vec::with_capacity(room);
     let mut add_named = |decl: Decl, owner: u32, name: Atom, pos: u32| {
-        if !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos)) {
+        if !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos))
+            && !unvisited.iter().any(|it| (it.0..it.1).contains(&pos))
+        {
             in_order.push(u64::from(pos) << 32 | entries.len() as u64);
             entries.push(Entry {
                 scope: NONE,
@@ -349,8 +367,7 @@ fn entries_in_order(file: &File, deep_patterns: &mut DeepPatterns) -> (Vec<Entry
         }
     };
     // What the parser has left behind where it backtracked is part of nothing.
-    let is_in_tree =
-        |s: hir::StmtId| !matches!(bound.stmt_parent.get(s.idx()), None | Some(Parent::None));
+    let is_in_tree = |s: hir::StmtId| !matches!(bound.parent_of_stmt(s), Parent::None);
     let mut passed = Vec::new();
     for (i, pat) in hir.pats.iter().enumerate() {
         let PatKind::Ident(name) = pat.kind else {
@@ -466,25 +483,29 @@ fn scope_of_function_in_block<'a>(
 
 /// Finds the scope that each is declared in, from the scope that its name is written in. Those
 /// that declare no variable are left without. Returns how many are declared in each scope, at the
-/// index after that of the scope.
+/// index after that of the scope, and `Variables::has_names_that_leave_blocks`.
 #[inline(never)]
 fn assign_scopes<'a>(
     file: &'a File<'a>,
     tree: &ScopeTree,
     entries: &mut [Entry],
     in_order: &[u64],
-) -> Vec<u32> {
+) -> (Vec<u32>, bool) {
     let (hir, bound) = (&file.hir, &file.bound);
     let mut entry_starts = vec![0u32; tree.scopes.len() + 1];
+    let mut leaves_blocks = false;
     let mut cursor = tree.cursor();
-    let moves_functions = file.language().has_scopes_of_oxc
+    let moves_functions = file.has_scopes_of_oxc()
         && file.is_javascript()
         && crate::utils::oxlint::source_type(file) != crate::language::SourceType::Module;
     for &key in in_order {
         let here = cursor.seek(entries[key as u32 as usize].pos);
         let moved_to = match entries[key as u32 as usize].decl {
             Decl::Fn(f) if moves_functions => {
-                scope_of_function_in_block(file, tree, entries, key as u32 as usize, f, here)
+                let index = key as u32 as usize;
+                let to = scope_of_function_in_block(file, tree, entries, index, f, here);
+                leaves_blocks |= to.is_some();
+                to
             }
             _ => None,
         };
@@ -503,6 +524,7 @@ fn assign_scopes<'a>(
                     true => tree.scopes[here as usize].variable_scope,
                     false => here,
                 };
+                leaves_blocks |= scope != here;
                 (scope, VALUE)
             }
             Decl::Param(_) => match it.owner {
@@ -532,7 +554,7 @@ fn assign_scopes<'a>(
             *count += 1;
         }
     }
-    entry_starts
+    (entry_starts, leaves_blocks)
 }
 
 /// The variables while they are made.
@@ -587,9 +609,10 @@ impl Variables {
     pub(crate) fn new<'a>(file: &'a File<'a>, tree: &ScopeTree) -> Variables {
         let hir = &file.hir;
         let mut deep_patterns = DeepPatterns::default();
-        let (mut entries, in_order) = entries_in_order(file, &mut deep_patterns);
+        let (mut entries, in_order) = entries_in_order(file, &tree.unvisited, &mut deep_patterns);
         let scope_count = tree.scopes.len();
-        let mut entry_starts = assign_scopes(file, tree, &mut entries, &in_order);
+        let (mut entry_starts, has_names_that_leave_blocks) =
+            assign_scopes(file, tree, &mut entries, &in_order);
 
         // The entries scope by scope, and in each in source order, as indices.
         for i in 0..scope_count {
@@ -674,8 +697,10 @@ impl Variables {
             slot.last += 1;
         }
         let mut declarations: Vec<Decl> = Vec::new();
+        let mut several: Vec<u32> = Vec::new();
         crate::utils::sort::sort_by_key(&mut later, |it| it.0);
         for of_one in later.chunk_by(|a, b| a.0 == b.0) {
+            several.push(of_one[0].0);
             let variable = &mut list[of_one[0].0 as usize];
             variable.start = declarations.len() as u32;
             declarations.push(variable.first);
@@ -698,6 +723,8 @@ impl Variables {
             names,
             by_name,
             declarations,
+            several,
+            has_names_that_leave_blocks,
             deep_patterns,
         }
     }
@@ -737,6 +764,12 @@ impl Variables {
             (Some(&start), Some(&end)) => start as usize..end as usize,
             _ => 0..0,
         }
+    }
+
+    /// Whether another variable has the name of `variable`.
+    #[inline]
+    pub(crate) fn shares_its_name(&self, variable: &Variable) -> bool {
+        (self.names.slots.get(variable.slot as usize)).is_some_and(|it| it.count > 1)
     }
 
     #[inline]

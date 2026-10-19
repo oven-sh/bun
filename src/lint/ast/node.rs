@@ -1,12 +1,12 @@
 //! Any node, and the way up from it.
 
 use super::{
-    Case, Class, EnumMember, ExportSpec, Expr, File, Func, ImportSpec, Member, Param, Pat, PatElem,
-    PatProp, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, VarDecl,
+    Case, Class, EnumMember, ExportSpec, Expr, File, Func, ImportAttributes, ImportSpec, Member,
+    Param, Pat, PatElem, PatProp, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, VarDecl,
 };
 use crate::span::{Span, Spanned};
 use bun_sema::bind::{MemberOwner, Parent, PatParent};
-use bun_sema::hir::{self, DecoratorOwner};
+use bun_sema::hir;
 
 /// Any node of a file.
 #[derive(Copy, Clone)]
@@ -50,6 +50,18 @@ macro_rules! conversions {
             fn from(it: $handle<'a>) -> Node<'a> {
                 Node::$variant(it)
             }
+        }
+
+        impl Spanned for $handle<'_> {
+            #[inline]
+            fn span(&self) -> Span {
+                $handle::span(*self)
+            }
+
+            #[inline]
+            fn packed_node(&self) -> Option<Packed> {
+                Some(Packed { tag: Tag::$variant, id: self.id().0 })
+            }
         })*
 
         impl<'a> Node<'a> {
@@ -72,7 +84,7 @@ macro_rules! conversions {
 
             /// Which vector of the HIR it is in, and where.
             #[inline]
-            fn packed(self) -> Packed {
+            pub(crate) fn packed(self) -> Packed {
                 match self {
                     Node::File(_) => Packed::FILE,
                     $(Node::$variant(it) => Packed { tag: Tag::$variant, id: it.id().0 },)*
@@ -84,9 +96,43 @@ macro_rules! conversions {
         #[repr(u8)]
         enum Tag { File, $($variant,)* }
 
+        /// How many kinds of nodes there are.
+        pub(crate) const KINDS: usize = [Tag::File, $(Tag::$variant),*].len();
+
+        impl<'a> File<'a> {
+            /// The [`Node::index`] of the first node of each kind, and after them [`File::node_count`].
+            fn kind_index_offsets(&self) -> &[u32; KINDS + 1] {
+                self.lazy.kind_index_offsets.get_or_init(|| {
+                    let mut offsets = [0; KINDS + 1];
+                    let mut next = 1;
+                    $(
+                        offsets[Tag::$variant as usize] = next;
+                        next += <$handle as super::Handle>::count_in(self);
+                    )*
+                    offsets[KINDS] = next;
+                    offsets
+                })
+            }
+
+            /// How many nodes there are, of all kinds.
+            pub fn node_count(&self) -> u32 {
+                self.kind_index_offsets()[KINDS]
+            }
+        }
+
+        impl Node<'_> {
+            /// A number below [`File::node_count`] that no other node of the file has. For who keeps something for some of
+            /// the nodes, the way the file keeps which expressions are in parentheses.
+            #[inline]
+            pub fn index(self) -> u32 {
+                let Packed { tag, id } = self.packed();
+                self.file().kind_index_offsets()[tag as usize] + id
+            }
+        }
+
         impl Packed {
             #[inline]
-            fn unpack<'a>(self, file: &'a File<'a>) -> Node<'a> {
+            pub(crate) fn unpack<'a>(self, file: &'a File<'a>) -> Node<'a> {
                 match self.tag {
                     Tag::File => Node::File(file),
                     $(Tag::$variant => Node::$variant(<$handle as super::Handle>::from_raw(file, self.id)),)*
@@ -106,7 +152,7 @@ impl<'a> From<&'a File<'a>> for Node<'a> {
 
 /// A [`Node`] without the reference to the file.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-struct Packed {
+pub struct Packed {
     tag: Tag,
     id: u32,
 }
@@ -141,6 +187,18 @@ impl Spanned for Node<'_> {
     #[inline]
     fn span(&self) -> Span {
         Node::span(*self)
+    }
+
+    #[inline]
+    fn packed_node(&self) -> Option<Packed> {
+        Some(self.packed())
+    }
+}
+
+impl Spanned for super::Modifier<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        super::Modifier::span(*self)
     }
 }
 
@@ -204,9 +262,9 @@ impl<'a> Node<'a> {
     }
 
     /// The node that the binder has as `parent`.
-    fn of_parent(file: &'a File<'a>, parent: Option<&Parent>) -> Node<'a> {
+    fn of_parent(file: &'a File<'a>, parent: Parent) -> Node<'a> {
         let (hir, bound) = (&file.hir, &file.bound);
-        match parent.copied().unwrap_or(Parent::None) {
+        match parent {
             Parent::None | Parent::File => Node::File(file),
             Parent::Expr(e) => Node::Expr(Expr::new(file, e)),
             Parent::Prop(p) if file.is_import_attribute(p) => {
@@ -220,32 +278,26 @@ impl<'a> Node<'a> {
                 })
             }
             Parent::VarInit(d) => Node::VarDecl(VarDecl::new(file, d)),
-            Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
-                Node::Param(Param::new(file, p))
-            }
+            Parent::ParamDefault(p) | Parent::ParamDecorator(p) => Node::Param(Param::new(file, p)),
             Parent::PatPropDefault(p) | Parent::PatKey(p) => Node::PatProp(PatProp::new(file, p)),
             Parent::PatElemDefault(e) => Node::PatElem(PatElem::new(file, e)),
-            Parent::Prop(p) | Parent::PropKey(_, p) | Parent::MethodKey(p) => {
+            Parent::Prop(p) | Parent::PropKey(p) | Parent::MethodKey(p) => {
                 Node::Prop(Prop::new(file, p))
             }
-            Parent::MemberKey(m)
-            | Parent::MemberInit(m)
-            | Parent::Decorator(_, DecoratorOwner::Member(m)) => Node::Member(Member::new(file, m)),
+            Parent::MemberKey(m) | Parent::MemberInit(m) | Parent::MemberDecorator(m) => {
+                Node::Member(Member::new(file, m))
+            }
             Parent::FnBody(f) => Node::Func(Func::new(file, f)),
             Parent::EnumInit(m) => Node::EnumMember(EnumMember::new(file, m)),
             Parent::Case(c) => Node::Case(Case::new(file, c)),
-            Parent::ClassExtends(c) | Parent::Decorator(_, DecoratorOwner::Class(c)) => {
-                Node::Class(Class::new(file, c))
-            }
+            Parent::ClassExtends(c) | Parent::ClassDecorator(c) => Node::Class(Class::new(file, c)),
             Parent::Module(mut m) => loop {
                 let Some(module) = hir.modules.get(m.idx()) else {
                     break Node::File(file);
                 };
                 // From the `C` of `namespace A.B.C` to the `A`.
-                match bound.stmt_parent.get(module.stmt.idx()) {
-                    Some(&Parent::Module(outer)) if file.is_nested_namespace(module.stmt) => {
-                        m = outer
-                    }
+                match bound.parent_of_stmt(module.stmt) {
+                    Parent::Module(outer) if file.is_nested_namespace(module.stmt) => m = outer,
                     _ => break Node::Stmt(Stmt::new(file, module.stmt)),
                 }
             },
@@ -383,7 +435,7 @@ impl<'a> Expr<'a> {
         let file = self.file;
         // The binder never has an expression as the parent of the `a.b` of the type `typeof a.b`.
         if !file.hides_casts
-            && let Some(&Parent::Expr(parent)) = file.bound.expr_parent.get(self.id.idx())
+            && let Parent::Expr(parent) = file.bound.parent_of_expr(self.id)
             && let Some(raw) = file.hir.exprs.get(parent.idx())
             && !matches!(raw.kind, hir::ExprKind::TaggedTemplate(_))
         {
@@ -397,12 +449,12 @@ impl<'a> Expr<'a> {
         let file = self.file;
         if !file.hides_casts {
             let is_in_no_type = file.bound.type_query_operands.is_empty();
-            match file.bound.expr_parent.get(self.id.idx()) {
-                Some(&Parent::VarInit(d)) => return Node::VarDecl(VarDecl::new(file, d)),
-                Some(&Parent::Prop(p)) if file.hir.import_attributes.is_empty() => {
+            match file.bound.parent_of_expr(self.id) {
+                Parent::VarInit(d) => return Node::VarDecl(VarDecl::new(file, d)),
+                Parent::Prop(p) if file.hir.import_attributes.is_empty() => {
                     return Node::Prop(Prop::new(file, p));
                 }
-                Some(&Parent::Stmt(s))
+                Parent::Stmt(s)
                     if match file.hir.stmts.get(s.idx()) {
                         None
                         | Some(hir::Stmt {
@@ -414,8 +466,8 @@ impl<'a> Expr<'a> {
                 {
                     return Node::Stmt(Stmt::new(file, s));
                 }
-                Some(&Parent::FnBody(f)) if is_in_no_type => return Node::Func(Func::new(file, f)),
-                Some(&Parent::MemberInit(m)) if is_in_no_type => {
+                Parent::FnBody(f) if is_in_no_type => return Node::Func(Func::new(file, f)),
+                Parent::MemberInit(m) if is_in_no_type => {
                     return Node::Member(Member::new(file, m));
                 }
                 _ => {}
@@ -435,19 +487,19 @@ impl<'a> Expr<'a> {
         {
             return Node::Type(TypeNode::new(file, ty));
         }
-        let mut id = self.id;
-        while let Some(cast) = file.jsdoc_cast_around(id) {
-            id = cast;
-        }
-        match bound.expr_parent.get(id.idx()) {
+        let id = file.with_jsdoc_casts(self.id);
+        match bound.parent_of_expr(id) {
             // The substitutions of a tagged template are in the template.
-            Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
-                Some(hir::ExprKind::TaggedTemplate(call)) => match hir.calls.get(call.idx()) {
-                    Some(call) if call.callee != id && call.template != id => {
-                        Node::Expr(Expr::new(file, call.template))
+            Parent::Expr(parent) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+                Some(hir::ExprKind::TaggedTemplate(c)) => {
+                    let template = hir::template_in(hir.tagged_templates, c);
+                    match hir.calls.get(c.idx()) {
+                        Some(call) if call.callee != id && template != id => {
+                            Node::Expr(Expr::new(file, template))
+                        }
+                        _ => Node::Expr(Expr::new(file, parent)),
                     }
-                    _ => Node::Expr(Expr::new(file, parent)),
-                },
+                }
                 _ => Node::Expr(Expr::new(file, parent)),
             },
             parent => Node::of_parent(file, parent),
@@ -459,9 +511,9 @@ impl<'a> Stmt<'a> {
     #[inline]
     pub fn parent(self) -> Node<'a> {
         let file = self.file;
-        match file.bound.stmt_parent.get(self.id.idx()) {
-            Some(&Parent::FnBody(f)) => Node::Func(Func::new(file, f)),
-            Some(&Parent::Stmt(parent))
+        match file.bound.parent_of_stmt(self.id) {
+            Parent::FnBody(f) => Node::Func(Func::new(file, f)),
+            Parent::Stmt(parent)
                 if matches!(
                     file.hir.stmts.get(parent.idx()),
                     Some(hir::Stmt {
@@ -476,11 +528,11 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    fn parent_in_general(self, parent: Option<&Parent>) -> Node<'a> {
+    fn parent_in_general(self, parent: Parent) -> Node<'a> {
         let file = self.file;
         match parent {
-            Some(Parent::File) => return Node::File(file),
-            Some(&Parent::Stmt(parent))
+            Parent::File => return Node::File(file),
+            Parent::Stmt(parent)
                 if !matches!(
                     file.hir.stmts.get(parent.idx()).map(|it| it.kind),
                     None | Some(hir::StmtKind::Expr(_) | hir::StmtKind::Switch { .. })
@@ -494,7 +546,7 @@ impl<'a> Stmt<'a> {
     }
 
     #[inline(never)]
-    fn parent_in_rare_cases(self, parent: Option<&Parent>) -> Node<'a> {
+    fn parent_in_rare_cases(self, parent: Parent) -> Node<'a> {
         match Node::of_parent(self.file, parent) {
             // The binder records the `switch` for what is in a clause.
             Node::Stmt(parent) if parent.tag() == StmtTag::Switch => match parent.as_switch() {
@@ -576,37 +628,43 @@ impl Parents {
 
     /// The import, the export or the import type that the attribute `prop` belongs to.
     fn of_import_attribute<'a>(&self, file: &'a File<'a>, prop: hir::PropId) -> Node<'a> {
-        let at = file.hir.props.get(prop.idx()).map_or(0, |it| it.pos);
-        let after = file.hir.import_attributes.partition_point(|it| it.0 <= at);
-        let owner = after
-            .checked_sub(1)
-            .and_then(|it| self.import_attributes.get(it));
-        owner.map_or(Node::File(file), |it| it.unpack(file))
+        // By its `{ .. }`, not by its position: an entry can follow a clause that is nested in the entry before it.
+        let object = file.bound.prop_owner.get(prop.idx());
+        object
+            .and_then(|&it| self.of_import_attributes(file, it))
+            .unwrap_or(Node::File(file))
     }
 
-    /// What each of `Hir::import_attributes`, which are in the order of the source, belongs to: the first import type around
-    /// it, or else the first import or export.
+    /// The import, the export or the import type whose attributes are in the `{ .. }` that is `object`.
+    pub(super) fn of_import_attributes<'a>(
+        &self,
+        file: &'a File<'a>,
+        object: hir::ExprId,
+    ) -> Option<Node<'a>> {
+        let owner = (self.import_attributes).get(file.index_of_import_attributes(object)?)?;
+        Some(owner.unpack(file))
+    }
+
+    /// The owner of each entry of `Hir::import_attributes`. Clauses nest, so an owner takes only its own, which is the
+    /// one `import_attributes()` returns for it.
     fn owners_of_import_attributes(hir: &super::Hir) -> Box<[Packed]> {
-        let all = hir.import_attributes;
-        let mut owners = vec![Packed::FILE; all.len()].into_boxed_slice();
-        if all.is_empty() {
+        let mut owners = vec![Packed::FILE; hir.import_attributes.len()].into_boxed_slice();
+        if owners.is_empty() {
             return owners;
         }
-        let mut own = |start: u32, end: u32, owner: Packed| {
-            let first = all.partition_point(|it| it.0 < start);
-            let within = all[first..].partition_point(|it| it.0 < end);
-            for it in owners[first..first + within]
-                .iter_mut()
-                .filter(|it| matches!(it.tag, Tag::File))
+        // The first owner wins: a type in a JSDoc comment is parsed once for each node that it annotates.
+        let mut own = |within: Span, owner: Packed| {
+            if let Some(it) =
+                ImportAttributes::index_within(hir, within).and_then(|it| owners.get_mut(it))
+                && matches!(it.tag, Tag::File)
             {
                 *it = owner;
             }
         };
         for (i, it) in hir.types.iter().enumerate() {
-            if matches!(it.kind, hir::TypeNodeKind::Import { .. }) {
+            if let Some(within) = ImportAttributes::search_span_of_type(hir, it) {
                 own(
-                    it.pos,
-                    it.end,
+                    within,
                     Packed {
                         tag: Tag::Type,
                         id: i as u32,
@@ -618,8 +676,7 @@ impl Parents {
             use hir::StmtKind::{ExportNamed, ExportStar, Import};
             if matches!(it.kind, Import(_) | ExportNamed(_) | ExportStar { .. }) {
                 own(
-                    it.start,
-                    it.loc.end,
+                    Span::new(it.start, it.loc.end),
                     Packed {
                         tag: Tag::Stmt,
                         id: i as u32,
@@ -777,12 +834,14 @@ impl Parents {
             }
             let (ty, type_args) = match e.kind {
                 K::As { ty, .. } | K::Satisfies { ty, .. } => (ty, hir::IdList::EMPTY),
-                K::Instantiation { type_args, .. } => (hir::TypeNodeId::NONE, type_args),
+                K::Instantiation { type_args, .. } => {
+                    (hir::TypeNodeId::NONE, hir.list_at(type_args))
+                }
                 K::Call(c) | K::New(c) | K::TaggedTemplate(c) => (
                     hir::TypeNodeId::NONE,
                     hir.calls
                         .get(c.idx())
-                        .map_or(hir::IdList::EMPTY, |call| call.type_args),
+                        .map_or(hir::IdList::EMPTY, |call| hir.list_at(call.type_args)),
                 ),
                 K::Jsx(j) => (
                     hir::TypeNodeId::NONE,
@@ -796,7 +855,10 @@ impl Parents {
                 continue;
             }
             // What the parser has left behind can share its type arguments with a node.
-            if matches!(file.bound.expr_parent.get(i), None | Some(Parent::None)) {
+            if matches!(
+                file.bound.parent_of_expr(hir::ExprId(i as u32)),
+                Parent::None
+            ) {
                 continue;
             }
             let parent = packed(Tag::Expr, i);
@@ -819,7 +881,7 @@ impl File<'_> {
     /// Whether it shows from the kind of its parent that the expression statement `id` is not a [wrapper](Stmt::is_wrapper).
     #[inline(always)]
     fn is_plainly_no_wrapper(&self, id: hir::StmtId) -> bool {
-        let Some(&Parent::Stmt(parent)) = self.bound.stmt_parent.get(id.idx()) else {
+        let Parent::Stmt(parent) = self.bound.parent_of_stmt(id) else {
             return true;
         };
         match self.hir.stmts.get(parent.idx()).map(|it| it.kind) {

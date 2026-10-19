@@ -21,6 +21,7 @@ const BABEL_TS: &str =
 const ONLY_BABEL_TS_REJECTS: &str = "an input that only `babel-ts` rejects: Prettier's `typescript` parser accepts it, and the output is the same";
 const HTML_LIKE_COMMENT: &str = "`babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted";
 const PLUGIN: &str = "formatted by a plugin of Prettier";
+const CHANGES_A_VALUE: &str = "Prettier's output is another value: it drops the blanks at the end of a block scalar (prettier#19764)";
 
 /// What is not run, and why. A case is left out if its path contains the text.
 const EXCLUDED: &[(&str, &str)] = &[
@@ -83,11 +84,15 @@ const EXCLUDED: &[(&str, &str)] = &[
         "typescript/_errors_/babel-ts2/parenthesized-decorators-tagged-template.ts",
         ONLY_BABEL_TS_REJECTS,
     ),
+    ("yaml/block-folded/block-folded-strip.yml", CHANGES_A_VALUE),
 ];
 
 /// Formatting their output again changes it, in Prettier too: `unstableTests` of
 /// `tests/config/format-test/failed-format-tests.js`.
 const UNSTABLE: &[&str] = &[
+    "flow/hook/declare-hook.js",
+    "flow/hook/hook-type-annotation.js",
+    "flow/comments/type_annotations.js",
     "js/ignore/semi/class-expression-decorator.js",
     "js/ignore/semi/head-ignored.js",
     "js/comments/return-statement.js",
@@ -307,7 +312,7 @@ fn replace_placeholders(original: &[u8], options: &mut FormatOptions) -> Vec<u8>
         .iter()
         .filter_map(|it| Some((strings::index_of(original, it.1)?, it.0, it.1)))
         .collect();
-    found.sort_unstable();
+    bun_format::sort::sort(&mut found[..]);
     let mut text = Vec::with_capacity(original.len());
     let mut end_of_previous = 0;
     for (at, name, placeholder) in found {
@@ -517,7 +522,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 }
                 let tally = by_directory.entry(group.clone()).or_default();
 
-                // `bun format` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
+                // `bun fmt` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
                 let mut options = FormatOptions {
                     embedded_html: true,
                     ..FormatOptions::default()

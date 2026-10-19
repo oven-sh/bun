@@ -8,7 +8,7 @@ pub struct NoEmptyCharacterClass;
 const UNEXPECTED: Message = Message::new("unexpected", "Empty class.");
 
 impl Rule for NoEmptyCharacterClass {
-    const META: Meta = Meta::eslint("no-empty-character-class", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-empty-character-class", Kind::Problem).recommended().hints();
     const ON: On = On::new().exprs(&[ExprTag::Regex]);
     no_state!();
 
@@ -38,7 +38,7 @@ impl Rule for NoEmptyCharacterClass {
                     true => Span::new(pattern_start + node.start(), pattern_start + node.end()),
                     false => e.span(),
                 };
-                cx.report(place, UNEXPECTED);
+                cx.report(place, UNEXPECTED).hint("[] in a regular expression matches nothing.");
             }
         }
     }

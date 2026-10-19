@@ -167,13 +167,10 @@ impl<'a> Expr<'a> {
             hir::ExprKind::Fn(f) => ExprKind::Fn(Func::new(file, f)),
             hir::ExprKind::Class(c) => ExprKind::Class(Class::new(file, c)),
             hir::ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                chain,
+                obj, name, chain, ..
             } => ExprKind::Dot {
                 obj: e(obj),
-                name: file.member_name(name, name_pos),
+                name: file.member_name(name, file.hir.name_pos(self.id)),
                 chain,
             },
             hir::ExprKind::Index { obj, index, chain } => ExprKind::Index {
@@ -197,11 +194,14 @@ impl<'a> Expr<'a> {
                 target: e(target),
                 value: e(value),
             },
-            hir::ExprKind::Cond { test, yes, no } => ExprKind::Cond {
-                test: e(test),
-                yes: e(yes),
-                no: e(no),
-            },
+            hir::ExprKind::Cond { test, branches } => {
+                let hir::Branches { yes, no } = file.hir.branches(branches);
+                ExprKind::Cond {
+                    test: e(test),
+                    yes: e(yes),
+                    no: e(no),
+                }
+            }
             hir::ExprKind::Spread(operand) => ExprKind::Spread(e(operand)),
             hir::ExprKind::Await(operand) => ExprKind::Await(e(operand)),
             hir::ExprKind::Yield { value, star } => ExprKind::Yield {
@@ -220,7 +220,7 @@ impl<'a> Expr<'a> {
             hir::ExprKind::NonNull(operand) => ExprKind::NonNull(e(operand)),
             hir::ExprKind::Instantiation { expr, type_args } => ExprKind::Instantiation {
                 expr: e(expr),
-                type_args: List::ids(file, type_args),
+                type_args: List::ids(file, file.hir.list_at(type_args)),
             },
             hir::ExprKind::Jsx(jsx) => ExprKind::Jsx(Jsx::new(file, jsx, self)),
             hir::ExprKind::ImportCall { args } => ExprKind::ImportCall {
@@ -284,24 +284,8 @@ impl<'a> Expr<'a> {
     /// what `&amp;` and the like stand for. `None` if it is not [JSX text](Expr::is_jsx_text).
     /// espree has `\n` for each `\r\n` in it.
     pub fn jsx_text_value(self) -> Option<std::borrow::Cow<'a, [u8]>> {
-        use bun_core::strings;
-        if !self.is_jsx_text() {
-            return None;
-        }
-        let written = self.text();
         let is_espree = self.file.language().parser == Parser::Espree;
-        if !is_espree || !strings::contains(written, b"\r\n") {
-            return Some(super::entities::unescape(written, is_espree));
-        }
-        let mut normalized = Vec::with_capacity(written.len());
-        for (at, line) in strings::split(written, b"\r\n").enumerate() {
-            if at > 0 {
-                normalized.push(b'\n');
-            }
-            normalized.extend_from_slice(line);
-        }
-        let value = super::entities::unescape(&normalized, is_espree);
-        Some(value.into_owned().into())
+        (self.is_jsx_text()).then(|| jsx_text_value_of(self.text(), is_espree))
     }
 
     /// It is the name in a tag of a JSX element, or a part of it: the `a`, the `a.b` and the `a.b.c`
@@ -368,10 +352,13 @@ impl<'a> Expr<'a> {
                 end,
             }) => Span::new(pos, self.file.end_of_identifier(pos, end)),
             Some(&hir::Expr {
-                kind: hir::ExprKind::Dot { name_pos, .. },
+                kind: hir::ExprKind::Dot { .. },
                 pos,
                 end,
-            }) => Span::new(pos, self.file.end_of_identifier(name_pos, end)),
+            }) => {
+                let name_pos = self.file.hir.name_pos(self.id);
+                Span::new(pos, self.file.end_of_identifier(name_pos, end))
+            }
             // Its decorators are part of it.
             Some(&hir::Expr {
                 kind: hir::ExprKind::Class(c),
@@ -434,6 +421,30 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn is_parenthesized(self) -> bool {
         self.file.is_parenthesized(self.id)
+    }
+
+    /// It is the `e` of `/** @type {T} */ (e)` or `/** @satisfies {T} */ (e)` in JavaScript, so its syntax says nothing
+    /// about [its type](Self::ty).
+    #[inline]
+    pub fn has_jsdoc_cast(self) -> bool {
+        self.file.jsdoc_cast_around(self.id).is_some()
+    }
+
+    /// In JavaScript `/** @type {T} */ (e)` is `(e as T)` for TypeScript 7 and tsgolint. Given the `e`, this is that
+    /// `e as T`: an [`ExprKind::As`] in the place of `e`, which nothing else returns. A rule with types calls it before it
+    /// looks at the syntax of an operand: to go into a `&&`, to know a literal, to walk up to a test.
+    ///
+    /// Of nested casts it is the outermost, and its `expr` is the `e` again: calling this on that `expr` never ends.
+    /// Without a cast it is `self`, and always with an ESLint config.
+    #[inline]
+    pub fn with_jsdoc_cast(self) -> Expr<'a> {
+        match self.file.types_follow_jsdoc_casts() {
+            true => Expr {
+                file: self.file,
+                id: self.file.with_jsdoc_casts(self.id),
+            },
+            false => self,
+        }
     }
 
     /// With all the parentheses around it.
@@ -558,13 +569,10 @@ impl<'a> Expr<'a> {
     pub fn as_dot(self) -> Option<(Expr<'a>, Ident<'a>, Chain)> {
         match self.try_raw()?.kind {
             hir::ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                chain,
+                obj, name, chain, ..
             } => Some((
                 Expr::new(self.file, obj),
-                self.file.member_name(name, name_pos),
+                self.file.member_name(name, self.file.hir.name_pos(self.id)),
                 chain,
             )),
             _ => None,
@@ -621,11 +629,14 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn as_cond(self) -> Option<(Expr<'a>, Expr<'a>, Expr<'a>)> {
         match self.try_raw()?.kind {
-            hir::ExprKind::Cond { test, yes, no } => Some((
-                Expr::new(self.file, test),
-                Expr::new(self.file, yes),
-                Expr::new(self.file, no),
-            )),
+            hir::ExprKind::Cond { test, branches } => {
+                let hir::Branches { yes, no } = self.file.hir.branches(branches);
+                Some((
+                    Expr::new(self.file, test),
+                    Expr::new(self.file, yes),
+                    Expr::new(self.file, no),
+                ))
+            }
             _ => None,
         }
     }
@@ -646,6 +657,15 @@ impl<'a> Expr<'a> {
             hir::ExprKind::Object(props) => Some(List::run(self.file, props)),
             _ => None,
         }
+    }
+
+    /// The import, the export or the import type whose attributes are in this `{ .. }`: the `import a from "a" with {}`
+    /// around the `{}`. Such an object is not a node of the tree, and its [parent](Expr::parent) is the file.
+    pub fn owner_of_import_attributes(self) -> Option<Node<'a>> {
+        if self.file.hir.import_attributes.is_empty() {
+            return None;
+        }
+        (self.file.parents()).of_import_attributes(self.file, self.id)
     }
 
     #[inline]
@@ -793,8 +813,8 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn member_name(self) -> Option<Ident<'a>> {
         match self.try_raw()?.kind {
-            hir::ExprKind::Dot { name, name_pos, .. } => {
-                Some(self.file.member_name(name, name_pos))
+            hir::ExprKind::Dot { name, .. } => {
+                Some(self.file.member_name(name, self.file.hir.name_pos(self.id)))
             }
             _ => None,
         }
@@ -804,7 +824,7 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn member_name_start(self) -> Option<u32> {
         match self.try_raw()?.kind {
-            hir::ExprKind::Dot { name_pos, .. } => Some(name_pos),
+            hir::ExprKind::Dot { .. } => Some(self.file.hir.name_pos(self.id)),
             _ => None,
         }
     }
@@ -812,8 +832,8 @@ impl<'a> Expr<'a> {
     /// `obj.#name`
     #[inline]
     pub fn is_private_member(self) -> bool {
-        matches!(self.try_raw(), Some(hir::Expr { kind: hir::ExprKind::Dot { name_pos, .. }, .. })
-            if self.file.hir.text.get(*name_pos as usize) == Some(&b'#'))
+        matches!(self.try_raw(), Some(hir::Expr { kind: hir::ExprKind::Dot { .. }, .. })
+            if self.file.hir.text.get(self.file.hir.name_pos(self.id) as usize) == Some(&b'#'))
     }
 
     /// The operator of a `Binary`.
@@ -988,8 +1008,28 @@ impl<'a> Expr<'a> {
     /// `AssignmentPattern` or `RestElement`. Parentheses make what is in them an ordinary
     /// expression.
     pub fn is_assignment_target(self) -> bool {
+        let mut container = None;
+        let answer = self.is_assignment_target_uncached(&mut container);
+        // The answer is the same for the array or the object that it is in, and so for everything else in that. With it
+        // remembered, what is nested does not go up to the root each time.
+        if let Some(container) = container {
+            let last = &self.file.lazy.last_assignment_target;
+            last.set(Some((container, answer)));
+        }
+        answer
+    }
+
+    /// `container`: the array or the object that it is in.
+    #[inline(always)]
+    fn is_assignment_target_uncached(self, container: &mut Option<hir::ExprId>) -> bool {
         let mut at = self;
         loop {
+            if container.is_some()
+                && let Some((last, answer)) = self.file.lazy.last_assignment_target.get()
+                && last == at.id
+            {
+                return answer;
+            }
             if at.is_parenthesized() {
                 return false;
             }
@@ -1015,6 +1055,7 @@ impl<'a> Expr<'a> {
                 }
                 _ => return false,
             };
+            container.get_or_insert(at.id);
         }
     }
 
@@ -1192,7 +1233,7 @@ impl File<'_> {
         if self.hir.jsx.is_empty() {
             return false;
         }
-        let Some(&bun_sema::bind::Parent::Prop(prop)) = self.bound.expr_parent.get(id.idx()) else {
+        let bun_sema::bind::Parent::Prop(prop) = self.bound.parent_of_expr(id) else {
             return false;
         };
         let is_attribute =
@@ -1218,8 +1259,7 @@ impl File<'_> {
         {
             return false;
         }
-        let Some(&bun_sema::bind::Parent::Expr(parent)) = self.bound.expr_parent.get(id.idx())
-        else {
+        let bun_sema::bind::Parent::Expr(parent) = self.bound.parent_of_expr(id) else {
             return false;
         };
         let Some(&hir::Expr {
@@ -1506,7 +1546,7 @@ impl<'a> Call<'a> {
     #[inline]
     pub fn type_args(self) -> List<'a, TypeNode<'a>> {
         match self.raw() {
-            Some(call) => List::ids(self.file, call.type_args),
+            Some(call) => List::ids(self.file, self.file.hir.list_at(call.type_args)),
             None => List::empty(self.file),
         }
     }
@@ -1533,7 +1573,10 @@ impl<'a> Call<'a> {
     /// The template of a tagged template.
     #[inline]
     pub fn template(self) -> Option<Expr<'a>> {
-        Expr::some(self.file, self.raw()?.template)
+        Expr::some(
+            self.file,
+            hir::template_in(self.file.hir.tagged_templates, self.id),
+        )
     }
 }
 
@@ -1692,4 +1735,21 @@ impl<'a> Jsx<'a> {
         let jsx = self.raw()?;
         (jsx.close_pos != u32::MAX).then(|| Span::new(jsx.close_pos, jsx.end))
     }
+}
+
+/// [`Expr::jsx_text_value`] for the source text `written`.
+pub(crate) fn jsx_text_value_of(written: &[u8], is_espree: bool) -> std::borrow::Cow<'_, [u8]> {
+    use bun_core::strings;
+    if !is_espree || !strings::contains(written, b"\r\n") {
+        return super::entities::unescape(written, is_espree);
+    }
+    let mut normalized = Vec::with_capacity(written.len());
+    for (at, line) in strings::split(written, b"\r\n").enumerate() {
+        if at > 0 {
+            normalized.push(b'\n');
+        }
+        normalized.extend_from_slice(line);
+    }
+    let value = super::entities::unescape(&normalized, is_espree);
+    value.into_owned().into()
 }

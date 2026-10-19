@@ -102,6 +102,18 @@ pub fn relative(base: &[u8], path: &[u8]) -> Vec<u8> {
     relative_as(Style::of(base), base, path)
 }
 
+/// Escapes `path` for display. A file name can contain a line break or a terminal escape sequence.
+pub fn shown(path: &[u8]) -> Vec<u8> {
+    bun_core::fmt::escape_control_chars(path)
+        .to_string()
+        .into_bytes()
+}
+
+/// [`relative`], escaped by [`shown`].
+pub fn relative_shown(base: &[u8], path: &[u8]) -> Vec<u8> {
+    shown(&relative(base, path))
+}
+
 pub fn relative_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
     // So it is for nearly every file.
     if let Some(rest) = inside_as(style, base, path) {
@@ -309,6 +321,24 @@ pub fn normalize(path: &[u8]) -> Vec<u8> {
         Style::Windows => node::normalize_windows_t(path, &mut buf),
     };
     of_node(style, normalized)
+}
+
+/// The package that `name` belongs to. `name` is a package name or a path to a file inside one, because eslint-config-next
+/// writes `require.resolve("eslint-import-resolver-node")`.
+pub fn package_of(name: &[u8]) -> &[u8] {
+    const FOLDER: &[u8] = b"node_modules";
+    let after =
+        bun_core::strings::last_index_of(name, FOLDER).and_then(|at| name.get(at + FOLDER.len()..));
+    let Some([b'/' | b'\\', inside @ ..]) = after else {
+        return name;
+    };
+    let end_of_part =
+        |from: usize| Some(from + bun_core::strings::index_of_any(inside.get(from..)?, b"/\\")?);
+    let end = match (inside.first(), end_of_part(0)) {
+        (Some(b'@'), Some(scope)) => end_of_part(scope + 1),
+        (_, end) => end,
+    };
+    &inside[..end.unwrap_or(inside.len())]
 }
 
 /// `directory` and the directories that it is in, up to the root.

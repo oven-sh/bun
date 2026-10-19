@@ -1,4 +1,5 @@
 use crate::jest::{self, Ctx, PossibleJestNode, Runner};
+use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Enforce using `toBe(true)` and `toBe(false)` over matchers that coerce types to boolean.
@@ -42,6 +43,17 @@ fn run<'a>(possible_vitest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         return;
     };
     let span = Span::new(matcher.span.start, possible_vitest_node.node.span().end);
+    // `.not.toBe(true)` would pass for everything but `true`.
+    if ctx.runner == Runner::Bun
+        && let Some(not) = vitest_expect_fn_call.modifiers().find(|it| it.is_name_equal("not"))
+    {
+        let (matcher_name, value) = if value == "true" { ("not.toBeTruthy", "false") } else { ("not.toBeFalsy", "true") };
+        let report = ctx.report(span, PREFER_STRICT_BOOLEAN_MATCHERS).data("value", value).data("matcher_name", matcher_name);
+        if strings::trim(ctx.file.slice(not.span.between(matcher.span)), b" \t\r\n") == b"." {
+            ctx.risky_fix(report, USE, not.span.to(span), format!("toBe({value})"));
+        }
+        return;
+    }
     let report = ctx.report(span, PREFER_STRICT_BOOLEAN_MATCHERS).data("value", value).data("matcher_name", matcher_name);
     let call_name = if parent.tag() == ExprTag::Index { "\"toBe\"]" } else { "toBe" };
     ctx.risky_fix(report, USE, span, format!("{call_name}({value})"));

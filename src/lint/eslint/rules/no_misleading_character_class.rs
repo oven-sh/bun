@@ -1,6 +1,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, ast::NodeType};
+use bun_lint::types::IdSet;
 use bun_lint::utils::char_source::{CharInfo, parse_string_literal, parse_template_token};
 use bun_lint::utils::eslint_utils::{
     ReferenceTracker, StaticValue, TraceMap, get_static_value, get_string_if_constant,
@@ -9,7 +10,6 @@ use bun_lint::utils::regular_expressions::{UnicodeFlag, is_valid_with_unicode_fl
 use bun_lint::utils::unicode::{
     is_combining_character, is_emoji_modifier, is_regional_indicator_symbol, is_surrogate_pair,
 };
-use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -317,7 +317,10 @@ impl NoMisleadingCharacterClass {
             };
             // Two kinds start together only at an escape that is two code units, and the kind that is about that alone is the
             // first of `KINDS`: the shorter first.
-            let report = cx.report(span, message).shorter_first();
+            let report = cx
+                .report(span, message)
+                .shorter_first()
+                .hint("What looks like one character is several, and the class matches each of them alone.");
             if kind == SURROGATE_PAIR_WITHOUT_U_FLAG {
                 report.suggest(SUGGEST_UNICODE_FLAG, &unicode_fixer);
             }
@@ -343,7 +346,8 @@ impl NoMisleadingCharacterClass {
 impl Rule for NoMisleadingCharacterClass {
     const META: Meta = Meta::eslint("no-misleading-character-class", Kind::Problem)
         .has_suggestions()
-        .recommended();
+        .recommended()
+        .hints();
     const ON: On = On::new().exprs(&[ExprTag::Regex]).finish();
     /// The regular expression literals in which something can be found.
     type State<'a> = Vec<Expr<'a>>;
@@ -372,7 +376,7 @@ impl Rule for NoMisleadingCharacterClass {
         let is_valid_with_u = |pattern: &[u8]| is_valid_with_unicode_flag(ecma_version, pattern, UnicodeFlag::U);
 
         // The literals whose flags are replaced by those given to `RegExp`.
-        let mut checked_pattern_nodes: FxHashSet<Expr<'a>> = FxHashSet::default();
+        let mut checked_pattern_nodes: IdSet<Expr<'a>> = IdSet::new();
         for reference in references {
             let (Some(ref_node), Some(call)) = (reference.expr(), reference.call()) else {
                 continue;
@@ -440,7 +444,7 @@ impl Rule for NoMisleadingCharacterClass {
 
         for e in std::mem::take(&mut cx.state) {
             if let Some(literal) = e.as_regex()
-                && !checked_pattern_nodes.contains(&e)
+                && !checked_pattern_nodes.contains(e)
             {
                 let is_valid = OnceCell::new();
                 let unicode_fixer = |fixer: Fixer<'a>| {

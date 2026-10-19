@@ -73,23 +73,24 @@ enum FuncNode<'a> {
 
 /// Whether the type of `node` can have call signatures at all.
 fn may_be_function(node: Expr) -> bool {
-    !matches!(
-        node.tag(),
-        ExprTag::Missing
-            | ExprTag::Spread
-            | ExprTag::Null
-            | ExprTag::True
-            | ExprTag::False
-            | ExprTag::Number
-            | ExprTag::String
-            | ExprTag::BigInt
-            | ExprTag::Regex
-            | ExprTag::Template
-            | ExprTag::Array
-            | ExprTag::Object
-            | ExprTag::Class
-            | ExprTag::Unary
-    )
+    node.has_jsdoc_cast()
+        || !matches!(
+            node.tag(),
+            ExprTag::Missing
+                | ExprTag::Spread
+                | ExprTag::Null
+                | ExprTag::True
+                | ExprTag::False
+                | ExprTag::Number
+                | ExprTag::String
+                | ExprTag::BigInt
+                | ExprTag::Regex
+                | ExprTag::Template
+                | ExprTag::Array
+                | ExprTag::Object
+                | ExprTag::Class
+                | ExprTag::Unary
+        )
 }
 
 fn is_void(ty: Type) -> bool {
@@ -107,13 +108,21 @@ fn is_nullish_or_any(ty: Type) -> bool {
 }
 
 fn is_void_returning_function_type(ty: Type) -> bool {
+    let returns_void = |signature: Signature| {
+        tsutils::union_constituents(signature.get_return_type())
+            .iter()
+            .all(is_void)
+    };
+    // tsgolint asks each constituent of a union for its signatures: an intersection has those of all its constituents.
+    if ty.file().language().is_oxlint {
+        let mut signatures = tsutils::union_constituents(ty)
+            .iter()
+            .flat_map(|type_part| type_part.get_call_signatures())
+            .peekable();
+        return signatures.peek().is_some() && signatures.all(returns_void);
+    }
     let signatures = tsutils::get_call_signatures_of_type(ty);
-    !signatures.is_empty()
-        && signatures.iter().all(|signature| {
-            tsutils::union_constituents(signature.get_return_type())
-                .iter()
-                .all(is_void)
-        })
+    !signatures.is_empty() && signatures.iter().all(|it| returns_void(*it))
 }
 
 /// Whether the contextual type of `node` is that of a void function.
@@ -237,7 +246,7 @@ impl StrictVoidReturn {
                     true => ty.get_construct_signatures(),
                     false => ty.get_call_signatures(),
                 };
-                tsutils::union_constituents(call.callee().ty())
+                tsutils::union_constituents(call.callee().ts_node_with_parentheses().get_type_at_location())
                     .iter()
                     .flat_map(signatures_of)
                     .collect()
@@ -285,7 +294,8 @@ impl StrictVoidReturn {
                 };
                 if self.returns_a_value(FuncNode::Method(func))
                     && let Some(prop_symbol) = object
-                        .contextual_type()
+                        .ts_node()
+                        .get_contextual_type()
                         .and_then(|it| it.get_property(name.bytes()))
                     && is_void_returning_function_type(prop_symbol.get_type_at_location(prop_node))
                 {
@@ -308,13 +318,17 @@ impl StrictVoidReturn {
         if member.is_signature() || member.flags().contains(Flags::ABSTRACT) {
             return;
         }
+        let is_oxlint = cx.language().is_oxlint;
         let func_node = match member.kind() {
-            MemberKind::Property if !member.flags().contains(Flags::ACCESSOR) => {
+            // For tsgolint an auto-accessor is a `PropertyDeclaration`.
+            MemberKind::Property if is_oxlint || !member.flags().contains(Flags::ACCESSOR) => {
                 match member.init() {
                     Some(value) if may_be_function(value) => FuncNode::Expr(value),
                     _ => return,
                 }
             }
+            // tsgolint listens to no accessor.
+            MemberKind::Getter | MemberKind::Setter if is_oxlint => return,
             MemberKind::Method | MemberKind::Getter | MemberKind::Setter => match member.func() {
                 Some(func) if func.has_body() => FuncNode::Method(func),
                 _ => return,
@@ -342,6 +356,11 @@ impl StrictVoidReturn {
         let func = match func_node {
             FuncNode::Method(func) => func,
             FuncNode::Expr(e) => match e.kind() {
+                // For tsgolint what is in parentheses is a `ParenthesizedExpression`, not a function, and is reported whole.
+                _ if cx.language().is_oxlint && e.is_parenthesized() => {
+                    cx.report(e.outer_span(), NON_VOID_FUNC);
+                    return;
+                }
                 ExprKind::Fn(func) => func,
                 _ => {
                     cx.report(e, NON_VOID_FUNC);
@@ -398,7 +417,13 @@ impl StrictVoidReturn {
 
         for statement in func.returns() {
             if let StmtKind::Return(Some(argument)) = statement.kind()
-                && !self.is_allowed_return_type(argument.ty())
+                && !match cx.language().is_oxlint {
+                    // tsgolint asks each constituent of a union.
+                    true => tsutils::union_constituents(argument.ty())
+                        .iter()
+                        .all(|ty| self.is_allowed_return_type(ty)),
+                    false => self.is_allowed_return_type(argument.ty()),
+                }
             {
                 // oxlint points at the statement.
                 let Span { start, end } = statement.span();
@@ -450,8 +475,10 @@ impl Rule for StrictVoidReturn {
             }
             ExprKind::Assign { value, .. } => {
                 // A default value is in an `AssignmentPattern`.
+                // For tsgolint only the default of a shorthand property is not a `BinaryExpression`.
+                let is_oxlint = cx.language().is_oxlint;
                 let is_assignment_pattern = || {
-                    node.is_assignment_target()
+                    !is_oxlint && node.is_assignment_target()
                         || matches!(node.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand)
                 };
                 if self.is_candidate(value)

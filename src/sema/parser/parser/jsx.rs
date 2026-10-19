@@ -1,6 +1,6 @@
 //! JSX.
 
-use super::{ListKind, Parser, take_span};
+use super::{ListKind, Parser, oxc, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_core::lexer::{
@@ -23,7 +23,7 @@ fn text_between(src: &[u8], (start, end): (u32, u32)) -> &[u8] {
     src.get(start as usize..end as usize).unwrap_or_default()
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// What `parseUpdateExpression` does at a `<`.
     pub(crate) fn jsx_element_or_fragment(&mut self) -> ExprId {
         if self.recovers() && !self.is_at_jsx_element() {
@@ -153,7 +153,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let from = self.full_start();
         let before = self.token();
         // What was read as a comment is text.
-        let kept = self.lx.comments.partition_point(|it| it.0 < from);
+        let kept = self.lx.comments.partition_point(|it| it.pos < from);
         self.lx.comments.truncate(kept);
         self.lx.end = from;
         self.lx.next_jsx_child();
@@ -466,7 +466,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[cold]
     #[inline(never)]
     fn unusual_jsx_identifier(&mut self) {
-        if !self.recovers() {
+        // For oxc the name is the text as it's written: `<X\u0065 />` doesn't refer to `Xe`. It rejects an escape in a keyword.
+        let is_escaped_keyword = self.lx.has_escape && self.token() != T::Identifier;
+        let is_as_written = self.options.dialect.oxc && !is_escaped_keyword;
+        if !self.recovers() && !(is_as_written && self.lx.has_escape) {
             return self.report();
         }
         let src = self.lx.src;
@@ -482,9 +485,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let mut text = self.lx.text_of(self.lx.atom).to_vec();
         let mut end = from;
+        // Once oxc's lexer is past a `-`, an escape ends the name.
+        let mut is_past_dash = false;
         loop {
             let (c, len) = match src.get(end) {
-                Some(b'-') => (i32::from(b'-'), 1),
+                Some(b'-') => {
+                    is_past_dash = true;
+                    (i32::from(b'-'), 1)
+                }
+                Some(b'\\') if is_as_written && is_past_dash => break,
                 Some(b'\\') => match peek_unicode_escape(src, end) {
                     Some(escaped) if is_type_script_identifier_part(escaped.0) => {
                         self.lx.has_escape = true;
@@ -504,12 +513,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
             end += len;
         }
-        if end > from {
+        if is_as_written {
+            let written = (self.lx.start as usize)..end;
+            text = src.get(written).unwrap_or_default().to_vec();
+        }
+        if end > from || is_as_written {
             self.lx.atom = self.atom(&text);
             self.lx.end = end as u32;
         }
         self.lx.token = T::Identifier;
-        if self.lx.has_escape {
+        if self.lx.has_escape && !is_as_written {
             self.error_at_token(17021, &[]);
         }
     }
@@ -537,6 +550,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// namespace, its start and whether it is anything but an identifier.
     #[inline(never)]
     fn jsx_name(&mut self) -> (Atom, u32, bool) {
+        let name = self.jsx_name_without_comments();
+        // The two names of `a:b` are finished one by one, so that a comment next to the `:` is between two names and not in one.
+        if !self.has_finished_name_that_ends_at(self.prev_end()) {
+            self.finish_name(name.1, self.prev_end());
+        }
+        name
+    }
+
+    #[inline(always)]
+    fn jsx_name_without_comments(&mut self) -> (Atom, u32, bool) {
         let end = self.lx.end;
         self.scan_jsx_identifier();
         if self.token() != T::Identifier {
@@ -570,13 +593,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(always)]
     fn rest_of_jsx_name(&mut self, mut name: Atom, start: u32) -> (Atom, u32, bool) {
         if self.token() == T::Colon {
+            self.finish_name(start, self.prev_end());
             self.next();
             self.scan_jsx_identifier();
             if self.token() != T::Identifier {
                 return self.jsx_name_without_local_name(name, start);
             }
             name = self.jsx_namespaced_name(name, self.lx.atom);
+            let local_start = self.pos();
             self.next();
+            self.finish_name(local_start, self.prev_end());
         }
         let is_plain = bun_core::strings::index_of_any(self.lx.text_of(name), b"-:").is_none();
         (name, start, !is_plain)
@@ -607,6 +633,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             true if name == known::empty => {
                 self.add_expr(ExprKind::Missing, start, self.full_start())
             }
+            // oxc takes `a-b.c`.
+            true if self.token() == T::Dot
+                && self.options.dialect.oxc
+                && !bun_core::strings::contains_char(self.lx.text_of(name), b':') =>
+            {
+                self.finish_expr(ExprKind::Ident(name), start)
+            }
             true => return self.finish_expr(ExprKind::String(name), start),
             false if name == known::this => self.finish_expr(ExprKind::This, start),
             false => self.finish_expr(ExprKind::Ident(name), start),
@@ -617,15 +650,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         while self.eat(T::Dot) {
             let (name, name_pos) = match self.recovers() {
                 true => self.jsx_member_name(),
-                false => self.identifier_name(),
+                false => {
+                    if self.lx.has_escape && !self.options.dialect.oxc {
+                        self.report();
+                    }
+                    self.identifier_name()
+                }
             };
-            let kind = ExprKind::Dot {
-                obj: expression,
-                name,
-                name_pos,
-                chain: Chain::No,
-            };
-            expression = self.finish_expr(kind, start);
+            expression = self.finish_dot((expression, Chain::No), (name, name_pos), start);
         }
         expression
     }
@@ -653,8 +685,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             let at = self.full_start();
             return (self.missing_identifier(0, 0).0, at);
         }
-        if self.lx.has_escape {
+        if self.lx.has_escape && !self.options.dialect.oxc {
             self.error_at_token(17021, &[]);
+        }
+        if self.is_before(b"-") && self.is_for_oxc() {
+            self.scan_jsx_identifier();
+            let at = (self.lx.start, self.lx.end);
+            oxc::hyphen_in_jsx_member_name(&mut self.f.diagnostics, at);
         }
         let name = (self.lx.atom, self.pos());
         self.next();
@@ -727,6 +764,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             let end = self.prev_end();
             if let Some(open) = braces {
+                self.finish_jsx_expression_container(value, open, end);
                 self.f.jsx_expressions.push((value, open, end));
             }
             self.s.props.push(Prop {
@@ -781,7 +819,41 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.refuse(Refusal::Reported);
             return ExprId::NONE;
         }
+        if self.is_for_oxc() {
+            let braces = (open, self.lx.end);
+            oxc::empty_jsx_attribute_value(&mut self.f.diagnostics, braces);
+        }
         self.add_expr(ExprKind::Missing, open, open)
+    }
+
+    /// Call at the `}` of `{expression}`, which starts at `open` and ends at `end`.
+    #[inline(always)]
+    fn finish_jsx_expression_container(&mut self, expression: ExprId, open: u32, end: u32) {
+        if COMMENTS && open <= self.lx.max_relevant_node_start {
+            self.finish_jsx_expression_container_near_comment(expression, open, end);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn finish_jsx_expression_container_near_comment(
+        &mut self,
+        expression: ExprId,
+        open: u32,
+        end: u32,
+    ) {
+        let node = NodeData::Expr(expression);
+        match self.f.exprs.get(expression.idx()).map(|e| e.kind) {
+            // `{/* comment */}`: the `JSXEmptyExpression` of ESTree is everything between the braces. Here it is a missing
+            // expression without a width, so a comment would not be inside it.
+            Some(ExprKind::Missing) => self.finish_node(node, open + 1, end.saturating_sub(1)),
+            // `{...a /* comment */}`: the `JSXSpreadChild` of ESTree includes the braces.
+            Some(ExprKind::Spread(_)) => {
+                self.unfinish_node(node);
+                self.finish_node(node, open, end);
+            }
+            _ => {}
+        }
     }
 
     /// The expression between braces. `parseJsxExpression` stays in the context of the element.
@@ -809,6 +881,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.unclosed_jsx_expression_child(expression, open);
             return expression;
         }
+        self.finish_jsx_expression_container(expression, open, self.lx.end);
         self.f.jsx_expressions.push((expression, open, self.lx.end));
         self.lx.next_jsx_child();
         expression

@@ -76,8 +76,12 @@
 //!   pattern. Here the annotation comes after the pattern and the decorators before it. A name in
 //!   a type is what may throw first in a `try` block as far as ESLint knows, so in
 //!   `try { let a: T = b; }` the segment changes before ESLint leaves the `a`, and here after.
+//!
+//! JavaScript plugins need the exact ESTree node and position of every event. [`estree`] drives the
+//! same graph builder from the ESTree numbering for them.
 
 mod analyzer;
+pub(crate) mod estree;
 mod matters;
 mod reach;
 mod state;
@@ -501,6 +505,12 @@ impl PartialEq for Segment<'_> {
     }
 }
 impl Eq for Segment<'_> {}
+impl crate::types::Indexed for Segment<'_> {
+    #[inline]
+    fn index(self) -> u32 {
+        self.id
+    }
+}
 impl std::hash::Hash for Segment<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

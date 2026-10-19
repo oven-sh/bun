@@ -1,8 +1,8 @@
-use bun_lint_oxlint::ast_util::is_method_call;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashMap;
+use bun_lint_oxlint::ast_util::is_method_call;
 
 /// Disallow useless `undefined`.
 pub struct NoUselessUndefined {
@@ -17,11 +17,12 @@ pub struct State<'a> {
     /// Whether the function around something has a return type.
     return_types: AncestorMemo<'a, bool>,
     /// Where the first optional parameter of a function with many parameters starts.
-    first_optional_parameters: FxHashMap<Func<'a>, Option<u32>>,
+    first_optional_parameters: IdMap<Func<'a>, Option<u32>>,
 }
 
 impl Rule for NoUselessUndefined {
-    const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-useless-undefined", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-useless-undefined", Kind::Suggestion)
+        .fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Ident]);
     type State<'a> = State<'a>;
 
@@ -37,7 +38,7 @@ impl Rule for NoUselessUndefined {
         Some(State {
             undefined: file.find_name("undefined")?,
             return_types: AncestorMemo::default(),
-            first_optional_parameters: FxHashMap::default(),
+            first_optional_parameters: IdMap::new(),
         })
     }
 
@@ -53,65 +54,114 @@ impl NoUselessUndefined {
         let state = &mut cx.state;
         let end = undefined_literal.span().end;
         let is_it = |e: Option<Expr<'a>>| e == Some(undefined_literal);
-        // What is replaced, and by what.
-        let (replaced, replacement) = match undefined_literal.parent() {
+        // In TypeScript, a function that ends in `return;` returns `void`, not `undefined`, and `let a;` has no type.
+        let is_untyped = undefined_literal.file().is_javascript();
+        // The span to replace, the replacement, and whether the program still behaves the same and type checks
+        // afterwards.
+        let (replaced, replacement, is_safe) = match undefined_literal.parent() {
             // `return undefined`
-            Node::Stmt(ret_stmt) if ret_stmt.tag() == StmtTag::Return => (Replaced::AfterReturn(ret_stmt), ""),
+            Node::Stmt(ret_stmt) if ret_stmt.tag() == StmtTag::Return => {
+                (Replaced::AfterReturn(ret_stmt), "", is_untyped)
+            }
             // `yield undefined`
-            Node::Expr(yield_expr) if matches!(yield_expr.kind(), ExprKind::Yield { star: false, .. }) => {
-                (Replaced::Span(yield_expr.span()), "yield")
+            Node::Expr(yield_expr)
+                if matches!(yield_expr.kind(), ExprKind::Yield { star: false, .. }) =>
+            {
+                (Replaced::Span(yield_expr.span()), "yield", true)
             }
             // `foo(undefined)`
             Node::Expr(call) if self.check_arguments && call.tag() == ExprTag::Call => {
                 return check_call(call, undefined_literal, cx);
             }
             // `() => undefined`
-            Node::Func(arrow) if self.check_arrow_function_body && matches!(arrow.body(), FnBody::Expr(_)) => {
-                (Replaced::Span(undefined_literal.outer_span()), "{}")
+            Node::Func(arrow)
+                if self.check_arrow_function_body && matches!(arrow.body(), FnBody::Expr(_)) =>
+            {
+                (
+                    Replaced::Span(undefined_literal.outer_span()),
+                    "{}",
+                    is_untyped,
+                )
             }
             // `let foo = undefined` / `var foo = undefined`
-            Node::VarDecl(declarator) if is_it(declarator.init()) && declarator.var_kind() != VarKind::Const => {
-                (Replaced::Span(Span::new(declarator.pat().span().end, end)), "")
+            Node::VarDecl(declarator)
+                if is_it(declarator.init()) && declarator.var_kind() != VarKind::Const =>
+            {
+                // A `var` without an initializer keeps its value from the previous loop iteration.
+                (
+                    Replaced::Span(Span::new(declarator.pat().span().end, end)),
+                    "",
+                    is_untyped && declarator.var_kind() == VarKind::Let,
+                )
             }
             // `const {foo = undefined} = {}`
-            Node::PatProp(property) if is_it(property.default()) => (Replaced::Span(Span::new(property.value().span().end, end)), ""),
+            Node::PatProp(property) if is_it(property.default()) => (
+                Replaced::Span(Span::new(property.value().span().end, end)),
+                "",
+                true,
+            ),
             Node::PatElem(element) if is_it(element.default()) => match element.pat() {
-                Some(left) => (Replaced::Span(Span::new(left.span().end, end)), ""),
+                Some(left) => (Replaced::Span(Span::new(left.span().end, end)), "", true),
                 None => return,
             },
             // `function foo(bar = undefined) {}`
-            Node::Param(parameter) if is_it(parameter.default()) && !undefined_literal.is_parenthesized() => {
+            Node::Param(parameter)
+                if is_it(parameter.default()) && !undefined_literal.is_parenthesized() =>
+            {
                 // Without the default it is required, which it cannot be after an optional parameter.
                 let Some(func) = parameter.func() else {
                     return;
                 };
-                let first_optional = || func.params().iter().find(|it| !it.is_rest() && it.is_optional()).map(|it| it.span().start);
+                let first_optional = || {
+                    func.params()
+                        .iter()
+                        .find(|it| !it.is_rest() && it.is_optional())
+                        .map(|it| it.span().start)
+                };
                 let first_optional = match func.params().len() {
                     0..=8 => first_optional(),
-                    _ => *state.first_optional_parameters.entry(func).or_insert_with(first_optional),
+                    _ => *state
+                        .first_optional_parameters
+                        .get_or_insert_with(func, first_optional),
                 };
                 if first_optional.is_some_and(|it| it < parameter.span().start) {
                     return;
                 }
-                let left = parameter.ty().map_or_else(|| parameter.pat().span().end, |it| it.annotation_span().end);
-                (Replaced::Span(Span::new(left, end)), "")
+                let left = parameter
+                    .ty()
+                    .map_or_else(|| parameter.pat().span().end, |it| it.annotation_span().end);
+                // A function's `length` counts the parameters before the first default, so removing a default can
+                // change it.
+                (Replaced::Span(Span::new(left, end)), "", false)
             }
             _ => return,
         };
         let is_yield = replacement == "yield";
-        if !is_yield && state.return_types.find(Node::Expr(undefined_literal), has_function_return_type) == Some(true) {
+        if !is_yield
+            && state
+                .return_types
+                .find(Node::Expr(undefined_literal), has_function_return_type)
+                == Some(true)
+        {
             return;
         }
-        cx.report(undefined_literal, NO_USELESS_UNDEFINED).fix(|fixer| {
-            let span = match replaced {
-                Replaced::Span(span) => span,
-                Replaced::AfterReturn(ret_stmt) => {
-                    let start = fixer.file().comments_in(ret_stmt).next_back().map_or_else(|| ret_stmt.span().start + 6, |it| it.end());
-                    Span::new(start, end)
-                }
-            };
-            (span.start <= span.end).then(|| fixer.replace(span, replacement))
-        });
+        cx.report(undefined_literal, NO_USELESS_UNDEFINED)
+            .fix_where_safe(|| is_safe, |fixer| {
+                let span = match replaced {
+                    Replaced::Span(span) => span,
+                    Replaced::AfterReturn(ret_stmt) => {
+                        let start = fixer
+                            .file()
+                            .comments_in(ret_stmt)
+                            .next_back()
+                            .map_or_else(|| ret_stmt.span().start + 6, |it| it.end());
+                        Span::new(start, end)
+                    }
+                };
+                (span.start <= span.end)
+                    .then(|| fixer.replace(span, replacement))
+                    .filter(|it| fixer.keeps_comments(it))
+            });
     }
 }
 
@@ -126,7 +176,13 @@ fn has_function_return_type<'a>(_: Node<'a>, parent: Node<'a>) -> Option<bool> {
     let func = parent.as_func()?;
     matches!(
         func.kind(),
-        FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor
+        FnKind::Decl
+            | FnKind::Expr
+            | FnKind::Arrow
+            | FnKind::Method
+            | FnKind::Getter
+            | FnKind::Setter
+            | FnKind::Constructor
     )
     .then(|| func.return_type().is_some())
 }
@@ -183,25 +239,49 @@ fn check_call<'a>(e: Expr<'a>, undefined_literal: Expr<'a>, cx: &Cx<'a, NoUseles
     if arguments.last() != Some(undefined_literal) {
         return;
     }
-    let undefined_count = arguments.iter().rev().take_while(|it| it.as_ident() == Some(undefined) && !it.is_parenthesized()).count();
+    let undefined_count = arguments
+        .iter()
+        .rev()
+        .take_while(|it| it.as_ident() == Some(undefined) && !it.is_parenthesized())
+        .count();
     if undefined_count == 0 || should_ignore(call_expr.callee()) {
         return;
     }
     // The arguments of `Function#bind()` are not looked at, but for `this`.
-    if arguments.len() != 1 && !call_expr.is_optional() && is_method_call(call_expr, None, Some(&["bind"]), None, None) {
+    if arguments.len() != 1
+        && !call_expr.is_optional()
+        && is_method_call(call_expr, None, Some(&["bind"]), None, None)
+    {
         return;
     }
     let remaining_count = arguments.len() - undefined_count;
-    let (Some(first_undefined), Some(last_undefined)) = (arguments.get(remaining_count), arguments.last()) else {
+    let (Some(first_undefined), Some(last_undefined)) =
+        (arguments.get(remaining_count), arguments.last())
+    else {
         return;
     };
-    let report = cx.report(first_undefined, NO_USELESS_UNDEFINED);
-    let report = arguments.iter().skip(remaining_count + 1).fold(report, |report, it| report.label(it, ""));
-    report.fix(|fixer| {
-        fixer.remove(match remaining_count.checked_sub(1).and_then(|it| arguments.get(it)) {
-            Some(previous_argument) => Span::new(previous_argument.outer_span().end, last_undefined.span().end),
-            // With the comma at the end.
-            None => Span::new(first_undefined.span().start, e.span().end.saturating_sub(1)),
-        })
+    // oxlint's rule is called with the call.
+    let report = cx
+        .report(first_undefined, NO_USELESS_UNDEFINED)
+        .called_with(e);
+    let report = arguments
+        .iter()
+        .skip(remaining_count + 1)
+        .fold(report, |report, it| report.label(it, ""));
+    // `String(undefined)` isn't `String()`, and a function can check `arguments.length`.
+    report.fix_dangerously(|fixer| {
+        fixer.remove(
+            match remaining_count
+                .checked_sub(1)
+                .and_then(|it| arguments.get(it))
+            {
+                Some(previous_argument) => Span::new(
+                    previous_argument.outer_span().end,
+                    last_undefined.span().end,
+                ),
+                // With the comma at the end.
+                None => Span::new(first_undefined.span().start, e.span().end.saturating_sub(1)),
+            },
+        )
     });
 }

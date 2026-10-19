@@ -1,5 +1,5 @@
 //! Where micromark, which Prettier parses Markdown with, does not do what
-//! CommonMark says, and what `bun format` prints for real documents depends on
+//! CommonMark says, and what `bun fmt` prints for real documents depends on
 //! it. Each is behind `Options::micromark`, which only the formatter sets, or
 //! behind `Options::micromark_to_the_letter`: what oxfmt's parser, which follows
 //! micromark, leaves out on purpose. And
@@ -142,12 +142,17 @@ pub(crate) fn text_goes_on_in_an_empty_item(flags: &Flags) -> bool {
     flags.mdx
 }
 
-/// remark-parse 8: `*` starts and ends emphasis whatever is next to it.
+/// remark-parse 8: `*` starts emphasis whatever is before it, and ends it
+/// whatever is behind it.
 ///
 /// ```markdown
-/// **a **b, /* c */
+/// a**.** b
 /// ```
-pub(crate) fn asterisks_do_not_look_around(flags: &Flags) -> bool {
+///
+/// To remark-parse 8 the other side does not matter either, so `a * b * c` has
+/// emphasis in it. To every later parser of MDX those are two stars, so they are
+/// here.
+pub(crate) fn asterisks_only_look_for_whitespace(flags: &Flags) -> bool {
     flags.mdx
 }
 

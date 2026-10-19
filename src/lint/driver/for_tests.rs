@@ -5,7 +5,7 @@
 use crate::Linter;
 use crate::cli::Options;
 use crate::embedded::Framework;
-use crate::lint::Context;
+use crate::lint::{Context, Fixes};
 use crate::paths::{self, Style};
 use crate::run::{Environment, Pool, Timing};
 use crate::typed::{self, Typed};
@@ -34,6 +34,7 @@ impl Host for Tester<'_> {
         self.linter.registry()
     }
 
+    #[optimize(size)]
     fn lint(&self, case: &Case<'_>) -> Option<Vec<LintMessage>> {
         // Nothing here hands out the file before it is linted.
         if case.prepare.is_some() {
@@ -45,7 +46,7 @@ impl Host for Tester<'_> {
             Place::Program(tsconfig) => crate::paths::dirname(tsconfig),
         };
         let options = Options {
-            project: match case.place {
+            tsconfig: match case.place {
                 Place::Program(tsconfig) => Some(tsconfig.to_vec()),
                 _ => None,
             },
@@ -67,6 +68,7 @@ impl Host for Tester<'_> {
             linter: &self.linter,
             options: &options,
             cwd: directory,
+            only: None,
             of_oxlint: None,
             checks_types: false,
             keeps_text: true,
@@ -84,14 +86,23 @@ impl Host for Tester<'_> {
             memory: &names,
             skipped_in_comments: &bun_threading::Guarded::new(Vec::new()),
             out_of_stack: &bun_threading::Guarded::new(Vec::new()),
+            without_include: &bun_threading::Guarded::new(Vec::new()),
             broken_fixes: &bun_threading::Guarded::new(Vec::new()),
             handed_back: &bun_threading::Guarded::new(Vec::new()),
             unread: &bun_threading::Guarded::new(Vec::new()),
+            needs_eslint: &bun_threading::Guarded::new(Vec::new()),
             invalid_tsconfigs: &bun_threading::Guarded::new(Default::default()),
         };
         let config = Arc::new(case.config.clone());
         match case.place {
             Place::Nowhere => Some(match Framework::of(case.path) {
+                _ if let Some(dialect) = &config.dialect => {
+                    let of_the_file = (&*config, dialect);
+                    let fixes = Fixes::default();
+                    let linted =
+                        context.verify_in_language(case.path, None, case.code, of_the_file, fixes);
+                    linted.messages
+                }
                 Some(framework) if config.language.is_oxlint => {
                     let linted = context.verify_scripts(framework, case.path, case.code, &config);
                     linted.messages
@@ -145,7 +156,10 @@ fn registry() -> Registry {
         bun_lint_unicorn::RULES,
         bun_lint_react::RULES,
         bun_lint_jest::RULES,
+        bun_lint_json::RULES,
+        bun_lint_markdown::RULES,
     ])
+    .with_languages(crate::rules::LANGUAGES)
 }
 
 fn object(entries: Vec<(&[u8], Json)>) -> Json {
@@ -178,6 +192,7 @@ fn configuration_case(registry: &Registry, case: &Json) -> Json {
                 rules: None,
                 plugins_from: None,
                 cascade: 1,
+                named: &[],
             },
             &mut [LegacyFile {
                 path: paths::join(base_path, b".eslintrc.json"),
@@ -232,6 +247,7 @@ fn configuration_case(registry: &Registry, case: &Json) -> Json {
 }
 
 /// The file at `file` has a list of what [`configuration_case`] is given. Returns the list of what it answers.
+#[optimize(size)]
 fn configuration_cases(file: &[u8]) -> Option<Vec<u8>> {
     let cases = bun_lint::json::parse(&crate::fs::read(file).ok()?)?;
     let registry = registry();
@@ -245,6 +261,7 @@ fn configuration_cases(file: &[u8]) -> Option<Vec<u8>> {
 
 /// `bun lint --run-path-tests <posix | windows> (<function> <a> <b>)..`, or `configurations <file>`: `args` is what follows the
 /// flag. Returns what the functions answer, a line each: the paths of Windows are tested on every system. `None`: no such function.
+#[optimize(size)]
 pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
     let (style, mut rest) = match args {
         [b"posix", rest @ ..] => (Style::Posix, rest),
@@ -273,8 +290,20 @@ pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// `bun lint --print-markdown-trees <cases>`: `args` is what follows the flag. Returns the tree that `bun lint` parses
+/// each case into.
+#[optimize(size)]
+pub fn print_markdown_trees(args: &[&[u8]]) -> Option<Vec<u8>> {
+    let &[cases] = args else {
+        return None;
+    };
+    let cases = bun_lint_conformance::read_file(cases)?;
+    Some(bun_lint_markdown::for_tests::trees(&cases))
+}
+
 /// `bun lint --run-eslint-tests <bundle> ..`: `args` is what follows the flag. Prints the cases that
 /// fail and the totals. Returns whether the tests could be run.
+#[optimize(size)]
 pub fn run_eslint_tests(args: &[&[u8]], environment: &Environment) -> bool {
     bun_lint_conformance::run_from_command_line(
         args,

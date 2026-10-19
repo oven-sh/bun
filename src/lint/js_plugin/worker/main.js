@@ -1,19 +1,41 @@
-// ───────────── the program ─────────────
+// Portions of this file are copied from ESLint, which is under the MIT License:
 //
-// It is the body of a function of `require`, `load`, which is `import()`, and of what it asks the other side with:
-// - `request(kind, details, buffer)` asks for something, writes the answer into `buffer` and returns its length. If that
-//   is more than fits, nothing is written.
-// - `again(buffer)` then writes it into a larger one.
-// - `decode(buffer, start, end)` is the text that these bytes of `buffer` are in UTF-8.
+// Copyright OpenJS Foundation and other contributors, <www.openjsf.org>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+// ------------- the program -------------
+//
+// It is the body of a function of `require`, of `load`, which is `import()`, and of `native`: the functions of
+// src/jsc/bindings/Lint*.cpp. With `native.askText(kind, details, start, end)` and `native.askWords(kind, details, count)` it asks the
+// other side for something and reads the answer where it is.
 //
 // It returns `handle`, which the other side calls. See `wire.rs` for what is said. All of it is synchronous but for loading
 // a plugin.
 
-const { pathToFileURL } = require("node:url");
+// The program is ASCII, so that it's parsed as one byte per character. It loads no module that it may not need: each costs millions
+// of instructions in every realm.
+const { pathToFileURL } = Bun;
 const nodeModule = require("node:module");
 const { createRequire } = nodeModule;
 const nodePath = require("node:path");
-const { statSync } = require("node:fs");
+const { realpathSync } = require("node:fs");
 
 // Rules ask which modules are built in, to tell them from packages. They mean Node.js, where `undici` and `ws` are packages. The
 // same is in `evaluate-start.js`.
@@ -22,6 +44,42 @@ const { statSync } = require("node:fs");
   const { isBuiltin } = nodeModule;
   nodeModule.builtinModules = nodeModule.builtinModules.filter(name => !isOfBun(name));
   nodeModule.isBuiltin = name => !isOfBun(name) && isBuiltin(name);
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+// What a plugin has thrown, as text. To read it runs code of the plugin, which can throw again.
+function messageOf(error, read = it => it?.message ?? it) {
+  try {
+    return String(read(error));
+  } catch (second) {
+    try {
+      return String(second?.message ?? second);
+    } catch {
+      return "An exception was thrown.";
+    }
+  }
+}
+
+// oxlint's `getErrorMessage`, without the stack frames: V8's `error.stack` starts with `String(error)`.
+function saidByOxlint(error) {
+  try {
+    if (error instanceof Error) return Error.prototype.toString.call(error);
+  } catch {}
+  return "Unknown error";
+}
+
+// ESLint's `createRuleListeners` catches what `create` throws and puts the rule into its message: the other side does that where
+// the line is "create". `ex.message = ..` throws itself if `ex` is no object, and these are V8's words for it.
+function thrownInCreate(error) {
+  if (error === undefined || error === null)
+    return [null, `Cannot read properties of ${error} (reading 'message')`, null];
+  if (typeof error !== "object" && typeof error !== "function") {
+    return [null, `Cannot create property 'message' on ${typeof error} '${String(error)}'`, null];
+  }
+  return [currentRule.position, messageOf(error, it => `${it.message}`), "create"];
 }
 
 const LOAD = 1;
@@ -39,35 +97,28 @@ const START = 1;
 const SETTINGS = 2;
 const CONFIGURED = 3;
 const SELECTORS = 4;
-const AST = 5;
-const MATCHES = 6;
-const TOKENS = 7;
-const COMMENTS = 8;
-const SCOPES = 9;
 const LOADED = 10;
-
-// By what was asked for: the last answer, which the next one overwrites.
-const buffers = [];
-
-// Asks for something. The answer is in `buffers[kind]`. Returns its length.
-function ask(kind, details = "") {
-  const buffer = (buffers[kind] ??= new ArrayBuffer(1 << 16));
-  const length = request(kind, details, buffer);
-  if (length > buffer.byteLength) again((buffers[kind] = new ArrayBuffer(2 ** Math.ceil(Math.log2(length)))));
-  return length;
-}
 
 // What `evaluate-eslint.js` has written for a `RegExp`, and `write_option` for `NaN`.
 const revive = (_, value) =>
   Array.isArray(value?.$regexp) ? new RegExp(...value.$regexp) : value?.$number === "NaN" ? NaN : value;
 
+// The first `count` words of the message that is being handled.
+function messageWords(count) {
+  return native.askWords(MESSAGE, "", count);
+}
+
+// The text that the bytes from `start` to `end` of it are in UTF-8. Without `end`: to where it ends.
+function messageText(start, end) {
+  return native.askText(MESSAGE, "", start, end);
+}
+
 function askForJson(kind, details) {
-  const length = ask(kind, details);
-  const json = decode(buffers[kind], 0, length);
+  const json = native.askText(kind, details);
   return json.includes('"$regexp"') || json.includes('"$number"') ? JSON.parse(json, revive) : JSON.parse(json);
 }
 
-// ───────────── plugins ─────────────
+// ------------- plugins -------------
 
 let cwd = "";
 // The rules of the plugins that are loaded: `{ plugin, name }`, by the number that the other side knows them by.
@@ -76,23 +127,6 @@ const rules = [];
 const loadedPlugins = new Set();
 // By where they are, as JSON: `{ name, plugin }` of the plugins that were ever loaded.
 const pluginsByLocation = new Map();
-
-// oxlint's `normalizePluginName`.
-function normalizePluginName(name) {
-  const prefixes = ["eslint-plugin", "oxlint-plugin"];
-  const slash = name.indexOf("/");
-  if (slash === -1) {
-    const prefix = prefixes.find(prefix => name.startsWith(`${prefix}-`));
-    return prefix ? name.slice(prefix.length + 1) : name;
-  }
-  const scope = name.slice(0, slash);
-  const rest = name.slice(slash + 1);
-  for (const prefix of prefixes) {
-    if (rest === prefix) return scope;
-    if (rest.startsWith(`${prefix}-`)) return `${scope}/${rest.slice(prefix.length + 1)}`;
-  }
-  return name;
-}
 
 // JSON, or `undefined` for what is not.
 function asJson(value) {
@@ -161,33 +195,62 @@ async function locatedPlugin(location, prefix) {
   return exported[location.index].plugins[prefix];
 }
 
+const isPathOfPlugin = specifier => /^\.{0,2}[\\/]/u.test(specifier) || nodePath.isAbsolute(specifier);
+
+// The file that `specifier` is: a path, relative to `directory`, or a package that is looked for from there.
+function fileOfPlugin(directory, specifier) {
+  const wanted = isPathOfPlugin(specifier) ? nodePath.resolve(directory, specifier) : specifier;
+  let file;
+  try {
+    file = createRequire(nodePath.join(directory, "noop.js")).resolve(wanted);
+  } catch (error) {
+    // A package that can only be imported.
+    try {
+      file = Bun.resolveSync(wanted, directory);
+    } catch {
+      throw error;
+    }
+  }
+  // `fs` is what it is called.
+  if (!nodePath.isAbsolute(file)) throw new Error(`Cannot find module '${specifier}'`);
+  // One file is one plugin, however it is written.
+  return realpathSync(file);
+}
+
 async function findPlugin([directory, specifier, alias]) {
   const isLocated = typeof directory === "object";
-  const isPath = isLocated || /^\.{0,2}[\\/]/u.test(specifier) || nodePath.isAbsolute(specifier);
-  let plugin;
+  const isPath = isLocated || isPathOfPlugin(specifier);
+  let plugin, file, path;
   if (isLocated) plugin = await locatedPlugin(directory, alias);
   else {
-    const file = isPath
-      ? nodePath.resolve(directory, specifier)
-      : createRequire(nodePath.join(directory, "noop.js")).resolve(specifier);
+    file = fileOfPlugin(directory, specifier);
     const module = await load(pathToFileURL(file).href);
     plugin = module.default ?? module;
+    // Where it is in what `require` returns: that is what is asked where a plugin is located.
+    let required;
+    try {
+      required = require(file);
+    } catch {}
+    path = required === plugin ? [] : ["default"];
   }
   if (plugin === null || typeof plugin !== "object") {
     throw new TypeError(`A plugin must export an object: ${JSON.stringify(alias ?? specifier)}`);
   }
+  // The other side takes `eslint-plugin-` and the like off a name that is no alias.
   let name = alias;
   if (name === null && plugin.meta?.name != null) {
     if (typeof plugin.meta.name !== "string") throw new TypeError("`plugin.meta.name` must be a string if defined");
-    name = normalizePluginName(plugin.meta.name);
+    name = plugin.meta.name;
   }
-  if (name === null && !isPath) name = normalizePluginName(specifier);
+  if (name === null && !isPath) name = specifier;
   if (name === null) {
     throw new Error(
       "Plugin must either define `meta.name`, be loaded from an NPM package with a `name` field in `package.json`, or be given an alias in config",
     );
   }
-  return { name, plugin };
+  // `vue` is a package too, and no plugin.
+  const hasNothing = !["meta", "rules", "configs", "processors", "languages"].some(key => key in plugin);
+  return { name, isAlias: alias !== null, plugin, file, path, hasNothing };
 }
 
 // Where the objects are that the modules which are loaded export: `{ module, export }`, as `locate` in `evaluate-eslint.js` has it.
@@ -233,15 +296,19 @@ function ruleAt(location) {
   try {
     return exportedAt(require(location.module), location.export);
   } catch (error) {
-    whyNoRule = ` ${location.module}: ${error?.message ?? error}`;
+    whyNoRule = ` ${location.module}: ${messageOf(error)}`;
     return undefined;
   } finally {
     loadingTime += performance.now() - started;
   }
 }
 
+// For `position`: the file is asked for, and nothing is loaded.
+const ONLY_RESOLVE = -1;
+
 // `position`, `firstRule`: `null` as long as the other side does not know the plugin.
 async function loadPlugin([location, position, firstRule]) {
+  if (position === ONLY_RESOLVE) return { file: fileOfPlugin(location[0], location[1]) };
   const key = JSON.stringify(location);
   let found = pluginsByLocation.get(key);
   if (found === undefined) {
@@ -249,7 +316,7 @@ async function loadPlugin([location, position, firstRule]) {
     pluginsByLocation.set(key, (found = await findPlugin(location)));
     loadingTime += performance.now() - started;
   }
-  const { name, plugin } = found;
+  const { name, isAlias, plugin, file, path, hasNothing } = found;
   const described = [];
   const exported = position === null ? exportedObjects() : null;
   // Sorted: a plugin that imports its rules all at once has them in another order each time.
@@ -258,10 +325,14 @@ async function loadPlugin([location, position, firstRule]) {
     // A plugin can load a rule when it is asked for it.
     if (position !== null) rules[firstRule + i] = { plugin, name: ruleName };
     else {
-      const meta = plugin.rules[ruleName].meta;
+      const rule = plugin.rules[ruleName];
+      if (rule === null || (typeof rule !== "object" && typeof rule !== "function")) {
+        throw new TypeError(`The rule ${JSON.stringify(ruleName)} must be an object: ${rule}`);
+      }
+      const meta = rule.meta;
       described.push({
         name: ruleName,
-        at: exported.get(plugin.rules[ruleName]),
+        at: exported.get(rule),
         type: meta?.type,
         fixable: Boolean(meta?.fixable),
         hasSuggestions: meta?.hasSuggestions === true,
@@ -273,11 +344,29 @@ async function loadPlugin([location, position, firstRule]) {
     }
   });
   if (position !== null) loadedPlugins.add(position);
-  return { name, rules: described };
+  // ESLint's `getObjectId`
+  const { name: called, version } = plugin.meta ?? {};
+  const id =
+    typeof called !== "string" || !called
+      ? null
+      : typeof version === "string" && version
+        ? `${called}@${version}`
+        : called;
+  return { name, isAlias, id, file, export: path, hasNothing, rules: described };
 }
 
-// ───────────── ESLint's `context` ─────────────
+// ------------- ESLint's `context` -------------
 
+// The text of the file, without the byte order mark.
+let text = "";
+// ESLint's `SourceCode`: src/jsc/bindings/LintSourceCode.cpp. What a `sourceCode` says is about the file that is being linted.
+const SourceCode = native.sourceCode(native.TokenStore, [
+  program,
+  scopeManager,
+  () => fileSettings.languageOptions.parserOptions,
+  oxlintScopeManager,
+]);
+let sourceCode = new SourceCode();
 let filename = "";
 // The file on the disk, if `filename` is that of a block which a processor has found in it.
 let physicalFilename = "";
@@ -348,28 +437,87 @@ function deepFreeze(value) {
   return value;
 }
 
-// What all rules see of a file. The contexts of the rules inherit from it.
-const fileContext = Object.freeze({
-  get cwd() {
-    return cwd;
-  },
-  get filename() {
-    return filename;
-  },
-  get physicalFilename() {
-    return physicalFilename;
-  },
-  get sourceCode() {
-    return sourceCode;
-  },
-  get settings() {
-    return fileSettings.settings;
-  },
-  get languageOptions() {
-    return fileSettings.languageOptions;
-  },
+// `settings`, which are those of a configuration of oxlint, for a file. `kind`: see `source_type_for_oxlint` in ../host.rs. oxlint decides
+// these for each file.
+const settingsByKind = new WeakMap();
+function settingsFor(settings, kind) {
+  let known = settingsByKind.get(settings);
+  if (known === undefined) settingsByKind.set(settings, (known = []));
+  if (known[kind] === undefined) {
+    const sourceType = ["module", "script", "commonjs"][kind & 3];
+    const ecmaFeatures = {
+      jsx: (kind & 4) === 0,
+      globalReturn: sourceType === "commonjs",
+      impliedStrict: sourceType === "module",
+    };
+    const { languageOptions } = settings;
+    const parserOptions = { ...languageOptions.parserOptions, sourceType, ecmaFeatures };
+    known[kind] = deepFreeze({ ...settings, languageOptions: { ...languageOptions, sourceType, parserOptions } });
+  }
+  return known[kind];
+}
+
+// oxlint's `context.languageOptions`: one object for all files. What differs between files is behind getters, which answer for the
+// file being linted.
+const oxlintLanguageOptions = once(() => {
+  const ecmaFeatures = Object.freeze({
+    get jsx() {
+      return fileSettings.languageOptions.parserOptions.ecmaFeatures.jsx;
+    },
+    get globalReturn() {
+      return fileSettings.languageOptions.parserOptions.ecmaFeatures.globalReturn;
+    },
+    get impliedStrict() {
+      return fileSettings.languageOptions.parserOptions.ecmaFeatures.impliedStrict;
+    },
+  });
+  const parserOptions = Object.freeze({
+    get sourceType() {
+      return fileSettings.languageOptions.sourceType;
+    },
+    ecmaFeatures,
+  });
+  const VisitorKeys = native.visitorKeys(2);
+  let syntax = null;
+  const parser = Object.freeze({
+    name: "oxlint",
+    // The version of oxlint whose plugin API this is.
+    version: "1.87.0",
+    parse(_code, _options) {
+      throw new Error("`context.languageOptions.parser.parse` not implemented yet.");
+    },
+    VisitorKeys,
+    get Syntax() {
+      if (syntax === null) {
+        syntax = Object.create(null);
+        for (const key of Object.keys(VisitorKeys)) syntax[key] = key;
+        Object.freeze(syntax);
+      }
+      return syntax;
+    },
+    latestEcmaVersion: 17,
+    supportedEcmaVersions: Object.freeze([3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]),
+  });
+  return Object.freeze({
+    get sourceType() {
+      return fileSettings.languageOptions.sourceType;
+    },
+    ecmaVersion: 2026,
+    parser,
+    parserOptions,
+    get globals() {
+      return fileSettings.languageOptions.globals;
+    },
+    get env() {
+      return fileSettings.languageOptions.env;
+    },
+  });
+});
+
+// What a context had until ESLint 9, which plugins still ask for.
+const oldContext = {
   get parserOptions() {
-    return fileSettings.languageOptions.parserOptions;
+    return fileSettings.freezes ? oxlintLanguageOptions().parserOptions : fileSettings.languageOptions.parserOptions;
   },
   // Only a configuration for ESLint 8 has it.
   get parserPath() {
@@ -427,15 +575,60 @@ const fileContext = Object.freeze({
       "getTokensBetween",
     ].map(name => [name, (...args) => sourceCode[name](...args)]),
   ),
+};
+
+// ESLint's `FileContext`: what all rules see of a file. There is one for each file, and the contexts of the rules inherit from it.
+class FileContext {
+  constructor() {
+    this.cwd = cwd;
+    this.filename = filename;
+    this.physicalFilename = physicalFilename;
+    this.sourceCode = sourceCode;
+    this.languageOptions = fileSettings.languageOptions;
+    this.settings = fileSettings.settings;
+    Object.freeze(this);
+  }
+
   extend(extension) {
     return Object.freeze(Object.assign(Object.create(this), extension));
-  },
-});
+  }
+}
+for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(oldContext))) {
+  Object.defineProperty(FileContext.prototype, key, { ...descriptor, enumerable: false });
+}
+
+// That of oxlint is one for all files, since `createOnce` gets its context once: what it has is always that of the file being linted.
+const oxlintFileContext = Object.freeze(
+  Object.defineProperties(
+    {
+      get cwd() {
+        return cwd;
+      },
+      get filename() {
+        return filename;
+      },
+      get physicalFilename() {
+        return physicalFilename;
+      },
+      get sourceCode() {
+        return sourceCode;
+      },
+      get settings() {
+        return fileSettings.settings;
+      },
+      get languageOptions() {
+        return oxlintLanguageOptions();
+      },
+      extend: FileContext.prototype.extend,
+    },
+    Object.getOwnPropertyDescriptors(oldContext),
+  ),
+);
 
 // The rule with its options that has `id`, and is at `position` among those that run on the file. Or the position of its plugin,
 // which has to be loaded first. Or `null`: its module is among `toImport`.
 function configure(id, position) {
-  const [index, options, ruleId, location, pluginPosition] = askForJson(CONFIGURED, String(position));
+  const { 0: index, 1: options, 2: ruleId, 3: location, 4: pluginPosition } = askForJson(CONFIGURED, String(position));
   const ofPlugin = rules[index];
   if (ofPlugin === undefined && location && !imported.has(location.module)) {
     toImport.push(location.module);
@@ -450,305 +643,328 @@ function configure(id, position) {
   // A function is a rule without `meta`, as for ESLint until version 8.
   const rule = typeof found === "function" ? { create: found } : found;
   // `once`: what oxlint's `createOnce` has returned, which is called the first time the rule runs.
-  const entry = { rule, ruleId, own: null, position: 0, once: null };
-  const meta = rule.meta;
+  // `reporter`: `{ position, meta, report }`, where `report` is `context.report`. See src/jsc/bindings/LintReport.cpp.
+  const entry = { rule, ruleId, own: null, position: 0, once: null, reporter: native.reporter(rule.meta) };
   entry.own = {
     id: ruleId,
     // ESLint leaves them as they are, and rules add to them.
     options: fileSettings.freezes ? deepFreeze(options) : options,
-    report(...args) {
-      report(entry.position, meta, args);
-    },
+    report: entry.reporter.report,
   };
   configured.set(id, entry);
   return entry;
 }
 
-// ───────────── listeners ─────────────
+// ------------- listeners -------------
 
-// All selectors that are not just the name of a type, by their text. The other side knows them by `number`.
-const selectors = new Map();
-// Those that the other side has not been asked about yet.
-let newSelectors = [];
-
-function describeNewSelectors() {
-  if (newSelectors.length === 0) return;
-  askForJson(SELECTORS, JSON.stringify(newSelectors.map(it => it.text))).forEach((it, i) => {
-    const selector = newSelectors[i];
-    if (typeof it === "string") selector.error = it;
-    else [selector.number, selector.attributes, selector.identifiers] = it;
-  });
-  newSelectors = [];
-}
-
-const codePathEvents = new Set([
+// In the order of the event kinds in `code_path/estree.rs`.
+const codePathEventNames = [
   "onCodePathStart",
   "onCodePathEnd",
   "onCodePathSegmentStart",
   "onCodePathSegmentEnd",
-  "onCodePathSegmentLoop",
   "onUnreachableCodePathSegmentStart",
   "onUnreachableCodePathSegmentEnd",
-]);
+  "onCodePathSegmentLoop",
+];
 
-// The listeners of the file. By the number of a type: those for entering and for leaving a node of it.
-let enterByType = [];
-let exitByType = [];
-// By their text: `{ selector, calls }`, for the selectors that are listened for.
-let bySelector = new Map();
-// By the name of an event of the code path analysis. `null`: nothing listens for any.
-let codePathCalls = null;
-let hasListeners = false;
-let hasExitListeners = false;
+// By the key of a listener: `{ kind, number, error }`, what `LISTEN` in `wire.rs` knows it by. A selector also has its `text`.
+const listenedKeys = new Map();
+// The selectors that the other side has not been asked about yet.
+let newSelectors = [];
+
+function describeKey(key) {
+  let known = listenedKeys.get(key);
+  if (known !== undefined) return known;
+  const isExit = key.endsWith(":exit");
+  const name = isExit ? key.slice(0, -5) : key;
+  const type = native.typeId(name);
+  const event = codePathEventNames.indexOf(key);
+  if (type !== undefined) known = { kind: isExit ? 1 : 0, number: type, error: null };
+  else if (event !== -1) known = { kind: 3, number: event, error: null };
+  else newSelectors.push((known = { kind: 2, number: -1, error: null, text: key }));
+  listenedKeys.set(key, known);
+  return known;
+}
+
+function describeNewSelectors() {
+  if (newSelectors.length === 0) return;
+  askForJson(SELECTORS, JSON.stringify(newSelectors.map(it => it.text))).forEach((it, i) => {
+    if (typeof it === "string") newSelectors[i].error = it;
+    else newSelectors[i].number = it;
+  });
+  newSelectors = [];
+}
+
+// The listeners of the file by their key, `{ entry, listener }` each, and the same by the order in which the keys came.
+let groupByKey = new Map();
+let groups = [];
 
 // The rule whose code is running, for the message of what it throws.
 let currentRule = null;
 let currentNode = null;
+// `currentRule.rule.create()` is being called.
+let isCreating = false;
 
 function addListeners(entry, listeners) {
   for (const key of Object.keys(listeners)) {
     const listener = listeners[key];
     if (typeof listener !== "function") continue;
-    const call = { entry, listener };
-    hasListeners = true;
-    const isExit = key.endsWith(":exit");
-    const type = typeIds.get(isExit ? key.slice(0, -5) : key);
-    if (type !== undefined) {
-      const byType = isExit ? exitByType : enterByType;
-      (byType[type] ??= []).push(call);
-      hasExitListeners ||= isExit;
-      continue;
+    let group = groupByKey.get(key);
+    if (group === undefined) {
+      groupByKey.set(key, (group = []));
+      groups.push(group);
     }
-    if (codePathEvents.has(key)) {
-      (codePathCalls ??= new Map()).set(key, [...(codePathCalls.get(key) ?? []), call]);
-      continue;
-    }
-    let selector = selectors.get(key);
-    if (selector === undefined) {
-      selector = { text: key, number: -1, isExit, attributes: 0, identifiers: 0, error: null };
-      selectors.set(key, selector);
-      newSelectors.push(selector);
-    }
-    hasExitListeners ||= isExit;
-    let listened = bySelector.get(key);
-    if (listened === undefined) bySelector.set(key, (listened = { selector, calls: [] }));
-    listened.calls.push(call);
+    group.push({ entry, listener });
   }
 }
 
-// ───────────── the parts of a file that are asked for ─────────────
-
-// The numbers of the selectors to match.
-function selectorRequest() {
-  describeNewSelectors();
-  return JSON.stringify(Array.from(bySelector.values(), it => it.selector.number));
-}
-
-// What matches the selectors of `bySelector`, in its order. `null`: not asked for yet.
-let matches = null;
-
-// The numbers of the types that are listened to. `null`: every node matters.
-function listenedTypes() {
-  if (codePathCalls !== null) return null;
-  return [...new Set([...Object.keys(enterByType), ...Object.keys(exitByType)])].map(Number);
-}
-
-// Nothing that is listened to is in the file, so its tree was not sent. Who asks for it now gets it.
-let isWithoutListened = false;
-
-// The `Program`. `null`, to `traverse`: nothing that is listened to is in the file.
-function program() {
-  if (tree === null) {
-    // Once the listeners are known, what matches comes with the tree.
-    const count = isTraversing ? bySelector.size : 0;
-    const types = isTraversing && !isWithoutListened ? listenedTypes() : null;
-    ask(AST, `[${isTraversing ? selectorRequest() : "[]"},${JSON.stringify(types)}]`);
-    if (new Uint32Array(buffers[AST], 0, 1)[0] === 0) {
-      isWithoutListened = true;
-      return null;
-    }
-    tree = readTree(buffers[AST], count);
-    if (isTraversing) matches = tree.matches;
-    makeNodes();
-    const root = nodes[0];
-    Object.defineProperty(root, "comments", { get: comments, enumerable: true, configurable: true });
-    Object.defineProperty(root, "tokens", { get: tokens, enumerable: true, configurable: true });
-  }
-  return nodes[0];
-}
-
-// 0: the tree of typescript-estree, 1: that of espree.
+// What `native.listen` is told.
+let listenWords = new Uint32Array(64);
+// 0: the tree of typescript-estree, which oxlint's is like in every file, 1: that of espree.
 let fileDialect = 0;
 
 function dialect() {
   return fileDialect;
 }
 
-let descendants = null;
-
-// By the number of a node: the number of the last node that is in it, or its own.
-function lastDescendants() {
-  if (descendants === null) {
-    const { count, parents } = tree;
-    descendants = new Uint32Array(count);
-    for (let id = count - 1; id > 0; id--) {
-      if (descendants[id] === 0) descendants[id] = id;
-      const parent = parents[id];
-      if (descendants[parent] < descendants[id]) descendants[parent] = descendants[id];
-    }
+// Tells the other side that `keys` are listened for. Returns the calls: see `calls.rs`. The nodes come along if there are calls and
+// they are not there yet, or if `wantsTree`.
+function listen(keys, wantsTree) {
+  describeNewSelectors();
+  for (const { error } of keys) if (error !== null) throw new SyntaxError(error);
+  const length = 1 + 2 * keys.length;
+  if (listenWords.length < length) listenWords = new Uint32Array(2 * length);
+  // See `LACKS_TREE`, `WANTS_TREE` and `WANTS_ALL_EVENTS` in `wire.rs`.
+  listenWords[0] = (nodes.length === 0 ? 1 : 0) | (wantsTree ? 2 : 0) | (fileSettings.isLegacy === true ? 4 : 0);
+  for (let i = 0; i < keys.length; i++) {
+    listenWords[1 + 2 * i] = keys[i].kind;
+    listenWords[2 + 2 * i] = keys[i].number;
   }
-  return descendants;
+  // By index: to take an array apart with `[a, b] =` goes through `Array.prototype`, which a plugin can have changed.
+  const answer = native.listen(listenWords, length);
+  if (answer[1] !== undefined) nodes = answer[1];
+  return answer[0];
 }
 
-// ───────────── the traversal ─────────────
-
-let isTraversing = false;
-
-// Tells the listeners for the event `name` of the code path analysis.
-function emitCodePathEvent(name, args) {
-  const calls = codePathCalls.get(name);
-  if (calls === undefined) return;
-  for (const call of calls) {
-    currentRule = call.entry;
-    call.listener(...args);
-  }
+// The `Program`
+function program() {
+  if (nodes.length === 0) listen([], true);
+  return nodes[0];
 }
 
-function callAll(calls, node) {
-  for (let i = 0; i < calls.length; i++) {
-    const call = calls[i];
-    currentRule = call.entry;
-    call.listener(node);
-  }
-}
-
-// ESLint's order of the selectors that match one node: the less specific first.
-function compareSelectors(a, b) {
-  return a.attributes - b.attributes || a.identifiers - b.identifiers || (a.text <= b.text ? -1 : 1);
-}
-
-// By the number of a node: the calls for the selectors that match it, with those for its type, in order.
-function callsByNode(isExit, byType) {
-  const listened = [...bySelector.values()];
-  const byNode = new Map();
-  listened.forEach(({ selector, calls }, i) => {
-    if (selector.isExit !== isExit) return;
-    for (const id of matches[i]) {
-      let list = byNode.get(id);
-      if (list === undefined) {
-        byNode.set(id, (list = []));
-        const type = tree.types[id];
-        const name = typeNames[type] + (isExit ? ":exit" : "");
-        if (byType[type]) list.push({ selector: { attributes: 0, identifiers: 1, text: name }, calls: byType[type] });
-      }
-      list.push({ selector, calls });
-    }
-  });
-  for (const [id, list] of byNode) {
-    list.sort((a, b) => compareSelectors(a.selector, b.selector));
-    byNode.set(
-      id,
-      list.flatMap(it => it.calls),
-    );
-  }
-  return byNode;
-}
-
+// Calls the listeners, in ESLint's order.
 function traverse() {
-  isTraversing = true;
-  const root = program();
-  if (root !== null && matches === null && bySelector.size > 0) {
-    const length = ask(MATCHES, selectorRequest());
-    matches = readMatches(new Uint32Array(buffers[MATCHES], 0, length >> 2), bySelector.size);
-  }
-  for (const { selector } of bySelector.values()) {
-    if (selector.error !== null) throw new SyntaxError(selector.error);
-  }
-  if (root === null) return;
-  const { count, types, twice } = tree;
-  const enterByNode = bySelector.size > 0 ? callsByNode(false, enterByType) : null;
-  const exitByNode = bySelector.size > 0 ? callsByNode(true, exitByType) : null;
-  const enter = id => {
-    const calls = enterByNode?.get(id) ?? enterByType[types[id]];
-    if (calls !== undefined) callAll(calls, (currentNode = nodes[id]));
-  };
-  const exitCalls = id => exitByNode?.get(id) ?? exitByType[types[id]];
-  const leave = id => {
-    const calls = exitCalls(id);
-    if (calls !== undefined) callAll(calls, (currentNode = nodes[id]));
-  };
-  const visitedTwice = twice.length > 0 ? new Set(twice) : null;
-  if (codePathCalls === null && !hasExitListeners && visitedTwice === null) {
-    for (let id = 0; id < count; id++) enter(id);
-    return;
-  }
-  const last = lastDescendants();
-  // Calls `enterNode` and `leaveNode` with the number of each node that `isLeft` says has to be left, and `enterNode` with
-  // that of every other.
-  const walk = (enterNode, leaveNode, isLeft) => {
-    const open = [];
-    for (let id = 0; id < count; id++) {
-      while (open.length > 0 && last[open.at(-1)] < id) leaveNode(open.pop());
-      enterNode(id);
-      if (visitedTwice?.has(id)) {
-        leaveNode(id);
-        enterNode(id);
-      }
-      if (isLeft(id)) open.push(id);
+  const calls = listen(Array.from(groupByKey.keys(), describeKey), false);
+  let emitAt = null;
+  for (let at = 0; at < calls.length; at += 2) {
+    const what = calls[at];
+    const group = groups[calls[at + 1]];
+    if (what >= 0x80000000) {
+      emitAt ??= openCodePaths();
+      emitAt(4 * (what - 0x80000000), group ?? []);
+      continue;
     }
-    while (open.length > 0) leaveNode(open.pop());
-  };
-  if (codePathCalls === null) return walk(enter, leave, id => exitCalls(id) !== undefined);
-  // As in ESLint the whole file is analyzed before the first listener is called: a rule sees the finished graph. A step is
-  // the number of a node to enter, the complement of that of one to leave, or an event and its arguments.
-  const steps = [];
-  let current = 0;
-  const analyzer = new CodePathAnalyzer({
-    enterNode: () => steps.push(current),
-    leaveNode: () => steps.push(~current),
-    emit: (name, args) => steps.push([name, args]),
-  });
-  walk(
-    id => analyzer.enterNode(nodes[(current = id)]),
-    id => analyzer.leaveNode(nodes[(current = id)]),
-    () => true,
-  );
-  for (const step of steps) {
-    if (typeof step !== "number") emitCodePathEvent(step[0], step[1]);
-    else if (step >= 0) enter(step);
-    else leave(~step);
+    const node = (currentNode = nodes[what]);
+    for (let i = 0; i < group.length; i++) {
+      const { entry, listener } = group[i];
+      currentRule = entry;
+      listener(node);
+    }
   }
 }
 
-// ───────────── a file ─────────────
+// ------------- code paths -------------
+
+// `codePath.origin`, in the order of `Origin` in `code_path/estree.rs`.
+const codePathOrigins = ["program", "function", "class-field-initializer", "class-static-block"];
+// `native.codePaths` builds the objects. Only ESLint's getters and methods live here.
+class CodePath {
+  get initialSegment() {
+    return this.internal.initialSegment;
+  }
+
+  get finalSegments() {
+    return this.internal.finalSegments;
+  }
+
+  get returnedSegments() {
+    return this.internal.returnedForkContext;
+  }
+
+  get thrownSegments() {
+    return this.internal.thrownForkContext;
+  }
+
+  traverseSegments(optionsOrCallback, callback) {
+    const hasOptions = typeof optionsOrCallback !== "function";
+    const options = (hasOptions && optionsOrCallback) || {};
+    const resolvedCallback = hasOptions ? callback : optionsOrCallback;
+    const startSegment = options.first || this.internal.initialSegment;
+    const lastSegment = options.last;
+    const visited = new Set();
+    const skipped = new Set();
+    const stack = [[startSegment, 0]];
+    let segment = null;
+    let broken = false;
+    const controller = {
+      skip() {
+        skipped.add(segment);
+      },
+      break() {
+        broken = true;
+      },
+    };
+    const isVisited = prevSegment => visited.has(prevSegment) || segment.isLoopedPrevSegment(prevSegment);
+    const isSkipped = prevSegment => skipped.has(prevSegment) || segment.isLoopedPrevSegment(prevSegment);
+    while (stack.length > 0) {
+      const record = stack.at(-1);
+      segment = record[0];
+      const index = record[1];
+      if (index === 0) {
+        const hasPrev = segment.prevSegments.length > 0;
+        if (visited.has(segment) || (segment !== startSegment && hasPrev && !segment.prevSegments.every(isVisited))) {
+          stack.pop();
+          continue;
+        }
+        visited.add(segment);
+        if (skipped.size > 0 && hasPrev && segment.prevSegments.every(isSkipped)) skipped.add(segment);
+        else {
+          resolvedCallback.call(this, segment, controller);
+          if (segment === lastSegment) controller.skip();
+          if (broken) break;
+        }
+      }
+      const end = segment.nextSegments.length - 1;
+      if (index < end) {
+        record[1] += 1;
+        stack.push([segment.nextSegments[index], 0]);
+      } else if (index === end) {
+        record[0] = segment.nextSegments[index];
+        record[1] = 0;
+      } else stack.pop();
+    }
+  }
+}
+
+class CodePathSegment {
+  isLoopedPrevSegment(segment) {
+    return this.internal.loopedPrevSegments.includes(segment);
+  }
+}
+
+const legacyPrototype = Object.defineProperties(
+  {},
+  {
+    ...Object.getOwnPropertyDescriptors(CodePath.prototype),
+    currentSegments: {
+      get() {
+        return this.internal.currentSegments;
+      },
+      configurable: true,
+    },
+  },
+);
+// Templates for `native.codePaths`.
+const codePathKeys = ["id", "origin", "upper", "childCodePaths", "internal"];
+const codePathShapes = [
+  native.shape(CodePath.prototype, codePathKeys, "", 1),
+  native.shape(Object.prototype, ["initialSegment", "finalSegments", "returnedForkContext", "thrownForkContext"], null),
+  native.shape(
+    CodePathSegment.prototype,
+    ["id", "nextSegments", "prevSegments", "allNextSegments", "allPrevSegments", "reachable", "internal"],
+    "",
+    1,
+  ),
+  native.shape(Object.prototype, ["used", "loopedPrevSegments"], true),
+];
+// The same for a configuration for ESLint 8, where a code path also has `currentSegments`.
+const legacyCodePathShapes = [native.shape(legacyPrototype, codePathKeys, "", 1), ...codePathShapes.slice(1)];
+
+// Makes the code paths of the file. The analysis is finished before the first listener runs, as in ESLint, so a rule sees the
+// complete graph from the first event on. Returns `emitAt(at, calls)`, which calls the listeners `calls` for the event that starts at
+// `at` in the events, which have four words each: see `code_path/estree.rs`. The events have to come in order.
+function openCodePaths() {
+  const isLegacy = fileSettings.isLegacy === true;
+  const shapesOfPaths = isLegacy ? legacyCodePathShapes : codePathShapes;
+  const { 0: paths, 1: segments, 2: events } = native.codePaths(shapesOfPaths, codePathOrigins);
+  if (isLegacy) for (const path of paths) path.internal.currentSegments = [];
+  // `internal` of the code paths that have started and not ended, to keep `currentSegments` up to date.
+  const open = [];
+  // The segments that have ended since `currentSegments` was last replaced.
+  const ended = [];
+  // The start events before this index are in `currentSegments` already.
+  let included = 0;
+  // That of the event that is being emitted.
+  let step = 0;
+  const isStart = kind => kind === 2 || kind === 4;
+  const isEnd = kind => kind === 3 || kind === 5;
+  const kindAt = index => (index < events.length && events[index] === step ? events[index + 1] & 7 : -1);
+  // ESLint 8 replaces `currentSegments` once per step, after the last end event and before the first start event. A new
+  // segment takes the place of the one that ended. `from`: the index of the first start event, if there is one.
+  const replaceCurrentSegments = from => {
+    const current = [...open.at(-1).currentSegments];
+    const places = ended.map(it => current.indexOf(it));
+    let count = 0;
+    for (; isStart(kindAt(from + 4 * count)); count++) {
+      const segment = segments[events[from + 4 * count + 2]];
+      if (count < places.length) current[places[count]] = segment;
+      else current.push(segment);
+    }
+    const removed = places.slice(count);
+    open.at(-1).currentSegments = current.filter((_, place) => !removed.includes(place));
+    ended.length = 0;
+    included = from + 4 * count;
+  };
+  const emitAt = (at, calls) => {
+    step = events[at];
+    const kind = events[at + 1] & 7;
+    const first = (kind < 2 ? paths : segments)[events[at + 2]];
+    if (isLegacy) {
+      if (kind === 0) open.push(first.internal);
+      else if (isStart(kind) && at >= included) replaceCurrentSegments(at);
+    }
+    const node = nodes[events[at + 1] >>> 3];
+    for (const { entry, listener } of calls) {
+      currentRule = entry;
+      if (kind === 6) listener(first, segments[events[at + 3]], node);
+      else listener(first, node);
+    }
+    if (isLegacy) {
+      if (kind === 1) open.pop();
+      else if (isEnd(kind)) {
+        ended.push(first);
+        if (!isEnd(kindAt(at + 4))) replaceCurrentSegments(at + 4);
+      }
+    }
+  };
+  return emitAt;
+}
+
+// ------------- a file -------------
 
 function reset() {
+  native.endFile();
   text = "";
-  lineStarts = lines = inlineConfigNodes = disableDirectives = parserServices = null;
   sourceCode = new SourceCode();
-  tree = null;
   nodes = [];
-  descendants = matches = null;
-  enterByType = [];
-  exitByType = [];
-  bySelector = new Map();
-  codePathCalls = null;
-  hasListeners = hasExitListeners = isTraversing = isWithoutListened = false;
+  groupByKey = new Map();
+  groups = [];
   currentRule = currentNode = null;
-  reports = [];
-  resetTokens();
+  isCreating = false;
+  // Some are left if another rule's `create` or `before` threw. They aren't for the next file.
+  afterHooks = [];
   resetScopes();
 }
 
 // Returns the positions of the plugins that are missing, if any are, or `NEEDS_SETTINGS`.
 function lint() {
-  const length = ask(MESSAGE);
-  const buffer = buffers[MESSAGE];
-  const [flags, plugins, settingsId, count, pathLength, physicalLength] = new Uint32Array(buffer, 0, 6);
+  const { 0: flags, 1: plugins, 2: settingsId, 3: count, 4: pathLength, 5: physicalLength } = messageWords(6);
+  const words = messageWords(6 + plugins + count);
   // Only the plugins that have a rule which runs on the file, and which no module exports.
-  const missing = Array.from(new Uint32Array(buffer, 24, plugins)).filter(position => !loadedPlugins.has(position));
+  const missing = Array.from(words.subarray(6, 6 + plugins)).filter(position => !loadedPlugins.has(position));
   if (missing.length > 0) return missing;
-  const ids = new Uint32Array(buffer, 24 + 4 * plugins, count);
+  const ids = words.subarray(6 + plugins);
   fileSettings = allSettings.get(settingsId);
   if (fileSettings === undefined) {
     if ((flags & 8) !== 0) return NEEDS_SETTINGS;
@@ -756,37 +972,40 @@ function lint() {
     if (fileSettings.freezes) deepFreeze(fileSettings);
     else addParser(fileSettings);
   }
+  if (fileSettings.freezes) fileSettings = settingsFor(fileSettings, (flags >> 5) & 7);
   const entries = Array.from(ids, (id, position) => configured.get(id) ?? configure(id, position));
   if (toImport.length > 0) return NEEDS_MODULES;
   const unloaded = new Set(entries.filter(it => typeof it === "number"));
   if (unloaded.size > 0) return [...unloaded];
   const pathStart = 24 + 4 * (plugins + count);
-  wantsFixes = (flags & 1) !== 0;
-  hasBOM = (flags & 2) !== 0;
   fileDialect = (flags >> 2) & 1;
-  filename = nativePath(decode(buffer, pathStart, pathStart + pathLength), nodePath);
+  filename = nativePath(messageText(pathStart, pathStart + pathLength), nodePath);
   physicalFilename =
-    physicalLength === pathLength
-      ? filename
-      : nativePath(decode(buffer, pathStart, pathStart + physicalLength), nodePath);
-  text = decode(buffer, pathStart + pathLength, length);
+    physicalLength === pathLength ? filename : nativePath(messageText(pathStart, pathStart + physicalLength), nodePath);
+  text = messageText(pathStart + pathLength);
+  native.beginFile(text, flags);
+  const fileContext = fileSettings.freezes ? oxlintFileContext : new FileContext();
   for (let position = 0; position < count; position++) {
     const entry = entries[position];
-    entry.position = position;
+    entry.position = entry.reporter.position = position;
     currentRule = entry;
     // A new context for each file, and a new `sourceCode`, as in ESLint: plugins keep what they know about a file in a `WeakMap`
     // under one of them.
+    // ESLint only knows `create`. A rule without it, which ESLint refuses, runs as in oxlint.
+    const { create, createOnce } = entry.rule;
+    isCreating = true;
     const listeners =
-      typeof entry.rule.createOnce === "function"
+      typeof createOnce === "function" && (fileSettings.freezes || typeof create !== "function")
         ? listenersOfOnce(entry)
         : entry.rule.create(fileContext.extend(entry.own));
+    isCreating = false;
     if (listeners === undefined || listeners === null) {
       throw new Error(`The create() function for rule '${entry.ruleId}' did not return an object.`);
     }
     addListeners(entry, listeners);
   }
   try {
-    if (hasListeners) traverse();
+    if (groups.length > 0) traverse();
   } finally {
     runAfterHooks();
   }
@@ -800,7 +1019,7 @@ let afterHooks = [];
 // when the file is done.
 function listenersOfOnce(entry) {
   if (entry.once === null) {
-    const { before, after, ...listeners } = entry.rule.createOnce(fileContext.extend(entry.own));
+    const { before, after, ...listeners } = entry.rule.createOnce(oxlintFileContext.extend(entry.own));
     entry.once = { before, after, listeners };
   }
   const { before, after, listeners } = entry.once;
@@ -827,7 +1046,7 @@ function runAfterHooks() {
 
 let hasStarted = false;
 
-// ───────────── what is loaded ─────────────
+// ------------- what is loaded -------------
 
 let measuresLoading = false;
 // The time that it took to load plugins and processors and that the other side has not been told.
@@ -836,6 +1055,7 @@ let loadingTime = 0;
 const countedModules = new Set();
 
 function reportLoading() {
+  const { statSync } = require("node:fs");
   let bytes = 0;
   const before = countedModules.size;
   for (const file of Object.keys(require.cache)) {
@@ -844,24 +1064,28 @@ function reportLoading() {
     bytes += statSync(file, { throwIfNoEntry: false })?.size ?? 0;
   }
   const modules = countedModules.size - before;
-  if (modules > 0 || loadingTime > 0) ask(LOADED, JSON.stringify([modules, bytes, loadingTime]));
+  if (modules > 0 || loadingTime > 0) native.askText(LOADED, JSON.stringify([modules, bytes, loadingTime]));
   loadingTime = 0;
 }
 
 function start() {
-  const { cwd: directory, measures, types, strings } = askForJson(START);
+  const { cwd: directory, measures } = askForJson(START);
   cwd = directory;
   measuresLoading = measures;
-  defineTypes(types, strings);
+  defineNodes();
   hasStarted = true;
 }
 
 // With where in the plugin it was thrown, and without what is not the user's.
 function describeLoadError(error) {
-  const lines = String(error?.stack ?? error).split("\n");
+  const lines = messageOf(error, it => it?.stack ?? it).split("\n");
   const stack = lines.indexOf("Require stack:");
   if (stack !== -1) lines.length = stack;
-  return lines.filter(it => !/^\s+at .*\bbun-lint-plugins\.js:\d+/.test(it)).join("\n");
+  // What it is made of says more than that there are several.
+  try {
+    if (error instanceof AggregateError) for (const it of error.errors) lines.push(`  ${messageOf(it, String)}`);
+  } catch {}
+  return lines.filter(it => !/^\s+at .*(?:\bbun-lint-plugins\.js|\(native):\d+/.test(it)).join("\n");
 }
 
 // What the other side calls, with what the message is. Returns the result, or a promise of it.
@@ -893,10 +1117,18 @@ function respond(kind) {
     if (missing === NEEDS_SETTINGS) return `${NEEDS_SETTINGS}[]`;
     if (missing !== null) return NEEDS_PLUGINS + JSON.stringify(missing);
     const used = usedVariables();
-    return reports.length === 0 && used.length === 0 ? DONE : DONE + JSON.stringify([reports, used]);
+    native.sendReports();
+    return used.length === 0 ? DONE : DONE + JSON.stringify(used);
   } catch (error) {
-    const line = currentNode === null ? null : currentNode.loc.start.line;
-    return FAILED + JSON.stringify([currentRule?.position ?? null, String(error?.message ?? error), line]);
+    // The node is the plugin's to change.
+    let line = null;
+    try {
+      line = Number(currentNode.loc.start.line);
+    } catch {}
+    if (fileSettings?.freezes)
+      return FAILED + JSON.stringify([currentRule?.position ?? null, saidByOxlint(error), line]);
+    if (isCreating) return FAILED + JSON.stringify(thrownInCreate(error));
+    return FAILED + JSON.stringify([currentRule?.position ?? null, messageOf(error), line]);
   } finally {
     reset();
   }

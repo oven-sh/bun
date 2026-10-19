@@ -1429,6 +1429,48 @@ describe("ansi renderer link and metadata control bytes", () => {
   });
 });
 
+describe("ansi renderer line wrapping", () => {
+  const sources = [
+    "The declaration and the assignment can be one `const`. Then (see `let`), use **bold text**: it is *fine*; [a link](https://example.com/x), and `more code`.\n",
+    "> A quote with `code`, **bold**, and (`parens`). Then `a longer code span`, which goes on.\n",
+    "- An item with `code`. And **bold words that go on**, with `x`; and (`y`), [text](https://e.com).\n  - nested `item`, with more `code`: yes.\n",
+  ];
+
+  test("a line never breaks where the source has no space", () => {
+    expect(Markdown.ansi("It can be one `const`.\n", { colors: false, columns: 19 })).toBe("It can be one\nconst.\n");
+    expect(Markdown.ansi("a word (`code`) ends\n", { colors: false, columns: 9 })).toBe("a word\n(code)\nends\n");
+    expect(Markdown.ansi("one **two**, three\n", { colors: false, columns: 7 })).toBe("one\ntwo,\nthree\n");
+  });
+
+  test.each([
+    { colors: false, hyperlinks: false },
+    { colors: true, hyperlinks: false },
+    { colors: true, hyperlinks: true },
+  ])("no line starts with punctuation, ends with a space or is too wide: %j", theme => {
+    for (const source of sources) {
+      const words = (text: string) => Bun.stripANSI(text).replace(/[\s│|]+/g, "");
+      const unwrapped = words(Markdown.ansi(source, { ...theme, columns: 0 }));
+      for (let columns = 34; columns <= 100; columns++) {
+        const out = Markdown.ansi(source, { ...theme, columns });
+        const lines = Bun.stripANSI(out).split("\n");
+        const wrong = lines.filter(
+          line => /^[\s│|]*[.,:;)]/.test(line) || /\S\s+$/.test(line) || Bun.stringWidth(line) > columns,
+        );
+        expect({ columns, wrong }).toEqual({ columns, wrong: [] });
+        expect(words(out)).toBe(unwrapped);
+      }
+    }
+  });
+
+  test("open styles are closed before a line break and reopened after it", () => {
+    const out = Markdown.ansi("> **some bold `code`**.\n", { columns: 16 });
+    expect(Bun.stripANSI(out)).toBe("│ some bold\n│ code.\n");
+    const [first, second] = out.split("\n");
+    expect(first).toEndWith("some bold\x1b[39m\x1b[49m");
+    expect(second).toContain("\x1b[1m");
+  });
+});
+
 // ============================================================================
 // Pathological inputs: emphasis delimiter floods. Each closer used to scan
 // backward over every already-consumed delimiter in the paragraph, so
@@ -1959,6 +2001,85 @@ test("a delimiter at the edge of the text of a link has the bracket next to it",
 test("white space is between the destination of a link and its title", () => {
   expect(Markdown.html('[a](<b>"c")\n')).toBe("<p>[a](<b>&quot;c&quot;)</p>\n");
   expect(Markdown.html('[a](<b> "c")\n')).toBe('<p><a href="b" title="c">a</a></p>\n');
+});
+
+describe("HTML start conditions", () => {
+  test.each([
+    // The tag name can be the last thing in the input.
+    ["<h1", "<h1\n"],
+    ["a\n\n<hr", "<p>a</p>\n<hr\n"],
+    ["<style", "<style\n"],
+    // After the tag name, a `/` only counts as part of `/>`.
+    ["<hr/x\n*a*", "<p>&lt;hr/x\n<em>a</em></p>\n"],
+    ["<pre/x\n*a*", "<p>&lt;pre/x\n<em>a</em></p>\n"],
+    ["<div/>\n*a*", "<div/>\n*a*\n"],
+    // An unquoted attribute value needs at least one character.
+    ["<a a=>", "<p>&lt;a a=&gt;</p>\n"],
+    ["b <a a=>", "<p>b &lt;a a=&gt;</p>\n"],
+    // Inside a tag, only spaces, tabs and line endings count as whitespace.
+    ["<a\vb>", "<p>&lt;a\vb&gt;</p>\n"],
+    ["b <a\fb>", "<p>b &lt;a\fb&gt;</p>\n"],
+  ])("%j", (text, html) => {
+    expect(Markdown.html(text)).toBe(html);
+  });
+});
+
+test("an autolink can't contain ASCII control characters", () => {
+  expect(Markdown.html("<http://a\x01b>")).toBe("<p>&lt;http://a\x01b&gt;</p>\n");
+  expect(Markdown.html("<http://a\x7Fb>")).toBe("<p>&lt;http://a\x7Fb&gt;</p>\n");
+});
+
+// A run of one or two `~` only matches a run of the same length, and the match uses up both runs.
+describe("strikethrough", () => {
+  test.each([
+    ["~a~", "<del>a</del>", "~a~"],
+    ["~~a~~", "<del>a</del>", "~~a~~"],
+    ["~~a~", "~~a~", "~~a~"],
+    ["~a~~", "~a~~", "~a~~"],
+    ["b ~~~a~~~", "b ~~~a~~~", "b ~~~a~~~"],
+    ["~a~ ~~b~~ ~c~", "<del>a</del> <del>b</del> <del>c</del>", "~a~ ~~b~~ ~c~"],
+    ["~~a ~b~ c~~", "<del>a <del>b</del> c</del>", "~~a ~b~ c~~"],
+    ["~a ~~b~~ c~", "<del>a <del>b</del> c</del>", "~a ~~b~~ c~"],
+    ["*~a~*", "<em><del>a</del></em>", "<em>~a~</em>"],
+    ["~*a*~", "<del><em>a</em></del>", "~<em>a</em>~"],
+    ["**~~a~~**", "<strong><del>a</del></strong>", "<strong>~~a~~</strong>"],
+    ["~~__a__~~", "<del><strong>a</strong></del>", "~~<strong>a</strong>~~"],
+    ["*~a*~", "<em>~a</em>~", "<em>~a</em>~"],
+    ["~*a~*", "<del>*a</del>*", "~<em>a~</em>"],
+    ["~~a~~b~~c~~", "<del>a</del>b<del>c</del>", "~~a~~b~~c~~"],
+    ["~a~b~c~", "<del>a</del>b<del>c</del>", "~a~b~c~"],
+    ["a~~b~~c", "a<del>b</del>c", "a~~b~~c"],
+    ["~~ a~~", "~~ a~~", "~~ a~~"],
+    ["~~a ~~", "~~a ~~", "~~a ~~"],
+    ["~~a\nb~~", "<del>a\nb</del>", "~~a\nb~~"],
+    ["~~a~~~", "~~a~~~", "~~a~~~"],
+    ["~~**a~~**", "<del>**a</del>**", "~~<strong>a~~</strong>"],
+    ["_~~a~~_ ~b~", "<em><del>a</del></em> <del>b</del>", "<em>~~a~~</em> ~b~"],
+  ])("%j", (text, on, off) => {
+    expect(Markdown.html(text)).toBe(`<p>${on}</p>\n`);
+    expect(Markdown.html(text, { strikethrough: false })).toBe(`<p>${off}</p>\n`);
+  });
+});
+
+test("a long delimiter run uses all of its characters to open and close emphasis", () => {
+  const repeated = (fill: string, count: number) => Buffer.alloc(count * fill.length, fill).toString();
+  const nested = (depth: number, text: string) =>
+    `${repeated("<strong>", depth)}${text}${repeated("</strong>", depth)}`;
+  expect(Markdown.html(`${repeated("_", 13)}!${repeated("_", 13)}`)).toBe(`<p><em>${nested(6, "!")}</em></p>\n`);
+  expect(Markdown.html(`${repeated("*", 14)}a${repeated("*", 14)}`)).toBe(`<p>${nested(7, "a")}</p>\n`);
+  expect(Markdown.html(`${repeated("*", 2000)}a${repeated("*", 2000)}`)).toBe(`<p>${nested(1000, "a")}</p>\n`);
+  // One run can close many openers.
+  expect(Markdown.html(`${repeated("**a ", 20)}b${repeated("*", 40)}`)).toBe(
+    `<p>${repeated("<strong>a ", 20)}b${repeated("</strong>", 20)}</p>\n`,
+  );
+});
+
+test("after an empty list item and a blank line in a block quote, indentation is relative to the quote", () => {
+  const quote = (html: string) => `<blockquote>\n${html}</blockquote>\n`;
+  const list = "<ul>\n<li></li>\n</ul>\n";
+  expect(Markdown.html(">-\n>\n>    a")).toBe(quote(`${list}<p>a</p>\n`));
+  expect(Markdown.html("> -\n>\n>     a")).toBe(quote(`${list}<pre><code>a\n</code></pre>\n`));
+  expect(Markdown.html("> > -\n> >\n> >     a")).toBe(quote(quote(`${list}<pre><code>a\n</code></pre>\n`)));
 });
 
 // What some scan once started again for each repetition, and what is like it, weighed against as many bytes of prose by

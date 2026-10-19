@@ -5,7 +5,7 @@ use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
 use bun_core::strings;
 use bun_lint::json::{self, Notation};
-use bun_lint::linter::{LegacyFailure, LegacyFile, LegacyKind, write_json};
+use bun_lint::linter::{LegacyFailure, LegacyFile, LegacyKind, json_parse, write_json};
 use bun_lint::options::Json;
 
 /// By priority: of several in a directory the first counts.
@@ -70,6 +70,8 @@ pub(crate) struct Modules<'m> {
     pub(crate) command_line: (Vec<u8>, Json),
     /// What the script has printed, by the file that it was run for.
     pub(crate) printed: Vec<(Vec<u8>, Json)>,
+    /// `--config` can point to a named pipe.
+    pub(crate) pipes: &'m fs::NamedPipes,
 }
 
 impl Modules<'_> {
@@ -149,7 +151,7 @@ fn error_of(found: &Json) -> Option<&[u8]> {
 }
 
 /// The script has said nothing about what it was asked for.
-const NOT_LOADED: &[u8] = b"It was not loaded.";
+const NOT_LOADED: &[u8] = b"The file could not be loaded.";
 
 /// `loadConfigFile`: what the file at `path` says. `None`: a `package.json` without `eslintConfig`, a program that exports
 /// nothing.
@@ -166,16 +168,26 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
             None => Err(cannot_read(path, NOT_LOADED)),
         };
     }
-    let text = fs::read(path).map_err(|error| cannot_read(path, &fs::describe(&error)))?;
-    let json = || json::parse(&text).ok_or_else(|| cannot_read(path, b"It is not valid JSON."));
+    let text = modules.pipes.read(path);
+    let text = text.map_err(|error| cannot_read(path, &fs::describe(&error)))?;
+    let json = || json::parse(&text).ok_or_else(|| cannot_read(path, b"Invalid JSON."));
+    // js-yaml throws.
+    let repeated = || crate::fmt::duplicated_mapping_key(&text).map(|why| cannot_read(path, &why));
     // `yaml.load(text) || {}`
     let yaml = || match json::parse_as(Notation::Yaml, &text) {
+        _ if let Some(why) = repeated() => Err(why),
         Ok(Json::Null) => Ok(Json::Object(Vec::new())),
         Ok(value) => Ok(value),
         Err(why) => Err(cannot_read(path, &why)),
     };
     if name == b"package.json" {
-        return Ok(json()?.get(b"eslintConfig").cloned());
+        let has_no_config = |it: Json| it.get(b"eslintConfig").is_none();
+        return match json::parse(&text) {
+            Some(package) => Ok(package.get(b"eslintConfig").cloned()),
+            // It's nested deeper than a config can be, which only matters if there is a config in it.
+            None if json_parse(&text).is_ok_and(has_no_config) => Ok(None),
+            None => Err(cannot_read(path, b"Invalid JSON.")),
+        };
     }
     Ok(Some(if name.ends_with(b".json") {
         json()?
@@ -184,6 +196,7 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
     } else {
         // YAML, which JSON is a part of, with the comments of JavaScript.
         match json::parse(&text) {
+            Some(_) if let Some(why) = repeated() => return Err(why),
             Some(value) => value,
             None => yaml()?,
         }
@@ -191,7 +204,7 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
 }
 
 /// Whether the file at `path`, which `--config` names, is one of ESLint 8, as far as that can be told without running it.
-pub(crate) fn is_one(path: &[u8]) -> bool {
+pub(crate) fn is_one(path: &[u8], pipes: &fs::NamedPipes) -> bool {
     let name = paths::basename(path);
     if name.starts_with(b".eslintrc") || name.ends_with(b".yaml") || name.ends_with(b".yml") {
         return true;
@@ -199,7 +212,7 @@ pub(crate) fn is_one(path: &[u8]) -> bool {
     if !name.ends_with(b".json") {
         return false;
     }
-    let Some(json) = fs::read(path).ok().and_then(|it| json::parse(&it)) else {
+    let Some(json) = pipes.read(path).ok().and_then(|it| json::parse(&it)) else {
         return false;
     };
     // What an `.oxlintrc.json` does not have.
@@ -229,7 +242,11 @@ fn name_of(path: &[u8], cwd: &[u8]) -> Vec<u8> {
 }
 
 /// The file at `path`, which `--config` names: its patterns are relative to the working directory.
-pub(crate) fn named(path: &[u8], cwd: &[u8], modules: &mut Modules) -> Result<LegacyFile, Fatal> {
+pub(crate) fn named(
+    path: &[u8],
+    base_path: &[u8],
+    modules: &mut Modules,
+) -> Result<LegacyFile, Fatal> {
     let json = match read(path, modules).map_err(Fatal)? {
         Some(json) => json,
         None if paths::basename(path) == b"package.json" => {
@@ -240,7 +257,7 @@ pub(crate) fn named(path: &[u8], cwd: &[u8], modules: &mut Modules) -> Result<Le
     Ok(LegacyFile {
         path: path.to_vec(),
         name: b"--config".to_vec(),
-        base_path: cwd.to_vec(),
+        base_path: base_path.to_vec(),
         json,
     })
 }
@@ -272,8 +289,12 @@ pub(crate) fn has_one(directory: &[u8]) -> bool {
     let is_there = |name: &&[u8]| fs::is_file(&paths::join(directory, name));
     NAMES.iter().any(|name| match *name {
         // One that cannot be read is found out when it is.
-        b"package.json" => fs::read(&paths::join(directory, name))
-            .is_ok_and(|it| json::parse(&it).is_none_or(|it| it.get(b"eslintConfig").is_some())),
+        b"package.json" => {
+            is_there(name)
+                && fs::read(&paths::join(directory, name)).is_ok_and(|it| {
+                    json::parse(&it).is_none_or(|it| it.get(b"eslintConfig").is_some())
+                })
+        }
         _ => is_there(name),
     })
 }
@@ -335,7 +356,11 @@ fn patterns(name: &[u8], path: &[u8], cwd: &[u8], patterns: Vec<Json>) -> Legacy
 
 /// `loadESLintIgnore(path)`, or `loadDefaultESLintIgnore()`: `.eslintignore` in the working directory, or else `eslintIgnore` in
 /// its `package.json`.
-pub(crate) fn ignore_file(path: Option<&[u8]>, cwd: &[u8]) -> Result<Option<LegacyFile>, Fatal> {
+pub(crate) fn ignore_file(
+    path: Option<&[u8]>,
+    cwd: &[u8],
+    pipes: &fs::NamedPipes,
+) -> Result<Option<LegacyFile>, Fatal> {
     let default = paths::join(cwd, b".eslintignore");
     let file = match path {
         Some(path) => path,
@@ -359,7 +384,7 @@ pub(crate) fn ignore_file(path: Option<&[u8]>, cwd: &[u8]) -> Result<Option<Lega
             };
         }
     };
-    let text = fs::read(file).map_err(|error| {
+    let text = pipes.read(file).map_err(|error| {
         Fatal(
             [
                 b"Cannot read .eslintignore file: ",

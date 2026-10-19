@@ -137,7 +137,9 @@ impl Checker<'_, '_> {
         // `getTypeOfNode` of its name is the type of the alias target.
         let required = self.bound(file).pat_symbol[pat.idx()];
         if required.is_some()
-            && self.bound(file).symbols[required.idx()]
+            && self
+                .bound(file)
+                .symbol(required)
                 .flags
                 .contains(SymFlags::ALIAS)
         {
@@ -231,7 +233,7 @@ impl Checker<'_, '_> {
         let ExprKind::Ident(name) = hir[e].kind else {
             return None;
         };
-        let crate::bind::Parent::Stmt(stmt) = bound.expr_parent[e.idx()] else {
+        let crate::bind::Parent::Stmt(stmt) = bound.parent_of_expr(e) else {
             return None;
         };
         if stmt.is_none()
@@ -394,7 +396,7 @@ impl Checker<'_, '_> {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `getTypeOfExpression`, called after `file` has been checked. tsgo does not memoize `checkExpression`, so `e` and its
+    /// `getTypeOfExpression`, called from outside the check of `file`. tsgo does not memoize `checkExpression`, so `e` and its
     /// subexpressions are checked again in the normal check mode with no contextual type pushed. Only what tsgo caches is reused:
     /// resolved signatures, symbol types, and the parameter and return types of functions. The contextual type of an argument
     /// therefore comes from the resolved signature, which decides again which literal types are preserved
@@ -406,13 +408,26 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         e: ExprId,
     ) -> TypeId {
+        // `getTypeOfExpression` asks for the quick type first: the arguments of such a call are not looked at. The first
+        // check of what is called resolves the calls enclosing `e`.
+        let mut called = e;
+        while let ExprKind::Await(awaited) = self.hir(file)[called].kind {
+            called = awaited;
+        }
+        if let ExprKind::Call(c) | ExprKind::New(c) = self.hir(file)[called].kind {
+            let callee = self.hir(file)[c].callee;
+            self.type_of_expr(file, callee);
+        }
+        let outer = self.begin_recheck();
+        let quick = self.quick_type_of_expr(file, e);
+        self.end_recheck(outer);
+        if let Some(quick) = quick {
+            return quick;
+        }
         // The first check, which resolves the calls enclosing `e`.
         self.type_of_expr(file, e);
         let outer = self.begin_recheck();
-        let ty = match self.quick_type_of_expr(file, e) {
-            Some(quick) => quick,
-            None => self.check_expression_ex(file, e, CheckMode::empty()),
-        };
+        let ty = self.check_expression_ex(file, e, CheckMode::empty());
         self.end_recheck(outer);
         ty
     }

@@ -12,11 +12,8 @@ use super::errors_operators::{
 };
 use super::errors_statements::is_with_statement;
 use super::sink::MAX_SERIALIZATION_LEVEL;
-use super::task::{Finished, Published};
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
-use crate::types::LinkCounts;
-use crate::util::InParallel;
 use crate::util::SharedSort;
 use smallvec::SmallVec;
 
@@ -28,54 +25,16 @@ use smallvec::SmallVec;
 /// are subtracted too.
 const TASK_STACK: usize = 3 << 20;
 
-/// The barrier after a step. `finished`: the tasks of that step, in task order. No task is running.
 impl<'s> Program<'s> {
-    /// Optimistic concurrency control: validation, before link and publish. `getVariancesWorker`
-    /// returns an empty list for a symbol whose variances are being computed and caches whatever
-    /// results from that, so the variances of mutually recursive types depend on which type of the
-    /// cycle is queried first. The serial order is step order, then program order within a step,
-    /// which is task order. (Not quite program order: the warm-up steps are a sample of the
-    /// program. Deferring what their tasks publish until all earlier files are checked makes a
-    /// check 17% slower.) A task is invalid if it computed a different value than an earlier task
-    /// or step did and a result of the task depends on the difference (`OrderDependent`). The
-    /// caller aborts an invalid task: it discards the task's output and retries its files, which
-    /// then read `serial_variances`. The first task to compute the variances of a symbol is valid
-    /// with respect to that symbol. Returns whether each task is invalid.
-    ///
-    /// Likewise for `markNodeAssignments`: what it has found about a variable depends on which of
-    /// the functions around the assignments was walked first
-    /// (`has_order_dependent_assignment_marks`). A task is invalid if it walked a function of a
-    /// file it was visiting that is inside or around one that an earlier task of the step walked,
-    /// on demand. Retried, it finds those walks published, with what was evaluated along with them.
-    pub fn validate(&self, finished: &[Finished<'s>]) -> Vec<bool> {
-        let mut serial = self.serial_variances.lock();
-        let mut walked: Vec<(FileId, Node)> = Vec::new();
-        (finished.iter())
-            .map(|finished| {
-                let is_invalid = (finished.order_dependent_variances.iter()).any(|it| {
-                    serial
-                        .get(&it.sym)
-                        .is_some_and(|first| it.conflicts_with(first))
-                });
-                if is_invalid || self.has_walked_across_earlier_walk(finished, &walked) {
-                    return true;
-                }
-                for it in &finished.order_dependent_variances {
-                    serial.entry(it.sym).or_insert(it.variances);
-                }
-                walked.extend(finished.assignments_walked.iter().map(|it| (it.0, it.1)));
-                false
-            })
-            .collect()
-    }
-
-    /// `earlier`: `Finished::assignments_walked` of the valid tasks before it.
-    fn has_walked_across_earlier_walk(
+    /// True if a walk that the task made while visiting the file contains an earlier walk or is
+    /// nested in one. `walked` is the task's `Task::assignments_walked`. `earlier` lists the walks
+    /// of earlier commits.
+    pub(super) fn has_walked_across_earlier_walk(
         &self,
-        finished: &Finished<'s>,
+        walked: &[(FileId, Node, bool)],
         earlier: &[(FileId, Node)],
     ) -> bool {
-        (finished.assignments_walked.iter()).any(|&(file, node, is_visiting)| {
+        walked.iter().any(|&(file, node, is_visiting)| {
             let hir = self.files.hir(file);
             let is_in =
                 |inner: Node, outer: Node| hir.find_ancestor(inner, |n| n == outer).is_some();
@@ -85,47 +44,10 @@ impl<'s> Program<'s> {
                 })
         })
     }
-
-    /// The first half. Of the types, signatures, mappers and component lists that several tasks
-    /// have created, the copy of the lowest task is kept. Each task gets its `Link`, through which
-    /// `publish` rewrites its keys and values.
-    pub fn link(&self, finished: &mut [Finished<'s>], in_parallel: InParallel<'_>) -> LinkCounts {
-        let own = finished.iter_mut().map(|it| std::mem::take(&mut it.own));
-        // For a union whose member order depended on task-local ids. Few steps have one.
-        let checker = std::cell::OnceCell::new();
-        let (links, counts) =
-            (self.types).link(&self.files.atoms, own.collect(), in_parallel, &|types| {
-                checker.get_or_init(|| self.checker()).sort_types(types)
-            });
-        for (finished, link) in finished.iter_mut().zip(links) {
-            finished.link = link;
-        }
-        counts
-    }
-
-    /// The second half. The buffered entries are moved to the published state, and the first entry
-    /// for a key wins. Then the diagnostics: the first task to report under a query is the one that
-    /// reports, so this is called for the steps in plan order, on one thread.
-    /// `with_digest`: `Published::digest` is computed.
-    pub fn publish(
-        &self,
-        finished: &mut [Finished<'s>],
-        in_parallel: InParallel<'_>,
-        with_digest: bool,
-    ) -> Published {
-        let published = task::publish(self, finished, in_parallel, with_digest);
-        if finished.iter().any(|finished| finished.closed_a_cycle) {
-            (self.closed_a_cycle).store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        for finished in finished {
-            self.publish_diagnostics(finished);
-        }
-        published
-    }
 }
 
 impl<'s> Checker<'_, 's> {
-    /// Called at the start of a task, or of a checker outside the plan. See `TASK_STACK`.
+    /// Call this before the checker is used. See `TASK_STACK`.
     pub fn begin_stack_budget(&mut self) {
         let left = bun_core::StackCheck::init().remaining();
         assert!(
@@ -135,33 +57,21 @@ impl<'s> Checker<'_, 's> {
         self.set_stack_limit(TASK_STACK);
     }
 
-    /// Called before `check_file`. `step` counts from 0. `index`: the position of the task in its
-    /// step, in task order.
-    /// `is_read_later`: whether anything will read what this task publishes. If not, only its
-    /// diagnostics go to the barrier.
-    /// A checker for which this is not called is outside the plan: its writes are dropped with it.
-    pub fn begin_task(&mut self, step: u32, index: u32, is_read_later: bool) {
-        self.task.begin(step, index, is_read_later);
+    /// Call this before `check_file`. `round` counts from 0, and no other task of the round has `index`. Without this
+    /// call the checker shares nothing: its writes are dropped with it.
+    pub fn begin_task(&mut self, round: u32, index: u32) {
+        self.task.begin(round, index);
+        self.task.own.set_sharing(Sharing::Publishes);
+
         self.order_dependent.clear();
         self.order_dependent_filter = 0;
-    }
-
-    /// Called on the thread of the task, after everything else this checker does.
-    pub fn end_task(&mut self) -> Finished<'s> {
-        let diagnostics = self.take_diagnostics();
-        self.task.finish(self.p, diagnostics)
+        self.constraints_of_this_task.clear();
+        self.relations_of_this_task.clear();
     }
 
     /// After `check_file`: whether the native stack ran out in that file. A task checks several files.
     pub fn take_ran_out_of_stack(&mut self) -> bool {
         self.ran_out_of_stack.replace(false)
-    }
-
-    /// How many entries of `relations` this checker has stored under a generic key whose hash
-    /// included a task-local id. Such an entry is bound to its task: after the link the same two
-    /// references hash differently. A function of the program.
-    pub fn generic_relation_entries_not_published(&self) -> u64 {
-        self.generic_relation_entries_not_published
     }
 
     /// `checkSourceFile`
@@ -204,6 +114,22 @@ impl<'s> Checker<'_, 's> {
         self.reported_unreachable_nodes.clear();
     }
 
+    /// Runs `checkSourceFile` on the task's file and throws its diagnostics away. For a file that `check_file` skips because
+    /// it reports no semantic errors (`// @ts-nocheck`, JavaScript without `checkJs`), when lint rules are about to ask for
+    /// its types out of source order. A diagnostic that belongs to a query stays with that query's entry.
+    pub(super) fn check_source_file_and_report_nothing(&mut self, file: FileId) {
+        let (reported, logged) = (self.reported.len(), self.task.diagnostics.len());
+        self.is_type_checked = false;
+        self.save_deferred_diagnostics = true;
+        self.check_source_file(file);
+        self.produce_type_not_iterable_errors(logged);
+        self.is_type_checked = true;
+        self.reported.truncate(reported);
+        let since = self.task.diagnostics.split_off(logged).into_iter();
+        (self.task.diagnostics).extend(since.filter(|(owner, _)| owner.is_some()));
+        self.never_checked.get_mut().clear();
+    }
+
     /// Settles `unvisited_exprs`. A query that computes a type from one checks the whole of it
     /// (`checkDeclarationInitializer`, `checkComputedPropertyName`,
     /// `checkAndAggregateYieldOperandTypes`). What no query has reached by the end of
@@ -234,6 +160,7 @@ impl<'s> Checker<'_, 's> {
         }
         self.never_check_with_bodies(file);
         self.never_check_specifier_expressions(file);
+        self.never_check_options_of_import_types(file);
     }
 
     /// Whether `pos` is in a range given to `never_check`.
@@ -257,61 +184,13 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
-    /// `checkSourceElement` for the statements of `file`, a declaration file, that begin in the
-    /// range `from..to` of its text (`PlanOptions::split_files`). The only work of its task.
-    ///
-    /// The task does not visit `file`. So every query is evaluated on demand, as a task evaluates
-    /// what it needs of any other file, and what goes to the barrier is what any task may publish
-    /// about `file`: an entry whose evaluation has a side effect that `check_file` reads is not
-    /// stored. The task of `file` runs in the next step and finds the entries.
-    ///
-    /// A diagnostic that belongs to a query goes to the barrier with the entry. One that belongs to
-    /// the task is dropped: `check_file` reports it.
-    ///
-    /// `publishes_everything`: otherwise `Task::withhold_tables_of_records`.
-    ///
-    /// Returns the obstacles to publishing, as a bit set. Each is an event after which a stored
-    /// result can depend on what was evaluated before, so the task of `file`, which begins at the
-    /// first statement, might have stored another one.
-    /// - 1: a query has re-entered itself.
-    /// - 2: an instantiation limit was reached, or the native stack ran low.
-    /// - 4: a comparison was cut short because both types were deeply nested.
-    /// - 8: `check_file` does not check the statements of `file`.
-    pub fn check_statements_ahead(
-        &mut self,
-        file: FileId,
-        (from, to): (u32, u32),
-        publishes_everything: bool,
-    ) -> u8 {
-        if self.expected != Requested::All || !self.reports_semantic_errors(file) {
-            return 8;
-        }
-        self.task.store_densely(file);
-        if !publishes_everything {
-            self.task.withhold_tables_of_records();
-        }
-        self.has_ambient_context = true;
-        self.save_deferred_diagnostics = true;
-        let hir = self.hir(file);
-        for s in hir.ids(hir.body) {
-            if (from..to).contains(&hir[s].start) {
-                self.check_source_element(file, s);
-            }
-        }
-        self.produce_type_not_iterable_errors(0);
-        self.reported.clear();
-        self.task.diagnostics.retain(|(owner, _)| owner.is_some());
-        let is_cut_short = self.ran_out_of_stack.replace(false)
-            || self.cuts() != 0
-            || self.instantiation_limit_hits != 0;
-        u8::from(self.task.closed_a_cycle)
-            | u8::from(is_cut_short) << 1
-            | u8::from(self.comparisons_of_deeply_nested_types != 0) << 2
-    }
-
     /// `checkSourceElements`
     fn check_source_elements(&mut self, file: FileId, statements: IdList<StmtId>) {
         for s in self.hir(file).ids(statements) {
+            self.rest_between_statements();
+            if self.task.is_lost() {
+                return;
+            }
             self.check_source_element(file, s);
         }
     }
@@ -361,6 +240,10 @@ impl<'s> Checker<'_, 's> {
     /// `checkDeferredNodes`: nodes deferred in the meantime are appended to the queue.
     fn check_deferred_nodes(&mut self, file: FileId) {
         while let Some(e) = self.deferred_nodes.pop_front() {
+            self.rest_between_statements();
+            if self.task.is_lost() {
+                return;
+            }
             let saved = self.enter_source_element(CurrentNode::Expr(file, e));
             self.check_deferred_node(file, e);
             self.current_source_element = saved;
@@ -384,12 +267,12 @@ impl<'s> Checker<'_, 's> {
                 if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
                     if !self.check_grammar_function_like_declaration(file, func)
                         && !self.check_grammar_accessor(file, func)
-                        && let Parent::Prop(p) = self.bound(file).expr_parent[e.idx()]
+                        && let Parent::Prop(p) = self.bound(file).parent_of_expr(e)
                     {
                         self.check_grammar_computed_property_name(file, hir[p].key);
                     }
                     self.check_signature_declaration(file, func);
-                    if let Parent::Prop(p) = self.bound(file).expr_parent[e.idx()]
+                    if let Parent::Prop(p) = self.bound(file).parent_of_expr(e)
                         && !hir.prop_modifiers(p).is_empty()
                     {
                         self.check_accessor_pair(file, Decl::Property(p));
@@ -398,7 +281,7 @@ impl<'s> Checker<'_, 's> {
                 self.check_getter_returns_a_value(file, func);
                 if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
                     // `checkAccessorDeclaration`: `getTypeOfAccessors` of the symbol, whose getter comes first.
-                    if let Parent::Prop(p) = self.bound(file).expr_parent[e.idx()] {
+                    if let Parent::Prop(p) = self.bound(file).parent_of_expr(e) {
                         let getter = match hir[p].kind {
                             PropKind::Setter => self.accessor_of_literal(file, p, PropKind::Getter),
                             _ => None,
@@ -631,10 +514,20 @@ impl<'s> Checker<'_, 's> {
         let has_body = has_body(&hir[func]);
         let is_pattern = matches!(hir[node.pat].kind, PatKind::Object(_) | PatKind::Array(_));
         if p != hir[func].this_param {
-            if self.check_name_and_initializer(file, node.pat, node.default, !has_body) {
+            // `checkExpressionCached(initializer)`: a loop that is being analysed is hidden from it.
+            let check = |c: &mut Self| {
+                let exits = c.check_name_and_initializer(file, node.pat, node.default, !has_body);
+                if !exits {
+                    c.check_parameter_initializer(file, p);
+                }
+                exits
+            };
+            let exits = match self.flow_loops.is_empty() {
+                true => check(self),
+                false => self.outside_flow_loops(check),
+            };
+            if exits {
                 self.error(file, p, 2371, &[]);
-            } else {
-                self.check_parameter_initializer(file, p);
             }
         }
         if node.flags.contains(Flags::PARAMETER_PROPERTY) {
@@ -783,7 +676,7 @@ impl<'s> Checker<'_, 's> {
 
     /// The check of the parent of `e` returns before it checks `e`.
     pub(super) fn leave_unvisited(&mut self, file: FileId, e: ExprId) {
-        if e.is_some() {
+        if e.is_some() && !self.is_checking_in_flow_loop {
             let start = self.start_of(file, e);
             self.unvisited_exprs.push((start, e));
         }
@@ -822,9 +715,11 @@ impl<'s> Checker<'_, 's> {
                     }
                     let (name, prop) = (hir[p].value, &hir[p]);
                     if is_bodiless && self.is_renamed_binding_element(file, p) {
-                        self.renamed_binding_elements_in_types.push(p);
-                        if let PropKey::Computed(key) = prop.key {
-                            self.unvisited_exprs.push((prop.key_pos, key));
+                        if !self.is_checking_in_flow_loop {
+                            self.renamed_binding_elements_in_types.push(p);
+                            if let PropKey::Computed(key) = prop.key {
+                                self.unvisited_exprs.push((prop.key_pos, key));
+                            }
                         }
                         self.leave_unvisited(file, prop.default);
                         continue;
@@ -1197,7 +1092,7 @@ impl<'s> Checker<'_, 's> {
         let hir = self.hir(file);
         matches!(hir[e].kind, ExprKind::Binary { op: BinOp::In, .. })
             && !is_parenthesized(hir, e)
-            && matches!(self.bound(file).expr_parent[e.idx()], Parent::MemberKey(m)
+            && matches!(self.bound(file).parent_of_expr(e), Parent::MemberKey(m)
                 if !matches!(hir[m].kind, MemberKind::Getter | MemberKind::Setter))
     }
 
@@ -1511,7 +1406,7 @@ impl<'s> Checker<'_, 's> {
         {
             self.check_grammar_statement_in_ambient_context(file, s);
         }
-        if !hir[s].modifiers.is_empty() {
+        if !hir.stmt_modifiers(s).is_empty() {
             self.check_grammar_modifiers_of_statement(file, s);
         }
         match hir[s].kind {
@@ -1528,7 +1423,7 @@ impl<'s> Checker<'_, 's> {
             }
             // `checkExportAssignment`: misplaced, or in a namespace, it is not checked.
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
-                let is_visited = match bound.stmt_parent[s.idx()] {
+                let is_visited = match bound.parent_of_stmt(s) {
                     Parent::File => true,
                     Parent::Module(m) => !matches!(hir[m].name, ModuleName::Ident(_)),
                     _ => false,
@@ -1542,7 +1437,7 @@ impl<'s> Checker<'_, 's> {
                     self.never_check(self.start_of(file, e), hir[s].loc.end);
                 }
                 if matches!(hir[s].kind, StmtKind::ExportAssign(_))
-                    && matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))
+                    && matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_))
                     && self.should_check_erasable_syntax(file)
                     && !hir.is_ambient(hir.node(s))
                 {
@@ -1571,7 +1466,7 @@ impl<'s> Checker<'_, 's> {
             // name in it. Reported on the first. After `checkGrammarModuleElementContext`. For an
             // import: `check_grammar_import_clause`.
             StmtKind::ExportNamed(x) if hir[x].type_only => {
-                if matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))
+                if matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_))
                     && let Some(item) = hir[x].items.iter().find(|&item| hir[item].type_only)
                 {
                     self.grammar_error_at((file, hir[item].start, 0), 2207, &[]);
@@ -1579,7 +1474,7 @@ impl<'s> Checker<'_, 's> {
             }
             // `checkImportEqualsDeclaration`, past `checkGrammarModuleElementContext`
             StmtKind::ImportEquals(_) => {
-                if matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))
+                if matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_))
                     && self.should_check_erasable_syntax(file)
                     && !hir.is_ambient(hir.node(s))
                 {
@@ -1775,7 +1670,7 @@ impl<'s> Checker<'_, 's> {
             StmtKind::Module(module) => {
                 self.check_function_or_module_block(file, hir[module].body);
                 // `checkGrammarModuleElementContext`
-                if matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_)) {
+                if matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_)) {
                     if let ModuleName::Ident(name) = hir[module].name {
                         self.check_collisions_for_declaration_name(file, s, name);
                     }
@@ -1847,7 +1742,7 @@ impl<'s> Checker<'_, 's> {
                 let callee = hir[c].callee;
                 self.check_expression(file, callee);
                 if callee.is_none() || !matches!(hir[callee].kind, ExprKind::Super) {
-                    self.check_type_nodes(file, hir[c].type_args);
+                    self.check_type_nodes(file, hir.list_at(hir[c].type_args));
                 }
                 // `getCandidateForOverloadFailure` begins with `checkNodeDeferred(node)`.
                 if (self.p.call_diagnostics)
@@ -1867,6 +1762,10 @@ impl<'s> Checker<'_, 's> {
                 self.serialization_level = serialization_level;
                 if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
                     check_tagged_template(self, file, c);
+                }
+                // Otherwise `check_calls`, after the walk.
+                if self.is_checking_in_flow_loop {
+                    self.check_call_like(file, e);
                 }
             }
             ExprKind::BigInt(_) => self.check_grammar_big_int_literal(file, e),
@@ -1961,6 +1860,7 @@ impl<'s> Checker<'_, 's> {
             }
             // `checkExpressionWithTypeArguments`
             ExprKind::Instantiation { expr, type_args } => {
+                let type_args = hir.list_at(type_args);
                 self.check_type_nodes(file, type_args);
                 self.check_expression(file, expr);
             }
@@ -2036,7 +1936,8 @@ impl<'s> Checker<'_, 's> {
                 self.check_plain_assignment_operator(file, e, None);
                 self.current_source_element = saved;
             }
-            ExprKind::Cond { test, yes, no } => {
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.check_expression(file, test);
                 let body = Parent::Expr(yes);
                 self.check_testing_known_truthy_callable_or_awaitable_or_enum_member_type(
@@ -2060,7 +1961,7 @@ impl<'s> Checker<'_, 's> {
     /// and whose walk reached the depth limit, reaches it again.
     #[cold]
     fn reach_flow_depth_limit_again(&mut self, file: FileId, e: ExprId) {
-        if self.bound(file).flow_places > super::flow::MAX_FLOW_DEPTH
+        if self.bound(file).can_reach_flow_depth_limit()
             && (self.p.flows_too_deep.get(&self.task, &(file, e))).is_some()
         {
             self.disable_flow_analysis(file);
@@ -2076,11 +1977,11 @@ impl<'s> Checker<'_, 's> {
         e: ExprId,
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let Some(&Parent::Expr(assignment)) = bound.expr_parent.get(e.idx()) else {
+        let Parent::Expr(assignment) = bound.parent_of_expr(e) else {
             return false;
         };
         matches!(hir[assignment].kind, ExprKind::Assign { op: None, target, .. } if target == e)
-            && matches!(bound.expr_parent[assignment.idx()], Parent::Prop(p)
+            && matches!(bound.parent_of_expr(assignment), Parent::Prop(p)
                 if hir[p].kind == PropKind::Shorthand
                     && bound.get_assignment_target(hir, bound.prop_owner[p.idx()]).is_none())
     }

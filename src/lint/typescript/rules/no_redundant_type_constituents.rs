@@ -224,6 +224,12 @@ fn describe_literal_type_node(type_node: TypeNode) -> Vec<u8> {
         TypeKind::NumberLit(value) => return text::number_to_string(value),
         TypeKind::BoolLit(true) => b"true",
         TypeKind::BoolLit(false) => b"false",
+        // tsgolint has the text of the scanner: hexadecimal stays so, in lower case and without separators.
+        TypeKind::BigIntLit { negative: false, .. }
+            if is_oxlint && type_node.text().get(..2).is_some_and(|it| it.eq_ignore_ascii_case(b"0x")) =>
+        {
+            return type_node.text().iter().filter(|&&it| it != b'_').map(u8::to_ascii_lowercase).collect();
+        }
         // In base 10.
         TypeKind::BigIntLit { .. } => return describe_literal_type(type_node.ty()),
         _ => b"literal type",
@@ -250,36 +256,50 @@ fn get_type_node_type_part_flags<'a>(
     type_node: TypeNode<'a>,
     parts: &mut SmallVec<[TypeFlagsWithName<'a>; 8]>,
 ) {
+    let file = type_node.file();
+    let is_oxlint = file.language().is_oxlint;
+    // tsgolint asks the type of all but seven keywords and four literals, which is an error for `this` outside of a
+    // class and for all in a `with` statement. `(A)` is a `ParenthesizedType` for it, which is none of them.
+    let is_parenthesized_type = is_oxlint && type_node.is_parenthesized();
+    let has_with_statements = is_oxlint && file.has_with_statements();
     let type_flags = match type_node.kind() {
+        _ if is_parenthesized_type => None,
         TypeKind::Keyword(keyword) => match keyword {
-            Keyword::Any => TypeFlags::ANY,
-            Keyword::BigInt => TypeFlags::BIG_INT,
-            Keyword::Boolean => TypeFlags::BOOLEAN,
-            Keyword::Never => TypeFlags::NEVER,
-            Keyword::Number => TypeFlags::NUMBER,
-            Keyword::String => TypeFlags::STRING,
-            Keyword::Unknown => TypeFlags::UNKNOWN,
+            Keyword::Any => Some(TypeFlags::ANY),
+            Keyword::BigInt => Some(TypeFlags::BIG_INT),
+            Keyword::Boolean => Some(TypeFlags::BOOLEAN),
+            Keyword::Never => Some(TypeFlags::NEVER),
+            Keyword::Number => Some(TypeFlags::NUMBER),
+            Keyword::String => Some(TypeFlags::STRING),
+            Keyword::Unknown => Some(TypeFlags::UNKNOWN),
+            Keyword::This if is_oxlint => None,
+            _ if has_with_statements => None,
             // One part, with none of the flags that are looked for.
-            _ => TypeFlags::empty(),
+            _ => Some(TypeFlags::empty()),
         },
-        TypeKind::StringLit(_) => TypeFlags::STRING_LITERAL,
-        TypeKind::NumberLit(_) => TypeFlags::NUMBER_LITERAL,
-        TypeKind::BigIntLit { .. } => TypeFlags::BIG_INT_LITERAL,
-        TypeKind::BoolLit(_) => TypeFlags::BOOLEAN_LITERAL,
+        // A template without substitutions is no `StringLiteral` for tsgolint.
+        TypeKind::StringLit(_) if is_oxlint && type_node.text().starts_with(b"`") => None,
+        TypeKind::StringLit(_) => Some(TypeFlags::STRING_LITERAL),
+        TypeKind::NumberLit(_) => Some(TypeFlags::NUMBER_LITERAL),
+        TypeKind::BigIntLit { .. } => Some(TypeFlags::BIG_INT_LITERAL),
+        TypeKind::BoolLit(_) => Some(TypeFlags::BOOLEAN_LITERAL),
         // The same: an object type.
-        TypeKind::Object(_)
-        | TypeKind::Fn(_)
-        | TypeKind::Array(_)
-        | TypeKind::Tuple(_)
-        | TypeKind::Mapped(_) => TypeFlags::empty(),
-        // For tsgolint `(A | B)` is a `ParenthesizedType`, which it asks the type of.
-        TypeKind::Union(types) if !(type_node.is_parenthesized() && type_node.file().language().is_oxlint) => {
+        TypeKind::Object(_) | TypeKind::Fn(_) | TypeKind::Array(_) | TypeKind::Tuple(_) | TypeKind::Mapped(_)
+            if !has_with_statements =>
+        {
+            Some(TypeFlags::empty())
+        }
+        TypeKind::Union(types) => {
             for type_node in types {
                 get_type_node_type_part_flags(type_node, parts);
             }
             return;
         }
-        _ => {
+        _ => None,
+    };
+    let type_flags = match type_flags {
+        Some(type_flags) => type_flags,
+        None => {
             let of_type = |type_part: Type<'a>| TypeFlagsWithName {
                 type_flags: match type_part.is_unresolved() {
                     true => TypeFlags::empty(),
@@ -300,8 +320,13 @@ fn get_type_node_type_part_flags<'a>(
                 });
                 return;
             }
-            // `unionTypePartsUnlessBoolean`: `boolean` is the union `false | true`.
-            match node_type.has_flags(TypeFlags::BOOLEAN) {
+            // `unionTypePartsUnlessBoolean`: `boolean` is the union `false | true`. For tsgolint only the type of the
+            // keyword is: an alias of `true | false` is another union.
+            let is_boolean_type = match is_oxlint {
+                true => node_type == file.type_checker().get_boolean_type(),
+                false => node_type.has_flags(TypeFlags::BOOLEAN),
+            };
+            match is_boolean_type {
                 true => parts.push(of_type(node_type)),
                 false => parts.extend(union_constituents(node_type).iter().map(of_type)),
             }
@@ -315,7 +340,14 @@ fn get_type_node_type_part_flags<'a>(
 }
 
 fn is_node_inside_return_type(node: TypeNode) -> bool {
-    matches!(node.parent(), Node::Func(func) if is_function_or_function_type(func))
+    let Node::Func(func) = node.parent() else {
+        return false;
+    };
+    // tsgolint's `ast.IsFunctionLike(node.Parent)`: also an index signature, not through the parentheses of `(A | B)`.
+    match node.file().language().is_oxlint {
+        true => !node.is_parenthesized(),
+        false => is_function_or_function_type(func),
+    }
 }
 
 /// Reports `any` or an error type among the constituents of a `container` type.
@@ -371,6 +403,7 @@ impl NoRedundantTypeConstituents {
         // `type F = "a" | 2 | "b"; type I = F & string;`: whether all the members of `F` are
         // assignable to another constituent of `I`.
         if has_seen_union_types {
+            let mut type_values_literal = None;
             for (type_ref, type_values) in constituents.iter() {
                 if type_values.len() < 2 {
                     continue;
@@ -382,7 +415,12 @@ impl NoRedundantTypeConstituents {
                 if let Some(primitive) = type_values.last().and_then(primitive_of)
                     && type_values.iter().all(|it| primitive_of(it).is_some())
                 {
-                    let (literal, is_oxlint) = (join(type_values.iter().copied()), cx.language().is_oxlint);
+                    let is_oxlint = cx.language().is_oxlint;
+                    // tsgolint names every union with the parts of the first that it reports.
+                    let literal = match is_oxlint {
+                        true => type_values_literal.get_or_insert_with(|| join(type_values.iter().copied())).clone(),
+                        false => join(type_values.iter().copied()),
+                    };
                     let report = cx.report(place(type_ref), PRIMITIVE_OVERRIDDEN);
                     // tsgolint has the two the other way round here.
                     match is_oxlint {

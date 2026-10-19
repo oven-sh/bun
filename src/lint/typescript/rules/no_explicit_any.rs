@@ -76,7 +76,7 @@ impl NoExplicitAny {
             return;
         }
         let parent = ty.parent();
-        let report = cx.report(ty, UNEXPECTED_ANY);
+        let report = cx.report(ty, UNEXPECTED_ANY).hint("unknown is the safe choice where the type is not known.");
         // oxlint suggests nothing, and knows no `PropertyKey`.
         if cx.language().is_oxlint {
             if self.fixes_to_unknown {
@@ -88,7 +88,7 @@ impl NoExplicitAny {
         if let Node::Type(keyof) = parent
             && keyof.tag() == TypeTag::Keyof
         {
-            let report = report.suggest(SUGGEST_PROPERTY_KEY, |fixer| fixer.replace(keyof, "PropertyKey"));
+            let report = report.suggest_change_of_behavior(SUGGEST_PROPERTY_KEY, &[], |fixer| fixer.replace(keyof, "PropertyKey"));
             if self.fixes_to_unknown {
                 report.fix(|fixer| fixer.replace(keyof, "PropertyKey"));
             }
@@ -96,8 +96,8 @@ impl NoExplicitAny {
         }
         let unknown = if is_rest_element_in_function(parent) { "unknown[]" } else { "unknown" };
         let report = report
-            .suggest(SUGGEST_UNKNOWN, |fixer| fixer.replace(ty, unknown))
-            .suggest(SUGGEST_NEVER, |fixer| fixer.replace(ty, "never"));
+            .suggest_change_of_behavior(SUGGEST_UNKNOWN, &[], |fixer| fixer.replace(ty, unknown))
+            .suggest_change_of_behavior(SUGGEST_NEVER, &[], |fixer| fixer.replace(ty, "never"));
         if self.fixes_to_unknown {
             report.fix(|fixer| fixer.replace(ty, unknown));
         }
@@ -108,7 +108,8 @@ impl Rule for NoExplicitAny {
     const META: Meta = Meta::typescript("no-explicit-any", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions()
-        .recommended();
+        .recommended()
+        .hints();
     const ON: On = On::new().types(&[TypeTag::Keyword]);
     no_state!();
 

@@ -17,9 +17,10 @@
 //! resolved as Node.js resolves them, after `paths`: [`AsRequire::as_import`].
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 
 use bun_core::strings;
-use bun_glob::{BunGlobWalker, Options as GlobOptions, Pattern};
+use bun_glob::{BunGlobWalker, Pattern};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
@@ -38,7 +39,7 @@ use bun_sema::json::Json;
 use bun_sema::resolve::{AsRequire, Host, Resolver, ScriptKind, ancestors, join, typescript_path};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, ShardedMap};
-use bun_sema_driver::host::{Disk, from_native};
+use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native};
 use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::any::Any;
@@ -50,7 +51,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub struct Store {
     session: Session,
     disk: OnceLock<Disk>,
+    already_read: OnceLock<AlreadyRead>,
     cwd: Vec<u8>,
+    /// A tsconfig.json that nothing names is the nearest to the file, as for TypeScript, and not that of `cwd`, as for
+    /// eslint-import-resolver-typescript.
+    is_by_file: bool,
+    /// `--tsconfig`. oxlint resolves what every file outside `node_modules` imports with it, and looks for no other.
+    tsconfig: Option<Vec<u8>>,
 }
 
 impl Store {
@@ -59,13 +66,41 @@ impl Store {
         Store {
             session: Session::new(),
             disk: OnceLock::new(),
+            already_read: OnceLock::new(),
             cwd: from_native(cwd),
+            is_by_file: false,
+            tsconfig: None,
         }
     }
 
+    /// `path`: as it is on the command line.
+    pub fn with_tsconfig(self, path: &[u8]) -> Store {
+        let path = from_argument(&self.cwd, path);
+        Store {
+            tsconfig: Some(resolve_config_file_name_of_project_reference(&path)),
+            ..self
+        }
+    }
+
+    /// For a run without a configuration of ESLint or oxlint: see `is_by_file`.
+    pub fn by_file(self) -> Store {
+        Store {
+            is_by_file: true,
+            ..self
+        }
+    }
+
+    /// Makes the store read the files in `already_read` from memory instead of from disk. Call it before any rule
+    /// queries the store.
+    pub fn provide(&self, already_read: AlreadyRead) {
+        let _ = self.already_read.set(already_read);
+    }
+
     fn disk(&self) -> &Disk {
-        self.disk
-            .get_or_init(|| Disk::with_already_read(1, FxHashMap::default(), &self.cwd))
+        self.disk.get_or_init(|| {
+            let already_read = self.already_read.get().cloned().unwrap_or_default();
+            Disk::with_already_read(1, already_read, &self.cwd).started_in(&self.cwd)
+        })
     }
 }
 
@@ -107,7 +142,7 @@ struct ProjectResolver<'h> {
 struct Known<'h> {
     /// By the path of the `tsconfig.json`. Empty: there is none.
     resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
-    /// The path of the `tsconfig.json` for the files of a directory.
+    /// The path of the `tsconfig.json` for the files of a directory. With [`Store::tsconfig`]: for a file.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
     /// [`Graph::scopes_in`], [`Graph::scopes_of`]
     scopes: ShardedMap<Vec<u8>, Vec<Scope>>,
@@ -226,7 +261,10 @@ impl Scope {
             if !strings::contains_any(last, b".*?") {
                 path.extend_from_slice(b"/**/*");
             }
-            (Pattern::new(&path, GlobOptions::BUN), path.ends_with(b"*"))
+            (
+                Pattern::new(&bun_glob::pattern::of_fast_glob(&path)),
+                path.ends_with(b"*"),
+            )
         };
         let patterns = |written: &[Vec<u8>]| written.iter().map(pattern).collect::<Vec<_>>();
         let written = &project.written;
@@ -467,10 +505,17 @@ impl<'h> Graph<'h> {
             }
             left.iter().count() + a.count() + right.iter().count() + b.count()
         };
-        listed.sort_by_key(distance);
+        bun_lint::utils::sort::sort_by_key(&mut listed, distance);
         listed.dedup();
         let is_for_it = |it: &Vec<u8>| self.scopes_of(it).last().is_some_and(|own| own.has(from));
         let chosen = match listed.len() {
+            0 if self.store.is_by_file => {
+                let mut above = bun_lint::paths::ancestors(directory);
+                above
+                    .find_map(|it| self.config_in(it))
+                    .into_iter()
+                    .collect()
+            }
             0 => self.config_in(&self.store.cwd).into_iter().collect(),
             1 => listed,
             _ => match listed.iter().position(is_for_it) {
@@ -513,6 +558,24 @@ impl<'h> Graph<'h> {
                 None => {
                     let found = find_config(self.store.disk(), directory).unwrap_or_default();
                     known.configs.insert_ref(directory.to_vec(), found)
+                }
+            };
+        }
+        if let Some(config) = &self.store.tsconfig {
+            let scopes = self.scopes_of(config).split_last();
+            let Some((own, referenced)) = scopes.filter(|_| !is_in_package(from)) else {
+                return b"";
+            };
+            if referenced.is_empty() {
+                return &own.config;
+            }
+            let known = self.known();
+            return match known.configs.get_ref(from) {
+                Some(config) => config,
+                None => {
+                    let of_file = referenced.iter().find(|it| it.has(from)).unwrap_or(own);
+                    let config = of_file.config.clone();
+                    known.configs.insert_ref(from.to_vec(), config)
                 }
             };
         }
@@ -1269,6 +1332,7 @@ impl Modules for Graph<'_> {
         let how = [
             language.parser as u8,
             language.scope_source_type() as u8,
+            u8::from(language.without_module_syntax.is_some()),
             u8::from(language.jsx),
             u8::from(language.experimental_decorators),
             u8::from(language.eslint_8.is_some()),

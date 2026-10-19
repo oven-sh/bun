@@ -11,6 +11,7 @@ import {
   isDebug,
   isLinux,
   isPosix,
+  isRoot,
   isWindows,
   shellExe,
   tempDir,
@@ -1383,6 +1384,19 @@ describe("close handling", () => {
   });
 });
 
+it("resourceUsage has records with no prototype", () => {
+  const usage = spawnSync({ cmd: [bunExe(), "-e", "1"], env: bunEnv }).resourceUsage;
+  const shape = (record: object) => [
+    Object.getPrototypeOf(record),
+    Object.entries(record).map(([name, value]) => `${name}: ${typeof value}`),
+  ];
+  expect(shape(usage.contextSwitches)).toEqual([null, ["voluntary: number", "involuntary: number"]]);
+  expect(shape(usage.cpuTime)).toEqual([null, ["user: bigint", "system: bigint", "total: bigint"]]);
+  expect(shape(usage.messages)).toEqual([null, ["sent: number", "received: number"]]);
+  expect(shape(usage.ops)).toEqual([null, ["in: number", "out: number"]]);
+  expect(usage.cpuTime.total).toBe(usage.cpuTime.user + usage.cpuTime.system);
+});
+
 it("dispose keyword works", async () => {
   let captured;
   {
@@ -1851,8 +1865,6 @@ describe("option combinations", () => {
 });
 
 describe("uid/gid", () => {
-  const isRoot = process.getuid?.() === 0;
-
   it.if(isPosix && isRoot)("applies uid and gid to the child", async () => {
     await using proc = spawn({ cmd: ["id", "-u"], uid: 65534, gid: 65534, stdout: "pipe" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

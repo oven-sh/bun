@@ -45,7 +45,7 @@ impl<'o> Tags<'_, '_, 'o> {
     }
 
     /// Whether what follows the node writes the end of its closing tag.
-    fn lends_closing_tag_end_marker(self, id: Id) -> bool {
+    pub(crate) fn lends_closing_tag_end_marker(self, id: Id) -> bool {
         match (self.tree.next(id), self.tree.parent(id)) {
             (Some(next), _) => self.needs_to_borrow_prev_closing_tag_end_marker(next),
             (None, Some(parent)) => self.needs_to_borrow_last_child_closing_tag_end_marker(parent),
@@ -108,9 +108,28 @@ impl<'o> Tags<'_, '_, 'o> {
             Kind::IeConditionalStartComment => b"]><!-->",
             Kind::Interpolation => b"}}",
             Kind::AngularIcuExpression => b"}",
-            Kind::Element if node.has(Flags::IS_SELF_CLOSING) => b"/>",
+            Kind::Element if node.has(Flags::IS_SELF_CLOSING) && !self.stays_without_slash(id) => {
+                b"/>"
+            }
             _ => b">",
         });
+    }
+
+    /// True if `id` is a void element written without a slash, like `<br>`, and is printed verbatim. The marker it
+    /// lends is then `>`. Prettier assumes `/>`, so `<img a=b>c` becomes `<img a=/>c`.
+    fn stays_without_slash(self, id: Id) -> bool {
+        let end = self.tree[id].span.end as usize;
+        self.tree.has_prettier_ignore(id)
+            && (self.options.original_text.get(..end)).is_some_and(|text| !text.ends_with(b"/>"))
+    }
+
+    /// Whether what is in `id` is written as it is, and `id` has no end tag that says where that ends. Prettier takes it to
+    /// be empty: `<pre><b>a</b>` becomes `<pre>>`. Here it is written to its end, and gets no end tag.
+    pub(crate) fn is_written_to_its_end(self, id: Id) -> bool {
+        let node = &self.tree[id];
+        node.has(Flags::PRESERVES_CONTENT)
+            && !(node.flags).intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
+            && self.tree.has_children(id)
     }
 
     fn should_not_print_closing_tag(self, id: Id) -> bool {
@@ -118,6 +137,7 @@ impl<'o> Tags<'_, '_, 'o> {
             .flags
             .intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
             && (self.tree.has_prettier_ignore(id)
+                || self.is_written_to_its_end(id)
                 || self
                     .tree
                     .parent_of(id)
@@ -286,9 +306,6 @@ impl<'o> Tags<'_, '_, 'o> {
     /// `getNodeContent`
     pub(crate) fn node_content(self, id: Id) -> &'o [u8] {
         let node = &self.tree[id];
-        let Some(end_span) = node.end_span() else {
-            return b"";
-        };
         let mut start = node.start_span.end as usize;
         if self
             .tree
@@ -298,6 +315,17 @@ impl<'o> Tags<'_, '_, 'o> {
             start =
                 start.saturating_sub(self.len_of(|tags, out| tags.opening_tag_end_marker(id, out)));
         }
+        let Some(end_span) = node.end_span() else {
+            if !self.is_written_to_its_end(id) {
+                return b"";
+            }
+            let (mut end, mut at) = (node.span.end, id);
+            while let Some(last) = self.tree.last_child(at) {
+                (end, at) = (end.max(self.tree[last].span.end), last);
+            }
+            let content = self.options.original_text.get(start..end as usize);
+            return content.unwrap_or_default().trim_ascii_end();
+        };
         let mut end = end_span.start as usize;
         if self
             .tree

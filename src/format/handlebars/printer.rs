@@ -1,8 +1,9 @@
 //! Prettier's `language-handlebars/printer-glimmer.js`. It writes the parts of the document one after the other.
+//!
+//! Where what Prettier prints is read as something else than the template, a comment says what Prettier does.
 
 use super::ast::{self, Call, Head, Kind, NOTHING, Node, NodeId, Range, Tree};
 use super::lexer::id_len;
-use super::positions::Positions;
 use super::tokenizer::is_void_tag;
 use crate::FormatOptions;
 use crate::css::doc::{self, Doc, Elements, IndentCommand, Line};
@@ -10,12 +11,9 @@ use crate::options::EmbeddedLanguageFormatting;
 use crate::stack::Stack;
 use crate::text;
 use bun_core::strings;
+use std::borrow::Cow;
 
 const HTML_WHITE_SPACE: &[u8] = b"\t\n\x0C\r ";
-
-fn has_html_white_space(text: &[u8]) -> bool {
-    strings::index_of_any(text, HTML_WHITE_SPACE).is_some()
-}
 
 /// `string.toUpperCase() === string`, for the first UTF-16 code unit of the name of a tag.
 fn starts_with_upper_case(tag: &[u8]) -> bool {
@@ -42,8 +40,17 @@ enum Parent {
     Template,
     Block,
     Element,
-    Pre,
     Style,
+}
+
+/// What of a text is not written as the tree has it.
+#[derive(Copy, Clone)]
+enum Escapes {
+    Nothing,
+    /// `{{`: a mustache in a text has been escaped.
+    Mustaches,
+    /// And the quote that the text is in.
+    MustachesAndQuote(u8),
 }
 
 pub(crate) struct Printer<'a> {
@@ -51,15 +58,12 @@ pub(crate) struct Printer<'a> {
     /// `options.originalText`, with blanks in the place of the front matter.
     pub(crate) source: &'a [u8],
     pub(crate) front_matter: &'a [u8],
-    pub(crate) positions: &'a Positions,
     pub(crate) options: &'a FormatOptions,
     /// `options.htmlWhitespaceSensitivity !== "ignore"`
     pub(crate) is_white_space_sensitive: bool,
     pub(crate) single_quote: bool,
     pub(crate) out: &'a mut Elements,
-    /// What is printed is not what the tree says, or white space that counts is not kept.
-    pub(crate) is_damaged: bool,
-    /// How many `<pre>` are around what is being printed.
+    /// How many elements are around what is being printed in which all white space counts.
     pub(crate) pre_depth: usize,
     pub(crate) stack: Stack,
 }
@@ -113,21 +117,34 @@ impl<'a> Printer<'a> {
     /// A text that can have line breaks in it. For a block of code in Markdown, Prettier makes `literalline`s of them.
     fn verbatim(&mut self, text: &[u8]) {
         match self.options.is_in_markdown {
-            true => self.with_literal_lines(text, false),
+            true => self.with_literal_lines(text, Escapes::Nothing),
             false => self.out.text(text),
         }
     }
 
     /// `replaceEndOfLine(text)`
-    fn with_literal_lines(&mut self, text: &[u8], is_escaped: bool) {
+    fn with_literal_lines(&mut self, text: &[u8], escapes: Escapes) {
         for (index, line) in strings::split(text, b"\n").enumerate() {
             if index > 0 {
                 self.out.line(Line::Literal);
                 self.out.break_parent();
             }
-            match is_escaped {
-                true => self.escaped(line),
-                false => self.out.text(line),
+            self.with_escapes(line, escapes);
+        }
+    }
+
+    fn with_escapes(&mut self, mut text: &[u8], escapes: Escapes) {
+        match escapes {
+            Escapes::Nothing => self.out.text(text),
+            Escapes::Mustaches => self.escaped(text),
+            // Prettier writes the quote.
+            Escapes::MustachesAndQuote(quote) => {
+                while let Some(at) = strings::index_of_char_usize(text, quote) {
+                    self.escaped(&text[..at]);
+                    self.token(if quote == b'"' { "&quot;" } else { "&apos;" });
+                    text = &text[at + 1..];
+                }
+                self.escaped(text);
             }
         }
     }
@@ -180,21 +197,17 @@ impl<'a> Printer<'a> {
 
     // ───────────────────────────── utilities.js ─────────────────────────────
 
-    /// `isWhitespaceNode`
+    /// `isWhitespaceNode`. For Prettier it is what is white space in JavaScript: a no-break space too, which is none in
+    /// HTML.
     fn is_white_space_node(&self, node: NodeId) -> bool {
-        matches!(self.tree.kind(node), Kind::Text { chars } if strings::trim_js_whitespace_start(self.text(chars)).is_empty())
+        matches!(self.tree.kind(node), Kind::Text { chars } if self.text(chars).trim_ascii_start().is_empty())
     }
 
     fn are_white_space(&self, nodes: &[NodeId]) -> bool {
         nodes.iter().all(|node| self.is_white_space_node(*node))
     }
 
-    /// `nodes`, which are white space to Prettier, are not printed. A no-break space is none in HTML.
-    fn drop_white_space(&mut self, nodes: &[NodeId]) {
-        self.is_damaged |= nodes.iter().any(|node| matches!(self.tree.kind(*node), Kind::Text { chars } if !self.text(chars).trim_ascii_start().is_empty()));
-    }
-
-    /// `isVoidElement`
+    /// `isVoidElement`. For Prettier `<imG>` is `<img>`, whatever is in it.
     fn is_void_element(&self, tag: &[u8], children: &[NodeId], is_self_closing: bool) -> bool {
         let is_void_tag = || is_void_tag(&text::to_lower_case(tag)) && !starts_with_upper_case(tag);
         let is_glimmer_component = || {
@@ -202,8 +215,7 @@ impl<'a> Printer<'a> {
                 && (starts_with_upper_case(tag) || strings::contains_char(tag, b'.'))
         };
         is_self_closing
-            || is_void_tag()
-            || (is_glimmer_component() && self.are_white_space(children))
+            || ((is_void_tag() || is_glimmer_component()) && self.are_white_space(children))
     }
 
     /// `isPrettierIgnoreNode`
@@ -237,57 +249,59 @@ impl<'a> Printer<'a> {
         }
         for (index, &id) in nodes.iter().enumerate() {
             let node = self.tree.node(id);
-            // Whether a backslash at the end of a text would escape what follows it. Before a mustache, Prettier doubles it.
-            let tree = self.tree;
-            let precedes_tag =
-                |is_doubled: bool| match nodes.get(index + 1).map(|next| tree.kind(*next)) {
-                    Some(Kind::Mustache { .. }) => !is_doubled,
-                    Some(Kind::BlockStatement { .. } | Kind::MustacheComment { .. }) => true,
-                    Some(_) => false,
-                    None => parent == Parent::Block,
-                };
-            if self.is_prettier_ignore(id)
-                || (index >= 2 && self.is_prettier_ignore(nodes[index - 2]))
-            {
-                // The backslash that escapes a mustache is in no text.
-                if let Kind::Text { .. } = node.kind {
-                    let raw = self
-                        .source
-                        .get(node.start as usize..node.end as usize)
-                        .unwrap_or_default();
-                    self.is_damaged |= strings::contains(raw, b"{{")
-                        || (raw.ends_with(b"\\") && precedes_tag(false));
+            let is_as_written = node.is_as_written
+                || self.is_prettier_ignore(id)
+                || (index >= 2 && self.is_prettier_ignore(nodes[index - 2]));
+            if let Kind::Text { chars } = node.kind {
+                let mut chars = Cow::Borrowed(self.text(chars));
+                // One more backslash, or the last would escape the `{{` that is printed right behind it. Before a mustache
+                // the tree has it: Prettier's `addBackslash`.
+                if chars.ends_with(b"\\")
+                    && match nodes.get(index + 1).map(|next| self.tree.kind(*next)) {
+                        Some(Kind::MustacheComment { .. }) => true,
+                        // Where white space does not count, the text puts it on the next line.
+                        Some(Kind::BlockStatement { .. }) => {
+                            self.is_white_space_sensitive || self.pre_depth > 0 || is_as_written
+                        }
+                        Some(_) => false,
+                        None => parent == Parent::Block && self.is_white_space_sensitive,
+                    }
+                {
+                    chars.to_mut().push(b'\\');
                 }
+                match is_as_written {
+                    // The backslash that escapes a mustache is before the text, so Prettier does not print it.
+                    true if self.options.is_in_markdown => {
+                        self.with_literal_lines(&chars, Escapes::Mustaches)
+                    }
+                    true => self.escaped(&chars),
+                    false => self.text_node(&chars, nodes, index, parent),
+                }
+                continue;
+            }
+            if is_as_written {
                 self.ignored(node);
                 continue;
             }
             match node.kind {
-                Kind::Text { chars } => {
-                    let chars = self.text(chars);
-                    self.is_damaged |= chars.ends_with(b"\\") && precedes_tag(true);
-                    self.text_node(chars, nodes, index, parent);
-                }
                 Kind::Element { .. } => {
                     let follows_element = index > 0
                         && matches!(self.tree.kind(nodes[index - 1]), Kind::Element { .. });
                     self.element(node, follows_element);
                 }
-                Kind::BlockStatement { call, .. } => {
+                Kind::BlockStatement { .. } => {
                     let outer =
-                        outer.filter(|outer| nodes.len() == 1 && self.is_else_if(call, outer.0));
+                        outer.filter(|outer| nodes.len() == 1 && self.is_else_if(id, *outer));
                     self.block_statement(node, outer.map(|outer| outer.1));
                 }
-                Kind::Mustache {
-                    call,
-                    is_trusting,
-                    strip,
-                } => self.mustache(call, is_trusting, strip, false),
+                Kind::Mustache { .. } => self.mustache_node(node, false),
                 Kind::MustacheComment { value } => self.mustache_comment(node, self.text(value)),
                 Kind::Comment { value } => {
                     self.token("<!--");
                     self.verbatim(self.text(value));
                     self.token("-->");
                 }
+                Kind::Doctype => self.ignored(node),
                 Kind::FrontMatter => self.print_front_matter(self.front_matter),
                 _ => {}
             }
@@ -296,16 +310,14 @@ impl<'a> Printer<'a> {
 
     fn mustache_comment(&mut self, node: Node, value: &[u8]) {
         let is_tilde = |at: Option<usize>| at.and_then(|at| self.source.get(at)) == Some(&b'~');
-        let strips_left = is_tilde(self.positions.moved(self.source, node.start as usize, 2));
-        let strips_right = is_tilde(self.positions.moved(self.source, node.end as usize, -3));
-        let dashes = if strings::contains(value, b"}}") {
-            "--"
-        } else {
-            ""
-        };
-        // It is read as a comment that ends at `--}}`, or as one that strips what follows it.
-        self.is_damaged |= dashes.is_empty()
-            && (value.starts_with(b"--") || (value.ends_with(b"~") && !strips_right));
+        let strips_left = is_tilde(Some(node.start as usize + 2));
+        let strips_right = is_tilde((node.end as usize).checked_sub(3));
+        // Prettier only looks for the first. Without dashes, the others are read as a comment that ends at `--}}`, and
+        // as one that strips what follows it.
+        let needs_dashes = strings::contains(value, b"}}")
+            || value.starts_with(b"--")
+            || (value.ends_with(b"~") && !strips_right);
+        let dashes = if needs_dashes { "--" } else { "" };
         self.token(if strips_left { "{{~!" } else { "{{!" });
         self.token(dashes);
         self.verbatim(value);
@@ -316,32 +328,28 @@ impl<'a> Printer<'a> {
     /// Prettier's `printEmbedFrontMatter`, or `printFrontMatter` where that does not apply.
     fn print_front_matter(&mut self, raw: &[u8]) {
         let formatted = crate::front_matter::parse(raw).and_then(|front_matter| {
-            if matches!(
-                self.options.embedded_language_formatting,
-                EmbeddedLanguageFormatting::Off
-            ) {
+            if crate::front_matter::has_indented_delimiter(raw)
+                || matches!(
+                    self.options.embedded_language_formatting,
+                    EmbeddedLanguageFormatting::Off
+                )
+            {
                 return None;
             }
             let language = &raw[front_matter.explicit_language.0..front_matter.explicit_language.1];
             let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
             let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
             let value =
-                match strings::trim_js_whitespace(&raw[front_matter.value.0..front_matter.value.1])
-                {
-                    b"" if is_yaml || is_toml => Doc::EMPTY,
-                    value if is_yaml => crate::yaml::document(value, self.options)
-                        .and_then(doc::text_to_doc)
-                        .ok()?,
-                    _ => return None,
-                };
+                strings::trim_js_whitespace_start(&raw[front_matter.value.0..front_matter.value.1]);
+            let value = match crate::front_matter::trim_end_to_last_line(value) {
+                b"" if is_yaml || is_toml => Doc::EMPTY,
+                value if is_yaml => crate::yaml::document(value, self.options)
+                    .and_then(doc::text_to_doc)
+                    .ok()?,
+                _ => return None,
+            };
             Some((language, value))
         });
-        // The mark of a document that is indented ends the front matter once it is not.
-        self.is_damaged |= formatted.is_some()
-            && strings::split(raw, b"\n").skip(1).any(|line| {
-                line.starts_with(b" ")
-                    && strings::trim_js_whitespace_start(line).starts_with(b"---")
-            });
         let Some((language, value)) = formatted else {
             return self.verbatim(raw);
         };
@@ -407,11 +415,6 @@ impl<'a> Printer<'a> {
         let (tag, attributes, children) =
             (self.text(tag), self.list(attributes), self.list(children));
         let is_void = self.is_void_element(tag, children, is_self_closing);
-        // `<imG>` counts as `<img>`, whatever is in it.
-        self.is_damaged |= is_void && !self.are_white_space(children);
-        if is_void {
-            self.drop_white_space(children);
-        }
 
         if !self.is_white_space_sensitive && follows_element {
             self.out.line(Line::Soft);
@@ -446,16 +449,23 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let is_style = tag == b"style";
-        // Their text is wrapped like any other.
-        self.is_damaged |= (tag.eq_ignore_ascii_case(b"script")
-            || tag.eq_ignore_ascii_case(b"textarea"))
-            && !self.are_white_space(children);
-        self.pre_depth += usize::from(tag.eq_ignore_ascii_case(b"pre"));
+        // Prettier wraps the text of the first two like any other, which joins the lines.
+        let is_raw_text = match tag == b"style" {
+            true => self.has_mustache_that_counts_in_style(children),
+            false => {
+                (tag.eq_ignore_ascii_case(b"script") || tag.eq_ignore_ascii_case(b"textarea"))
+                    && !self.are_white_space(children)
+            }
+        };
+        let is_style = tag == b"style" && !is_raw_text;
+        let keeps_white_space = is_raw_text || tag.eq_ignore_ascii_case(b"pre");
+        let was_white_space_sensitive = self.is_white_space_sensitive;
+        self.is_white_space_sensitive |= is_raw_text;
+        self.pre_depth += usize::from(keeps_white_space);
         let is_empty = children.is_empty()
             || ((!self.is_white_space_sensitive || is_style) && self.are_white_space(children));
         if is_empty {
-            self.drop_white_space(children);
+            // Nothing.
         } else if is_style || !self.is_white_space_sensitive {
             self.start_indent();
             self.out.line(Line::Soft);
@@ -463,16 +473,13 @@ impl<'a> Printer<'a> {
                 .then(|| self.embedded_style_sheet(attributes, children))
                 .flatten()
             {
-                Some(style_sheet) => {
-                    self.is_damaged |= children.iter().any(|child| matches!(self.tree.kind(*child), Kind::Text { chars } if strings::contains(self.text(chars), b"{{")));
-                    self.out.document(&style_sheet);
-                }
+                Some(style_sheet) => self.out.document(&style_sheet),
                 None => self.children(
                     children,
                     if is_style {
                         Parent::Style
                     } else {
-                        self.parent_of(tag)
+                        Parent::Element
                     },
                     None,
                 ),
@@ -482,28 +489,36 @@ impl<'a> Printer<'a> {
         } else {
             self.start_indent();
             self.start_group();
-            self.children(children, self.parent_of(tag), None);
+            self.children(children, Parent::Element, None);
             self.out.end_group();
             self.out.end_indent();
         }
-        self.pre_depth -= usize::from(tag.eq_ignore_ascii_case(b"pre"));
+        self.pre_depth -= usize::from(keeps_white_space);
+        self.is_white_space_sensitive = was_white_space_sensitive;
         self.token("</");
         self.out.text(tag);
         self.token(">");
     }
 
-    fn parent_of(&self, tag: &[u8]) -> Parent {
-        if tag == b"pre" {
-            Parent::Pre
-        } else {
-            Parent::Element
-        }
+    /// Whether `children`, of a `<style>`, have an escaped mustache, which Prettier prints without its backslash, or
+    /// white space next to a mustache, which it does not print.
+    fn has_mustache_that_counts_in_style(&self, children: &[NodeId]) -> bool {
+        children.iter().enumerate().any(|(index, child)| {
+            let Kind::Text { chars } = self.tree.kind(*child) else {
+                return false;
+            };
+            let chars = self.text(chars);
+            strings::contains(chars, b"{{")
+                || (index > 0 && chars.trim_ascii_start().len() < chars.len())
+                || (index + 1 < children.len() && chars.trim_ascii_end().len() < chars.len())
+        })
     }
 
     /// An attribute, a modifier or a comment in a tag.
     fn attribute(&mut self, id: NodeId) {
         let node = self.tree.node(id);
         match node.kind {
+            _ if node.is_as_written => self.ignored(node),
             Kind::Attr { name, value } => self.attr_node(self.text(name), value),
             Kind::ElementModifier { call } => {
                 self.start_group();
@@ -519,7 +534,7 @@ impl<'a> Printer<'a> {
     }
 
     /// `getPreferredQuote`, for the texts in `nodes`.
-    fn preferred_quote_of(&mut self, nodes: &[NodeId]) -> &'static str {
+    fn preferred_quote_of(&self, nodes: &[NodeId]) -> &'static str {
         let (mut double, mut single) = (0, 0);
         for node in nodes {
             if let Kind::Text { chars } = self.tree.kind(*node) {
@@ -527,8 +542,6 @@ impl<'a> Printer<'a> {
                 single += strings::count_char(self.text(chars), b'\'');
             }
         }
-        // Whichever it is, it is in the text.
-        self.is_damaged |= double > 0 && single > 0;
         preferred_quote(double, single, self.single_quote)
     }
 
@@ -544,6 +557,10 @@ impl<'a> Printer<'a> {
             Kind::Concat { parts } => self.preferred_quote_of(self.list(parts)),
             _ => "",
         };
+        let escapes = match quote.as_bytes() {
+            [quote, ..] => Escapes::MustachesAndQuote(*quote),
+            [] => Escapes::Mustaches,
+        };
         self.out.text(name);
         self.token("=");
         self.token(quote);
@@ -554,7 +571,7 @@ impl<'a> Printer<'a> {
         }
         match node.kind {
             Kind::Text { chars } => {
-                self.text_in_attribute(self.text(chars), is_class, Neighbors::default())
+                self.text_in_attribute(self.text(chars), is_class, Neighbors::default(), escapes)
             }
             Kind::Concat { parts } => {
                 let parts = self.list(parts);
@@ -571,22 +588,14 @@ impl<'a> Printer<'a> {
                                 follows_mustache: is_mustache(index.checked_sub(1)),
                                 precedes_mustache: is_mustache(Some(index + 1)),
                             };
-                            self.text_in_attribute(self.text(chars), is_class, neighbors);
+                            self.text_in_attribute(self.text(chars), is_class, neighbors, escapes);
                         }
-                        Kind::Mustache {
-                            call,
-                            is_trusting,
-                            strip,
-                        } => self.mustache(call, is_trusting, strip, true),
+                        Kind::Mustache { .. } => self.mustache_node(self.tree.node(*part), true),
                         _ => {}
                     }
                 }
             }
-            Kind::Mustache {
-                call,
-                is_trusting,
-                strip,
-            } => self.mustache(call, is_trusting, strip, false),
+            Kind::Mustache { .. } => self.mustache_node(node, false),
             _ => {}
         }
         if is_grouped {
@@ -596,40 +605,46 @@ impl<'a> Printer<'a> {
         self.token(quote);
     }
 
-    fn text_in_attribute(&mut self, chars: &[u8], is_class: bool, neighbors: Neighbors) {
+    fn text_in_attribute(
+        &mut self,
+        chars: &[u8],
+        is_class: bool,
+        neighbors: Neighbors,
+        escapes: Escapes,
+    ) {
         let Neighbors {
             follows_mustache,
             precedes_mustache,
         } = neighbors;
-        // The backslash escapes the mustache.
-        self.is_damaged |= precedes_mustache && chars.ends_with(b"\\");
+        // One more, or it would escape the mustache. Prettier only does that for the text in an element.
+        let needs_backslash = precedes_mustache && chars.ends_with(b"\\");
         if !is_class {
-            return self.with_literal_lines(chars, true);
+            self.with_literal_lines(chars, escapes);
+            if needs_backslash {
+                self.token("\\");
+            }
+            return;
         }
-        // What JavaScript takes for white space can be in the name of a class.
-        self.is_damaged |= (0..chars.len())
-            .any(|at| chars[at] == 0x0B || strings::js_whitespace_len(&chars[at..]) > 1);
-        let mut classes = strings::trim_js_whitespace(chars);
-        if follows_mustache && text::starts_with_white_space(chars) {
+        // Prettier goes by what JavaScript takes for white space, some of which can be in the name of a class.
+        let mut classes = chars.trim_ascii();
+        if follows_mustache && chars.trim_ascii_start().len() < chars.len() {
             self.out.line(Line::Space);
         }
         let has_classes = !classes.is_empty();
         // `.replaceAll(/\s+/g, " ")`
         while !classes.is_empty() {
-            let len = (0..classes.len())
-                .find(|at| strings::js_whitespace_len(&classes[*at..]) > 0)
-                .unwrap_or(classes.len());
-            self.escaped(&classes[..len]);
+            let len = strings::index_of_any(classes, HTML_WHITE_SPACE).unwrap_or(classes.len());
+            self.with_escapes(&classes[..len], escapes);
             classes = &classes[len..];
             if !classes.is_empty() {
                 self.token(" ");
-                classes = strings::trim_js_whitespace_start(classes);
+                classes = classes.trim_ascii_start();
             }
         }
-        if precedes_mustache
-            && has_classes
-            && strings::trim_js_whitespace_end(chars).len() < chars.len()
-        {
+        if needs_backslash {
+            self.token("\\");
+        }
+        if precedes_mustache && has_classes && chars.trim_ascii_end().len() < chars.len() {
             self.out.line(Line::Space);
         }
     }
@@ -637,26 +652,14 @@ impl<'a> Printer<'a> {
     // ───────────────────────────── text ─────────────────────────────
 
     fn text_node(&mut self, chars: &[u8], siblings: &[NodeId], index: usize, parent: Parent) {
-        match parent {
-            // An escaped mustache is printed without its backslash.
-            Parent::Pre | Parent::Style if strings::contains(chars, b"{{") => {
-                self.is_damaged = true
-            }
-            _ => {}
+        if parent == Parent::Style {
+            return self.text_in_style(chars);
+        }
+        // Prettier only keeps what is right in a `<pre>` as it is, and prints an escaped mustache without its backslash.
+        if self.pre_depth > 0 {
+            return self.with_literal_lines(chars, Escapes::Mustaches);
         }
         let (is_first, is_last) = (index == 0, index + 1 == siblings.len());
-        match parent {
-            Parent::Pre => return self.with_literal_lines(chars, false),
-            Parent::Style => {
-                // The white space between it and a mustache is not kept.
-                self.is_damaged |= (!is_first && chars.trim_ascii_start().len() < chars.len())
-                    || (!is_last && chars.trim_ascii_end().len() < chars.len());
-                return self.text_in_style(chars);
-            }
-            Parent::Template | Parent::Block | Parent::Element => {}
-        }
-        // Only what is right in a `<pre>` is kept as it is.
-        self.is_damaged |= self.pre_depth > 0 && has_html_white_space(chars);
         let is_white_space_only = chars.trim_ascii_start().is_empty();
 
         if self.is_white_space_sensitive {
@@ -693,7 +696,8 @@ impl<'a> Printer<'a> {
         let (previous, next) = (kind_at(index.checked_sub(1)), kind_at(Some(index + 1)));
         let is_block_or_element =
             |kind: Kind| matches!(kind, Kind::BlockStatement { .. } | Kind::Element { .. });
-        let is_mustache = |kind: Kind| matches!(kind, Kind::Mustache { .. });
+        // A text next to a text is an escaped mustache. Prettier joins the two.
+        let is_mustache = |kind: Kind| matches!(kind, Kind::Mustache { .. } | Kind::Text { .. });
 
         let line_breaks = strings::count_char(chars, b'\n');
         // `countLeadingNewLines`, `countTrailingNewLines`
@@ -793,11 +797,32 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// `isElseIfBlock`, for a block that is all that follows `{{else}}` in the block `outer`.
-    fn is_else_if(&self, block: Call, outer: Call) -> bool {
-        match self.head_name(block) {
+    /// `isElseIfBlock`, for a node that is all that follows `{{else}}` in the block `outer`.
+    fn is_else_if(&self, id: NodeId, outer: (Call, u8)) -> bool {
+        let node = self.tree.node(id);
+        let Kind::BlockStatement {
+            call,
+            inverse,
+            strip,
+            ..
+        } = node.kind
+        else {
+            return false;
+        };
+        // Of `{{else}}{{~#if a}}..{{/if}}`, what the inner tags strip would be lost. Prettier makes `{{else if a}}` of it.
+        let mut strips = (strip & !ast::INVERSE_OPEN & !ast::INVERSE_CLOSE)
+            | (outer.1 & (ast::INVERSE_CLOSE | ast::CLOSE_OPEN));
+        // Handlebars takes the `~` of `{{~else if b}}` in a block that is written `{{else if a}}` for one of `{{~/if}}` too.
+        if matches!(self.body_of(inverse).0, [next] if matches!(self.tree.kind(*next), Kind::BlockStatement { strip, .. } if strip & ast::CHAINED != 0))
+        {
+            strips |= strip & ast::INVERSE_OPEN;
+        }
+        if node.is_as_written || (strip & ast::CHAINED == 0 && strips != 0) {
+            return false;
+        }
+        match self.head_name(call) {
             Some(b"if") => true,
-            Some(name) => self.head_name(outer) == Some(name),
+            Some(name) => self.head_name(outer.0) == Some(name),
             None => false,
         }
     }
@@ -848,13 +873,9 @@ impl<'a> Printer<'a> {
         match else_if_of {
             // `printElseIfBlock`
             Some(outer) => {
-                // The rest of the name is not printed. Of `{{else}}{{#if a}}..{{/if}}`, neither is what the inner tags strip.
-                let has_tail = matches!(self.tree.kind(call.path), Kind::Path { tail, .. } if !tail.is_empty());
-                let strips = (strip & !ast::INVERSE_OPEN & !ast::INVERSE_CLOSE)
-                    | (outer & (ast::INVERSE_CLOSE | ast::CLOSE_OPEN));
-                self.is_damaged |= has_tail || (strip & ast::CHAINED == 0 && strips != 0);
                 self.open_mustache(outer & ast::INVERSE_OPEN != 0, "else ");
-                self.verbatim(self.head_name(call).unwrap_or_default());
+                // Prettier prints the first name of it, as the tree has it.
+                self.expression(call.path, false);
                 self.start_indent();
                 self.out.line(Line::Space);
                 self.start_group();
@@ -898,10 +919,9 @@ impl<'a> Printer<'a> {
             self.start_group();
         }
         // `printProgram`
-        let is_blank = self.are_white_space(body);
-        if is_blank {
-            self.drop_white_space(body);
-        } else {
+        // Prettier leaves white space out wherever it is.
+        let is_blank = self.are_white_space(body) && (self.pre_depth == 0 || body.is_empty());
+        if !is_blank {
             self.start_indent();
             if is_ignoring_white_space {
                 self.out.hard_line();
@@ -914,7 +934,7 @@ impl<'a> Printer<'a> {
         // `printInverse`
         if inverse != NOTHING {
             let (body, _) = self.body_of(inverse);
-            let is_chained = matches!(body, [block] if matches!(self.tree.kind(*block), Kind::BlockStatement { call: block, .. } if self.is_else_if(block, call)));
+            let is_chained = matches!(body, [block] if self.is_else_if(*block, (call, strip)));
             if !is_chained {
                 // `printElseBlock`
                 if is_ignoring_white_space {
@@ -953,19 +973,33 @@ impl<'a> Printer<'a> {
     // ───────────────────────────── expressions ─────────────────────────────
 
     /// `is_in_quotes`: it is a part of the value of an attribute, which is in quotes.
-    fn mustache(&mut self, call: Call, is_trusting: bool, strip: u8, is_in_quotes: bool) {
-        // `{{{~a~}}}` cannot be read.
-        self.is_damaged |= is_trusting && strip != 0;
+    fn mustache_node(&mut self, node: Node, is_in_quotes: bool) {
+        let Kind::Mustache {
+            call,
+            is_trusting,
+            strip,
+        } = node.kind
+        else {
+            return;
+        };
+        if node.is_as_written {
+            return self.ignored(node);
+        }
         self.start_group();
-        self.token(if is_trusting { "{{{" } else { "{{" });
-        if strip & ast::OPEN_OPEN != 0 {
-            self.token("~");
-        }
+        // Prettier prints `{{{~a~}}}`, which cannot be read.
+        self.token(match (is_trusting, strip & ast::OPEN_OPEN != 0) {
+            (true, true) => "{{~{",
+            (true, false) => "{{{",
+            (false, true) => "{{~",
+            (false, false) => "{{",
+        });
         self.path_and_params(call, is_in_quotes);
-        if strip & ast::OPEN_CLOSE != 0 {
-            self.token("~");
-        }
-        self.token(if is_trusting { "}}}" } else { "}}" });
+        self.token(match (is_trusting, strip & ast::OPEN_CLOSE != 0) {
+            (true, true) => "}~}}",
+            (true, false) => "}}}",
+            (false, true) => "~}}",
+            (false, false) => "}}",
+        });
         self.out.end_group();
     }
 
@@ -996,10 +1030,7 @@ impl<'a> Printer<'a> {
                 self.out.line(Line::Space);
             }
             if let Kind::HashPair { key, value } = self.tree.kind(*pair) {
-                // It is printed without the brackets that it may need.
-                let key = self.text(key);
-                self.is_damaged |= key.is_empty() || id_len(key) != key.len();
-                self.verbatim(key);
+                self.verbatim(self.text(key));
                 self.token("=");
                 self.expression(value, false);
             }
@@ -1008,7 +1039,9 @@ impl<'a> Printer<'a> {
 
     /// `needs_opposite_quote`: Prettier's `needsOppositeQuote`, if it is a string.
     fn expression(&mut self, id: NodeId, needs_opposite_quote: bool) {
-        match self.tree.kind(id) {
+        let node = self.tree.node(id);
+        match node.kind {
+            _ if node.is_as_written => self.ignored(node),
             Kind::SubExpression { .. } if !self.stack.has_room() => {}
             Kind::SubExpression { call } => {
                 self.start_group();
@@ -1029,18 +1062,18 @@ impl<'a> Printer<'a> {
                 self.out.end_group();
             }
             Kind::Path { head, name, tail } => {
-                // It is read as `this`, or as an argument.
-                self.is_damaged |= head == Head::Var
-                    && (self.text(name) == b"this" || self.text(name).starts_with(b"@"));
-                self.path(
-                    if head == Head::This {
-                        &b"this"[..]
-                    } else {
-                        self.text(name)
-                    },
-                    tail,
-                );
+                let name = if head == Head::This {
+                    &b"this"[..]
+                } else {
+                    self.text(name)
+                };
+                match self.is_read_as_printed(head, name, tail) {
+                    true => self.path(name, tail),
+                    false => self.ignored(node),
+                }
             }
+            // The backslash would escape the quote.
+            Kind::String { value } if self.text(value).ends_with(b"\\") => self.ignored(node),
             Kind::String { value } => {
                 let mut value = self.text(value);
                 let (double, single) = (
@@ -1049,8 +1082,6 @@ impl<'a> Printer<'a> {
                 );
                 let quote =
                     preferred_quote(double, single, self.single_quote != needs_opposite_quote);
-                // The backslash escapes the quote.
-                self.is_damaged |= value.ends_with(b"\\");
                 self.token(quote);
                 while let Some(at) = strings::index_of_char_usize(value, quote.as_bytes()[0]) {
                     self.verbatim(&value[..at]);
@@ -1082,27 +1113,37 @@ impl<'a> Printer<'a> {
             .and_then(|it| it.parse::<f64>().ok())
             .unwrap_or(f64::NAN);
         let printed = bun_sema::atom::number_to_string(value);
-        // The lexer knows neither exponents nor `Infinity`.
-        self.is_damaged |= !printed
-            .iter()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'-' | b'.'));
-        self.out.text(&printed);
+        // The lexer knows neither exponents nor `Infinity`, which Prettier prints.
+        let is_number = (printed.iter()).all(|byte| matches!(byte, b'0'..=b'9' | b'-' | b'.'));
+        self.out.text(if is_number { &printed[..] } else { token });
+    }
+
+    /// Whether what `path` prints is read as the same path. What was in brackets need not be: `[this]`, `[@a]`, `[true]`,
+    /// `[-1]`, `[else]`, `[a]b]`.
+    fn is_read_as_printed(&self, kind: Head, head: &[u8], tail: Range) -> bool {
+        let tail = self.tree.names(tail);
+        if kind == Head::Var && (head == b"this" || head.starts_with(b"@")) {
+            return false;
+        }
+        if tail.is_empty() && strings::contains_char(head, b'/') {
+            let names = head.strip_prefix(b"@").unwrap_or(head);
+            return strings::split(names, b"/")
+                .all(|name| !name.is_empty() && id_len(name) == name.len() && name != b"this");
+        }
+        let is_literal =
+            matches!(head, b"true" | b"false" | b"null" | b"undefined") || is_negative_number(head);
+        head != b"else"
+            && !(tail.is_empty() && is_literal)
+            && is_part_read_as_printed(head, true)
+            && (tail.iter()).all(|part| is_part_read_as_printed(self.text(*part), false))
     }
 
     /// `printPathExpression`
     fn path(&mut self, head: &[u8], tail: Range) {
         let tail = self.tree.names(tail);
         if tail.is_empty() && strings::contains_char(head, b'/') {
-            let names = head.strip_prefix(b"@").unwrap_or(head);
-            self.is_damaged |= strings::split(names, b"/")
-                .any(|name| name.is_empty() || id_len(name) != name.len() || name == b"this");
             return self.verbatim(head);
         }
-        // It is read as a literal, or as `{{else}}`.
-        self.is_damaged |= matches!(head, b"else")
-            || (tail.is_empty()
-                && (matches!(head, b"true" | b"false" | b"null" | b"undefined")
-                    || is_negative_number(head)));
         self.path_part(head, true);
         for part in tail {
             self.token(".");
@@ -1111,26 +1152,7 @@ impl<'a> Printer<'a> {
     }
 
     fn path_part(&mut self, part: &[u8], is_first: bool) {
-        // `isPathExpressionPartNeedBrackets`
-        let needs_brackets = !(is_first && part.starts_with(b"@"))
-            && ((!is_first && matches!(part, b"true" | b"false" | b"null" | b"undefined"))
-                || part.first().is_some_and(u8::is_ascii_digit)
-                // `/[\s!"#%&'()*+,./;<=>@[\\\]^`{|}~]/`: all that cannot be in an `ID`.
-                || id_len(part) != part.len());
-        // Whether it is read as it is printed.
-        self.is_damaged |= match needs_brackets {
-            true => {
-                strings::index_of_any(part, b"]\\\n\r").is_some()
-                    || strings::contains(part, b"\xE2\x80\xA8")
-                    || strings::contains(part, b"\xE2\x80\xA9")
-            }
-            false if is_first => {
-                part.strip_prefix(b"@")
-                    .is_some_and(|name| name.is_empty() || id_len(name) != name.len())
-                    || part.is_empty()
-            }
-            false => part.is_empty() || part == b"this" || is_negative_number(part),
-        };
+        let needs_brackets = needs_brackets(part, is_first);
         if needs_brackets {
             self.token("[");
         }
@@ -1138,6 +1160,30 @@ impl<'a> Printer<'a> {
         if needs_brackets {
             self.token("]");
         }
+    }
+}
+
+/// `isPathExpressionPartNeedBrackets`
+fn needs_brackets(part: &[u8], is_first: bool) -> bool {
+    !(is_first && part.starts_with(b"@"))
+        && ((!is_first && matches!(part, b"true" | b"false" | b"null" | b"undefined"))
+            || part.first().is_some_and(u8::is_ascii_digit)
+            // `/[\s!"#%&'()*+,./;<=>@[\\\]^`{|}~]/`: all that cannot be in an `ID`.
+            || id_len(part) != part.len())
+}
+
+fn is_part_read_as_printed(part: &[u8], is_first: bool) -> bool {
+    match needs_brackets(part, is_first) {
+        true => {
+            strings::index_of_any(part, b"]\\\n\r").is_none()
+                && !strings::contains(part, b"\xE2\x80\xA8")
+                && !strings::contains(part, b"\xE2\x80\xA9")
+        }
+        false if is_first => {
+            let name = part.strip_prefix(b"@").unwrap_or(part);
+            !name.is_empty() && id_len(name) == name.len()
+        }
+        false => !part.is_empty() && part != b"this" && !is_negative_number(part),
     }
 }
 

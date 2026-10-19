@@ -5,6 +5,8 @@ use super::directives::{self, ConfigComment, Label};
 use super::globals::{CommentGlobal, CommentVariables, Tables};
 use crate::ast::File;
 use crate::language::Global;
+use crate::languages::JoinedComment;
+use crate::span::Span;
 use std::borrow::Cow;
 use std::cell::{Cell, OnceCell};
 
@@ -24,15 +26,20 @@ fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
         let value = file.slice(comment.value);
         match comment.label {
             Label::Env => {
-                let Some(eslint_8) = &file.language().eslint_8 else {
-                    continue;
+                // ESLint 9 and later reject the comment. With no config file it still says which globals the file expects.
+                let language = file.language();
+                let tables = match &language.eslint_8 {
+                    Some(_) => Tables::Eslint8,
+                    None if language.stands_alone => Tables::Today,
+                    None => continue,
                 };
                 for name in parse_list_config(value) {
-                    let of_plugin = eslint_8.globals_of_environment(name);
+                    let of_plugin = language.eslint_8.iter();
+                    let of_plugin = of_plugin.flat_map(|it| it.globals_of_environment(name));
                     let of_plugin = of_plugin.map(|it| (Cow::Owned(it.0.to_vec()), it.1));
                     variables.of_environments.extend(of_plugin);
                     let name: &[u8] = if name == b"es6" { b"es2015" } else { name };
-                    let all = super::globals::environment(name, Tables::Eslint8);
+                    let all = super::globals::environment(name, tables);
                     let all = all.into_iter().flatten();
                     let all = all.map(|it| (Cow::Borrowed(it.0), it.1));
                     variables.of_environments.extend(all);
@@ -90,6 +97,23 @@ impl<'a> File<'a> {
             .get_or_init(|| directives::config_comments(self))
     }
 
+    /// The comment that `span` is in, if the source interrupts it.
+    pub(crate) fn joined_comment(&self, span: Span) -> Option<&'a JoinedComment> {
+        let joined = &self.parsed()?.joined;
+        joined.iter().find(|it| it.value().contains(span))
+    }
+
+    /// The text of `span`, which is part of a [`ConfigComment`].
+    pub(crate) fn slice_of_comment(&self, span: Span) -> &'a [u8] {
+        match self.joined_comment(span) {
+            Some(joined) => joined
+                .text()
+                .get(joined.index_of(span.start)..joined.index_of(span.end))
+                .unwrap_or_default(),
+            None => self.slice(span),
+        }
+    }
+
     fn comment_variables(&'a self) -> Option<&'a CommentVariables> {
         let per_file = &self.lazy.linter;
         (!per_file.ignores_comments.get()).then(|| {
@@ -117,6 +141,18 @@ impl<'a> File<'a> {
     /// What `name` is in an environment that an `/* eslint-env */` comment of the file names.
     pub(crate) fn global_of_environment_in_comments(&'a self, name: &[u8]) -> Option<Global> {
         self.comment_variables()?.of_environments.get(name).copied()
+    }
+
+    /// Globals from the environments that the file's `/* eslint-env */` comments name, sorted by name.
+    pub(crate) fn globals_of_environments_in_comments(&'a self) -> Vec<(&'a [u8], Global)> {
+        let Some(variables) = self.comment_variables() else {
+            return Vec::new();
+        };
+        let mut all: Vec<(&'a [u8], Global)> = (variables.of_environments.iter())
+            .map(|(name, setting)| (&**name, *setting))
+            .collect();
+        crate::utils::sort::sort_unstable_by_key(&mut all, |it| it.0);
+        all
     }
 
     /// The names in the `/* exported */` comments of the file.

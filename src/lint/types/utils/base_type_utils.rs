@@ -4,8 +4,7 @@ use super::has_room_on_the_stack;
 use crate::types::tsutils::{
     intersection_constituents, is_object_type, is_type_reference, union_constituents,
 };
-use crate::types::{ObjectFlags, Type, TypeFlags};
-use smallvec::SmallVec;
+use crate::types::{IdSet, ObjectFlags, Type, TypeFlags};
 
 /// What the class or the interface extends that `ty` is, or is an instantiation of.
 fn get_base_types_for_type(ty: Type<'_>) -> impl Iterator<Item = Type<'_>> {
@@ -55,17 +54,16 @@ pub fn matches_type_or_base_type<'a>(
     mut matcher: impl FnMut(Type<'a>) -> bool,
     ty: Type<'a>,
 ) -> bool {
-    matches(&mut matcher, ty, &mut SmallVec::new())
+    matches(&mut matcher, ty, &mut IdSet::new())
 }
 
 fn matches<'a>(
     matcher: &mut dyn FnMut(Type<'a>) -> bool,
     ty: Type<'a>,
-    seen: &mut SmallVec<[Type<'a>; 8]>,
+    seen: &mut IdSet<Type<'a>>,
 ) -> bool {
-    if !has_room_on_the_stack() || seen.contains(&ty) {
+    if !has_room_on_the_stack() || !seen.insert(ty) {
         return false;
     }
-    seen.push(ty);
     matcher(ty) || get_base_types_for_type(ty).any(|base| matches(matcher, base, seen))
 }

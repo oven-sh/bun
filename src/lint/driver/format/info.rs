@@ -1,11 +1,12 @@
 //! What the formats of oxlint print a problem from: `Info` of `oxc_diagnostics`.
 
-use super::Meta;
 use super::oxlint::{Offsets, code, is_error};
+use super::{Meta, shown_at};
 use crate::paths;
 use crate::results::FileResult;
 use bun_core::strings;
 use bun_lint::linter::{LintMessage, RuleId};
+use bun_lint::rule::Plugin;
 use bun_lint::source::LineStarts;
 
 /// A line, and a column in bytes, both from 1.
@@ -38,6 +39,8 @@ pub(super) struct Source<'r> {
     offsets: Offsets<'r>,
     /// Where each line starts, where only `\n`, `\r\n` and `\r` end a line. `None`: where those of `offsets` do.
     lines: Option<LineStarts>,
+    /// [`Meta::is_oxlint`]
+    is_oxlint: bool,
 }
 
 impl<'r> Source<'r> {
@@ -47,9 +50,19 @@ impl<'r> Source<'r> {
         let name =
             strings::replace_owned(paths::inside(meta.cwd, &path).unwrap_or(&path), b"\\", b"/");
         let text = result.text.as_deref().unwrap_or_default();
-        let offsets = Offsets::new(text, result.line_starts.as_deref());
-        let has = |separator: &str| strings::contains(text, separator.as_bytes());
-        let lines = (!offsets.is_ascii && (has("\u{2028}") || has("\u{2029}"))).then(|| {
+        let offsets = Offsets::new(text, result.lines());
+        // U+2028 and U+2029 start with the same two bytes.
+        let has_separator = || {
+            let mut rest = text;
+            while let Some(at) = strings::index_of(rest, b"\xE2\x80") {
+                if matches!(rest.get(at + 2), Some(0xA8 | 0xA9)) {
+                    return true;
+                }
+                rest = &rest[at + 2..];
+            }
+            false
+        };
+        let lines = (!offsets.is_ascii && has_separator()).then(|| {
             let mut lines = vec![0];
             let mut at = 0;
             while let Some(found) = strings::index_of_any(&text[at..], b"\r\n") {
@@ -65,6 +78,7 @@ impl<'r> Source<'r> {
             text,
             offsets,
             lines,
+            is_oxlint: meta.is_oxlint,
         }
     }
 
@@ -100,12 +114,18 @@ impl<'r> Source<'r> {
 
     /// Where the problem starts and where it ends, in bytes from the start of the file. `None`: it has no place.
     pub(super) fn span(&self, message: &LintMessage) -> Option<(usize, usize)> {
-        if message.line == 0 {
+        let start = shown_at(message, self.is_oxlint);
+        if start.0 == 0 {
             return None;
         }
-        let start = (message.line, message.column);
         let end = message.end.unwrap_or(start);
         Some(match message.rule_id {
+            // oxlint's rule marks the program, which starts before a byte order mark, and no more than 100 bytes.
+            Some(RuleId::Known(rule))
+                if rule.plugin == Plugin::Unicorn && rule.name == "no-empty-file" =>
+            {
+                (0, self.between(start, end).1.min(100))
+            }
             Some(RuleId::Known(_) | RuleId::Named(..)) => self.label(start, end),
             // A plugin in JavaScript does not see the mark: its 0 is after it.
             Some(RuleId::Js(_) | RuleId::Unknown(_)) | None => self.between(start, end),
@@ -113,7 +133,24 @@ impl<'r> Source<'r> {
     }
 
     /// [`Info::start`]
+    #[inline]
     pub(super) fn start(&self, message: &LintMessage) -> Position {
+        // In a line after the first, which may start with a byte order mark, and before its end, the line is the one that
+        // ESLint counts, and the column is known with the offset. A column can be past the end of its line.
+        if message.line as i32 > 1 && self.lines.is_none() {
+            let (at, column) = self.offsets.at(message.line, message.column);
+            let next_line = self.offsets.lines.start_of(message.line + 1);
+            let is_in_line = at < next_line.map_or(usize::MAX, |it| it as usize);
+            if is_in_line && self.text.get(at).is_some_and(|it| *it != b'\n') {
+                let line = message.line as usize;
+                return Position { line, column };
+            }
+        }
+        self.start_by_offset(message)
+    }
+
+    #[cold]
+    fn start_by_offset(&self, message: &LintMessage) -> Position {
         (self.span(message)).map_or_else(Default::default, |it| self.position(it.0))
     }
 

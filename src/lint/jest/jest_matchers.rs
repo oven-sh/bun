@@ -85,7 +85,8 @@ pub(crate) mod prefer_snapshot_hint {
                         .push(node);
                 }
             }
-            for expects in scoped_expects.values() {
+            let first = |it: &&SmallVec<[Expr<'a>; 2]>| it.first().map(|it| it.span().start);
+            for expects in utils::sort::in_order_of(scoped_expects.values(), first) {
                 if self == SnapshotHintMode::Always || expects.len() > 1 {
                     expects.iter().for_each(|it| check_expect(*it, ctx));
                 }
@@ -585,7 +586,9 @@ pub(crate) mod prefer_to_be {
                 PreferToBeKind::NaN
             } else if first_matcher_arg.tag() == ExprTag::Null {
                 PreferToBeKind::Null
-            } else if should_use_tobe(first_matcher_arg) && !matcher.is_name_equal("toBe") {
+            } else if should_use_tobe(first_matcher_arg, ctx.runner)
+                && !matcher.is_name_equal("toBe")
+            {
                 PreferToBeKind::ToBe
             } else {
                 return;
@@ -603,12 +606,22 @@ pub(crate) mod prefer_to_be {
     }
 
     /// A literal that is no regular expression, or the negative of one. Not a number that is written with a `.`.
-    fn should_use_tobe(first_matcher_arg: Expr) -> bool {
+    fn should_use_tobe(first_matcher_arg: Expr, runner: Runner) -> bool {
         let expr = match first_matcher_arg.kind() {
             ExprKind::Unary {
                 op: UnOp::Minus,
                 operand,
             } if operand.is_parenthesized() => return false,
+            // oxlint only looks for the `.` when there's no `-` in front of the number.
+            ExprKind::Unary {
+                op: UnOp::Minus,
+                operand,
+            } if runner == Runner::Bun
+                && operand.tag() == ExprTag::Number
+                && strings::contains_char(operand.text(), b'.') =>
+            {
+                return false;
+            }
             ExprKind::Unary {
                 op: UnOp::Minus,
                 operand,
@@ -946,8 +959,15 @@ pub(crate) mod no_unneeded_async_expect_function {
         let Some(parsed_expect_call) = parse_expect_jest_fn_call(ctx.file, jest_node) else {
             return;
         };
+        // In `bun test`, `expect(asyncFunction).toThrow()` passes and `expect(promise).toThrow()` fails. Only
+        // `.rejects` and `.resolves` accept a promise.
+        let takes_promise = ctx.runner != Runner::Bun
+            || parsed_expect_call
+                .modifiers()
+                .any(|it| it.is_name_equal("rejects") || it.is_name_equal("resolves"));
         // `expect(async () => { await a(); })`
         if parsed_expect_call.matcher().is_some()
+            && takes_promise
             && let Some((_, expect_call_expr)) = expect_call(&parsed_expect_call)
             && let Some(first_arg) = expect_call_expr
                 .args()
@@ -971,7 +991,12 @@ pub(crate) mod no_unneeded_async_expect_function {
             && !inner_call.is_chain_root()
         {
             ctx.report(first_arg, NO_UNNEEDED_ASYNC_EXPECT_FUNCTION)
-                .fix(|fixer| fixer.replace(first_arg, inner_call.text()));
+                .fix(|fixer| {
+                    // The fix keeps only the call, so a comment anywhere else in the function would be dropped.
+                    let mut comments = fixer.file().comments_in(first_arg);
+                    let keeps_comments = comments.all(|it| inner_call.span().contains(it.span()));
+                    keeps_comments.then(|| fixer.replace(first_arg, inner_call.text()))
+                });
         }
     }
 }
@@ -1048,7 +1073,11 @@ pub(crate) mod no_large_snapshots {
             }
             for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 if let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node)
-                    && let Some(first_arg_expr) = first_expression(jest_fn_call.args)
+                    && let Some(first_arg_expr) = match ctx.runner {
+                        Runner::Jest | Runner::Vitest => first_expression(jest_fn_call.args),
+                        // The snapshot comes last: `toMatchInlineSnapshot({ id: expect.any(Number) }, `..`)`
+                        Runner::Bun => jest_fn_call.args.last(),
+                    }
                     && let Some(snapshot_matcher) = (jest_fn_call.members.iter()).find(|member| {
                         INLINE_SNAPSHOT_MATCHERS
                             .iter()

@@ -3,7 +3,7 @@ use bun_lint::types::tsutils::{
     is_intersection_type, is_literal_type, is_object_flag_set, is_object_type, is_type_flag_set,
 };
 use bun_lint::types::utils::type_is_or_has_base_type;
-use bun_lint::types::{ObjectFlags, Type, TypeFlags};
+use bun_lint::types::{IdMap, IdSet, NameOf, ObjectFlags, Type, TypeFlags};
 use bun_lint::utils::eslint_utils::find_variable;
 use bun_lint::utils::ts_scope::is_type_definition;
 use bun_lint::utils::ts_utils::{
@@ -19,8 +19,10 @@ pub struct PreferReadonly {
     only_inline_lambdas: bool,
 }
 
-const PREFER_READONLY: Message =
-    Message::new("preferReadonly", "Member '{{name}}' is never reassigned; mark it as `readonly`.");
+const PREFER_READONLY: Message = Message::new(
+    "preferReadonly",
+    "Member '{{name}}' is never reassigned; mark it as `readonly`.",
+);
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum TypeToClassRelation {
@@ -46,6 +48,7 @@ struct PrivateModifiable<'a> {
 }
 
 struct ClassScope<'a> {
+    class: Class<'a>,
     class_type: Option<Type<'a>>,
     private_modifiables: SmallVec<[PrivateModifiable<'a>; 4]>,
     /// Where each is in `private_modifiables`, by its name and whether it is static.
@@ -53,7 +56,11 @@ struct ClassScope<'a> {
 }
 
 /// The classes that have a private member that is not `readonly`.
-pub struct ClassScopes<'a>(FxHashMap<Class<'a>, ClassScope<'a>>);
+pub struct ClassScopes<'a> {
+    scopes: Vec<ClassScope<'a>>,
+    /// Where the scope of each class is in `scopes`.
+    positions: IdMap<Class<'a>, usize>,
+}
 
 fn get_member_name<'a>(key: Key<'a>, file: &'a File<'a>) -> Option<&'a [u8]> {
     match key.kind() {
@@ -61,18 +68,51 @@ fn get_member_name<'a>(key: Key<'a>, file: &'a File<'a>) -> Option<&'a [u8]> {
         | KeyKind::Private(name)
         | KeyKind::String(name)
         | KeyKind::ComputedNumber(name) => Some(name.bytes()),
-        // A `bigint` is not a `NumericLiteral`.
-        KeyKind::Number(name) => (!file.slice(key.span(file)).ends_with(b"n")).then(|| name.bytes()),
+        // A `bigint` is not a `NumericLiteral`. tsgolint has it by its text.
+        KeyKind::Number(name) => {
+            let text = file.slice(key.span(file));
+            match text.ends_with(b"n") {
+                true => file.language().is_oxlint.then_some(text),
+                false => Some(name.bytes()),
+            }
+        }
         KeyKind::ComputedString(_) => None,
         KeyKind::Computed(expression) => match expression.kind() {
             ExprKind::Dot { obj, .. }
-                if !expression.is_parenthesized() && !obj.is_parenthesized() && obj.is_ident("Symbol") =>
+                if !expression.is_parenthesized()
+                    && !obj.is_parenthesized()
+                    && obj.is_ident("Symbol") =>
             {
                 Some(expression.text())
             }
             _ => None,
         },
     }
+}
+
+/// tsgolint's `typeIsOrHasBaseType`: whether the type, or a type that it extends however far up,
+/// has the symbol of `base_type`.
+fn tsgolint_type_is_or_has_base_type<'a>(ty: Type<'a>, base_type: Type<'a>) -> bool {
+    let Some(base_symbol) = base_type.get_symbol() else {
+        return false;
+    };
+    let mut queue: SmallVec<[Type<'a>; 4]> = SmallVec::new();
+    let mut seen: IdSet<Type<'a>> = IdSet::new();
+    queue.push(ty);
+    while let Some(current) = queue.pop() {
+        if !seen.insert(current) {
+            continue;
+        }
+        if current.get_symbol() == Some(base_symbol) {
+            return true;
+        }
+        if is_object_type(current)
+            && is_object_flag_set(current, ObjectFlags::CLASS | ObjectFlags::INTERFACE)
+        {
+            queue.extend(current.get_base_types());
+        }
+    }
+    false
 }
 
 fn get_type_to_class_relation<'a>(ty: Type<'a>, class_type: Type<'a>) -> TypeToClassRelation {
@@ -105,7 +145,14 @@ fn get_type_to_class_relation<'a>(ty: Type<'a>, class_type: Type<'a>) -> TypeToC
             None => TypeToClassRelation::None,
         };
     }
-    if ty.get_symbol().is_none() || !type_is_or_has_base_type(ty, class_type) {
+    if ty.get_symbol().is_none() {
+        return TypeToClassRelation::None;
+    }
+    let is_or_has_base_type = match class_type.file().language().is_oxlint {
+        true => tsgolint_type_is_or_has_base_type(ty, class_type),
+        false => type_is_or_has_base_type(ty, class_type),
+    };
+    if !is_or_has_base_type {
         return TypeToClassRelation::None;
     }
     match is_object_type(ty) && is_object_flag_set(ty, ObjectFlags::ANONYMOUS) {
@@ -120,7 +167,10 @@ impl<'a> ClassScope<'a> {
     }
 
     fn push(&mut self, member: PrivateModifiable<'a>) {
-        self.positions.insert((member.name, member.is_static), self.private_modifiables.len());
+        self.positions.insert(
+            (member.name, member.is_static),
+            self.private_modifiables.len(),
+        );
         self.private_modifiables.push(member);
     }
 
@@ -130,8 +180,12 @@ impl<'a> ClassScope<'a> {
         only_inline_lambdas: bool,
     ) {
         let (flags, initializer, key) = match node {
-            ParameterOrPropertyDeclaration::Parameter(param) => (param.flags(), param.default(), None),
-            ParameterOrPropertyDeclaration::Property(member) => (member.flags(), member.init(), member.key()),
+            ParameterOrPropertyDeclaration::Parameter(param) => {
+                (param.flags(), param.default(), None)
+            }
+            ParameterOrPropertyDeclaration::Property(member) => {
+                (member.flags(), member.init(), member.key())
+            }
         };
         if !(flags.contains(Flags::PRIVATE) || key.is_some_and(Key::is_private))
             || flags.intersects(Flags::ACCESSOR | Flags::READONLY)
@@ -144,7 +198,9 @@ impl<'a> ClassScope<'a> {
         };
         // For tsgolint what is not initialized is no lambda either.
         if only_inline_lambdas
-            && initializer.map_or(is_oxlint, |it| it.is_parenthesized() || !it.as_fn().is_some_and(Func::is_arrow))
+            && initializer.map_or(is_oxlint, |it| {
+                it.is_parenthesized() || !it.as_fn().is_some_and(Func::is_arrow)
+            })
         {
             return;
         }
@@ -153,12 +209,20 @@ impl<'a> ClassScope<'a> {
             return;
         }
         let member_name = match node {
-            ParameterOrPropertyDeclaration::Parameter(param) => param.pat().as_ident().map(|name| name.bytes()),
-            ParameterOrPropertyDeclaration::Property(member) => key.and_then(|key| get_member_name(key, member.file())),
+            ParameterOrPropertyDeclaration::Parameter(param) => {
+                param.pat().as_ident().map(|name| name.bytes())
+            }
+            ParameterOrPropertyDeclaration::Property(member) => {
+                key.and_then(|key| get_member_name(key, member.file()))
+            }
         };
         let Some(member_name) = member_name else {
             return;
         };
+        // tsgolint leaves `private "" = 1`.
+        if is_oxlint && member_name.is_empty() {
+            return;
+        }
         let is_static = flags.contains(Flags::STATIC);
         let existing = self.position(member_name, is_static);
         match existing.and_then(|i| self.private_modifiables.get_mut(i)) {
@@ -175,7 +239,6 @@ impl<'a> ClassScope<'a> {
 
     fn add_variable_modification_by_name(
         &mut self,
-        class: Class<'a>,
         expression: Expr<'a>,
         member_name: &[u8],
         is_directly_inside_constructor: bool,
@@ -184,6 +247,7 @@ impl<'a> ClassScope<'a> {
         if named == [None, None] {
             return;
         }
+        let class = self.class;
         let class_type = *self.class_type.get_or_insert_with(|| {
             let class_type = class.type_at_location();
             match is_intersection_type(class_type) {
@@ -205,8 +269,14 @@ impl<'a> ClassScope<'a> {
                 continue;
             }
             it.is_modified |= match it.is_static {
-                true => matches!(relation, TypeToClassRelation::Class | TypeToClassRelation::ClassAndInstance),
-                false => matches!(relation, TypeToClassRelation::Instance | TypeToClassRelation::ClassAndInstance),
+                true => matches!(
+                    relation,
+                    TypeToClassRelation::Class | TypeToClassRelation::ClassAndInstance
+                ),
+                false => matches!(
+                    relation,
+                    TypeToClassRelation::Instance | TypeToClassRelation::ClassAndInstance
+                ),
             };
         }
     }
@@ -226,7 +296,9 @@ enum TsNodeLike<'a> {
 /// for the `a = 1`.
 fn shorthand_with_default(e: Expr<'_>) -> Option<Prop<'_>> {
     match (e.kind(), e.parent()) {
-        (ExprKind::Assign { .. }, Node::Prop(prop)) if prop.kind() == PropKind::Shorthand => Some(prop),
+        (ExprKind::Assign { .. }, Node::Prop(prop)) if prop.kind() == PropKind::Shorthand => {
+            Some(prop)
+        }
         _ => None,
     }
 }
@@ -238,11 +310,15 @@ fn ts_parent(node: TsNodeLike<'_>) -> TsNodeLike<'_> {
                 return TsNodeLike::Expr(e, parens + 1);
             }
             match e.parent() {
+                // `a!!` is two of TypeScript's nodes, and the parent of the inner one is the outer.
+                Node::Expr(parent) if parent.non_null_count() > 1 => TsNodeLike::Other,
                 Node::Expr(parent) => match shorthand_with_default(parent) {
                     Some(prop) => TsNodeLike::Prop(prop),
                     None => TsNodeLike::Expr(parent, 0),
                 },
-                Node::Prop(prop) if prop.value() == Some(e) && !prop.is_jsx_attribute() => TsNodeLike::Prop(prop),
+                Node::Prop(prop) if prop.value() == Some(e) && !prop.is_jsx_attribute() => {
+                    TsNodeLike::Prop(prop)
+                }
                 _ => TsNodeLike::Other,
             }
         }
@@ -264,9 +340,13 @@ fn is_destructuring_assignment(node: Expr<'_>) -> bool {
                 ExprKind::Spread(_) => {
                     matches!(ts_parent(parent), TsNodeLike::Expr(it, 0) if matches!(it.kind(), ExprKind::Array(_)))
                 }
-                ExprKind::Assign { op: None, target, .. } => {
+                ExprKind::Assign {
+                    op: None, target, ..
+                } => {
                     return match current {
-                        TsNodeLike::Expr(it, 0) if matches!(it.kind(), ExprKind::Dot { .. }) => false,
+                        TsNodeLike::Expr(it, 0) if matches!(it.kind(), ExprKind::Dot { .. }) => {
+                            false
+                        }
                         TsNodeLike::Expr(it, _) => it == target,
                         _ => false,
                     };
@@ -289,7 +369,9 @@ fn is_modified_property_access(node: Expr<'_>) -> bool {
         && let Node::Expr(parent) = node.parent()
     {
         match parent.kind() {
-            ExprKind::Assign { target, .. } if shorthand_with_default(parent).is_none() => return target == node,
+            ExprKind::Assign { target, .. } if shorthand_with_default(parent).is_none() => {
+                return target == node;
+            }
             ExprKind::Binary { .. } => return false,
             ExprKind::Unary {
                 op: UnOp::Delete | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
@@ -301,6 +383,15 @@ fn is_modified_property_access(node: Expr<'_>) -> bool {
     is_destructuring_assignment(node)
 }
 
+/// tsgolint has the constructors of TypeScript's parser: `static constructor() {}` is one,
+/// `"constructor"<T>() {}` and `*"constructor"() {}` are methods.
+fn is_constructor(member: Member<'_>) -> bool {
+    match member.file().language().is_oxlint {
+        true => member.kind() == MemberKind::Constructor,
+        false => member.is_constructor(),
+    }
+}
+
 /// The innermost class around `node`, and whether `node` is in its constructor and in no other
 /// function in that.
 fn enclosing_class(node: Expr<'_>) -> Option<(Class<'_>, bool)> {
@@ -309,8 +400,9 @@ fn enclosing_class(node: Expr<'_>) -> Option<(Class<'_>, bool)> {
         match ancestor {
             Node::Func(func) if innermost_function.is_none() => innermost_function = Some(func),
             Node::Class(class) => {
-                let is_directly_inside_constructor = innermost_function
-                    .is_some_and(|func| matches!(func.owner(), Node::Member(member) if member.is_constructor()));
+                let is_directly_inside_constructor = innermost_function.is_some_and(
+                    |func| matches!(func.owner(), Node::Member(member) if is_constructor(member)),
+                );
                 return Some((class, is_directly_inside_constructor));
             }
             _ => {}
@@ -322,7 +414,8 @@ fn enclosing_class(node: Expr<'_>) -> Option<(Class<'_>, bool)> {
 /// The type to annotate the `PropertyDefinition` with: once it is `readonly`, the type of a literal
 /// that initializes it is not widened any more.
 fn get_type_annotation<'a>(member: Member<'a>, key: Key<'a>) -> Option<Vec<u8>> {
-    if member.ty().is_some() || !matches!(key.kind(), KeyKind::Ident(_)) {
+    // typescript-eslint and tsgolint don't annotate `#a = 0`, so the constructor can't assign other numbers anymore.
+    if member.ty().is_some() || !matches!(key.kind(), KeyKind::Ident(_) | KeyKind::Private(_)) {
         return None;
     }
     let violating_type = member.type_at_location();
@@ -335,7 +428,14 @@ fn get_type_annotation<'a>(member: Member<'a>, key: Key<'a>) -> Option<Vec<u8>> 
     if is_type_flag_set(initializer_type, TypeFlags::ENUM_LITERAL) {
         let variable = find_variable(Node::Member(member).scope(), &annotation)?;
         let definition = variable.declarations().find(|it| is_type_definition(*it))?;
-        if definition.node()?.ty() != violating_type {
+        let definition_type = match definition {
+            // tsgolint resolves the name through the import to the enum.
+            Declaration::ImportSpec(specifier) if member.file().language().is_oxlint => {
+                NameOf(specifier).ts_symbol()?.skip_alias().get_declared_type()
+            }
+            _ => definition.node()?.ty(),
+        };
+        if definition_type != violating_type {
             return None;
         }
     }
@@ -352,7 +452,11 @@ fn report<'a>(cx: &Cx<'a, PreferReadonly>, violating: &PrivateModifiable<'a>) {
                 loc.start = param.span().start;
             }
             // tsgolint has the name alone.
-            let name = if cx.language().is_oxlint { param.pat().span() } else { param.binding_span() };
+            let name = if cx.language().is_oxlint {
+                param.pat().span()
+            } else {
+                param.binding_span()
+            };
             cx.report(loc, PREFER_READONLY)
                 .data("name", file.slice(name))
                 .fix(|fixer| fixer.insert_before(param.pat(), "readonly "));
@@ -365,34 +469,47 @@ fn report<'a>(cx: &Cx<'a, PreferReadonly>, violating: &PrivateModifiable<'a>) {
     };
     let name_node = key.inner_span(file);
     let is_property_definition = !member.flags().contains(Flags::ABSTRACT);
-    let mut loc = match is_property_definition {
-        true => get_member_head_loc(member),
-        false => member.span(),
+    let is_oxlint = cx.language().is_oxlint;
+    let loc = match (is_oxlint, is_property_definition) {
+        // tsgolint has every property from its decorators to the end of its name.
+        (true, _) => Span::new(member.span().start, key.span(file).end),
+        (false, true) => get_member_head_loc(member),
+        (false, false) => member.span(),
     };
-    // oxlint points at the decorators.
-    if cx.language().is_oxlint {
-        loc.start = member.span().start;
-    }
     let has_constructor_modifications = violating.has_constructor_modifications;
-    cx.report(loc, PREFER_READONLY).data("name", file.slice(name_node)).fix(|fixer| {
-        let readonly_insertion_target = match is_property_definition && key.is_computed() {
-            true => key.span(file),
-            false => name_node,
-        };
-        let mut fixes = vec![fixer.insert_before(readonly_insertion_target, "readonly ")];
-        if is_property_definition
-            && has_constructor_modifications
-            && let Some(type_annotation) = get_type_annotation(member, key)
-        {
-            fixes.push(fixer.insert_after(name_node, [&b": "[..], &type_annotation[..]].concat()));
-        }
-        fixes
-    });
+    cx.report(loc, PREFER_READONLY)
+        .data("name", file.slice(name_node))
+        .fix(|fixer| {
+            let readonly_insertion_target = match is_property_definition && key.is_computed() {
+                true => key.span(file),
+                false => name_node,
+            };
+            let mut fixes = vec![fixer.insert_before(readonly_insertion_target, "readonly ")];
+            // tsgolint annotates an abstract property as well.
+            if (is_property_definition || is_oxlint)
+                && has_constructor_modifications
+                && let Some(type_annotation) = get_type_annotation(member, key)
+            {
+                // tsgolint writes the type before the `?` of `x? = 1`, which cannot be parsed.
+                let question_or_exclamation = is_oxlint
+                    .then(|| skip_trivia(file.text(), name_node.end))
+                    .filter(|&at| matches!(file.text().get(at as usize), Some(b'?' | b'!')));
+                let annotated = match question_or_exclamation {
+                    Some(at) => Span::new(at, at + 1),
+                    None => name_node,
+                };
+                fixes.push(
+                    fixer.insert_after(annotated, [&b": "[..], &type_annotation[..]].concat()),
+                );
+            }
+            fixes
+        });
 }
 
 impl PreferReadonly {
     fn new_class_scope<'a>(&self, class: Class<'a>) -> ClassScope<'a> {
         let mut scope = ClassScope {
+            class,
             class_type: None,
             private_modifiables: SmallVec::new(),
             positions: FxHashMap::default(),
@@ -405,7 +522,11 @@ impl PreferReadonly {
                 );
             }
         }
-        for constructor in class.members().iter().filter(|member| member.is_constructor()) {
+        for constructor in class
+            .members()
+            .iter()
+            .filter(|member| is_constructor(*member))
+        {
             let parameters = constructor.func().into_iter().flat_map(Func::params);
             for parameter in parameters.filter(|it| it.flags().contains(Flags::PRIVATE)) {
                 scope.add_declared_variable(
@@ -433,14 +554,18 @@ impl Rule for PreferReadonly {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<ClassScopes<'a>> {
-        let mut class_scopes = FxHashMap::default();
+        let mut class_scopes = ClassScopes {
+            scopes: Vec::new(),
+            positions: IdMap::new(),
+        };
         for class in file.classes() {
             let class_scope = self.new_class_scope(class);
             if !class_scope.private_modifiables.is_empty() {
-                class_scopes.insert(class, class_scope);
+                class_scopes.positions.insert(class, class_scopes.scopes.len());
+                class_scopes.scopes.push(class_scope);
             }
         }
-        (!class_scopes.is_empty()).then_some(ClassScopes(class_scopes))
+        (!class_scopes.scopes.is_empty()).then_some(class_scopes)
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -463,7 +588,10 @@ impl Rule for PreferReadonly {
         let Some((class, is_directly_inside_constructor)) = enclosing_class(node) else {
             return;
         };
-        let Some(class_scope) = cx.state.0.get_mut(&class) else {
+        let Some(&position) = cx.state.positions.get(class) else {
+            return;
+        };
+        let Some(class_scope) = cx.state.scopes.get_mut(position) else {
             return;
         };
         let (expression, member_name) = match node.kind() {
@@ -475,7 +603,6 @@ impl Rule for PreferReadonly {
             _ => return,
         };
         class_scope.add_variable_modification_by_name(
-            class,
             expression,
             &member_name,
             is_directly_inside_constructor,
@@ -483,9 +610,18 @@ impl Rule for PreferReadonly {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        for class_scope in cx.state.0.values() {
-            for violating in class_scope.private_modifiables.iter().filter(|it| !it.is_modified) {
-                report(cx, violating);
+        // tsgolint reports the statics of a class after its other members.
+        let passes: &[Option<bool>] = match cx.language().is_oxlint {
+            true => &[Some(false), Some(true)],
+            false => &[None],
+        };
+        for class_scope in utils::sort::in_order_of(&cx.state.scopes, |it| it.class.span().start) {
+            for &statics in passes {
+                for violating in class_scope.private_modifiables.iter().filter(|it| {
+                    !it.is_modified && statics.is_none_or(|statics| it.is_static == statics)
+                }) {
+                    report(cx, violating);
+                }
             }
         }
     }

@@ -84,11 +84,25 @@ pub fn parse_type_or_value_specifiers(values: &[Json]) -> Vec<TypeOrValueSpecifi
 
 /// `specifierNameMatches(type, names)`
 fn specifier_name_matches(ty: Type, names: &[Vec<u8>]) -> bool {
+    let is_oxlint = ty.file().language().is_oxlint;
     let symbol = ty.alias_symbol().or_else(|| ty.get_symbol());
-    symbol.is_some_and(|it| names.includes(it.escaped_name()))
-        || ty
-            .intrinsic_name()
-            .is_some_and(|it| names.includes(it.as_bytes()))
+    symbol.is_some_and(|it| {
+        names.includes(it.escaped_name()) && !(is_oxlint && has_internal_symbol_name(it))
+    }) || ty.intrinsic_name().is_some_and(|it| {
+        // In typescript-go `boolean`, `true` and `false` are not intrinsic types.
+        names.includes(it.as_bytes()) && !(is_oxlint && matches!(it, "boolean" | "true" | "false"))
+    })
+}
+
+/// typescript-go spells a name that the compiler makes up (`__type`, `__object`, `__function`,
+/// `__class`) with `ast.InternalSymbolNamePrefix`, so no name of a specifier is that of such a
+/// symbol. A declaration that is written with the name has it as its `name`.
+fn has_internal_symbol_name(symbol: TsSymbol<'_>) -> bool {
+    let name = symbol.escaped_name();
+    name.starts_with(b"__")
+        && !symbol
+            .declarations()
+            .any(|declaration| declaration.name().is_some_and(|it| it.text() == name))
 }
 
 /// `symbol?.getDeclarations() ?? []`
@@ -103,7 +117,9 @@ fn declaration_files_of<'a>(symbol: Option<TsSymbol<'a>>) -> impl Iterator<Item 
 
 /// `getCanonicalFileName(a) === getCanonicalFileName(b)`, for paths that are normalized.
 fn is_same_file_name(program: Types, a: &[u8], b: &[u8]) -> bool {
-    match program.compiler_options().use_case_sensitive_file_names {
+    // tsgolint compares the names as they are.
+    let is_oxlint = program.file.language().is_oxlint;
+    match program.compiler_options().use_case_sensitive_file_names || is_oxlint {
         true => a == b,
         false => a.eq_ignore_ascii_case(b),
     }
@@ -146,15 +162,15 @@ fn type_declared_in_lib<'a>(mut declaration_files: impl Iterator<Item = SourceFi
 }
 
 /// The `declare module "name" {}` that the node is in. `namespace a {}` and `global {}` are looked
-/// through.
-fn find_parent_module_declaration(node: TsNode<'_>) -> Option<TsNode<'_>> {
+/// through. tsgolint looks through `namespace a {}` only: in `global {}` it finds none.
+fn find_parent_module_declaration(node: TsNode<'_>, is_oxlint: bool) -> Option<TsNode<'_>> {
+    let looked_through = match is_oxlint {
+        true => NodeFlags::NAMESPACE,
+        false => NodeFlags::NAMESPACE | NodeFlags::GLOBAL_AUGMENTATION,
+    };
     for node in std::iter::once(node).chain(node.ancestors()) {
         match node.kind() {
-            SyntaxKind::ModuleDeclaration
-                if !node
-                    .flags()
-                    .intersects(NodeFlags::NAMESPACE | NodeFlags::GLOBAL_AUGMENTATION) =>
-            {
+            SyntaxKind::ModuleDeclaration if !node.flags().intersects(looked_through) => {
                 return node
                     .name()
                     .is_some_and(|name| name.kind() == SyntaxKind::StringLiteral)
@@ -170,10 +186,45 @@ fn find_parent_module_declaration(node: TsNode<'_>) -> Option<TsNode<'_>> {
 fn type_declared_in_declare_module<'a>(
     package_name: &[u8],
     mut declarations: impl Iterator<Item = TsNode<'a>>,
+    is_oxlint: bool,
 ) -> bool {
     declarations.any(|declaration| {
-        let name = find_parent_module_declaration(declaration).and_then(|module| module.name());
+        let name =
+            find_parent_module_declaration(declaration, is_oxlint).and_then(|module| module.name());
         name.is_some_and(|name| name.text() == package_name)
+    })
+}
+
+/// True if `symbol` has a declaration in a `declare module "name" {}`.
+pub fn is_declared_in_ambient_module(symbol: TsSymbol<'_>, name: &[u8]) -> bool {
+    type_declared_in_declare_module(name, symbol.declarations(), false)
+}
+
+/// True if `declaration` is visible to every file. It has to be at the top level of a declaration file that is a
+/// script, or of a `declare global {}` in a declaration file.
+fn is_global_declaration(declaration: TsNode<'_>) -> bool {
+    let file = declaration.get_source_file();
+    if !file.is_declaration_file() {
+        return false;
+    }
+    for node in declaration.ancestors() {
+        match node.kind() {
+            SyntaxKind::ModuleBlock => {}
+            SyntaxKind::ModuleDeclaration => {
+                return node.flags().intersects(NodeFlags::GLOBAL_AUGMENTATION);
+            }
+            SyntaxKind::SourceFile => return file.symbol().is_none(),
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// True if `ty` is a global class or interface whose name is in `names`. Any declaration file can declare it: a
+/// `lib.*.d.ts`, or one from `@types/node` or `bun-types`. A class with that name in a module isn't the global.
+pub fn is_global_type(ty: Type, names: impl Names) -> bool {
+    ty.get_symbol().is_some_and(|symbol| {
+        names.includes(symbol.name()) && symbol.declarations().any(is_global_declaration)
     })
 }
 
@@ -249,16 +300,27 @@ fn type_declared_in_package_declaration_file<'a>(
     symbol: Option<TsSymbol<'a>>,
     program: Types<'a>,
 ) -> bool {
-    type_declared_in_declare_module(package_name, declarations_of(symbol))
+    let is_oxlint = program.file.language().is_oxlint;
+    type_declared_in_declare_module(package_name, declarations_of(symbol), is_oxlint)
         || type_declared_in_declaration_file(package_name, declaration_files_of(symbol))
-        || type_exported_from_declare_module(package_name, symbol, program)
+        // tsgolint does not ask what the module exports.
+        || !is_oxlint && type_exported_from_declare_module(package_name, symbol, program)
 }
 
 /// `typeMatchesSpecifier(type, specifier, program)`: whether the type has the name, and is declared
 /// where the specifier says. Every constituent of a union has to match, one of an intersection.
+/// tsgolint asks a union as a whole, and so each part of an intersection.
 pub fn type_matches_specifier(ty: Type, specifier: &TypeOrValueSpecifier) -> bool {
     if !has_room_on_the_stack() {
         return false;
+    }
+    if ty.file().language().is_oxlint {
+        return whole_type_matches(ty, specifier)
+            || is_intersection_type(ty)
+                && ty
+                    .types()
+                    .iter()
+                    .any(|part| whole_type_matches(part, specifier));
     }
     if is_union_type(ty) {
         return ty

@@ -7863,6 +7863,171 @@ describe("css tests", () => {
     minify_test("@page \\31 st{margin:1em}", "@page \\31 st{margin:1em}");
   });
 
+  // A relative color reads the float channels of an origin that is `hsl()`, `hwb()` or a relative color, not its bytes.
+  // `hsl(30 2% 97%)` is (247.503, 247.35, 247.197) on the scale of a byte. Its bytes are #f8f7f7, whose hue is 0.
+  describe("origin of a relative color", () => {
+    describe("hsl(), hwb() and relative colors", () => {
+      minify_test(".a{color:hsl(from hsl(30 2% 97%) h 60% 50%)}", ".a{color:#cc8033}");
+      // A hex color has only its bytes.
+      minify_test(".a{color:hsl(from #f8f7f7 h 60% 50%)}", ".a{color:#c33}");
+
+      // `hsl(30 100% 40%)` is #c60. With the hue of #f8f7f7 it is #c00.
+      for (const origin of [
+        "hsl(30, 2%, 97%)",
+        "hsla(30, 2%, 97%, 1)",
+        "hsl(30deg 2% 97%)",
+        "hsl(calc(10 + 20) 2% 97%)",
+        "hwb(30 96.94% 2.94%)",
+        // The result of a relative color that is an origin in its turn.
+        "hsl(from hsl(30 2% 97%) h s l)",
+        "hwb(from hsl(30 2% 97%) h w b)",
+        "rgb(from hsl(30 2% 97%) r g b)",
+        "color(from hsl(30 2% 97%) srgb r g b)",
+      ]) {
+        minify_test(`.a{color:hsl(from ${origin} h 100% 40%)}`, ".a{color:#c60}");
+      }
+
+      minify_test(".a{color:hwb(from hwb(30 96.94% 2.94%) h 20% 40%)}", ".a{color:#963}");
+      minify_test(".a{color:hwb(from hsl(30 2% 97%) h 20% 40%)}", ".a{color:#963}");
+      minify_test(".a{color:color(from hsl(30 2% 97%) srgb r g b)}", ".a{color:color(srgb .9706 .97 .9694)}");
+      minify_test(".a{color:color(from hwb(30 20% 20%) srgb r g b)}", ".a{color:color(srgb .8 .5 .2)}");
+      minify_test(".a{color:color(from hsl(150 60% 50%) srgb r g b)}", ".a{color:color(srgb .2 .8 .5)}");
+      minify_test(".a{color:color(from hsl(270 60% 50%) srgb r g b)}", ".a{color:color(srgb .5 .2 .8)}");
+      // A number channel of a relative rgb() is not an integer.
+      minify_test(".a{color:color(from rgb(from red 128.4 g b) srgb r g b)}", ".a{color:color(srgb .503529 0 0)}");
+      // The alpha of `hsl()` is a float in each syntax.
+      minify_test(".a{color:color(from hsl(120 100% 50% / 0.5) srgb r g b / alpha)}", ".a{color:color(srgb 0 1 0/.5)}");
+      minify_test(
+        ".a{color:color(from hsla(120, 100%, 50%, 0.5) srgb r g b / alpha)}",
+        ".a{color:color(srgb 0 1 0/.5)}",
+      );
+      minify_test(
+        ".a{color:hsl(from light-dark(hsl(30 2% 97%), hsl(210 2% 10%)) h 60% 50%)}",
+        ".a{color:light-dark(#cc8033,#3380cc)}",
+      );
+      minify_test(
+        ".a{color:hsl(from light-dark(#000, hsl(390 2% 97%)) calc(h / 2) 100% 40%)}",
+        ".a{color:light-dark(#c00,#c30)}",
+      );
+      minify_test(
+        ".a{color:hsl(from light-dark(hsl(390 2% 97%), #000) calc(h / 2) 100% 40%)}",
+        ".a{color:light-dark(#c30,#c00)}",
+      );
+      minify_test(".a{border:1px solid hsl(from hsl(30 2% 97%) h 60% 50%)}", ".a{border:1px solid #cc8033}");
+
+      // https://drafts.csswg.org/css-color-5/#relative-HSL: `h` is the hue of the origin in [0, 360).
+      minify_test(".a{color:hsl(from hsl(390 2% 97%) calc(h / 2) 100% 40%)}", ".a{color:#c30}");
+      minify_test(".a{color:hsl(from hsl(-330 2% 97%) calc(h / 2) 100% 40%)}", ".a{color:#c30}");
+      minify_test(".a{color:hsl(from hsl(480 none 50%) calc(h / 2) 100% 40%)}", ".a{color:#cc0}");
+      minify_test(".a{color:hwb(from hwb(480 none 50%) calc(h / 2) 20% 40%)}", ".a{color:#993}");
+      minify_test(".a{color:hsl(from hsl(359.998 20% 50%) calc(h / 2) s l)}", ".a{color:#699}");
+    });
+
+    // https://drafts.csswg.org/css-color-5/#relative-colors: only an origin of another color function
+    // is converted. The same function reads the channels as they are parsed. Chrome 153 computes these.
+    describe("origin of the same function", () => {
+      // A gray keeps its hue, its saturation, its whiteness and its blackness.
+      minify_test(".a{color:hsl(from hsl(30 0% 40%) h 100% 40%)}", ".a{color:#c60}");
+      minify_test(".a{color:hsl(from hsl(30 4% 100%) h s 40%)}", ".a{color:#6a6662}");
+      minify_test(".a{color:hwb(from hwb(30 40% 60%) h 20% 40%)}", ".a{color:#963}");
+      minify_test(".a{color:hwb(from hwb(30 80% 60%) h w 20%)}", ".a{color:#ccc}");
+      // The result is the color that the same channels give when they are written in the function.
+      minify_test(".a{color:hsl(from hsl(30 50% 40%) h 60% 50%)}.b{color:hsl(30 60% 50%)}", ".a,.b{color:#cc8033}");
+    });
+
+    // Another function converts the origin. A gray has the hue 0, and the noise of the conversion is not a hue.
+    describe("origin of another function", () => {
+      minify_test(".a{color:hwb(from hsl(30 0% 40%) h 20% 40%)}", ".a{color:#933}");
+      minify_test(".a{color:hsl(from hwb(30 50% 50%) h 100% 40%)}", ".a{color:#c00}");
+      minify_test(".a{color:hwb(from hsl(120 4% 100% / .5) h 20% 40% / alpha)}", ".a{color:#99333380}");
+      minify_test(".a{color:hsl(from rgb(from lab(50% 0 0) r g b) h 100% 40%)}", ".a{color:#c00}");
+      // A channel that 8 bits hold is read from them: 255 / 2 is 127.5, and 254.99998 / 2 is not.
+      minify_test(".a{color:rgb(from hsl(0 100% 80%) calc(r / 2) g b)}", ".a{color:#809999}");
+      minify_test(".a{color:color(from hsl(120 20% 50.0005%) srgb r g b)}", ".a{color:color(srgb .4 .6 .4)}");
+      minify_test(
+        ".a{color:color(from hsl(120 20% 50.002%) srgb r g b)}",
+        ".a{color:color(srgb .400024 .600016 .400024)}",
+      );
+    });
+
+    describe("color with an alpha that is not known yet", () => {
+      minify_test(".a{color:hsl(from hsl(30 2% 97%) h 60% 50% / var(--a))}", ".a{color:hsl(30 60% 50%/var(--a))}");
+      minify_test(
+        ".a{color:hsl(from hsl(30 50% 40%) h s l / var(--a))}.b{color:hsl(30 50% 40% / var(--a))}",
+        ".a,.b{color:hsl(30 50% 40%/var(--a))}",
+      );
+      // The channels of `rgb()` print as bytes. Two colors with the same bytes are one value.
+      minify_test(
+        ".a{color:rgb(from hsl(30 2% 97%) r g b / var(--a))}.b{color:rgb(248 247 247 / var(--a))}",
+        ".a,.b{color:rgb(248 247 247/var(--a))}",
+      );
+      minify_test(
+        ".a{color:rgb(50.1% 0% 0% / var(--a))}.b{color:rgb(50.2% 0% 0% / var(--a))}",
+        ".a,.b{color:rgb(128 0 0/var(--a))}",
+      );
+    });
+
+    // The bytes of these origins hold their channels, so the result does not change.
+    describe("origin that 8 bits hold", () => {
+      for (const [origin, hex] of [
+        ["hsl(210 50% 40%)", "#369"],
+        ["hwb(210 20% 40%)", "#369"],
+        ["rgb(51 102 153)", "#369"],
+        ["rgb(20%, 40%, 60%)", "#369"],
+        ["hsl(0 0% 40%)", "#666"],
+      ]) {
+        minify_test(`.a{color:hsl(from ${origin} h s l)}`, `.a{color:${hex}}`);
+      }
+      minify_test(".a{color:rgb(from hsl(210 50% 40%) b g r)}", ".a{color:#963}");
+      minify_test(".a{color:hsl(from hsl(210 50% 40%) calc(h + 30) s l)}", ".a{color:#339}");
+      minify_test(".a{color:hsl(from hwb(210 20% 40%) h 100% 50%)}", ".a{color:#0080ff}");
+      minify_test(".a{color:color(from hsl(210 50% 40%) srgb r g b)}", ".a{color:color(srgb .2 .4 .6)}");
+    });
+
+    // These do not change: an `rgb()` with no origin, `color-mix()`, and a color that no relative color reads.
+    describe("colors that are 8-bit when they are parsed, as before", () => {
+      minify_test(".a{color:color(from rgba(0, 0, 0, 0.5) srgb r g b / alpha)}", ".a{color:color(srgb 0 0 0/.501961)}");
+      minify_test(".a{color:color(from rgb(0 0 0 / 0.5) srgb r g b / alpha)}", ".a{color:color(srgb 0 0 0/.501961)}");
+      // `none` takes the hue of the other color. It is not a 0.
+      minify_test(".a{color:color-mix(in hsl, hsl(none 50% 50%), hsl(120 50% 50%))}", ".a{color:#40bf40}");
+      minify_test(".a{color:color-mix(in srgb, #fffffe 0.2%, #050505)}", ".a{color:#060605}");
+      test("a color-mix() is the same color when it is an origin", () => {
+        const mix = "color-mix(in hsl, hsl(30 2% 97%) 50%, hsl(30 100% 50%))";
+        const outside = minify_test_with_options(`.a{color:${mix}}`, "");
+        expect(minify_test_with_options(`.a{color:rgb(from ${mix} r g b)}`, "")).toEqual(outside);
+      });
+      minify_test(
+        ".x{color:hsl(30 2% 97%)}.y{color:#f8f7f7}.z{color:rgb(247.503 247.35 247.197)}",
+        ".x,.y,.z{color:#f8f7f7}",
+      );
+      minify_test(
+        ".a{border-top-color:hsl(30 2% 97%);border-right-color:#f8f7f7;border-bottom-color:rgb(97.06% 97% 96.94%);border-left-color:hwb(30 96.94% 2.94%)}",
+        ".a{border-color:#f8f7f7}",
+      );
+      minify_test(".a{color:light-dark(hsl(30 2% 97%), rgb(128.4 0 0))}", ".a{color:light-dark(#f8f7f7,maroon)}");
+      minify_test(".a{color:hsl(none 0% 90%)}", ".a{color:#e6e6e6}");
+      prefix_test(
+        ".a{color:color(srgb .9 .9 .9)}",
+        `.a {
+          color: #e6e6e6;
+          color: color(srgb .9 .9 .9);
+        }
+        `,
+        { chrome: Some(90 << 16) },
+      );
+    });
+
+    // These origins are still read from bytes. Chrome 153 computes the expected colors.
+    test.failing("an origin that is a color-mix() in hsl", () => {
+      const source = ".a{color:hsl(from color-mix(in hsl, hsl(30 2% 97%) 50%, hsl(30 100% 50%)) h 60% 50%)}";
+      expect(minify_test_with_options(source, "")).toEqual(".a{color:#cc8033}");
+    });
+    test.failing("an origin inside a relative color that stays unparsed", () => {
+      const source = ".a{color:hsl(from hsl(30 2% 97%) h 60% var(--l))}";
+      expect(minify_test_with_options(source, "")).not.toContain("#f8f7f7");
+    });
+  });
+
   describe("container", () => {
     minify_test("@container (width > 100px) { a { color: red } }", "@container (width>100px){a{color:red}}");
     minify_test("@container not (width > 100px) { a { color: red } }", "@container not (width>100px){a{color:red}}");

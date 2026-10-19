@@ -151,7 +151,7 @@ pub enum PredefinedColor {
     XyzD65(XYZd65),
 }
 
-/// Floating-point RGB/HSL/HWB used when a color carries `none` components.
+/// Floating-point RGB/HSL/HWB: the channels of `rgb()`, `hsl()` and `hwb()` as they are parsed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FloatColor {
     Rgb(SRGB),
@@ -380,7 +380,7 @@ pub enum CssColor {
     Lab(Box<LABColor>),
     /// A predefined-space color (`color(display-p3 …)`).
     Predefined(Box<PredefinedColor>),
-    /// Float RGB/HSL/HWB carrying `none` components.
+    /// Float RGB/HSL/HWB. It has a `none` component, or a color function reads it (`parse_inner_color`).
     Float(FloatColor),
     /// `light-dark()`.
     LightDark {
@@ -431,8 +431,23 @@ impl CssColor {
                     }
                 },
             }},
-            css::Token::Function(name) => parse_color_function(location, name, input),
+            css::Token::Function(name) => {
+                let color = parse_color_function(location, name, input);
+                debug_assert!(
+                    input.flags.inner_color() || color.as_ref().map_or(true, Self::is_settled)
+                );
+                color
+            }
             _ => Err(location.new_unexpected_token_error(token)),
+        }
+    }
+
+    /// Whether `Float` holds only a color with a `none` component.
+    fn is_settled(&self) -> bool {
+        match self {
+            CssColor::Float(float) => float.has_none(),
+            CssColor::LightDark { light, dark } => light.is_settled() && dark.is_settled(),
+            _ => true,
         }
     }
 
@@ -931,6 +946,36 @@ impl crate::generics::ToCss for CssColor {
     }
 }
 
+/// Parses the origin of a relative color. A color function reads it, so it keeps its float channels.
+fn parse_inner_color(input: &mut css::Parser) -> CssResult<ExactColor> {
+    let flags = input.flags;
+    input.flags.insert(css::ParserOpts::INNER_COLOR);
+    let color = CssColor::parse(input);
+    input.flags = flags;
+    color.map(ExactColor)
+}
+
+/// A color that `parse_inner_color` made: `hsl()`, `hwb()` and relative colors keep their float channels.
+struct ExactColor(CssColor);
+
+impl ExactColor {
+    /// The origin of a relative color, as the function of `reader` reads it. `None` is `color()`.
+    fn into_origin(self, reader: Option<core::any::TypeId>) -> CssColor {
+        match self.0 {
+            CssColor::Float(float) => CssColor::Float(float.read_by(reader)),
+            CssColor::LightDark {
+                mut light,
+                mut dark,
+            } => {
+                *light = ExactColor(core::mem::take(&mut *light)).into_origin(reader);
+                *dark = ExactColor(core::mem::take(&mut *dark)).into_origin(reader);
+                CssColor::LightDark { light, dark }
+            }
+            color => color,
+        }
+    }
+}
+
 // `light_dark` payload helpers
 // `takeLightFreeDark` / `takeDarkFreeLight` — taking ownership of one
 // `Box` and dropping the other is just destructuring; provided as free fns.
@@ -998,7 +1043,7 @@ impl ColorFallbackKind {
 
 /// Trait every colorspace implements. The
 /// first three struct fields plus `alpha` are exposed by index.
-pub trait Colorspace: Copy + Sized + FromAnyColorspace {
+pub trait Colorspace: Copy + Sized + FromAnyColorspace + 'static {
     const CHANNEL_NAMES: (&'static [u8], &'static [u8], &'static [u8]);
     const CHANNEL_TYPES: (ChannelType, ChannelType, ChannelType);
 
@@ -1146,24 +1191,31 @@ pub(crate) fn parse_color_function(
             LABColor::Oklch(OKLCH { l, c, h, alpha })
         }),
         b"color" => parse_predefined(input, &mut parser),
-        b"hsl" | b"hsla" => parse_hsl_hwb::<HSL>(input, &mut parser, true, |h, s, l, a| {
+        b"hsl" | b"hsla" => parse_hsl_hwb::<HSL>(input, &mut parser, true, |h, s, l, a, inner| {
             let hsl = HSL { h, s, l, alpha: a };
-            if !h.is_nan() && !s.is_nan() && !l.is_nan() && !a.is_nan() {
+            if !inner && !h.is_nan() && !s.is_nan() && !l.is_nan() && !a.is_nan() {
                 CssColor::Rgba(RGBA::from(hsl))
             } else {
                 CssColor::Float(FloatColor::Hsl(hsl))
             }
         }),
-        b"hwb" => parse_hsl_hwb::<HWB>(input, &mut parser, false, |h, w, b, a| {
+        b"hwb" => parse_hsl_hwb::<HWB>(input, &mut parser, false, |h, w, b, a, inner| {
             let hwb = HWB { h, w, b, alpha: a };
-            if !h.is_nan() && !w.is_nan() && !b.is_nan() && !a.is_nan() {
+            if !inner && !h.is_nan() && !w.is_nan() && !b.is_nan() && !a.is_nan() {
                 CssColor::Rgba(RGBA::from(hwb))
             } else {
                 CssColor::Float(FloatColor::Hwb(hwb))
             }
         }),
         b"rgb" | b"rgba" => parse_rgb(input, &mut parser),
-        b"color-mix" => input.parse_nested_block(parse_color_mix),
+        b"color-mix" => {
+            // `color-mix()` reads the bytes of its operands, also when it is an origin.
+            let flags = input.flags;
+            input.flags.remove(css::ParserOpts::INNER_COLOR);
+            let mix = input.parse_nested_block(parse_color_mix);
+            input.flags = flags;
+            mix
+        },
         b"light-dark" => input.parse_nested_block(|i| {
             let light = match CssColor::parse(i)? {
                 CssColor::LightDark { light, dark } => take_light_free_dark(light, dark),
@@ -1222,11 +1274,14 @@ pub(crate) fn parse_rgb_components(
             }
         }
     } else {
-        fn get_component(value: NumberOrPercentage) -> f32 {
+        // Only an `rgb()` with no origin rounds its number channels: browsers do not agree on it.
+        fn get_component(value: NumberOrPercentage, relative: bool) -> f32 {
             match value {
                 NumberOrPercentage::Number { value: v } => {
                     if v.is_nan() {
                         v
+                    } else if relative {
+                        v.clamp(0.0, 255.0) / 255.0
                     } else {
                         v.round().clamp(0.0, 255.0) / 255.0
                     }
@@ -1235,9 +1290,10 @@ pub(crate) fn parse_rgb_components(
             }
         }
 
-        let r = get_component(red);
-        let g = get_component(parser.parse_number_or_percentage(input)?);
-        let b = get_component(parser.parse_number_or_percentage(input)?);
+        let relative = parser.from.is_some();
+        let r = get_component(red, relative);
+        let g = get_component(parser.parse_number_or_percentage(input)?, relative);
+        let b = get_component(parser.parse_number_or_percentage(input)?, relative);
         (r, g, b)
     };
 
@@ -1378,7 +1434,6 @@ pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> +
 }
 
 /// Parses the hsl() and hwb() functions.
-/// The results of this function are stored as floating point if there are any `none` components.
 /// https://drafts.csswg.org/css-color-4/#the-hsl-notation
 pub(crate) fn parse_hsl_hwb<
     T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>,
@@ -1386,7 +1441,7 @@ pub(crate) fn parse_hsl_hwb<
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     allows_legacy: bool,
-    func: fn(f32, f32, f32, f32) -> CssColor,
+    func: fn(f32, f32, f32, f32, bool) -> CssColor,
 ) -> CssResult<CssColor> {
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
@@ -1397,7 +1452,7 @@ pub(crate) fn parse_hsl_hwb<
                 parse_alpha(i, p)?
             };
 
-            Ok(func(h, a, b, alpha))
+            Ok(func(h, a, b, alpha, i.flags.inner_color()))
         })
     })
 }
@@ -1451,7 +1506,9 @@ fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult
                 parse_alpha(i, p)?
             };
 
-            if !r.is_nan() && !g.is_nan() && !b.is_nan() && !alpha.is_nan() {
+            // Only a relative `rgb()` keeps float channels: browsers do not agree on an `rgb()` with no origin.
+            let inner = p.from.is_some() && i.flags.inner_color();
+            if !inner && !r.is_nan() && !g.is_nan() && !b.is_nan() && !alpha.is_nan() {
                 if is_legacy {
                     return Ok(CssColor::Rgba(RGBA::new(r as u8, g as u8, b as u8, alpha)));
                 }
@@ -1507,6 +1564,44 @@ impl LABColor {
 }
 
 impl FloatColor {
+    fn has_none(&self) -> bool {
+        let (a, b, c, alpha) = self.components();
+        a.is_nan() || b.is_nan() || c.is_nan() || alpha.is_nan()
+    }
+
+    /// This color as the origin of a relative color. Only another function converts it: https://drafts.csswg.org/css-color-5/#relative-colors
+    fn read_by(mut self, reader: Option<core::any::TypeId>) -> FloatColor {
+        if reader != Some(self.payload_type_id()) {
+            return FloatColor::Rgb(self.to_srgb());
+        }
+        // `h` is the hue of the origin in [0, 360).
+        if let FloatColor::Hsl(HSL { h, .. }) | FloatColor::Hwb(HWB { h, .. }) = &mut self {
+            *h = h.rem_euclid(360.0);
+        }
+        self
+    }
+
+    /// This color in sRGB, for another color function. The noise of the conversion does not become a hue.
+    fn to_srgb(&self) -> SRGB {
+        // A conversion leaves up to 1e-6 of noise on a channel.
+        let is_close = |a: f32, b: f32| (a - b).abs() <= 1e-5;
+        let byte = |channel: f32| f32::from(clamp_unit_f32(channel)) / 255.0;
+        let mut srgb = SRGB::from_float_color(self);
+        // A gray is read from its byte, as before: its three channels are one value.
+        if is_close(srgb.r, srgb.g) && is_close(srgb.g, srgb.b) && is_close(srgb.b, srgb.r) {
+            srgb.r = byte(srgb.g);
+            srgb.g = srgb.r;
+            srgb.b = srgb.r;
+        }
+        // A channel that 8 bits hold is read from them, as before.
+        for channel in [&mut srgb.r, &mut srgb.g, &mut srgb.b] {
+            if is_close(*channel, byte(*channel)) {
+                *channel = byte(*channel);
+            }
+        }
+        srgb
+    }
+
     pub fn into_hsl(&self) -> HSL {
         HSL::from_float_color(self)
     }
@@ -1910,7 +2005,8 @@ impl ComponentParser {
             .try_parse(|i| i.expect_ident_matching(b"from"))
             .is_ok()
         {
-            let from = CssColor::parse(input)?;
+            let reader = Some(core::any::TypeId::of::<T>());
+            let from = parse_inner_color(input)?.into_origin(reader);
             return self.parse_from::<T, C, F>(from, input, func);
         }
 
@@ -2283,7 +2379,7 @@ pub(crate) fn parse_predefined(
     let res = input.parse_nested_block(|i| {
         // https://www.w3.org/TR/css-color-4/#color-function
         let from: Option<CssColor> = if i.try_parse(|i| i.expect_ident_matching(b"from")).is_ok() {
-            Some(CssColor::parse(i)?)
+            Some(parse_inner_color(i)?.into_origin(None))
         } else {
             None
         };

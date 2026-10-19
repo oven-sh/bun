@@ -606,6 +606,123 @@ describe("input forms", () => {
   });
 });
 
+// A relative color reads the float channels of an origin that is `hsl()`, `hwb()` or a relative color, not its bytes.
+// `hsl(30 2% 97%)` is (247.503, 247.35, 247.197) on the scale of a byte. Its bytes are #f8f7f7, whose hue is 0.
+describe("origin of a relative color", () => {
+  test.each([
+    ["hsl(from hsl(30 2% 97%) h 60% 50%)", "#cc8033"],
+    ["hsl(from hsl(30, 2%, 97%) h 100% 40%)", "#c60"],
+    ["hsl(from hwb(30 96.94% 2.94%) h 100% 40%)", "#c60"],
+    ["hsl(from hsl(from hsl(30 2% 97%) h s l) h 100% 40%)", "#c60"],
+    ["hsl(from rgb(from hsl(30 2% 97%) r g b) h 100% 40%)", "#c60"],
+    ["hsl(from light-dark(hsl(30 2% 97%), hsl(210 2% 10%)) h 60% 50%)", "light-dark(#cc8033, #3380cc)"],
+    ["color(from hsl(30 2% 97%) srgb r g b)", "color(srgb .9706 .97 .9694)"],
+    ["color(from rgb(from red 128.4 g b) srgb r g b)", "color(srgb .503529 0 0)"],
+    ["color(from hsl(120 100% 50% / 0.5) srgb r g b / alpha)", "color(srgb 0 1 0 / .5)"],
+    // The same function reads the channels of a gray as they are parsed.
+    ["hsl(from hsl(30 0% 40%) h 100% 40%)", "#c60"],
+    // The hue of the origin is in [0, 360).
+    ["hsl(from hsl(390 2% 97%) calc(h / 2) 100% 40%)", "#c30"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test("each output format comes from the float channels of the origin", () => {
+    const input = "hsl(from hsl(30 2% 97%) h 60% 50%)";
+    const numbers = (text: string | null) => text!.match(/[\d.]+/g)!.map(Number);
+    expect({
+      hex: color(input, "hex"),
+      rgb: color(input, "{rgb}"),
+      array: color(input, "[rgb]"),
+      number: color(input, "number"),
+    }).toEqual({
+      hex: "#cc8033",
+      rgb: { r: 204, g: 128, b: 51 },
+      array: [204, 128, 51],
+      number: 0xcc8033,
+    });
+    // These two formats convert the bytes of #cc8033. The hue of #c33 is 0.
+    expect(numbers(color(input, "hsl"))[0]).toBeCloseTo(30.2, 1);
+    expect(numbers(color(input, "lab"))[2]).toBeCloseTo(52.45, 1);
+  });
+
+  // The lightness of #f8f7f7 is 97.3095.
+  test("lab() reads the float channels", () => {
+    const css = color("lab(from hsl(30 2% 97%) l 0 0)", "css")!;
+    expect(css).toMatch(/^lab\([\d.]+% 0 0\)$/);
+    expect(parseFloat(css.slice(4))).toBeCloseTo(97.3621, 2);
+  });
+
+  const hues = [0, 30, 75, 135, 180, 210, 285, 330];
+  const bytes = (input: string) => color(input, "[rgb]") as number[];
+
+  // `hsl(from hsl(H S L) h 60% 45%)` is `hsl(H 60% 45%)`. No channel of that color is between two bytes.
+  test("the same function gives the color that the channels give when they are written", () => {
+    const differences: string[] = [];
+    for (const h of hues) {
+      for (const [a, b] of [
+        [2, 97],
+        [50, 40],
+        [0, 40],
+      ]) {
+        for (const [origin, folded, written] of [
+          [`hsl(${h} ${a}% ${b}%)`, "hsl(from X h 60% 45%)", `hsl(${h} 60% 45%)`],
+          [`hwb(${h} ${b}% ${a / 50}%)`, "hwb(from X h 20% 35%)", `hwb(${h} 20% 35%)`],
+        ]) {
+          const input = folded.replace("X", origin);
+          if (color(input, "css") !== color(written, "css")) differences.push(input);
+        }
+      }
+    }
+    expect(differences).toEqual([]);
+  });
+
+  // `hsl(H S L)` and the `color(srgb r g b)` of the same color are one origin for another color function.
+  test("another function reads the color that color(srgb) gives", () => {
+    const differences: string[] = [];
+    for (const h of hues) {
+      for (const [s, l] of [
+        [20, 50],
+        [100, 30],
+        [60, 85],
+      ]) {
+        const chroma = (s / 100) * Math.min(l / 100, 1 - l / 100);
+        const channel = (n: number) => {
+          const k = (n + h / 30) % 12;
+          return (l / 100 - chroma * Math.max(-1, Math.min(k - 3, 9 - k, 1))).toFixed(7);
+        };
+        const srgb = `color(srgb ${channel(0)} ${channel(8)} ${channel(4)})`;
+        for (const reader of ["hwb(from X h 20% 35%)", "rgb(from X b r g)", "lab(from X l a b)"]) {
+          const [fromHsl, fromSrgb] = [`hsl(${h} ${s}% ${l}%)`, srgb].map(origin => bytes(reader.replace("X", origin)));
+          if (fromHsl.some((byte, i) => Math.abs(byte - fromSrgb[i]) > 1)) differences.push(reader.replace("X", srgb));
+        }
+      }
+    }
+    expect(differences).toEqual([]);
+  });
+
+  // A gray origin is read from its byte by another function. Exactly 127.5 would give each channel of the result its own rounding.
+  test.each(["lab(from X l a b)", "lch(from X l c h)", "oklab(from X l a b)", "oklch(from X l c h)"])(
+    "a gray is a gray in 8 bits after %s",
+    reader => {
+      for (const lightness of [10, 30, 50, 70, 90]) {
+        const input = reader.replace("X", `hsl(0 0% ${lightness}%)`);
+        const [r, g, b] = bytes(input);
+        expect({ input, g, b }).toEqual({ input, g: r, b: r });
+        expect({ input, bytes: bytes(`rgb(from ${input} r g b)`) }).toEqual({ input, bytes: [r, r, r] });
+      }
+    },
+  );
+
+  test.each([
+    ["hsl(30 2% 97%)", "#f8f7f7"],
+    ["hsl(from hsl(210 50% 40%) h s l)", "#369"],
+    ["hsl(from rgb(248 247 247) h 60% 50%)", "#c33"],
+  ])("%s is still %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});
+
 // https://drafts.csswg.org/css-color-5/#color-mix — the grammar is
 // <percentage [0,100]>, so a value outside that range is a parse error.
 describe("color-mix() percentage range", () => {

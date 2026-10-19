@@ -2999,6 +2999,8 @@ bitflags::bitflags! {
         const CSS_MODULES = 0b1;
         /// Makes `TokenList::parse` keep `url()` as a raw token instead of creating an import record.
         const RAW_URL_TOKENS = 0b10;
+        /// Set inside the origin of a relative color: a color function reads that color.
+        const INNER_COLOR = 0b100;
     }
 }
 impl ParserOpts {
@@ -3010,6 +3012,11 @@ impl ParserOpts {
     #[inline]
     pub(crate) fn raw_url_tokens(self) -> bool {
         self.contains(Self::RAW_URL_TOKENS)
+    }
+
+    #[inline]
+    pub(crate) fn inner_color(self) -> bool {
+        self.contains(Self::INNER_COLOR)
     }
 }
 

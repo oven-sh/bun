@@ -54,7 +54,7 @@ type StoreEntryId = store::entry::Id;
 
 // ── Path option presets ───────────────────────────────────────────────────
 use paths::path_options::{AssumeOk as _, Kind as PathKind, PathSeparators};
-pub(crate) type AutoPath = paths::Path<u8, { PathKind::ANY }, { PathSeparators::AUTO }>;
+type AutoPath = paths::Path<u8, { PathKind::ANY }, { PathSeparators::AUTO }>;
 type OsAutoAbsPath = AbsPath<paths::OSPathChar, { PathSeparators::AUTO }>;
 type OsAutoPath = paths::Path<paths::OSPathChar, { PathKind::ANY }, { PathSeparators::AUTO }>;
 type DefaultAbsPath = AbsPath<u8>;
@@ -522,17 +522,6 @@ impl<'a> Installer<'a> {
                 self.delete_store_copy(entry_id);
             }
         }
-        // Likewise for a package that this install linked and whose scripts have not run yet.
-        if matches!(
-            err,
-            TaskError::SymlinkDependencies(_)
-                | TaskError::Binaries(_)
-                | TaskError::DependencyBinaries(_)
-        ) && self.tasks[entry_id.get() as usize].relink == Relink::Off
-            && self.is_trusted(entry_id)
-        {
-            self.delete_store_copy(entry_id);
-        }
         Output::flush();
 
         // Clean up the staging directory so a half-built global-store entry
@@ -759,7 +748,7 @@ impl<'a> Installer<'a> {
             && (tag.can_enqueue_install_task() || tag == ResolutionTag::Folder);
         if is_store_copy
             && self
-                .remove_planted_links_in(entry_id, Self::STORE_PATH_LEN)
+                .remove_planted_links_in(entry_id, Self::store_path_len())
                 .is_ok()
         {
             if tag == ResolutionTag::Folder {
@@ -777,7 +766,7 @@ impl<'a> Installer<'a> {
 
     /// Deletes the `installed_marker` file first, because `delete_tree` can stop midway.
     fn delete_local_store_package_in_place(&self, entry_id: StoreEntryId) {
-        let mut path = AutoPath::init();
+        let mut path = AutoAbsPath::init_top_level_dir();
         if self.append_store_path(&mut path, entry_id).is_err() {
             return;
         }
@@ -797,22 +786,26 @@ impl<'a> Installer<'a> {
         let _ = Fd::cwd().delete_tree(path.slice());
     }
 
-    /// `install_isolated_packages` looked at it.
-    const STORE_PATH_LEN: usize = "node_modules/.bun".len();
+    /// Of `<project>/node_modules/.bun`, which `install_isolated_packages` looked at.
+    fn store_path_len() -> usize {
+        let mut store = AutoPath::init_top_level_dir();
+        let _ = store.try_append(b"node_modules/.bun");
+        store.len()
+    }
 
     /// Call before anything in the entry is written or deleted. `real_len` is the length of the
-    /// part of the entry's path from the project that was already checked.
+    /// part that was already checked.
     fn remove_planted_links_in(&self, entry_id: StoreEntryId, real_len: usize) -> sys::Result<()> {
         if self.is_new_bun_modules {
             return Ok(());
         }
-        let mut bin = AutoPath::init();
+        let mut bin = AutoPath::init_top_level_dir();
         self.append_store_node_modules_path(&mut bin, entry_id)?;
         let node_modules_len = bin.len();
         PathLike::append(&mut bin, b".bin")?;
         crate::prune::remove_planted_links(bin.slice(), real_len)?;
 
-        let mut package = AutoPath::init();
+        let mut package = AutoPath::init_top_level_dir();
         self.append_store_path(&mut package, entry_id)?;
         crate::prune::remove_planted_links(
             // A cached package replaces whatever is at its path. A folder's files are linked into
@@ -1210,7 +1203,7 @@ impl Task {
                     // `Step::LinkPackage` was skipped, so this check hasn't run yet.
                     if self.relink != Relink::Off {
                         installer
-                            .remove_planted_links_in(entry_id, Installer::STORE_PATH_LEN)
+                            .remove_planted_links_in(entry_id, Installer::store_path_len())
                             .map_err(|err| TaskError::Binaries(err.into()))?;
                     }
                     installer.link_dependency_bins(entry_id)?;
@@ -1595,7 +1588,7 @@ impl<'a> Installer<'a> {
         let folder_dir = sys::open_dir_for_iteration(Fd::cwd(), path)?;
         let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
 
-        self.remove_planted_links_in(entry_id, Self::STORE_PATH_LEN)?;
+        self.remove_planted_links_in(entry_id, Self::store_path_len())?;
 
         // The hardlink and copy walks below only visit what the folder contains now. First remove
         // what it no longer has from the old copy, and any symlink that they would write through.
@@ -1738,7 +1731,7 @@ impl<'a> Installer<'a> {
             // If this install created `node_modules/.bun`, nothing from this entry is in there yet.
             if !uses_global_store && (!self.is_new_bun_modules || link_in_place) {
                 // An entry that lost global-store eligibility is still a link into that store.
-                let mut local = AutoPath::init();
+                let mut local = AutoPath::init_top_level_dir();
                 self.append_local_store_entry_path(&mut local, entry_id)
                     .map_err(TaskError::LinkPackage)?;
                 let is_stale_link = is_link(local.slice_z());
@@ -2894,7 +2887,14 @@ impl<'a> Installer<'a> {
 
         self.append_real_store_node_modules_path(buf, entry_id, Which::Staging)?;
         PathLike::append(buf, package_dir_name)?;
-        buf.try_append_join(folder).map_err(name_too_long)?;
+        // `folder` comes from a third-party manifest, so its length is unchecked.
+        if buf.len() + 1 + folder.len() >= paths::MAX_PATH_BYTES {
+            return Err(sys::Error::from_code(
+                sys::Errno::ENAMETOOLONG,
+                sys::Tag::fstatat,
+            ));
+        }
+        buf.append_join(folder).assume_ok();
 
         match sys::directory_exists_at(Fd::cwd(), buf.slice_z()) {
             Ok(is_dir) => Ok(is_dir),

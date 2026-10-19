@@ -55,7 +55,7 @@ use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
     invalid_dependency_id, invalid_package_id,
 };
-use installer::{AutoPath, CompleteState, PatchInfo, Step, TaskError, Which};
+use installer::{CompleteState, PatchInfo, Step, TaskError, Which};
 use store::{Entry as StoreEntry, EntryColumns as _, Node as StoreNode, NodeColumns as _};
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2333,7 +2333,7 @@ pub(crate) fn install_isolated_packages(
                     // copied the project into the store, so that copy is deleted.
                     if !is_new_bun_modules {
                         use bun_sys::FdExt as _;
-                        let mut old_copy = AutoPath::init();
+                        let mut old_copy: AbsPath = AbsPath::init_top_level_dir();
                         let _ = installer
                             .append_local_store_entry_path(&mut old_copy, entry_id)
                             .and_then(|()| Fd::cwd().delete_tree(old_copy.slice()));
@@ -2393,7 +2393,7 @@ pub(crate) fn install_isolated_packages(
 
                     // folders are always hardlinked to keep them up-to-date
                     if !is_new_bun_modules && !installer.manager().options.enable.force_install() {
-                        let mut store_path = AutoPath::init();
+                        let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                         if installer
                             .append_real_store_path(&mut store_path, entry_id, Which::Final)
                             .is_ok()
@@ -2431,7 +2431,7 @@ pub(crate) fn install_isolated_packages(
                         || (is_new_bun_modules && !uses_global_store)
                         || matches!(patch_info, PatchInfo::Remove)
                         || 'needs_install: {
-                            let mut store_path = AutoPath::init();
+                            let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                             if uses_global_store {
                                 // Global entries are built under a per-process
                                 // staging path and renamed into place as the
@@ -2447,28 +2447,29 @@ pub(crate) fn install_isolated_packages(
                                 break 'needs_install true;
                             }
                             let local_entry_len = store_path.len();
-                            store_path.append(b"node_modules").assume_ok();
-                            store_path.append(pkg_name.slice(string_buf)).assume_ok();
+                            if store_path.try_append(b"node_modules").is_err()
+                                || store_path.try_append(pkg_name.slice(string_buf)).is_err()
+                            {
+                                break 'needs_install true;
+                            }
                             let package_len = store_path.len();
                             let mut hash_buf: install::BuntagHashBuf = Default::default();
-                            store_path
-                                .append(installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf))
-                                .assume_ok();
+                            let marker = installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf);
                             // `exists` follows the link of an entry that left the global store.
-                            if !sys::exists_z(store_path.slice_z()) {
+                            if store_path.try_append(marker).is_err() || !sys::exists_z(store_path.slice_z()) {
                                 break 'needs_install true;
                             }
                             // Like the hoisted linker, replace a tarball copy that holds other bytes than bun.lock pins.
                             if matches!(pkg_res.tag, ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball) {
                                 store_path.set_length(package_len);
-                                store_path.append(crate::package_install::BUN_TAG).assume_ok();
-                                let is_current = sys::File::read_from(Fd::cwd(), store_path.slice()).is_ok_and(|tag| {
-                                    crate::package_install::tarball_tag_matches(
-                                        &tag,
-                                        &pkgs.items_meta()[pkg_id as usize].integrity,
-                                        installer.manager().skips_verify(pkg_res.tag),
-                                    )
-                                });
+                                let is_current = store_path.try_append(crate::package_install::BUN_TAG).is_ok()
+                                    && sys::File::read_from(Fd::cwd(), store_path.slice()).is_ok_and(|tag| {
+                                        crate::package_install::tarball_tag_matches(
+                                            &tag,
+                                            &pkgs.items_meta()[pkg_id as usize].integrity,
+                                            installer.manager().skips_verify(pkg_res.tag),
+                                        )
+                                    });
                                 if !is_current {
                                     break 'needs_install true;
                                 }
@@ -2487,8 +2488,8 @@ pub(crate) fn install_isolated_packages(
                             } else {
                                 b"../../.."
                             };
-                            store_path.append(up).assume_ok();
-                            !sys::stat(store_path.slice_z()).is_ok_and(|st| Some((st.st_dev, st.st_ino)) == store_inode)
+                            store_path.try_append(up).is_err()
+                                || !sys::stat(store_path.slice_z()).is_ok_and(|st| Some((st.st_dev, st.st_ino)) == store_inode)
                         };
 
                     if !needs_install {

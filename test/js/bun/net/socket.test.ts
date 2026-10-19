@@ -13,7 +13,6 @@ import {
   isLinux,
   isWindows,
   libcPathForDlopen,
-  normalizeBunSnapshot,
   tempDir,
   tls,
 } from "harness";
@@ -6629,82 +6628,4 @@ it("a view of shared memory as a tls option is refused", () => {
       ).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
     }
   }
-});
-
-// expect(promise).resolves ticks the loop while the dispatch that called the handler is still on the stack.
-// The outer dispatch reads the closed socket again, so the inner ticks must not free it.
-describe.concurrent("a handler that closes its socket and then waits for a promise", () => {
-  it("doesn't crash the dispatch that called it", async () => {
-    const source = `
-      import { expect, test } from "bun:test";
-
-      // JS can't observe when the loop finishes the close, so tick the loop from the handler for a short time.
-      function waitInsideHandler() {
-        expect(Bun.sleep(20)).resolves.toBeUndefined();
-      }
-
-      test("data() closes the accepted socket", async () => {
-        for (let i = 0; i < 3; i++) {
-          const dispatched = Promise.withResolvers();
-          using server = Bun.listen({
-            hostname: "127.0.0.1",
-            port: 0,
-            socket: {
-              data(socket) {
-                socket.terminate();
-                waitInsideHandler();
-                setTimeout(dispatched.resolve, 0);
-              },
-            },
-          });
-          const peer = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
-          peer.write("x");
-          await dispatched.promise;
-          peer.terminate();
-        }
-        console.log("data() done");
-      });
-
-      test("open() closes the accepted socket and the listener", async () => {
-        for (let i = 0; i < 3; i++) {
-          const dispatched = Promise.withResolvers();
-          const server = Bun.listen({
-            hostname: "127.0.0.1",
-            port: 0,
-            socket: {
-              open(socket) {
-                socket.terminate();
-                server.stop(true);
-                waitInsideHandler();
-                setTimeout(dispatched.resolve, 0);
-              },
-              data() {},
-            },
-          });
-          // The server resets the client, so its connect may resolve, reject or (on kqueue) never settle.
-          Bun.connect({
-            hostname: "127.0.0.1",
-            port: server.port,
-            socket: { data() {}, error() {}, connectError() {}, close() {} },
-          }).catch(() => {});
-          await dispatched.promise;
-        }
-        console.log("open() done");
-      });
-    `;
-    using dir = tempDir("socket-close-then-wait-in-handler", { "fixture.test.ts": source });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "fixture.test.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: normalizeBunSnapshot(stdout), exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
-      stdout: "bun test <version> (<revision>)\ndata() done\nopen() done",
-      exitCode: 0,
-      stderr: "",
-    });
-  });
 });

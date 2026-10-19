@@ -582,7 +582,11 @@ const IS_UV_FS_COPYFILE_DISABLED =
       fs.closeSync(held.pop());
       console.log(await Bun.file(fifo).text().catch(e => e.code));
       for (const fd of held) fs.closeSync(fd);
+      const countFds = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      const before = countFds();
       const text = Bun.file(fifo).text();
+      // The fifo drops its bytes if the writer closes before the read has opened it.
+      while (countFds() < before + 2) await Bun.sleep(1);
       fs.writeSync(writer, "hello");
       fs.closeSync(writer);
       console.log(await text);

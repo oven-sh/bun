@@ -307,6 +307,7 @@ test.concurrent("responds to a framework request queued behind the reload that b
         name: "park-page",
         setup(build) {
           build.onLoad({ filter: /edited\\.ts$/ }, async () => {
+            if (!globalThis.loadParked) return;
             globalThis.loadParked.resolve();
             await globalThis.releaseLoad.promise;
           });
@@ -314,17 +315,17 @@ test.concurrent("responds to a framework request queued behind the reload that b
       };
     `,
     "render.ts": `export function render(request, meta) { return new Response(meta.pageModule.default); }`,
-    "routes/index.ts": `export default "index";`,
+    // The import gets the page bundled, which is what makes kqueue and Windows watch it.
+    "routes/index.ts": `import "./edited.ts"; export default "index";`,
     "routes/edited.ts": `export default "before";`,
     "server.ts": `
       import { renameSync, writeFileSync } from "node:fs";
-      globalThis.loadParked = Promise.withResolvers();
-      globalThis.releaseLoad = Promise.withResolvers();
-
       const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" };
       const server = Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } });
       const get = path => fetch(new URL(path, server.url)).then(res => res.text());
       console.log(await get("/"));
+      globalThis.loadParked = Promise.withResolvers();
+      globalThis.releaseLoad = Promise.withResolvers();
 
       // A rename is a single watcher event, so a second reload isn't queued behind the first.
       writeFileSync("edited.next", 'export default "after";');

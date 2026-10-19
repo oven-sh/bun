@@ -1968,6 +1968,8 @@ test.skipIf(isWindows)("the next response can read a FIFO fd after an aborted Re
   const fifoPath = join(String(dir), "fd.fifo");
   mkfifo(fifoPath);
   const fd = openSync(fifoPath, constants.O_RDONLY | constants.O_NONBLOCK);
+  // Without a writer, macOS reads EOF and the first response ends before the abort.
+  const writer = openSync(fifoPath, "w");
   try {
     const aborted = Promise.withResolvers<void>();
     await using server = Bun.serve({
@@ -1981,7 +1983,6 @@ test.skipIf(isWindows)("the next response can read a FIFO fd after an aborted Re
     await abortAfterResponseHead(server.port);
     await aborted.promise;
 
-    const writer = openSync(fifoPath, "w");
     writeSync(writer, "hello");
     closeSync(writer);
     expect(await fetch(server.url).then(res => res.text())).toBe("hello");

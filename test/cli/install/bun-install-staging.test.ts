@@ -972,17 +972,9 @@ test.concurrent.skipIf(!isLinux).each(["hoisted", "isolated"])(
       Bun.TOML.stringify({ install: { registry: registry.url.href, cache: join(String(dir), ".bun-cache"), linker } }),
     );
 
-    const failing = await install(root);
-    expect(failing.stderr).toContain("ENAMETOOLONG");
-    expect(failing.exitCode).toBe(1);
-
-    // Where the paths fit, the next install completes what this one left.
-    const moved = join(String(dir), "moved");
-    renameSync(root, moved);
-    const { stderr, exitCode } = await install(moved);
-    expect(stderr).not.toContain("error");
-    expect(readFileSync(join(moved, "node_modules", "pkg", "ran.txt"), "utf8")).toBe("ran\n");
-    expect(exitCode).toBe(0);
+    const { stderr, exitCode } = await install(root);
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(exitCode).toBe(1);
   },
 );
 

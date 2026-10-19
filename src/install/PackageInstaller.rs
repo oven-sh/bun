@@ -1033,7 +1033,7 @@ impl<'a> PackageInstaller<'a> {
     }
 
     fn spawn_scripts(&mut self, entry: PendingLifecycleScript, log_level: Options::LogLevel) {
-        let (name, tree_id) = (entry.list.package_name.clone(), entry.tree_id);
+        let name = entry.list.package_name.clone();
         let output_in_foreground = false;
         if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
             self.command_ctx,
@@ -1045,7 +1045,7 @@ impl<'a> PackageInstaller<'a> {
                 unfinished: std::rc::Rc::clone(&self.unfinished_scripts),
             }),
         ) {
-            self.on_scripts_error(log_level, "spawn life-cycle", tree_id, &name, err);
+            self.on_scripts_error(log_level, "spawn life-cycle", &name, err);
         }
     }
 
@@ -1054,12 +1054,9 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         log_level: Options::LogLevel,
         action: &str,
-        tree_id: lockfile::tree::Id,
         name: &[u8],
         err: crate::Error,
     ) {
-        // A placed package counts as installed, so the next install would not run its scripts.
-        remove_placed_package(self.lockfile(), tree_id, name);
         let name = bstr::BStr::new(name);
         if log_level.show_progress() {
             if Output::enable_ansi_colors_stderr() {
@@ -2665,8 +2662,8 @@ impl<'a> PackageInstaller<'a> {
         let mut folder_path = match self.package_path(alias.slice(string_buf)) {
             Ok(folder_path) => folder_path,
             Err(err) => {
-                let (tree_id, name) = (self.current_tree_id, alias.slice(string_buf));
-                return self.on_scripts_error(log_level, "enqueue lifecycle", tree_id, name, err);
+                let name = alias.slice(string_buf);
+                return self.on_scripts_error(log_level, "enqueue lifecycle", name, err);
             }
         };
 
@@ -2751,8 +2748,7 @@ impl<'a> PackageInstaller<'a> {
             Ok(Some(list)) => list,
             Ok(None) => return false,
             Err(err) => {
-                let tree_id = self.current_tree_id;
-                self.on_scripts_error(log_level, "enqueue lifecycle", tree_id, folder_name, err);
+                self.on_scripts_error(log_level, "enqueue lifecycle", folder_name, err);
                 return false;
             }
         };

@@ -1638,8 +1638,10 @@ devTest("recovers from an unresolved css url() and html script src longer than t
   },
   async test(dev) {
     expect((await dev.fetch("/")).status).toBe(500);
-    await dev.write("styles.css", `body { color: blue; }`, { errors: null });
-    await dev.write("index.html", emptyHtmlFile({ styles: ["styles.css"] }));
+    // The stylesheet is bundled and watched only after the page's imports resolve.
+    await dev.write("index.html", emptyHtmlFile({ styles: ["styles.css"] }), { errors: null });
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("styles.css", `body { color: blue; }`);
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });

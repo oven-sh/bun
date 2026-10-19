@@ -179,6 +179,16 @@ extern "C" void NapiHandleScope__close(napi_env env, HandleScopeImpl* current)
     return HandleScopeImpl::close(env->globalObject(), current);
 }
 
+extern "C" HandleScopeImpl* HandleScopeImpl__open(Zig::GlobalObject* globalObject)
+{
+    return HandleScopeImpl::open(globalObject, false);
+}
+
+extern "C" void HandleScopeImpl__close(Zig::GlobalObject* globalObject, HandleScopeImpl* current)
+{
+    return HandleScopeImpl::close(globalObject, current);
+}
+
 extern "C" void NapiHandleScope__append(napi_env env, JSC::EncodedJSValue value)
 {
     // Match toNapi() in napi.h: non-cell values need no rooting, and the

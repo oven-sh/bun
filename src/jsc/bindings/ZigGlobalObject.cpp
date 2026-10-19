@@ -3190,14 +3190,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 
 // ====================== end conditional builtin globals ======================
 
-// VM::drainMicrotasks() never writes the padding of its std::optional<VMEntryScope>, so the collector reads what the last
-// callback left there as part of a cell's address. This can go once WebKit writes the whole word.
-static NEVER_INLINE void zeroFrameOfDrainMicrotasks()
-{
-    uintptr_t frame[32];
-    memset(WTF::opaque(frame), 0, sizeof(frame));
-}
-
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
@@ -3259,8 +3251,6 @@ uint8_t GlobalObject::drainMicrotasks()
             return *result;
     }
 
-    if (!vm.defaultMicrotaskQueue().isEmpty())
-        zeroFrameOfDrainMicrotasks();
     vm.drainMicrotasks();
     if (auto result = endedByException())
         return *result;

@@ -45,6 +45,9 @@ bun_output::declare_scope!(uv, hidden);
 unsafe extern "C" {
     /// Crashes the same way the stubs do. `name` must be static. Never returns.
     fn CrashHandler__unsupportedUVFunction(name: *const c_char);
+    /// Returns null while the GC is sweeping. `HandleScopeImpl__close` accepts null.
+    fn HandleScopeImpl__open(global: *const JSGlobalObject) -> *mut c_void;
+    fn HandleScopeImpl__close(global: *const JSGlobalObject, scope: *mut c_void);
 }
 
 #[cold]
@@ -52,6 +55,32 @@ fn unsupported(function: &'static CStr) -> ! {
     // SAFETY: `function` is a static NUL-terminated string.
     unsafe { CrashHandler__unsupportedUVFunction(function.as_ptr()) };
     unreachable!("CrashHandler__unsupportedUVFunction returned");
+}
+
+/// Holds a handle scope open while an addon's callback runs on the JS thread. Node's
+/// headers inline `v8::HandleScope`, so the addon's own scopes keep their handles in
+/// the scope Bun opened.
+struct CallbackScope<'a> {
+    global: &'a JSGlobalObject,
+    scope: *mut c_void,
+}
+
+impl<'a> CallbackScope<'a> {
+    fn open(global: &'a JSGlobalObject) -> CallbackScope<'a> {
+        CallbackScope {
+            global,
+            // SAFETY: `global` is alive, and this is its JS thread.
+            scope: unsafe { HandleScopeImpl__open(global) },
+        }
+    }
+}
+
+impl Drop for CallbackScope<'_> {
+    fn drop(&mut self) {
+        // SAFETY: `scope` came from `HandleScopeImpl__open` on `global`, and the addon
+        // closed the scopes it opened inside it.
+        unsafe { HandleScopeImpl__close(self.global, self.scope) };
+    }
 }
 
 // `UV_E*` on posix is `-errno` (uv/errno.h).
@@ -214,6 +243,7 @@ impl WatcherList {
             };
             {
                 let _scope = vm.enter_event_loop_scope();
+                let _handles = CallbackScope::open(global);
                 // SAFETY: calls the addon's callback on the loop thread with a
                 // handle it started.
                 unsafe { cb(watcher.as_ptr()) };
@@ -394,6 +424,7 @@ impl UvLoop {
             bun_output::scoped_log!(uv, "uv_async_t {:?}: async_cb", async_);
             // SAFETY: same as above.
             if let Some(async_cb) = unsafe { (*async_.as_ptr()).async_cb } {
+                let _handles = CallbackScope::open(global);
                 // SAFETY: calls the addon's callback on the loop thread with the
                 // handle it initialized.
                 unsafe { async_cb(async_.as_ptr()) };
@@ -451,6 +482,19 @@ pub(crate) extern "C" fn uv_default_loop() -> *mut UvLoop {
         return core::ptr::null_mut();
     };
     // SAFETY: the main thread's VM is never freed.
+    unsafe { UvLoop::of_vm(vm) }
+}
+
+/// Returns `vm`'s loop for `node::GetCurrentEventLoop`, the same one
+/// `napi_get_uv_event_loop` returns.
+///
+/// # Safety
+/// Same as [`UvLoop::of_vm`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Bun__VirtualMachine__uvLoop(
+    vm: *const VirtualMachine,
+) -> *mut UvLoop {
+    // SAFETY: fn contract.
     unsafe { UvLoop::of_vm(vm) }
 }
 
@@ -801,6 +845,7 @@ impl UvTimerNode {
         let vm = unsafe { &*(*loop_).vm.as_ptr() };
         if let Some(cb) = cb {
             let _scope = vm.enter_event_loop_scope();
+            let _handles = CallbackScope::open(vm.global());
             // SAFETY: calls the addon's callback on the loop thread with its handle.
             unsafe { cb(timer) };
         }
@@ -1090,12 +1135,14 @@ impl UvHandle {
             ((*handle).close_cb, (*handle).loop_)
         };
         bun_output::scoped_log!(uv, "uv_handle_t {:?}: close_cb", handle);
+        // SAFETY: the VM owns the loop, so it outlives its handles.
+        let global = unsafe { &*loop_ }.global();
         if let Some(close_cb) = close_cb {
+            let _handles = CallbackScope::open(global);
             // SAFETY: calls the addon's callback on the loop thread with its handle.
             unsafe { close_cb(handle) };
         }
-        // SAFETY: the VM owns the loop, so it outlives its handles.
-        if unsafe { &*loop_ }.global().has_exception() {
+        if global.has_exception() {
             return Err(JsError::Thrown);
         }
         Ok(())
@@ -1297,6 +1344,7 @@ impl JobContext for UvWorkJob {
         bun_output::scoped_log!(uv, "uv_work_t {:?}: after_work_cb({})", req, status);
         // The callback usually frees the request.
         if let Some(after_work_cb) = after_work_cb {
+            let _handles = CallbackScope::open(cx.global());
             // SAFETY: calls the addon's callback on the loop thread.
             unsafe { after_work_cb(req, status) };
         }

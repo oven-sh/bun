@@ -275,6 +275,11 @@ module.exports = debugMode => {
       keep();
     },
 
+    test_uv_queue_work_on_current_event_loop() {
+      const rc = nativeModule.queue_work_and_call((...args) => console.log("after_work_cb", ...args));
+      console.log("uv_queue_work", rc);
+    },
+
     test_v8_object_get_set_exceptions() {
       for (const key of [0, "key"]) {
         for (const access of ["get", "set"]) {

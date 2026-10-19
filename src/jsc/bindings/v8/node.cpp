@@ -21,6 +21,10 @@ using v8::Value;
 using JSC::JSObject;
 using JSC::JSValue;
 
+#if !OS(WINDOWS)
+extern "C" struct uv_loop_s* Bun__VirtualMachine__uvLoop(void* bunVM);
+#endif
+
 namespace node {
 
 void AddEnvironmentCleanupHook(v8::Isolate* isolate,
@@ -42,10 +46,7 @@ struct uv_loop_s* GetCurrentEventLoop(v8::Isolate* isolate)
 #if OS(WINDOWS)
     return reinterpret_cast<struct uv_loop_s*>(isolate->globalObject()->uvLoop());
 #else
-    // Bun does not run a libuv event loop on POSIX; per node.h this may return
-    // nullptr when the context is not associated with a Node instance.
-    (void)isolate;
-    return nullptr;
+    return Bun__VirtualMachine__uvLoop(isolate->globalObject()->bunVM());
 #endif
 }
 

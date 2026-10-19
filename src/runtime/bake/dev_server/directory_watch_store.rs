@@ -267,6 +267,17 @@ impl DirectoryWatchStore {
 
         if found_existing {
             let prev_first = Some(self.watches.values()[gop_index].first_dep);
+            // Every rebuild of a file reports its failed imports again.
+            let mut it = prev_first;
+            while let Some(index) = it {
+                let dep = &self.dependencies[index as usize];
+                if dep.source_file_path.slice().as_ptr() == file_path.slice().as_ptr()
+                    && dep.specifier == specifier_cloned
+                {
+                    return Ok(());
+                }
+                it = dep.next;
+            }
             let dep = self.append_dep_assume_capacity(Dep {
                 next: prev_first,
                 source_file_path: file_path,

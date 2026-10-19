@@ -890,6 +890,43 @@ void test_uv_os_getppid(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+struct QueuedWork {
+  uv_work_t req;
+  Isolate *isolate;
+  Global<Function> callback;
+  int result = 0;
+};
+
+// Queues work the way Nan::AsyncQueueWorker does. after_work_cb only opens a
+// v8::HandleScope, like Nan::AsyncExecuteComplete.
+void queue_work_and_call(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  auto *work = new QueuedWork;
+  work->req.data = work;
+  work->isolate = isolate;
+  work->callback.Reset(isolate, info[0].As<Function>());
+  int rc = uv_queue_work(
+      node::GetCurrentEventLoop(isolate), &work->req,
+      [](uv_work_t *req) { static_cast<QueuedWork *>(req->data)->result = 42; },
+      [](uv_work_t *req, int status) {
+        auto *work = static_cast<QueuedWork *>(req->data);
+        Isolate *isolate = work->isolate;
+        {
+          HandleScope scope(isolate);
+          Local<Value> args[] = {
+              String::NewFromUtf8(isolate, "done").ToLocalChecked(),
+              Number::New(isolate, status),
+              Number::New(isolate, work->result),
+          };
+          Local<Function>::New(isolate, work->callback)
+              ->Call(isolate->GetCurrentContext(), Undefined(isolate), 3, args)
+              .ToLocalChecked();
+        }
+        delete work;
+      });
+  info.GetReturnValue().Set(Number::New(isolate, rc));
+}
+
 void test_v8_object_get_by_key(const FunctionCallbackInfo<Value> &info) {
   printf("Testing Object::Get(context, key)...\n");
 
@@ -2199,6 +2236,7 @@ void initialize(Local<Object> exports, Local<Value> module,
                   return_accessor_value_from_inner_scope);
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
+  NODE_SET_METHOD(exports, "queue_work_and_call", queue_work_and_call);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_key",
                   test_v8_object_get_by_key);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_index",

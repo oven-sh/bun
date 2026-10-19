@@ -1,5 +1,4 @@
 import { describe } from "bun:test";
-import { isASAN } from "harness";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -1277,8 +1276,7 @@ b {
     },
   });
 
-  // Skipped under ASAN: the linker clones the import condition and leaks the env() fallback's token list.
-  (isASAN ? itBundled.skip : itBundled)("css/URLInEnvFallbackOfAtImportMediaQuery", {
+  itBundled("css/URLInEnvFallbackOfAtImportMediaQuery", {
     files: {
       "/entry.css": /* css */ `
         @import "./b.css" (min-width: env(foo, url(sub/g.css)));

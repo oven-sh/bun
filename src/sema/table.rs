@@ -1013,16 +1013,24 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
             return;
         }
         let mut has_seeds = false;
-        for at in nodes.clone() {
-            let raw = self.seen_at(task, file, at);
-            if raw == 0 {
+        // Most nodes have nothing published, so the empty cells are skipped before asking what the task sees.
+        let cells = nodes.start / Self::PER_CELL..nodes.end.div_ceil(Self::PER_CELL);
+        for (cell, published) in self.cells.written_in(cells) {
+            if published.load(Ordering::Acquire) == 0 {
                 continue;
             }
-            has_seeds = true;
-            let index = (at - nodes.start) as u32;
-            let own = buffer.seed(slot, index, raw);
-            if own != 0 && own != raw {
-                buffer.shadow(slot, file, index, own);
+            let first = cell * Self::PER_CELL;
+            for at in first.max(nodes.start)..(first + Self::PER_CELL).min(nodes.end) {
+                let raw = self.seen_at(task, file, at);
+                if raw == 0 {
+                    continue;
+                }
+                has_seeds = true;
+                let index = (at - nodes.start) as u32;
+                let own = buffer.seed(slot, index, raw);
+                if own != 0 && own != raw {
+                    buffer.shadow(slot, file, index, own);
+                }
             }
         }
         buffer.set_whole(slot, has_seeds);

@@ -18,6 +18,7 @@ use std::alloc::{Allocator, Global, Layout};
 use std::cell::Cell;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
+use std::ops::Range;
 use std::ptr::{NonNull, null_mut, slice_from_raw_parts_mut};
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Once, OnceLock};
@@ -908,6 +909,19 @@ impl<C: Zeroed, A: Allocator + Clone> FixedCells<C, A> {
         let written = pages.filter(|&(page, _)| self.is_zeroed(page));
         // SAFETY: as in `existing`.
         written.map(|(_, cells)| unsafe { cells.assume_init_ref() })
+    }
+
+    /// Iterates over the cells in `range` that are on written pages, each with its index.
+    #[inline]
+    pub fn written_in(&self, range: Range<usize>) -> impl Iterator<Item = (usize, &C)> {
+        let pages = range.start / Self::PER_PAGE..range.end.div_ceil(Self::PER_PAGE);
+        let written = pages.filter(|&page| self.is_zeroed(page));
+        written.flat_map(move |page| {
+            let first = range.start.max(page * Self::PER_PAGE);
+            let cells = &self.cells[first..range.end.min((page + 1) * Self::PER_PAGE)];
+            // SAFETY: as in `existing`.
+            (first..).zip(unsafe { cells.assume_init_ref() })
+        })
     }
 }
 

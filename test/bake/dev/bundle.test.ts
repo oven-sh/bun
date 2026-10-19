@@ -1169,3 +1169,75 @@ devTest("a render() that does not return a Response is reported as that", {
     }).toEqual({ status: 500, saysWhatIsWrong: true, referenceError: false });
   },
 });
+devTest("require() of a built-in module in server code returns what require() returns", {
+  framework: minimalFramework,
+  files: {
+    "node_modules/cjsdep/package.json": JSON.stringify({ name: "cjsdep", main: "index.js" }),
+    "node_modules/cjsdep/index.js": `
+      var Stream = require("stream");
+      var EventEmitter = require("events");
+      var util = require("util");
+      function DataStream() {}
+      util.inherits(DataStream, Stream);
+      module.exports = {
+        stream: typeof Stream + ":" + typeof Stream.prototype,
+        events: typeof EventEmitter + ":" + typeof EventEmitter.prototype,
+        inherits: new DataStream() instanceof Stream,
+      };
+    `,
+    "routes/index.ts": `
+      import info from "cjsdep";
+      import * as streamNamespace from "stream";
+      export default function () {
+        return new Response(JSON.stringify({ ...info, importReadable: typeof streamNamespace.Readable }));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({
+      stream: "function:object",
+      events: "function:object",
+      inherits: true,
+      importReadable: "function",
+    });
+  },
+});
+devTest("a route whose import throws on load throws that error again on the next request", {
+  framework: minimalFramework,
+  files: {
+    "dep.cjs": `throw new Error("dep.cjs failed to load");`,
+    "esm-dep.ts": `throw new Error("esm-dep.ts failed to load"); export const value = 1;`,
+    "routes/index.ts": `
+      import dep from "../dep.cjs";
+      export default function () {
+        return new Response("dep: " + dep);
+      }
+    `,
+    "routes/esm.ts": `
+      import { value } from "../esm-dep.ts";
+      export default function () {
+        return new Response("esm-dep: " + value);
+      }
+    `,
+  },
+  async test(dev) {
+    for (const [url, message] of [
+      ["/", "dep.cjs failed to load"],
+      ["/esm", "esm-dep.ts failed to load"],
+    ]) {
+      for (let i = 0; i < 2; i++) {
+        const response = await dev.fetch(url);
+        const text = await response.text();
+        expect({ url, status: response.status, hasMessage: text.includes(message) }).toEqual({
+          url,
+          status: 500,
+          hasMessage: true,
+        });
+      }
+    }
+    await dev.write("dep.cjs", `module.exports = "fixed";`);
+    await dev.fetch("/").equals("dep: fixed");
+    await dev.write("esm-dep.ts", `export const value = "fixed";`);
+    await dev.fetch("/esm").equals("esm-dep: fixed");
+  },
+});

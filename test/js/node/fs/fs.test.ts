@@ -1904,17 +1904,19 @@ describe.skipIf(isWindows)("readdir returns entries in strcmp order like node", 
     ).toEqual(treeSync);
   });
 
+  // The async walk reads subdirectories on the work pool, so where one
+  // directory's entries land relative to another's is not fixed.
   it("fs.promises.readdir({ recursive: true }) sorts within each directory", async () => {
     using dir = tempDir("readdir-order-recursive-async", tree);
     const root = String(dir);
     const names = await promises.readdir(root, { recursive: true });
     expect(names.toSorted()).toEqual(treeSync.toSorted());
-    expect(names.slice(0, 3)).toEqual(["a", "b", "c"]);
+    expect(perDir(names, "")).toEqual(["a", "b", "c"]);
     expect(perDir(names, "a/")).toEqual(["a/1", "a/2", "a/sub"]);
     expect(perDir(names, "a/sub/")).toEqual(["a/sub/x", "a/sub/y", "a/sub/z"]);
     const dirents = await promises.readdir(root, { recursive: true, withFileTypes: true });
     const paths = dirents.map(d => relative(root, join(d.parentPath, d.name)));
-    expect(paths.slice(0, 3)).toEqual(["a", "b", "c"]);
+    expect(perDir(paths, "")).toEqual(["a", "b", "c"]);
     expect(perDir(paths, "b/")).toEqual(["b/1", "b/2"]);
   });
 });

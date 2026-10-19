@@ -831,8 +831,7 @@ pub(crate) struct SortedEntries {
 }
 
 impl SortedEntries {
-    pub(crate) fn read(dir: Fd) -> Self {
-        let mut iter = WrappedIterator::init(dir);
+    pub(crate) fn read(iter: &mut WrappedIterator) -> Self {
         let mut names: Vec<u8> = Vec::new();
         let mut index: Vec<SortedEntry> = Vec::new();
         let deferred_err = loop {
@@ -877,27 +876,25 @@ impl SortedEntries {
     }
 }
 
-/// `Sorted` for `fs.readdir` on Unix. `Streaming` (kernel order) for
+/// Sorted for `fs.readdir` on Unix. Kernel order (`sorted: None`) for
 /// `fs.opendir` and for Windows, where libuv does not sort either.
-pub(crate) enum ReaddirIterator {
-    Streaming(WrappedIterator),
-    Sorted(SortedEntries),
+pub(crate) struct ReaddirIterator {
+    iter: WrappedIterator,
+    sorted: Option<SortedEntries>,
 }
 
 impl ReaddirIterator {
     pub(crate) fn init(dir: Fd, sorted: bool) -> Self {
-        if sorted && !cfg!(windows) {
-            Self::Sorted(SortedEntries::read(dir))
-        } else {
-            Self::Streaming(WrappedIterator::init(dir))
-        }
+        let mut iter = WrappedIterator::init(dir);
+        let sorted = (sorted && !cfg!(windows)).then(|| SortedEntries::read(&mut iter));
+        Self { iter, sorted }
     }
 
     #[inline]
     pub(crate) fn next(&mut self) -> Result {
-        match self {
-            Self::Streaming(iter) => iter.next(),
-            Self::Sorted(entries) => entries.next(),
+        match &mut self.sorted {
+            Some(entries) => entries.next(),
+            None => self.iter.next(),
         }
     }
 }

@@ -66,7 +66,6 @@ impl<'s> Checker<'_, 's> {
         self.order_dependent.clear();
         self.order_dependent_filter = 0;
         self.constraints_of_this_task.clear();
-        self.relations_of_this_task.clear();
     }
 
     /// After `check_file`: whether the native stack ran out in that file. A task checks several files.

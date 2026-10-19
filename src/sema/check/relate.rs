@@ -4311,7 +4311,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // Where two types count as deeply nested depends on the comparisons around this one.
                 let is_cut = self.comparisons_of_deeply_nested_types != cuts;
                 let around = std::mem::replace(
-                    &mut self.keeps_relations_for_this_task,
+                    &mut self.keeps_relations_for_this_file,
                     is_cut && self.task.commits(),
                 );
                 let keys = match result == Ternary::TRUE || result == Ternary::MAYBE {
@@ -4320,7 +4320,7 @@ impl<'p, 's> Checker<'p, 's> {
                     false => MaybeKeys::Forgotten,
                 };
                 self.reset_maybe_stack(r, maybe_start, propagating, keys, stored);
-                self.keeps_relations_for_this_task = around;
+                self.keeps_relations_for_this_file = around;
             }
         } else {
             // A result that is false under assumptions is false without them, and so is one that
@@ -4380,7 +4380,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)`
     fn set_relation(&mut self, key: Key, entry: u8, stored: Stored) {
-        if self.keeps_relations_for_this_task || self.p.relations.get(&self.task, &key).is_none() {
+        if self.keeps_relations_for_this_file || self.p.relations.get(&self.task, &key).is_none() {
             self.insert_relation(key, entry, stored);
         } else {
             (self.p.relations).rewrite(&self.task, key, entry, stored);
@@ -4390,22 +4390,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// `relation.set(key, entry)` for a key that has no entry.
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
-        if self.keeps_relations_for_this_task {
-            self.relations_of_this_task.entry(key).or_insert(entry);
+        if self.keeps_relations_for_this_file {
+            self.relations_of_this_file.entry(key).or_insert(entry);
             return;
         }
         self.p.relations.insert(&self.task, key, entry, stored);
     }
 
-    /// The entry of `Program::relations`, or else of `relations_of_this_task`. What is computed from the latter is for this
-    /// task too.
+    /// The entry of `Program::relations`, or else of `relations_of_this_file`. What is computed from the latter is for
+    /// this file too.
     #[inline]
     fn known_relation(&mut self, key: &Key) -> Option<u8> {
         let known = self.p.relations.get(&self.task, key);
-        if known.is_some() || self.relations_of_this_task.is_empty() {
+        if known.is_some() || self.relations_of_this_file.is_empty() {
             return known;
         }
-        let kept = self.relations_of_this_task.get(key).copied()?;
+        let kept = self.relations_of_this_file.get(key).copied()?;
         self.comparisons_of_deeply_nested_types += 1;
         self.task.hold_back();
         Some(kept)

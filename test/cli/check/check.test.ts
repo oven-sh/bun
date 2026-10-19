@@ -14296,6 +14296,27 @@ export const c${i}: never = handle(typed);`,
 (+3,14): error TS2322: Type 'number' is not assignable to type 'never'.
 `,
         },
+        "after a comparison that was over 100 levels deep": {
+          sizes: [14, 15, 16, 17, 40],
+          declarations: count => `
+interface Target<T> { ${properties(count, () => "T")} }
+interface A { ${properties(count, () => "string")} }
+declare function take<T>(x: Target<T>): T[];
+declare const a: A;
+take(a);
+take(a);
+take(a);
+take(a);
+${each(101, i => `interface I${i} { n: I${i + 1} } interface J${i} { n: J${i + 1} }`, "\n")}
+interface I101 { v: 1 } interface J101 { v: 1 }
+declare let source: I0, target: J0;
+target = source;`,
+          round: i => `
+export const a${i}: never = take(a);`,
+          repeated: `
+(+1,14): error TS2322: Type 'string[]' is not assignable to type 'never'.
+`,
+        },
         // A walk ends when it has been everywhere, however long that takes: "last" is in the last of 211,600 pairs.
         "each member of a long union to each member of another": {
           sizes: [20, 440, 460],
@@ -23552,6 +23573,32 @@ export const far: I69 extends J69 ? 1 : 2 = 0;
       for (const { stdout, exitCode } of await Promise.all([1, 2, 8].map(n => check(dir, ["--threads", String(n)])))) {
         expect(stdout).toBe("");
         expect(exitCode).toBe(0);
+      }
+    });
+
+    // The chains differ in their last member, which is over 100 levels from `I0` and 30 from `I70`. `first.ts` assumes
+    // that `I0` and `J0` are related, and with them every pair on the way. One task checks `first.ts` and `second.ts`,
+    // or two tasks do, depending on timing. So `second.ts` must not find what `first.ts` assumed. `pad.ts` makes the
+    // two files small enough, compared to the whole program, to share a task.
+    test("reports types that differ 30 levels down after another file compared them from 100 levels up", async () => {
+      const chain = (name: string, last: number) =>
+        `${range(100)
+          .map(i => `interface ${name}${i} { n: ${name}${i + 1} }`)
+          .join("\n")}\ninterface ${name}100 { v: ${last} }\n`;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          ...JSON.parse(tsconfig),
+          files: ["chains.d.ts", "pad.ts", "first.ts", "second.ts"],
+        }),
+        "chains.d.ts": chain("I", 1) + chain("J", 2),
+        "pad.ts": `declare const n: number;\nconst all = [${repeat("n, ", 5000)}];\n`,
+        "first.ts": `declare const i0: I0;\nconst j0: J0 = i0;\n`,
+        "second.ts": `declare const i70: I70;\nconst j70: J70 = i70;\n`,
+      });
+      const threads = [1, 1, 2, 2, 2, 8, 8, 8];
+      for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+        expect(stdout.split("\n")[0]).toBe("second.ts(2,7): error TS2322: Type 'I70' is not assignable to type 'J70'.");
+        expect(exitCode).toBe(1);
       }
     });
 

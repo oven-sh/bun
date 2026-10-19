@@ -829,8 +829,8 @@ impl<'s> Program<'s> {
             instantiation_limit_hits: 0,
             limits_in_earlier_files: 0,
             comparisons_of_deeply_nested_types: 0,
-            relations_of_this_task: Default::default(),
-            keeps_relations_for_this_task: false,
+            relations_of_this_file: Default::default(),
+            keeps_relations_for_this_file: false,
             constraints_of_this_task: Default::default(),
             constraint_cuts: Default::default(),
             instantiations_in_progress: Vec::new(),
@@ -1571,12 +1571,13 @@ pub struct Checker<'p, 's> {
     /// How many comparisons were `TernaryMaybe` because both types were deeply nested (`isDeeplyNestedType`). That depends on the
     /// comparisons in progress and on the order in which the types were created.
     comparisons_of_deeply_nested_types: u64,
-    /// In a task that commits: the comparisons that hold because one inside them was `TernaryMaybe` for two deeply nested
-    /// types. Another task may get another result, and in `Program::relations` the first of them would stay for
-    /// everybody. See `known_relation`.
-    relations_of_this_task: FxHashMap<relate::Key, u8>,
-    /// `insert_relation` stores in `relations_of_this_task`.
-    keeps_relations_for_this_task: bool,
+    /// In a task that commits: the comparisons that hold because one inside them was `TernaryMaybe`, for two deeply
+    /// nested types or at 100 levels. Another task may get another result, and in `Program::relations` the first of
+    /// them would stay for everybody. See `known_relation`. `check_file` clears it: which files share a task depends on
+    /// timing, so a file must not find what an earlier file of the task left here.
+    relations_of_this_file: FxHashMap<relate::Key, u8>,
+    /// `insert_relation` stores in `relations_of_this_file`.
+    keeps_relations_for_this_file: bool,
     /// The same for the base constraints that were cut short, or follow from one that was: where the cut is depends on how
     /// deep the computation was when it got to the type. See `known_constraint`.
     constraints_of_this_task: FxHashMap<TypeId, (Option<TypeId>, bool)>,

@@ -9577,8 +9577,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Self::init_with_text_len(out, arena, log, source, define, lexer, opts, text_len)
     }
 
-    /// [`Self::init`], with the number of bytes of `source` that the parse pass reads. That
-    /// number sizes the symbol tables. `to_lazy_export_ast` has no parse pass and passes 0.
+    /// [`Self::init`], where `text_len` sizes the symbol tables: the bytes that a parse pass reads.
     pub(crate) fn init_with_text_len(
         out: &mut core::mem::MaybeUninit<Self>,
         arena: &'a Bump,

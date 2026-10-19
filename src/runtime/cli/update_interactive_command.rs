@@ -273,7 +273,7 @@ impl UpdateInteractiveCommand {
         Self::update_interactive(ctx, &original_cwd, manager, cli.update_groups)
     }
 
-    /// `None`: it cannot be read or parsed, which was reported.
+    /// Returns `None` if the file can't be read or parsed. The error was already reported.
     fn load_package_json<'a>(
         manager: &'a mut PackageManager,
         package_json_path: &[u8],
@@ -358,7 +358,8 @@ impl UpdateInteractiveCommand {
                     continue;
                 };
 
-                // Not `Expr::init`: install resets the Store before it reads this cached `root` again.
+                // Don't use `Expr::init` here, because the install resets the Store before it reads
+                // this cached `root` again.
                 let new_expr = Expr::allocate(
                     bump,
                     E::EString::init(cli_dupe(&version_with_prefix)),
@@ -764,7 +765,8 @@ impl UpdateInteractiveCommand {
         widths
     }
 
-    /// The whole terminal; `viewport_height` says how many package rows fit in it.
+    /// Returns the size of the whole terminal. `viewport_height` says how many package rows fit in
+    /// it.
     fn get_terminal_size() -> TerminalSize {
         #[cfg(unix)]
         {
@@ -805,7 +807,8 @@ impl UpdateInteractiveCommand {
         } // Default fallback
     }
 
-    /// A frame taller than the screen cannot be redrawn in place: cursor-up stops at the top.
+    /// A frame that's taller than the screen can't be redrawn in place, because cursor-up stops at
+    /// the top.
     fn viewport_height(terminal_rows: usize, packages: &[OutdatedPackage]) -> usize {
         let groups = packages
             .chunk_by(|a, b| a.dependency_type == b.dependency_type)
@@ -912,7 +915,8 @@ impl UpdateInteractiveCommand {
         }
     }
 
-    /// After the cursor moved: keeps it visible, with 2 rows below it and 1 above where they fit.
+    /// Call after the cursor moves. Keeps it visible, with 2 rows below it and 1 above it where
+    /// they fit.
     fn update_viewport(state: &mut MultiSelectState<'_>) {
         let context_below: usize = 2;
         // A 1-row viewport has no room above the cursor.
@@ -927,7 +931,8 @@ impl UpdateInteractiveCommand {
             {
                 state.cursor - (state.viewport_height - context_below)
             } else {
-                // Viewport shorter than the context: cursor on the last visible row.
+                // The viewport is shorter than the context, so put the cursor on the last visible
+                // row.
                 state.cursor.saturating_sub(state.viewport_height - 1)
             };
 
@@ -943,7 +948,7 @@ impl UpdateInteractiveCommand {
         }
     }
 
-    /// `false`: cancelled.
+    /// Returns false if the user cancelled.
     fn process_multi_select(
         state: &mut MultiSelectState<'_>,
         initial_terminal_size: TerminalSize,
@@ -970,7 +975,7 @@ impl UpdateInteractiveCommand {
                 state.columns.show_workspace &= current_size.width > 100;
                 last_terminal_size = current_size;
                 Self::update_viewport(state);
-                // In place: a fresh frame below the old one would duplicate it.
+                // Redraw in place, because a new frame below the old one would duplicate it.
                 needs_redraw = true;
             }
 
@@ -1044,7 +1049,8 @@ impl UpdateInteractiveCommand {
                             pkg.dependency_type.len()
                         };
 
-                        // Names start after "    " and "□ ", and 2 spaces follow them; the header after "  ".
+                        // Names start after "    " and "□ " and are followed by 2 spaces. The
+                        // header starts after "  ".
                         let total_offset = 6 + columns.name + 2;
                         let header_start = 2 + dep_type_text_len;
                         print_spaces(total_offset.saturating_sub(header_start).max(1));
@@ -1206,7 +1212,7 @@ impl UpdateInteractiveCommand {
             let last = state.packages.len() - 1;
 
             match byte {
-                // Enter; ctrl+c and ctrl+d cancel
+                // Enter confirms. Ctrl+C and Ctrl+D cancel.
                 b'\n' | b'\r' | 3 | 4 => {
                     Output::up(total_lines);
                     Output::print(format_args!("\x1B[1G"));
@@ -1224,7 +1230,7 @@ impl UpdateInteractiveCommand {
                 }
                 b' ' => {
                     state.selected[state.cursor] = !state.selected[state.cursor];
-                    // Nothing newer in range: the selection means `latest`.
+                    // Nothing newer is in range, so selecting it means `latest`.
                     let pkg = &mut state.packages[state.cursor];
                     if pkg.current_version == pkg.update_version {
                         pkg.use_latest = true;
@@ -1233,7 +1239,7 @@ impl UpdateInteractiveCommand {
                 }
                 b'a' | b'A' => {
                     state.selected.fill(true);
-                    // As for the space bar.
+                    // Same as for the space bar.
                     for pkg in state.packages.iter_mut() {
                         if pkg.current_version == pkg.update_version {
                             pkg.use_latest = true;
@@ -1296,7 +1302,7 @@ impl UpdateInteractiveCommand {
                                 state.cursor = (state.cursor + 1) % state.packages.len();
                                 Self::update_viewport(state);
                             }
-                            // right arrow: Latest; left arrow: Target
+                            // The right arrow selects Latest, and the left arrow selects Target.
                             b'C' | b'D' => {
                                 state.packages[state.cursor].use_latest = arrow == b'C';
                                 state.selected[state.cursor] = true;

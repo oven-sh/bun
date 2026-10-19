@@ -788,18 +788,6 @@ pub(crate) use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_ar
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
 pub(crate) const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 
-/// Whether `flag`, which stands before the command, has its value in the next argument: `--cwd dir`, not `--cwd=dir`.
-pub(crate) fn value_is_next_arg(flag: &[u8]) -> bool {
-    AUTO_PARAMS.iter().any(|param| {
-        matches!(param.takes_value, clap::Values::One | clap::Values::Many)
-            && match flag {
-                [b'-', b'-', long @ ..] => param.names.matches_long(long),
-                [b'-', short] => param.names.short == Some(*short),
-                _ => false,
-            }
-    })
-}
-
 /// `--disallow-code-generation-from-strings[=<value>]`. Raises the process's level; never lowers it.
 fn disallow_code_generation_from_strings(value: &[u8]) {
     match bun_core::CodeGenerationFromStrings::from_flag_value(value) {

@@ -15,7 +15,7 @@ impl Checker<'_, '_> {
         // accepts a use after that position, so most uses cost one comparison. 0: not computed yet.
         let mut declared_by = vec![0u32; bound.symbols.len()];
         for &e in index.of(ExprTag::Ident) {
-            let local = bound.expr_symbol[e.idx()];
+            let local = bound.symbol_of_expr(e);
             if local.is_none() {
                 continue;
             }
@@ -65,12 +65,12 @@ impl Checker<'_, '_> {
     /// enum. 0: the tables do not determine it.
     fn end_of_declaring_statement(&self, file: FileId, local: SymbolId) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let symbol = &bound.symbols[local.idx()];
+        let symbol = bound.symbol(local);
         let is_block_scoped = SymFlags::BLOCK_SCOPED_VARIABLE | SymFlags::CLASS | SymFlags::ENUM;
         if !symbol.flags.intersects(is_block_scoped) {
             return 1;
         }
-        let &[declaration] = &symbol.decls[..] else {
+        let &[declaration] = symbol.decls else {
             return 0;
         };
         // Cases that `block_scoped_declaration` handles specially.
@@ -100,7 +100,7 @@ impl Checker<'_, '_> {
             return 0;
         }
         // The head of a `for` is in that statement.
-        if let Parent::Stmt(around) = bound.stmt_parent[statement.idx()]
+        if let Parent::Stmt(around) = bound.parent_of_stmt(statement)
             && matches!(
                 hir[around].kind,
                 StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. }
@@ -463,13 +463,7 @@ impl Checker<'_, '_> {
         may_be_in_place: bool,
     ) {
         let hir = self.hir(file);
-        let ExprKind::Dot {
-            obj,
-            name,
-            name_pos,
-            ..
-        } = hir[e].kind
-        else {
+        let ExprKind::Dot { obj, name, .. } = hir[e].kind else {
             return;
         };
         let (node, right) = (hir.node(e), hir.name(hir.node(e)));
@@ -526,7 +520,13 @@ impl Checker<'_, '_> {
         } else {
             return;
         };
-        self.report_use_before_declaration(file, (name_pos, 0), code, name_pos, declaration);
+        self.report_use_before_declaration(
+            file,
+            (hir.name_pos(e), 0),
+            code,
+            hir.name_pos(e),
+            declaration,
+        );
     }
 
     /// `isPropertyDeclaredInAncestorClass` for the property `name` that `declaration` declares.

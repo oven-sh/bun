@@ -28,7 +28,7 @@ export const serverManifest = {};
 /** Server */
 export const ssrManifest = {};
 /** Client */
-export let onServerSideReload: (() => Promise<void>) | null = null;
+export let onServerSideReload: ((update: { clientCodeChanged: boolean }) => Promise<void>) | null = null;
 const eventHandlers: Record<HMREvent | string, HotEventHandler[] | undefined> = {};
 let refreshRuntime: any;
 /** The expression `import(a,b)` is not supported in all browsers, most notably

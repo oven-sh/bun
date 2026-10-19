@@ -475,10 +475,12 @@ impl Macro {
         if is_new_vm {
             // SAFETY: `vm` is the freshly-allocated per-thread VM.
             unsafe { (*vm).transpiler.configure_defines()? };
-            // The build resolves the imports of this module with what the VM read, a `NODE_PATH` in `.env`.
-            // SAFETY: as for `clone_loaded` above; the VM's loader is its own.
-            if let Some(env) = unsafe { env.as_mut() } {
-                env.adopt_loaded(unsafe { (*vm).transpiler.env() })?;
+            // The build resolves this module's imports with what the VM read, such as a `NODE_PATH` in `.env`.
+            // SAFETY: `env` as above, and `adopt_loaded` writes it under its lock. The VM's loader is its own.
+            unsafe {
+                if let Some(env) = env.as_mut() {
+                    env.adopt_loaded((*vm).transpiler.env())?;
+                }
             }
         }
 

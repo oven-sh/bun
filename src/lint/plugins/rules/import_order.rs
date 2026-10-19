@@ -4,7 +4,7 @@ use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint::utils::sort::sort_indices;
+use bun_lint::utils::sort::merge_sort_indices;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -870,7 +870,7 @@ impl Order {
             let key = |at: u32| Some((imported.get(at as usize)?, &**normalized.get(at as usize)?));
             let mut order: Vec<u32> = (0..imported.len() as u32).collect();
             let rank = |at: u32| key(at).map_or(0.0, |it| it.0.rank);
-            sort_indices(&mut order, &mut |a, b| {
+            merge_sort_indices(&mut order, &mut |a, b| {
                 rank(a).partial_cmp(&rank(b)).unwrap_or(Ordering::Equal)
             });
             let is_before = |a: u32, b: u32| match (key(a), key(b)) {
@@ -1052,6 +1052,22 @@ impl Order {
             return;
         }
         report.fix(|fixer| {
+            // The fix doesn't move the comment lines above a declaration, so a directive or doc comment would end up
+            // above other code.
+            if fixer.has_directive_or_doc_before(second.root)
+                || !is_after && fixer.has_directive_or_doc_before(first.root)
+            {
+                return None;
+            }
+            // After the move, a different statement precedes the code that follows. Bail out if that code would
+            // continue it.
+            let (previous, next) = match is_after {
+                false => (file.token_before(second.root), file.token_after(second.root)),
+                true => (file.last_token(second.root), file.token_after(first.root)),
+            };
+            if previous.zip(next).is_some_and(|it| ast_utils::continues_statement(file, it.0, it.1)) {
+                return None;
+            }
             let lines_of = |it: &Entry| {
                 (
                     start_of_line_with_comments(file, it.root),

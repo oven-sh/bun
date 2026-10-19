@@ -307,7 +307,8 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
             },
             // Not of ESLint: see `Config::from_flat_json_with_plugins`.
             b"$changesLinter" | b"$defaultOptions" | b"$framework" | b"$globsOfBun" | b"$ignorePatterns"
-            | b"$jsPlugins" | b"$otherPlugins" | b"$parser" | b"$pluginModules" | b"$processor" | b"$severityByKind" | b"$source"
+            | b"$jsPlugins" | b"$otherPlugins" | b"$packageType" | b"$parser" | b"$pluginModules" | b"$processor"
+            | b"$severityByKind" | b"$source"
             | b"$withoutWarnings" => None,
             b"rules" if !is_object(value) => expected_object(),
             b"rules" => (value.as_object().unwrap_or_default().iter())
@@ -723,6 +724,9 @@ impl Reader<'_> {
         let mut packages = Frameworks::PACKAGES.iter();
         object.required_framework = (packages.find(|it| Some(it.0.as_bytes()) == framework))
             .map_or(Frameworks::empty(), |it| it.1);
+        if json.get(b"$packageType").and_then(Json::as_str) == Some(b"module") {
+            object.required_framework |= Frameworks::TYPE_MODULE;
+        }
         object.processor_location = json
             .get(b"$processor")
             .filter(|it| it.as_object().is_some())

@@ -743,53 +743,51 @@ pub(crate) mod command {
             return Tag::RunAsNodeCommand;
         }
 
-        // A flag of `bun` can have its value in the next argument, as in `bun --cwd dir run dev`.
-        let mut after_value = false;
-        let mut in_packages = false;
-        let name = loop {
-            let Some(arg) = iter.next() else {
-                return Tag::AutoCommand;
-            };
-            if !arg.starts_with(b"-") {
-                break arg;
-            }
-            let flag = strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
-            if arg[1..].starts_with(b"e") || matches!(flag, b"--eval" | b"--print") {
-                return Tag::AutoCommand;
-            }
-            in_packages |=
-                arg == b"--workspaces" || arg.starts_with(b"--filter") || arg.starts_with(b"-F");
+        let Some(mut first_arg_name) = iter.next() else {
+            return Tag::AutoCommand;
+        };
+        while !first_arg_name.is_empty()
+            && first_arg_name[0] == b'-'
+            && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
+            && !matches!(first_arg_name, b"--eval" | b"--print")
+            && !first_arg_name.starts_with(b"--eval=")
+            && !first_arg_name.starts_with(b"--print=")
+        {
             // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
             // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
             // that and boot the legacy `bun repl` implementation instead.
-            if !arguments::value_is_next_arg(arg) {
-                continue;
+            match iter.next() {
+                Some(n) => first_arg_name = n,
+                None => return Tag::AutoCommand,
             }
-            let Some(value) = iter.next() else {
-                return Tag::AutoCommand;
-            };
-            // Commands give these flags other meanings: `bun -p install` is `bun install --production`.
-            if !after_value && command_named(value) != Tag::AutoCommand {
-                break value;
-            }
-            after_value = true;
-            // What follows names a script of other packages, or is for the code.
-            if matches!(arg, b"--filter" | b"-F" | b"-p") {
-                return Tag::AutoCommand;
-            }
-        };
+        }
 
-        use super::script_or_command::{Runs, is_of_the_project, runs};
+        use super::script_or_command::{Runs, arguments_before, is_of_the_project, runs};
+        // `bun --cwd <dir> lint`: `<dir>` is the value of a flag.
+        let starts_with_flag = argv.get(1).is_some_and(|it| it.starts_with(b"-"));
+        let mut after_value = false;
+        if starts_with_flag && let Some(it) = super::script_or_command::word_after_flags() {
+            // A word that spells another command is that command, not a value: `bun -p install` is `bun install -p`.
+            after_value = command_named(first_arg_name) == Tag::AutoCommand;
+            if after_value || matches!(it, b"check" | b"lint" | b"fmt") {
+                first_arg_name = it;
+            }
+        }
+
+        let name = first_arg_name;
         let tag = command_named(name);
+        let in_packages = |arg: &&[u8]| {
+            *arg == b"--workspaces" || arg.starts_with(b"--filter") || arg.starts_with(b"-F")
+        };
         let project_has_it = match tag {
             Tag::AutoCommand => false,
             // `bun --workspaces --cwd dir run` runs the `run` script of each package.
-            Tag::RunCommand => after_value && in_packages,
+            Tag::RunCommand => after_value && arguments_before(name).iter().any(in_packages),
             Tag::CheckCommand | Tag::LintCommand | Tag::FormatCommand => is_of_the_project(name),
             // `bun create` would ignore the `--cwd`, and a reserved word is no command.
             Tag::CreateCommand | Tag::ReservedCommand => after_value,
             // `bun --cwd dir build` is `bun build` only if the project has no `build` to run. Scripts have `bun` in `PATH`.
-            _ => after_value && (name == b"bun" || runs(name) != Runs::Command),
+            _ => after_value && (name == b"bun" || !matches!(runs(name), Ok(Runs::Command))),
         };
         match project_has_it {
             true => Tag::AutoCommand,
@@ -1356,7 +1354,7 @@ pub(crate) mod command {
     fn exec_init() -> CmdResult {
         // InitCommand parses its own argv (no Context).
         let argv = argv_zslice();
-        print_help_if_asked_before(&argv, b"init", Tag::InitCommand);
+        print_help_if_asked_before(b"init", Tag::InitCommand);
         if let Some(cwd) = lint_command::cwd_before(b"init") {
             lint_command::change_directory(cwd);
         }
@@ -1430,16 +1428,8 @@ pub(crate) mod command {
         argv: &'a [&'static bun_core::ZStr],
         command: &[u8],
     ) -> &'a [&'static bun_core::ZStr] {
-        let mut args = argv.iter().enumerate();
-        while let Some((at, arg)) = args.next() {
-            match arg.as_bytes() {
-                arg if arg == command => return &argv[at + 1..],
-                // `bun --cwd lint lint`
-                b"--cwd" => _ = args.next(),
-                _ => {}
-            }
-        }
-        &[]
+        let at = super::script_or_command::place_of_command(command);
+        at.and_then(|at| argv.get(at + 1..)).unwrap_or_default()
     }
 
     /// The flags of `command` that stand before it, as in `bun --check format` or `bun -c format`, and then what follows it. If
@@ -1455,8 +1445,8 @@ pub(crate) mod command {
             Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
             None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
         };
-        let before = (argv.iter().skip(1)).take_while(|arg| arg.as_bytes() != command);
-        let mut args: Vec<_> = before
+        let at = super::script_or_command::place_of_command(command).unwrap_or(argv.len());
+        let mut args: Vec<_> = (argv.iter().take(at).skip(1))
             .filter(|arg| arg.as_bytes().starts_with(b"-"))
             .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
             .copied()
@@ -1466,9 +1456,9 @@ pub(crate) mod command {
     }
 
     /// `bun --help lint`: prints the help of `command` and exits if `--help` or `-h` is among the flags of `bun`, which precede it.
-    fn print_help_if_asked_before(argv: &[&'static bun_core::ZStr], command: &[u8], tag: Tag) {
-        let mut before = (argv.iter().map(|it| it.as_bytes())).take_while(|arg| *arg != command);
-        if before.any(|arg| matches!(arg, b"--help" | b"-h")) {
+    fn print_help_if_asked_before(command: &[u8], tag: Tag) {
+        let before = super::script_or_command::arguments_before(command);
+        if before.iter().any(|arg| matches!(*arg, b"--help" | b"-h")) {
             tag_print_help(tag, false);
             Global::exit(0);
         }
@@ -1480,7 +1470,7 @@ pub(crate) mod command {
         // LintCommand parses its own argv.
         let ctx = init(Tag::LintCommand, log)?;
         let argv = argv_zslice();
-        print_help_if_asked_before(&argv, b"lint", Tag::LintCommand);
+        print_help_if_asked_before(b"lint", Tag::LintCommand);
         let knows = super::lint_command::LintCommand::has_flag;
         super::lint_command::LintCommand::exec(ctx, &with_own_flags_before(&argv, b"lint", knows))
     }
@@ -1491,7 +1481,7 @@ pub(crate) mod command {
         // FormatCommand parses its own argv.
         let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
-        print_help_if_asked_before(&argv, b"fmt", Tag::FormatCommand);
+        print_help_if_asked_before(b"fmt", Tag::FormatCommand);
         let knows = super::format_command::FormatCommand::has_flag;
         super::format_command::FormatCommand::exec(
             ctx,
@@ -1913,7 +1903,7 @@ To create a project with the official Next.js scaffolding tool, run
     /// Printed at the end of `bun <command> --help` if the project has a script with the same name.
     fn print_note_about_script(command: &str) {
         use crate::cli::script_or_command::{Runs, runs};
-        if runs(command.as_bytes()) == Runs::Script {
+        if matches!(runs(command.as_bytes()), Ok(Runs::Script)) {
             pretty!(
                 "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command, or pass <b>--no-script<r>\n",
                 command,

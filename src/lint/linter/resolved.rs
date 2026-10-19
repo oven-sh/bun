@@ -2,6 +2,7 @@
 
 use super::instances::Instance;
 use super::registry::{Deprecated, Registry, formatting_rule, parse_rule_id};
+use crate::ast::File;
 use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
@@ -261,6 +262,8 @@ pub struct ResolvedConfig {
     pub plugins_without_rules: Vec<Plugin>,
     /// What the rules of JavaScript plugins see of `language`. It is there if `js_plugins` is not empty.
     pub js_settings: Option<Arc<js_plugin::FileSettings>>,
+    /// Like `js_settings`, for [`LanguageOptions::without_module_syntax`].
+    pub js_settings_without_module_syntax: Option<Arc<js_plugin::FileSettings>>,
     /// The JavaScript plugins whose rules the configuration and the comments of the file can name. The name of one hides
     /// the plugin of the same name that is implemented here.
     pub js_plugins: Vec<Arc<js_plugin::Plugin>>,
@@ -361,6 +364,15 @@ impl ResolvedConfig {
     pub fn named_rule(&self, id: &[u8]) -> Option<&ConfiguredRule> {
         let mut named = self.rules.iter().filter(|_| self.has_named_rules);
         named.find(|it| it.name.as_deref() == Some(id))
+    }
+
+    /// Returns `js_settings` or `js_settings_without_module_syntax`, whichever matches `file`'s source type. `file`
+    /// must use this config.
+    pub(crate) fn js_settings_of(&self, file: &File) -> Option<&Arc<js_plugin::FileSettings>> {
+        match file.language().source_type == self.language.source_type {
+            true => self.js_settings.as_ref(),
+            false => self.js_settings_without_module_syntax.as_ref(),
+        }
     }
 
     pub(crate) fn validate_language_options(&mut self, language_options: &Json) {

@@ -1070,7 +1070,9 @@ test.concurrent(
     expect(home).toContain(`<main class="layout"><h1>Home</h1></main>`);
     const post = await (await fetch(new URL("/blog/hello", url))).text();
     expect(post).toContain(`<h1>Post hello</h1>`);
-    expect(post).toContain(`<script id="__bun_bake_params" type="application/json">{"slug":"hello"}</script>`);
+    expect(post).toContain(
+      `<script id="__bun_bake_data" type="application/json">{"params":{"slug":"hello"},"props":{},"hasData":false}</script>`,
+    );
     expect(await (await fetch(new URL("/about", url))).text()).toContain("<h1>About</h1>");
     expect(await get(url, "/api/hello")).toBe(`200 {"hi":1}`);
     expect(await get(url, "/missing")).toBe("404 fallback");
@@ -1256,6 +1258,55 @@ test.concurrent("bun bake rejects a route with dir and style in app/server.ts", 
   const output = collectOutput(proc);
   await output.waitFor(/does not support a route with "dir" and "style"/);
   expect(output.text).not.toContain("url: ");
+});
+
+test.concurrent("bun bake runs the data functions of a page of the default framework", async () => {
+  using dir = tempDir("bake-command-page-data", {
+    "app/secret.ts": `export const secret = "server-only-secret";`,
+    "app/pages/dashboard.tsx": `
+      import { secret } from "../secret.ts";
+      export const getServerSideProps = async ({ request }) => {
+        const user = request.headers.get("x-user");
+        if (user === "gone") return { notFound: true };
+        if (!user) return { redirect: { destination: "/", permanent: false } };
+        return { props: { user, length: secret.length } };
+      };
+      export default function Dashboard({ user, length }) {
+        return <h1>{"Hi " + user + " " + length}</h1>;
+      }
+    `,
+    "app/pages/blog/[id].tsx": `
+      export const getStaticPaths = async () => ({ paths: [{ params: { id: "1" } }], fallback: false });
+      export const getStaticProps = async ({ params }) => ({ props: { title: "Post " + params.id } });
+      export default function Post({ title }) {
+        return <h1>{title}</h1>;
+      }
+    `,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const page = await fetch(new URL("/dashboard", url), { headers: { "x-user": "ali" } });
+  const html = await page.text();
+  expect(html).toContain("<h1>Hi ali 18</h1>");
+  expect(html).toContain(`"props":{"user":"ali","length":18},"hasData":true`);
+
+  const redirect = await fetch(new URL("/dashboard", url), { redirect: "manual" });
+  expect([redirect.status, redirect.headers.get("location")]).toEqual([307, "/"]);
+  expect((await fetch(new URL("/dashboard", url), { headers: { "x-user": "gone" } })).status).toBe(404);
+
+  expect(await (await fetch(new URL("/blog/1", url))).text()).toContain("<h1>Post 1</h1>");
+  // Not in getStaticPaths, with `fallback: false`.
+  expect((await fetch(new URL("/blog/2", url))).status).toBe(404);
+
+  // The browser copy of the page has no getServerSideProps, and so no import of app/secret.ts.
+  const bundleUrl = html.match(/<script type="module" src="([^"]+)"/)![1];
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain("app/pages/dashboard.tsx");
+  expect(bundle).not.toContain("getServerSideProps");
+  expect(bundle).not.toContain("server-only-secret");
 });
 
 test.concurrent("the default framework sends the browser bundle before a slow Suspense boundary", async () => {

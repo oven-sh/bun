@@ -889,10 +889,8 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
             )
         });
     }
-    let needs_leading_semicolon = matches!(
-        statement.kind(),
-        StmtKind::Expr(expression) if print::statements::expression_statement_needs_semicolon(statement, expression, f)
-    );
+    let needs_leading_semicolon =
+        print::statements::ignored_statement_needs_semicolon(statement, span.start, f);
     f.around_cursor(span, |f| {
         write!(
             f,
@@ -933,14 +931,11 @@ fn write_ignored_statement_without_terminator<'a>(
             write!(f, [FormatSuppressedNode(content), terminator])
         });
     }
-    // The text can start with a parenthesis that would not be written. Before a type cast comment the `;` is written already:
-    // see `semicolon_is_before_cast_comment_of_ignored_statement`.
+    // If a type cast comment comes first, the `;` was already printed before it: see
+    // `semicolon_is_before_cast_comment_of_ignored_statement`.
     let needs_leading_semicolon =
-        matches!(
-            statement.kind(),
-            StmtKind::Expr(expression) if f.source_text().byte_at(content.start) == Some(b'(')
-                || print::statements::expression_statement_needs_semicolon(statement, expression, f)
-        ) && !print::statements::follows_type_cast_comment(content.start, f);
+        print::statements::ignored_statement_needs_semicolon(statement, content.start, f)
+            && !print::statements::follows_type_cast_comment(content.start, f);
     f.around_cursor(content, |f| {
         write!(
             f,

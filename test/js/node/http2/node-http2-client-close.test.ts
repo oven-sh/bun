@@ -15,11 +15,11 @@
  *   node --test test/js/node/http2/node-http2-client-close.test.ts
  */
 import assert from "node:assert";
+import { execFile } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
-import { execFile } from "node:child_process";
 import { type Duplex, duplexPair } from "node:stream";
 import { describe, test } from "node:test";
 import { promisify } from "node:util";

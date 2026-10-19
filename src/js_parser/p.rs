@@ -2194,9 +2194,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if self.options.features.inlining {
             if let Some(replacement) = self.const_values.get(&ref_) {
-                let replacement = *replacement;
+                // Use-site loc, as esbuild does. The stored value has the declaration's.
+                let data = replacement.data;
                 self.ignore_usage(ref_);
-                return replacement;
+                return match data {
+                    // The printer maps the inner value, not the wrapper.
+                    js_ast::ExprData::EInlinedEnum(inlined) => self.new_expr(
+                        E::InlinedEnum {
+                            value: Expr {
+                                loc,
+                                data: inlined.value.data,
+                            },
+                            comment: inlined.comment,
+                        },
+                        loc,
+                    ),
+                    _ => Expr { loc, data },
+                };
             }
         }
 

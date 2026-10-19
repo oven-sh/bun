@@ -63,7 +63,6 @@ impl Parser<'_> {
         let mut n_brothers: u32 = 0;
         let mut n_children: u32 = 0;
         let mut container = Container::default();
-        let prev_line_has_list_loosening_effect = self.last_line_has_list_loosening_effect;
         // The line before is the marker of a list item and nothing else.
         let follows_empty_item = self.last_header_opens_list_item
             && self.current_block.is_none()
@@ -139,13 +138,12 @@ impl Parser<'_> {
             }
         }
 
-        self.last_line_has_list_loosening_effect = false;
-
         // Blank line lazy-matches list containers BEFORE the main detection loop
         // (md4c does this outside while(TRUE) to ensure n_parents is correct for
         // fenced code and HTML block container-boundary checks)
         if off >= self.size || helpers::is_newline(self.text[off as usize]) {
             if n_brothers + n_children == 0 {
+                self.blank_line_marks = n_parents;
                 while n_parents < self.n_containers
                     && self.containers[n_parents as usize].ch != b'>'
                 {
@@ -179,7 +177,6 @@ impl Parser<'_> {
                 if line.indent < self.code_indent_offset && n_parents == self.n_containers {
                     if self.is_closing_code_fence(off, pivot_line.data) {
                         line.r#type = LineType::Blank; // ending fence treated as blank
-                        self.last_line_has_list_loosening_effect = false;
                         if let Some(cb_off) = self.current_block {
                             self.get_block_header_at(cb_off).flags |= types::BLOCK_CLOSED;
                         }
@@ -207,29 +204,22 @@ impl Parser<'_> {
                     // HTML block is implicitly ended when enclosing container closes
                     self.html_block_type = 0;
                 } else {
-                    if self.is_html_block_end_condition(off, self.html_block_type)
+                    let ends = self.is_html_block_end_condition(off, self.html_block_type)
                         && !(line.indent > 0
                             && self.html_block_type >= 6
-                            && compat::only_a_line_without_blanks_ends_html(&self.flags))
-                    {
-                        // Save type before clearing (md4c uses a local variable)
-                        let ended_type = self.html_block_type;
-                        self.html_block_type = 0;
-
-                        // Types 6 and 7 end conditions also serve as blank lines
-                        if ended_type == 6 || ended_type == 7 {
-                            line.r#type = LineType::Blank;
-                            line.indent = 0;
-                            is_empty = true;
-                            break;
+                            && compat::only_a_line_without_blanks_ends_html(&self.flags));
+                    // What ends types 6 and 7 is a blank line. It is not a line of the HTML: the check below takes it.
+                    if !(ends && self.html_block_type >= 6) {
+                        if ends {
+                            self.html_block_type = 0;
+                            if let Some(cb_off) = self.current_block {
+                                self.get_block_header_at(cb_off).flags |= types::BLOCK_CLOSED;
+                            }
                         }
-                        if let Some(cb_off) = self.current_block {
-                            self.get_block_header_at(cb_off).flags |= types::BLOCK_CLOSED;
-                        }
+                        line.r#type = LineType::Html;
+                        n_parents = self.n_containers;
+                        break;
                     }
-                    line.r#type = LineType::Html;
-                    n_parents = self.n_containers;
-                    break;
                 }
             }
 
@@ -245,12 +235,8 @@ impl Parser<'_> {
                     } else {
                         line.indent = 0;
                     }
-                    self.last_line_has_list_loosening_effect = false;
                 } else {
                     line.r#type = LineType::Blank;
-                    self.last_line_has_list_loosening_effect = n_parents > 0
-                        && n_brothers + n_children == 0
-                        && self.containers[(n_parents - 1) as usize].ch != b'>';
 
                     // HTML block types 6 and 7 end on a blank line
                     if self.html_block_type >= 6 {
@@ -288,7 +274,6 @@ impl Parser<'_> {
                     }
                     self.last_list_item_starts_with_two_blank_lines = false;
                 }
-                self.last_line_has_list_loosening_effect = false;
             }
 
             // Indented code continuation
@@ -787,15 +772,18 @@ impl Parser<'_> {
 
         *p_end = off;
 
-        // Loose list detection
-        if prev_line_has_list_loosening_effect
-            && line.r#type != LineType::Blank
-            && n_parents + n_brothers > 0
-        {
-            let ci = (n_parents + n_brothers - 1) as usize;
-            if ci < self.containers.len() && self.containers[ci].ch != b'>' {
-                self.containers[ci].is_loose = true;
-            }
+        // An empty line in a list item makes a list loose if a block of that list follows it.
+        if is_empty {
+            self.blank_line_in_list = match n_parents {
+                0 => parser::NO_BLANK_LINE,
+                _ => self.blank_line_in(n_parents),
+            };
+        } else if self.blank_line_in_list != parser::NO_BLANK_LINE {
+            // The line is one more of the indented code that the empty line is in.
+            let continues_code = line.r#type == LineType::Indentedcode
+                && pivot_line.r#type == LineType::Indentedcode
+                && n_parents == self.n_containers;
+            self.end_blank_line_in_list(n_parents + n_brothers, continues_code);
         }
 
         // Flush current leaf block before any container transitions
@@ -857,6 +845,36 @@ impl Parser<'_> {
         }
 
         Ok(())
+    }
+
+    // The line behind an empty line in a list item: it is in `count` of the open containers, or the next item of the last.
+    #[cold]
+    #[inline(never)]
+    fn end_blank_line_in_list(&mut self, count: u32, continues_code: bool) {
+        let floor = core::mem::replace(&mut self.blank_line_in_list, parser::NO_BLANK_LINE);
+        // Indented code that goes on has the empty line in it. Below `floor` the list is around the quote of that line.
+        if continues_code || count <= floor {
+            return;
+        }
+        let ci = (count - 1) as usize;
+        // A quote that the empty line left open has its `>` on that line, so it is below `floor`.
+        debug_assert!(self.containers[ci].ch != b'>');
+        self.containers[ci].is_loose = true;
+    }
+
+    // Only empty lines in a container get here. Inlined, it costs every other line a few instructions.
+    #[inline(never)]
+    fn blank_line_in(&self, n_parents: u32) -> u32 {
+        // For cost only: the floor would be `n_parents`, and no line behind this one is in more containers.
+        if self.containers[(n_parents - 1) as usize].ch == b'>' {
+            return parser::NO_BLANK_LINE;
+        }
+        // With a `>` on it the line is in that quote, not between two blocks of a list around the quote.
+        let marked = &self.containers[..self.blank_line_marks as usize];
+        marked
+            .iter()
+            .rposition(|c| c.ch == b'>')
+            .map_or(0, |quote| quote as u32 + 1)
     }
 
     pub(crate) fn process_line(

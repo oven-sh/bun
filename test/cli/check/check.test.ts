@@ -23618,6 +23618,32 @@ export const far: I69 extends J69 ? 1 : 2 = 0;
       }
     });
 
+    // `first.ts` assumes that `I0` and `J0` are related, and with them `I70` and `J70`, so it would take `C` for 1.
+    // What it finds depends on whether `second.ts` has compared `I70` and `J70` yet. So a file that compares types
+    // over 100 levels deep is checked after all the others.
+    test("a conditional type is the same in two files if one compares its types from 100 levels up", async () => {
+      const chain = (name: string, last: number) =>
+        `${range(100)
+          .map(i => `interface ${name}${i} { n: ${name}${i + 1} }`)
+          .join("\n")}\ninterface ${name}100 { v: ${last} }\n`;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["chains.d.ts", "first.ts", "second.ts"] }),
+        "chains.d.ts": `${chain("I", 1)}${chain("J", 2)}type C = I70 extends J70 ? 1 : 2;\n`,
+        "first.ts": `declare const i0: I0;\nconst j0: J0 = i0;\nconst a: C = 1;\n`,
+        "second.ts": `const b: C = 1;\nconst c: C = 2;\n`,
+      });
+      const threads = [1, 2, 2, 2, 8, 8, 8];
+      for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+        expect(stdout).toBe(
+          [
+            "first.ts(3,7): error TS2322: Type '1' is not assignable to type '2'.",
+            "second.ts(1,7): error TS2322: Type '1' is not assignable to type '2'.",
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(1);
+      }
+    });
+
     // `y = x` takes 1,000 x 2,051 comparisons, more than the 2,000,000 that one comparison may take. tsc reports TS2859
     // and caches the comparison of `S` and `T`, which was in progress, as failed. `t = s` repeats it to report the
     // error. Most of its parts are cached by now, so it succeeds, and tsc replaces the cached failure.

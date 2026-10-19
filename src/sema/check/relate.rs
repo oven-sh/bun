@@ -4238,10 +4238,16 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         // As in TypeScript 7.1. 7.0 gives up here and reports 2321. Which comparison is the 100th depends on where the
-        // outermost one started, so the results that follow from this one stay in the task, like those of `REC_BOTH` below.
+        // outermost one started and on what is cached, so only the last round's task answers. Any other task is
+        // discarded, and ends the comparison right away. The results that follow from the answer stay in the file, like
+        // those of `REC_BOTH` below.
         if r.source_stack.len() == 100 || r.target_stack.len() == 100 {
+            self.note_gave_up("the depth of a comparison");
+            if self.task.is_lost() {
+                r.overflow = true;
+                return Ternary::FALSE;
+            }
             self.comparisons_of_deeply_nested_types += 1;
-            self.task.hold_back();
             return Ternary::MAYBE;
         }
         if self.is_stack_low() {

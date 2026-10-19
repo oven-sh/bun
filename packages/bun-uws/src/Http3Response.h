@@ -137,8 +137,27 @@ struct Http3Response {
     void overrideWriteOffset(uint64_t o) { getHttpResponseData()->offset = o; }
     size_t getBufferedAmount() { return getHttpResponseData()->backpressure.length(); }
 
-    Http3Response *pause() { us_quic_stream_hold_window((us_quic_stream_t *) this, 1); return this; }
-    Http3Response *resume() { us_quic_stream_hold_window((us_quic_stream_t *) this, 0); return this; }
+    Http3Response *pause() {
+        getHttpResponseData()->window |= Http3ResponseData::WINDOW_PAUSED;
+        us_quic_stream_hold_window((us_quic_stream_t *) this, 1);
+        return this;
+    }
+    Http3Response *resume() {
+        Http3ResponseData *d = getHttpResponseData();
+        /* The response sink resumes at its end with no pause() before it.
+         * That must not open a first window nobody asked to open. */
+        if (!(d->window & Http3ResponseData::WINDOW_PAUSED)) return this;
+        d->window &= ~Http3ResponseData::WINDOW_PAUSED;
+        if (!(d->window & Http3ResponseData::WINDOW_NARROW)) openReceiveWindow();
+        return this;
+    }
+    /* The handler started consuming the body: widen this stream's window. */
+    void growReceiveWindow() {
+        Http3ResponseData *d = getHttpResponseData();
+        if (!(d->window & Http3ResponseData::WINDOW_NARROW)) return;
+        d->window &= ~Http3ResponseData::WINDOW_NARROW;
+        if (!(d->window & Http3ResponseData::WINDOW_PAUSED)) openReceiveWindow();
+    }
 
     Http3Response *cork(MoveOnlyFunction<void()> &&fn) { fn(); return this; }
     void *getSocketData() { return getHttpResponseData()->socketData; }
@@ -201,6 +220,28 @@ struct Http3Response {
 private:
     void appendHeader(Http3ResponseData *d, std::string_view name, std::string_view value) {
         d->appendHeader(name.data(), (unsigned) name.size(), value.data(), (unsigned) value.size());
+    }
+
+    /* False when the peer can send no more on the stream. */
+    bool openReceiveWindow() {
+        return us_quic_stream_grow_window((us_quic_stream_t *) this, Http3ResponseData::STREAM_WINDOW_SIZE) != 0;
+    }
+
+    /* Can a body still come on a request stream that its peer has not
+     * ended? The content-length says so. Without one, a GET, HEAD or TRACE
+     * has none (as http::Method::has_request_body) and any other method can
+     * have one of unknown length. Request field names are lowercase: quic.c
+     * refuses the others (us_quic_field_is_malformed). */
+    bool requestMayHaveBody() {
+        us_quic_stream_t *s = (us_quic_stream_t *) this;
+        bool bodiless = false;
+        for (unsigned int i = 0, n = us_quic_stream_header_count(s); i < n; i++) {
+            const us_quic_header_t *h = us_quic_stream_header(s, i);
+            std::string_view name{h->name, h->name_len}, value{h->value, h->value_len};
+            if (name == "content-length") return value != "0";
+            if (name == ":method") bodiless = value == "GET" || value == "HEAD" || value == "TRACE";
+        }
+        return !bodiless;
     }
 
     void sendBufferedHeaders(Http3ResponseData *d, bool endStream) {
@@ -276,13 +317,22 @@ private:
          * pointer is about to die. */
         d->state |= Http3ResponseData::HTTP_END_CALLED;
         d->state &= ~Http3ResponseData::HTTP_RESPONSE_PENDING;
-        /* The handler has committed a response; if it returned without
-         * consuming the request body, STOP_SENDING tells the client to
-         * abort its upload instead of pushing bytes the app will never
-         * read (RFC 9114 §4.1.1). lsquic only emits the frame when the
-         * client's FIN/RST hasn't already arrived, so this is a no-op for
-         * the fully-consumed case. */
-        us_quic_stream_shutdown_read((us_quic_stream_t *) this);
+        /* The handler has committed a response. If the request body is still
+         * coming, nobody will read the rest (RFC 9114 §4.1.1). STOP_SENDING
+         * says so, but Chrome then drops the response it already has and
+         * sends the request again. So open the window, let the on_stream_data
+         * lambda read and drop up to DISCARD_LIMIT, and send STOP_SENDING
+         * only past that. A request with no body to come gets STOP_SENDING
+         * as before: a peer that leaves such a stream open would keep it,
+         * and its slot, for as long as the connection lives. */
+        d->window &= ~(Http3ResponseData::WINDOW_NARROW | Http3ResponseData::WINDOW_PAUSED);
+        if (openReceiveWindow() && ((d->window & Http3ResponseData::WINDOW_DATA) || requestMayHaveBody())) {
+            d->discard = Http3ResponseData::DISCARD_LIMIT;
+        } else {
+            /* lsquic only emits the frame when the client's FIN/RST hasn't
+             * already arrived. */
+            us_quic_stream_shutdown_read((us_quic_stream_t *) this);
+        }
         /* H1's closeConnection means "Connection: close + FIN the socket".
          * H3 has no per-response equivalent (RFC 9114 §4.1); the bit is set
          * by AnyResponse callers that are correct for H1, so honoring it

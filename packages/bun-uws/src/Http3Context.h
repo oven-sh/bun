@@ -33,6 +33,11 @@ struct Http3Context {
              * state is 0 only before the first reset() on this stream. */
             if (rd->state != 0) return;
             rd->reset();
+            /* From here, not from stream open: the stream's flow control
+             * counts the HEADERS frame too, and a header block can be larger
+             * than the first window. */
+            rd->window = Http3ResponseData::WINDOW_NARROW;
+            us_quic_stream_hold_window(s, 1);
 
             Http3Request req(s);
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
@@ -45,7 +50,18 @@ struct Http3Context {
         us_quic_socket_context_on_stream_data(ctx, [](us_quic_stream_t *s, const char *data, unsigned len, int fin) {
             Http3Response *res = (Http3Response *) s;
             Http3ResponseData *rd = res->getHttpResponseData();
-            if (rd->inStream) rd->inStream(res, data, len, fin != 0, rd->userData);
+            if (len) rd->window |= Http3ResponseData::WINDOW_DATA;
+            if (rd->inStream) {
+                rd->inStream(res, data, len, fin != 0, rd->userData);
+            } else if (rd->discard) {
+                /* An unread body after its response: see markDone(). */
+                if (len < rd->discard) {
+                    rd->discard -= len;
+                } else {
+                    rd->discard = 0;
+                    us_quic_stream_shutdown_read(s);
+                }
+            }
         });
 
         us_quic_socket_context_on_stream_writable(ctx, [](us_quic_stream_t *s) {

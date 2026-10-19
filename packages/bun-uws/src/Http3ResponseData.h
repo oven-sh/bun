@@ -62,6 +62,26 @@ struct Http3ResponseData {
     uint64_t offset = 0;
     uint8_t state = 0;
 
+    /* The request stream's receive window. Its first window (64 KiB, the
+     * engine's setting in quic.c) is held from the header set, so a body
+     * nobody asked for stops there. Http3Response::growReceiveWindow() and
+     * the end of the response open it to STREAM_WINDOW_SIZE. */
+    enum : uint8_t {
+        /* The first window is still held. */
+        WINDOW_NARROW = 1,
+        /* pause() with no resume() yet. */
+        WINDOW_PAUSED = 2,
+        /* A body byte arrived. */
+        WINDOW_DATA = 4,
+    };
+    static constexpr unsigned STREAM_WINDOW_SIZE = 1u << 20;
+    /* After an answer, at most this much of the unread body is read and
+     * dropped before STOP_SENDING. */
+    static constexpr uint32_t DISCARD_LIMIT = 1u << 20;
+    uint8_t window = 0;
+    /* What is left of DISCARD_LIMIT; 0 when nothing is being dropped. */
+    uint32_t discard = 0;
+
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {
         size_t off = hdrBuf.size();
         hdrBuf.grow(off + nlen + vlen);
@@ -88,6 +108,8 @@ struct Http3ResponseData {
         endAfterDrain = false;
         offset = 0;
         state = HTTP_RESPONSE_PENDING;
+        window = 0;
+        discard = 0;
     }
 };
 

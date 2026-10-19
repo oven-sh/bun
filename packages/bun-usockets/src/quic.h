@@ -134,6 +134,10 @@ void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *ctx,
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len);
 /* Receive backpressure: lsquic_stream_hold_window() in lsquic.h. */
 void us_quic_stream_hold_window(us_quic_stream_t *s, int hold);
+/* Release the stream's receive window and make it at least `window` bytes:
+ * lsquic_stream_grow_window() in lsquic.h. Returns 0 if the peer can send no
+ * more on the stream. */
+int us_quic_stream_grow_window(us_quic_stream_t *s, unsigned int window);
 void us_quic_stream_want_write(us_quic_stream_t *s, int want);
 int us_quic_stream_send_headers(us_quic_stream_t *s,
     const struct us_quic_header_t *headers, unsigned int count, int end_stream);

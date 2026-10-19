@@ -1,6 +1,6 @@
 --- a/include/lsquic.h
 +++ b/include/lsquic.h
-@@ -1758,6 +1758,23 @@
+@@ -1758,6 +1758,35 @@
  lsquic_stream_wantread (lsquic_stream_t *s, int is_want);
  
  /**
@@ -10,20 +10,49 @@
 + * no new MAX_STREAM_DATA.  An update that a read queued before the hold still
 + * goes out, so the peer can send up to one window past the read offset at the
 + * hold.  A release queues the update that the hold kept back, unless the
-+ * stream is reset or read to its end.  It goes out when the connection is
-+ * next ticked.
++ * peer has finished the stream (FIN or reset) or it is read to its end.  It
++ * goes out when the connection is next ticked.  Returns 1 if a release left
++ * an update queued, 0 otherwise.
 + *
 + * This is receive backpressure that leaves no data in the stream, unlike
 + * lsquic_stream_wantread(s, 0): data left there holds the connection's
 + * window too, and is dropped when the connection goes away.
 + */
-+void
++int
 +lsquic_stream_hold_window (lsquic_stream_t *s, int hold);
++
++/**
++ * bun: release the stream's window and make it at least @param window bytes.
++ * lsquic sizes a stream's window once, from the transport parameter, and
++ * after that only auto-tuning (es_max_sfcw) changes it, on update timing.
++ * This lets a stream start with a small window and get a large one when the
++ * application wants its data.  Returns 0 and does nothing if the peer has
++ * finished the stream or its read side is shut down, 1 otherwise.
++ */
++int
++lsquic_stream_grow_window (lsquic_stream_t *s, unsigned window);
 +
 +/**
   * Read up to @param len bytes from stream into @param buf.  Returns number
   * of bytes read or -1 on error, in which case errno is set.  Possible
   * errno values:
+@@ -2233,6 +2262,16 @@
+ lsquic_conn_ack_now (lsquic_conn_t *);
+ 
+ /**
++ * bun: make the connection tickable if it has work to do.  A stream call made
++ * inside another connection's callback can queue a frame, but lsquic drops
++ * the request to tick this connection while the engine is processing
++ * (ENPUB_PROC), so the frame waits for an unrelated alarm or the peer's next
++ * packet.  Call this after lsquic_engine_process_conns() has returned.
++ */
++void
++lsquic_conn_maybe_tickable (lsquic_conn_t *);
++
++/**
+  * Update the millisecond idle timeout applied to connections created
+  * after this call (see @ref es_idle_timeout_ms).
+  */
 --- a/src/liblsquic/lsquic_sfcw.h
 +++ b/src/liblsquic/lsquic_sfcw.h
 @@ -20,6 +20,7 @@
@@ -49,24 +78,65 @@
          LSQ_DEBUG("recv_off has not changed, still at %"PRIu64,
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -1524,6 +1524,20 @@
+@@ -1524,6 +1524,41 @@
  }
  
  
++/* bun: the peer can send no more on this stream.  After a reset sf_read_off
++ * is the final size, not read_offset: an update would take the unread bytes'
++ * credit from the connection. */
++#define STREAM_RECV_WINDOW_DONE \
++                    (STREAM_FIN_RECVD|STREAM_RST_RECVD|STREAM_U_READ_DONE)
++
++
 +/* bun: see lsquic.h */
-+void
++int
 +lsquic_stream_hold_window (struct lsquic_stream *stream, int hold)
 +{
 +    if (stream->fc.sf_hold == (unsigned) !!hold)
-+        return;
++        return 0;
 +    stream->fc.sf_hold = !!hold;
-+    /* After a reset sf_read_off is the final size, not read_offset: an
-+     * update would take the unread bytes' credit from the connection. */
-+    if (!hold && !(stream->stream_flags & (STREAM_RST_RECVD|STREAM_U_READ_DONE)))
-+        stream_consumed_bytes(stream);
++    if (hold || (stream->stream_flags & STREAM_RECV_WINDOW_DONE))
++        return 0;
++    stream_consumed_bytes(stream);
++    return !!(stream->sm_qflags & SMQF_SEND_WUF);
++}
++
++
++/* bun: see lsquic.h */
++int
++lsquic_stream_grow_window (struct lsquic_stream *stream, unsigned window)
++{
++    if (stream->stream_flags & STREAM_RECV_WINDOW_DONE)
++        return 0;
++    stream->fc.sf_hold = 0;
++    if (stream->fc.sf_max_recv_win < window)
++        stream->fc.sf_max_recv_win = window;
++    stream_consumed_bytes(stream);
++    return 1;
 +}
 +
 +
  static ssize_t
  read_data_frames (struct lsquic_stream *stream, int do_filtering,
          size_t (*readf)(void *, const unsigned char *, size_t, int), void *ctx)
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -3064,6 +3064,17 @@
+ }
+ 
+ 
++/* bun: see lsquic.h */
++void
++lsquic_conn_maybe_tickable (struct lsquic_conn *lconn)
++{
++    if ((lconn->cn_flags & (LSCONN_MINI|LSCONN_IETF)) == LSCONN_IETF
++                                    && lconn->cn_if->ci_is_tickable(lconn))
++        lsquic_engine_add_conn_to_tickable(
++                        ((struct ietf_full_conn *) lconn)->ifc_enpub, lconn);
++}
++
++
+ /* bun: abort without a CONNECTION_CLOSE.  The peer discovers the death via
+  * stateless reset (the CIDs purge as PUTY_CONN_DELETED thanks to
+  * LSCONN_IMMED_CLOSE) or its idle timeout.  No-op difference from

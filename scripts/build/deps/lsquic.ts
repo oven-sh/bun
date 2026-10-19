@@ -138,6 +138,12 @@ export const lsquic: Dependency = {
     // stream and stops its receive limit. Data left in a stream by
     // lsquic_stream_wantread(s, 0) also holds the connection's window and is
     // dropped with the connection.
+    // lsquic_stream_grow_window(): lsquic sizes a stream's window once, from
+    // the transport parameter. This raises one stream's window, so a request
+    // stream can start small and open when its body is wanted.
+    // lsquic_conn_maybe_tickable(): a window call made inside another
+    // connection's callback queues its frame, but lsquic does not tick the
+    // connection for it.
     "patches/lsquic/hold-stream-window.patch",
   ],
 

@@ -946,10 +946,12 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.try_end(data, total_size, close_connection))
     }
 
-    /// HTTP/2: widen the stream receive window once the body is wanted.
+    /// HTTP/2 and HTTP/3: widen the stream receive window once the body is wanted.
     pub fn grow_request_window(self) {
-        if let AnyResponse::H2(r) = self {
-            bun_opaque::opaque_deref_mut(r).grow_request_window();
+        match self {
+            AnyResponse::H2(r) => H2Response::as_handle(r).grow_request_window(),
+            AnyResponse::H3(r) => H3Response::as_handle(r).grow_request_window(),
+            AnyResponse::SSL(_) | AnyResponse::TCP(_) => {}
         }
     }
     pub fn pause(self) {

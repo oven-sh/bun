@@ -79,6 +79,11 @@ struct us_quic_socket_context_s {
      * before the UDP fd disappears (otherwise abrupt stop just black-holes
      * the peer until idle timeout). */
     struct us_quic_socket_s *conns;
+    /* Conns with a window update queued while `processing` was set;
+     * us_quic_engine_leave makes them tickable (us_quic_stream_tick_later). */
+    struct us_quic_socket_s *tick_later;
+    /* The stream whose on_stream_headers is on the stack. */
+    struct us_quic_stream_s *in_headers;
 
     void (*on_open)(us_quic_socket_t *);
     void (*on_hsk_done)(us_quic_socket_t *, int);
@@ -113,7 +118,10 @@ struct us_quic_socket_s {
      * can match it against the leaf cert's SAN/CN. */
     int reject_unauthorized;
     int going_away;
+    /* Linked in ctx->tick_later. */
+    int tick_later;
     char *hostname;
+    struct us_quic_socket_s *next_tick_later;
     /* ext follows */
 };
 
@@ -628,6 +636,11 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     for (us_quic_socket_t **pp = &ctx->conns; *pp; pp = &(*pp)->next) {
         if (*pp == qs) { *pp = qs->next; break; }
     }
+    if (qs->tick_later) {
+        for (us_quic_socket_t **pp = &ctx->tick_later; *pp; pp = &(*pp)->next_tick_later) {
+            if (*pp == qs) { *pp = qs->next_tick_later; break; }
+        }
+    }
     us_free(qs->hostname);
     us_free(qs);
 #ifndef LIBUS_USE_LIBUV
@@ -676,7 +689,12 @@ static int us_quic_deliver_hset(lsquic_stream_t *stream, us_quic_stream_t *s) {
     us_quic_hset_finalize(hset);
     us_quic_hset_free(s->hset);
     s->hset = hset;
-    if (s->ctx->on_stream_headers) s->ctx->on_stream_headers(s);
+    us_quic_socket_context_t *ctx = s->ctx;
+    if (ctx->on_stream_headers) {
+        ctx->in_headers = s;
+        ctx->on_stream_headers(s);
+        ctx->in_headers = NULL;
+    }
     return s->stream ? 1 : -1;
 }
 
@@ -818,6 +836,11 @@ us_quic_socket_context_t *us_create_quic_socket_context(
      * a single request can't run hsi_prepare to OOM. */
     ctx->settings.es_max_header_list_size = 16 * 1024;
     ctx->settings.es_init_max_streams_bidi = 100;
+    /* The first window of a request stream. lsquic's default is 1 MiB, and a
+     * peer can park that much in each of its 100 streams before a handler
+     * asks for a body. Http3Response opens a stream to 1 MiB when its body
+     * is wanted, as the HTTP/2 listener does (LOCAL_INITIAL_WINDOW_SIZE). */
+    ctx->settings.es_init_max_stream_data_bidi_remote = 64 * 1024;
     /* Static-table-only response encoding: skips the per-header dynamic
      * table search (lsqpack_enc_encode + XXH32 + header_out_dynamic_entry
      * were ~8% of a hello-world profile). Clients still get correct
@@ -1054,6 +1077,12 @@ static void us_quic_finish_pending_closes(us_quic_socket_context_t *ctx) {
 /* The engine has left the stack: do what a callback asked for while it could
  * not be entered. */
 static void us_quic_after_engine_call(us_quic_socket_context_t *ctx) {
+    while (ctx->tick_later) {
+        us_quic_socket_t *qs = ctx->tick_later;
+        ctx->tick_later = qs->next_tick_later;
+        qs->tick_later = 0;
+        lsquic_conn_maybe_tickable(qs->conn);
+    }
     if (ctx->shutdown_pending) {
         ctx->shutdown_pending = 0;
         us_quic_socket_context_finish_shutdown(ctx);
@@ -1111,8 +1140,31 @@ int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len
     return (int) w;
 }
 
+/* A window call queued MAX_STREAM_DATA for `s`. lsquic sends it in the
+ * connection's next tick and makes the connection tickable for it, except
+ * while the engine is processing: then only the connection in its tick sends,
+ * and a call made in another connection's callback waits for an unrelated
+ * alarm or the peer's next packet. Make the connection tickable once the
+ * engine has left the stack. */
+static void us_quic_stream_tick_later(us_quic_stream_t *s) {
+    us_quic_socket_context_t *ctx = s->ctx;
+    /* In the stream's own header callback its connection is in its tick. */
+    if (!ctx->processing || ctx->in_headers == s) return;
+    us_quic_socket_t *qs = us_quic_stream_socket(s);
+    if (!qs || qs->tick_later) return;
+    qs->tick_later = 1;
+    qs->next_tick_later = ctx->tick_later;
+    ctx->tick_later = qs;
+}
+
 void us_quic_stream_hold_window(us_quic_stream_t *s, int hold) {
-    if (s->stream) lsquic_stream_hold_window(s->stream, hold);
+    if (s->stream && lsquic_stream_hold_window(s->stream, hold)) us_quic_stream_tick_later(s);
+}
+
+int us_quic_stream_grow_window(us_quic_stream_t *s, unsigned int window) {
+    if (!s->stream || !lsquic_stream_grow_window(s->stream, window)) return 0;
+    us_quic_stream_tick_later(s);
+    return 1;
 }
 
 void us_quic_stream_want_write(us_quic_stream_t *s, int want) {

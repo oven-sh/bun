@@ -4355,12 +4355,9 @@ where
             });
 
             // Pre-stream backpressure; resumed by `on_stream_drained` / `on_start_buffering`.
-            let mark = if MUX {
-                MUX_REQUEST_BODY_HIGH_WATER_MARK
-            } else {
-                REQUEST_BODY_HIGH_WATER_MARK
-            };
-            if !this.flags.request_body_buffer_all() && this.request_body_buf.get().len() >= mark {
+            if !this.flags.request_body_buffer_all()
+                && this.request_body_buf.get().len() >= REQUEST_BODY_HIGH_WATER_MARK
+            {
                 this.pause_request_body_socket();
             }
         }
@@ -4563,8 +4560,6 @@ const MUX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 64 * 1024;
 
 /// Pause socket reads at this many unconsumed request-body bytes (two 512 KB uWS recv buffers).
 const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;
-/// For a body no handler asked for yet over HTTP/2 or 3: under half the HTTP/3 stream window.
-const MUX_REQUEST_BODY_HIGH_WATER_MARK: usize = 256 * 1024;
 
 // ─── per-monomorphization C-ABI exports ──────────────────────────────────────
 // The exported symbol name is "Bun__HTTPRequestContext" + (debug ? "Debug" : "")

@@ -134,6 +134,7 @@ void uws_h3_res_end_without_body(uws_h3_res_t* res, bool close_connection)
     r->endWithoutBody(std::nullopt, close_connection);
 }
 
+void uws_h3_res_grow_request_window(uws_h3_res_t* res) { ((Http3Response*)res)->growReceiveWindow(); }
 void uws_h3_res_pause(uws_h3_res_t* res) { ((Http3Response*)res)->pause(); }
 void uws_h3_res_resume(uws_h3_res_t* res) { ((Http3Response*)res)->resume(); }
 void uws_h3_res_write_continue(uws_h3_res_t* res) { ((Http3Response*)res)->writeContinue(); }

@@ -5424,8 +5424,9 @@ describe("transcode allocation limits", () => {
   });
 });
 
-// The fixture prints what transcode() does with each value of a list that is passed as an encoding.
-it.skipIf(!nodeExe())("transcode() takes each encoding value as Node.js does", async () => {
+// The fixture prints what transcode() and StringDecoder do with each value of a list that is passed
+// as an encoding.
+it.skipIf(!nodeExe())("transcode() and StringDecoder take each encoding value as Node.js does", async () => {
   const fixture = join(import.meta.dir, "normalize-encoding-fixture.js");
   async function run(exe) {
     await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });

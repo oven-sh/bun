@@ -1,9 +1,10 @@
-// Prints one line for each value that is passed as an encoding to buffer.transcode(), which takes
-// it through Node's normalizeEncoding(). buffer.test.js runs this fixture under Node.js and under
-// Bun and requires the two outputs to be equal.
+// Prints one line for each value that is passed as an encoding to buffer.transcode() and to
+// new StringDecoder(). Both take the encoding from Node's normalizeEncoding(). buffer.test.js runs
+// this fixture under Node.js and under Bun and requires the two outputs to be equal.
 "use strict";
 
 const { Buffer, transcode } = require("node:buffer");
+const { StringDecoder } = require("node:string_decoder");
 
 // "é" gives different bytes for each of the four encodings of transcode(), as the source encoding
 // and as the target encoding. So the result names the encoding that transcode() used.
@@ -13,6 +14,7 @@ const usedAsTarget = { c3a9: "utf8", e9: "latin1", "3f": "ascii", e900: "ucs2" }
 const consumers = {
   fromEnc: encoding => usedAsSource[transcode(source, encoding, "utf8").toString("hex")],
   toEnc: encoding => usedAsTarget[transcode(source, "utf8", encoding).toString("hex")],
+  StringDecoder: encoding => new StringDecoder(encoding).encoding,
 };
 
 // The user code that the consumer ran on the value.
@@ -160,9 +162,11 @@ const values = [
   ["{ length: 6, toString: throws }", () => recorder(6, new RangeError("from user code"))],
   ["{ length: 6, toString: a symbol }", () => recorder(6, Symbol("latin1"))],
   ["{ length: 6 } with no prototype", () => Object.assign(Object.create(null), { length: 6 })],
-  ["a symbol", () => Symbol("latin1")],
-  ["a Symbol object", () => Object(Symbol("latin1"))],
-  ["an object with no prototype", () => Object.create(null)],
+
+  // Bun cannot put these in the message of StringDecoder's ERR_UNKNOWN_ENCODING, and throws a TypeError.
+  ["a symbol", () => Symbol("latin1"), ["fromEnc", "toEnc"]],
+  ["a Symbol object", () => Object(Symbol("latin1")), ["fromEnc", "toEnc"]],
+  ["an object with no prototype", () => Object.create(null), ["fromEnc", "toEnc"]],
 ];
 
 // Only the code, or the class of an error with no code, is printed: an engine words its own errors.
@@ -178,10 +182,8 @@ function outcomeOf(run) {
 }
 
 const lines = [];
-for (const [label, make] of values) {
-  const outcomes = Object.keys(consumers).map(
-    consumer => `${consumer}: ${outcomeOf(() => consumers[consumer](make()))}`,
-  );
+for (const [label, make, only = Object.keys(consumers)] of values) {
+  const outcomes = only.map(consumer => `${consumer}: ${outcomeOf(() => consumers[consumer](make()))}`);
   lines.push(label + " | " + outcomes.join(" | "));
 }
 

@@ -889,10 +889,8 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
             )
         });
     }
-    let needs_leading_semicolon = matches!(
-        statement.kind(),
-        StmtKind::Expr(expression) if print::statements::expression_statement_needs_semicolon(statement, expression, f)
-    );
+    let needs_leading_semicolon =
+        print::statements::ignored_statement_needs_semicolon(statement, span.start, f);
     f.around_cursor(span, |f| {
         write!(
             f,
@@ -933,14 +931,11 @@ fn write_ignored_statement_without_terminator<'a>(
             write!(f, [FormatSuppressedNode(content), terminator])
         });
     }
-    // The text can start with a parenthesis that would not be written. Before a type cast comment the `;` is written already:
-    // see `semicolon_is_before_cast_comment_of_ignored_statement`.
+    // If a type cast comment comes first, the `;` was already printed before it: see
+    // `semicolon_is_before_cast_comment_of_ignored_statement`.
     let needs_leading_semicolon =
-        matches!(
-            statement.kind(),
-            StmtKind::Expr(expression) if f.source_text().byte_at(content.start) == Some(b'(')
-                || print::statements::expression_statement_needs_semicolon(statement, expression, f)
-        ) && !print::statements::follows_type_cast_comment(content.start, f);
+        print::statements::ignored_statement_needs_semicolon(statement, content.start, f)
+            && !print::statements::follows_type_cast_comment(content.start, f);
     f.around_cursor(content, |f| {
         write!(
             f,
@@ -1131,22 +1126,25 @@ fn write_type_in_parentheses<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     if matches!(tag, TypeTag::Keyword | TypeTag::BoolLit) {
         return write!(f, source_text(ty.span()));
     }
-    // No other kind of type ever needs parentheses. Flow's `renders T` writes its own.
-    let needs_parentheses = matches!(
-        tag,
+    // No other kind of type ever needs parentheses.
+    let may_need_parentheses = match tag {
         TypeTag::Fn
-            | TypeTag::Infer
-            | TypeTag::Union
-            | TypeTag::Intersection
-            | TypeTag::Cond
-            | TypeTag::Keyof
-            | TypeTag::Readonly
-            | TypeTag::UniqueSymbol
-            | TypeTag::Unique
-            | TypeTag::Typeof
-            | TypeTag::Import
-    ) && !(tag == TypeTag::Unique && f.file().is_flow())
-        && parentheses::ts_type::needs_parentheses(ty, f);
+        | TypeTag::Infer
+        | TypeTag::Union
+        | TypeTag::Intersection
+        | TypeTag::Cond
+        | TypeTag::Keyof
+        | TypeTag::Readonly
+        | TypeTag::UniqueSymbol
+        | TypeTag::Typeof
+        | TypeTag::Import => true,
+        // Flow's `renders T` writes its own.
+        TypeTag::Unique => !f.file().is_flow(),
+        // In Flow, as the return type of an arrow function: `(): (A<{ b: () => void }>) => c`.
+        TypeTag::Ref => f.file().is_flow(),
+        _ => false,
+    };
+    let needs_parentheses = may_need_parentheses && parentheses::ts_type::needs_parentheses(ty, f);
     if needs_parentheses {
         "(".fmt(f);
     }

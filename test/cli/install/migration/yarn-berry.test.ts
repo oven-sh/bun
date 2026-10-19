@@ -399,7 +399,7 @@ describe("yarn berry migration", () => {
       expect(stdout + stderr).not.toContain("Saved");
       expect(await Bun.file(join(dir, "package.json")).text()).toBe(before);
       expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
-      // the patch is applied all the same
+      // The patch is applied anyway.
       expect(await Bun.file(join(dir, "node_modules", "no-deps", "patched.txt")).text()).toBe("hello world\n");
       expect(exitCode).toBe(0);
     });
@@ -554,6 +554,227 @@ describe("yarn berry migration", () => {
     `);
 
     await expectFrozenInstall(dir);
+  });
+
+  // yarn applies `no-deps@npm:^1.0.0` only to dependencies declared as exactly `^1.0.0`. The root
+  // asks for `^1.1.0`, so yarn.lock keeps 1.1.0 for it.
+  test.concurrent("a name@range resolution only applies to dependencies that declare exactly that range", async () => {
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-range-resolution",
+          dependencies: { "no-deps": "^1.1.0", "one-range-dep": "^1.0.0" },
+          resolutions: { "no-deps@npm:^1.0.0": "1.0.0" },
+        }),
+        "yarn.lock": yarnLock({
+          "berry-range-resolution@workspace:.": [
+            "version: 0.0.0-use.local",
+            'resolution: "berry-range-resolution@workspace:."',
+            "dependencies:",
+            '  no-deps: "npm:^1.1.0"',
+            '  one-range-dep: "npm:^1.0.0"',
+            "languageName: unknown",
+            "linkType: soft",
+          ],
+          "no-deps@npm:1.0.0": [
+            "version: 1.0.0",
+            'resolution: "no-deps@npm:1.0.0"',
+            "languageName: node",
+            "linkType: hard",
+          ],
+          "no-deps@npm:^1.1.0": [
+            "version: 1.1.0",
+            'resolution: "no-deps@npm:1.1.0"',
+            "languageName: node",
+            "linkType: hard",
+          ],
+          "one-range-dep@npm:^1.0.0": [
+            "version: 1.0.0",
+            'resolution: "one-range-dep@npm:1.0.0"',
+            "dependencies:",
+            '  no-deps: "npm:^1.0.0"',
+            "languageName: node",
+            "linkType: hard",
+          ],
+        }),
+      },
+    });
+
+    const migrated = await run(dir, "pm", "migrate");
+    expect(migrated.stderr).not.toContain("error:");
+    expect(migrated.exitCode).toBe(0);
+    const bunLock = await bunLockOf(dir);
+    expect(lockedVersions(bunLock)).toEqual(["no-deps@1.0.0", "no-deps@1.1.0", "one-range-dep@1.0.0"]);
+
+    await expectFrozenInstall(dir);
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).not.toContain("error:");
+    expect(await bunLockOf(dir)).toBe(bunLock);
+    expect(exitCode).toBe(0);
+  });
+
+  // yarn does not apply the key to `*`, so yarn.lock has `latest` for it. Here `latest` is a prerelease.
+  test.concurrent("a name@range resolution does not apply to a dependency declared as *", async () => {
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-range-resolution-any",
+          dependencies: { "prereleases-3": "*" },
+          resolutions: { "prereleases-3@npm:^5.0.0-alpha.100": "5.0.0-alpha.150" },
+        }),
+        "yarn.lock": yarnLock({
+          "berry-range-resolution-any@workspace:.": [
+            "version: 0.0.0-use.local",
+            'resolution: "berry-range-resolution-any@workspace:."',
+            "dependencies:",
+            '  prereleases-3: "npm:*"',
+            "languageName: unknown",
+            "linkType: soft",
+          ],
+          "prereleases-3@npm:*": [
+            "version: 5.0.0-alpha.153",
+            'resolution: "prereleases-3@npm:5.0.0-alpha.153"',
+            "languageName: node",
+            "linkType: hard",
+          ],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(lockedVersions(await bunLockOf(dir))).toEqual(["prereleases-3@5.0.0-alpha.153"]);
+    await expectFrozenInstall(dir);
+  });
+
+  describe("name@range rules and a bun.lock edited by hand", () => {
+    const npmEntry = (version: string) => [
+      `version: ${version}`,
+      `resolution: "no-deps@npm:${version}"`,
+      "languageName: node",
+      "linkType: hard",
+    ];
+    const row = (bunLock: string, version: string) =>
+      bunLock.match(new RegExp(`\\["no-deps@${version.replaceAll(".", "\\.")}"[^\\]]*\\]`))![0];
+
+    async function expectToPass(dir: string, ...args: string[]) {
+      const { stderr, exitCode } = await run(dir, ...args);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    /** Replaces no-deps@`version` in bun.lock with no-deps@1.1.0, which is inside every range used below. */
+    async function lockAt110(dir: string, version: string) {
+      const { packageDir: scratch } = await testRegistry.createTestDir({
+        files: { "package.json": JSON.stringify({ name: "scratch", dependencies: { "no-deps": "1.1.0" } }) },
+      });
+      await expectToPass(scratch, "install", "--lockfile-only");
+      const [bunLock, other] = await Promise.all([dir, scratch].map(at => Bun.file(join(at, "bun.lock")).text()));
+      await Bun.write(join(dir, "bun.lock"), bunLock.replace(row(bunLock, version), row(other, "1.1.0")));
+    }
+
+    async function expectFrozenInstallToFail(dir: string, wanted: string, field = "resolutions") {
+      const { stderr, exitCode } = await run(dir, "install", "--frozen-lockfile");
+      expect(stderr).toContain(
+        "error: lockfile had changes, but lockfile is frozen\n" +
+          `note: bun.lock has no-deps@1.1.0, ${field} in package.json wants ${wanted}\n`,
+      );
+      expect(exitCode).toBe(1);
+    }
+
+    // Both keys overlap with the root's `^1.0.1`. yarn uses the key whose range is exactly `^1.0.1`.
+    test.concurrent("of two keys that overlap, the one with the declared range is enforced", async () => {
+      const { packageDir: dir } = await testRegistry.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "berry-two-range-resolutions",
+            dependencies: { "no-deps": "^1.0.1", "one-range-dep": "^1.0.0" },
+            resolutions: { "no-deps@npm:^1.0.0": "1.0.0", "no-deps@npm:^1.0.1": "1.0.1" },
+          }),
+          "yarn.lock": yarnLock({
+            "berry-two-range-resolutions@workspace:.": [
+              "version: 0.0.0-use.local",
+              'resolution: "berry-two-range-resolutions@workspace:."',
+              "dependencies:",
+              '  no-deps: "npm:^1.0.1"',
+              '  one-range-dep: "npm:^1.0.0"',
+              "languageName: unknown",
+              "linkType: soft",
+            ],
+            "no-deps@npm:1.0.0": npmEntry("1.0.0"),
+            "no-deps@npm:1.0.1": npmEntry("1.0.1"),
+            "one-range-dep@npm:^1.0.0": [
+              "version: 1.0.0",
+              'resolution: "one-range-dep@npm:1.0.0"',
+              "dependencies:",
+              '  no-deps: "npm:^1.0.0"',
+              "languageName: node",
+              "linkType: hard",
+            ],
+          }),
+        },
+      });
+      await expectToPass(dir, "pm", "migrate");
+      expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0", "no-deps@1.0.1", "one-range-dep@1.0.0"]);
+      await expectFrozenInstall(dir);
+
+      await lockAt110(dir, "1.0.1");
+      await expectFrozenInstallToFail(dir, "1.0.1");
+    });
+
+    // yarn treats `npm:^1.0.0` and `^1.0.0` as the same range.
+    test.concurrent.each(["npm:^1.0.0", "^1.0.0"])(
+      "the key is enforced for a dependency declared as %s",
+      async range => {
+        const { packageDir: dir } = await testRegistry.createTestDir({
+          files: {
+            "package.json": JSON.stringify({
+              name: "range-resolution",
+              dependencies: { "no-deps": range },
+              resolutions: { "no-deps@npm:^1.0.0": "1.0.0" },
+            }),
+          },
+        });
+        await expectToPass(dir, "install", "--lockfile-only");
+        expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
+        await expectFrozenInstall(dir);
+
+        await lockAt110(dir, "1.0.0");
+        await expectFrozenInstallToFail(dir, "1.0.0");
+      },
+    );
+
+    // `^1.1.0` overlaps with the key's `^1.0.0` but is not the same range. npm and pnpm apply the rule, yarn does not.
+    test.concurrent.each(["overrides", "resolutions"])(
+      "a key in %s and a declared range that only overlaps",
+      async field => {
+        const { packageDir: dir } = await testRegistry.createTestDir({
+          files: {
+            "package.json": JSON.stringify({
+              name: "range-rule",
+              dependencies: { "no-deps": "^1.1.0" },
+              [field]: { "no-deps@^1.0.0": "1.0.0" },
+            }),
+          },
+        });
+        await expectToPass(dir, "install", "--lockfile-only");
+        expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
+        await lockAt110(dir, "1.0.0");
+
+        if (field === "resolutions") {
+          await expectFrozenInstall(dir);
+        } else {
+          await expectFrozenInstallToFail(dir, "1.0.0", field);
+        }
+        await expectToPass(dir, "install", "--lockfile-only");
+        expect(lockedVersions(await bunLockOf(dir))).toEqual([
+          field === "resolutions" ? "no-deps@1.1.0" : "no-deps@1.0.0",
+        ]);
+      },
+    );
   });
 
   test.concurrent("a parent/name resolution only rebinds that parent's edge", async () => {
@@ -1180,7 +1401,7 @@ catalogs:
     await expectFrozenInstall(dir);
   });
 
-  // What yarn.lock pins and bun cannot keep fails the migration; nothing is written.
+  // If yarn.lock pins something that Bun can't keep, the migration fails and nothing is written.
   const rootEntry = (deps: string[]) => [`resolution: "berry-reject@workspace:."`, `dependencies:`, ...deps];
   const noDeps100 = { "no-deps@npm:^1.0.0": [`resolution: "no-deps@npm:1.0.0"`] };
   const rejected: {
@@ -2111,7 +2332,7 @@ catalogs:
       expect(bunLock).toContain(
         `"one-range-dep@1.0.0", "http://localhost:1234/one-range-dep/-/one-range-dep-1.0.0.tgz", { "dependencies": { "no-deps": "^1.0.0 ", "one-fixed-dep": "1.0.0" }, "peerDependencies": { "a-dep": "*" }, "optionalPeers": ["a-dep"] }`,
       );
-      // bun.lock says which edges an extension added, and the extensions go where bun reads them
+      // bun.lock records which dependencies an extension added, and the extensions are written where Bun reads them.
       expect(bunLock).toContain(
         `  "packageExtensions": {\n    "one-range-dep@1.0.0": { "dependencies": ["one-fixed-dep"], "peerDependencies": ["a-dep"] },\n  },\n`,
       );
@@ -2355,7 +2576,7 @@ catalogs:
     expect(bunLock).toContain(`{ "peerDependencies": { "no-deps": "^1.0.0" }, "optionalPeers": ["no-deps"] }`);
     expect(exitCode).toBe(0);
     await expectFrozenInstall(dir);
-    // nothing in package.json stands for yarn's own extension, and the next install keeps what it added
+    // Nothing in package.json corresponds to Yarn's builtin extension, and the next install keeps what it added.
     const again = await run(dir, "install");
     expect(again.stderr).not.toContain("error:");
     expect(await bunLockOf(dir)).toBe(bunLock);

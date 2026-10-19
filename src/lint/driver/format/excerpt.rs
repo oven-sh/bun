@@ -2,7 +2,7 @@
 //! Bun prints its own errors, `agent`, the same in tags and without colors, and `github`, the
 //! workflow commands that GitHub Actions turns into annotations.
 
-use super::{Meta, linked};
+use super::{Meta, linked, shown_at};
 use crate::paths;
 use crate::results::{Counts, FileResult};
 use bstr::BStr;
@@ -81,13 +81,8 @@ impl<'r> Place<'r> {
         meta: &Meta,
     ) -> &(&'r FileResult, LineStarts, Vec<u8>) {
         self.file.take_if(|it| !std::ptr::eq(it.0, result));
-        self.file.get_or_insert_with(|| {
-            let starts = match &result.line_starts {
-                Some(starts) => LineStarts::at(starts.clone()),
-                None => LineStarts::new(result.text.as_deref().unwrap_or_default()),
-            };
-            (result, starts, display_path(&result.path, meta.cwd))
-        })
+        self.file
+            .get_or_insert_with(|| (result, result.lines(), display_path(&result.path, meta.cwd)))
     }
 }
 
@@ -363,7 +358,9 @@ fn write_said(
         let gutter = bun_core::fmt::digit_count(line) + " | ".len();
         let room =
             Some(meta.width.saturating_sub(gutter)).filter(|it| *it >= 2 * LEFT_OF_THE_PLACE);
-        let (text, column) = fitted(lines, column, room.unwrap_or(0));
+        // A rule written in JavaScript can give a column far past the end of the line.
+        let end = lines.last().map_or(0, |it| strings::wtf8_len_utf16(it));
+        let (text, column) = fitted(lines, column.min(end + 1), room.unwrap_or(0));
         bun_ast::Location {
             line_text: Some(text.into()),
             ..location(line, column)
@@ -412,7 +409,8 @@ fn write_pretty_problem<'r>(
         });
         push_lossy(&mut text, &linked(&rule, message, meta));
     }
-    let shown = match message.line {
+    let (line, column) = shown_at(message, meta.is_oxlint);
+    let shown = match line {
         line @ 1.. => lines(result, (line.saturating_sub(2).max(1), line), meta, place),
         0 => Vec::new(),
     };
@@ -430,7 +428,7 @@ fn write_pretty_problem<'r>(
         bun_ast::Kind::Warn
     };
     let file = place.of(result, meta).2.clone();
-    let at = (&file[..], message.line, message.column);
+    let at = (&file[..], line, column);
     write_said(out, meta, kind, text, Some((at, &shown[blank..])));
     let texts = [message.first_label(), message.help(), message.note()];
     let texts = texts.iter().filter(|it| !it.is_empty());
@@ -555,7 +553,7 @@ fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
                     "      {:>4}  <cyan>{}<r><d>:{}<r>\n",
                     count,
                     BStr::new(&path),
-                    first.message.line
+                    shown_at(first.message, meta.is_oxlint).0
                 );
             }
             if files.len() > MAX_FILES {
@@ -630,12 +628,11 @@ fn write_agent_problem<'r>(
     } else {
         "warning"
     };
+    let (line, column) = shown_at(message, meta.is_oxlint);
     let _ = write!(
         out,
-        "<{tag} file=\"{}\" line=\"{}\" column=\"{}\"",
+        "<{tag} file=\"{}\" line=\"{line}\" column=\"{column}\"",
         BStr::new(&attribute(&display_path(&result.path, meta.cwd))),
-        message.line,
-        message.column
     );
     let rule = problem.rule();
     if !rule.is_empty() {
@@ -650,7 +647,7 @@ fn write_agent_problem<'r>(
     out.extend_from_slice(b">\n");
     out.extend_from_slice(&message.message);
     out.push(b'\n');
-    if let (Some(_), line @ 1..) = (&result.text, message.line) {
+    if let (Some(_), line @ 1..) = (&result.text, line) {
         let first = line.saturating_sub(2).max(1);
         let mut shown = lines(result, (first, line + 1), meta, place);
         // A blank line after it says nothing.
@@ -660,7 +657,7 @@ fn write_agent_problem<'r>(
             shown.pop();
         }
         if shown.iter().all(|line| line.len() <= 1000) && !shown.is_empty() {
-            let from = message.column.saturating_sub(1) as usize;
+            let from = column.saturating_sub(1) as usize;
             let to = (message.end.filter(|end| end.0 == line))
                 .map(|(_, end_column)| end_column.saturating_sub(1) as usize);
             bun_sema_driver::format::write_agent_source(out, first, &shown, line, (from, to));
@@ -694,13 +691,8 @@ fn write_agent_problem<'r>(
         for (i, other) in group[1..].iter().take(MAX_LOCATIONS).enumerate() {
             let path = display_path(&other.result.path, meta.cwd);
             let space = if i > 0 { " " } else { "" };
-            let _ = write!(
-                out,
-                "{space}{}:{}:{}",
-                BStr::new(&path),
-                other.message.line,
-                other.message.column
-            );
+            let (line, column) = shown_at(other.message, meta.is_oxlint);
+            let _ = write!(out, "{space}{}:{line}:{column}", BStr::new(&path));
         }
         if group.len() - 1 > MAX_LOCATIONS {
             let _ = write!(out, " and {} more", group.len() - 1 - MAX_LOCATIONS);
@@ -759,7 +751,11 @@ pub(super) fn write_github(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
         } else {
             path
         };
-        let (end_line, end_column) = message.end.unwrap_or((message.line, message.column));
+        let signed = |(line, column): (u32, u32)| (line as i32, column as i32);
+        let (line, column) = signed(shown_at(message, meta.is_oxlint));
+        let start = (line.max(1), column.max(1));
+        let end = message.end.map(signed).filter(|end| *end >= start);
+        let (end_line, end_column) = end.unwrap_or(start);
         let _ = write!(
             out,
             "::{} file={},line={},col={},endLine={end_line},endColumn={end_column},title={}::",
@@ -769,8 +765,8 @@ pub(super) fn write_github(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
                 "warning"
             },
             bun_core::fmt::github_action_property(&path),
-            message.line.max(1),
-            message.column.max(1),
+            start.0,
+            start.1,
             bun_core::fmt::github_action_property(&match problem.rule() {
                 rule if rule.is_empty() => b"bun lint".to_vec(),
                 rule => rule,

@@ -96,8 +96,11 @@ function createHeldReader() {
   const setImmediate = $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1);
   const nop = () => {};
   const iteratorDone = () => ({ done: true, value: undefined });
+  const cancelHeld = held => {
+    held.cancel();
+  };
 
-  // A reader the pipeline can cancel: return() on the stream's own iterator queues behind a pending next().
+  // A reader the pipeline can cancel. Node uses the stream's iterator, whose return() queues behind a pending next().
   return class HeldReader {
     #stream: ReadableStream | null = null;
     #reader: ReadableStreamDefaultReader | null = null;
@@ -149,9 +152,11 @@ function createHeldReader() {
     // Cancels in the next turn: an owner that hears the same signal goes first. False once the source has ended.
     stop() {
       if (this.#stream === null) return false;
-      this.#stopped = true;
-      runInFrame ??= require("internal/async_context_frame").run;
-      runInFrame(this.#frame, setImmediate, undefined, () => this.cancel());
+      if (!this.#stopped) {
+        this.#stopped = true;
+        runInFrame ??= require("internal/async_context_frame").run;
+        runInFrame(this.#frame, setImmediate, undefined, cancelHeld, this);
+      }
       return true;
     }
 
@@ -161,6 +166,7 @@ function createHeldReader() {
       const reader = this.#reader;
       if (reader !== null) readerRelease.$call(reader);
       this.#reader = this.#stream = null;
+      this.#frame = undefined;
     }
   };
 }
@@ -168,8 +174,8 @@ function createHeldReader() {
 function hold(stream, destroys) {
   if (destroys === undefined || !isReadableStream(stream)) return null;
   try {
-    // A stream with an iterator of its own (a subclass, a property) is read through that iterator, in the loop.
-    if (stream[SymbolAsyncIterator] !== $ReadableStream.prototype[SymbolAsyncIterator]) return null;
+    // Not the built-in iterator (a subclass, a property, a replacement on the prototype): the loop reads through it.
+    if (stream[SymbolAsyncIterator] !== $ReadableStream.prototype.$values) return null;
   } catch {
     // A getter threw. The loop reads it again, where the pump reports the error.
     return null;
@@ -183,7 +189,6 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
   let onresolve: (() => void) | null = null;
   let torn;
   let reported = false;
-  let onreported: (() => void) | null = null;
   const source = hold(iterable, destroys);
 
   const resume = err => {
@@ -219,8 +224,8 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
     iterable = source;
     destroys.push(err => {
       torn ??= err;
-      // A wait on a destination that the teardown destroyed ends with its report, as before.
-      if (onresolve !== null && !reported && writable.destroyed) return;
+      // The report of a destination that the teardown destroyed stops the pump, and ends a wait on a dead destination.
+      if ((end || onresolve !== null) && !reported && writable.destroyed) return;
       source.stop();
       resume(undefined);
     });
@@ -228,7 +233,6 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
       reported = true;
       resume(err);
       if (err || torn !== undefined) source.stop();
-      if (onreported !== null) onreported();
     };
     // As pipe() reports it for a node source: an error, unless the source has ended.
     onclose = () => {
@@ -254,12 +258,6 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
     if (source !== null) {
       if (source.stopped) {
         await source.cancel();
-        // With `end`, the teardown destroyed the destination: its close and its own error come before the callback.
-        if (end && !reported && writable.destroyed) {
-          const { promise, resolve } = Promise.withResolvers<void>();
-          onreported = resolve;
-          await promise;
-        }
         // The source did not end. The pump fails as it does when a chunk meets a dead destination.
         throw error || torn;
       }
@@ -282,10 +280,11 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
   }
 }
 
-// The reaction lives as long as the sink does, so it holds the source and not the scope of the pump.
-function stopWhenGone(sink, source) {
+// The reaction lives as long as the sink does: it holds the source, not the scope of the pump or its async context.
+function stopWhenErrored(sink, source) {
   const stop = () => source.stop();
-  PromisePrototypeThen.$call($webStreamClosedPromise(sink), stop, stop);
+  runInFrame ??= require("internal/async_context_frame").run;
+  runInFrame(undefined, PromisePrototypeThen, $webStreamClosedPromise(sink), undefined, stop);
 }
 
 async function pumpToWeb(readable, writable, finish, { end }, destroys?) {
@@ -311,7 +310,7 @@ async function pumpToWeb(readable, writable, finish, { end }, destroys?) {
       source.stop();
     });
     // `writable` of a TransformStream is a property that a program can replace with any object.
-    if (isWritableStream(writable)) stopWhenGone(writable, source);
+    if (isWritableStream(writable)) stopWhenErrored(writable, source);
   }
 
   try {
@@ -325,11 +324,12 @@ async function pumpToWeb(readable, writable, finish, { end }, destroys?) {
       source.release();
     }
 
-    // A sink that is gone rejects here with its own error, as it does for the next chunk.
-    await writer.ready;
-
-    // The source did not end: the teardown stopped the pump.
-    if (source?.stopped && torn !== undefined) throw torn;
+    // The source did not end: the teardown stopped the pump. It does not wait for room in the sink.
+    const stopped = source !== null && source.stopped && torn !== undefined;
+    const ready = writer.ready;
+    // A sink that is gone has rejected this with its own error, as it does for the next chunk.
+    if (!stopped || !$isPromise(ready) || !$isPromisePending(ready)) await ready;
+    if (stopped) throw torn;
 
     if (end) {
       await writer.close();

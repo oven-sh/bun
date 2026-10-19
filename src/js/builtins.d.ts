@@ -62,6 +62,8 @@ declare var $alwaysInline;
 interface ReadableStream<R = any> extends _ReadableStream<R> {
   /** The native source behind a Bun-created stream: `undefined` when there is none, `-1` once it is detached. */
   $bunNativePtr: TODO | undefined;
+  /** The built-in `values()`, which is also `[Symbol.asyncIterator]()`, under a name that a program cannot replace. */
+  $values: _ReadableStream<R>["values"];
 }
 
 declare var ReadableStream: {

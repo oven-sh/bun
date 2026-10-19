@@ -423,6 +423,8 @@ void JSReadableStreamPrototype::finishCreation(VM& vm)
     // @@asyncIterator is the SAME function object as values() (WebIDL async_iterable).
     JSValue valuesFunction = getDirect(vm, vm.propertyNames->builtinNames().valuesPublicName());
     putDirectWithoutTransition(vm, vm.propertyNames->asyncIteratorSymbol, valuesFunction, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    // `$values`: node:stream's pipeline() tells the built-in iterator from one that a program put on the prototype.
+    putDirectWithoutTransition(vm, vm.propertyNames->builtinNames().valuesPrivateName(), valuesFunction, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
 
     // Bun private-name accessor read by surviving builtins (`stream.$bunNativePtr`).
     auto& names = builtinNames(vm);

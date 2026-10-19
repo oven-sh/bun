@@ -1,8 +1,8 @@
 import { exposedInternals } from "bun:internal-for-testing";
-import { describe, expect, it, jest } from "bun:test";
+import { describe, expect, it, jest, onTestFinished } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { createReadStream, createWriteStream, mkdirSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { connect as connectHttp2, createServer as createHttp2Server, constants as http2Constants } from "node:http2";
@@ -1950,7 +1950,8 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
       expect(await sink.aborted).toBe(err);
     });
 
-    it("the callback waits for a destination that closes later", async () => {
+    // Until the destination reports, the pump stays on the source, as in node: the source can still end or fail.
+    it("a destination that closes later: its close stops the pump, and the callback comes after it", async () => {
       const source = webSource();
       const closing = Promise.withResolvers();
       const sink = nodeSink({
@@ -1959,18 +1960,54 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
         },
       });
       const ac = new AbortController();
-      let state = "pending";
+      const events = [];
+      source.cancelled.then(() => events.push("source cancelled"));
+      sink.stream.on("close", () => events.push("destination closed"));
       const promise = settled(pipelineP(source.stream, sink.stream, { signal: ac.signal })).then(err => {
-        state = "settled";
+        events.push("callback");
         return err;
       });
       ac.abort();
-      await source.cancelled;
       await turn();
-      expect(state).toBe("pending");
+      await turn();
+      expect(events).toEqual([]);
       closing.resolve();
       expect(await promise).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
-      expect(sink.stream.closed).toBe(true);
+      expect(events).toEqual(["destination closed", "source cancelled", "callback"]);
+    });
+
+    // The report of the destination ends the wait of the pump at once, as in node.
+    it.each([true, false])(
+      "a destination that fails a write cancels the source in the same turn, { end: %p }",
+      async end => {
+        const boom = new Error("boom");
+        const source = webSource();
+        const sink = nodeSink({ write: (chunk, encoding, callback) => callback(boom) });
+        const events = [];
+        source.cancelled.then(() => events.push("source cancelled"));
+        const promise = settled(pipelineP(source.stream, sink.stream, { end })).then(err => {
+          events.push("callback");
+          return err;
+        });
+        source.push();
+        await turn();
+        events.push("next turn");
+        expect(await promise).toBe(boom);
+        expect(events).toEqual(["source cancelled", "callback", "next turn"]);
+      },
+    );
+
+    it("a destination that never reports its destroy: the error of the source still calls back, as in node", async () => {
+      const boom = new Error("boom");
+      const source = webSource();
+      const sink = nodeSink({ destroy() {} });
+      const ac = new AbortController();
+      const promise = pipelineP(source.stream, sink.stream, { signal: ac.signal });
+      ac.abort();
+      await turn();
+      await turn();
+      source.controller().error(boom);
+      expect(await settled(promise)).toBe(boom);
     });
 
     it("{ end: false }: the pump stops and the destination stays open", async () => {
@@ -2001,8 +2038,97 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
       const promise = pipelineP(source.stream, sink.stream, { signal: ac.signal, end: false });
       await turn();
       ac.abort();
+      const err = await settled(promise);
+      expect(err).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      expect(await sink.aborted).toBe(err);
+    });
+
+    // Node aborts the sink at once for the Readable: a pump that failed does not wait for room in its sink.
+    describe.each([true, false])("a signal while a write of a WritableStream is in flight, { end: %p }", end => {
+      it.each([
+        ["a Readable", nodeSource, source => source.stream.push("x")],
+        ["a ReadableStream", webSource, source => source.push()],
+      ])("%s: the sink is aborted", async (name, create, push) => {
+        const source = create();
+        const writing = Promise.withResolvers();
+        const sink = webSink({
+          // Ends only when the signal of the sink fires.
+          write(chunk, controller) {
+            writing.resolve();
+            const { promise, reject } = Promise.withResolvers();
+            controller.signal.addEventListener("abort", () => reject(controller.signal.reason));
+            return promise;
+          },
+        });
+        const ac = new AbortController();
+        const promise = pipelineP(source.stream, sink.stream, { signal: ac.signal, end });
+        push(source);
+        await writing.promise;
+        ac.abort();
+        const err = await settled(promise);
+        expect(err).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+        expect(await sink.aborted).toBe(err);
+      });
+    });
+
+    it("a destination with no `destroyed` property: the pump does not wait for a report of it", async () => {
+      const source = webSource();
+      const sink = Object.assign(new EventEmitter(), { writable: true, write: () => true, end() {}, destroy() {} });
+      const ac = new AbortController();
+      const promise = pipelineP(source.stream, sink, { signal: ac.signal });
+      await turn();
+      ac.abort();
       expect(await settled(promise)).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
-      expect(await sink.aborted).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      expect(await source.cancelled).toBeUndefined();
+    });
+
+    // As http.ServerResponse: destroy() reports nothing, and end() does. Node ends it when the source ends.
+    it("a signal into a destination that reports only after end(), and its owner closes the source", async () => {
+      const source = webSource();
+      const ended = Promise.withResolvers();
+      const sink = Object.assign(new EventEmitter(), {
+        writable: true,
+        write: () => true,
+        end() {
+          ended.resolve();
+          process.nextTick(() => {
+            sink.emit("finish");
+            sink.emit("close");
+          });
+        },
+        destroy() {
+          sink.destroyed = true;
+        },
+      });
+      const ac = new AbortController();
+      const promise = pipelineP(source.stream, sink, { signal: ac.signal });
+      await turn();
+      ac.abort();
+      source.controller().close();
+      expect(await settled(promise)).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      await ended.promise;
+    });
+
+    it("{ end: false }: a WritableStream that the caller keeps does not keep the AsyncLocalStorage store of the call", async () => {
+      const als = new AsyncLocalStorage();
+      const sinks = [];
+      const stores = [];
+      const run = async () => {
+        const store = {};
+        stores.push(new WeakRef(store));
+        sinks.push(new WritableStream());
+        const source = new ReadableStream({ start: controller => controller.close() });
+        await als.run(store, () => pipelineP(source, sinks.at(-1), { end: false }));
+      };
+      for (let i = 0; i < 100; i++) await run();
+      for (let i = 0; i < 2; i++) {
+        await turn();
+        Bun.gc(true);
+      }
+      await turn();
+      // 100 without the fix. A few can stay on the stack of this test.
+      expect(stores.filter(ref => ref.deref() !== undefined).length).toBeLessThan(10);
+      expect(sinks.every(sink => sink.locked)).toBe(true);
     });
 
     it("{ end: false }: a source that always has a chunk is not read again after the abort", async () => {
@@ -2102,6 +2228,10 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
         [ReadableStreamDefaultReader.prototype, "releaseLock"],
       ];
       const real = patched.map(([prototype, name]) => prototype[name]);
+      // Not in a `finally`: a test that times out does not reach it.
+      onTestFinished(() => {
+        for (const [i, [prototype, name]] of patched.entries()) prototype[name] = real[i];
+      });
       const calls = [];
       for (const [i, [prototype, name]] of patched.entries()) {
         prototype[name] = function (...args) {
@@ -2109,27 +2239,33 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
           return real[i].apply(this, args);
         };
       }
-      try {
-        const ends = webSource();
-        const sink = nodeSink();
-        const ended = pipelineP(ends.stream, sink.stream);
-        ends.push();
-        ends.controller().close();
-        await ended;
-        expect(sink.writes.map(String)).toEqual(["x"]);
-        expect(ends.stream.locked).toBe(false);
 
-        const idle = webSource();
-        const ac = new AbortController();
-        const aborted = pipelineP(idle.stream, nodeSink().stream, { signal: ac.signal });
-        await turn();
-        ac.abort();
-        expect(await settled(aborted)).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
-        expect(await idle.cancelled).toBeUndefined();
-        expect(idle.stream.locked).toBe(false);
-      } finally {
-        for (const [i, [prototype, name]] of patched.entries()) prototype[name] = real[i];
-      }
+      const ends = webSource();
+      const sink = nodeSink();
+      const ended = pipelineP(ends.stream, sink.stream);
+      ends.push();
+      ends.controller().close();
+      await ended;
+      expect(sink.writes.map(String)).toEqual(["x"]);
+      expect(ends.stream.locked).toBe(false);
+
+      const idle = webSource();
+      const ac = new AbortController();
+      const aborted = pipelineP(idle.stream, nodeSink().stream, { signal: ac.signal });
+      await turn();
+      ac.abort();
+      expect(await settled(aborted)).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      expect(await idle.cancelled).toBeUndefined();
+      expect(idle.stream.locked).toBe(false);
+
+      // The pump waits for 'drain' before it takes the lock: the cancel takes a reader of its own.
+      const unlocked = webSource();
+      const full = nodeSink({ highWaterMark: 1, write() {} });
+      full.stream.write("a");
+      const early = pipelineP(unlocked.stream, full.stream, { signal: ac.signal });
+      expect(await settled(early)).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      expect(await unlocked.cancelled).toBeUndefined();
+
       expect(calls).toEqual([]);
     });
 
@@ -2147,9 +2283,11 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
                 throw new Error("patched " + name + "() called");
               };
             }
-            // As a spy that a test restores later.
+            // As a spy that a test restores later. The loop calls it, as in node: the pump holds no reader then.
             const values = ReadableStream.prototype[Symbol.asyncIterator];
+            let calls = 0;
             ReadableStream.prototype[Symbol.asyncIterator] = function () {
+              calls++;
               return values.call(this);
             };
             const { Writable } = require("node:stream");
@@ -2159,7 +2297,7 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
             process.on("exit", () => console.log(events.join(", ")));
             (async () => {
               await pipeline(new ReadableStream({ start: controller => controller.close() }), sink());
-              events.push("ended");
+              events.push("ended with " + calls + " call of the replaced iterator");
               ReadableStream.prototype[Symbol.asyncIterator] = values;
               const ac = new AbortController();
               const source = new ReadableStream({ cancel: () => void events.push("cancelled") });
@@ -2172,12 +2310,12 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
         env: bunEnv,
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("ended, cancelled, AbortError\n");
+      expect(stdout).toBe("ended with 1 call of the replaced iterator, cancelled, AbortError\n");
       expect(exitCode).toBe(0);
     });
 
-    // The 'close' of a destination that finished reports no error, and the teardown left the wait to that report.
-    it("{ end: false }: a signal between the 'finish' and the 'close' of a destination that its owner ended", async () => {
+    // With `end`, the 'close' stops the pump: it reports no error, because the destination had finished.
+    it.each([true, false])("a signal between the 'finish' and the 'close' of a destination, { end: %p }", async end => {
       const source = webSource();
       const closing = Promise.withResolvers();
       let written;
@@ -2192,7 +2330,7 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
         },
       });
       const ac = new AbortController();
-      const promise = pipelineP(source.stream, sink.stream, { signal: ac.signal, end: false });
+      const promise = pipelineP(source.stream, sink.stream, { signal: ac.signal, end });
       source.push();
       while (written === undefined) await turn();
       sink.stream.end();
@@ -2204,7 +2342,7 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
       expect(await source.cancelled).toBeUndefined();
     });
 
-    // The callback did not wait before either: the pump has not started to read.
+    // The callback does not wait: the pump has not started to read.
     it("a destination that closes before the first read: the source is cancelled, and the callback does not wait", async () => {
       const source = webSource({ cancel: () => new Promise(() => {}) });
       // The pump waits for 'drain' before it takes the lock.
@@ -2222,15 +2360,15 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
       const ac = new AbortController();
       const promise = pipelineP(source.stream, nodeSink().stream, { signal: ac.signal });
       const real = globalThis.setImmediate;
+      // Not in a `finally`: a test that times out does not reach it.
+      onTestFinished(() => {
+        globalThis.setImmediate = real;
+      });
       // As fake timers do.
       globalThis.setImmediate = () => {};
-      try {
-        ac.abort();
-        expect(await settled(promise)).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
-        expect(await source.cancelled).toBeUndefined();
-      } finally {
-        globalThis.setImmediate = real;
-      }
+      ac.abort();
+      expect(await settled(promise)).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      expect(await source.cancelled).toBeUndefined();
     });
 
     describe("the destination goes away while the source is idle", () => {
@@ -2308,7 +2446,7 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
         expect(await source.destroyed).toBe(err);
       });
 
-      // A node source gives this on main and in node. A web source resolved there when it ended later.
+      // Node gives this for a node source. For a web source, node resolves if the source ends later.
       it.each([
         ["Readable", () => new Readable({ read() {} })],
         ["ReadableStream", () => webSource().stream],
@@ -2343,16 +2481,43 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
         else expect(await settled(promise)).toMatchObject(expected);
       });
 
-      it("ReadableStream > WritableStream that is closed already", async () => {
-        const source = webSource();
-        const sink = webSink();
-        await sink.stream.close();
-        const { promise, resolve } = Promise.withResolvers();
-        pipeline(source.stream, sink.stream, resolve);
-        // What close() on a closed sink gives when the source ends.
-        expect(await promise).toMatchObject({ name: "TypeError", code: "ERR_INVALID_STATE" });
-        expect(await source.cancelled).toBeUndefined();
-      });
+      it.each([true, false])(
+        "ReadableStream > Writable that was destroyed with an error before the call, { end: %p }",
+        async end => {
+          const source = webSource();
+          const sink = nodeSink();
+          const closed = Promise.withResolvers();
+          sink.stream.on("error", () => {}).on("close", closed.resolve);
+          sink.stream.destroy(boom);
+          await closed.promise;
+          const promise = pipelineP(source.stream, sink.stream, { end });
+          expect(await settled(promise)).toBe(boom);
+          expect(await source.cancelled).toBeUndefined();
+        },
+      );
+
+      // A sink that closed before the call is not watched. As in node, the source decides.
+      it.each([
+        [true, { name: "TypeError", code: "ERR_INVALID_STATE" }],
+        [false, "resolved"],
+      ])(
+        "ReadableStream > WritableStream that is closed already, { end: %p }: the end of the source",
+        async (end, expected) => {
+          const source = webSource();
+          let cancelled = false;
+          source.cancelled.then(() => (cancelled = true));
+          const sink = webSink();
+          await sink.stream.close();
+          const promise = pipelineP(source.stream, sink.stream, { end });
+          // A pump that a closed sink stopped cancels its source in the next turn.
+          await turn();
+          await turn();
+          source.controller().close();
+          if (expected === "resolved") expect(await settled(promise)).toBe(expected);
+          else expect(await settled(promise)).toMatchObject(expected);
+          expect(cancelled).toBe(false);
+        },
+      );
     });
 
     // The error that a compose() of node streams emits when it is destroyed before its end.
@@ -2712,17 +2877,23 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
         expect(await reader.read()).toEqual({ done: false, value: Buffer.from("x") });
       });
 
-      it("{ end: false }: a signal does not wait for a destination that never reports its destroy", async () => {
-        const source = webSource();
-        const sink = nodeSink({ destroy() {} });
-        sink.stream.destroy();
-        const ac = new AbortController();
-        const promise = pipelineP(source.stream, sink.stream, { signal: ac.signal, end: false });
-        ac.abort();
-        // In node this end of the source is what lets the pump call back.
-        source.controller().close();
-        expect(await settled(promise)).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
-      });
+      it.each([
+        // In node the end of the source is what lets the pump call back.
+        ["the source ends", source => source.controller().close()],
+        ["the source stays idle", () => {}],
+      ])(
+        "{ end: false }: a signal does not wait for a destination that never reports its destroy, %s",
+        async (name, next) => {
+          const source = webSource();
+          const sink = nodeSink({ destroy() {} });
+          sink.stream.destroy();
+          const ac = new AbortController();
+          const promise = pipelineP(source.stream, sink.stream, { signal: ac.signal, end: false });
+          ac.abort();
+          next(source);
+          expect(await settled(promise)).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+        },
+      );
 
       it("a TransformStream whose writable is not a WritableStream is written through its getWriter()", async () => {
         const real = webSink();
@@ -2902,6 +3073,34 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
         client.destroy();
         expect(await done.promise).toMatchObject({ code: "ERR_STREAM_PREMATURE_CLOSE" });
         expect(await source.cancelled).toBeUndefined();
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+
+    // What node gives when the source ends after the response has closed, and when it ends on the same signal.
+    it.each([
+      ["the source stays idle", () => {}, { code: "ERR_STREAM_PREMATURE_CLOSE" }],
+      ["its owner closes the source on the same signal", s => s.controller().close(), { code: "ABORT_ERR" }],
+    ])("a signal into an http.ServerResponse: %s", async (name, next, expected) => {
+      const source = webSource();
+      const ac = new AbortController();
+      const done = Promise.withResolvers();
+      const server = createHttpServer((req, res) => {
+        res.writeHead(200);
+        res.write("first");
+        done.resolve(settled(pipelineP(source.stream, res, { signal: ac.signal })));
+      }).listen(0, "127.0.0.1");
+      try {
+        await once(server, "listening");
+        const client = connect(server.address().port, "127.0.0.1");
+        client.on("error", () => {});
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await once(client, "data");
+        ac.abort();
+        next(source);
+        expect(await done.promise).toMatchObject(expected);
       } finally {
         server.closeAllConnections();
         server.close();

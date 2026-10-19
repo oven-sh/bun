@@ -15332,10 +15332,9 @@ class V4c {
       expect(exitCode).toBe(1);
     });
 
-    test("reports errors for `new` with `@this`, a mismatched `@extends`, `@typedef {T=}` and JSDoc `const` assertions", async () => {
-      using dir = project({
-        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
-        "a.js": `export {};
+    const jsdocErrors = {
+      "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
+      "a.js": `export {};
 /** @template T */ class G0 { /** @param {T} v */ constructor(v) { this.v = v; } }
 class B0 {}
 // C1: \`new\` on a function with @this
@@ -15364,7 +15363,9 @@ const k2b = /** @satisfies {const} @type {const} */ (1);
 const k2c = /** @satisfies {const} */ (1);
 const k2d = /** @type {const} */ (/** @satisfies {Missing} */ (1));
 `,
-      });
+    };
+    test("reports errors for `new` with `@this`, a mismatched `@extends`, `@typedef {T=}` and JSDoc `const` assertions", async () => {
+      using dir = project(jsdocErrors);
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
         "a.js(2,63): error TS7006: Parameter 'v' implicitly has an 'any' type.
@@ -15383,6 +15384,21 @@ const k2d = /** @type {const} */ (/** @satisfies {Missing} */ (1));
         a.js(27,29): error TS2304: Cannot find name 'const'.
         a.js(28,51): error TS2304: Cannot find name 'Missing'.
         a.js(28,63): error TS1355: A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("syntax errors in one JavaScript file hide the JSDoc errors in another", async () => {
+      using dir = project({
+        ...jsdocErrors,
+        "k1.js": `export async function w() { const f = () => (await { a: 1 }); }\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "k1.js(1,52): error TS1005: ')' expected.
+        k1.js(1,57): error TS1003: Identifier expected.
+        k1.js(1,59): error TS1005: ':' expected.
+        k1.js(1,60): error TS1005: ',' expected."
       `);
       expect(exitCode).toBe(1);
     });

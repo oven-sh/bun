@@ -141,6 +141,10 @@ pub trait CalcValue:
     fn into_calc(self) -> Calc<Self>;
     /// Convert a `Calc<Self>` into `Self` if representable.
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self>;
+    /// `|self|`, when the sign is known before the value is resolved.
+    fn try_abs(&self) -> Option<Self> {
+        self.try_map(f32::abs)
+    }
 }
 
 impl<V: Clone> Clone for Calc<V> {
@@ -324,7 +328,7 @@ impl<V: CalcValue> Calc<V> {
                 // can we use stack fallback here if the common case is that there will be 1 argument?
                 Self::reduce_args(&mut reduced, Ordering::Less);
                 if reduced.len() == 1 {
-                    return Ok(reduced.swap_remove(0));
+                    return Ok(Self::single_argument(reduced.swap_remove(0)));
                 }
                 Ok(Calc::Function(Box::new(MathFunction::Min(reduced))))
             }
@@ -335,7 +339,7 @@ impl<V: CalcValue> Calc<V> {
                 // PERF: i don't like this additional allocation
                 Self::reduce_args(&mut reduced, Ordering::Greater);
                 if reduced.len() == 1 {
-                    return Ok(reduced.remove(0));
+                    return Ok(Self::single_argument(reduced.remove(0)));
                 }
                 Ok(Calc::Function(Box::new(MathFunction::Max(reduced))))
             }
@@ -456,8 +460,7 @@ impl<V: CalcValue> Calc<V> {
             CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, parse_ident),
             CalcUnit::Hypot => input.parse_nested_block(|i| {
                 let mut args = i.parse_comma_separated(|i| Self::parse_sum(i, parse_ident))?;
-                let val = Self::parse_hypot(&mut args)?;
-                if let Some(v) = val {
+                if let Some(v) = Self::parse_hypot(&mut args) {
                     return Ok(v);
                 }
                 Ok(Calc::Function(Box::new(MathFunction::Hypot(args))))
@@ -488,6 +491,14 @@ impl<V: CalcValue> Calc<V> {
                 }
                 Ok(Calc::Function(Box::new(MathFunction::Sign(v))))
             }),
+        }
+    }
+
+    /// Unlike lightningcss: a sum or a product is only valid CSS inside a math function.
+    fn single_argument(arg: Self) -> Self {
+        match arg {
+            Calc::Value(_) | Calc::Number(_) | Calc::Function(_) => arg,
+            _ => Calc::Function(Box::new(MathFunction::Calc(arg))),
         }
     }
 
@@ -831,38 +842,33 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    pub(crate) fn parse_hypot(args: &mut [Self]) -> CssResult<Option<Self>> {
-        if args.len() == 1 {
-            let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
-            return Ok(Some(v));
+    /// Folds `hypot()` into `args[0]` and returns it. `None` leaves `args` as parsed.
+    pub(crate) fn parse_hypot(args: &mut [Self]) -> Option<Self> {
+        let (first, rest) = args.split_first_mut()?;
+        match first {
+            Calc::Number(a) => {
+                let sum = rest.iter().try_fold(square(*a), |sum, arg| match arg {
+                    Calc::Number(b) => Some(sum + square(*b)),
+                    _ => None,
+                })?;
+                *a = sum.sqrt() as f32;
+            }
+            Calc::Value(a) => {
+                // Unlike lightningcss: each argument is squared in the unit they all convert to.
+                let unit = rest.iter().try_fold(a.try_abs()?, |unit, arg| match arg {
+                    Calc::Value(b) => unit.try_op(&**b, (), |_, v, _| v),
+                    _ => None,
+                })?;
+                let squared = |v: &V| unit.try_op_to(v, (), |_, _, v| square(v));
+                let sum = rest.iter().try_fold(squared(&**a)?, |sum, arg| match arg {
+                    Calc::Value(b) => Some(sum + squared(&**b)?),
+                    _ => None,
+                })?;
+                **a = unit.try_op(&unit, (), |_, _, _| sum.sqrt() as f32)?;
+            }
+            _ => return None,
         }
-
-        if args.len() == 2 {
-            return Ok(Self::apply_op(&args[0], &args[1], (), |_, a, b| {
-                hypot((), a, b)
-            }));
-        }
-
-        let mut i: usize = 0;
-        let Some(first) = Self::apply_map(&args[0], powi2) else {
-            return Ok(None);
-        };
-        i += 1;
-        let mut errored = false;
-        let mut sum = first;
-        for arg in &args[i..] {
-            let Some(next) = Self::apply_op(&sum, arg, (), |_, a, b| a + b.powf(2.0)) else {
-                errored = true;
-                break;
-            };
-            sum = next;
-        }
-
-        if errored {
-            return Ok(None);
-        }
-
-        Ok(Self::apply_map(&sum, sqrtf32))
+        Some(core::mem::replace(first, Calc::Number(0.0)))
     }
 
     pub(crate) fn apply_op<OC: Copy>(
@@ -1377,16 +1383,9 @@ fn round(_: (), value: f32, to: f32, strategy: RoundingStrategy) -> f32 {
     }
 }
 
-fn hypot(_: (), a: f32, b: f32) -> f32 {
-    a.hypot(b)
-}
-
-fn powi2(v: f32) -> f32 {
-    v.powf(2.0)
-}
-
-fn sqrtf32(v: f32) -> f32 {
-    v.sqrt()
+/// The square of an f32 is exact in f64.
+fn square(v: f32) -> f64 {
+    f64::from(v) * f64::from(v)
 }
 
 /// Returns -1.0, 0.0, or 1.0 (NOT Rust's `f32::signum`, which
@@ -1614,6 +1613,11 @@ impl CalcValue for Percentage {
             Calc::Value(v) => Ok(*v),
             _ => Ok(Percentage { v: f32::NAN }),
         }
+    }
+    // Not part of a `DimensionPercentage` here, so the percentage is a number and its sign is known.
+    #[inline]
+    fn try_abs(&self) -> Option<Self> {
+        Some(Percentage { v: self.v.abs() })
     }
 }
 

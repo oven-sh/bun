@@ -8,7 +8,7 @@ let crc = 0;
 crc = Bun.hash.crc32(new Uint8Array([1, 2, 3]), crc);
 crc = Bun.hash.crc32(new Uint8Array([4, 5, 6]), crc);
 
-// The calls that docs/runtime/hashing.mdx prints. A 64-bit hash takes its seed as a number or a bigint.
+// The calls that docs/runtime/hashing.mdx prints. Every seeded hash takes its seed as a number or a bigint.
 expectType(Bun.hash("data", 1234)).is<bigint>();
 expectType(Bun.hash.wyhash("data", 1234)).is<bigint>();
 expectType(Bun.hash.crc32("data", 1234)).is<number>();
@@ -23,9 +23,13 @@ expectType(Bun.hash.murmur32v2("data", 1234)).is<number>();
 expectType(Bun.hash.murmur64v2("data", 1234)).is<bigint>();
 expectType(Bun.hash.rapidhash("data", 1234)).is<bigint>();
 
+expectType(Bun.hash.crc32("data", 1234n)).is<number>();
 expectType(Bun.hash.cityHash64("data", 1234n)).is<bigint>();
+expectType(Bun.hash.xxHash32("data", 1234n)).is<number>();
 expectType(Bun.hash.xxHash64("data", 1234n)).is<bigint>();
 expectType(Bun.hash.xxHash3("data", 1234n)).is<bigint>();
+expectType(Bun.hash.murmur32v3("data", 1234n)).is<number>();
+expectType(Bun.hash.murmur32v2("data", 1234n)).is<number>();
 expectType(Bun.hash.murmur64v2("data", 1234n)).is<bigint>();
 expectType(Bun.hash.rapidhash("data", 1234n)).is<bigint>();
 

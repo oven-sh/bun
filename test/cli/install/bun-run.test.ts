@@ -813,26 +813,25 @@ describe.concurrent("bun run", () => {
       ["npm run print -s && echo done -s", "$ bun run --silent print && echo done -s\n", "printed\ndone -s\n"],
       ["npm run print -s;echo done -s", "$ bun run --silent print;echo done -s\n", "printed\ndone -s\n"],
       ["npm run print -s || echo done -s", "$ bun run --silent print || echo done -s\n", "printed\n"],
+      [`echo "it's" && npm run -s print`, `$ echo "it's" && bun run --silent print\n`, "it's\nprinted\n"],
     ])("%s runs the script with --silent", async (start, rewritten, output) => {
       const { dir, stdout, stderr, exitCode } = await runStart(start);
       using _ = dir;
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: output, stderr: rewritten, exitCode: 0 });
     });
 
-    // An `npm run` among the words of the script is rewritten too, in front of `--` and behind it.
+    // A command among the words of the script is rewritten too, in front of `--` and behind it.
     // In front of `--`, a `-s` behind it is still a flag of the first `npm run`.
     it.each([
       ["npm run --silent print npm run print", "$ bun run --silent print bun run print\n"],
       ["npm run print npm run print -s", "$ bun run --silent print bun run print\n"],
       ["npm run -s print -- npm run print", "$ bun run --silent print -- bun run print\n"],
+      ["npm run -s print yarn print && echo done", "$ bun run --silent print bun run print && echo done\n"],
     ])("%s rewrites both commands", async (start, rewritten) => {
       const { dir, stdout, stderr, exitCode } = await runStart(start);
       using _ = dir;
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "printed bun run print\n",
-        stderr: rewritten,
-        exitCode: 0,
-      });
+      expect(stdout).toStartWith("printed bun run print\n");
+      expect({ stderr, exitCode }).toEqual({ stderr: rewritten, exitCode: 0 });
     });
 
     it.each([
@@ -848,10 +847,13 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
-    it("does not move `-s` in a quoted string", async () => {
-      const { dir, stdout, exitCode } = await runStart('echo "npm run -s print && npm run -s print"');
+    it.each([
+      ['echo "npm run -s print && npm run -s print"', "bun run -s print && bun run -s print\n"],
+      [`echo "it's" && echo 'npm run -s print && npm run -s print'`, "it's\nbun run -s print && bun run -s print\n"],
+    ])("%s does not move `-s` in a quoted string", async (start, output) => {
+      const { dir, stdout, exitCode } = await runStart(start);
       using _ = dir;
-      expect({ stdout, exitCode }).toEqual({ stdout: "bun run -s print && bun run -s print\n", exitCode: 0 });
+      expect({ stdout, exitCode }).toEqual({ stdout: output, exitCode: 0 });
     });
 
     it.each(["run --filter app start", "run --parallel start", "run --sequential start", "run --shell=bun start"])(

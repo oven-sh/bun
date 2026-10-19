@@ -268,8 +268,7 @@ fn append_npm_run_flags(
         return Ok(0);
     }
     // In a quoted string this can be one of several commands, and the one with the closing quote is not read.
-    let quoted =
-        strings::count_char(before, b'"') % 2 == 1 || strings::count_char(before, b'\'') % 2 == 1;
+    let quoted = ends_in_quoted_string(before);
 
     let mut flags: Vec<u8> = Vec::new();
     let mut rest: Vec<u8> = Vec::new();
@@ -342,9 +341,39 @@ fn append_npm_run_flags(
     let name_end = name_end.unwrap_or(rest.len());
     out.extend_from_slice(&flags);
     out.extend_from_slice(&rest[..name_end]);
-    // A command among the words behind the script's name is rewritten like any other text.
+    // A command among the words behind the name is rewritten like any other text. The space stands for the text that follows.
+    let text_follows = own.len() < args.len();
+    if text_follows {
+        rest.push(b' ');
+    }
     replace_package_manager_run(out, &rest[name_end..])?;
+    if text_follows {
+        debug_assert_eq!(out.last(), Some(&b' '));
+        out.pop();
+    }
     Ok(own.len())
+}
+
+/// Whether a shell is inside a `'...'` or `"..."` string at the end of `text`.
+fn ends_in_quoted_string(mut text: &[u8]) -> bool {
+    use bun_core::strings;
+
+    let mut quote = 0;
+    while let Some(at) = strings::index_of_any(text, b"'\"\\") {
+        let found = text[at];
+        text = &text[at + 1..];
+        if found == b'\\' {
+            // Between single quotes a backslash is a plain character.
+            if quote != b'\'' && !text.is_empty() {
+                text = &text[1..];
+            }
+        } else if quote == 0 {
+            quote = found;
+        } else if quote == found {
+            quote = 0;
+        }
+    }
+    quote != 0
 }
 
 /// Without a POSIX shell, this runs `bun exec --no-env-file`. Like `sh`, it doesn't add any `.env*`

@@ -176,6 +176,8 @@ describe.concurrent("a package.json that does not parse", () => {
     // A script can have such a name.
     ["child", ["run", "greet.dev"], withLine(`File not found "greet.dev"`)],
     ["child", ["run", "missing.js"], withLine(`Module not found "missing.js"`)],
+    // The `bun bake` that is built in does not take this flag.
+    ["child", ["--watch", "bake"], withLine(`"bun bake" reloads app/server.ts on its own. Remove --watch.`)],
   ])("in %s: bun %j", async (cwd, args, stderr) => {
     using dir = project({ "package.json": text });
     expect(await run(String(dir), cwd, args)).toEqual({ stdout: "", stderr, exitCode: 1 });
@@ -242,17 +244,19 @@ describe.concurrent("a package.json that does not parse", () => {
   // With no script, file or executable of that name, `bun bake` serves `app/server.ts`, and its runtime starts in the
   // process of `bun run`. The runtime says what the log still has when that file is loaded, before its immediate runs.
   // Not beside the other rows: a debug build then takes most of the time limit to start the server.
-  test.serial("bun bake says what is wrong with each file once", async () => {
+  test.serial("bun bake: the runtime does not say it again", async () => {
     using dir = tempDir("run-unparsable-package-json-bake", {
       "package.json": JSON.stringify({ name: "parent", scripts: { bake: "echo from-parent" } }),
       "child/package.json": text,
       "child/tsconfig.json": `{"compilerOptions": {"strict": true`,
       "child/app/server.ts": `export default { fetch: () => new Response("served") };\nsetImmediate(() => process.exit(0));`,
     });
+    // On Windows the process then starts again as the child of a watcher, which looks for the script again.
+    const said = isWindows ? `${error}\n${error}` : error;
     const { stdout, stderr, exitCode } = await run(String(dir), "child", ["bake", "--port=0"]);
     expect({ stdout: stdout.match(/^url: http:\/\/localhost:/m)?.[0] ?? stdout, stderr, exitCode }).toEqual({
       stdout: "url: http://localhost:",
-      stderr: `${error}\n1 | {"compilerOptions": {"strict": true\n                                      ^\nerror: Expected "}" but found end of file\n    at <dir>/child/tsconfig.json:1:35`,
+      stderr: `${said}\n1 | {"compilerOptions": {"strict": true\n                                      ^\nerror: Expected "}" but found end of file\n    at <dir>/child/tsconfig.json:1:35`,
       exitCode: 0,
     });
   });

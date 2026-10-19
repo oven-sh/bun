@@ -996,6 +996,7 @@ impl<'s> Program<'s> {
             recent_type_params: Box::new(std::array::from_fn(|_| {
                 std::cell::Cell::new(((FileId(u32::MAX), TypeParamId(0)), TypeId::UNRESOLVED))
             })),
+            recent_name_references: ((FileId(u32::MAX), TypeNodeId::NONE), MapperId::IDENTITY),
             recent_steps: Box::new(std::array::from_fn(|_| {
                 std::cell::Cell::new(((FileId(u32::MAX), FnId(0), MapperId::IDENTITY), None))
             })),
@@ -1864,6 +1865,8 @@ pub struct Checker<'p, 's> {
     recent_sig_type_params: Box<[(SigId, &'p [TypeId]); RECENT_SIGS]>,
     /// The most recent results of `type_param`, indexed by the low bits of the type parameter's number.
     recent_type_params: Box<[std::cell::Cell<((FileId, TypeParamId), TypeId)>; RECENT_TYPE_PARAMS]>,
+    /// The `as` clause that `mapper_for_name` was last asked about, and its `identity_mapper_for_node`.
+    recent_name_references: ((FileId, TypeNodeId), MapperId),
     /// The most recent results of `steps_of_sig_mapper` for functions with type parameters, indexed by the low bits of
     /// the mapper id.
     recent_steps: Box<[std::cell::Cell<instantiate::Steps>; RECENT_SIGS]>,

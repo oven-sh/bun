@@ -65,6 +65,37 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().mapper_of(&pairs)
     }
 
+    /// Returns `mapper_with_pair(mapper, param, key)` without the type parameters that the `as` clause of the mapped type
+    /// at `node` cannot reference (`isTypeParameterPossiblyReferenced`). `mapper` and `param`: of the mapped type.
+    ///
+    /// The name is the same with either mapper. In `{ [K in keyof T as Camel<K>]: T[K] }` it depends on the key only, so
+    /// with this one every instantiation of the mapped type finds the names that the first one made.
+    fn mapper_for_name(
+        &mut self,
+        (file, node): (FileId, TypeNodeId),
+        mapper: MapperId,
+        param: TypeId,
+        key: TypeId,
+    ) -> MapperId {
+        let name = self.mapped_decl(file, node).name_ty;
+        let referenced = match self.recent_name_references {
+            (of, referenced) if of == (file, name) => referenced,
+            _ => {
+                let scope = self.bound(file).type_scope[name.idx()];
+                let referenced = self.identity_mapper_for_node(file, scope, name);
+                self.recent_name_references = ((file, name), referenced);
+                referenced
+            }
+        };
+        let types = self.types();
+        let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = (types.mapping(mapper).iter())
+            .filter(|pair| pair.0 == param || types.map(referenced, pair.0).is_some())
+            .copied()
+            .collect();
+        pairs.push((param, key));
+        types.mapper_of(&pairs)
+    }
+
     /// Returns `Prop::mapper`, with the key added if `prop` stores its key separately (`Types::key_apart`). Use this to
     /// read the mapper of any property that may belong to a mapped type, except to compare two properties.
     pub(super) fn mapper_of_prop(&self, prop: &Prop) -> MapperId {
@@ -422,7 +453,7 @@ impl<'p, 's> Checker<'p, 's> {
         for key in keys {
             let name = match name_type {
                 Some((param, declared)) => {
-                    let with_key = self.mapper_with_pair(mapper, param, key);
+                    let with_key = self.mapper_for_name((file, node), mapper, param, key);
                     names += 1;
                     is_idle &= self.is_mapper_idle(with_key);
                     self.instantiate(declared, with_key)
@@ -3165,8 +3196,8 @@ impl<'p, 's> Checker<'p, 's> {
                 |c: &Self| created.unwrap_or_else(|| c.mapper_with_pair(mapper, param, key));
             let names = match name_declared {
                 Some(declared) => {
-                    let with_key = with_key(self);
-                    self.instantiate(declared, with_key)
+                    let for_name = self.mapper_for_name((file, node), mapper, param, key);
+                    self.instantiate(declared, for_name)
                 }
                 None => key,
             };

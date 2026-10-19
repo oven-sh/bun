@@ -5,7 +5,8 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import { describeWithContainer } from "harness";
+import { bunEnv, bunExe, describeWithContainer } from "harness";
+import { totalmem } from "node:os";
 
 describeWithContainer("postgres", { image: "postgres_plain", concurrent: true }, container => {
   const connect = (options: { prepare?: boolean } = {}) =>
@@ -178,4 +179,54 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     expect(rejected).toBe("ERR_INVALID_ARG_TYPE");
     expect(await sql`select encode(body, 'hex') as hex from files order by id`).toEqual([{ hex: "01" }, { hex: "02" }]);
   });
+
+  // The length of a parameter is a signed Int32 on the wire, so 2^31 bytes is
+  // one more than a parameter holds. The value is copied once into the write
+  // buffer (2 GiB resident, twice that when it is sent), so it runs in a child
+  // process, and only where that much memory is spare.
+  test.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
+    "a bytea value of 2^31 bytes is too long for a parameter and is not sent",
+    async () => {
+      await container.ready;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const sql = new Bun.SQL({
+            url: "postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test",
+            max: 1,
+          });
+          const settle = query =>
+            query.then(rows => [...rows], e => ({ code: e.code, message: e.message, hint: e.hint }));
+          const bind = await settle(sql\`select octet_length(\${new Uint8Array(2 ** 31)}::bytea) as n\`);
+          // The connection is gone with its half-written Bind. The pool opens the next one.
+          const next = await settle(sql\`select 2 as x\`);
+          console.log(JSON.stringify({ bind, next }));
+          await sql.close();
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout:
+          JSON.stringify({
+            bind: {
+              code: "ERR_POSTGRES_INVALID_MESSAGE_LENGTH",
+              message: "Failed to write query",
+              hint: "The query or its parameters are longer than 2147483647 bytes, the limit of one PostgreSQL protocol message. Send the data in smaller parts.",
+            },
+            next: [{ x: 2 }],
+          }) + "\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    60_000,
+  );
 });

@@ -55,7 +55,7 @@ pub struct MySQLConnection {
 
     write_buffer: OffsetByteList,
     read_buffer: OffsetByteList,
-    last_message_start: u32,
+    last_message_start: usize,
     /// The one behind the last packet that was read.
     sequence_id: u8,
     /// The reply to the head of the queue has begun: its next packet has `sequence_id`. The first
@@ -267,8 +267,7 @@ impl MySQLConnection {
         if wrote > 0 {
             let wrote_usize = usize::try_from(wrote).expect("int cast");
             SocketMonitor::write(&chunk[0..wrote_usize]);
-            self.write_buffer
-                .consume(u32::try_from(wrote_usize).expect("int cast"));
+            self.write_buffer.consume(wrote_usize);
         }
     }
 
@@ -1514,7 +1513,7 @@ impl Reader {
 
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn last_message_start(&self) -> &mut u32 {
+    fn last_message_start(&self) -> &mut usize {
         // SAFETY: same justification as `read_buffer()` — disjoint field
         // projection from a non-null connection pointer that outlives the
         // `Reader`; `process_packets` does not access `last_message_start`
@@ -1529,7 +1528,7 @@ impl ReaderContext for Reader {
     }
 
     fn set_offset_from_start(self, offset: usize) {
-        self.read_buffer().head = *self.last_message_start() + (offset as u32);
+        self.read_buffer().head = *self.last_message_start() + offset;
     }
 
     fn peek(&self) -> &[u8] {

@@ -82,7 +82,7 @@ pub struct PostgresSQLConnection {
 
     pub(crate) write_buffer: JsCell<OffsetByteList>,
     read_buffer: JsCell<OffsetByteList>,
-    last_message_start: Cell<u32>,
+    last_message_start: Cell<usize>,
     pub(crate) requests: JsCell<PostgresRequest::Queue>,
     /// number of requests in flight whose Bind and Execute are written
     pub(crate) pipelined_requests: Cell<u32>,
@@ -474,9 +474,9 @@ impl PostgresSQLConnection {
         });
         debug!("flushData: wrote {}/{} bytes", wrote, chunk.len());
         if wrote > 0 {
-            SocketMonitor::write(&chunk[..usize::try_from(wrote).expect("int cast")]);
-            self.write_buffer
-                .with_mut(|b| b.consume(u32::try_from(wrote).expect("int cast")));
+            let wrote = usize::try_from(wrote).expect("int cast");
+            SocketMonitor::write(&chunk[..wrote]);
+            self.write_buffer.with_mut(|b| b.consume(wrote));
         }
     }
 
@@ -540,6 +540,10 @@ impl PostgresSQLConnection {
     }
 
     pub(crate) fn fail(&self, message: &[u8], err: AnyPostgresError) {
+        self.fail_with_hint(message, None, err);
+    }
+
+    fn fail_with_hint(&self, message: &[u8], hint: Option<&[u8]>, err: AnyPostgresError) {
         debug!(
             "failed: {}: {}",
             bstr::BStr::new(message),
@@ -548,7 +552,12 @@ impl PostgresSQLConnection {
 
         let global_object = self.global();
 
-        self.fail_with_js_value(postgres_error_to_js(global_object, Some(message), err));
+        self.fail_with_js_value(postgres_error_to_js_with_hint(
+            global_object,
+            Some(message),
+            hint,
+            err,
+        ));
     }
 
     pub(crate) fn on_close(&self) {
@@ -1705,7 +1714,7 @@ impl protocol::ReaderContext for Reader {
 
     fn skip(&mut self, count: usize) {
         self.connection.read_buffer.with_mut(|buf| {
-            buf.head = (buf.head + (count as u32)).min(buf.byte_list.len() as u32);
+            buf.head = buf.head.saturating_add(count).min(buf.byte_list.len());
         });
     }
 
@@ -1812,7 +1821,13 @@ impl PostgresSQLConnection {
 
     /// A message that was not written to its end is in the buffer: the stream cannot go on.
     fn fail_write(&self, err: AnyPostgresError) -> bool {
-        self.fail(b"Failed to write query", err);
+        let hint: Option<&[u8]> = match err {
+            AnyPostgresError::InvalidMessageLength => Some(
+                b"The query or its parameters are longer than 2147483647 bytes, the limit of one PostgreSQL protocol message. Send the data in smaller parts.",
+            ),
+            _ => None,
+        };
+        self.fail_with_hint(b"Failed to write query", hint, err);
         false
     }
 

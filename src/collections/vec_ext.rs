@@ -535,7 +535,7 @@ impl crate::pool::ObjectPoolType for Vec<u8> {
 
 #[derive(Default)]
 pub struct OffsetByteList {
-    pub head: u32,
+    pub head: usize,
     pub byte_list: Vec<u8>,
 }
 
@@ -546,12 +546,12 @@ impl OffsetByteList {
     }
 
     pub fn remaining(&self) -> &[u8] {
-        &self.byte_list[self.head as usize..]
+        &self.byte_list[self.head..]
     }
 
-    pub fn consume(&mut self, bytes: u32) {
+    pub fn consume(&mut self, bytes: usize) {
         self.head = self.head.saturating_add(bytes);
-        let head = self.head as usize;
+        let head = self.head;
         if head >= self.byte_list.len() {
             self.head = 0;
             self.byte_list.clear();
@@ -563,8 +563,8 @@ impl OffsetByteList {
         }
     }
 
-    pub fn len(&self) -> u32 {
-        self.byte_list.len() as u32 - self.head
+    pub fn len(&self) -> usize {
+        self.byte_list.len() - self.head
     }
 
     pub fn clear_and_free(&mut self) {
@@ -608,5 +608,90 @@ pub fn prepend_from<T, A: Allocator, B: Allocator>(dst: &mut Vec<T, A>, src: &mu
         src.set_len(0);
         // …then claim it in `dst`.
         dst.set_len(dst_len + src_len);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OffsetByteList;
+
+    // `vec![0; n]` is a zeroed allocation and these tests write a few bytes of
+    // it, so a list over 4 GiB costs address space, not memory.
+    fn zeroed_ending_in(len: usize, tail: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0u8; len];
+        bytes[len - tail.len()..].copy_from_slice(tail);
+        bytes
+    }
+
+    // The length first: a wrong cursor leaves gigabytes, and `assert_eq!` would format them.
+    #[track_caller]
+    fn assert_remaining(list: &OffsetByteList, expected: &[u8]) {
+        assert_eq!(list.remaining().len(), expected.len());
+        assert_eq!(list.remaining(), expected);
+        assert_eq!(list.len(), expected.len());
+    }
+
+    #[test]
+    fn offset_byte_list_len_at_2_pow_32() {
+        let list = OffsetByteList {
+            head: 0,
+            byte_list: vec![0u8; 1 << 32],
+        };
+        assert_eq!(list.len(), 1 << 32);
+    }
+
+    #[test]
+    fn offset_byte_list_head_above_u32_max() {
+        const HEAD: usize = u32::MAX as usize + 10;
+        let mut list = OffsetByteList {
+            head: HEAD,
+            byte_list: zeroed_ending_in(HEAD + 5, b"+OK\r\n"),
+        };
+        assert_remaining(&list, b"+OK\r\n");
+        list.consume(2);
+        assert_remaining(&list, b"K\r\n");
+    }
+
+    #[test]
+    fn offset_byte_list_consume_more_than_u32_max() {
+        const REPLY: usize = u32::MAX as usize + 29;
+        let mut list = OffsetByteList {
+            head: 0,
+            byte_list: zeroed_ending_in(REPLY + 5, b"+OK\r\n"),
+        };
+        assert_eq!(list.len(), REPLY + 5);
+        list.consume(REPLY);
+        assert_remaining(&list, b"+OK\r\n");
+    }
+
+    #[test]
+    fn offset_byte_list_head_plus_consume_past_u32_max() {
+        const REPLY: usize = u32::MAX as usize - 50;
+        let mut list = OffsetByteList {
+            head: 100,
+            byte_list: zeroed_ending_in(100 + REPLY + 5, b"+OK\r\n"),
+        };
+        list.consume(REPLY);
+        assert_remaining(&list, b"+OK\r\n");
+    }
+
+    #[test]
+    fn offset_byte_list_consume_keeps_or_compacts() {
+        let mut list = OffsetByteList {
+            head: 0,
+            byte_list: b"0123456789".to_vec(),
+        };
+        // Less than half is consumed: the bytes stay where they are.
+        list.consume(3);
+        assert_eq!((list.head, list.byte_list.len()), (3, 10));
+        assert_remaining(&list, b"3456789");
+        // Half is consumed: the rest moves to the front.
+        list.consume(2);
+        assert_eq!((list.head, list.byte_list.len()), (0, 5));
+        assert_remaining(&list, b"56789");
+        // More than there is: the list is empty.
+        list.consume(usize::MAX);
+        assert_eq!((list.head, list.byte_list.len()), (0, 0));
+        assert_remaining(&list, b"");
     }
 }

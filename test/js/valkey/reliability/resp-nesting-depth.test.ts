@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import net from "net";
+import { once } from "node:events";
 
 /**
  * Count the number of complete RESP commands in a buffer.
@@ -307,6 +308,89 @@ describe("Valkey: RESP line-terminated replies (>512KB)", () => {
       server.close();
     }
   });
+});
+
+// The client keeps a reply in its read buffer until the whole reply is there,
+// so the only input that moves a read offset past 2^32 is one reply of that
+// size, sent over the socket. Its bulk strings are the values of a RESP3
+// attribute, which the client parses and then drops: the reply is resident
+// twice (read buffer and parsed values, about 9 GiB) and no 4 GiB value reaches
+// JS. It runs in a child process, and only where that much memory is free: the
+// lanes with 16 GiB run database containers beside the tests, so their total
+// does not say it. Windows commits the whole capacity of the read buffer,
+// which takes more.
+describe.skipIf(isWindows || process.availableMemory() < 12 * 1024 ** 3)("Valkey: RESP reply larger than 4 GiB", () => {
+  test("resolves, and so does the reply pipelined behind it", async () => {
+    const megabyte = Buffer.alloc(1024 * 1024, "x");
+    const bulkLength = 512 * megabyte.length; // the longest bulk string the client accepts
+    let sent = 0;
+
+    const server = net.createServer(socket => {
+      const write = async (data: string | Buffer) => {
+        sent += data.length;
+        if (!socket.write(data)) await once(socket, "drain").catch(() => {});
+      };
+      let greeted = false;
+      let replied = false;
+      socket.on("error", () => {});
+      socket.on("data", async () => {
+        if (!greeted) {
+          greeted = true;
+          socket.write("+OK\r\n"); // HELLO
+          return;
+        }
+        if (replied) return;
+        replied = true;
+        // GET: an attribute of 8 pairs ("k", 512 MiB), then the reply itself.
+        await write("|8\r\n");
+        for (let i = 0; i < 8 && !socket.destroyed; i++) {
+          await write(`$1\r\nk\r\n$${bulkLength}\r\n`);
+          for (let left = bulkLength; left > 0 && !socket.destroyed; left -= megabyte.length) {
+            await write(megabyte);
+          }
+          await write("\r\n");
+        }
+        // In one write with the reply to PING, which the client sent with GET: the
+        // bytes of the next reply are in the read buffer when this one is consumed.
+        await write("$4\r\ntail\r\n+PONG\r\n");
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://127.0.0.1:${(server.address() as net.AddressInfo).port}", {
+            autoReconnect: false,
+            enableAutoPipelining: true,
+          });
+          await client.connect();
+          const [reply, next] = await Promise.all([client.send("GET", ["k"]), client.send("PING", [])]);
+          console.log(JSON.stringify({ reply, next, bufferedAmount: client.bufferedAmount }));
+          client.close();
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: `{"reply":"tail","next":"PONG","bufferedAmount":0}\n`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+      expect(sent).toBe(2 ** 32 + 189);
+    } finally {
+      server.close();
+    }
+  }, 120_000);
 });
 
 describe("Valkey: RESP push frame routing", () => {

@@ -1728,14 +1728,14 @@ The client raises these errors while it decodes a result, after the server ran t
 
 ### PostgreSQL Protocol Errors
 
-| Protocol Errors                         | Description                 |
-| --------------------------------------- | --------------------------- |
-| `ERR_POSTGRES_EXPECTED_REQUEST`         | Expected client request     |
-| `ERR_POSTGRES_EXPECTED_STATEMENT`       | Expected prepared statement |
-| `ERR_POSTGRES_INVALID_BACKEND_KEY_DATA` | Invalid backend key data    |
-| `ERR_POSTGRES_INVALID_MESSAGE`          | Invalid protocol message    |
-| `ERR_POSTGRES_INVALID_MESSAGE_LENGTH`   | Invalid message length      |
-| `ERR_POSTGRES_UNEXPECTED_MESSAGE`       | Unexpected message type     |
+| Protocol Errors                         | Description                                                                                                                                                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ERR_POSTGRES_EXPECTED_REQUEST`         | Expected client request                                                                                                                                                                          |
+| `ERR_POSTGRES_EXPECTED_STATEMENT`       | Expected prepared statement                                                                                                                                                                      |
+| `ERR_POSTGRES_INVALID_BACKEND_KEY_DATA` | Invalid backend key data                                                                                                                                                                         |
+| `ERR_POSTGRES_INVALID_MESSAGE`          | Invalid protocol message                                                                                                                                                                         |
+| `ERR_POSTGRES_INVALID_MESSAGE_LENGTH`   | Invalid message length. With a `hint`, the query or its parameters are longer than 2,147,483,647 bytes, the limit of one protocol message. Bun does not send the query and closes the connection |
+| `ERR_POSTGRES_UNEXPECTED_MESSAGE`       | Unexpected message type                                                                                                                                                                          |
 
 ### PostgreSQL Transaction Errors
 

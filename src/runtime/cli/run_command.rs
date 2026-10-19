@@ -3392,8 +3392,8 @@ impl RemoteImageDownload {
         mut result: bun_http::HTTPClientResult<'_>,
     ) {
         // SAFETY: `this` is the allocation `prefetch_remote_images` made for
-        // this request. After `HTTPThread::schedule` only this callback
-        // reaches it, and the HTTP thread runs one callback at a time.
+        // this request. From `HTTPThread::schedule` on, only the HTTP thread
+        // reaches it, and only this callback touches these fields.
         let (batch, keep_body, body) =
             unsafe { (&*(*this).batch, &mut (*this).keep_body, &mut (*this).body) };
 
@@ -3416,8 +3416,9 @@ impl RemoteImageDownload {
             return;
         }
 
-        // SAFETY: this is the request's last callback, so nothing reaches the
-        // allocation after it, and the borrows above are not used again.
+        // SAFETY: this is the request's last callback. The HTTP thread made
+        // its last access to the allocation before the call, and the borrows
+        // above are not used again.
         let RemoteImageDownload {
             async_http,
             batch,

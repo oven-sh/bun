@@ -421,11 +421,19 @@ async function renderOnKitty(
   images: [alt: string, url: string][],
   options: {
     env?: Record<string, string>;
+    /** A paragraph after the images. */
+    text?: string;
     /** Runs while bun renders. */
     meanwhile?: (terminal: Bun.Terminal, proc: Bun.Subprocess) => Promise<void>;
   } = {},
 ) {
-  const doc = [`# ${FIRST_LINE}`, ...images.map(([alt, url]) => `![${alt}](${url})`), LAST_LINE, ""].join("\n\n");
+  const doc = [
+    `# ${FIRST_LINE}`,
+    ...images.map(([alt, url]) => `![${alt}](${url})`),
+    ...(options.text ? [options.text] : []),
+    LAST_LINE,
+    "",
+  ].join("\n\n");
   using dir = tempDir("md-remote-img-", { "doc.md": doc, "tmp/keep": "" });
   const tmp = join(String(dir), "tmp");
   const decoder = new TextDecoder();
@@ -617,8 +625,9 @@ describe.concurrent("bun <file.md> remote images", () => {
     pastDeadline,
   );
 
-  // Ctrl-S stops the output of a POSIX terminal, so bun blocks when it prints and cannot
-  // exit. The requests must end at the deadline all the same, not when bun exits.
+  // Ctrl-S stops the output of a POSIX terminal. The document is more than a stopped
+  // terminal takes into its queue, so bun blocks when it prints and cannot exit. The
+  // requests must end at the deadline all the same, not when bun exits.
   test.skipIf(!isPosix)(
     "the requests that miss the deadline are aborted",
     async () => {
@@ -638,6 +647,7 @@ describe.concurrent("bun <file.md> remote images", () => {
       const result = await renderOnKitty(
         stalled.map((path, i): [string, string] => [`ALT-${i}`, `http://127.0.0.1:${host.port}${path}`]),
         {
+          text: Buffer.alloc(64 * 1024, "text that the stopped terminal does not take ").toString(),
           async meanwhile(terminal, proc) {
             terminal.write("\x13");
             await allEnded.promise;

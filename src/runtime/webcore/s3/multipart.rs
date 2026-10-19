@@ -782,7 +782,8 @@ impl MultiPartUpload {
                 let rolled_back = self_.rollback_multi_part_request();
                 r.and(rolled_back)
             }
-            S3CommitResult::Success => {
+            // Released behavior, not a rule: the writer commits on an answer that nothing read as a result.
+            S3CommitResult::Success(_) | S3CommitResult::Unrecognized => {
                 self_.state.set(State::Finished);
                 // The deref must run after the callback:
                 let r =

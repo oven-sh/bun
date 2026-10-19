@@ -1560,6 +1560,12 @@ declare module "bun" {
     /**
      * Complete a multipart upload: assemble the uploaded parts into the file.
      *
+     * Rejects with `InvalidResponse` when S3 answers 200 with a body that is
+     * neither a `<CompleteMultipartUploadResult>` nor an `<Error>` document,
+     * or answers 206. The upload can be complete in that case: call this
+     * method again. An `<Error>` document rejects with its code. Other
+     * statuses reject as S3 errors.
+     *
      * @param path The path to the file in the bucket
      * @param uploadId The id from {@link createMultipartUpload}
      * @param parts The uploaded parts, each with the `ETag` header its upload returned
@@ -1583,6 +1589,12 @@ declare module "bun" {
 
     /**
      * Complete a multipart upload: assemble the uploaded parts into the file.
+     *
+     * Rejects with `InvalidResponse` when S3 answers 200 with a body that is
+     * neither a `<CompleteMultipartUploadResult>` nor an `<Error>` document,
+     * or answers 206. The upload can be complete in that case: call this
+     * method again. An `<Error>` document rejects with its code. Other
+     * statuses reject as S3 errors.
      *
      * @param path The path to the file in the bucket
      * @param uploadId The id from {@link createMultipartUpload}

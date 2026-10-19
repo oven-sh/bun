@@ -553,19 +553,22 @@ impl S3Ext for S3 {
                 // SAFETY: opaque_self was created via heap::into_raw(Box::new(..)) below.
                 let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                 let global_object = self_.global.get();
-                match result {
-                    S3CommitResult::Success => {
-                        self_.promise.resolve(global_object, JSValue::UNDEFINED)
+                let err = match result {
+                    S3CommitResult::Success(_) => {
+                        return self_.promise.resolve(global_object, JSValue::UNDEFINED);
                     }
-                    S3CommitResult::Failure(err) => {
-                        let err_val = err.to_js_with_async_stack(
-                            global_object,
-                            self_.store.get_path(),
-                            self_.promise.get(),
-                        );
-                        self_.promise.reject(global_object, err_val)
-                    }
-                }
+                    S3CommitResult::Unrecognized => S3Error {
+                        code: b"InvalidResponse",
+                        message: b"CompleteMultipartUpload response is not a 200 with a <CompleteMultipartUploadResult> document",
+                    },
+                    S3CommitResult::Failure(err) => err,
+                };
+                let err_val = err.to_js_with_async_stack(
+                    global_object,
+                    self_.store.get_path(),
+                    self_.promise.get(),
+                );
+                self_.promise.reject(global_object, err_val)
             }
         }
 

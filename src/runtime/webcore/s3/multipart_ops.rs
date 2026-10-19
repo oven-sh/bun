@@ -87,6 +87,26 @@ pub(crate) fn parse_initiate_result(body: &[u8]) -> Option<UploadId> {
     .and_then(|id| UploadId::parse(&id))
 }
 
+/// Proof that a body was read as a `<CompleteMultipartUploadResult>` document.
+pub(crate) struct Completed(());
+
+/// What the body of a 200 answer to CompleteMultipartUpload is.
+pub(crate) enum CompleteResponse {
+    Completed(Completed),
+    Error,
+    Unrecognized,
+}
+
+/// S3 sends the 200 status line first, so only the body says whether the file exists.
+pub(crate) fn read_complete_response(body: &[u8]) -> CompleteResponse {
+    xml_response::parse(body, |root| match root.name {
+        b"CompleteMultipartUploadResult" => CompleteResponse::Completed(Completed(())),
+        b"Error" => CompleteResponse::Error,
+        _ => CompleteResponse::Unrecognized,
+    })
+    .unwrap_or(CompleteResponse::Unrecognized)
+}
+
 /// One uploaded part, as CompleteMultipartUpload lists it.
 pub(crate) struct UploadPartResult {
     pub(crate) number: u16,

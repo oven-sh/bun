@@ -1579,6 +1579,44 @@ describe.concurrent("s3 missing credentials", () => {
   });
 });
 
+// Answers to CompleteMultipartUpload. S3 sends the 200 status line first and whitespace while it
+// assembles the file, so only the body says how it ended. The last column: "result" (the file
+// exists), "unread" (nothing says that it does), or the code of the error that the answer is.
+const completeResult =
+  '<?xml version="1.0" encoding="UTF-8"?>\n<CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Location>http://b.s3.amazonaws.com/k</Location><Bucket>b</Bucket><Key>k</Key><ETag>"3858f62230ac3c915f300c664312c11f-1"</ETag></CompleteMultipartUploadResult>';
+const completeError =
+  '<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>';
+const completeAnswers = [
+  ["the result", 200, completeResult, "result"],
+  ["whitespace, then the result", 200, " \n \n" + completeResult, "result"],
+  ["an Error document", 200, completeError, "InternalError"],
+  ["whitespace, then an Error document", 200, " \n \n" + completeError, "InternalError"],
+  ["an empty body", 200, "", "unread"],
+  ["whitespace alone", 200, " \n \n ", "unread"],
+  ["an Error document that is cut off", 200, completeError.slice(0, 70), "unread"],
+  ["a result that is cut off", 200, completeResult.slice(0, 120), "unread"],
+  ["an HTML page", 200, "<html><body><h1>502 Bad Gateway</h1></body></html>", "unread"],
+  ["JSON", 200, '{"ok":true}', "unread"],
+  [
+    "the answer to another call",
+    200,
+    "<InitiateMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><UploadId>u</UploadId></InitiateMultipartUploadResult>",
+    "unread",
+  ],
+  ["status 206 and the result", 206, completeResult, "unread"],
+  ["status 206 and an Error document", 206, completeError, "unread"],
+  ["status 206 and an empty body", 206, "", "unread"],
+  ["status 204", 204, null, "UnknownError"],
+  ["status 201 and the result", 201, completeResult, "UnknownError"],
+  [
+    "status 404 and NoSuchUpload",
+    404,
+    "<Error><Code>NoSuchUpload</Code><Message>The specified upload does not exist.</Message></Error>",
+    "NoSuchUpload",
+  ],
+  ["status 500 and an empty body", 500, "", "UnknownError"],
+] as const;
+
 describe("multipart upload primitives", () => {
   // The browser-driven flow: the server creates the upload and presigns one
   // UploadPart URL per part, the client PUTs the parts, the server completes.
@@ -1672,6 +1710,39 @@ describe("multipart upload primitives", () => {
     } finally {
       await client.abortMultipartUpload(key, uploadId);
     }
+  });
+
+  // The method resolves only when it read the result. The writer test below reads the same answers.
+  it.each(completeAnswers)("complete, answered with %s", async (_, status, body, outcome) => {
+    let requests = 0;
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        requests++;
+        return new Response(body, { status });
+      },
+    });
+    const options = { ...credentials, endpoint: server.url.href };
+    const parts = [{ partNumber: 1, etag: '"e"' }];
+    for (const complete of [
+      () => new S3Client(options).completeMultipartUpload("k", "u", parts),
+      () => S3Client.completeMultipartUpload("k", "u", parts, options),
+    ]) {
+      if (outcome === "result") {
+        expect(await complete()).toBeUndefined();
+      } else if (outcome === "unread") {
+        await expect(complete()).rejects.toMatchObject({
+          name: "S3Error",
+          code: "InvalidResponse",
+          message: "CompleteMultipartUpload response is not a 200 with a <CompleteMultipartUploadResult> document",
+        });
+      } else {
+        await expect(complete()).rejects.toMatchObject({ name: "S3Error", code: outcome });
+      }
+    }
+    // One request per call: a complete that rejects is not sent again.
+    expect(requests).toBe(2);
   });
 
   it("static forms take the credentials as the last argument", async () => {
@@ -2188,6 +2259,82 @@ describe("s3 multipart upload id validation", () => {
       code: "UnknownError",
       message: "Failed to initiate multipart upload",
     });
+  });
+});
+
+// What the writer does with each answer to its own CompleteMultipartUpload. It commits on the nine
+// "unread" answers below: that is what released versions do, not a rule.
+// `S3Client.completeMultipartUpload` rejects them: see "complete, answered with".
+describe("s3 writer commit", () => {
+  const part = Buffer.alloc(5 * 1024 * 1024, "a");
+  const cutOffError = "an Error document that is cut off";
+  const committed = completeAnswers.filter(
+    ([name, , , outcome]) => (outcome === "result" || outcome === "unread") && name !== cutOffError,
+  );
+  const failed = completeAnswers.filter(([, , , outcome]) => outcome !== "result" && outcome !== "unread");
+
+  // A writer with one part uploaded, and the requests that the mock S3 gets after the part.
+  function onePartWriter(status: number, body: string | null, retry: number) {
+    const requests: string[] = [];
+    const aborted = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        const query = new URL(req.url).searchParams;
+        if (req.method === "POST" && query.has("uploads")) {
+          return new Response(
+            "<InitiateMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><UploadId>u</UploadId></InitiateMultipartUploadResult>",
+          );
+        }
+        if (req.method === "PUT") return new Response(undefined, { headers: { ETag: '"etag"' } });
+        if (req.method === "POST") {
+          requests.push("complete");
+          return new Response(body, { status });
+        }
+        if (req.method === "HEAD") {
+          requests.push("exists");
+          return new Response(undefined, { status: 404 });
+        }
+        requests.push("abort");
+        aborted.resolve();
+        return new Response(undefined, { status: 204 });
+      },
+    });
+    const client = new S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      region: "us-east-1",
+      bucket: "b",
+      endpoint: server.url.href,
+    });
+    const writer = client.file("k").writer({ partSize: part.length, queueSize: 1, retry });
+    writer.write(part);
+    return { writer, client, requests, aborted: aborted.promise, [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  it.concurrent.each(committed)("answered with %s: one commit, no abort", async (_, status, body) => {
+    using upload = onePartWriter(status, body, 3);
+    expect(await upload.writer.end()).toBe(part.length);
+    // An abort would come after the writer settles. It would reach the server before this request.
+    expect(await upload.client.exists("k")).toBe(false);
+    expect(upload.requests).toEqual(["complete", "exists"]);
+  });
+
+  describe.each([0, 3])("retry %d", retry => {
+    it.concurrent.each(failed)("answered with %s: every commit, then an abort", async (_, status, body, code) => {
+      using upload = onePartWriter(status, body, retry);
+      await expect(upload.writer.end()).rejects.toMatchObject({ code });
+      await upload.aborted;
+      expect(upload.requests).toEqual([...Array(1 + retry).fill("complete"), "abort"]);
+    });
+  });
+
+  // Rejected up to bun 1.3.14. Resolves since #37194.
+  it.failing(`answered with ${cutOffError}`, async () => {
+    const [, status, body] = completeAnswers.find(([name]) => name === cutOffError)!;
+    using upload = onePartWriter(status, body, 0);
+    await expect(upload.writer.end()).rejects.toBeInstanceOf(Error);
   });
 });
 

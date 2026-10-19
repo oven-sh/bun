@@ -554,6 +554,10 @@ describe("`bun audit`", () => {
         "workspaces": {
           "": {
             "name": "test",
+            "dependencies": {
+              "@foo/bar": "1.0.0",
+              "@foo/baz": "1.0.0",
+            },
           },
         },
         "packages": {

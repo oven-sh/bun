@@ -1,4 +1,5 @@
 import { file, spawn, write } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, readlinkSync, realpathSync, statSync } from "fs";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
@@ -1142,6 +1143,185 @@ it("--frozen-lockfile accepts a bun.lock with an entry nothing depends on, where
     expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBeFalse();
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
   }
+});
+
+// `packages` has one entry for each place that a dependency resolves to. An entry that nothing
+// resolves to is not installed, and it must not change how the other entries load either. It
+// used to: a copy of an entry in use became the same package, and then supplied that package's
+// dependency list and tarball when it was listed first, and bound its dependencies from below
+// its own key. A newer version took every peer whose range accepts it. So the file has to load
+// exactly as it does without those entries, wherever they are listed.
+describe("bun.lock entries that no dependency resolves to", () => {
+  const pkg = (nameAndVersion: string, info: object = {}) => [nameAndVersion, "", info, ""];
+  type Rows = Record<string, unknown[]>;
+  type Lock = { workspaces: Record<string, object>; packages: Rows };
+  const rootWith = (dependencies: Record<string, string>) => ({ "": { name: "app", dependencies } });
+
+  function load({ workspaces, packages }: Lock) {
+    using dir = tempDir("bun-lock-unused-entries-", {
+      "bun.lock": JSON.stringify({ lockfileVersion: 1, configVersion: 1, workspaces, packages }),
+    });
+    return install_test_helpers.parseLockfile(String(dir));
+  }
+
+  const tdep = pkg("tdep@1.0.0", { dependencies: { leftpad: "1.0.0" } });
+  const rdep = pkg("rdep@1.0.0", { dependencies: { leftpad: "^1.0.0" } });
+  const host = pkg("host@1.0.0", { peerDependencies: { react: "^18.0.0" } });
+  const app: Lock = {
+    workspaces: rootWith({ tdep: "1.0.0" }),
+    packages: { leftpad: pkg("leftpad@1.0.0"), tdep },
+  };
+  // other holds react at the root. host's peer binds by version, to the highest react in its range.
+  const withPeer: Lock = {
+    workspaces: rootWith({ host: "1.0.0", other: "1.0.0", tdep: "1.0.0" }),
+    packages: {
+      host,
+      leftpad: pkg("leftpad@1.0.0"),
+      other: pkg("other@1.0.0", { dependencies: { react: "18.2.0" } }),
+      react: pkg("react@18.2.0"),
+      tdep,
+    },
+  };
+
+  const cases: [string, Lock, Rows][] = [
+    [
+      "a copy of an entry in use that aliases its dependency, with the alias below it",
+      app,
+      {
+        "abc": pkg("tdep@1.0.0", { dependencies: { leftpad: "npm:evil@1.0.0" } }),
+        "abc/leftpad": pkg("evil@1.0.0"),
+      },
+    ],
+    [
+      "an exact copy of an entry in use, with another package below it",
+      app,
+      { "abc": tdep, "abc/leftpad": pkg("evil@1.0.0") },
+    ],
+    [
+      "an exact copy of an entry in use, with a newer version in range below it",
+      { workspaces: rootWith({ rdep: "1.0.0" }), packages: { leftpad: pkg("leftpad@1.0.0"), rdep } },
+      { "abc": rdep, "abc/leftpad": pkg("leftpad@1.0.1") },
+    ],
+    [
+      "a copy of an entry in use that lists one more dependency",
+      app,
+      {
+        "abc": pkg("tdep@1.0.0", { dependencies: { bufferutil: "1.0.0", leftpad: "1.0.0" } }),
+        "bufferutil": pkg("bufferutil@1.0.0"),
+      },
+    ],
+    [
+      "a copy of an entry in use that depends on its own key",
+      app,
+      {
+        "abc": pkg("tdep@1.0.0", { dependencies: { abc: "npm:tdep@1.0.0", leftpad: "npm:evil@1.0.0" } }),
+        "abc/leftpad": pkg("evil@1.0.0"),
+      },
+    ],
+    [
+      "a copy of an entry in use from another tarball",
+      app,
+      {
+        "abc": [
+          "tdep@1.0.0",
+          "https://registry.npmjs.org/tdep/-/tdep-1.0.0-other.tgz",
+          { dependencies: { leftpad: "1.0.0" } },
+          "sha512-V8E0l1jyyeSSS9R+J9oljx5eq2rqzClInuwaPcyuv0Mm3ViI/3/rcc4rCEO8i4eQ4I0O0FAGYDA2i5xWHHPhzg==",
+        ],
+      },
+    ],
+    ["a newer version in the range of a peer", withPeer, { "abc": pkg("react@18.99.0") }],
+    [
+      "a newer version in the range of a peer whose package only that peer holds",
+      { workspaces: rootWith({ host: "1.0.0" }), packages: { host, react: pkg("react@18.2.0") } },
+      { "abc": pkg("react@18.99.0") },
+    ],
+    [
+      "a copy of an entry in use at the path of a peer that binds by version",
+      withPeer,
+      { "host/react": tdep, "host/react/leftpad": pkg("evil@1.0.0") },
+    ],
+    [
+      "an entry whose own dependency is not in the file",
+      app,
+      { "abc": pkg("ghost@1.0.0", { dependencies: { "not-there": "1.0.0" } }) },
+    ],
+  ];
+
+  it.each(cases)("%s", (_, lock, unused) => {
+    const without = load(lock);
+    expect({ first: load({ ...lock, packages: { ...unused, ...lock.packages } }) }).toEqual({ first: without });
+    expect({ last: load({ ...lock, packages: { ...lock.packages, ...unused } }) }).toEqual({ last: without });
+  });
+
+  // one-dep@1.0.0 depends on no-deps@1.0.1. The two added entries put a-dep in its place.
+  const packageJson = JSON.stringify({ name: "foo", dependencies: { "one-dep": "1.0.0" } });
+  const lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: { "": { name: "foo", dependencies: { "one-dep": "1.0.0" } } },
+    packages: {
+      "no-deps": pkg("no-deps@1.0.1"),
+      "one-dep": pkg("one-dep@1.0.0", { dependencies: { "no-deps": "1.0.1" } }),
+      "abc": pkg("one-dep@1.0.0", { dependencies: { "no-deps": "npm:a-dep@1.0.1" } }),
+      "abc/no-deps": pkg("a-dep@1.0.1"),
+    },
+  });
+
+  describe.each(["hoisted", "isolated"] as const)("%s linker", linker => {
+    it.concurrent.each(["ci", "install --frozen-lockfile", "install"])(
+      "bun %s installs what the entries in use lock",
+      async command => {
+        const { packageDir } = await registry.createTestDir({
+          bunfigOpts: { linker },
+          files: { "package.json": packageJson, "bun.lock": lockfile },
+        });
+        await using proc = spawn({
+          cmd: [bunExe(), ...command.split(" ")],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(err).not.toContain("error:");
+        // What one-dep itself loads as no-deps.
+        const next = dirname(realpathSync(join(packageDir, "node_modules", "one-dep")));
+        expect(await file(join(next, "no-deps", "package.json")).json()).toMatchObject({
+          name: "no-deps",
+          version: "1.0.1",
+        });
+        expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  it("are named by --verbose, and a file without any is loaded once", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: { "package.json": packageJson, "bun.lock": lockfile },
+    });
+    const dryRun = async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--frozen-lockfile", "--dry-run", "--verbose"],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { skipped: err.split("\n").filter(line => line.includes("unused bun.lock")), exitCode };
+    };
+    expect(await dryRun()).toEqual({
+      skipped: ['warn: skipping 2 unused bun.lock entries: "abc", "abc/no-deps"'],
+      exitCode: 0,
+    });
+
+    const { abc, "abc/no-deps": nested, ...inUse } = JSON.parse(lockfile).packages;
+    await write(join(packageDir, "bun.lock"), JSON.stringify({ ...JSON.parse(lockfile), packages: inUse }));
+    expect(await dryRun()).toEqual({ skipped: [], exitCode: 0 });
+  });
 });
 
 // bun.lock stores every package as "<name>@<resolution>" and splits the name back off at the
@@ -2538,6 +2718,20 @@ describe("loading bun.lock keeps a peer nothing in the file satisfies where the 
   }
 
   it.each(shapes)("re-saving keeps %s", (_, shape) => resave(shape));
+
+  // no-deps@2.0.0 is in the peer's range, but no dependency resolves to its entry. It is not one
+  // of the versions the file locks, so the peer stays on the copy the file records.
+  it.each(shapes)("an entry nothing resolves to does not take %s", async (_, shape) => {
+    const loadWith = async (packages: Shape["packages"]) => {
+      using dir = tempDir("bun-lock-unmet-peer-unused-entry-", {});
+      await writeProject(String(dir), { ...shape, packages });
+      return install_test_helpers.parseLockfile(String(dir));
+    };
+    const unused = { "abc": pkg("no-deps@2.0.0") };
+    const recorded = await loadWith(shape.packages);
+    expect({ first: await loadWith({ ...unused, ...shape.packages }) }).toEqual({ first: recorded });
+    expect({ last: await loadWith({ ...shape.packages, ...unused }) }).toEqual({ last: recorded });
+  });
 
   const [, nestedCopy] = shapes[0];
 

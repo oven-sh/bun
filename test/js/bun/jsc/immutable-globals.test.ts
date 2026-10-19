@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // `*` makes every built-in immutable; `,-name` after it leaves that global as it is and, if it is a function, its prototype.
 
@@ -183,7 +183,15 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
   test.each(["Array", "-Array", "*,Array", "* ,-Array", ",", ",*", "*,", "*,,-Array"])(
     "a value of another form is an error: %s",
     async value => {
-      const { stdout, stderr, exitCode } = await run(value, ["-e", "console.log('ran')"]);
+      const cmd = [bunExe(), "-e", "console.log('ran')"];
+      await using proc = Bun.spawn({
+        // The engine aborts, and CI counts a core file as a failure.
+        cmd: isWindows ? cmd : ["sh", "-c", 'ulimit -c 0; exec "$0" "$@"', ...cmd],
+        env: { ...bunEnv, BUN_JSC_immutableGlobals: value },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(
         "ERROR: immutableGlobals is '*', followed by ',-name' for each global to leave mutable: " + value,
       );

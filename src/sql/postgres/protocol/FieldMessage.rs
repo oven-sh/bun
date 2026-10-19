@@ -1,5 +1,3 @@
-use core::fmt;
-
 use bun_core::String;
 
 use super::field_type::FieldType;
@@ -24,12 +22,6 @@ pub enum FieldMessage {
     File(String),
     Line(String),
     Routine(String),
-}
-
-impl fmt::Display for FieldMessage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.payload())
-    }
 }
 
 impl FieldMessage {
@@ -83,9 +75,9 @@ impl FieldMessage {
 
     pub(crate) fn init(tag: FieldType, message: &[u8]) -> crate::Result<FieldMessage> {
         Ok(match tag {
-            FieldType::SEVERITY => FieldMessage::Severity(String::clone_utf8(message)),
-            // Ignore this one for now.
-            // FieldType::LOCALIZED_SEVERITY => FieldMessage::LocalizedSeverity(String::clone_utf8(message)),
+            FieldType::SEVERITY | FieldType::SEVERITY_NOT_LOCALIZED => {
+                FieldMessage::Severity(String::clone_utf8(message))
+            }
             FieldType::CODE => FieldMessage::Code(String::clone_utf8(message)),
             FieldType::MESSAGE => FieldMessage::Message(String::clone_utf8(message)),
             FieldType::DETAIL => FieldMessage::Detail(String::clone_utf8(message)),

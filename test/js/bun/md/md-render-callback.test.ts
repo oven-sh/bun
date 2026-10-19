@@ -411,7 +411,7 @@ describe("Bun.markdown.render", () => {
 describe("Bun.markdown buffer input", () => {
   test("the input buffer stays attached while a callback runs and is released after", () => {
     const input = new TextEncoder().encode("# Hello\n\nworld\n");
-    let detachedDuringRender: boolean | null = null;
+    let detachedDuringRender = null as boolean | null;
     const result = Markdown.render(input, {
       heading: (children: string) => {
         input.buffer.transfer();

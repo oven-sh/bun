@@ -1,0 +1,4 @@
+foo();
+// note
+x // left
+  + y;

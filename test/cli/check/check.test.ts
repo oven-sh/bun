@@ -1141,6 +1141,40 @@ export type Forth = Back;
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/45733, without the package. `b.ts` and `c.ts` both instantiate `Folded<string[]>`, on
+  // two threads. Which files there are decides how they're spread over the threads, so this doesn't use `project`.
+  test.each([1, 2, 3, 4, 8])(
+    "reports no excessive stack depth that depends on the number of threads: %d",
+    async threads => {
+      using dir = tempDir("bun-check", {
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "skipLibCheck": true, "types": [], "lib": ["es2022"] } }\n`,
+        "t.ts": `export declare function drop<L>(from: L): Folded<L>;
+export declare function record<T extends Record<string, Shape>>(fields: T): T;
+interface Shape { out: any }
+interface OneOf<T> { out: OutOf<T> }
+type OutOf<T> = { [K in keyof T]: T[K] extends never ? T[K] : any }[any];
+type Folded<T> = Settled<Lits<Listed<T>>>;
+type Listed<U> = U extends any ? any : Listed<Exclude<U, U>>;
+type Lits<T> = T extends any ? any : any;
+type Settled<T> = T extends never ? T : OneOf<T>;
+`,
+        "a.ts": `import './c.js';\n`,
+        "b.ts": `import { drop, record } from './t.js';\nimport { kinds } from './d.js';\nrecord({ kind: drop(kinds) });\n`,
+        "c.ts": `import { drop } from './t.js';\nimport { kinds } from './d.js';\nimport './f.js';\ndrop(kinds);\n`,
+        "d.ts": `export const kinds: string[] = [];\n`,
+        "e.ts": `import a from './e1.js';\nimport b from './e2.js';\nimport c from './e3.js';\nimport d from './e4.js';\nexport default [];\n`,
+        "e1.ts": `export default {};\n`,
+        "e2.ts": `export default {};\n`,
+        "e3.ts": `export default {};\n`,
+        "e4.ts": `export default {};\n`,
+        "f.ts": `import items from './e.js';\n`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--threads", String(threads)]);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

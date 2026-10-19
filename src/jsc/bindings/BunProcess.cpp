@@ -343,7 +343,10 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
-    putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
+    {
+        JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
+    }
     auto event = Identifier::fromString(vm, "exit"_s);
     if (!emitter.hasEventListeners(event)) {
         return;

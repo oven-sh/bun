@@ -153,6 +153,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionDidCreateBuiltin);
 JSC::JSValue blobPrototype(Zig::GlobalObject*);
 JSC::JSValue performancePrototype(Zig::GlobalObject*);
 JSC::JSValue processPrototype(Zig::GlobalObject*);
+JSC::JSValue processObject(Zig::GlobalObject*);
 // `JSC::allocateCell` for a fieldless `JSNonFinalObject` subclass living in `vm.plainObjectSpace()` (prototype objects).
 void* allocatePlainObjectCell(JSC::VM&, size_t);
 // `JSC_TO_STRING_TAG_WITHOUT_TRANSITION()`, out of line.

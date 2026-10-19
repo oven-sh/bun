@@ -935,6 +935,51 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    [
+      "the exports of abort-controller, and process._exiting",
+      `
+        const controller = require("abort-controller");
+        console.log(controller.default === AbortController, controller.AbortController === AbortController, controller.AbortSignal === AbortSignal);
+        process.on("exit", () => console.log(process._exiting));
+      `,
+      "true true true\ntrue\n",
+    ],
+    [
+      "process.env and Bun.env of a thread that shares them",
+      `
+        const { Worker, SHARE_ENV, isMainThread } = require("node:worker_threads");
+        if (isMainThread) {
+          void process.env.A, Bun.env.A;
+          const worker = new Worker(__filename, { env: SHARE_ENV });
+          process.env.FROM_MAIN = "1";
+          worker.on("exit", () => console.log(process.env.FROM_WORKER, Bun.env.FROM_WORKER));
+        } else {
+          console.log(process.env.FROM_MAIN);
+          process.env.FROM_WORKER = "2";
+        }
+      `,
+      "1\n2 2\n",
+    ],
+    [
+      "process.channel of a cluster worker that disconnects",
+      `
+        const cluster = require("node:cluster");
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          worker.on("online", () => worker.disconnect());
+          worker.on("exit", code => console.log(code));
+        }
+      `,
+      "0\n",
+    ],
+  ])("what Bun itself writes on a built-in is written: %s", async (written, source, expected) => {
+    using dir = tempDir("immutable-globals-own-writes", { "index.cjs": source });
+    const { stdout, exitCode } = await run("*", ["index.cjs"], String(dir));
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+
   test("inspector.open(0) reports the port it bound in process.debugPort", async () => {
     const { stdout, exitCode } = await run("*", [
       "-e",

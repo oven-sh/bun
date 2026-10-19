@@ -359,6 +359,11 @@ JSC::JSValue processPrototype(Zig::GlobalObject* globalObject)
     return globalObject->processObject()->getPrototypeDirect();
 }
 
+JSC::JSValue processObject(Zig::GlobalObject* globalObject)
+{
+    return globalObject->processObject();
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDidCreateBuiltin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     if (auto* builtin = callFrame->argument(0).getObject())

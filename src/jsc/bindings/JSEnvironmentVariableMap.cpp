@@ -957,6 +957,7 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     globalObject->m_processEnvObject.set(vm, globalObject, shared);
 
     auto envIdentifier = JSC::Identifier::fromString(vm, "env"_s);
+    JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
 
     // process.env may already be reified as an own property on the process object;
     // overwrite it so it resolves to the shared variant.

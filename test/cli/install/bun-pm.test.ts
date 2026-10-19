@@ -2888,6 +2888,30 @@ describe.concurrent("the global bin directory and $PATH", () => {
   });
 });
 
+// `$(bun pm bin)/tool` has to name the directory that exists. Only Linux filesystems take a name that is not UTF-8.
+test.skipIf(!isLinux)("bun pm bin prints a path that is not UTF-8 as it is", async () => {
+  using dir = tempDir("pm-bin-bytes", {});
+  // "café" in Latin-1.
+  const project = Buffer.concat([Buffer.from(String(dir) + "/caf"), Buffer.from([0xe9])]);
+  mkdirSync(project);
+  writeFileSync(Buffer.concat([project, Buffer.from("/package.json")]), JSON.stringify({ name: "app" }));
+  await using proc = spawn({
+    // The `cwd` of a spawn is a string, so a shell enters the directory.
+    cmd: ["/bin/sh", "-c", `cd "$(printf 'caf\\351')" && exec "$0" pm bin`, bunExe()],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+  // One character per byte.
+  expect({ stdout: Buffer.from(stdout).toString("latin1"), stderr, exitCode }).toEqual({
+    stdout: project.toString("latin1") + "/node_modules/.bin\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // A package.json that is readable but not writable (a read-only checkout, a file owned by
 // another user) must only stop the commands that actually rewrite it.
 describe.skipIf(isWindows)("read-only package.json", () => {

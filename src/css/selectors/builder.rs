@@ -121,8 +121,10 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// Appends `compound` to the current compound selector, where a type selector must be first.
     fn join_compound(&mut self, compound: impl Iterator<Item = GenericComponent<Impl>>) {
         let start = self.simple_selectors.len() as usize - self.current_len;
+        // A type selector starts its compound selector, or follows a leading `&`.
         let has_type_selector = self.simple_selectors.slice()[start..]
             .iter()
+            .take(2)
             .any(GenericComponent::is_type_selector_part);
         let mut front = start;
         let mut second_type_selector = Vec::new_in(self.alloc);

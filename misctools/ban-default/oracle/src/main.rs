@@ -837,6 +837,43 @@ impl<'a, 'tcx> BodyVisitor<'a, 'tcx> {
         self.cx.emit(rec);
     }
 
+    /// `X::name` written with a type-relative path that resolves to an associated function of a
+    /// trait. An inherent function of that name on `X` would take the call over, so the codemod
+    /// must not pick that name for `X`.
+    fn record_trait_assoc_fn(&mut self, ex: &'tcx hir::Expr<'tcx>, qp: &hir::QPath<'tcx>) {
+        let hir::QPath::TypeRelative(_, seg) = qp else { return };
+        let tcx = self.cx.tcx;
+        let Res::Def(DefKind::AssocFn, did) = self.typeck.qpath_res(qp, ex.hir_id) else { return };
+        if Some(did) == self.cx.default_fn {
+            return;
+        }
+        let parent = tcx.parent(did);
+        if !matches!(tcx.def_kind(parent), DefKind::Trait | DefKind::Impl { of_trait: true }) {
+            return;
+        }
+        let args = self.typeck.node_args(ex.hir_id);
+        if args.is_empty() {
+            return;
+        }
+        // the Self type of a trait method path is the first generic argument when the item
+        // resolved to the trait's own declaration
+        if !matches!(tcx.def_kind(parent), DefKind::Trait) {
+            return;
+        }
+        let Some(self_ty) = args.types().next() else { return };
+        if let ty::Adt(def, _) = self_ty.kind() {
+            if self.cx.is_workspace_def(def.did()) {
+                let mut rec = J::obj();
+                rec.set("rec", J::Str("traitfn".into()));
+                rec.set("crate", J::Str(self.cx.krate.clone()));
+                rec.set("adt", self.cx.adt_key(def.did()));
+                rec.set("name", J::Str(seg.ident.name.to_string()));
+                rec.set("span", self.cx.span_json(ex.span));
+                self.cx.emit(rec);
+            }
+        }
+    }
+
     /// Any callee whose instantiated predicates require `X: Default`.
     fn record_obligations(
         &mut self,
@@ -957,6 +994,7 @@ impl<'a, 'tcx> Visitor<'tcx> for BodyVisitor<'a, 'tcx> {
                 }
             }
             hir::ExprKind::Path(ref qp) => {
+                self.record_trait_assoc_fn(ex, qp);
                 if !self.handled.contains(&ex.hir_id) {
                     if let Res::Def(_, did) = self.typeck.qpath_res(qp, ex.hir_id) {
                         if Some(did) == self.cx.default_fn {

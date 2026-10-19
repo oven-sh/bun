@@ -44,7 +44,7 @@ def buf(path):
 
 
 def text(sp):
-    return buf(sp["file"])[sp["lo"] : sp["hi"]].decode("utf-8")
+    return buf(sp["file"])[sp["lo"] : sp["hi"]].decode("utf-8", errors="replace")
 
 
 def in_workspace(path):
@@ -111,6 +111,9 @@ class TypeInfo:
         if self.ctor is None:
             raise Manual(f"no constructor decided for {self.key[0]}{self.key[1]}: {self.why_manual}")
         kind, val = self.ctor
+        if self.unit and tree is not None and strip_generics(path).split("::")[-1] not in (self.name, "Self"):
+            # a type alias does not name the value of a unit struct
+            path = tree["site_path"]
         path = expr_path(path)
         if kind == "fn":
             return Rendered(f"{path}::{val}()", cheap=False, fnpath=f"{path}::{val}")
@@ -179,7 +182,9 @@ except FileNotFoundError:
 
 
 def inherent_names(t):
-    names = set()
+    # a name that some call already reaches through a trait must not become an inherent function:
+    # the inherent one would take those calls over
+    names = set(load.TRAIT_FN_NAMES.get(t.key, ()))
     for i in t.impls:
         for n in i["adt"].get("inherent", []):
             names.add(n["name"])
@@ -204,7 +209,14 @@ def decide_ctor(t):
                 t.why_manual = "derive(Default) comes from a macro expansion"
                 return
             fields = i.get("fields", [])
-            if t.kind == "struct" and len(fields) == 1 and fields[0]["init"].get("name") == "InternalBitFlags":
+            if (
+                t.kind == "struct"
+                and len(fields) == 1
+                and (
+                    fields[0]["init"].get("name") == "InternalBitFlags"
+                    or "bitflags::__private::PublicFlags>::Internal" in fields[0].get("ty", "")
+                )
+            ):
                 # `bitflags! { #[derive(Default)] struct F: u32 { .. } }`: the default is the empty set
                 kinds.add(("suffix", "::empty()"))
                 t.bitflags = True
@@ -414,22 +426,41 @@ def fx_names():
     raise Manual("FxBuildHasher is not nameable: the crate depends on neither rustc-hash nor bun_sema")
 
 
-def hasher_expr(tree):
+def hasher_expr(tree, unsure=None):
     if tree["k"] == "extern" and tree["krate"] == "rustc_hash" and tree["name"] == "FxBuildHasher":
         return fx_names()[2]
+    if tree["k"] == "local":
+        # one of our BuildHasher types
+        return render(tree, unsure=unsure).text
     raise Manual(f"hash map with hasher {tree.get('ty') or tree.get('why')}")
+
+
+@register_extern("hashbrown", "HashMap")
+def _hb_hashmap(tree, path, unsure):
+    h = hasher_expr(tree["targs"][2], unsure)
+    if path is None:
+        raise Manual(f"hashbrown map {tree['ty']} without a written type")
+    return Rendered(f"{expr_path(path)}::with_hasher({h})", cheap=False, fnpath=None)
+
+
+@register_extern("hashbrown", "HashSet")
+def _hb_hashset(tree, path, unsure):
+    h = hasher_expr(tree["targs"][1], unsure)
+    if path is None:
+        raise Manual(f"hashbrown set {tree['ty']} without a written type")
+    return Rendered(f"{expr_path(path)}::with_hasher({h})", cheap=False, fnpath=None)
 
 
 @register_extern("std", "HashMap")
 def _hashmap(tree, path, unsure):
-    h = hasher_expr(tree["targs"][2])
+    h = hasher_expr(tree["targs"][2], unsure)
     head = expr_path(path) if path is not None else fx_names()[0]
     return Rendered(f"{head}::with_hasher({h})", cheap=False, fnpath=None)
 
 
 @register_extern("std", "HashSet")
 def _hashset(tree, path, unsure):
-    h = hasher_expr(tree["targs"][1])
+    h = hasher_expr(tree["targs"][1], unsure)
     head = expr_path(path) if path is not None else fx_names()[1]
     return Rendered(f"{head}::with_hasher({h})", cheap=False, fnpath=None)
 
@@ -496,14 +527,35 @@ def has_kind(tree, kinds):
     )
 
 
-def local_keys(tree):
-    out = []
-    for n in load.tree_kinds(tree):
-        if n["k"] == "local":
-            out.append((n["krate"], n["path"]))
-        if n["k"] == "extern":
-            for t_ in n.get("targs", []):
-                out.extend(local_keys(t_))
+def local_keys(tree, out=None):
+    """The workspace types whose `Default` the value of `tree` needs. A foreign container's `Default` does not need
+    the `Default` of its element type (`Vec<T>`, `Option<T>`, `SmallVec<[T; N]>`): only the few type arguments
+    below. A workspace wrapper listed in the overrides (`GuardedBy<T>`) needs its argument's."""
+    out = out if out is not None else []
+    k = tree["k"]
+    if k == "local":
+        out.append((tree["krate"], tree["path"]))
+        if (tree["krate"] + tree["path"]) in OVERRIDES:
+            for t_ in tree.get("targs", []):
+                local_keys(t_, out)
+    elif k == "wrap":
+        local_keys(tree["inner"], out)
+    elif k == "tuple":
+        for t_ in tree["items"]:
+            local_keys(t_, out)
+    elif k == "array":
+        local_keys(tree["elem"], out)
+    elif k == "extern":
+        targs = tree.get("targs", [])
+        name = tree["name"]
+        if name == "HashMap" and len(targs) > 2:
+            local_keys(targs[2], out)
+        elif name == "HashSet" and len(targs) > 1:
+            local_keys(targs[1], out)
+        elif name == "EnumMap" and len(targs) > 1:
+            local_keys(targs[1], out)
+        elif name == "Range" and targs:
+            local_keys(targs[0], out)
     return out
 
 
@@ -677,8 +729,13 @@ def gen_struct_ctor(t, i):
     unsure = []
     rendered = []
     for f in i["fields"]:
+        # the field's type as written names the type at this place for certain
+        written = (f.get("ty_text") or "").strip()
+        path = None
+        if re.fullmatch(r"(::)?[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*(<.*>)?", written, flags=re.S):
+            path = strip_generics(written)
         try:
-            r = render(f["init"], unsure=unsure)
+            r = render(f["init"], path=path, unsure=unsure)
         except Manual as e:
             raise Manual(f"field `{f['name']}`: {e}")
         rendered.append((f["name"], r.text, cfgs.get(f["name"], [])))
@@ -832,9 +889,44 @@ def site_ok(sp):
 
 
 stats = collections.Counter()
+
+# A call that a macro_rules body spells on one concrete type (`Foo::default()` with no metavariable) is the
+# same tokens in every expansion. When every expansion also resolves it to the same type, the body is rewritten.
+macro_body_calls = collections.defaultdict(list)
+for c in calls:
+    sp = c["span"]
+    if sp.get("exp") and in_workspace(sp.get("file")) and "Bang" in str(sp.get("macro")):
+        macro_body_calls[(sp["file"], sp["lo"], sp["hi"])].append(c)
+macro_body_done = set()
+for (mfile, mlo, mhi), group in macro_body_calls.items():
+    first = group[0]
+    if first["form"] != "typed" or not first["is_call"] or first.get("update"):
+        continue
+    if len({g["ty"] for g in group}) != 1:
+        continue
+    try:
+        snippet = buf(mfile)[mlo:mhi].decode("utf-8")
+    except (UnicodeDecodeError, FileNotFoundError):
+        continue
+    m = re.fullmatch(r"((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*(?:::<[^$]*>)?)\s*::\s*default\s*\(\s*\)", snippet)
+    if not m or "$" in snippet:
+        continue
+    _SITE["file"] = mfile
+    try:
+        r = render(first["init"], path=m.group(1))
+    except Manual:
+        continue
+    if first["init"]["k"] != "local":
+        continue
+    edit(mfile, mlo, mhi, r.text, "macro-body-call")
+    macro_body_done.add((mfile, mlo, mhi))
+    stats["macro-body-call"] += 1
+
 for c in calls:
     sp = c["span"]
     if not site_ok(sp):
+        if (sp.get("file"), sp.get("lo"), sp.get("hi")) in macro_body_done:
+            continue
         cs = sp.get("callsite") or sp
         note("call-in-macro", cs, f"Default::default() of `{c['ty']}` inside a macro expansion: {sp.get('macro')}")
         continue
@@ -1084,7 +1176,7 @@ for o in obligs:
                 else:
                     new = f"get_or_insert_with(|| {r.text})"
             else:  # Cell::take / RefCell::take
-                if not re.search(r"cell::(Cell|RefCell)<", o["callee"]):
+                if not re.search(r"cell::(Cell|RefCell)(::)?<", o["callee"]):
                     raise Manual(f"`take` of `{o['callee']}`")
                 new = f"replace({r.text})"
             edit(sp["file"], msp["lo"], sp["hi"], new, "method")

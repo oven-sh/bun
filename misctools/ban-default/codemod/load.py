@@ -1,7 +1,11 @@
 import json, glob, collections, os, sys
 
+TRAIT_FN_NAMES = {}
+
 def load(dirs=('/tmp/oracle-out',)):
     impls = {}; calls = {}; obligs = {}; crates = []
+    global TRAIT_FN_NAMES
+    TRAIT_FN_NAMES = {}
     for d in dirs:
         for p in sorted(glob.glob(os.path.join(d, '*.jsonl'))):
             for line in open(p):
@@ -9,6 +13,10 @@ def load(dirs=('/tmp/oracle-out',)):
                 k = r['rec']
                 if k == 'crate':
                     crates.append(r); continue
+                if k == 'traitfn':
+                    a = r['adt']
+                    TRAIT_FN_NAMES.setdefault((a['krate'], a['path']), set()).add(r['name'])
+                    continue
                 if k == 'impl':
                     sp = r['impl_span']
                     key = (sp.get('file'), sp.get('lo'), sp.get('hi'), r['self_ty'])
@@ -34,7 +42,7 @@ def load(dirs=('/tmp/oracle-out',)):
                     calls.setdefault(key, r)
                 elif k == 'oblig':
                     sp = r['span']
-                    key = (sp.get('file'), sp.get('lo'), sp.get('hi'), r['callee'], r['ty'])
+                    key = (sp.get('file'), sp.get('lo'), sp.get('hi'), r['callee'], r['ty'], r.get('param'))
                     obligs.setdefault(key, r)
     return crates, list(impls.values()), list(calls.values()), list(obligs.values())
 

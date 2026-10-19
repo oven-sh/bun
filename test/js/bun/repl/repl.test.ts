@@ -1072,6 +1072,36 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
   });
 
+  test("Ctrl+C in a continuation also cancels the line being typed", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send("function __half() {\n");
+      await waitFor("... ");
+      send("return 41");
+      await waitFor("return 41");
+      send("\x03");
+      // The prompt is empty again, so this input is evaluated alone.
+      send('"after" + "Cancel"\n');
+      send('"second" + "Input"\n');
+      await waitFor("secondInput");
+      expect(allOutput()).toContain("afterCancel");
+    });
+  });
+
+  test("Ctrl+C in editor mode also cancels the line being typed", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send(".editor\n");
+      await waitFor("Entering editor mode");
+      send("half typed");
+      await waitFor("half typed");
+      send("\x03");
+      await waitFor("Editor mode cancelled");
+      send('"after" + "Cancel"\n');
+      send('"second" + "Input"\n');
+      await waitFor("secondInput");
+      expect(allOutput()).toContain("afterCancel");
+    });
+  });
+
   test("Ctrl+D exits on empty line", async () => {
     await withTerminalRepl(async ({ send, proc }) => {
       send("\x04"); // Ctrl+D

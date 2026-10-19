@@ -2631,9 +2631,7 @@ impl<'a> Repl<'a> {
                 self.input_mode = InputMode::Normal;
                 self.multiline_buffer.clear();
             }
-            InputMode::Normal if cancels_line => {
-                self.line_editor.clear();
-            }
+            InputMode::Normal if cancels_line => {}
             InputMode::Normal if self.ctrl_c_pressed => {
                 // Second Ctrl+C on empty line - exit
                 self.running = false;
@@ -2648,6 +2646,8 @@ impl<'a> Repl<'a> {
                 ));
             }
         }
+        // In every mode, the line being typed is cancelled too.
+        self.line_editor.clear();
         self.history.reset_position();
         self.refresh_line();
     }

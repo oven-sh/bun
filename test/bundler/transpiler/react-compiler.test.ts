@@ -672,6 +672,47 @@ describe("bundler", () => {
     });
   }
 
+  // A compound assignment reads its key twice, and the compiled body holds
+  // that one key expression in both places. With minify.syntax on, the
+  // single-use `a` is substituted and the statement is visited again, so the
+  // key is folded once for each place. A fold of `"s" + template` must leave
+  // the template readable for the second place, and a fold of the template
+  // alone must not take its text away from the second place.
+  itBundled("react-compiler/TemplateKeyOfCompoundAssignment", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function StringThenTemplate(props) {
+          let c = "s";
+          const o = {};
+          const [s] = useState(0);
+          const a = props.a;
+          const r = !a + (o[c + \`b\${props.y}\`] += 1);
+          return <div>{r}{s}</div>;
+        }
+        export function TemplateOnly(props) {
+          const o = {};
+          const [s] = useState(0);
+          const a = props.a;
+          const r = !a + (o[\`k\${props.y}z\`] += s);
+          return <div>{r}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    minifySyntax: true,
+    external: ["*"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out.match(/o\[.*\] = o.*? \+ (1|s)\)/g)).toEqual([
+        "o[`sb${props.y}`] = o[`sb${props.y}`] + 1)",
+        "o[`k${props.y}z`] = o[`k${props.y}z`] + s)",
+      ]);
+    },
+  });
+
   // A later declarator that reads an earlier declarator in the same
   // `const a = x, b = f(a)` statement is a plain left-to-right read, not a
   // forward reference. Upstream's BlockStatement hoisting only emits a

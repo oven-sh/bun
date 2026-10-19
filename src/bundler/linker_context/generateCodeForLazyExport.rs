@@ -345,7 +345,7 @@ pub(crate) fn generate_code_for_lazy_export(
                     value = Expr::init(
                         E::Template {
                             tag: None,
-                            parts: parts_slice,
+                            parts: E::TemplateParts::borrowed(parts_slice),
                             head: E::TemplateContents::Cooked(E::String::init(b"")),
                         },
                         stmt.loc,

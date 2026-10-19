@@ -4064,7 +4064,7 @@ pub(crate) mod __gated_printer {
                     // the identical fold, so emitted output is unchanged.
                     let mut e = E::Template {
                         tag: e.tag,
-                        parts: e.parts,
+                        parts: e.parts.view(),
                         head: match &e.head {
                             E::TemplateContents::Cooked(c) => {
                                 E::TemplateContents::Cooked(c.shallow_clone())
@@ -4073,22 +4073,6 @@ pub(crate) mod __gated_printer {
                         },
                     };
                     if e.tag.is_none() && (self.options.minify_syntax || self.was_lazy_export) {
-                        // `TemplatePart` is structurally
-                        // `Copy` but `EString` doesn't derive it; field-wise copy.
-                        #[inline]
-                        fn part_clone(p: &E::TemplatePart) -> E::TemplatePart {
-                            E::TemplatePart {
-                                value: p.value,
-                                tail_loc: p.tail_loc,
-                                tail: match &p.tail {
-                                    E::TemplateContents::Cooked(c) => {
-                                        E::TemplateContents::Cooked(c.shallow_clone())
-                                    }
-                                    E::TemplateContents::Raw(r) => E::TemplateContents::Raw(*r),
-                                },
-                            }
-                        }
-
                         // Bump-allocated (printer arena) so the folded
                         // template's parts outlive the inner block: the
                         // thread-local `e` above keeps the parts slice alive
@@ -4096,7 +4080,7 @@ pub(crate) mod __gated_printer {
                         let mut replaced =
                             bun_alloc::ArenaVec::<E::TemplatePart>::new_in(self.bump);
                         for (i, _part) in e.parts().iter().enumerate() {
-                            let mut part = part_clone(_part);
+                            let mut part = _part.shallow_clone();
                             let inlined_value: Option<Expr> = match &part.value.data {
                                 ExprData::ENameOfSymbol(e2) => Some(Expr::init(
                                     E::String::init(self.mangled_prop_name(e2.ref_)),
@@ -4111,7 +4095,9 @@ pub(crate) mod __gated_printer {
 
                             if let Some(value) = inlined_value {
                                 if replaced.is_empty() {
-                                    replaced.extend(e.parts()[..i].iter().map(part_clone));
+                                    replaced.extend(
+                                        e.parts()[..i].iter().map(E::TemplatePart::shallow_clone),
+                                    );
                                 }
                                 part.value = value;
                                 replaced.push(part);
@@ -4121,15 +4107,11 @@ pub(crate) mod __gated_printer {
                         }
 
                         if !replaced.is_empty() {
-                            // Build a
-                            // local `Template` (not a StoreRef alias) so `fold`'s
-                            // `mem::take(self.head)` doesn't clobber the AST node.
-                            // `replaced` is leaked into the bump arena, so the
-                            // parts slice stays valid past this block.
+                            // `fold` writes its node and its parts in place: it gets a local `Template` over `replaced`.
                             let parts_slice = js_ast::StoreSlice::from_bump(replaced);
                             let mut copy = E::Template {
                                 tag: e.tag,
-                                parts: parts_slice,
+                                parts: E::TemplateParts::borrowed(parts_slice),
                                 head: match &e.head {
                                     E::TemplateContents::Cooked(c) => {
                                         E::TemplateContents::Cooked(c.shallow_clone())
@@ -4146,19 +4128,10 @@ pub(crate) mod __gated_printer {
                                     return;
                                 }
                                 ExprData::ETemplate(t) => {
-                                    // Use the folded template for the print path
-                                    // below — assigned to the thread-local `e`,
-                                    // never written back into the shared AST node
-                                    // (see the comment at the top of this arm).
-                                    // Field values are arena/store-backed in both
-                                    // fold paths (the bail-out path aliases the
-                                    // stack `copy`, but its `parts`/`head` payloads
-                                    // are bump-allocated above), so copying the
-                                    // fields out is safe even though `t` itself may
-                                    // point at `copy`.
+                                    // `t` is `copy`, folded in place. Its head and parts are bump-allocated.
                                     e = E::Template {
                                         tag: t.tag,
-                                        parts: t.parts,
+                                        parts: t.parts.view(),
                                         head: match &t.head {
                                             E::TemplateContents::Cooked(c) => {
                                                 E::TemplateContents::Cooked(c.shallow_clone())

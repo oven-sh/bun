@@ -3142,8 +3142,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // `E::Template.parts` is `StoreSlice<TemplatePart>` (arena-owned, mutable
-                    // provenance preserved end-to-end) so derive the unique view directly.
                     // SAFETY: arena-owned slice; single-threaded visit pass has exclusive
                     // access and no other borrow of this slice is live across the loop body.
                     for part in e.parts_mut().iter_mut() {

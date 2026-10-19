@@ -3287,6 +3287,134 @@ console.log(a)
       expectPrintedMin_(`export const foo = "a" + "b" + 1 + "b" + "c";`, `export const foo = "ab1bc"`);
     });
 
+    // A template literal keeps its parts in one buffer that a `+` fold extends
+    // at either end, and Template::fold rewrites the parts in place. These rows
+    // pin the output of each path through that.
+    it("template literal `+` folds print the same text", () => {
+      const cases = [
+        ["capture(`a${x}b` + `c${y}d`);", "capture(`a${x}bc${y}d`);\n"],
+        [
+          "capture(`a${x}b` + `c${y}d` + `e${z}f` + `g${w}h` + `i${v}j`);",
+          "capture(`a${x}bc${y}de${z}fg${w}hi${v}j`);\n",
+        ],
+        // the accumulator starts at the second operand
+        ["capture(x + `a${y}` + `b${z}` + `c${w}`);", "capture(x + `a${y}b${z}c${w}`);\n"],
+        // a template without substitutions takes over the parts of the next one
+        ["capture(`head` + `a${x}` + `b${y}` + `c${z}`);", "capture(`heada${x}b${y}c${z}`);\n"],
+        ["capture('s' + `a${x}` + `b${y}` + 't' + `c${z}`);", "capture(`sa${x}b${y}tc${z}`);\n"],
+        ["capture(`a${x}` + 's' + `b${y}`);", "capture(`a${x}sb${y}`);\n"],
+        ["capture(`a${x}` + 1 + `b${y}` + null + `c${z}`);", "capture(`a${x}1b${y}nullc${z}`);\n"],
+        ["capture(`a${x}` + `b${y}c${z}d` + `e${w}`);", "capture(`a${x}b${y}c${z}de${w}`);\n"],
+        // a non-constant operand starts a new accumulator
+        [
+          "capture(`a${x}` + y + `b${z}` + `c${w}` + v + `d${u}` + `e${s}`);",
+          "capture(`a${x}` + y + `b${z}c${w}` + v + `d${u}e${s}`);\n",
+        ],
+        // chains inside substitutions fold on their own
+        [
+          "capture(`a${`b${x}` + `c${y}`}d` + `e${`f${z}` + `g${w}`}h` + `i${v}`);",
+          "capture(`a${`b${x}c${y}`}de${`f${z}g${w}`}hi${v}`);\n",
+        ],
+        ["capture(`${x}` + `${y}` + `${z}`);", "capture(`${x}${y}${z}`);\n"],
+        ["capture(`a${x}` + `` + `b${y}` + ``);", "capture(`a${x}b${y}`);\n"],
+        ["capture(tag`a${x}` + `b${y}` + `c${z}`);", "capture(tag`a${x}` + `b${y}c${z}`);\n"],
+        ["capture(`a${x}` + tag`b${y}` + `c${z}`);", "capture(`a${x}` + tag`b${y}` + `c${z}`);\n"],
+        ["capture(`a${1}` + `b${2}` + `c${'3'}`);", 'capture("a1b2c3");\n'],
+        [
+          "const enum E { A = 'a', B = `b` }\ncapture(`x${y}` + E.A + `z${w}` + E.B);",
+          'var E;\n((E) => {\n  E.A = "a";\n  E.B = "b";\n})(E ||= {});\ncapture(`x${y}az${w}b`);\n',
+        ],
+        // the longer right operand keeps its parts, the left ones go in front
+        ["capture(`a${x}` + (`b${y}` + `c${z}` + `d${w}`));", "capture(`a${x}b${y}c${z}d${w}`);\n"],
+        [
+          "capture(`a${x}` + (`b${y}` + (`c${z}` + (`d${w}` + (`e${v}` + `f${u}`)))));",
+          "capture(`a${x}b${y}c${z}d${w}e${v}f${u}`);\n",
+        ],
+        ["capture((`a${x}` + `b${y}`) + (`c${z}` + `d${w}`));", "capture(`a${x}b${y}c${z}d${w}`);\n"],
+        ["capture(`a${x}` + (`b${y}` + `c${z}`) + `d${w}`);", "capture(`a${x}b${y}c${z}d${w}`);\n"],
+        [
+          "capture(`a${x}` + (`b${y}` + (`c${z}` + `d${w}`) + `e${v}`) + `f${u}`);",
+          "capture(`a${x}b${y}c${z}d${w}e${v}f${u}`);\n",
+        ],
+        // a string in front of a folded chain
+        [
+          "capture('s' + (`a${x}` + `b${y}` + `c${z}`) + `d${w}` + `e${v}`);",
+          "capture(`sa${x}b${y}c${z}d${w}e${v}`);\n",
+        ],
+        ["capture('s' + ('t' + (`a${x}` + `b${y}`) + `c${z}`) + `d${w}`);", "capture(`sta${x}b${y}c${z}d${w}`);\n"],
+        // single-use declarations are folded one into the next
+        [
+          "function f(x) {\n  let a = `p${x}q`;\n  let b = a + `r${x}s`;\n  let c = b + `t${x}u`;\n  return c;\n}",
+          "function f(x) {\n  return `p${x}qr${x}st${x}u`;\n}\n",
+        ],
+        [
+          "function f(x) {\n  let a = `p${!x}q`;\n  let b = `r${!x}s` + a;\n  let c = `t${!x}u` + b + `v${!x}w`;\n  return c;\n}",
+          "function f(x) {\n  return `t${!x}ur${!x}sp${!x}qv${!x}w`;\n}\n",
+        ],
+        // constants fold into the text around them
+        ["capture(`a${x}b${1}c${y}d${'s'}e${z}f`);", "capture(`a${x}b1c${y}dse${z}f`);\n"],
+        ["capture(`a${1}b${'s'}c${null}d${true}e${undefined}f${2n}g`);", 'capture("a1bscnulldtrueeundefinedf2g");\n'],
+        ["capture(`${1}${x}${2}${3}${y}${4}`);", "capture(`1${x}23${y}4`);\n"],
+        // text that is not ASCII is not joined, and a constant in front of it stays a substitution
+        ["capture(`a${1}é${x}`);", 'capture(`a${"1"}é${x}`);\n'],
+        ["capture(`a${x}é` + `b${y}` + `c${z}`);", "capture(`a${x}é` + `b${y}c${z}`);\n"],
+        ["capture(`a${x}` + `é${y}` + `c${z}`);", "capture(`a${x}` + `é${y}c${z}`);\n"],
+        ["capture(`é${1}b${x}c${2}é${3}d`);", "capture(`é${1}b${x}c${2}é${3}d`);\n"],
+        // a substituted constant shortens a template that a fold made, and the next fold extends it
+        [
+          "function f(x, y, z, w) {\n  let s = 1;\n  let t = `a${x}` + `b${y}` + `c${z}` + `d${s}e`;\n  let u = t + `f${w}g`;\n  return u;\n}",
+          "function f(x, y, z, w) {\n  return `a${x}b${y}c${z}d1ef${w}g`;\n}\n",
+        ],
+        [
+          "function f(x, y, z, w) {\n  let s = 1;\n  let t = `a${!x}` + `b${!y}` + `c${!z}` + `d${s}e`;\n  let u = `f${!w}g` + t;\n  return u;\n}",
+          "function f(x, y, z, w) {\n  return `f${!w}ga${!x}b${!y}c${!z}d1e`;\n}\n",
+        ],
+        [
+          "function f(x, y, z, w) {\n  let s = 1;\n  let t = `a${!x}` + `b${s}` + `c${!z}` + `d${!y}e`;\n  let u = `f${!w}g` + t + `h${!w}i`;\n  let v = `j${!w}` + u + `k${!w}` + `l${!w}`;\n  return v;\n}",
+          "function f(x, y, z, w) {\n  return `j${!w}f${!w}ga${!x}b1c${!z}d${!y}eh${!w}ik${!w}l${!w}`;\n}\n",
+        ],
+        [
+          "function f(x, y, z, w) {\n  let s = 'S';\n  let t = `a${s}` + `b${!y}` + `c${!z}` + `d${!y}e` + `m${!x}`;\n  let u = `f${!w}g` + t + `h${!w}i`;\n  return u;\n}",
+          "function f(x, y, z, w) {\n  return `f${!w}gaSb${!y}c${!z}d${!y}em${!x}h${!w}i`;\n}\n",
+        ],
+        [
+          "function f(x, y, z, w) {\n  let s = 1;\n  let r = 2;\n  let t = `a${s}` + `b${r}`;\n  let u = `f${!w}g` + t + `h${!w}i` + `n${!x}`;\n  return u;\n}",
+          "function f(x, y, z, w) {\n  return `f${!w}ga1b2h${!w}in${!x}`;\n}\n",
+        ],
+        // operands of about the same size, as in a balanced tree of parentheses
+        [
+          "capture((`a${x}` + `b${y}`) + (`c${z}` + `d${w}`) + ((`e${x}` + `f${y}`) + (`g${z}` + `h${w}`)));",
+          "capture(`a${x}b${y}c${z}d${w}e${x}f${y}g${z}h${w}`);\n",
+        ],
+      ];
+      expect(cases.map(([input]) => [input, ts.parsedMin(input, false)])).toEqual(cases);
+    });
+
+    // The options of a transposed import() are one expression in both arms, and the
+    // statement is visited again after `t` is substituted. A fold must not take the
+    // text of that template away from the second arm.
+    it("a template literal in two places keeps its text", () => {
+      const cases = [
+        [
+          "function f(c, z) {\n  let t = c;\n  return import(t ? './a' : './b', `x${!z}w`);\n}",
+          'function f(c, z) {\n  return c ? import("./a", `x${!z}w`) : import("./b", `x${!z}w`);\n}\n',
+        ],
+        [
+          "function f(c, z) {\n  let t = c;\n  return import(t ? './a' : './b', 's' + `x${!z}w`);\n}",
+          'function f(c, z) {\n  return c ? import("./a", `sx${!z}w`) : import("./b", `sx${!z}w`);\n}\n',
+        ],
+        [
+          "function f(c, z) {\n  let t = c;\n  return import(t ? './a' : './b', `x${!z}w` + `y${!z}v`);\n}",
+          'function f(c, z) {\n  return c ? import("./a", `x${!z}wy${!z}v`) : import("./b", `x${!z}wy${!z}v`);\n}\n',
+        ],
+        [
+          "function f(c, z) {\n  let t = c;\n  let u = t;\n  return import(u ? './a' : './b', `x${`y${!z}`}w`);\n}",
+          'function f(c, z) {\n  return c ? import("./a", `x${`y${!z}`}w`) : import("./b", `x${`y${!z}`}w`);\n}\n',
+        ],
+      ];
+      expect(cases.map(([input]) => [input, ts.parsedMin(input, false)])).toEqual(cases);
+    });
+
     it("numeric constants", () => {
       expectBunPrinted_("export const foo = 1 + 2", "export const foo = 3");
       expectBunPrinted_("export const foo = 1 - 2", "export const foo = -1");

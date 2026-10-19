@@ -320,7 +320,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Template {
                 tag: Some(tag),
                 head: E::TemplateContents::Raw(head),
-                parts,
+                parts: E::TemplateParts::borrowed(parts),
             },
             loc,
         );

@@ -2208,7 +2208,7 @@ fn codegen_base_instruction_value(
                 E::Template {
                     tag: Some(tag_expr),
                     head: E::TemplateContents::Raw(value.raw),
-                    parts: StoreSlice::EMPTY,
+                    parts: E::TemplateParts::EMPTY,
                 },
                 loc,
             ))
@@ -2233,7 +2233,7 @@ fn codegen_base_instruction_value(
                 E::Template {
                     tag: None,
                     head,
-                    parts: StoreSlice::new_mut(parts.leak()),
+                    parts: E::TemplateParts::borrowed(StoreSlice::new_mut(parts.leak())),
                 },
                 loc,
             ))

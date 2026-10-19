@@ -1,6 +1,6 @@
 use crate::expr::{Data, PrimitiveType, data};
 use crate::{E, Expr, e};
-use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_alloc::Arena;
 
 /// Links both ropes into the result (see `EString::push`); sound because shared strings are never ropes.
 fn join_strings(left: &E::EString, right: &E::EString) -> E::EString {
@@ -11,27 +11,6 @@ fn join_strings(left: &E::EString, right: &E::EString) -> E::EString {
     new.prefer_template = new.prefer_template || right.prefer_template;
 
     new
-}
-
-/// Concat two `TemplatePart` slices into the bump arena.
-/// `TemplatePart` is POD-shaped (no Drop) but not `Copy` because
-/// `EString` opted out; mirror `Template::fold`'s field-wise copy via
-/// `shallow_clone` instead of raw `copy_nonoverlapping`.
-fn concat_parts(
-    bump: &Arena,
-    a: &[e::TemplatePart],
-    b: &[e::TemplatePart],
-) -> crate::StoreSlice<e::TemplatePart> {
-    let mut v = bun_alloc::ArenaVec::<e::TemplatePart>::with_capacity_in(a.len() + b.len(), bump);
-    for p in a.iter().chain(b.iter()) {
-        // Field-wise copy (all fields structurally `Copy`).
-        v.push(e::TemplatePart {
-            value: p.value,
-            tail_loc: p.tail_loc,
-            tail: p.tail.shallow_clone(),
-        });
-    }
-    crate::StoreSlice::from_bump(v)
 }
 
 /// Transforming the left operand into a string is not safe if it comes from a
@@ -89,12 +68,12 @@ pub fn fold_string_addition(
                         }
                     }
                     // "bar" + `baz${bar}` => `barbaz${bar}`
-                    Data::ETemplate(right) => {
+                    Data::ETemplate(mut right) => {
                         if right.head.is_utf8() {
                             return Some(Expr::init(
                                 E::Template {
                                     tag: None,
-                                    parts: right.parts,
+                                    parts: right.parts.take(),
                                     head: e::TemplateContents::Cooked(join_strings(
                                         left.get(),
                                         right.head.cooked(),
@@ -140,8 +119,6 @@ pub fn fold_string_addition(
                             // be treated by enums as strings, but will not be
                             // inlined unless they could be converted into
                             // .e_string.
-                            // `parts` is `StoreSlice<T>` (arena-owned, mutable
-                            // provenance) — write through `parts_mut()`.
                             if !left.parts().is_empty() {
                                 let i = left.parts().len() - 1;
                                 let last_tail = &left.parts()[i].tail;
@@ -161,7 +138,7 @@ pub fn fold_string_addition(
                         }
                     }
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
-                    Data::ETemplate(right) => {
+                    Data::ETemplate(mut right) => {
                         if right.tag.is_none() && right.head.is_utf8() {
                             if !left.parts().is_empty() {
                                 let i = left.parts().len() - 1;
@@ -173,19 +150,14 @@ pub fn fold_string_addition(
                                     ));
                                     left.parts_mut()[i].tail = new_tail;
 
-                                    let new_parts = if right.parts().is_empty() {
-                                        left.parts
-                                    } else {
-                                        concat_parts(bump, left.parts(), right.parts())
-                                    };
-                                    left.parts = new_parts;
+                                    left.parts.append(bump, &mut right.parts);
                                     return Some(lhs);
                                 }
                             } else if left.head.is_utf8() && right.head.is_utf8() {
                                 let new_head =
                                     join_strings(left.head.cooked(), right.head.cooked());
                                 left.head = e::TemplateContents::Cooked(new_head);
-                                left.parts = right.parts;
+                                left.parts = right.parts.take();
                                 return Some(lhs);
                             }
                         }

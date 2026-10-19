@@ -1946,12 +1946,15 @@ impl Data {
                 Ok(Data::ESpread(StoreRef::from_bump(item)))
             }
             Data::ETemplate(el) => {
+                // The clone gets its own parts: folds write a template's parts in place.
+                let mut parts = bun_alloc::ArenaVec::with_capacity_in(el.parts().len(), bump);
+                parts.extend(el.parts().iter().map(E::TemplatePart::shallow_clone));
                 let item = bump.alloc(E::Template {
                     tag: match &el.tag {
                         Some(tag) => Some(tag.deep_clone_no_detach(bump, stack_check)?),
                         None => None,
                     },
-                    parts: el.parts,
+                    parts: E::TemplateParts::borrowed(crate::StoreSlice::from_bump(parts)),
                     // `TemplateContents` is POD-shaped; `shallow_clone` is the
                     // safe field-wise copy.
                     head: el.head.shallow_clone(),

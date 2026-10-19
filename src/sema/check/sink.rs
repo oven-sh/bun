@@ -71,6 +71,14 @@ pub(super) fn number_text(number: usize) -> Vec<u8> {
 /// `maxSerializationLevel`
 pub(super) const MAX_SERIALIZATION_LEVEL: u32 = 2;
 
+/// True if only a resolution cycle reports `code`.
+fn is_circularity_error(code: u32) -> bool {
+    matches!(
+        code,
+        2303 | 2310 | 2313 | 2456 | 2502 | 2506 | 2577 | 2615 | 4109 | 4110 | 7022 | 7023 | 7024
+    )
+}
+
 /// `ast.Diagnostic`
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct Reported {
@@ -769,6 +777,7 @@ impl Checker<'_, '_> {
         // Only the check of that file or of an earlier one reports a cycle, and for that it has to go round by itself. So it
         // must not find what this task stored on the way.
         if let Some(q) = owner
+            && is_circularity_error(diagnostic.code)
             && diagnostic.file != NOWHERE.0
             && self.reports_semantic_errors(diagnostic.file)
             && self.is_left_to_an_earlier_file(owner, diagnostic.file)

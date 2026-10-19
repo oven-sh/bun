@@ -963,6 +963,9 @@ private:
         }
         if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
         conn->flush();
+        /* No stream waits for this close. Over TLS the graceful close reads on until the
+         * peer's close_notify, so a request that crosses the GOAWAY is not answered with a reset. */
+        if (conn->streams.empty()) return us_socket_close(s, 0, nullptr);
         return us_socket_close_now(s);
     }
 

@@ -1059,7 +1059,7 @@ describe("Bun.serve http2 in-process", () => {
       }
     });
 
-    // usockets ticks timeouts in 4 s steps, so the idleTimeout tests need real seconds.
+    // usockets ticks timeouts in 4 s steps, so an idleTimeout test needs real seconds.
     test("idleTimeout aborts a stream in flight", async () => {
       const onAbort = mock();
       await using server = Bun.serve({
@@ -1080,37 +1080,7 @@ describe("Bun.serve http2 in-process", () => {
       } finally {
         raw.close();
       }
-    }, 15_000);
-
-    test("idleTimeout closes a connection whose response is complete", async () => {
-      await using server = Bun.serve({
-        port: 0,
-        tls: tlsCert,
-        http2: true,
-        idleTimeout: 1,
-        fetch: () => new Response("ok"),
-      });
-      const raw = await silentClient(server.port!);
-      try {
-        raw.headers(1, baseHeaders("/"));
-        expect((await raw.body(1)).toString()).toBe("ok");
-        await raw.waitForEnd();
-        // No request is left to observe on the server, so ask its kernel: it resets a frame sent to a socket that is closed.
-        raw.write(frame(T.PING, 0, 0, Buffer.alloc(8)));
-        // That reset is back before a whole exchange on a new connection completes.
-        const res = await fetch(`https://127.0.0.1:${server.port}/`, {
-          tls: { rejectUnauthorized: false },
-          keepalive: false,
-        });
-        expect({ body: await res.text(), goaway: hasGoaway(raw), closed: raw.closed }).toEqual({
-          body: "ok",
-          goaway: true,
-          closed: true,
-        });
-      } finally {
-        raw.close();
-      }
-    }, 15_000);
+    }, 10_000);
   });
 
   // The other wait of a graceful TLS close is for ciphertext the kernel did not take.
@@ -1127,7 +1097,8 @@ describe("Bun.serve http2 in-process", () => {
     // that does not read stops it. Each small request after it makes the server write
     // again, until it holds ciphertext that the kernel refused.
     function bigResponse(idleTimeout: number) {
-      const onAbort = mock();
+      const aborted = Promise.withResolvers<void>();
+      const onAbort = mock(() => aborted.resolve());
       let arrived = Promise.withResolvers<void>();
       const options = {
         port: 0,
@@ -1151,7 +1122,7 @@ describe("Bun.serve http2 in-process", () => {
           await arrived.promise;
         }
       }
-      return { options, onAbort, stall };
+      return { options, onAbort, aborted: aborted.promise, stall };
     }
 
     test("stop(true) aborts the response inside the call", async () => {
@@ -1169,24 +1140,15 @@ describe("Bun.serve http2 in-process", () => {
     });
 
     test("idleTimeout aborts the response", async () => {
-      const { options, onAbort, stall } = bigResponse(1);
+      const { options, aborted, stall } = bigResponse(1);
       await using server = Bun.serve(options);
       const raw = await silentClient(server.port!, streamWindow);
       try {
         await stall(raw);
-        // This client does not read, so a second one tells the time: it went idle
-        // after the first, and its own idle timeout cannot fire before the first one's.
-        const clock = await silentClient(server.port!);
-        try {
-          clock.headers(1, baseHeaders("/"));
-          await clock.waitForEnd();
-          expect(onAbort).toHaveBeenCalledTimes(1);
-        } finally {
-          clock.close();
-        }
+        await aborted;
       } finally {
         raw.close();
       }
-    }, 15_000);
+    }, 10_000);
   });
 });

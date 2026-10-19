@@ -314,27 +314,24 @@ describe("Bun.serve per-serverName client certificate policy", () => {
         tls: { key: serverKey, cert: serverCert, ca: clientCa, requestCert: true, rejectUnauthorized: true },
         fetch: () => new Response("served"),
       });
-      const pinned = { minVersion: version, maxVersion: version };
       // With allowHalfOpen this client reads the server's close_notify and never answers it.
       const refused = tls.connect({
         host: "127.0.0.1",
         port: server.port,
         rejectUnauthorized: false,
         allowHalfOpen: true,
-        ...pinned,
+        minVersion: version,
+        maxVersion: version,
         ...untrustedClient,
       } as tls.ConnectionOptions);
+      const closed = Promise.withResolvers<void>();
       refused.on("error", () => {});
+      refused.on("close", () => closed.resolve());
       try {
         await once(refused, "end");
-        // Ask the server's kernel: it resets a write to a socket that is closed.
+        // The server's kernel resets a write to a socket that is closed, and that reset closes this one.
         refused.write("x");
-        // That reset is back before a whole exchange on a new connection completes.
-        const served = await request(server.port!, "localhost", { ...pinned, ...trustedClient });
-        expect({ served: served.status, refusedIsClosed: refused.closed }).toEqual({
-          served: "HTTP/1.1 200 OK",
-          refusedIsClosed: true,
-        });
+        await closed.promise;
       } finally {
         refused.destroy();
       }

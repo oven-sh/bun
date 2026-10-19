@@ -75,7 +75,7 @@ impl<'a> JsHeap<'a> {
         JsLocal::from_raw(EncodedSlice::latin1(latin1).to_js(self.global_object()))
     }
 
-    /// A string that takes over the allocation of `utf16`.
+    /// A string that takes over the allocation of `utf16`. Its error is not thrown: a `&mut self` method can call it.
     #[inline]
     pub fn create_utf16_string_from_vec(
         &self,

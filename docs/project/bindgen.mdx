@@ -134,8 +134,9 @@ set and not defined, and a call to a constructor found on the global object all 
 Throwing tells the debugger, which can run code, so after a throw the body returns without
 reading what it borrowed. A `mutates: true` method does not throw: what the debugger runs can call
 a method of the same object while the `&mut self` is live. It returns the error, which is thrown
-after the borrow ends. A `heap.create_*` that returns a `Result` throws at once, but for
-`create_utf16_string_from_vec`.
+after the borrow ends. Every `heap.create_*` that returns a `Result` throws at once, except
+`create_utf16_string_from_vec`. A method that has to call one takes `capability: "js"` and borrows
+with `with_mut` (see [the receiver](#the-receiver)).
 
 ```rust
 // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
@@ -147,7 +148,8 @@ let global = unsafe { heap.global() };
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
 `heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)`,
 `heap.illegal_constructor()`, `heap.string_too_long()`, `heap.memory_allocation_failed()` or
-`bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any type that implements `bindgen::IntoError` (`bun_sys::Error`,
+`bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any
+type that implements `bindgen::IntoError` (`bun_sys::Error`,
 `SystemError`, `JsError` and a `Box` of one do), which lets a `capability: "none"` function fail too.
 
 `cx.global()` is the `&JSGlobalObject`, for code that takes one. It borrows all of

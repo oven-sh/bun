@@ -1,5 +1,8 @@
 //! Tests for the buffer, `Task::finish`, `publish`, the merge and `follow` of ids and handles, and
 //! the underlying containers.
+//!
+//! Miri needs half a minute to build a `TypeStore`, so it runs only a few of the tests that have one. It also skips
+//! the tests that insert thousands of entries.
 
 use super::*;
 use crate::atom::Interner;
@@ -146,7 +149,6 @@ fn stored() -> Stored {
 // ───────────────────────────── the buffer ─────────────────────────────
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn insert_keeps_what_is_there_and_rewrite_replaces_the_tasks_entry() {
     let session = Session::new();
     let tables = Tables::new(&session);
@@ -282,7 +284,6 @@ fn a_permission_tells_whether_the_task_has_held_back_since_its_computation_began
 
 #[test]
 #[should_panic]
-#[cfg_attr(miri, ignore)]
 fn a_table_that_knows_its_slot_takes_no_other() {
     let mut table = ById::<TypeId, TypeId, Buffered<At<3>>>::default();
     table.set_slot(numbered(4));
@@ -291,7 +292,6 @@ fn a_table_that_knows_its_slot_takes_no_other() {
 // ───────────────────────────── bit storage ─────────────────────────────
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn the_fields_of_a_shared_cell() {
     let cell = AtomicU32::new(0);
     assert_eq!(cell.put_field_if_empty(4, 3, 2), 2);
@@ -344,7 +344,6 @@ fn file_local_values_of_a_bit_or_two_share_a_word() {
 
 /// `TypeKey` is hashed and compared like the equivalent `TypeData`.
 #[test]
-#[cfg_attr(miri, ignore)]
 fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
     let session = Session::new();
     let tables = Tables::new(&session);
@@ -510,7 +509,6 @@ fn a_vacancy_is_filled_only_while_it_is_one() {
 
 /// The table is replaced when an entry would make it more than three quarters full.
 #[test]
-#[cfg_attr(miri, ignore)]
 fn what_is_found_stays_found_when_the_table_is_replaced() {
     // The first table has 256 slots.
     for count in [1, 191, 192, 193, 384, 385] {
@@ -531,7 +529,6 @@ fn what_is_found_stays_found_when_the_table_is_replaced() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn the_top_bits_of_a_hash_are_its_shard() {
     for shards in [1, 2, 8, 64, 256] {
         for top in 0..256 {
@@ -557,9 +554,9 @@ fn the_nodes_of_many_files_have_different_hashes() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn threads_fill_and_read_a_sharded_map() {
-    let map = ShardedMap::<u32, Box<u32>>::default();
+    // About 75 keys in each of four shards: a shard's table is replaced three times while other threads read it.
+    let map = ShardedMap::<u32, Box<u32>, Global, 4>::default();
     on_threads(4, &|thread| {
         for i in 0..300 {
             let key = (i * 7 + thread as u32) % 300;
@@ -574,33 +571,37 @@ fn threads_fill_and_read_a_sharded_map() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn threads_fill_and_read_a_windowed_map() {
-    let map = WindowedMap::<(TypeId, TypeId), u32>::new_in(std::alloc::Global);
-    let key_of = |i: u32| (TypeId(i * 37), TypeId(i % 5));
-    on_threads(4, &|thread| {
-        for i in 0..3000 {
-            let i = (i * 7 + thread as u32) % 3000;
-            let key = key_of(i);
-            map.add_if_absent(spread_in_window(&key), &key, i);
-            assert_eq!(map.get_by_now(spread_in_window(&key), &key), Some(&i));
-            let other = key_of((i + 11) % 3000);
-            if let Some(value) = map.get_by_now(spread_in_window(&other), &other) {
-                assert_eq!(*value, (i + 11) % 3000);
+    // Miri needs four minutes for 3,000 keys.
+    const KEYS: u32 = if cfg!(miri) { 200 } else { 3000 };
+    // With a step of 37 a window has two keys, so the threads keep adding windows. With a step of 3 it has 21 or 22, so
+    // its table is replaced twice while other threads read it.
+    for step in [37, 3] {
+        let map = WindowedMap::<(TypeId, TypeId), u32>::new_in(Global);
+        let key_of = |i: u32| (TypeId(i * step), TypeId(i % 5));
+        on_threads(4, &|thread| {
+            for i in 0..KEYS {
+                let i = (i * 7 + thread as u32) % KEYS;
+                let key = key_of(i);
+                map.add_if_absent(spread_in_window(&key), &key, i);
+                assert_eq!(map.get_by_now(spread_in_window(&key), &key), Some(&i));
+                let other = key_of((i + 11) % KEYS);
+                if let Some(value) = map.get_by_now(spread_in_window(&other), &other) {
+                    assert_eq!(*value, (i + 11) % KEYS);
+                }
             }
+        });
+        assert_eq!(map.entries(), KEYS as usize);
+        for i in 0..KEYS {
+            let key = key_of(i);
+            assert_eq!(map.get_frozen(spread_in_window(&key), &key), Some(&i));
         }
-    });
-    assert_eq!(map.entries(), 3000);
-    for i in 0..3000 {
-        let key = key_of(i);
-        assert_eq!(map.get_frozen(spread_in_window(&key), &key), Some(&i));
+        let absent = (TypeId(1), TypeId(1));
+        assert_eq!(map.get_frozen(spread_in_window(&absent), &absent), None);
     }
-    let absent = (TypeId(1), TypeId(1));
-    assert_eq!(map.get_frozen(spread_in_window(&absent), &absent), None);
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn local_is_bit_30() {
     assert_eq!(LOCAL, 1 << 30);
     assert!(TypeId(LOCAL).is_local() && !TypeId(LOCAL - 1).is_local());
@@ -657,7 +658,6 @@ fn next_statement(task: &Task) {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn a_commit_stores_every_kind_of_entry_and_the_task_keeps_its_own() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
@@ -698,7 +698,6 @@ fn a_commit_stores_every_kind_of_entry_and_the_task_keeps_its_own() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn a_task_that_begins_again_has_none_of_its_earlier_entries() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
@@ -1081,7 +1080,6 @@ fn a_commit_stores_what_a_key_has_by_then_and_the_first_entry_stays() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn a_task_sees_all_that_a_commit_stores_under_the_nodes_of_a_file_or_nothing_of_it() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));

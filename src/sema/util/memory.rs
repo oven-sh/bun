@@ -1701,6 +1701,7 @@ mod tests {
         assert_eq!(alive.load(Ordering::Relaxed), 0);
     }
 
+    /// 114,688 pushes take four minutes under Miri. The next test allocates segments without filling them.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn an_emptied_segmented_vector_keeps_its_first_segment() {
@@ -1721,6 +1722,22 @@ mod tests {
         assert_eq!(*vec.get(2 * SEGMENT as u32 - 1), 2 * SEGMENT as u64 - 1);
         drop(vec);
         assert_eq!(count(), 0);
+    }
+
+    #[test]
+    fn an_element_stays_where_it_is_when_the_directory_grows() {
+        let mut vec = Segmented::<u64, Cell<u32>>::new_in(Global);
+        vec.push(7);
+        let first = vec.of_either(OWN);
+        // The directory starts with four entries.
+        for segment in 1..5 {
+            vec.install(segment * SEGMENT as u32);
+        }
+        assert_eq!(*first, 7);
+        assert!(std::ptr::eq(first, vec.of_either(OWN)) && std::ptr::eq(first, vec.get(0)));
+        vec.clear();
+        vec.install(SEGMENT as u32);
+        assert_eq!((vec.push(8), *vec.of_either(OWN)), (0, 8));
     }
 
     #[test]
@@ -1801,12 +1818,14 @@ mod tests {
 
     #[test]
     fn threads_replace_the_placeholders_that_they_add() {
+        // Miri needs a minute for 16 rounds.
+        const ROUNDS: u32 = if cfg!(miri) { 2 } else { 16 };
         let store = Segmented::<u64, AtomicU32>::new_in(Global);
         std::thread::scope(|scope| {
             for thread in 0..8 {
                 let store = &store;
                 scope.spawn(move || {
-                    for _ in 0..16 {
+                    for _ in 0..ROUNDS {
                         let mut mine = store.add_placeholders(64, || u64::MAX);
                         let first = mine.first().unwrap();
                         // The last placeholder is never replaced.
@@ -1821,7 +1840,7 @@ mod tests {
                 });
             }
         });
-        assert_eq!(store.len(), 8 * 16 * 64);
+        assert_eq!(store.len(), 8 * ROUNDS * 64);
         for index in 0..store.len() {
             match index % 64 {
                 63 => assert_eq!(*store.get(index), u64::MAX),
@@ -1941,11 +1960,8 @@ mod tests {
 
         type Many<'a> = Growing<AtomicU32, Counting<'a>>;
         let mut newest = Newest::<AtomicU32, _, Many<'_>>::new_in(alloc);
-        let (near, far, other) = (
-            Many::series(0, 3),
-            Many::series(0, 5000),
-            Many::series(3, 3),
-        );
+        // `far` is in the second chunk of heads. Miri needs a minute for a chunk of 4,096.
+        let (near, far, other) = (Many::series(0, 3), Many::series(0, 100), Many::series(3, 3));
         let len =
             |newest: &Newest<_, _, Many<'_>>, series| newest.get(series, Ordering::Relaxed).len();
         assert_eq!((len(&newest, near), len(&newest, far), count()), (0, 0, 0));

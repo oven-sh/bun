@@ -3639,17 +3639,27 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
         buf->unpin();
 }
 
-// Returns true if `v`'s bytes belong to a `WebAssembly.Memory`. Never materializes an ArrayBuffer.
-CPP_DECL bool JSC__JSValue__isWasmMemory(JSC::EncodedJSValue v)
+// Returns the ArrayBuffer that `value` already has, or null. Never materializes one.
+static ALWAYS_INLINE JSC::ArrayBuffer* existingArrayBuffer(JSC::JSValue value)
 {
-    auto value = JSC::JSValue::decode(v);
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
-        return view->hasArrayBuffer() && view->possiblySharedBuffer()->isWasmMemory();
-    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
-        auto* buf = jb->impl();
-        return buf && buf->isWasmMemory();
-    }
-    return false;
+        return view->hasArrayBuffer() ? view->possiblySharedBuffer() : nullptr;
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
+        return jb->impl();
+    return nullptr;
+}
+
+CPP_DECL bool JSC__JSValue__isNonSharedWasmMemory(JSC::EncodedJSValue v)
+{
+    auto* buf = existingArrayBuffer(JSC::JSValue::decode(v));
+    return buf && buf->isWasmMemory() && !buf->isShared();
+}
+
+// See `ArrayBuffer::can_be_freed_while_pinned` in array_buffer.rs.
+CPP_DECL bool JSC__JSValue__canBeFreedWhilePinned(JSC::EncodedJSValue v)
+{
+    auto* buf = existingArrayBuffer(JSC::JSValue::decode(v));
+    return buf && !buf->isShared() && (buf->isResizableOrGrowableShared() || buf->isWasmMemory());
 }
 
 // Returns `v`'s current byte range, or null and 0 if it's detached.

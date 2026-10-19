@@ -139,7 +139,8 @@ unsafe extern "C" {
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     // safe: by-value `JSValue`; false for non-buffer values.
-    safe fn JSC__JSValue__isWasmMemory(v: JSValue) -> bool;
+    safe fn JSC__JSValue__isNonSharedWasmMemory(v: JSValue) -> bool;
+    safe fn JSC__JSValue__canBeFreedWhilePinned(v: JSValue) -> bool;
     // safe: by-value `JSValue`; the callee always fills both out-params.
     safe fn JSC__JSValue__arrayBufferExtent(v: JSValue, out_ptr: &mut *mut u8, out_len: &mut usize);
 }
@@ -184,13 +185,10 @@ impl ArrayBuffer {
     /// `grow()` detaches a non-shared `WebAssembly.Memory`'s buffer regardless of the pin count,
     /// which frees the old block immediately or when the memory is collected.
     /// Copy these bytes if the borrow outlives the call.
-    pub fn can_be_freed_while_pinned(&self) -> bool {
-        !self.shared && (self.resizable || self.is_wasm_memory())
-    }
-
+    ///
     /// A call instead of a field, so that `as_array_buffer` callers that never ask don't pay for the answer.
-    fn is_wasm_memory(&self) -> bool {
-        JSC__JSValue__isWasmMemory(self.value)
+    pub fn can_be_freed_while_pinned(&self) -> bool {
+        JSC__JSValue__canBeFreedWhilePinned(self.value)
     }
 
     // require('buffer').kMaxLength.
@@ -745,6 +743,10 @@ impl PinnedArrayBuffer {
 
     /// Like [`root`](Self::root), but for a job that reads the bytes itself. See [`copy_if_freeable_while_pinned`](Self::copy_if_freeable_while_pinned).
     pub fn root_read_only(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        // Asking first makes the usual case a tail call, so the result isn't moved again.
+        if !JSC__JSValue__canBeFreedWhilePinned(value) {
+            return Self::root(global, value);
+        }
         let mut this = Self::root(global, value)?;
         this.copy_if_freeable_while_pinned(global).then_some(this)
     }
@@ -778,7 +780,7 @@ impl PinnedArrayBuffer {
     /// copies the bytes to `offset`.
     #[inline]
     pub fn write_to_scratch_if_wasm(&mut self, offset: usize, len: usize) -> bool {
-        if len == 0 || self.buffer.shared || !self.buffer.is_wasm_memory() {
+        if len == 0 || !JSC__JSValue__isNonSharedWasmMemory(self.buffer.value) {
             return false;
         }
         let mut scratch = vec![0u8; len];

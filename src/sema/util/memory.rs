@@ -1753,6 +1753,38 @@ mod tests {
         is_send::<Segmented<'static, Box<u32>, Cell<u32>>>();
     }
 
+    /// Each thread uses series that no other thread uses, as if it held their locks. The series share chunks of heads,
+    /// so a thread reads a head in a chunk that another thread has just allocated.
+    #[test]
+    fn threads_use_series_that_share_a_chunk() {
+        type Many = Growing<AtomicU32, Global>;
+        const THREADS: u32 = 3;
+        for _ in 0..8 {
+            let newest = Newest::<AtomicU32, Global, Many>::default();
+            let start = Barrier::new(THREADS as usize);
+            std::thread::scope(|scope| {
+                for thread in 0..THREADS {
+                    let (newest, start) = (&newest, &start);
+                    scope.spawn(move || {
+                        start.wait();
+                        for round in 0..40 {
+                            let series = Many::series(0, round * THREADS + thread);
+                            assert!(newest.get(series, Ordering::Relaxed).is_empty());
+                            let mark = series as u32 + 1;
+                            newest.replace(series, 2, |cells| {
+                                cells[0].store(mark, Ordering::Relaxed);
+                            });
+                            let count = newest.series().count(series);
+                            assert_eq!(count.fetch_add(1, Ordering::Relaxed), 0);
+                            let cells = newest.get(series, Ordering::Relaxed);
+                            assert_eq!(cells[0].load(Ordering::Relaxed), mark);
+                        }
+                    });
+                }
+            });
+        }
+    }
+
     #[test]
     fn every_block_goes_back_to_its_allocator() {
         let blocks = AtomicUsize::new(0);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, nodeExe, normalizeBunSnapshot, tempDir } from "harness";
 import { totalmem } from "node:os";
 import { join } from "node:path";
 import {
@@ -2064,6 +2064,77 @@ test("node:vm SourceTextModule.link() rejects holey and mismatched argument arra
   expect(exitCode).toBe(0);
 });
 
+test("node:vm native getNamespace() refuses a module that is not linked", async () => {
+  // The namespace getter of a vm.Module checks the status before it calls the native method. The native method
+  // (reachable via the kNative own-symbol) must check the module record itself, as Node's does. The namespace object
+  // of a module that is not linked has the exports that its modules give it now, and link() or linkRequests() can
+  // still give it other modules.
+  const fixture = `
+    import vm from "node:vm";
+    const context = vm.createContext({});
+    const mk = (identifier, source) => new vm.SourceTextModule(source, { identifier, context });
+    const kNative = Object.getOwnPropertySymbols(mk("probe", "export {};")).find(s => s.description === "kNative");
+    const nativeNamespace = module => {
+      try {
+        return Object.keys(module[kNative].getNamespace()) + "";
+      } catch (e) {
+        return e.code;
+      }
+    };
+    const results = [];
+
+    // a is a member of a cycle whose link() failed.
+    {
+      const root = mk("root", 'import "b"; import { read } from "a"; export { read };');
+      const a = mk("a", 'import * as ns from "b"; export const read = () => Object.keys(ns) + " v=" + ns.v;');
+      const b1 = mk("b1", 'import "a"; import { missing } from "c"; export var v = "b1";');
+      const b2 = mk("b2", 'import "a"; export var v = "b2"; export var only2;');
+      const c = mk("c", "export var y = 1;");
+      await root.link(specifier => ({ a, b: b1, c })[specifier]).catch(() => {});
+      results.push("after a failed link(): " + nativeNamespace(a));
+      await root.link(specifier => ({ a, b: b2, c })[specifier]);
+      await root.evaluate();
+      results.push("after the next link(): " + nativeNamespace(a) + " | " + root.namespace.read());
+    }
+
+    // No link() fails. r exports what b exports, and gets another module for "b" after the call.
+    {
+      const root = mk("root", 'import { v } from "r"; export const read = () => v;');
+      const r = mk("r", 'export * from "b";');
+      const b1 = mk("b1", 'export let v = "b1"; export let only1 = 1;');
+      const b2 = mk("b2", 'export let v = "b2"; export let only2 = 2;');
+      root.linkRequests([r]);
+      r.linkRequests([b1]);
+      b1.linkRequests([]);
+      b2.linkRequests([]);
+      results.push("before instantiate(): " + nativeNamespace(r));
+      r.linkRequests([b2]);
+      root.instantiate();
+      await root.evaluate();
+      results.push("after instantiate(): " + nativeNamespace(r) + " | " + root.namespace.read());
+    }
+    console.log(results.join("\\n"));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "after a failed link(): ERR_VM_MODULE_STATUS
+    after the next link(): read | only2,v v=b2
+    before instantiate(): ERR_VM_MODULE_STATUS
+    after instantiate(): only2,v | b2"
+  `);
+  expect(exitCode).toBe(0);
+});
+
 describe("node:vm SourceTextModule cyclic graph linking", () => {
   // Building a cyclic SourceTextModule graph and linking + evaluating each
   // module from inside the linker callback (instead of linking the whole graph
@@ -2180,6 +2251,108 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
 
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ab=B ba=A");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("node:vm SourceTextModule link() after a link() that failed", () => {
+  // A module that is still "unlinked" after a failed link() can get other modules from the next link() or
+  // linkRequests(), as in Node. JSC kept what the failed Link() made on the modules that did not link, and all of
+  // that was for the modules they had before: a segfault, a TDZ ReferenceError or the bindings of the replaced module.
+  //
+  // The programs and what Node v26.3.0 prints for them are in the fixture. Each group runs in one process, one
+  // after the other: a debug build needs more than a second for a group.
+  const fixture = join(import.meta.dir, "vm-module-relink-after-failed-link-fixture.mjs");
+
+  const groups: [group: string, env: Record<string, string>][] = [
+    ["the environment of a member of the cycle", {}],
+    ["other bindings of a member of the cycle", {}],
+    ["the exports that a module resolved through another module", {}],
+    ["the namespace object of a module", {}],
+    ["two modules with one identifier and one source text", {}],
+    ["a module that linked inside the failed link()", {}],
+    // With 512 KB of stack, a short chain of modules is enough for Link() to overflow.
+    ["a link() that fails with a stack overflow", { BUN_JSC_maxPerThreadStackUsage: "524288" }],
+  ];
+
+  test.each(groups)("%s", async (group, env) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, group],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The expected lines of the fixture are from the Node.js version that Bun reports, so only that version checks them.
+  const node = nodeExe();
+  const nodeIsTheReportedVersion =
+    !!node &&
+    Bun.spawnSync({ cmd: [node, "--version"], env: bunEnv })
+      .stdout.toString()
+      .trim() === `v${process.versions.node}`;
+
+  test.skipIf(!nodeIsTheReportedVersion)("Node.js runs the fixture with the same results", async () => {
+    await using proc = Bun.spawn({
+      // With a small stack, as above: a shorter chain of modules.
+      cmd: [node!, "--experimental-vm-modules", "--no-warnings", "--stack-size=256", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Every member imports root, so all of them are in one cycle, and each finishes InitializeEnvironment before the
+  // last one fails. Only the leaf links: it keeps its environment and its code. Without the reset, the 200 members
+  // and the root keep theirs too, and the numbers are 201 and 202.
+  test.each([
+    ["a new context", "vm.createContext({})"],
+    ["the main context", "undefined"],
+  ])("what a failed instantiate() leaves in the heap, in %s", async (_, context) => {
+    const program = `
+      import { heapStats } from "bun:jsc";
+      import vm from "node:vm";
+      const context = ${context};
+      const mk = (identifier, source) => new vm.SourceTextModule(source, { identifier, context });
+      const members = Array.from({ length: 200 }, (_, i) => mk("m" + i, 'import "root"; import * as ns from "leaf"; export const read = () => ns;'));
+      const root = mk("root", members.map(member => 'import "' + member.identifier + '";').join("") + 'import "last";');
+      const last = mk("last", 'import "root"; import { missing } from "leaf";');
+      const leaf = mk("leaf", "export var y = 1;");
+      root.linkRequests([...members, last]);
+      for (const member of members) member.linkRequests([root, leaf]);
+      last.linkRequests([root, leaf]);
+      leaf.linkRequests([]);
+      const count = () => {
+        Bun.gc(true);
+        const { JSModuleEnvironment = 0, ModuleProgramExecutable = 0 } = heapStats().objectTypeCounts;
+        return { JSModuleEnvironment, ModuleProgramExecutable };
+      };
+      const before = count();
+      let error;
+      try {
+        root.instantiate();
+      } catch (e) {
+        error = e.name;
+      }
+      const after = count();
+      console.log(JSON.stringify({
+        error,
+        JSModuleEnvironment: after.JSModuleEnvironment - before.JSModuleEnvironment,
+        ModuleProgramExecutable: after.ModuleProgramExecutable - before.ModuleProgramExecutable,
+      }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", program], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ error: "SyntaxError", JSModuleEnvironment: 1, ModuleProgramExecutable: 1 });
     expect(exitCode).toBe(0);
   });
 });

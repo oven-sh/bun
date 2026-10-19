@@ -345,6 +345,13 @@ JSModuleNamespaceObject* NodeVMModule::namespaceObject(JSC::JSGlobalObject* glob
 
     AbstractModuleRecord* amr = this->moduleRecord(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    // The namespace object has the exports that the modules of this record give it now, and link() can still change
+    // those modules. Node's native method refuses too:
+    // https://github.com/nodejs/node/blob/v26.3.0/src/module_wrap.cc#L970-L972
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(amr); cyclic && cyclic->status() < JSC::CyclicModuleRecord::Status::Linked) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module status must not be unlinked or linking"_s);
+        return {};
+    }
     object = amr->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (object) {

@@ -319,6 +319,14 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 
     JSModuleRecord* record = m_moduleRecord.get();
 
+    // The Link() of an importer linked this record already. It keeps the modules that it linked with, as in Node:
+    // ModuleWrap::Link stores the new ones, and V8 does not resolve the requests of a linked module again.
+    // https://github.com/nodejs/node/blob/v26.3.0/deps/v8/src/objects/module.cc#L233-L249
+    if (record->status() >= JSC::CyclicModuleRecord::Status::Linked) {
+        m_linkCalled = true;
+        return jsUndefined();
+    }
+
     if (length != 0) {
         const auto& requested = record->requestedModules();
         for (unsigned i = 0; i < length; i++) {
@@ -472,7 +480,13 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
 
     record->link(globalObject, nullptr);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]] {
+        // link() can give the modules that did not link other modules before the next Link(). Nothing of this one
+        // stays on them, as in V8 (Module::ResetGraph):
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/v8/src/objects/module.cc#L208-L231
+        record->resetGraphAfterFailedLink(vm);
+        return {};
+    }
 
     status(Status::Linked);
     propagateLinked();

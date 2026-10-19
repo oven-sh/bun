@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { basename, join } from "node:path";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1787,6 +1788,35 @@ describe("bundler", () => {
     },
   });
 
+  // All `case` bodies share the switch's block scope: a `let` in one case is
+  // visible (in TDZ or not) from closures and hoisted functions in the other
+  // cases, so it must not be inlined away before those have been counted.
+  itBundled("minify/SingleUseSubstitutionSeesAllSwitchCases", {
+    files: {
+      "/entry.js": /* js */ `
+        export function later(n, g) { switch (n) { case 0: let a = g(); throw a; case 1: return () => a; } }
+        export function earlier(n, g) { switch (n) { case 1: return () => a; case 0: let a = g(); throw a; } }
+        export function hoisted(n, g) { switch (n) { case 0: let a = g(); throw a; case 1: return h; function h() { return a; } } }
+        export function alone(n, g) { switch (n) { case 0: let a = g(); throw a; default: return null; } }
+      `,
+      "/test.js": /* js */ `
+        import { later, earlier, hoisted, alone } from "./entry.js";
+        globalThis.keep = [earlier, hoisted, alone];
+        const read = later(1, null);
+        // TDZ error from the switch-scoped \`a\`, not "a is not defined" from a dangling global reference
+        try { read(); console.log("unreachable"); } catch (e) { console.log(e.constructor.name, /initiali[sz]/.test(e.message)); }
+      `,
+    },
+    entryPoints: ["/test.js"],
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code.match(/let a = g\(\);\s*throw a;/g)).toHaveLength(3);
+      expect(code).toContain("throw g();");
+    },
+    run: { file: "/out.js", stdout: "ReferenceError true" },
+  });
   // A single-use `let` is substituted into whichever child of the next
   // expression reads it. `a` is used where the substitution must happen;
   // `keep` where a side effect in between must block it.
@@ -1859,6 +1889,101 @@ describe("bundler", () => {
       expect(code.match(/return v\[i\];/g)).toHaveLength(2);
       expect(code.match(/let keep = /g)).toHaveLength(10);
     },
+  });
+
+  // `(0, eval)(code)` is an indirect eval, also after the single-use `result`
+  // moves into the return statement. No scope has a direct eval, so the locals
+  // are renamed and the unused function is removed.
+  itBundled("minify/SingleUseNextToIndirectEval", {
+    files: {
+      "/entry.js": /* js */ `
+        function run(code) {
+          var firstLocal = 1;
+          let secondLocal = 2;
+          const result = (0, eval)(code);
+          return result + "!" + secondLocal;
+        }
+        function unusedFunction() { return "UNUSED"; }
+        console.log(run("typeof firstLocal"), run("typeof secondLocal"));
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("(0, eval)(");
+      expect(code).not.toMatch(/\b(var|let) (firstLocal|secondLocal)\b/);
+      expect(code).not.toContain("UNUSED");
+    },
+    run: { stdout: "undefined!2 undefined!2" },
+  });
+
+  // The single-use `c` moves into the return statement, which then reads
+  // `config.limit` next to a parameter that is also named `limit`.
+  for (const [name, options] of [
+    ["", {}],
+    ["TargetBun", { target: "bun" }],
+    ["FormatCJS", { format: "cjs" }],
+    ["MinifyWhitespace", { minifyWhitespace: true }],
+  ] as const) {
+    itBundled(`minify/SingleUseNamespaceAliasNextToParameterOfSameName${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import * as config from "./config.js";
+          function clamp(limit) { const c = config; return c.limit + limit; }
+          console.log(clamp(1));
+        `,
+        "/config.js": /* js */ `export const limit = 10;`,
+      },
+      minifySyntax: true,
+      ...options,
+      run: { stdout: "11" },
+    });
+  }
+
+  // The single-use value moves into a statement that writes a CommonJS export.
+  itBundled("minify/SingleUseIntoCommonJSExportAssignment", {
+    files: {
+      "/entry.js": /* js */ `
+        const viaExports = require("./via-exports.js");
+        const viaModule = require("./via-module.js");
+        const viaUpdate = require("./via-update.js");
+        viaExports.init(() => 9);
+        viaModule.init(() => 42);
+        console.log(viaExports.x, viaModule.app, viaUpdate.bump(() => 5), viaUpdate.bump(() => 5), viaUpdate.count);
+      `,
+      "/via-exports.js": /* js */ `exports.init = function (g) { const v = g(); exports.x = v; };`,
+      "/via-module.js": /* js */ `
+        function init(c) { const app = c(); module.exports.app = app; }
+        module.exports.init = init;
+      `,
+      "/via-update.js": /* js */ `
+        exports.count = 0;
+        exports.bump = function (g) { const v = g(); return v + exports.count++; };
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "9 42 5 6 2" },
+  });
+
+  // \`module.require\` through a single-use alias stays a call on \`module\`. The
+  // bundle must not name a \`__require\` helper that it does not define.
+  itBundled("minify/SingleUseAliasOfModuleNextToRequire", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function load(name) { const m = module; return m.require(name).value + 1; }
+        try { console.log(load("./dep.cjs")); } catch (e) { console.log(e.constructor.name); }
+      `,
+      "/dep.cjs": /* js */ `module.exports = { value: 41 };`,
+    },
+    entryPoints: ["/entry.cjs"],
+    format: "esm",
+    target: "node",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__require");
+    },
+    run: { stdout: "TypeError" },
   });
 
   // Every top-level statement of /esm.js hoists, so it gets no `init_esm()`
@@ -2059,5 +2184,74 @@ test.each(["transformSync", "transform"] as const)(
       "export var t = 1;\nvar t = 2;\nexport function read() { return t; }\n",
     );
     expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");
+  },
+);
+
+// A call through an alias of `require` is not resolved at build time. The
+// minifier moves the single-use alias into the call, and the build must still
+// bundle the same modules as the build that does not minify.
+test.concurrent.each(["bun", "node", "browser"] as const)(
+  "minify.syntax bundles the same modules for a call through a single-use alias of require (target %s)",
+  async target => {
+    using dir = tempDir("minify-aliased-require", {
+      "entry.js": `
+        function viaSum() { const r = require; return r("./dep.js")[0] + "!"; }
+        function viaCall() { const r = require; return r("./dep.js"); }
+        console.log(viaSum(), viaCall()[0]);
+      `,
+      "dep.js": `module.exports = ["dep"];`,
+    });
+    const bundledModules = async (syntax: boolean) => {
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        target,
+        minify: { syntax },
+        metafile: true,
+      });
+      return Object.keys(result.metafile!.inputs).map(path => basename(path));
+    };
+    expect({ minified: await bundledModules(true), unminified: await bundledModules(false) }).toEqual({
+      minified: ["entry.js"],
+      unminified: ["entry.js"],
+    });
+  },
+);
+
+// A define replaces the expression that the source names. The minifier moves
+// the single-use alias into the read, and the read must stay a read.
+test.concurrent.each(["bun", "node", "browser"] as const)(
+  "minify.syntax does not apply a define through a single-use alias (target %s)",
+  async target => {
+    using dir = tempDir("minify-aliased-define", {
+      "entry.js": `
+        function viaEnv() { const e = process.env; return e.ALIASED_DEFINE + "!"; }
+        function viaProcess() { const p = process; return p.env.ALIASED_DEFINE + "!"; }
+        function direct() { return process.env.ALIASED_DEFINE + "!"; }
+        console.log(viaEnv(), viaProcess(), direct());
+      `,
+    });
+    const run = async (syntax: boolean) => {
+      const outdir = join(String(dir), syntax ? "minified" : "unminified");
+      await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        outdir,
+        target,
+        minify: { syntax },
+        define: { "process.env.ALIASED_DEFINE": '"DEFINED"' },
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(outdir, "entry.js")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const expected = { stdout: "undefined! undefined! DEFINED!\n", stderr: "", exitCode: 0 };
+    expect({ minified: await run(true), unminified: await run(false) }).toEqual({
+      minified: expected,
+      unminified: expected,
+    });
   },
 );

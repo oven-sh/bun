@@ -286,3 +286,153 @@ test.skipIf(isDebug || isASAN)(
     expect(exitCode).toBe(0);
   },
 );
+
+// The runtime transpiler moves a single-use `let`/`const` into the statement
+// after it.
+describe.concurrent("a single-use declaration moved into the next statement", () => {
+  const indirectEval = /* js */ `
+    const results = {};
+    function movedValue(code) { var secret = 1; const r = (0, eval)(code); return r + "!"; }
+    results.movedValue = movedValue("typeof secret");
+    function movedCallee(code) { var secret = 1; const e = eval; return e(code) + "!"; }
+    results.movedCallee = movedCallee("typeof secret");
+    function inTarget(code) { var secret = 1; const s = [1]; return s + (0, eval)(code); }
+    results.inTarget = inTarget("typeof secret");
+    function foldedCallee(code) { var secret = 1; const r = (1 ? eval : 0)(code); return r + "!"; }
+    results.foldedCallee = foldedCallee("typeof secret");
+    function calleeFoldsAfterMove(code) { var secret = 1; const k = 1; const r = (k ? eval : 0)(code); return r + "!"; }
+    results.calleeFoldsAfterMove = calleeFoldsAfterMove("typeof secret");
+    function write() { var local = 1; const r = (0, eval)("local = 2"); return r + ":" + local; }
+    results.write = write();
+    results.writeMadeGlobal = globalThis.local;
+    function thisValue(fallback) { const r = (0, eval)("this"); return r || fallback; }
+    results.thisIsGlobal = thisValue("fallback") === globalThis;
+    function declares() { const r = (0, eval)("var declaredByEval = 5; 1"); return !r; }
+    results.declares = [declares(), typeof globalThis.declaredByEval];
+    function direct(code) { var secret = 1; const r = eval(code); return r + "!"; }
+    results.direct = direct("typeof secret");
+    console.log(JSON.stringify(results));
+  `;
+  const shortCircuit = /* js */ `
+    let calls = 0;
+    const fn = () => ++calls;
+    function andInArray() { let x = fn(); let k = 0; return [k && x]; }
+    function orInArray() { let x = fn(); let k = 1; return [k || x]; }
+    function nullishInArray() { let x = fn(); let k = 1; return [k ?? x]; }
+    function and() { let x = fn(); let k = 0; return k && x; }
+    function or() { let x = fn(); let k = 1; return k || x; }
+    function nullish() { let x = fn(); let k = 1; return k ?? x; }
+    const values = [andInArray(), orInArray(), nullishInArray(), and(), or(), nullish()];
+    console.log(JSON.stringify({ values, calls }));
+  `;
+  // Every case of a switch is in one scope, so a later case can use the declaration.
+  const switchCases = /* js */ `
+    var sink;
+    const use = x => x;
+    function fallThrough(v) { switch (v) { case 0: let a = [1]; let k = 0; k && use(a); case 1: return a; } }
+    function comparison(v) { switch (v) { case 0: let a = [1]; let k = 5; (k > 3) && use(a); case 1: return a; } }
+    function laterClosure(v) { switch (v) { case 0: let a = use(1); throw a; case 1: return () => a; } }
+    function earlierClosure(v) { switch (v) { case 1: return () => a; case 0: let a = use(1); throw a; } }
+    function accumulate(v) { switch (v) { case 3: let acc = []; acc.push(3); case 2: acc.push(2); return acc; } }
+    function evalInLaterCase(v, code) { switch (v) { case 0: let a = 1; use(a); case 1: return eval(code); } }
+    function shadowsParameter(k, x) { switch (k) { case 0: let x = use(7); sink = x; case 1: return x; } }
+    function writesOuter(k) { let x = "outer"; switch (k) { case 0: let x = use(1); sink = x; case 1: x = "inner-write"; } return x; }
+    function sameCase(v) { switch (v) { case 0: let a = use(1); return a + 1; default: return null; } }
+    const attempt = f => {
+      try { return f(); } catch (e) { return e.constructor.name + (/initiali[sz]/.test(e.message) ? " (TDZ)" : ": " + e.message); }
+    };
+    console.log(JSON.stringify({
+      fallThrough: attempt(() => fallThrough(0)),
+      comparison: attempt(() => comparison(0)),
+      laterClosure: attempt(() => laterClosure(1)()),
+      earlierClosure: attempt(() => earlierClosure(1)()),
+      accumulate: attempt(() => accumulate(3)),
+      evalInLaterCase: attempt(() => evalInLaterCase(0, "a")),
+      shadowsParameter: attempt(() => shadowsParameter(0, "parameter")),
+      writesOuter: attempt(() => writesOuter(0)),
+      sameCase: attempt(() => sameCase(0)),
+    }));
+  `;
+  // A define replaces the expression that the source names. The move does not
+  // make a new one, so a function body gives the same answer as the module scope.
+  const defineThroughAlias = /* js */ `
+    function viaEnv() { const e = process.env; return e.ALIASED_DEFINE + "!"; }
+    function viaProcess() { const p = process; return p.env.ALIASED_DEFINE + "!"; }
+    const env = process.env;
+    const atModuleScope = env.ALIASED_DEFINE + "!";
+    const direct = process.env.ALIASED_DEFINE + "!";
+    console.log(JSON.stringify({ viaEnv: viaEnv(), viaProcess: viaProcess(), atModuleScope, direct }));
+  `;
+
+  async function run(source: string, how: "mjs" | "cjs" | "-e", flags: string[] = []) {
+    using dir = tempDir("transpiler-single-use", how === "-e" ? {} : { [`fixture.${how}`]: source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, ...(how === "-e" ? ["-e", source] : [`fixture.${how}`])],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  test.each(["mjs", "cjs", "-e"] as const)("an indirect eval runs in the global scope (%s)", async how => {
+    expect(await run(indirectEval, how)).toEqual({
+      stdout: {
+        movedValue: "undefined!",
+        movedCallee: "undefined!",
+        inTarget: "1undefined",
+        foldedCallee: "undefined!",
+        calleeFoldsAfterMove: "undefined!",
+        write: "2:1",
+        writeMadeGlobal: 2,
+        thisIsGlobal: true,
+        declares: [false, "number"],
+        direct: "number!",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each(["mjs", "cjs", "-e"] as const)(
+    "a call still runs when a literal moves in front of && || ?? (%s)",
+    async how => {
+      expect(await run(shortCircuit, how)).toEqual({
+        stdout: { values: [[0], [1], [1], 0, 1, 1], calls: 6 },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.each(["mjs", "cjs", "-e"] as const)(
+    "a declaration in a switch case stays for the cases after it (%s)",
+    async how => {
+      expect(await run(switchCases, how)).toEqual({
+        stdout: {
+          fallThrough: [1],
+          comparison: [1],
+          laterClosure: "ReferenceError (TDZ)",
+          earlierClosure: "ReferenceError (TDZ)",
+          accumulate: [3, 2],
+          evalInLaterCase: 1,
+          shadowsParameter: 7,
+          writesOuter: "outer",
+          sameCase: 2,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.each(["mjs", "cjs", "-e"] as const)("--define does not apply through an alias (%s)", async how => {
+    expect(await run(defineThroughAlias, how, ["--define", 'process.env.ALIASED_DEFINE:"DEFINED"'])).toEqual({
+      stdout: { viaEnv: "undefined!", viaProcess: "undefined!", atModuleScope: "undefined!", direct: "DEFINED!" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

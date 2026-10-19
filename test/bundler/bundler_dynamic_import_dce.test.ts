@@ -647,8 +647,7 @@ describe("bundler", () => {
   }
 
   // The minifier substitutes a single-use `const x = cond ? (await import()).a() : b`
-  // into its use and re-visits it; the re-visit must not mint a second,
-  // untracked record for the same import().
+  // into its use. The import() must keep its one tracked record.
   itBundled("dynamic_import_dce/MinifyRevisitDoesNotDuplicateRecord", {
     files: {
       "/entry.ts": /* ts */ `
@@ -668,6 +667,29 @@ describe("bundler", () => {
     format: "esm",
     outdir: "/out",
     run: { file: "/out/entry.js", env: { X: "1" }, stdout: "pinned:p" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+    },
+  });
+
+  // The single-use `v` moves into the statement of the import(). Only the
+  // exports that the callback reads are kept.
+  itBundled("dynamic_import_dce/MinifySingleUseNextToImportThen", {
+    files: {
+      "/entry.js": /* js */ `
+        async function viaMember(g) { const v = g(); return v + await import("./member.js").then(m => m.c); }
+        async function viaPattern(g) { const v = g(); return v + await import("./pattern.js").then(({ a }) => a); }
+        console.log(await viaMember(() => "x"), await viaPattern(() => "y"));
+      `,
+      "/member.js": `export const a = "A_DROPPED"; export const b = "B_DROPPED"; export const c = "C";`,
+      "/pattern.js": `export const a = "A"; export const b = "B_DROPPED";`,
+    },
+    minifySyntax: true,
+    splitting: true,
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "xC yA" },
     onAfterBundle(api) {
       expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
     },

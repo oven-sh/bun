@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -654,6 +654,124 @@ test("css-module/NoBundleHashesByRelativePath", async () => {
   expect(hashA).toBeDefined();
   expect(hashB).toBeDefined();
   expect(hashA).not.toBe(hashB);
+});
+
+async function build(dir: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", ...args],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+}
+
+// `bun build --no-bundle` reports a CSS error with the source line and a caret
+// under the column, then the message and `file:line:column`. For a parse error
+// the bundled build prints the same bytes.
+describe.concurrent("bun build --no-bundle reports a CSS error with its place", () => {
+  const importAfterRule = [
+    '2 | @import "x";',
+    "           ^",
+    "error: @import rules must come before any other rules except @charset and @layer",
+  ];
+
+  test.each([
+    {
+      name: "at a token",
+      css: 'a { color: red; }\n@import "x";\n',
+      stderr: [...importAfterRule, "    at <dir>/in.css:2:8"],
+    },
+    {
+      name: "in a file with CRLF line breaks",
+      css: 'a { color: red; }\r\n@import "x";\r\n',
+      stderr: [...importAfterRule, "    at <dir>/in.css:2:8"],
+    },
+    {
+      name: "one column past a stray }",
+      css: "}",
+      stderr: ["1 | }", "     ^", "error: Unexpected end of input", "    at <dir>/in.css:1:2"],
+    },
+    {
+      // The line after the last line break is empty, so there is no source line to print.
+      name: "at the end of input",
+      css: ".a { color: red }\n.b { color: }\n}\n",
+      stderr: ["error: Unexpected end of input", "    at <dir>/in.css:4:1"],
+    },
+  ])("a parse error $name, like the bundled build", async ({ css, stderr }) => {
+    using dir = tempDir("css-no-bundle-parse-error", { "in.css": css });
+    const expected = { stdout: "", stderr: stderr.join("\n"), exitCode: 1 };
+    expect(await build(String(dir), "--no-bundle", "in.css")).toEqual(expected);
+    expect(await build(String(dir), "in.css")).toEqual(expected);
+  });
+
+  test("each failing entry point names its own file, and nothing is written", async () => {
+    using dir = tempDir("css-no-bundle-errors", {
+      "a.css": 'a { color: red; }\n@import "x";\n',
+      "b.css": ".a { color: red }\n.b { color: }\n}\n",
+      "c.js": "let x = 1;\nlet y = ;\n",
+      "ok.css": ".ok { color: green }\n",
+    });
+    expect(await build(String(dir), "--no-bundle", "a.css", "b.css", "c.js", "ok.css", "--outdir", "out")).toEqual({
+      stdout: "",
+      stderr: [
+        ...importAfterRule,
+        "    at <dir>/a.css:2:8",
+        "",
+        "error: Unexpected end of input",
+        "    at <dir>/b.css:4:1",
+        "",
+        "2 | let y = ;",
+        "            ^",
+        "error: Unexpected ;",
+        "    at <dir>/c.js:2:9",
+      ].join("\n"),
+      exitCode: 1,
+    });
+    const entries = Array.from(new Bun.Glob("*").scanSync({ cwd: String(dir), onlyFiles: false }));
+    expect(entries.sort()).toEqual(["a.css", "b.css", "c.js", "ok.css"]);
+  });
+
+  test("a print error with a position", async () => {
+    // The printer rejects `composes` in a rule whose selector is not a single class.
+    using dir = tempDir("css-no-bundle-print-error", {
+      "styles.module.css": ".b { color: blue }\n.a .c { composes: b; color: red }\n",
+    });
+    const { stdout, stderr, exitCode } = await build(String(dir), "--no-bundle", "styles.module.css");
+    // The parser's warnings about the same declaration come first.
+    expect({ stdout, error: stderr.split("\n\n").at(-1), exitCode }).toEqual({
+      stdout: "",
+      error: [
+        "2 | .a .c { composes: b; color: red }",
+        "                     ^",
+        "error: The 'composes' property can only be used with a simple class selector",
+        "    at <dir>/styles.module.css:2:18",
+      ].join("\n"),
+      exitCode: 1,
+    });
+  });
+
+  test("a print error with no position names the file", async () => {
+    // The printer compiles nesting for the default browser targets. Each level
+    // has two `&`, so 17 levels pass its limit on `&` substitutions.
+    const open = "&:is(.a, &.b) {\n";
+    const close = "}\n";
+    const css =
+      Buffer.alloc(17 * open.length, open).toString() +
+      "color: red;\n" +
+      Buffer.alloc(17 * close.length, close).toString();
+    using dir = tempDir("css-no-bundle-print-limit", { "deep.css": css });
+    expect(await build(String(dir), "--no-bundle", "deep.css")).toEqual({
+      stdout: "",
+      stderr: [
+        "error: Maximum nesting expansion exceeded when compiling CSS nesting for the configured targets",
+        "    at <dir>/deep.css",
+      ].join("\n"),
+      exitCode: 1,
+    });
+  });
 });
 
 test("a resolve error in CSS covers the whole url() and composes path", async () => {

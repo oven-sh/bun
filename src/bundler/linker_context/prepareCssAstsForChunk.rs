@@ -261,7 +261,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                     c.log_disjoint().add_error_fmt(
                                         None,
                                         Loc::EMPTY,
-                                        format_args!("Error generating CSS for import: {}", e),
+                                        format_args!("Error generating CSS for import: {}", e.kind),
                                     );
                                     continue;
                                 }

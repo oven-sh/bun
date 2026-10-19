@@ -192,11 +192,12 @@ describe.concurrent("a package.json that does not parse", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: isWindows ? 1 : 127 });
   });
 
-  test("bun run --parallel: a pattern matches no script", async () => {
+  // A pattern is for scripts, also one that reads like the name of a file.
+  test.each(["gre*", "*.js"])("bun run --parallel: the pattern %s matches no script", async pattern => {
     using dir = project({ "package.json": text });
-    expect(await run(String(dir), "child", ["run", "--parallel", "gre*"])).toEqual({
+    expect(await run(String(dir), "child", ["run", "--parallel", pattern])).toEqual({
       stdout: "",
-      stderr: withLine(`Cannot use glob pattern "gre*" without package.json scripts`),
+      stderr: withLine(`Cannot use glob pattern "${pattern}" without package.json scripts`),
       exitCode: 1,
     });
   });

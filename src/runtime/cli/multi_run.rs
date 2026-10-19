@@ -1049,8 +1049,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         let scripts_map: Option<&ScriptsMap> = match root_dir_info.script_package() {
             ScriptPackage::Loaded(package_json) => package_json.scripts.as_deref(),
             ScriptPackage::Unloadable { dir, error } => {
-                // A name that is no file can be a script that is there.
-                if script_names.iter().any(|name| !runs_as_file(name)) {
+                // A pattern, and a name that is no file, can be a script that is there.
+                let is_for_script =
+                    |name: &[u8]| strings::contains_char(name, b'*') || !runs_as_file(name);
+                if script_names.iter().any(|name| is_for_script(name)) {
                     RunCommand::print_unloadable_package_json(ctx, dir, error);
                 }
                 None

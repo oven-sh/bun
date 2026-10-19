@@ -5,6 +5,8 @@ use bun_alloc::Arena as Bump;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output, Progress};
+use bun_install::bin::{DependencyBins, LinkFailure};
+use bun_install::isolated_install::StoreFolders;
 use bun_install::lockfile::{
     Lockfile,
     package::PackageColumns as _,
@@ -60,13 +62,31 @@ enum Action {
 struct Blocked {
     dep_id: DependencyID,
     package_id: PackageID,
-    /// Scripts run deepest first, like during an install.
+    /// Under the hoisted linker, scripts run deepest first, like during an install. Under the
+    /// isolated linker, the depth only sorts the list. See `TrustCommand::batches_and_bins`.
     depth: usize,
     scripts_list: ScriptsList,
     /// Other projects share the directory, so nothing runs there until an install moves the
     /// package.
     in_global_store: bool,
     action: Action,
+    place: Place,
+}
+
+/// Where a blocked package is.
+enum Place {
+    /// In a `node_modules` of the hoisted layout. `bun pm trust` keeps where the bins of the
+    /// package go, because the install tree is gone when it links them.
+    Tree(Option<DependencyBins>),
+    /// In the store. The index is that of its folder in `StoreFolders::folders`.
+    Store(usize),
+}
+
+/// What the command does with the blocked packages that it finds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Find {
+    ToList,
+    ToRunScripts,
 }
 
 impl Blocked {
@@ -107,42 +127,43 @@ impl Blocked {
         }
     }
 
-    fn find_all(pm: &mut PackageManager, linker: NodeLinker) -> crate::Result<Vec<Blocked>> {
+    /// Also returns the store, if the packages are in one.
+    fn find_all(
+        pm: &mut PackageManager,
+        linker: NodeLinker,
+        find: Find,
+    ) -> crate::Result<(Vec<Blocked>, Option<StoreFolders>)> {
         // If there is no `node_modules/.bun`, another tool created `node_modules`. In that case,
         // look for each package where it resolves from.
         let mut store = AutoAbsPath::init_top_level_dir();
         let _ = store.append(b"node_modules/.bun");
         if linker == NodeLinker::Isolated && bun_sys::exists(store.slice()) {
-            return Self::find_in_store(pm);
+            let (blocked, store) = Self::find_in_store(pm)?;
+            return Ok((blocked, Some(store)));
         }
         // The tree saved in the lockfile also has the dependencies that packages bundle, and no
         // install runs the scripts of those. The install tree leaves them out.
-        bun_install::prune::with_install_tree(pm, Self::find_in_tree)?
+        let blocked =
+            bun_install::prune::with_install_tree(pm, |pm| Self::find_in_tree(pm, find))??;
+        Ok((blocked, None))
     }
 
-    fn find_in_store(pm: &PackageManager) -> crate::Result<Vec<Blocked>> {
+    fn find_in_store(pm: &PackageManager) -> crate::Result<(Vec<Blocked>, StoreFolders)> {
         let log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
-        let buf = lockfile.buffers.string_bytes.as_slice();
 
         let mut blocked: Vec<Blocked> = Vec::new();
         let mut path = AutoAbsPath::init_top_level_dir();
         let top_level_len = path.len();
 
         let mut link_buf = bun_paths::path_buffer_pool::get();
-        for folder in bun_install::isolated_install::store_folders(pm, lockfile)? {
+        let store = bun_install::isolated_install::store_folders(pm, lockfile)?;
+        for (index, folder) in store.folders.iter().enumerate() {
             path.set_length(top_level_len);
             let _ = path.append(folder.entry_dir.as_slice());
             let entry_dir_len = path.len();
             let _ = path.append(b"node_modules");
-            let is_link = lockfile.packages.items_resolution()[folder.pkg_id as usize].tag
-                == ResolutionTag::Symlink;
-            let name = if is_link {
-                lockfile.buffers.dependencies.as_slice()[folder.dep_id as usize].name
-            } else {
-                lockfile.packages.items_name()[folder.pkg_id as usize]
-            };
-            let _ = path.append(name.slice(buf));
+            let _ = path.append(folder.name(lockfile));
             let Some(scripts_list) =
                 Self::scripts_at(log, lockfile, folder.dep_id, folder.pkg_id, &mut path)?
             else {
@@ -154,15 +175,16 @@ impl Blocked {
                 package_id: folder.pkg_id,
                 depth: folder.depth,
                 scripts_list,
-                in_global_store: !is_link
+                in_global_store: !folder.is_link
                     && bun_sys::readlink(path.slice_z(), &mut link_buf[..]).is_ok(),
                 action: Action::Skip,
+                place: Place::Store(index),
             });
         }
-        Ok(blocked)
+        Ok((blocked, store))
     }
 
-    fn find_in_tree(pm: &PackageManager) -> crate::Result<Vec<Blocked>> {
+    fn find_in_tree(pm: &PackageManager, find: Find) -> crate::Result<Vec<Blocked>> {
         let log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -205,6 +227,12 @@ impl Blocked {
                         scripts_list,
                         in_global_store: false,
                         action: Action::Skip,
+                        place: Place::Tree(if find == Find::ToRunScripts {
+                            let global = pm.options.global;
+                            DependencyBins::in_tree(lockfile, &node_modules, dep_id, global)
+                        } else {
+                            None
+                        }),
                     });
                 }
             }
@@ -291,7 +319,7 @@ impl UntrustedCommand {
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
         read_trusted_dependencies(pm);
 
-        let blocked = Blocked::find_all(pm, linker)?;
+        let (blocked, _) = Blocked::find_all(pm, linker, Find::ToList)?;
         if blocked.is_empty() {
             bun_core::pretty!(
                 "Found <b>0<r> untrusted dependencies with scripts.\n\
@@ -393,6 +421,100 @@ impl TrustCommand {
         Output::flush();
     }
 
+    /// Returns the number of the batch of scripts that each of `blocked` is in, and the bins of
+    /// the packages whose scripts run, each with the number of the batch to link them after.
+    /// `blocked` is sorted by depth. Under the hoisted linker, a batch has the packages of one
+    /// depth. Under the isolated linker, a script waits for the scripts of the packages that its
+    /// own package depends on, like during an install.
+    fn batches_and_bins(
+        lockfile: &Lockfile,
+        blocked: &mut [Blocked],
+        store: Option<&StoreFolders>,
+        global: bool,
+    ) -> (Vec<usize>, Vec<(DependencyBins, usize)>) {
+        let mut bins: Vec<(DependencyBins, usize)> = Vec::new();
+        let Some(store) = store else {
+            let mut batch = 0;
+            let mut batches = Vec::with_capacity(blocked.len());
+            for index in 0..blocked.len() {
+                if index > 0 && blocked[index].depth != blocked[index - 1].depth {
+                    batch += 1;
+                }
+                batches.push(batch);
+                let info = &mut blocked[index];
+                if info.action == Action::Run
+                    && let Place::Tree(of_package) = &mut info.place
+                {
+                    bins.extend(of_package.take().map(|of_package| (of_package, batch)));
+                }
+            }
+            return (batches, bins);
+        };
+
+        let folder_of = |info: &Blocked| match info.place {
+            Place::Store(folder) if info.action == Action::Run => Some(folder),
+            _ => None,
+        };
+        let mut runs = vec![false; store.folders.len()];
+        for folder in blocked.iter().filter_map(folder_of) {
+            runs[folder] = true;
+        }
+        let script_batches = store.script_batches(&runs);
+        for folder in blocked.iter().filter_map(folder_of) {
+            bins.extend(store.dependency_bins(lockfile, folder, &script_batches, global));
+        }
+        let batches = (blocked.iter())
+            .map(|info| folder_of(info).map_or(0, |folder| script_batches.of_folder[folder]))
+            .collect();
+        (batches, bins)
+    }
+
+    /// Links the bins that are due after the scripts of `batch`. An install does this after its
+    /// scripts too, because a script can write the file of a bin.
+    fn link_bins(
+        lockfile: &Lockfile,
+        global_bin_path: &bun_core::ZStr,
+        bins: &[(DependencyBins, usize)],
+        batch: usize,
+    ) -> Vec<LinkFailure> {
+        let mut due: Vec<&DependencyBins> = (bins.iter())
+            .filter(|(_, after)| *after == batch)
+            .map(|(bins, _)| bins)
+            .collect();
+        if due.is_empty() {
+            return Vec::new();
+        }
+        bun_install::bin::link_bins_after_scripts(lockfile, global_bin_path, &mut due)
+    }
+
+    /// Nothing is saved when a bin can't be linked, like when a script fails. The next run runs
+    /// the scripts again.
+    fn exit_with_link_failures(failures: &[LinkFailure], global: bool) -> ! {
+        Output::flush();
+        for failure in failures {
+            let bin_folder = bun_core::fmt::escape_control_chars(&failure.bin_folder);
+            match &failure.package {
+                Some(package) => Output::err_generic(
+                    "failed to link <b>{}<r> into {}: {}",
+                    (
+                        bun_core::fmt::escape_control_chars(package),
+                        bin_folder,
+                        failure.err.name(),
+                    ),
+                ),
+                None => Output::err_generic(
+                    "failed to link into <b>{}<r>: {}",
+                    (bin_folder, failure.err.name()),
+                ),
+            }
+        }
+        bun_core::note!(
+            "package.json and the lockfile were not changed, run 'bun pm {}trust' again once the bins can be linked (it runs the scripts again)",
+            if global { "-g " } else { "" },
+        );
+        Global::crash();
+    }
+
     pub(crate) fn exec(
         ctx: Command::Context,
         pm: &mut PackageManager,
@@ -429,6 +551,8 @@ impl TrustCommand {
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
         let dry_run = pm.options.dry_run;
+        let global = pm.options.global;
+        let global_bin_path = pm.options.bin_path;
         let configured_linker = pm.options.node_linker;
         let max_concurrent = pm.options.max_concurrent_lifecycle_scripts;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
@@ -440,7 +564,8 @@ impl TrustCommand {
         let recorded = read_trusted_dependencies(unsafe { &mut *pm_raw });
 
         // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced while this runs.
-        let mut blocked = Blocked::find_all(unsafe { &mut *pm_raw }, linker)?;
+        let (mut blocked, store) =
+            Blocked::find_all(unsafe { &mut *pm_raw }, linker, Find::ToRunScripts)?;
         bun_collections::index_sort::sort_slice_by(&mut blocked, |a, b| b.depth.cmp(&a.depth));
 
         // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow until the scripts have run.
@@ -511,6 +636,9 @@ impl TrustCommand {
             }
         };
 
+        let (batches, bins) =
+            Self::batches_and_bins(lockfile, &mut blocked, store.as_ref(), global);
+
         let mut scripts_node: Progress::Node;
         let show_progress = log_level.show_progress();
 
@@ -526,12 +654,10 @@ impl TrustCommand {
             }
         }
 
-        for same_depth in blocked.chunk_by(|a, b| a.depth == b.depth) {
-            for info in same_depth {
-                if info.action != Action::Run {
-                    continue;
-                }
-
+        for batch in 0..=batches.iter().copied().max().unwrap_or(0) {
+            for (info, _) in (blocked.iter().zip(&batches))
+                .filter(|(info, in_batch)| info.action == Action::Run && **in_batch == batch)
+            {
                 while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
                     >= max_concurrent
                 {
@@ -581,6 +707,16 @@ impl TrustCommand {
             {
                 // SAFETY: `pm_raw` singleton.
                 unsafe { (*pm_raw).sleep() };
+            }
+
+            // The scripts of the next batch may run these bins.
+            let failures = Self::link_bins(lockfile, global_bin_path, &bins, batch);
+            if !failures.is_empty() {
+                if show_progress {
+                    // SAFETY: `pm_raw` singleton.
+                    unsafe { (*pm_raw).progress.root.end() };
+                }
+                Self::exit_with_link_failures(&failures, global);
             }
         }
 

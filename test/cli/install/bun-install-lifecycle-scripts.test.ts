@@ -10,19 +10,21 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   realpathSync,
   rmSync,
   statSync,
   writeSync,
 } from "fs";
-import { appendFile, exists, mkdir, rm, symlink, writeFile } from "fs/promises";
+import { appendFile, cp, exists, mkdir, rename, rm, symlink, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
   githubTarball,
   isLinux,
+  isRoot,
   isWindows,
   normalizeBunSnapshot,
   readdirSorted,
@@ -30,7 +32,7 @@ import {
   tempDir,
 } from "harness";
 import { constants as osConstants, type as osType, tmpdir } from "os";
-import { join, sep } from "path";
+import { join, relative, sep } from "path";
 import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
 
@@ -2357,30 +2359,44 @@ describe.concurrent("--dry-run and root lifecycle scripts", () => {
 // `files` go beside the package.json. The tarball is not sent before `hold` resolves.
 type ScriptPackage = { files?: Record<string, string>; hold?: Promise<unknown>; [field: string]: unknown };
 
-// A project whose registry serves `packages`, each as version 1.0.0.
+// A project whose registry serves `packages`. A key is a name, for version 1.0.0, or `name@version`.
 async function setupScriptPackages(linker: "hoisted" | "isolated", packages: Record<string, ScriptPackage>) {
-  const served = new Map<string, { manifest: object; tgz: Uint8Array; hold?: Promise<unknown> }>();
-  for (const [name, { files, hold, ...fields }] of Object.entries(packages)) {
-    const manifest = { name, version: "1.0.0", hasInstallScript: "scripts" in fields, ...fields };
+  type Served = { manifest: object; tgz: Uint8Array; hold?: Promise<unknown> };
+  const served = new Map<string, Map<string, Served>>();
+  for (const [key, { files, hold, ...fields }] of Object.entries(packages)) {
+    const at = key.lastIndexOf("@");
+    const [name, version] = at > 0 ? [key.slice(0, at), key.slice(at + 1)] : [key, "1.0.0"];
+    const manifest = { name, version, hasInstallScript: "scripts" in fields, ...fields };
     const entries: Record<string, string> = { "package/package.json": JSON.stringify(manifest) };
     for (const [path, contents] of Object.entries(files ?? {})) entries[`package/${path}`] = contents;
-    served.set(name, { manifest, hold, tgz: await new Bun.Archive(entries, { compress: "gzip" }).bytes() });
+    if (!served.has(name)) served.set(name, new Map());
+    served
+      .get(name)!
+      .set(version, { manifest, hold, tgz: await new Bun.Archive(entries, { compress: "gzip" }).bytes() });
   }
   const ctx = await setupTest();
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
       const { origin, pathname } = new URL(request.url);
-      const pkg = served.get(pathname.slice(1).replace(/-1\.0\.0\.tgz$/, ""));
-      if (!pkg) return new Response("not found", { status: 404 });
-      if (pathname.endsWith(".tgz")) {
+      const [, name, version] = pathname.match(/^\/(.*?)(?:-(\d+\.\d+\.\d+)\.tgz)?$/)!;
+      const versions = served.get(name);
+      if (!versions) return new Response("not found", { status: 404 });
+      if (version) {
+        const pkg = versions.get(version);
+        if (!pkg) return new Response("not found", { status: 404 });
         await pkg.hold;
         return new Response(pkg.tgz);
       }
       return Response.json({
-        ...pkg.manifest,
-        "dist-tags": { latest: "1.0.0" },
-        versions: { "1.0.0": { ...pkg.manifest, dist: { tarball: `${origin}${pathname}-1.0.0.tgz` } } },
+        name,
+        "dist-tags": { latest: [...versions.keys()].sort(Bun.semver.order).at(-1) },
+        versions: Object.fromEntries(
+          [...versions].map(([version, { manifest }]) => [
+            version,
+            { ...manifest, dist: { tarball: `${origin}/${name}-${version}.tgz` } },
+          ]),
+        ),
       });
     },
   });
@@ -2477,6 +2493,1010 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("a bin whose file a s
       expect(lstatSync(ctx.installed(".bin", "tool")).isFile()).toBe(true);
     },
   );
+
+  // The install blocked the script, so the bin had no file when its package was linked.
+  describe("a script that bun pm trust runs", () => {
+    type Ctx = Awaited<ReturnType<typeof setupScriptPackages>>;
+    const tool: ScriptPackage = { bin: { tool: "dist/tool" }, scripts: { postinstall: build }, files };
+    const host: ScriptPackage = { dependencies: { tool: "1.0.0" } };
+    const app = { name: "app", version: "1.0.0", dependencies: { tool: "1.0.0" } };
+    const ran = (count: number) =>
+      `${count} script${count === 1 ? "" : "s"} ran across ${count} package${count === 1 ? "" : "s"}`;
+    // The name of a bin in its folder, as the first of `names` is for `tool`.
+    const named = (bin: string) => (isWindows ? `${bin}.bunx` : bin);
+    const rootBin = ["root", "node_modules", ".bin"];
+    const storeBin = (entry: string) => ["root", "node_modules", ".bun", entry, "node_modules", ".bin"];
+
+    // What a name in a `.bin` runs, and whether the file can run. On Windows, the text of the shim's `.bunx`,
+    // which has the path of the file.
+    function describeBin(path: string) {
+      if (isWindows) return path.endsWith(".bunx") ? readFileSync(path, "utf16le") : "shim";
+      if (!lstatSync(path).isSymbolicLink()) return "not a link";
+      const canRun = existsSync(path) && (statSync(path).mode & 0o100) !== 0;
+      return `${readlinkSync(path)} (${canRun ? "can run" : "cannot run"})`;
+    }
+
+    // Every name in every `.bin` below `dir`, by its path from `dir`. Links are not followed.
+    function binTree(dir: string, tree: Record<string, string> = {}, from = dir) {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const path = join(dir, entry.name);
+        if (entry.name !== ".bin") binTree(path, tree, from);
+        else
+          for (const name of readdirSync(path)) tree[relative(from, join(path, name))] = describeBin(join(path, name));
+      }
+      return tree;
+    }
+
+    // A project in `<folder>/root` of `ctx`. `members` has the package.json of each workspace, by its path
+    // from the project. A workspace outside of the project is still inside `<folder>`.
+    async function project(
+      ctx: Ctx,
+      folder: string,
+      manifest: object,
+      { members = {} as Record<string, object>, bunfig = "" } = {},
+    ) {
+      const dir = join(ctx.packageDir, folder, "root");
+      await write(join(dir, "bunfig.toml"), (await file(join(ctx.packageDir, "bunfig.toml")).text()) + bunfig);
+      await write(join(dir, "package.json"), JSON.stringify({ name: "root", ...manifest }));
+      for (const [path, member] of Object.entries(members)) {
+        await write(join(dir, path, "package.json"), JSON.stringify(member));
+      }
+      return {
+        dir,
+        installed: (...path: string[]) => join(dir, "node_modules", ...path),
+        bins: () => binTree(join(ctx.packageDir, folder)),
+        async bun(...args: string[]) {
+          await using proc = spawn({
+            cmd: [bunExe(), ...args],
+            cwd: dir,
+            env: ctx.env,
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { out, err, exitCode };
+        },
+      };
+    }
+
+    // The same project twice: `control` trusts the packages from the start, and `blocked` does not.
+    // `count` is the number of packages that have one of the `trusted` names.
+    async function installBoth(
+      ctx: Ctx,
+      manifest: object,
+      trusted: string[],
+      options: { members?: Record<string, object>; bunfig?: string; count?: number } = {},
+    ) {
+      const control = await project(ctx, "control", { ...manifest, trustedDependencies: trusted }, options);
+      const installed = await control.bun("install");
+      expect(installed.err).not.toContain("error:");
+      expect(installed.exitCode).toBe(0);
+
+      const blocked = await project(ctx, "blocked", manifest, options);
+      const install = await blocked.bun("install");
+      expect(install.err).not.toContain("error:");
+      expect(install.out).toContain(`Blocked ${options.count ?? trusted.length} postinstall`);
+      expect(install.exitCode).toBe(0);
+      return { control, blocked };
+    }
+
+    test.each([
+      {
+        shape: "the project depends on it",
+        packages: { tool },
+        manifest: { dependencies: { tool: "1.0.0" } },
+        at: rootBin,
+      },
+      {
+        shape: "a package depends on it",
+        packages: { tool, host },
+        manifest: { dependencies: { host: "1.0.0" } },
+        at: linker === "isolated" ? storeBin("host@1.0.0") : rootBin,
+      },
+      {
+        shape: "a workspace depends on it",
+        packages: { tool },
+        manifest: { workspaces: ["packages/*"] },
+        members: { "packages/app": app },
+        at: linker === "isolated" ? ["root", "packages", "app", "node_modules", ".bin"] : rootBin,
+      },
+      {
+        shape: "a workspace outside of the project depends on it",
+        packages: { tool },
+        manifest: { workspaces: ["../outside"] },
+        members: { "../outside": app },
+        at: linker === "isolated" ? ["outside", "node_modules", ".bin"] : rootBin,
+      },
+      {
+        shape: "the root has it through publicHoistPattern",
+        packages: { tool, host },
+        manifest: { dependencies: { host: "1.0.0" } },
+        bunfig: `publicHoistPattern = ["tool"]\n`,
+        at: rootBin,
+      },
+      {
+        shape: "its bin is a directories.bin folder",
+        packages: { tool: { directories: { bin: "dist" }, scripts: { postinstall: build }, files } },
+        manifest: { dependencies: { tool: "1.0.0" } },
+        at: rootBin,
+      },
+      {
+        shape: "the tarball has the file of another of its bins",
+        packages: { tool: { ...tool, bin: { tool: "dist/tool", shipped: "cli.js" } } },
+        manifest: { dependencies: { tool: "1.0.0" } },
+        at: rootBin,
+      },
+      {
+        shape: "two packages that it trusts have the bin name",
+        packages: { "a-tool": tool, "z-tool": tool },
+        manifest: { dependencies: { "a-tool": "1.0.0", "z-tool": "1.0.0" } },
+        trusted: ["a-tool", "z-tool"],
+        at: rootBin,
+      },
+      {
+        shape: "a package that it trusts and a dependency of that package have the bin name",
+        packages: { "a-deep": { ...tool, dependencies: { "z-tool": "1.0.0" } }, "z-tool": tool },
+        manifest: { dependencies: { "a-deep": "1.0.0", "z-tool": "1.0.0" } },
+        trusted: ["a-deep", "z-tool"],
+        at: rootBin,
+      },
+      {
+        shape: "only the project declares one of two packages that have the bin name",
+        packages: {
+          "a-tool": tool,
+          "z-tool": tool,
+          host: { dependencies: { "a-tool": "1.0.0", "z-tool": "1.0.0" } },
+        },
+        manifest: { dependencies: { host: "1.0.0", "z-tool": "1.0.0" } },
+        trusted: ["a-tool", "z-tool"],
+        at: rootBin,
+      },
+      {
+        // Under the isolated linker, the project's node_modules has `a-tool` through publicHoistPattern.
+        shape: "the project declares one of the two packages in its node_modules that have the bin name",
+        packages: { "a-tool": tool, "z-tool": tool, host: { dependencies: { "a-tool": "1.0.0" } } },
+        manifest: { dependencies: { host: "1.0.0", "z-tool": "1.0.0" } },
+        bunfig: `publicHoistPattern = ["a-tool"]\n`,
+        trusted: ["a-tool", "z-tool"],
+        at: rootBin,
+      },
+      {
+        // Under the hoisted linker, the other version is in the node_modules of `host`.
+        shape: "a package depends on another version of it",
+        packages: { tool, "tool@2.0.0": tool, host: { dependencies: { tool: "2.0.0" } } },
+        manifest: { dependencies: { tool: "1.0.0", host: "1.0.0" } },
+        count: 2,
+        at: linker === "isolated" ? storeBin("host@1.0.0") : ["root", "node_modules", "host", "node_modules", ".bin"],
+      },
+      {
+        // Under the hoisted linker, the other version is in the node_modules of the workspace.
+        shape: "a workspace depends on another version of it",
+        packages: { tool, "tool@2.0.0": tool },
+        manifest: { workspaces: ["packages/*"], dependencies: { tool: "1.0.0" } },
+        members: { "packages/app": { ...app, dependencies: { tool: "2.0.0" } } },
+        count: 2,
+        at: ["root", "packages", "app", "node_modules", ".bin"],
+      },
+      {
+        // Under the isolated linker, the script of `z-tool` runs before the script of `a-tool`, which waits
+        // for `z-dep`. An install links both for `host` at once, and `a-tool` is the first one by name.
+        shape: "a package depends on two packages that have the bin name, and their scripts run one after the other",
+        packages: {
+          "z-dep": { scripts: { postinstall: "echo z-dep" } },
+          "a-tool": { ...tool, dependencies: { "z-dep": "1.0.0" } },
+          "z-tool": tool,
+          host: { dependencies: { "a-tool": "1.0.0", "z-tool": "1.0.0" }, scripts: { postinstall: "echo host" } },
+        },
+        manifest: { dependencies: { host: "1.0.0" } },
+        trusted: ["a-tool", "host", "z-dep", "z-tool"],
+        at: linker === "isolated" ? storeBin("host@1.0.0") : rootBin,
+      },
+      {
+        // An install skips a bin that has no file before it looks at the name.
+        shape: "the name of another of its bins is too long for a path",
+        packages: { tool: { ...tool, bin: { tool: "dist/tool", [Buffer.alloc(5000, "x").toString()]: "" } } },
+        manifest: { dependencies: { tool: "1.0.0" } },
+        at: rootBin,
+      },
+    ])("leaves the bins of an install that trusts the package: $shape", async row => {
+      const trusted = row.trusted ?? ["tool"];
+      using ctx = await setupScriptPackages(linker, row.packages);
+      const { control, blocked } = await installBoth(ctx, row.manifest, trusted, row);
+      expect(Object.keys(control.bins())).toContain(join(...row.at, named("tool")));
+
+      const { out, err, exitCode } = await blocked.bun("pm", "trust", ...trusted);
+      expect(err).not.toContain("error:");
+      expect(out).toContain(ran(row.count ?? trusted.length));
+      expect(blocked.bins()).toEqual(control.bins());
+      expect(exitCode).toBe(0);
+    });
+
+    test("leaves a name that another package has, and links the other bins", async () => {
+      using ctx = await setupScriptPackages(linker, {
+        "a-tool": { ...tool, bin: { tool: "dist/tool", extra: "dist/tool" } },
+        "z-tool": { bin: { tool: "cli.js" }, files },
+      });
+      const blocked = await project(ctx, "blocked", { dependencies: { "a-tool": "1.0.0", "z-tool": "1.0.0" } });
+      expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+
+      const { out, err, exitCode } = await blocked.bun("pm", "trust", "a-tool");
+      expect(err).not.toContain("error:");
+      expect(out).toContain(ran(1));
+      expect(await readdirSorted(blocked.installed(".bin"))).toEqual(
+        isWindows ? ["extra.bunx", "extra.exe", "tool.bunx", "tool.exe"] : ["extra", "tool"],
+      );
+      expect(blocked.installed(".bin", "tool")).toBeValidBin(join("..", "z-tool", "cli.js"));
+      expect(blocked.installed(".bin", "extra")).toBeValidBin(join("..", "a-tool", "dist", "tool"));
+      expect(exitCode).toBe(0);
+    });
+
+    // The script of `a-del` removes the file of its bin. The name is still not free for `z-tool`.
+    test("leaves a name that another package of the same command has", async () => {
+      using ctx = await setupScriptPackages(linker, {
+        "a-del": { bin: { tool: "cli.js" }, scripts: { postinstall: "rm cli.js" }, files },
+        "z-tool": tool,
+      });
+      const blocked = await project(ctx, "blocked", { dependencies: { "a-del": "1.0.0", "z-tool": "1.0.0" } });
+      expect((await blocked.bun("install")).out).toContain("Blocked 2 postinstalls");
+      expect(blocked.installed(".bin", "tool")).toBeValidBin(join("..", "a-del", "cli.js"));
+
+      const { out, err, exitCode } = await blocked.bun("pm", "trust", "--all");
+      expect(err).not.toContain("error:");
+      expect(out).toContain(ran(2));
+      expect(await readdirSorted(blocked.installed(".bin"))).toEqual(names);
+      expect(blocked.installed(".bin", "tool")).toBeValidBin(join("..", "a-del", "cli.js"));
+      expect(exitCode).toBe(0);
+    });
+
+    // A script can put a program where the link was. The install has a test for this too.
+    test.skipIf(isWindows || linker === "isolated")(
+      "leaves a program that the script writes in place of the link",
+      async () => {
+        using ctx = await setupScriptPackages(linker, {
+          tool: {
+            bin: { tool: "cli.js" },
+            scripts: { postinstall: "rm ../.bin/tool && cp cli.js ../.bin/tool" },
+            files,
+          },
+        });
+        const blocked = await project(ctx, "blocked", { dependencies: { tool: "1.0.0" } });
+        expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "tool");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(1));
+        expect(lstatSync(blocked.installed(".bin", "tool")).isFile()).toBe(true);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // The mode of a file says nothing about a shim on Windows, and a shim does not name its package.
+    describe.skipIf(isWindows)("the link that the package already has", () => {
+      const places = [
+        { place: "the project", manifest: { dependencies: { tool: "1.0.0" } }, members: {}, bin: rootBin },
+        // The path of this `.bin` has `..` in it. Under the hoisted linker, the project's node_modules has
+        // what a workspace depends on.
+        ...(linker === "isolated"
+          ? [
+              {
+                place: "a workspace outside of the project",
+                manifest: { workspaces: ["../outside"] },
+                members: { "../outside": app },
+                bin: ["outside", "node_modules", ".bin"],
+              },
+            ]
+          : []),
+      ];
+
+      test.each(places)(
+        "is made again in the .bin of $place when the script puts another file in the place of the bin",
+        async ({ manifest, members, bin }) => {
+          using ctx = await setupScriptPackages(linker, {
+            tool: {
+              bin: { tool: "cli.js" },
+              scripts: { postinstall: "rm cli.js && cp built.js cli.js" },
+              files: { ...files, "built.js": files["cli.js"] },
+            },
+          });
+          const { control, blocked } = await installBoth(ctx, manifest, ["tool"], { members });
+          const link = (mode: string) => `${join("..", "tool", "cli.js")} (${mode})`;
+          expect(blocked.bins()[join(...bin, "tool")]).toBe(link("can run"));
+
+          const { err, exitCode } = await blocked.bun("pm", "trust", "tool");
+          expect(err).not.toContain("error:");
+          expect(blocked.bins()[join(...bin, "tool")]).toBe(link("can run"));
+          // The hoisted linker links before the scripts, so its install leaves the new file as the script wrote it.
+          if (linker === "isolated") expect(blocked.bins()).toEqual(control.bins());
+          else expect(control.bins()[join(...bin, "tool")]).toBe(link("cannot run"));
+          expect(exitCode).toBe(0);
+        },
+      );
+
+      // The bin before it in the map has no file, and a name that does not fit in a path.
+      test("is made again when a bin before it has a name that is too long", async () => {
+        using ctx = await setupScriptPackages(linker, {
+          tool: {
+            bin: { [Buffer.alloc(5000, "x").toString()]: "", tool: "cli.js" },
+            scripts: { postinstall: "rm cli.js && cp built.js cli.js" },
+            files: { ...files, "built.js": files["cli.js"] },
+          },
+        });
+        const blocked = await project(ctx, "blocked", { dependencies: { tool: "1.0.0" } });
+        expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+
+        const { err, exitCode } = await blocked.bun("pm", "trust", "tool");
+        expect(err).not.toContain("error:");
+        expect(blocked.bins()[join(...rootBin, "tool")]).toBe(`${join("..", "tool", "cli.js")} (can run)`);
+        expect(exitCode).toBe(0);
+      });
+
+      test.each(places)(
+        "is replaced in the .bin of $place when it leads to another file of the package",
+        async ({ manifest, members, bin }) => {
+          using ctx = await setupScriptPackages(linker, { tool });
+          const blocked = await project(ctx, "blocked", manifest, { members });
+          expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+          const binDir = join(ctx.packageDir, "blocked", ...bin);
+          await mkdir(binDir, { recursive: true });
+          await symlink(join("..", "tool", "cli.js"), join(binDir, "tool"));
+
+          const { err, exitCode } = await blocked.bun("pm", "trust", "tool");
+          expect(err).not.toContain("error:");
+          expect(describeBin(join(binDir, "tool"))).toBe(`${join("..", "tool", "dist", "tool")} (can run)`);
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("fails and saves nothing when it cannot link a bin, and links it on the next run", async () => {
+      using ctx = await setupScriptPackages(linker, {
+        tool: { ...tool, scripts: { postinstall: "mkdir -p dist && cp cli.js dist/tool" } },
+      });
+      const blocked = await project(ctx, "blocked", { dependencies: { tool: "1.0.0" } });
+      expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+      const saved = async () => ({
+        trustedDependencies: (await file(join(blocked.dir, "package.json")).json()).trustedDependencies,
+        lockfile: Bun.JSONC.parse(await file(join(blocked.dir, "bun.lock")).text()).trustedDependencies,
+      });
+      await writeFile(blocked.installed(".bin"), "not a folder");
+
+      const failed = await blocked.bun("pm", "trust", "tool");
+      // A path below a regular file is ENOTDIR on POSIX. Windows reports another errno.
+      expect(failed.err).toContain(
+        `error: failed to link tool into ${join("node_modules", ".bin")}: ${isWindows ? "" : "ENOTDIR"}`,
+      );
+      expect(failed.err).toContain(
+        "note: package.json and the lockfile were not changed, run 'bun pm trust' again once the bins can be linked",
+      );
+      expect(failed.out).not.toContain("script ran");
+      expect(await saved()).toEqual({ trustedDependencies: undefined, lockfile: undefined });
+      expect(failed.exitCode).toBe(1);
+
+      await rm(blocked.installed(".bin"));
+      const { out, err, exitCode } = await blocked.bun("pm", "trust", "tool");
+      expect(err).not.toContain("error:");
+      expect(out).toContain(ran(1));
+      expect(await readdirSorted(blocked.installed(".bin"))).toEqual(names);
+      expect(await saved()).toEqual({ trustedDependencies: ["tool"], lockfile: ["tool"] });
+      expect(exitCode).toBe(0);
+    });
+
+    // A link in `node_modules` where Bun makes a folder leads out of the project. An install removes it.
+    describe("a link that was put into node_modules", () => {
+      const link = (target: string, path: string) => symlink(target, path, isWindows ? "junction" : undefined);
+      // A folder outside of the project. `at` is the folder in it that has a `tool` with the file of the bin.
+      async function victim(ctx: Ctx, at: string[]) {
+        const dir = join(ctx.packageDir, "victim");
+        await write(join(dir, ...at, "tool", "dist", "tool"), "#!/usr/bin/env node\r\n");
+        if (!isWindows) chmodSync(join(dir, ...at, "tool", "dist", "tool"), 0o600);
+        const state = () =>
+          readdirSync(dir, { recursive: true, withFileTypes: true })
+            .map(entry => {
+              const path = join(entry.parentPath, entry.name);
+              const stat = lstatSync(path);
+              return `${relative(dir, path)} ${stat.isFile() ? `${(stat.mode & 0o777).toString(8)} ${JSON.stringify(readFileSync(path, "utf8"))}` : stat.isDirectory() ? "folder" : "link"}`;
+            })
+            .sort();
+        return { dir, state, before: state() };
+      }
+
+      test.each([
+        { owner: "the project", manifest: { dependencies: { tool: "1.0.0" } }, bin: ["node_modules", ".bin"] },
+        // Under the hoisted linker, the project's node_modules has what a workspace depends on.
+        ...(linker === "isolated"
+          ? [
+              {
+                owner: "a workspace",
+                manifest: { workspaces: ["packages/*"] },
+                members: { "packages/app": app },
+                bin: ["packages", "app", "node_modules", ".bin"],
+              },
+            ]
+          : []),
+      ])("in place of the .bin of $owner is removed", async ({ manifest, members, bin }) => {
+        using ctx = await setupScriptPackages(linker, { tool });
+        const blocked = await project(ctx, "blocked", manifest, { members });
+        expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+        // The name of the bin is free in the folder that the link leads to.
+        const outside = await victim(ctx, ["inner"]);
+        await link(outside.dir, join(blocked.dir, ...bin));
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "tool");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(1));
+        expect(lstatSync(join(blocked.dir, ...bin)).isDirectory()).toBe(true);
+        expect(await readdirSorted(join(blocked.dir, ...bin))).toEqual(names);
+        expect(outside.state()).toEqual(outside.before);
+        expect(exitCode).toBe(0);
+      });
+
+      // The link to `tool` behind each of these leads to the package, like the one that an install makes.
+      test.skipIf(linker === "hoisted").each([
+        {
+          place: "the node_modules of a package that depends on it",
+          at: ["host@1.0.0", "node_modules"],
+          inVictim: [] as string[],
+        },
+        {
+          place: "the store entry of a package that depends on it",
+          at: ["host@1.0.0"],
+          inVictim: ["node_modules"],
+        },
+      ])("in place of $place gets no bin", async ({ at, inVictim }) => {
+        using ctx = await setupScriptPackages(linker, { tool, host });
+        const blocked = await project(ctx, "blocked", { dependencies: { host: "1.0.0" } });
+        expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+        const outside = join(ctx.packageDir, "victim", ...inVictim);
+        await mkdir(outside, { recursive: true });
+        await link(blocked.installed(".bun", "tool@1.0.0", "node_modules", "tool"), join(outside, "tool"));
+        await rm(blocked.installed(".bun", ...at), { recursive: true });
+        await link(join(ctx.packageDir, "victim"), blocked.installed(".bun", ...at));
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "tool");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(1));
+        expect(await readdirSorted(outside)).toEqual(["tool"]);
+        expect(lstatSync(blocked.installed(".bun", ...at)).isSymbolicLink()).toBe(true);
+        expect(exitCode).toBe(0);
+      });
+
+      test.skipIf(linker === "hoisted")("in place of the store gets no bin", async () => {
+        using ctx = await setupScriptPackages(linker, { tool, host });
+        const blocked = await project(ctx, "blocked", { dependencies: { host: "1.0.0", tool: "1.0.0" } });
+        expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+        // The store behind the link could be the one of another project.
+        const outside = join(ctx.packageDir, "victim");
+        await rename(blocked.installed(".bun"), outside);
+        await link(outside, blocked.installed(".bun"));
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "tool");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(1));
+        expect({ inStore: binTree(outside), inProject: existsSync(blocked.installed(".bin")) }).toEqual({
+          inStore: {},
+          inProject: false,
+        });
+        expect(lstatSync(blocked.installed(".bun")).isSymbolicLink()).toBe(true);
+        expect(exitCode).toBe(0);
+      });
+
+      // Under the hoisted linker the package is a folder of `node_modules` itself.
+      test.skipIf(linker === "hoisted")("in place of the link to the package gets no bin", async () => {
+        using ctx = await setupScriptPackages(linker, { tool });
+        const blocked = await project(ctx, "blocked", { dependencies: { tool: "1.0.0" } });
+        expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+        const outside = await victim(ctx, []);
+        await rm(blocked.installed("tool"), { recursive: true });
+        await link(join(outside.dir, "tool"), blocked.installed("tool"));
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "tool");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(1));
+        expect(existsSync(blocked.installed(".bin"))).toBe(false);
+        expect(outside.state()).toEqual(outside.before);
+        expect(exitCode).toBe(0);
+      });
+
+      // The folder behind the link has a package of its own, with a file where the bin of `tool` is.
+      test("in place of the folder of the package gets no bin", async () => {
+        using ctx = await setupScriptPackages(linker, { tool });
+        const blocked = await project(ctx, "blocked", { dependencies: { tool: "1.0.0" } });
+        expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+        const folder =
+          linker === "isolated"
+            ? blocked.installed(".bun", "tool@1.0.0", "node_modules", "tool")
+            : blocked.installed("tool");
+        await write(
+          join(ctx.packageDir, "victim", "tool", "package.json"),
+          JSON.stringify({ name: "other", version: "2.0.0", scripts: { postinstall: "echo other" } }),
+        );
+        const outside = await victim(ctx, []);
+        await rm(folder, { recursive: true });
+        await link(join(outside.dir, "tool"), folder);
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "tool");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(1));
+        expect(existsSync(blocked.installed(".bin"))).toBe(false);
+        expect(outside.state()).toEqual(outside.before);
+        expect(exitCode).toBe(0);
+      });
+
+      // The link in the project's node_modules leads to itself, so it cannot be followed.
+      test.skipIf(isWindows || linker === "hoisted")(
+        "in place of the link to the package, that cannot be followed, fails the command",
+        async () => {
+          using ctx = await setupScriptPackages(linker, { tool });
+          const blocked = await project(ctx, "blocked", { dependencies: { tool: "1.0.0" } });
+          expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+          await rm(blocked.installed("tool"), { recursive: true });
+          await symlink("tool", blocked.installed("tool"));
+
+          const { err, exitCode } = await blocked.bun("pm", "trust", "tool");
+          expect(err).toContain(`error: failed to link tool into ${join("node_modules", ".bin")}: ELOOP`);
+          expect((await file(join(blocked.dir, "package.json")).json()).trustedDependencies).toBeUndefined();
+          expect(exitCode).toBe(1);
+        },
+      );
+
+      // Under the hoisted linker, the node_modules of a workspace is behind the link to the workspace
+      // in the project's node_modules. The folder behind this link is a copy of the workspace.
+      test.skipIf(linker === "isolated")("in place of the link to a workspace gets no bin", async () => {
+        using ctx = await setupScriptPackages(linker, { tool, "tool@2.0.0": tool });
+        const blocked = await project(
+          ctx,
+          "blocked",
+          { workspaces: ["packages/*"], dependencies: { tool: "1.0.0" } },
+          { members: { "packages/app": { ...app, dependencies: { tool: "2.0.0" } } } },
+        );
+        expect((await blocked.bun("install")).out).toContain("Blocked 2 postinstalls");
+        const workspace = join(blocked.dir, "packages", "app");
+        expect(existsSync(join(workspace, "node_modules", "tool", "cli.js"))).toBe(true);
+        const outside = join(ctx.packageDir, "victim");
+        await cp(workspace, outside, { recursive: true });
+        await rm(blocked.installed("app"), { recursive: true });
+        await link(outside, blocked.installed("app"));
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "tool");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(2));
+        expect({ outside: binTree(outside), workspace: binTree(workspace) }).toEqual({ outside: {}, workspace: {} });
+        expect(await readdirSorted(blocked.installed(".bin"))).toEqual(names);
+        expect(exitCode).toBe(0);
+      });
+
+      // `outer` has `inner` in its node_modules, and `inner` has another version of `tool` in its own.
+      test.skipIf(linker === "isolated")("in place of the node_modules of a package gets no bin", async () => {
+        using ctx = await setupScriptPackages(linker, {
+          tool,
+          "tool@2.0.0": tool,
+          "tool@3.0.0": tool,
+          inner: { dependencies: { tool: "2.0.0" } },
+          "inner@2.0.0": {},
+          outer: { dependencies: { inner: "1.0.0", tool: "1.0.0" } },
+        });
+        const blocked = await project(ctx, "blocked", {
+          dependencies: { outer: "1.0.0", inner: "2.0.0", tool: "3.0.0" },
+        });
+        expect((await blocked.bun("install")).out).toContain("Blocked 3 postinstalls");
+        const nested = blocked.installed("outer", "node_modules");
+        expect(existsSync(join(nested, "inner", "node_modules", "tool", "cli.js"))).toBe(true);
+        const outside = join(ctx.packageDir, "victim");
+        await rename(nested, outside);
+        await link(outside, nested);
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "tool");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(3));
+        expect(binTree(outside)).toEqual({});
+        expect(lstatSync(nested).isSymbolicLink()).toBe(true);
+        expect(await readdirSorted(blocked.installed(".bin"))).toEqual(names);
+        expect(exitCode).toBe(0);
+      });
+
+      // The node_modules of the project is not a folder that Bun makes, so a link there is the user's.
+      // Not run on Windows, like the install's tests of a node_modules that is a link.
+      test.skipIf(isWindows)("in place of the node_modules of the project is kept", async () => {
+        using ctx = await setupScriptPackages(linker, { tool });
+        const blocked = await project(ctx, "blocked", { dependencies: { tool: "1.0.0" } });
+        const elsewhere = join(ctx.packageDir, "elsewhere");
+        await mkdir(elsewhere);
+        await symlink(elsewhere, blocked.installed());
+        expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "tool");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(1));
+        expect(lstatSync(blocked.installed()).isSymbolicLink()).toBe(true);
+        expect(join(elsewhere, ".bin", "tool")).toBeValidBin(join("..", "tool", "dist", "tool"));
+        expect(exitCode).toBe(0);
+      });
+
+      // The owner of a folder removes a link in it only if the folder can be written to. Root writes to a
+      // folder of any mode, so as root the command runs without that capability.
+      const setpriv = isRoot ? Bun.which("setpriv") : null;
+      test.skipIf(isWindows || (isRoot && !setpriv))("that cannot be removed fails the command", async () => {
+        using ctx = await setupScriptPackages(linker, { tool });
+        const blocked = await project(ctx, "blocked", { dependencies: { tool: "1.0.0" } });
+        expect((await blocked.bun("install")).out).toContain("Blocked 1 postinstall");
+        const outside = await victim(ctx, ["inner"]);
+        await link(outside.dir, blocked.installed(".bin"));
+        chmodSync(blocked.installed(), 0o555);
+        try {
+          const unprivileged = setpriv ? [setpriv, "--bounding-set", "-dac_override,-dac_read_search"] : [];
+          await using proc = spawn({
+            cmd: [...unprivileged, bunExe(), "pm", "trust", "tool"],
+            cwd: blocked.dir,
+            env: ctx.env,
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "pipe",
+          });
+          const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          expect(err).toContain(`error: failed to link into ${join("node_modules", ".bin")}: EACCES`);
+          expect(outside.state()).toEqual(outside.before);
+          expect((await file(join(blocked.dir, "package.json")).json()).trustedDependencies).toBeUndefined();
+          expect(exitCode).toBe(1);
+        } finally {
+          chmodSync(blocked.installed(), 0o755);
+        }
+      });
+    });
+
+    describe("with -g", () => {
+      // A global install of its own in `<folder>` of `ctx`. `files` go beside the global package.json.
+      async function globalInstall(ctx: Ctx, folder: string, files: Record<string, string> = {}) {
+        const home = join(ctx.packageDir, folder);
+        const globalDir = join(home, "install", "global");
+        const env = {
+          ...ctx.env,
+          BUN_INSTALL: home,
+          BUN_INSTALL_GLOBAL_DIR: globalDir,
+          BUN_INSTALL_BIN: join(home, "bin"),
+          BUN_CONFIG_REGISTRY: ctx.registry,
+        };
+        for (const [path, contents] of Object.entries(files)) await write(join(globalDir, path), contents);
+        return {
+          bin: (...path: string[]) => join(home, "bin", ...path),
+          installed: (...path: string[]) => join(globalDir, "node_modules", ...path),
+          packageJson: join(globalDir, "package.json"),
+          // The global bin folder, and every `.bin` of the global `node_modules`.
+          bins() {
+            const bin = join(home, "bin");
+            const commands = existsSync(bin) ? readdirSync(bin).sort() : [];
+            return {
+              commands: Object.fromEntries(commands.map(name => [name, describeBin(join(bin, name))])),
+              nodeModules: binTree(globalDir),
+            };
+          },
+          async bun(...args: string[]) {
+            await using proc = spawn({
+              cmd: [bunExe(), ...args],
+              cwd: ctx.packageDir,
+              env,
+              stdin: "ignore",
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            return { out, err, exitCode };
+          },
+        };
+      }
+      // `top` has a bin that its script writes, and depends on `tool`, which has one too.
+      const top: ScriptPackage = {
+        bin: { top: "dist/top" },
+        dependencies: { tool: "1.0.0" },
+        scripts: { postinstall: "mkdir dist && cp cli.js dist/top" },
+        files,
+      };
+
+      test.each([
+        { hoisted: "nothing", files: {} as Record<string, string> },
+        // The global node_modules then has `tool`, which the global package.json does not declare.
+        ...(linker === "isolated"
+          ? [{ hoisted: "a dependency", files: { "bunfig.toml": `[install]\npublicHoistPattern = ["tool"]\n` } }]
+          : []),
+      ])("leaves the bins of bun add -g --trust when publicHoistPattern has $hoisted", async ({ hoisted, files }) => {
+        using ctx = await setupScriptPackages(linker, { tool, top });
+        const control = await globalInstall(ctx, "control", files);
+        const added = await control.bun("add", "-g", `--linker=${linker}`, "--trust", "top");
+        expect(added.err).not.toContain("error:");
+        expect(added.exitCode).toBe(0);
+        expect(Object.keys(control.bins().commands)).toEqual(isWindows ? ["top.bunx", "top.exe"] : ["top"]);
+        expect(existsSync(control.installed("tool"))).toBe(linker === "hoisted" || hoisted !== "nothing");
+
+        const blocked = await globalInstall(ctx, "blocked", files);
+        const add = await blocked.bun("add", "-g", `--linker=${linker}`, "top");
+        expect(add.err).not.toContain("error:");
+        expect(add.out).toContain("Blocked 2 postinstalls");
+
+        const { out, err, exitCode } = await blocked.bun("pm", "-g", "trust", "--all");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(2));
+        expect(blocked.bins()).toEqual(control.bins());
+        expect(exitCode).toBe(0);
+      });
+
+      // An install links the command of such a package to the platform package, and runs no script of it.
+      test.each([
+        { platform: "beside the package", first: [] as string[] },
+        // Another version of the platform package is a global package. The hoisted linker then puts
+        // this one into the node_modules of the package.
+        { platform: "inside the package", first: ["native-platform@2.0.0"] },
+      ])("leaves the command of a package in nativeDependencies, with its platform package $platform", async row => {
+        const platform = {
+          os: [process.platform],
+          cpu: [process.arch],
+          files: { "bin/native": "#!/usr/bin/env node\n" },
+        };
+        using ctx = await setupScriptPackages(linker, {
+          native: {
+            bin: { native: "bin/native" },
+            optionalDependencies: { "native-platform": "1.0.0" },
+            scripts: { postinstall: "echo ran > ran.txt" },
+            files: { "bin/native": `#!/usr/bin/env node\nthrow new Error("not the platform package");\n` },
+          },
+          "native-platform": platform,
+          "native-platform@2.0.0": platform,
+        });
+        const manifest = { "package.json": JSON.stringify({ nativeDependencies: ["native"] }) };
+        const control = await globalInstall(ctx, "control", manifest);
+        for (const name of [...row.first, "native"]) {
+          const added = await control.bun("add", "-g", `--linker=${linker}`, "--trust", name);
+          expect(added.err).not.toContain("error:");
+          expect(added.exitCode).toBe(0);
+        }
+        expect(control.bins().commands[named("native")]).toContain(join("native-platform", "bin", "native"));
+        expect(existsSync(control.installed("native", "node_modules", "native-platform"))).toBe(
+          linker === "hoisted" && row.first.length > 0,
+        );
+
+        const blocked = await globalInstall(ctx, "blocked", manifest);
+        for (const name of [...row.first, "native"]) {
+          const add = await blocked.bun("add", "-g", `--linker=${linker}`, name);
+          expect(add.err).not.toContain("error:");
+          expect(add.exitCode).toBe(0);
+        }
+
+        const { out, err, exitCode } = await blocked.bun("pm", "-g", "trust", "native");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(1));
+        expect(blocked.bins()).toEqual(control.bins());
+        expect(exitCode).toBe(0);
+      });
+
+      // The isolated installer writes a link out of a node_modules that is a link from the real path
+      // of that folder. Not run on Windows, like the install's tests of a node_modules that is a link.
+      test.skipIf(isWindows)("links through a global node_modules that is a link", async () => {
+        const shipped: ScriptPackage = { bin: { shipped: "cli.js" }, scripts: { postinstall: "echo shipped" }, files };
+        using ctx = await setupScriptPackages(linker, { tool, shipped });
+        const installs = [];
+        for (const [folder, trust] of [
+          ["control", ["--trust"]],
+          ["blocked", []],
+        ] as const) {
+          const install = await globalInstall(ctx, folder);
+          await mkdir(join(ctx.packageDir, folder, "elsewhere"), { recursive: true });
+          await mkdir(join(install.installed(), ".."), { recursive: true });
+          await symlink(join(ctx.packageDir, folder, "elsewhere"), install.installed());
+          for (const name of ["shipped", "tool"]) {
+            const added = await install.bun("add", "-g", `--linker=${linker}`, ...trust, name);
+            expect(added.err).not.toContain("error:");
+            expect(added.exitCode).toBe(0);
+          }
+          installs.push(install);
+        }
+        const [control, blocked] = installs;
+        expect(Object.keys(control.bins().commands)).toEqual(["shipped", "tool"]);
+
+        const { out, err, exitCode } = await blocked.bun("pm", "-g", "trust", "--all");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(2));
+        expect(blocked.bins().commands).toEqual(control.bins().commands);
+        expect(exitCode).toBe(0);
+
+        // The next `bun add -g` takes the link of `tool` for one of its own.
+        const again = await blocked.bun("add", "-g", `--linker=${linker}`, "tool");
+        expect(again.err).not.toContain("error:");
+        expect(again.exitCode).toBe(0);
+      });
+
+      test("leaves a command that another global package has", async () => {
+        using ctx = await setupScriptPackages(linker, { tool, "z-tool": { bin: { tool: "cli.js" }, files } });
+        const blocked = await globalInstall(ctx, "blocked");
+        expect((await blocked.bun("add", "-g", `--linker=${linker}`, "tool")).out).toContain("Blocked 1 postinstall");
+        const added = await blocked.bun("add", "-g", `--linker=${linker}`, "z-tool");
+        expect(added.err).not.toContain("error:");
+        const before = blocked.bins().commands;
+        expect(Object.keys(before)).toEqual(names);
+
+        const { out, err, exitCode } = await blocked.bun("pm", "-g", "trust", "tool");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(1));
+        expect(blocked.bins().commands).toEqual(before);
+        expect(exitCode).toBe(0);
+      });
+
+      // The bin before `tool` in the map has no file, and a name that does not fit in a path on POSIX.
+      test.each(isWindows ? ["a file"] : ["a file", "a link"])(
+        "fails like bun add -g when %s that Bun did not make has the name",
+        async foreignIs => {
+          using ctx = await setupScriptPackages(linker, {
+            tool: { ...tool, bin: { [Buffer.alloc(5000, "x").toString()]: "", tool: "dist/tool" } },
+          });
+          const blocked = await globalInstall(ctx, "blocked");
+          const add = await blocked.bun("add", "-g", `--linker=${linker}`, "tool");
+          expect(add.out).toContain("Blocked 1 postinstall");
+          const program = join(ctx.packageDir, "program");
+          await writeFile(program, "not from bun");
+          const foreign = blocked.bin(isWindows ? "tool.exe" : "tool");
+          if (foreignIs === "a link") await symlink(program, foreign);
+          else await writeFile(foreign, "not from bun");
+
+          const { out, err, exitCode } = await blocked.bun("pm", "-g", "trust", "tool");
+          expect(err).toMatch(/error: failed to link tool into .+: EEXIST/);
+          expect(err).toContain("run 'bun pm -g trust' again once the bins can be linked");
+          expect(out).not.toContain("script ran");
+          expect(readFileSync(foreign, "utf8")).toBe("not from bun");
+          expect(lstatSync(foreign).isSymbolicLink()).toBe(foreignIs === "a link");
+          expect((await file(blocked.packageJson).json()).trustedDependencies).toBeUndefined();
+          expect(exitCode).toBe(1);
+        },
+      );
+    });
+
+    describe("--all", () => {
+      // `tool ran` is what the bin prints.
+      const printer = { ...tool, files: { "cli.js": `#!/usr/bin/env node\nconsole.log("tool ran");\n` } };
+      const user: ScriptPackage = { dependencies: { tool: "1.0.0" }, scripts: { postinstall: "tool > tool.txt" } };
+      const inStore = (dir: string, name: string, ...path: string[]) =>
+        join(dir, "node_modules", ".bun", `${name}@1.0.0`, "node_modules", name, ...path);
+      // The path of every bin in `tree`, without the two files of a shim on Windows.
+      const linked = (tree: Record<string, string>) =>
+        [...new Set(Object.keys(tree).map(path => path.replace(/\.(bunx|exe)$/, "")))].sort();
+
+      // The hoisted linker runs the scripts of one node_modules folder in one batch, like its install does.
+      test.skipIf(linker === "hoisted").each([
+        {
+          shape: "only the package depends on it",
+          packages: { tool: printer, user },
+          dependencies: { user: "1.0.0" },
+        },
+        {
+          shape: "the project depends on it too",
+          packages: { tool: printer, user },
+          dependencies: { tool: "1.0.0", user: "1.0.0" },
+        },
+        {
+          // `user` has to wait for `a-user`, not only for the `tool` that it depends on itself.
+          shape: "a package also depends on it through another package that runs it",
+          packages: {
+            tool: printer,
+            "a-user": user,
+            user: {
+              dependencies: { "a-user": "1.0.0", tool: "1.0.0" },
+              scripts: { postinstall: "cp ../a-user/tool.txt tool.txt" },
+            },
+          },
+          dependencies: { user: "1.0.0" },
+        },
+      ])("the script of a package runs the bin: $shape", async ({ packages, dependencies }) => {
+        const count = Object.keys(packages).length;
+        using ctx = await setupScriptPackages(linker, packages);
+        const blocked = await project(ctx, "blocked", { dependencies });
+        expect((await blocked.bun("install")).out).toContain(`Blocked ${count} postinstalls`);
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "--all");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(count));
+        expect(readFileSync(inStore(blocked.dir, "user", "tool.txt"), "utf8").trim()).toBe("tool ran");
+        expect(exitCode).toBe(0);
+      });
+
+      // `late` and `user` depend on each other, and only `user` depends on `tool`. An install links
+      // `tool` for `user` before the script of `user`, whatever the order of the two is.
+      test.skipIf(linker === "hoisted")("the script of a package runs the bin: the package is on a cycle", async () => {
+        using ctx = await setupScriptPackages(linker, {
+          tool: printer,
+          late: { ...tool, bin: { late: "dist/tool" }, dependencies: { user: "1.0.0" } },
+          user: { ...user, dependencies: { late: "1.0.0", tool: "1.0.0" } },
+        });
+        const blocked = await project(ctx, "blocked", { dependencies: { late: "1.0.0" } });
+        expect((await blocked.bun("install")).out).toContain("Blocked 3 postinstalls");
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "--all");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(3));
+        expect(readFileSync(inStore(blocked.dir, "user", "tool.txt"), "utf8").trim()).toBe("tool ran");
+        // The bin of `late` is linked for `user` after the script of `late`. An install never links it.
+        expect(linked(blocked.bins())).toEqual([
+          join(...rootBin, "late"),
+          join(...storeBin("user@1.0.0"), "late"),
+          join(...storeBin("user@1.0.0"), "tool"),
+        ]);
+        expect(exitCode).toBe(0);
+      });
+
+      // The other version of `tool` is in the node_modules of `user` under the hoisted linker, one folder
+      // deeper than `user`. Its script runs first, and its bin is linked before the script of `user`.
+      test("the script of a package runs the bin of another version than the project has", async () => {
+        using ctx = await setupScriptPackages(linker, {
+          tool: printer,
+          "tool@2.0.0": { ...tool, files: { "cli.js": `#!/usr/bin/env node\nconsole.log("tool 2 ran");\n` } },
+          user: { dependencies: { tool: "2.0.0" }, scripts: { postinstall: "tool > tool.txt" } },
+        });
+        const blocked = await project(ctx, "blocked", { dependencies: { tool: "1.0.0", user: "1.0.0" } });
+        expect((await blocked.bun("install")).out).toContain("Blocked 3 postinstalls");
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "--all");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(3));
+        expect(readFileSync(blocked.installed("user", "tool.txt"), "utf8").trim()).toBe("tool 2 ran");
+        expect(exitCode).toBe(0);
+      });
+
+      test("packages that depend on each other", async () => {
+        using ctx = await setupScriptPackages(linker, {
+          tool: { ...tool, dependencies: { other: "1.0.0" } },
+          other: { ...tool, bin: { other: "dist/tool" }, dependencies: { tool: "1.0.0" } },
+        });
+        const blocked = await project(ctx, "blocked", { dependencies: { tool: "1.0.0", other: "1.0.0" } });
+        expect((await blocked.bun("install")).out).toContain("Blocked 2 postinstalls");
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "--all");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(2));
+        expect(blocked.installed(".bin", "tool")).toBeValidBin(join("..", "tool", "dist", "tool"));
+        expect(blocked.installed(".bin", "other")).toBeValidBin(join("..", "other", "dist", "tool"));
+        // Each of the two also gets the bin of the other one. An install links neither.
+        expect(linked(blocked.bins())).toEqual(
+          [
+            join(...rootBin, "other"),
+            join(...rootBin, "tool"),
+            ...(linker === "isolated"
+              ? [join(...storeBin("other@1.0.0"), "tool"), join(...storeBin("tool@1.0.0"), "other")]
+              : []),
+          ].sort(),
+        );
+        expect(exitCode).toBe(0);
+      });
+
+      // Each script waits for the other one to start. Scripts that run one after the other never meet.
+      test("scripts of packages that do not depend on each other run at the same time", async () => {
+        const meet = `
+          const { existsSync, writeFileSync } = require("fs");
+          const { join } = require("path");
+          const [own, other] = process.argv.slice(2);
+          writeFileSync(join(process.env.MEET_DIR, own), "");
+          const deadline = Date.now() + 30_000;
+          while (!existsSync(join(process.env.MEET_DIR, other))) {
+            if (Date.now() > deadline) process.exit(1);
+            Bun.sleepSync(5);
+          }
+        `;
+        const meets = (own: string, other: string): ScriptPackage => ({
+          scripts: { postinstall: `${bunExe()} meet.js ${own} ${other}` },
+          files: { "meet.js": meet },
+        });
+        using ctx = await setupScriptPackages(linker, {
+          near: meets("near", "far"),
+          far: meets("far", "near"),
+          between: { dependencies: { far: "1.0.0" } },
+        });
+        ctx.env.MEET_DIR = ctx.packageDir;
+        const blocked = await project(ctx, "blocked", { dependencies: { near: "1.0.0", between: "1.0.0" } });
+        expect((await blocked.bun("install")).out).toContain("Blocked 2 postinstalls");
+
+        const { out, err, exitCode } = await blocked.bun("pm", "trust", "--all");
+        expect(err).not.toContain("error:");
+        expect(out).toContain(ran(2));
+        expect(exitCode).toBe(0);
+      });
+    });
+  });
 });
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("bun add --trust (%s)", linker => {

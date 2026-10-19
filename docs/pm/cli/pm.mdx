@@ -471,6 +471,16 @@ Options for the `trust` command:
 - `--all`: Trust all untrusted dependencies.
 - `--dry-run`: Print the scripts that would run and the packages that would be trusted, without running scripts or writing `package.json` and `bun.lock`.
 
+After the scripts of a package run, `bun pm trust` links the `bin` commands of that package. A script can write the file of a command, so `bun install` has nothing to link for that command while it blocks the script. Where `bun pm trust` puts the command depends on the linker:
+
+- With the hoisted linker, the command goes into the `.bin` folder of the `node_modules` folder that has the package.
+- With the isolated linker, the command goes into the `.bin` folder of each package that depends on the package. For a dependency of your project, that folder is `node_modules/.bin`.
+- With `-g`, the commands of a global package go into the global `bin` directory. Bun links the commands of its dependencies into the `.bin` folders of the global `node_modules`, as described above.
+
+`bun pm trust` leaves a name that another package already has, in a `.bin` folder and in the global `bin` directory. A later `bun install` or `bun add -g` links the names by its own rules, so the name can go to the other package then. With `-g`, `bun pm trust` fails if something that Bun did not create has the name.
+
+If `bun pm trust` cannot link a command, it prints the error and exits without changing `package.json` and `bun.lock`. Remove the cause of the error and run `bun pm trust` again. It runs the scripts again.
+
 A package that does not come from the npm registry (a tarball, `git`, `file:` or `link:` dependency) also has to be declared in the `package.json` of the project or of a workspace. `bun install`, `bun pm trust` and `bun add --trust` do not run the scripts of the others, and `bun pm untrusted` marks them with `cannot be trusted by name`.
 
 ## default-trusted

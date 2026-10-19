@@ -8,6 +8,7 @@ use bun_core::ZStr;
 use bun_core::w;
 #[cfg(not(windows))]
 use bun_paths::MAX_PATH_BYTES;
+use bun_paths::path_options::AssumeOk as _;
 use bun_paths::platform::Auto as PlatformAuto;
 use bun_paths::resolve_path::{self, join_abs_string_buf_z_checked as join_z_checked};
 use bun_paths::strings;
@@ -678,6 +679,21 @@ impl<'a> LinkOrder<'a> {
         behavior.is_prod() || behavior.is_dev() || behavior.is_optional() || behavior.is_workspace()
     }
 
+    /// Returns true if `importer`, which is the project or a workspace, declares a dependency
+    /// with this name. The name is compared instead of the dependency id, because a store entry
+    /// keeps the id of whichever dependency reached it first, which may be another package's peer
+    /// dependency.
+    pub(crate) fn is_declared_by(
+        lockfile: &Lockfile,
+        importer: crate::PackageID,
+        name_hash: crate::PackageNameHash,
+    ) -> bool {
+        (lockfile.packages.items_dependencies()[importer as usize])
+            .get(lockfile.buffers.dependencies.as_slice())
+            .iter()
+            .any(|own| own.name_hash == name_hash && Self::declares(own.behavior))
+    }
+
     /// Compares by package, because a hoisted package keeps the id of the first dependency that
     /// reached it.
     pub(crate) fn direct_packages(lockfile: &Lockfile) -> Result<DynamicBitSet, AllocError> {
@@ -935,6 +951,16 @@ impl<'a> Linker<'a> {
     #[cfg(not(windows))]
     pub(crate) fn link_leads_into(abs_dest: &ZStr, link: &[u8], abs_dir: &[u8]) -> bool {
         let mut resolved_buf = path::path_buffer_pool::get();
+        // The join below resolves every `..` of the link, also one that comes from `abs_dest`.
+        // The path of a workspace outside of the project has one, so resolve it here as well.
+        let mut dir_buf = path::path_buffer_pool::get();
+        let Some(abs_dir) = resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
+            abs_dir,
+            dir_buf.as_mut_slice(),
+            &[b"."],
+        ) else {
+            return false;
+        };
         resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
             resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes()),
             resolved_buf.as_mut_slice(),
@@ -1788,33 +1814,121 @@ impl<'a> Linker<'a> {
     }
 
     pub fn unlink(&mut self, global: bool) {
+        let result = self.for_each_dest(global, |this, abs_dest, package_dir_len| {
+            let Some(abs_dest) = abs_dest else {
+                return false;
+            };
+            let package_dir = &this.abs_target_buf[0..package_dir_len];
+            Self::unlink_bin_or_shim(abs_dest, global.then_some(package_dir));
+            true
+        });
+        if let Err(err) = result {
+            self.err = Some(err);
+        }
+    }
+
+    /// Takes out of `seen` the names of the package's bins that `link` has to look at although
+    /// they exist, so that `link` doesn't skip them. Returns those names.
+    fn forget_names_left_to_link(
+        &mut self,
+        global: bool,
+        seen: &mut StringHashMap<()>,
+    ) -> Vec<Box<[u8]>> {
+        let mut forgotten: Vec<Box<[u8]>> = Vec::new();
+        let _ = self.for_each_dest(global, |this, abs_dest, package_dir_len| {
+            // `link` skips a bin whose target is empty or leaves the package before it builds the
+            // path of the name. So a name that doesn't fit ends nothing here, and it's an error
+            // only if `link` reports it.
+            let Some(abs_dest) = abs_dest else {
+                return true;
+            };
+            if seen.contains_key(abs_dest.as_bytes())
+                && Self::is_left_to_link(
+                    abs_dest,
+                    &this.abs_target_buf[0..package_dir_len],
+                    global.then(|| this.node_modules_path.slice()),
+                )
+            {
+                seen.remove(abs_dest.as_bytes());
+                forgotten.push(abs_dest.as_bytes().into());
+            }
+            true
+        });
+        self.err = None;
+        forgotten
+    }
+
+    /// Returns true if `link` has to look at the name at `abs_dest` in a bin folder, although
+    /// the name exists:
+    /// - A link that leads into `package_dir` is the package's own. The package had it before
+    ///   its lifecycle scripts ran, so its target can be another file by now, and `link` makes
+    ///   it again. A link that leads into the `node_modules` of `package_dir` belongs to a
+    ///   package in there, which the command of a package in `nativeDependencies` can lead to.
+    /// - In the global bin folder, Bun didn't create a name that isn't a link into
+    ///   `global_node_modules`. `link` fails for such a name.
+    ///
+    /// Every other name belongs to another package, or to something else in a `.bin`, and stays.
+    #[cfg(not(windows))]
+    fn is_left_to_link(
+        abs_dest: &ZStr,
+        package_dir: &[u8],
+        global_node_modules: Option<&[u8]>,
+    ) -> bool {
+        let mut link_buf = path::path_buffer_pool::get();
+        let Ok(len) = sys::readlink(abs_dest, link_buf.as_mut_slice()) else {
+            return global_node_modules.is_some();
+        };
+        let link = &link_buf[..len];
+        let leads_into = |dir: &[u8]| Self::link_leads_into(abs_dest, link, dir);
+        if leads_into(package_dir) {
+            return !leads_into(&[package_dir, &b"node_modules"[..]].concat());
+        }
+        global_node_modules.is_some_and(|node_modules| !leads_into(node_modules))
+    }
+
+    /// A shim doesn't say which package it belongs to without being parsed, so every shim stays.
+    /// In the global bin folder, Bun didn't create a name that has no `.bunx` file, and `link`
+    /// applies its own rules to such a name.
+    #[cfg(windows)]
+    fn is_left_to_link(
+        abs_dest: &ZStr,
+        _package_dir: &[u8],
+        global_node_modules: Option<&[u8]>,
+    ) -> bool {
+        global_node_modules.is_some()
+            && !sys::exists(&[abs_dest.as_bytes(), &b".bunx"[..]].concat())
+    }
+
+    /// Calls `each` with the path, in the bin folder, of every name that the package's `bin`
+    /// gives it, or with `None` for a name that doesn't fit. The last argument of `each` is the
+    /// length of the package's directory at the start of `abs_target_buf`. Stops when `each`
+    /// returns false.
+    fn for_each_dest(
+        &mut self,
+        global: bool,
+        mut each: impl FnMut(&mut Self, Option<&ZStr>, usize) -> bool,
+    ) -> Result<(), Error> {
         let (Some(package_dir_len), Some(dest_dir_len)) = (
             self.build_target_package_dir(),
             self.build_destination_dir(global),
         ) else {
-            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-            return;
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
         };
         let (bin, string_buf, extern_string_buf) =
             (self.bin, self.string_buf, self.extern_string_buf);
 
         debug_assert!(bin.tag != Tag::None);
 
-        // Returns false if the name doesn't fit.
-        let unlink_name = |this: &mut Self, name: &[u8]| -> bool {
-            let Some(abs_dest) = this.append_dest(dest_dir_len, name) else {
-                return false;
-            };
-            let package_dir = &this.abs_target_buf[0..package_dir_len];
-            Self::unlink_bin_or_shim(abs_dest, global.then_some(package_dir));
-            true
+        let mut visit = |this: &mut Self, name: &[u8]| -> bool {
+            let abs_dest = this.append_dest(dest_dir_len, name);
+            each(this, abs_dest, package_dir_len)
         };
 
         match bin.tag {
             Tag::None => {}
             Tag::File => {
                 let package_name = self.package_name;
-                unlink_name(
+                visit(
                     self,
                     Dependency::unscoped_package_name(package_name.slice()),
                 );
@@ -1822,21 +1936,21 @@ impl<'a> Linker<'a> {
             Tag::NamedFile => {
                 let name = normalized_bin_name(bin.named_file()[0].slice(string_buf));
                 if !name.is_empty() {
-                    unlink_name(self, name);
+                    visit(self, name);
                 }
             }
             Tag::Map => {
                 for i in (bin.map().begin()..bin.map().end()).step_by(2) {
                     let name = normalized_bin_name(extern_string_buf[i as usize].slice(string_buf));
-                    if !name.is_empty() && !unlink_name(self, name) {
-                        return;
+                    if !name.is_empty() && !visit(self, name) {
+                        return Ok(());
                     }
                 }
             }
             Tag::Dir => {
                 let target = bin.dir().slice(string_buf);
                 if target.is_empty() {
-                    return;
+                    return Ok(());
                 }
 
                 let mut abs_target_dir_buf = path::path_buffer_pool::get();
@@ -1845,28 +1959,23 @@ impl<'a> Linker<'a> {
                     abs_target_dir_buf.as_mut_slice(),
                     &[target],
                 ) else {
-                    self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                    return;
+                    return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                 };
 
-                let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
-                    Ok(d) => sys::Dir::from_fd(d),
-                    Err(err) => {
-                        self.err = Some(err.into());
-                        return;
-                    }
-                };
+                let target_dir =
+                    sys::Dir::from_fd(sys::open_dir_absolute(abs_target_dir.as_bytes())?);
 
                 let mut iter = sys::iterate_dir(target_dir.fd());
                 while let Some(entry) = iter.next().unwrap_or(None) {
                     if matches!(entry.kind, sys::EntryKind::SymLink | sys::EntryKind::File)
-                        && !unlink_name(self, entry.name.slice_u8())
+                        && !visit(self, entry.name.slice_u8())
                     {
-                        return;
+                        return Ok(());
                     }
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -1927,13 +2036,47 @@ pub(crate) fn link_free_bins(
         let _ = dir.append(node_modules);
         dir
     };
-    let (target_node_modules_path, mut node_modules_path) =
-        (abs_node_modules(), abs_node_modules());
+    let _ = link_bins_into(
+        lockfile,
+        (abs_node_modules(), abs_node_modules()),
+        global_bin_path,
+        placed,
+        Taken::Existing,
+    );
+}
+
+/// The names in the bin folder that `link_bins_into` leaves as they are.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Taken {
+    /// Every name that exists.
+    Existing,
+    /// Every name that exists, except for those that `Linker::is_left_to_link` gives to the
+    /// linker: the package's own links, and what Bun didn't create in the global bin folder.
+    OfOthers,
+}
+
+/// Links the bins of the packages in `placed`, in order, into the `.bin` of `node_modules` or into
+/// the global bin folder. The two paths in `node_modules` are the same. Returns the index of each
+/// package that a bin could not be linked for.
+fn link_bins_into(
+    lockfile: &Lockfile,
+    node_modules: (AbsPath, AbsPath),
+    global_bin_path: Option<&ZStr>,
+    placed: &[(&[u8], crate::PackageID)],
+    taken: Taken,
+) -> Vec<(usize, Error)> {
+    let (target_node_modules_path, mut node_modules_path) = node_modules;
 
     let mut seen: StringHashMap<()> = StringHashMap::default();
     match global_bin_path {
-        // The linker creates a missing `.bin`, but never a missing global bin folder.
-        Some(bin_path) if see_names_in(bin_path.as_bytes(), &mut seen).is_err() => return,
+        // The linker creates a missing `.bin`, but never a missing global bin folder. With
+        // `Taken::OfOthers`, the linker reports the missing folder.
+        Some(bin_path)
+            if see_names_in(bin_path.as_bytes(), &mut seen).is_err()
+                && taken == Taken::Existing =>
+        {
+            return Vec::new();
+        }
         Some(_) => {}
         None => see_linked_names(node_modules_path.slice(), &mut seen),
     }
@@ -1941,7 +2084,8 @@ pub(crate) fn link_free_bins(
     let mut abs_target_buf = path::path_buffer_pool::get();
     let mut abs_dest_buf = path::path_buffer_pool::get();
     let mut rel_buf = path::path_buffer_pool::get();
-    for &(folder, package_id) in placed {
+    let mut failed: Vec<(usize, Error)> = Vec::new();
+    for (index, &(folder, package_id)) in placed.iter().enumerate() {
         let Some(&bin) = lockfile.packages.items_bin().get(package_id as usize) else {
             continue;
         };
@@ -1949,11 +2093,11 @@ pub(crate) fn link_free_bins(
             continue;
         }
         let package_name = strings::StringOrTinyString::init(folder);
-        Linker {
+        let mut linker = Linker {
             bin,
             target_node_modules_path: &raw const target_node_modules_path,
             target_package_name: package_name,
-            seen: Some(&mut seen),
+            seen: None,
             node_modules_path: &mut node_modules_path,
             package_name,
             global_bin_path: global_bin_path.unwrap_or(ZStr::EMPTY),
@@ -1965,7 +2109,310 @@ pub(crate) fn link_free_bins(
             is_behind_link: Some(false),
             err: None,
             skipped_due_to_missing_bin: false,
+        };
+        let forgotten = match taken {
+            Taken::Existing => Vec::new(),
+            Taken::OfOthers => {
+                linker.forget_names_left_to_link(global_bin_path.is_some(), &mut seen)
+            }
+        };
+        linker.seen = Some(&mut seen);
+        linker.link(global_bin_path.is_some());
+        if let Some(err) = linker.err.take() {
+            failed.push((index, err));
         }
-        .link(global_bin_path.is_some());
+        // A name that this package didn't link after all is still taken for the next packages.
+        for name in forgotten {
+            let _ = seen.put(&name, ());
+        }
     }
+    failed
+}
+
+/// Where the bins of a dependency are linked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BinFolder {
+    /// The `.bin` of the `node_modules` that has the dependency.
+    NodeModules,
+    /// The global bin folder. The global package.json declares the dependency.
+    Global,
+}
+
+/// The directory of a package in the store.
+pub(crate) struct StorePackage {
+    /// An absolute path.
+    pub(crate) dir: Vec<u8>,
+    /// Bun creates the folders of `dir` after its first `real_len` bytes.
+    pub(crate) real_len: usize,
+}
+
+/// The bins of a dependency, for one `node_modules` that has the dependency or a link to it. An
+/// install links them into the `.bin` of that folder, or into the global bin folder.
+pub struct DependencyBins {
+    /// The absolute path of the `node_modules`.
+    pub(crate) node_modules: Vec<u8>,
+    /// Bun creates the folders of `node_modules` after its first `real_len` bytes. If one of
+    /// them is a link, nothing is linked behind it. The folders before them are not looked at
+    /// here. The `node_modules` of the project or of a workspace can be a link that the user
+    /// made, and `StoreFolders::dependency_bins` looks at a store entry itself.
+    pub(crate) real_len: usize,
+    /// The dependency that names the package in `node_modules`.
+    pub(crate) dep_id: DependencyID,
+    pub(crate) package_id: crate::PackageID,
+    /// Whether the owner of `node_modules` declares the dependency, for `LinkOrder`. `None` means
+    /// the rule of the hoisted linker, which asks whether the project or any workspace declares
+    /// the package.
+    pub(crate) direct: Option<bool>,
+    /// The package, if `node_modules` has a link to it. Nothing is linked unless that link
+    /// leads to the directory of the package. `None` means that the package is a folder of
+    /// `node_modules`.
+    pub(crate) in_store: Option<StorePackage>,
+    pub(crate) folder: BinFolder,
+}
+
+impl DependencyBins {
+    /// Returns the bins of a dependency in a `node_modules` of the hoisted layout, or `None` if
+    /// its package has no bin. `global` is true for `-g`.
+    pub fn in_tree(
+        lockfile: &Lockfile,
+        node_modules: &crate::lockfile::tree::IteratorNext<'_>,
+        dep_id: DependencyID,
+        global: bool,
+    ) -> Option<DependencyBins> {
+        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+        if lockfile.packages.items_bin()[package_id as usize].tag == Tag::None {
+            return None;
+        }
+        let trees = lockfile.buffers.trees.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+
+        // Every tree below the `node_modules` of the project or of a workspace adds
+        // `/<package>/node_modules` to the path.
+        let relative = node_modules.relative_path.as_bytes();
+        let mut below_len = 0;
+        let mut importer = node_modules.tree_id;
+        while !lockfile.is_importer_tree_id(importer) {
+            let tree = &trees[importer as usize];
+            below_len += b"/".len()
+                + tree.folder_name(dependencies, string_buf).len()
+                + b"/node_modules".len();
+            importer = tree.parent;
+        }
+        // The path of a tree that is too deep stops early, and nothing is linked for such a tree.
+        let importer_len = (relative.len().checked_sub(below_len)).filter(|&len| len > 0)?;
+
+        let mut path: AbsPath = AbsPath::init_top_level_dir();
+        let importer_tree = &trees[importer as usize];
+        let is_behind_workspace_link = importer != 0
+            && !importer_tree.is_unlinked_member(
+                trees,
+                lockfile.buffers.hoisted_dependencies.as_slice(),
+                dependencies,
+            );
+        if is_behind_workspace_link {
+            // The tree of this workspace is behind the link to the workspace in the project's
+            // `node_modules`. The path leads to the folder of the workspace itself, so that
+            // nothing is written through that link.
+            let workspace =
+                lockfile.buffers.resolutions.as_slice()[importer_tree.dependency_id as usize];
+            crate::isolated_install::installer::append_workspace_path(
+                &mut path,
+                lockfile.str(lockfile.packages.items_resolution()[workspace as usize].workspace()),
+            );
+            let _ = path.append(b"node_modules");
+        } else {
+            let _ = path.append(&relative[..importer_len]);
+        }
+        let real_len = path.len();
+        if importer_len < relative.len() {
+            let _ = path.append(&relative[importer_len + 1..]);
+        }
+
+        // The commands of the global package.json's own dependencies are in the global bin
+        // folder.
+        let in_global_bin =
+            global && node_modules.tree_id == 0 && lockfile.is_root_dependency(package_id);
+        Some(DependencyBins {
+            node_modules: path.slice().to_vec(),
+            real_len,
+            dep_id,
+            package_id,
+            direct: None,
+            in_store: None,
+            folder: if in_global_bin {
+                BinFolder::Global
+            } else {
+                BinFolder::NodeModules
+            },
+        })
+    }
+}
+
+/// Something that `link_bins_after_scripts` could not link.
+pub struct LinkFailure {
+    /// The path of the bin folder. It starts at the project's directory if the folder is in it.
+    pub bin_folder: Box<[u8]>,
+    /// The name of the package whose bin failed. It's `None` if the bin folder itself failed.
+    pub package: Option<Box<[u8]>>,
+    pub err: Error,
+}
+
+/// Returns whether the two paths lead to the same directory. A path that leads to nothing is not
+/// a directory.
+fn is_same_dir(a: &ZStr, b: &ZStr) -> sys::Maybe<bool> {
+    let stat = |path: &ZStr| match sys::stat(path) {
+        Ok(stat) => Ok(Some(stat)),
+        Err(err) if matches!(err.get_errno(), sys::Errno::ENOENT | sys::Errno::ENOTDIR) => Ok(None),
+        Err(err) => Err(err),
+    };
+    let (Some(a), Some(b)) = (stat(a)?, stat(b)?) else {
+        return Ok(false);
+    };
+    Ok(a.st_ino == b.st_ino && a.st_dev == b.st_dev)
+}
+
+/// Links bins after lifecycle scripts that ran later than the install that placed their
+/// packages, which is what `bun pm trust` does. A script can write the file of a bin, so the
+/// install may have had nothing to link. A name that another package has stays with that
+/// package. That also keeps the command of a package in `nativeDependencies`, which leads to
+/// another package. In the global bin folder, a name that Bun didn't create is an error, like
+/// for `bun add -g`.
+pub fn link_bins_after_scripts(
+    lockfile: &Lockfile,
+    global_bin_path: &ZStr,
+    bins: &mut [&DependencyBins],
+) -> Vec<LinkFailure> {
+    let pkgs = lockfile.packages.slice();
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let folder_of =
+        |bins: &DependencyBins| dependencies[bins.dep_id as usize].name.slice(string_buf);
+
+    // Sort by `node_modules`, and inside one by the order in which an install links the packages.
+    let direct_packages = core::cell::OnceCell::new();
+    let link_order = |bins: &DependencyBins| {
+        let package_id = bins.package_id as usize;
+        let direct = bins.direct.unwrap_or_else(|| {
+            direct_packages
+                .get_or_init(|| bun_core::handle_oom(LinkOrder::direct_packages(lockfile)))
+                .is_set_allow_out_of_bound(package_id, false)
+        });
+        LinkOrder::new(
+            direct,
+            pkgs.items_resolution()[package_id].tag,
+            folder_of(bins),
+        )
+    };
+    bun_collections::index_sort::sort_slice_by(bins, |a, b| {
+        (a.node_modules.cmp(&b.node_modules)).then_with(|| link_order(a).cmp(&link_order(b)))
+    });
+
+    let top_level_dir =
+        strings::without_trailing_slash(path::fs::FileSystem::instance().top_level_dir());
+    let in_project = |abs: &[u8]| -> Box<[u8]> {
+        (abs.strip_prefix(top_level_dir))
+            .and_then(|rest| rest.strip_prefix(&[SEP]))
+            .unwrap_or(abs)
+            .into()
+    };
+
+    let mut failures: Vec<LinkFailure> = Vec::new();
+    let mut dir_buf = path::path_buffer_pool::get();
+    for group in bins.chunk_by(|a, b| a.node_modules == b.node_modules) {
+        let node_modules = group[0].node_modules.as_slice();
+        // A link in place of a folder that Bun creates came with the project or with a package,
+        // and it can lead out of `node_modules`, so nothing is linked behind it. An install
+        // removes such a link and makes the folder again. Here, the link stays, because scripts
+        // of this command can still have to run in a package behind it.
+        if crate::prune::has_planted_link(node_modules, group[0].real_len) {
+            continue;
+        }
+        let bin_folder = [node_modules, &[SEP][..], &b".bin"[..]].concat();
+        let folder_path = |folder: BinFolder| match folder {
+            BinFolder::NodeModules => in_project(&bin_folder),
+            BinFolder::Global => in_project(global_bin_path.as_bytes()),
+        };
+
+        let (mut local, mut global): (Vec<_>, Vec<_>) = (Vec::new(), Vec::new());
+        for bins in group {
+            let folder = folder_of(bins);
+            let in_node_modules = [node_modules, &[SEP][..], folder, &[0][..]].concat();
+            let in_node_modules = ZStr::from_slice_with_nul(&in_node_modules);
+
+            // Bun also creates the folders of the package itself, so a link in place of one of
+            // them leads to files that are not the package's. For a `link:` dependency, the last
+            // one is a link that Bun makes.
+            let (package_dir, package_real_len) = match &bins.in_store {
+                Some(package) => (package.dir.as_slice(), package.real_len),
+                None => (in_node_modules.as_bytes(), node_modules.len()),
+            };
+            let is_linked_directory = matches!(
+                pkgs.items_resolution()[bins.package_id as usize].tag,
+                resolution::Tag::Symlink | resolution::Tag::Workspace
+            );
+            let created = if is_linked_directory {
+                resolve_path::dirname::<PlatformAuto>(package_dir)
+            } else {
+                package_dir
+            };
+            if crate::prune::has_planted_link(created, package_real_len) {
+                continue;
+            }
+
+            // If the link in `node_modules` leads somewhere else, an install didn't make it, and
+            // the files behind it are not the package's.
+            if let Some(package) = &bins.in_store {
+                let package_dir = resolve_path::z(&package.dir, &mut dir_buf);
+                match is_same_dir(in_node_modules, package_dir) {
+                    Ok(true) => {}
+                    Ok(false) => continue,
+                    Err(err) => {
+                        failures.push(LinkFailure {
+                            bin_folder: folder_path(bins.folder),
+                            package: Some(folder.into()),
+                            err: err.into(),
+                        });
+                        continue;
+                    }
+                }
+            }
+            match bins.folder {
+                BinFolder::NodeModules => local.push((folder, bins.package_id)),
+                BinFolder::Global => global.push((folder, bins.package_id)),
+            }
+        }
+
+        let abs_node_modules = || AbsPath::from(node_modules).assume_ok();
+        let mut link = |placed: &[(&[u8], crate::PackageID)], folder: BinFolder| {
+            let failed = link_bins_into(
+                lockfile,
+                (abs_node_modules(), abs_node_modules()),
+                (folder == BinFolder::Global).then_some(global_bin_path),
+                placed,
+                Taken::OfOthers,
+            );
+            failures.extend(failed.into_iter().map(|(index, err)| LinkFailure {
+                bin_folder: folder_path(folder),
+                package: Some(placed[index].0.into()),
+                err,
+            }));
+        };
+        if !global.is_empty() {
+            link(&global, BinFolder::Global);
+        }
+        if local.is_empty() {
+            continue;
+        }
+        // Only links are in `.bin`, so a link in its place is removed, like during an install.
+        match crate::prune::remove_planted_links(&bin_folder, node_modules.len()) {
+            Ok(()) => link(&local, BinFolder::NodeModules),
+            Err(err) => failures.push(LinkFailure {
+                bin_folder: folder_path(BinFolder::NodeModules),
+                package: None,
+                err: err.into(),
+            }),
+        }
+    }
+    failures
 }

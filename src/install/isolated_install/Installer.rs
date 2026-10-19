@@ -2245,17 +2245,9 @@ impl<'a> Installer<'a> {
             self.resolution(parent_entry_id).tag,
             ResolutionTag::Root | ResolutionTag::Workspace
         );
-        let parent_dependencies = if is_importer {
-            pkgs.items_dependencies()[store.ids(parent_entry_id).pkg_id as usize]
-        } else {
-            Default::default()
-        };
-        // Match by name, not by dependency id. A store entry keeps the id of whichever dependency
-        // reached it first, which may be another package's peer dependency.
+        let parent_pkg_id = store.ids(parent_entry_id).pkg_id;
         let is_direct = |name_hash: u64| {
-            (parent_dependencies.get(dependencies).iter()).any(|own| {
-                own.name_hash == name_hash && bin_real::LinkOrder::declares(own.behavior)
-            })
+            is_importer && bin_real::LinkOrder::is_declared_by(lockfile, parent_pkg_id, name_hash)
         };
 
         let mut deps_with_bins: Vec<_> = entry_deps[parent_entry_id.get() as usize]
@@ -2858,7 +2850,7 @@ struct BinLinks {
 /// `buf` is the project's directory. Appends the path of a workspace. On Windows, the path of a
 /// workspace outside the project is normalized, because the `..` in the path of a new link isn't
 /// resolved there. Elsewhere the kernel resolves it, also when the project is behind a symlink.
-fn append_workspace_path(buf: &mut impl paths::PathLike, workspace_path: &[u8]) {
+pub(crate) fn append_workspace_path(buf: &mut impl paths::PathLike, workspace_path: &[u8]) {
     if cfg!(not(windows)) || !crate::bin::path_climbs_out(workspace_path) {
         return buf.append(workspace_path);
     }

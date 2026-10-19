@@ -329,12 +329,53 @@ pub struct StoreFolder {
     /// For a `link:` dependency, this is the folder of the package that declares `dep_id`, and the
     /// link is in `node_modules/<dependency name>` below it.
     pub entry_dir: Vec<u8>,
+    /// True for a `link:` dependency.
+    pub is_link: bool,
+    /// True if `entry_dir` is the folder of the project or of a workspace.
+    in_importer: bool,
+    entry_id: store::entry::Id,
+}
+
+impl StoreFolder {
+    /// The name of the package's folder in the `node_modules` of `entry_dir`.
+    pub fn name<'a>(&self, lockfile: &'a Lockfile) -> &'a [u8] {
+        lockfile.str(if self.is_link {
+            &lockfile.buffers.dependencies[self.dep_id as usize].name
+        } else {
+            &lockfile.packages.items_name()[self.pkg_id as usize]
+        })
+    }
+}
+
+/// The store of the project in the working directory, and the folder of each dependency in it.
+pub struct StoreFolders {
+    store: Store,
+    pub folders: Vec<StoreFolder>,
+    /// `dependency_bins` looks at the project's `node_modules` once.
+    node_modules: core::cell::OnceCell<ProjectNodeModules>,
+}
+
+struct ProjectNodeModules {
+    /// Set if `node_modules` is a link that the user made. The installer links through its real
+    /// path.
+    linked: Option<LinkedNodeModules>,
+    /// Whether `node_modules/.bun` is a folder and not a link.
+    is_own_store: bool,
+}
+
+/// The batches in which `bun pm trust` runs the lifecycle scripts of packages in the store.
+pub struct ScriptBatches {
+    /// The number of the batch of each of `StoreFolders::folders` whose scripts run, and 0 for
+    /// the others.
+    pub of_folder: Vec<usize>,
+    /// The number of the batch of each store entry, and `None` if its scripts don't run.
+    of_entry: Vec<Option<usize>>,
 }
 
 pub fn store_folders(
     manager: &PackageManager,
     lockfile: &Lockfile,
-) -> Result<Vec<StoreFolder>, AllocError> {
+) -> Result<StoreFolders, AllocError> {
     let store = build_whole_store(manager, lockfile)?;
     let node_dep_ids = store.nodes.items_dep_id();
     let node_pkg_ids = store.nodes.items_pkg_id();
@@ -360,12 +401,18 @@ pub fn store_folders(
             depth += 1;
             parent = node_parent_ids[parent.get() as usize];
         }
-        let holder = if tag == ResolutionTag::Symlink {
+        let entry_id = store::entry::Id::from(entry as u32);
+        let is_link = tag == ResolutionTag::Symlink;
+        let holder = if is_link {
             entry_parents[entry][0]
         } else {
-            store::entry::Id::from(entry as u32)
+            entry_id
         };
         let holder_res = &pkg_resolutions[store.ids(holder).pkg_id as usize];
+        let in_importer = matches!(
+            holder_res.tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        );
         let mut entry_dir: Vec<u8> = Vec::new();
         match holder_res.tag {
             ResolutionTag::Root => {}
@@ -384,9 +431,243 @@ pub fn store_folders(
             pkg_id,
             depth,
             entry_dir,
+            is_link,
+            in_importer,
+            entry_id,
         });
     }
-    Ok(folders)
+    Ok(StoreFolders {
+        store,
+        folders,
+        node_modules: core::cell::OnceCell::new(),
+    })
+}
+
+impl StoreFolders {
+    /// `runs[i]` says whether the lifecycle scripts of `folders[i]` are about to run. The scripts
+    /// run in batches. Like during an install, a script starts after the scripts of every package
+    /// that its own package depends on.
+    pub fn script_batches(&self, runs: &[bool]) -> ScriptBatches {
+        const NEW: u8 = 0;
+        const OPEN: u8 = 1;
+        const DONE: u8 = 2;
+        let entry_dependencies = self.store.entries.items_dependencies();
+        let count = entry_dependencies.len();
+
+        let mut entry_runs = vec![false; count];
+        for (folder, &runs) in self.folders.iter().zip(runs) {
+            entry_runs[folder.entry_id.get() as usize] = runs;
+        }
+
+        // `below[entry]` is the most entries that run scripts on one chain of dependencies below
+        // the entry. The search goes depth first, and doesn't follow a dependency that is still
+        // open, because that one closes a cycle.
+        let mut below = vec![0usize; count];
+        let mut state = vec![NEW; count];
+        let mut open: Vec<(u32, usize)> = Vec::new();
+        for (start, _) in entry_runs.iter().enumerate().filter(|(_, runs)| **runs) {
+            if state[start] != NEW {
+                continue;
+            }
+            state[start] = OPEN;
+            open.push((start as u32, 0));
+            while let Some((entry, next)) = open.last_mut() {
+                let dependencies = entry_dependencies[*entry as usize].slice();
+                if let Some(dependency) = dependencies.get(*next) {
+                    *next += 1;
+                    let dependency = dependency.entry_id.get();
+                    if state[dependency as usize] == NEW {
+                        state[dependency as usize] = OPEN;
+                        open.push((dependency, 0));
+                    }
+                    continue;
+                }
+                let entry = *entry as usize;
+                below[entry] = (dependencies.iter())
+                    .map(|dependency| dependency.entry_id.get() as usize)
+                    .filter(|&dependency| state[dependency] == DONE)
+                    .map(|dependency| below[dependency] + usize::from(entry_runs[dependency]))
+                    .max()
+                    .unwrap_or(0);
+                state[entry] = DONE;
+                open.pop();
+            }
+        }
+
+        let of_entry: Vec<Option<usize>> = (entry_runs.iter().zip(&below))
+            .map(|(&runs, &below)| runs.then_some(below))
+            .collect();
+        let of_folder = (self.folders.iter())
+            .map(|folder| of_entry[folder.entry_id.get() as usize].unwrap_or(0))
+            .collect();
+        ScriptBatches {
+            of_folder,
+            of_entry,
+        }
+    }
+
+    /// Returns the bins of `folders[index]`, whose scripts are in `batches`, for the
+    /// `node_modules` of every dependent that has a link to the package. The number beside each
+    /// is that of the batch of scripts to link them after. `global` is true for `-g`.
+    ///
+    /// The `.bin` of the package's own store entry gets nothing. An install links the package's
+    /// bins there between `preinstall` and the other scripts of the package. `bun pm trust` runs
+    /// all scripts of a package in one go.
+    pub fn dependency_bins(
+        &self,
+        lockfile: &Lockfile,
+        index: usize,
+        batches: &ScriptBatches,
+        global: bool,
+    ) -> Vec<(crate::bin::DependencyBins, usize)> {
+        let folder = &self.folders[index];
+        if lockfile.packages.items_bin()[folder.pkg_id as usize].tag == crate::bin::Tag::None {
+            return Vec::new();
+        }
+        let project = self.node_modules.get_or_init(|| {
+            let mut path: AbsPath = AbsPath::init_top_level_dir();
+            path.append(b"node_modules").assume_ok();
+            let linked = LinkedNodeModules::at(path.slice_z());
+            path.append(b".bun").assume_ok();
+            ProjectNodeModules {
+                linked,
+                is_own_store: installer::is_link(path.slice_z()) == Some(false),
+            }
+        });
+        // A link in place of the store leads to packages that aren't this project's.
+        if !project.is_own_store {
+            return Vec::new();
+        }
+
+        let store = &self.store;
+        let entry_dependencies = store.entries.items_dependencies();
+        let entry_nested_folder = store.entries.items_nested_folder();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let batch = batches.of_entry[folder.entry_id.get() as usize].unwrap_or(0);
+
+        // Bun creates the `node_modules` of a store entry. That of the project or of a workspace,
+        // which has a `link:` dependency, can be a link that the user made.
+        let mut package_dir: AbsPath = AbsPath::init_top_level_dir();
+        package_dir.append(folder.entry_dir.as_slice()).assume_ok();
+        let package_entry_len = package_dir.len();
+        package_dir.append(b"node_modules").assume_ok();
+        let package_real_len = if folder.in_importer {
+            package_dir.len()
+        } else {
+            package_entry_len
+        };
+        package_dir.append(folder.name(lockfile)).assume_ok();
+
+        // Public hoisting gives the root a dependency on an entry that it isn't a parent of.
+        let mut dependents: Vec<store::entry::Id> = vec![store::entry::Id::ROOT];
+        for &parent in &store.entries.items_parents()[folder.entry_id.get() as usize] {
+            if parent.try_get().is_some() && !dependents.contains(&parent) {
+                dependents.push(parent);
+            }
+        }
+
+        let mut bins: Vec<(crate::bin::DependencyBins, usize)> = Vec::new();
+        for dependent in dependents {
+            if entry_nested_folder[dependent.get() as usize] {
+                continue;
+            }
+            let dependent_pkg_id = store.ids(dependent).pkg_id;
+            let dependent_res = &pkg_resolutions[dependent_pkg_id as usize];
+            let is_importer = matches!(
+                dependent_res.tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            );
+            // With `-g`, the bins of the global package.json's own dependencies are in the global
+            // bin folder, and the root has no other bin.
+            let in_global_bin = global && dependent == store::entry::Id::ROOT;
+            if in_global_bin && !lockfile.is_root_dependency(folder.pkg_id) {
+                continue;
+            }
+
+            // `store_folders` builds the same directories for reading. These are for new links,
+            // so the path of a workspace is the one that the installer links into.
+            let mut node_modules: AbsPath = AbsPath::init_top_level_dir();
+            match dependent_res.tag {
+                ResolutionTag::Root => {}
+                ResolutionTag::Workspace => installer::append_workspace_path(
+                    &mut node_modules,
+                    lockfile.str(dependent_res.workspace()),
+                ),
+                _ => {
+                    node_modules
+                        .append_fmt(format_args!(
+                            "node_modules/.bun/{}",
+                            store::entry::fmt_store_path(dependent, store, lockfile),
+                        ))
+                        .assume_ok();
+                    // A link here leads to the global store, which other projects share, or
+                    // somewhere else that isn't this project's.
+                    if installer::is_link(node_modules.slice_z()) != Some(false) {
+                        continue;
+                    }
+                }
+            }
+            let entry_len = node_modules.len();
+            node_modules.append(b"node_modules").assume_ok();
+            // The installer writes the text of a link out of the project's `node_modules` from
+            // the real path of that folder. A link in the global bin folder is one.
+            let resolved_len = node_modules.len();
+            if let Some(linked) = &project.linked {
+                linked.resolve(&mut node_modules);
+            }
+            let real_len = if is_importer {
+                node_modules.len()
+            } else {
+                node_modules.len() - (resolved_len - entry_len)
+            };
+
+            let due = match batches.of_entry[dependent.get() as usize] {
+                // The scripts of the dependent can run the bins, so the bins are linked before
+                // those scripts. They are linked together, in the order of an install.
+                Some(own) if batch < own => own - 1,
+                // A package of a later batch is on a cycle with the dependent. An install doesn't
+                // make the dependent wait for such a package, and never links a bin that the
+                // scripts of that package write.
+                Some(_) => batch,
+                // No script runs in the dependent. Its `.bin` is filled once, after the last of
+                // its packages, so that the packages link in the order of an install.
+                None => (entry_dependencies[dependent.get() as usize].slice().iter())
+                    .filter_map(|dependency| batches.of_entry[dependency.entry_id.get() as usize])
+                    .max()
+                    .unwrap_or(batch),
+            };
+
+            for dependency in entry_dependencies[dependent.get() as usize].slice() {
+                if dependency.entry_id != folder.entry_id {
+                    continue;
+                }
+                let name_hash = dependencies[dependency.dep_id as usize].name_hash;
+                let direct = is_importer
+                    && crate::bin::LinkOrder::is_declared_by(lockfile, dependent_pkg_id, name_hash);
+                bins.push((
+                    crate::bin::DependencyBins {
+                        node_modules: node_modules.slice().to_vec(),
+                        real_len,
+                        dep_id: dependency.dep_id,
+                        package_id: folder.pkg_id,
+                        direct: Some(direct),
+                        in_store: Some(crate::bin::StorePackage {
+                            dir: package_dir.slice().to_vec(),
+                            real_len: package_real_len,
+                        }),
+                        folder: if in_global_bin {
+                            crate::bin::BinFolder::Global
+                        } else {
+                            crate::bin::BinFolder::NodeModules
+                        },
+                    },
+                    due,
+                ));
+            }
+        }
+        bins
+    }
 }
 
 /// A `file:` path relative to the package declaring it, not to the project (local, `overrides`).

@@ -358,16 +358,7 @@ impl PackageManager {
                 .update_requests
                 .iter()
                 .any(|request| request.package_id == package_id)
-                || (installed
-                    && self
-                        .lockfile
-                        .packages
-                        .items_resolutions()
-                        .first()
-                        .is_some_and(|root| {
-                            root.get(self.lockfile.buffers.resolutions.as_slice())
-                                .contains(&package_id)
-                        })))
+                || (installed && self.lockfile.is_root_dependency(package_id)))
     }
 }
 

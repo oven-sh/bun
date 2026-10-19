@@ -3033,8 +3033,7 @@ function advanceResponsePipeline(server, socket) {
       res[kNeedDrain] = needDrain;
     }
   }
-  // What waited for the turn: the 'drain' that a write() owes, and the callbacks of res._send(). With nothing left
-  // to send they come here, like the 'drain' of _flush(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1194-L1197
+  // What waited for the turn comes here when nothing is left to send, like the 'drain' of _flush(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1194-L1197
   settleWhenEmpty(res);
 }
 
@@ -3052,9 +3051,7 @@ function markResponseEndedNT(res) {
   res._ended = true;
 }
 
-// Runs what waits until the handle holds none of the response's bytes: the callbacks of write(), and the 'drain' that a
-// write() owes since it returned false (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L878-L888).
-// It is the drain callback of the handle, the job at the end of a turn with writes, and the turn of a queued response.
+// Runs the write() callbacks that wait and emits the owed 'drain', once the handle holds none of the response's bytes: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L878-L888
 function settleWhenEmpty(res) {
   // The handle of a queued response still answers for the response ahead of it.
   if (res.finished || res[kPipelinedQueuedState] !== undefined) return;
@@ -4103,8 +4100,7 @@ ServerResponse.prototype.assignSocket = function (socket) {
     this._flush();
     return;
   }
-  // The 'drain' and the 'prefinish' of what a queued response did come after its replay. From _flush() it needs only
-  // what it stored before it had a handle (a subclass that writes in its constructor), and the 'prefinish' of an end() from there.
+  // A queued response is replayed after this: of _flush() it needs only the output stored before it had a handle, and the 'prefinish' of an end() from there.
   if (this.outputData.length !== 0) this._flushOutput(socket);
   if (this.finished && !queued.ended) this._finish();
 };

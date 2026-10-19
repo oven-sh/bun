@@ -179,8 +179,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     if (!socket.writableEnded) socket.write(data, callback);
   }
 
-  // The waiting callback needs a signal when the socket is empty. Over its high water mark the socket emits 'drain'.
-  // Under it, an empty write calls back behind every byte that the socket holds, like the one of end() below.
+  // A socket under its high water mark emits no 'drain': an empty write calls back behind every byte that it holds, like the one of end() below.
   function askSocketWhenEmpty() {
     if (!socket.writableNeedDrain && !socket.writableEnded) socket.write("", "latin1", onSocketAnswered);
   }

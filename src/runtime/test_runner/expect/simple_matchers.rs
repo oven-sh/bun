@@ -45,11 +45,11 @@ crate::unary_predicate_matcher!(to_be_positive, "toBePositive", |v| v.is_number(
 // ── numeric ordering: toBe{Greater,Less}Than[OrEqual] ──────────────────────
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_be_greater_than(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_be_greater_than(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
         self.numeric_ordering_matcher(g, f, "toBeGreaterThan", OrderingRelation::Gt)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn to_be_greater_than_or_equal(
+    pub(crate) fn to_be_greater_than_or_equal(
         &self,
         g: &JSGlobalObject,
         f: &CallFrame,
@@ -57,11 +57,11 @@ impl Expect {
         self.numeric_ordering_matcher(g, f, "toBeGreaterThanOrEqual", OrderingRelation::Ge)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn to_be_less_than(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_be_less_than(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
         self.numeric_ordering_matcher(g, f, "toBeLessThan", OrderingRelation::Lt)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn to_be_less_than_or_equal(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_be_less_than_or_equal(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
         self.numeric_ordering_matcher(g, f, "toBeLessThanOrEqual", OrderingRelation::Le)
     }
 }

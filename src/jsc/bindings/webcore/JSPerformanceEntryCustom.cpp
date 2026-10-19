@@ -35,14 +35,8 @@
 #include "JSDOMBinding.h"
 #include "JSPerformanceMark.h"
 #include "JSPerformanceMeasure.h"
-// #include "JSPerformanceNavigationTiming.h"
-// #include "JSPerformancePaintTiming.h"
-// #include "JSPerformanceResourceTiming.h"
 #include "PerformanceMark.h"
 #include "PerformanceMeasure.h"
-// #include "PerformanceNavigationTiming.h"
-// #include "PerformancePaintTiming.h"
-// #include "PerformanceResourceTiming.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -50,16 +44,10 @@ using namespace JSC;
 JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceEntry>&& entry)
 {
     switch (entry->performanceEntryType()) {
-    // case PerformanceEntry::Type::Navigation:
-    //     return createWrapper<PerformanceNavigationTiming>(globalObject, WTF::move(entry));
     case PerformanceEntry::Type::Mark:
         return createWrapper<PerformanceMark>(globalObject, WTF::move(entry));
     case PerformanceEntry::Type::Measure:
         return createWrapper<PerformanceMeasure>(globalObject, WTF::move(entry));
-    // case PerformanceEntry::Type::Resource:
-    //     return createWrapper<PerformanceResourceTiming>(globalObject, WTF::move(entry));
-    // case PerformanceEntry::Type::Paint:
-    //     return createWrapper<PerformancePaintTiming>(globalObject, WTF::move(entry));
     default: {
     }
     }

@@ -11,7 +11,6 @@ use bun_jsc::{JSGlobalObject, JSValue};
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
 use bun_core::Output;
-use bun_core::ZigStringSlice;
 use bun_http_types::MimeType::MimeType;
 
 use crate::api::js_bundler::BuildArtifact;
@@ -19,15 +18,6 @@ use crate::node::types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::Blob;
 use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
-
-/// Heap-dupe `path` into an owning `PathLike` so the resulting `Blob.Store`
-/// outlives the borrowed source.
-#[inline]
-fn dupe_path_like(path: &[u8]) -> PathLike {
-    PathLike::EncodedSlice(
-        ZigStringSlice::init_dupe(path).unwrap_or_else(|_| bun_core::out_of_memory()),
-    )
-}
 
 #[inline]
 fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
@@ -49,13 +39,8 @@ pub(crate) trait OutputFileJsc {
 
 impl OutputFileJsc for OutputFile {
     fn to_js(&mut self, owned_pathname: Option<&[u8]>, global_object: &JSGlobalObject) -> JSValue {
-        // Early-out arms that neither consume nor replace `self.value`.
-        match &self.value {
-            OutputFileValue::Move(_) | OutputFileValue::Pending(_) => {
-                panic!("Unexpected pending output file")
-            }
-            OutputFileValue::Noop => return JSValue::UNDEFINED,
-            _ => {}
+        if let OutputFileValue::Noop = &self.value {
+            return JSValue::UNDEFINED;
         }
 
         // Taking the value out up-front avoids the borrowck conflict between
@@ -74,11 +59,7 @@ impl OutputFileJsc for OutputFile {
         match value {
             OutputFileValue::Copy(copy) => {
                 let file_blob = match BlobStore::init_file(
-                    if copy.fd.is_valid() {
-                        PathOrFileDescriptor::Fd(copy.fd)
-                    } else {
-                        PathOrFileDescriptor::Path(dupe_path_like(copy.pathname.as_ref()))
-                    },
+                    PathOrFileDescriptor::Path(PathLike::owned(copy.pathname.to_vec())),
                     Some(mime),
                 ) {
                     Ok(b) => b,
@@ -104,18 +85,8 @@ impl OutputFileJsc for OutputFile {
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
 
-                // An owned `PathLike::String` (a `CowSlice`) frees its buffer in
-                // `PathLike::drop`, so the backing buffer must be owned by the
-                // store. `owned_pathname` is a borrow here (the caller drops its
-                // `Box<[u8]>` after this returns), so dupe it.
-                let store_path = match owned_pathname {
-                    Some(p) => PathLike::String(bun_ptr::cow_slice::CowSlice::init_owned(
-                        p.to_vec().into_boxed_slice(),
-                    )),
-                    None => dupe_path_like(self.src_path.text),
-                };
                 let file_blob = match BlobStore::init_file(
-                    PathOrFileDescriptor::Path(store_path),
+                    PathOrFileDescriptor::Path(PathLike::owned(path_to_use.to_vec())),
                     Some(mime),
                 ) {
                     Ok(b) => b,
@@ -158,7 +129,7 @@ impl OutputFileJsc for OutputFile {
                 // See `Copy` arm.
                 BuildArtifact::to_js_boxed(build_output, global_object)
             }
-            OutputFileValue::Move(_) | OutputFileValue::Pending(_) | OutputFileValue::Noop => {
+            OutputFileValue::Noop => {
                 // SAFETY: filtered out by the early-out match above.
                 unreachable!()
             }
@@ -166,12 +137,8 @@ impl OutputFileJsc for OutputFile {
     }
 
     fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, crate::Error> {
-        match &self.value {
-            OutputFileValue::Move(_) | OutputFileValue::Pending(_) => {
-                panic!("Unexpected pending output file")
-            }
-            OutputFileValue::Noop => panic!("Cannot convert noop output file to blob"),
-            _ => {}
+        if let OutputFileValue::Noop = &self.value {
+            panic!("Cannot convert noop output file to blob");
         }
 
         let value = core::mem::replace(
@@ -188,18 +155,14 @@ impl OutputFileJsc for OutputFile {
         match value {
             OutputFileValue::Copy(copy) => {
                 let file_blob = BlobStore::init_file(
-                    if copy.fd.is_valid() {
-                        PathOrFileDescriptor::Fd(copy.fd)
-                    } else {
-                        PathOrFileDescriptor::Path(dupe_path_like(copy.pathname.as_ref()))
-                    },
+                    PathOrFileDescriptor::Path(PathLike::owned(copy.pathname.to_vec())),
                     Some(mime),
                 )?;
                 Ok(Blob::init_with_store(file_blob, global_this))
             }
             OutputFileValue::Saved(_) => {
                 let file_blob = BlobStore::init_file(
-                    PathOrFileDescriptor::Path(dupe_path_like(self.src_path.text)),
+                    PathOrFileDescriptor::Path(PathLike::owned(self.src_path.text.to_vec())),
                     Some(mime),
                 )?;
                 Ok(Blob::init_with_store(file_blob, global_this))
@@ -211,7 +174,7 @@ impl OutputFileJsc for OutputFile {
                 blob.size.set(bytes_len as BlobSizeType);
                 Ok(blob)
             }
-            OutputFileValue::Move(_) | OutputFileValue::Pending(_) | OutputFileValue::Noop => {
+            OutputFileValue::Noop => {
                 // SAFETY: filtered out by the early-out match above.
                 unreachable!()
             }

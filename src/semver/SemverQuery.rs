@@ -6,6 +6,7 @@ use bun_collections::IntegerBitSet;
 use bun_core::strings;
 
 use crate::range::{Comparator, Op as RangeOp};
+use crate::version::Tag;
 use crate::{Range, SlicedString, Version, version};
 
 // Re-export sub-namespace so
@@ -82,14 +83,21 @@ impl<'a> fmt::Display for QueryFormatter<'a> {
 }
 
 impl Query {
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
+    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
         QueryFormatter {
             query: self,
             buffer: buf,
         }
     }
 
-    pub fn eql(&self, rhs: &Query) -> bool {
+    /// The version when this AND chain is one `=version` comparator.
+    pub(crate) fn exact_version(&self) -> Option<Version> {
+        let range = &self.range;
+        (self.next.is_none() && range.left.op == RangeOp::Eql && !range.has_right())
+            .then_some(range.left.version)
+    }
+
+    pub(crate) fn eql(&self, rhs: &Query) -> bool {
         let mut lhs = self;
         let mut rhs = rhs;
         loop {
@@ -111,7 +119,7 @@ impl Query {
         }
     }
 
-    pub fn satisfies(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
         let mut node = self;
         loop {
             if !node.range.satisfies(version, query_buf, version_buf) {
@@ -124,7 +132,7 @@ impl Query {
         }
     }
 
-    pub fn satisfies_pre(
+    pub(crate) fn satisfies_pre(
         &self,
         version: Version,
         query_buf: &[u8],
@@ -156,7 +164,7 @@ impl Query {
 pub struct List {
     pub head: Query,
     // BACKREF: alias into self.head.next chain
-    pub tail: Option<NonNull<Query>>,
+    pub(crate) tail: Option<NonNull<Query>>,
 
     // OR
     pub next: Option<Box<List>>,
@@ -241,14 +249,14 @@ impl<'a> fmt::Display for ListFormatter<'a> {
 }
 
 impl List {
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
+    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
         ListFormatter {
             list: self,
             buffer: buf,
         }
     }
 
-    pub fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
         let mut node = self;
         loop {
             if node.head.satisfies(version, list_buf, version_buf) {
@@ -261,7 +269,12 @@ impl List {
         }
     }
 
-    pub fn satisfies_pre(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies_pre(
+        &self,
+        version: Version,
+        list_buf: &[u8],
+        version_buf: &[u8],
+    ) -> bool {
         debug_assert!(version.tag.has_pre());
 
         // `version` has a prerelease tag:
@@ -286,7 +299,7 @@ impl List {
         }
     }
 
-    pub fn eql(&self, rhs: &List) -> bool {
+    pub(crate) fn eql(&self, rhs: &List) -> bool {
         let mut lhs = self;
         let mut rhs = rhs;
         loop {
@@ -308,7 +321,7 @@ impl List {
         }
     }
 
-    pub fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
+    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         if !self.head.range.has_left() && !self.head.range.has_right() {
             self.head.range = *range;
             return Ok(());
@@ -337,13 +350,14 @@ pub(crate) type FlagsBitSet = IntegerBitSet<3>;
 pub struct Flags;
 impl Flags {
     pub const PRE: usize = 1;
-    pub const BUILD: usize = 0;
+    pub(crate) const BUILD: usize = 0;
+    pub(crate) const SKIPPED: usize = 2;
 }
 
 pub struct Group {
     pub head: List,
     // BACKREF: alias into self.head.next chain
-    pub tail: Option<NonNull<List>>,
+    pub(crate) tail: Option<NonNull<List>>,
     /// Borrowed view into the caller's source buffer.
     /// Stored as a raw fat pointer
     /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
@@ -433,29 +447,18 @@ impl Group {
     // iterative `Drop` impls on `Query` and `List`.
 
     pub fn get_exact_version(&self) -> Option<Version> {
-        let range = &self.head.head.range;
-        if self.head.next.is_none()
-            && self.head.head.next.is_none()
-            && range.has_left()
-            && range.left.op == RangeOp::Eql
-            && !range.has_right()
-        {
-            debug_assert!(self.tail.is_none());
-            return Some(range.left.version);
+        if self.head.next.is_some() {
+            return None;
         }
-
-        None
+        self.head.head.exact_version()
     }
 
-    pub fn from(version: Version) -> Group {
+    fn from_comparator(left: Comparator) -> Group {
         Group {
             head: List {
                 head: Query {
                     range: Range {
-                        left: Comparator {
-                            op: RangeOp::Eql,
-                            version,
-                        },
+                        left,
                         ..Default::default()
                     },
                     next: None,
@@ -464,6 +467,21 @@ impl Group {
                 next: None,
             },
             ..Default::default()
+        }
+    }
+
+    pub fn from(version: Version) -> Group {
+        Self::from_comparator(Comparator {
+            op: RangeOp::Eql,
+            version,
+        })
+    }
+
+    /// A group that no version satisfies.
+    fn null_set(input: &[u8]) -> Group {
+        Group {
+            input: std::ptr::from_ref::<[u8]>(input),
+            ..Self::from_comparator(Comparator::null_set())
         }
     }
 
@@ -489,35 +507,7 @@ impl Group {
         self.head.eql(&rhs.head)
     }
 
-    pub fn to_version(&self) -> Version {
-        debug_assert!(self.is_exact() || self.head.head.range.left.op == RangeOp::Unset);
-        self.head.head.range.left.version
-    }
-
-    pub fn or_version(&mut self, version: Version) -> Result<(), AllocError> {
-        if self.tail.is_none() && !self.head.head.range.has_left() {
-            self.head.head.range.left.version = version;
-            self.head.head.range.left.op = RangeOp::Eql;
-            return Ok(());
-        }
-
-        let mut new_tail = Box::new(List::default());
-        new_tail.head.range.left.version = version;
-        new_tail.head.range.left.op = RangeOp::Eql;
-
-        let new_tail_ptr = NonNull::from(&mut *new_tail);
-
-        let prev_tail: &mut List = match self.tail {
-            // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
-            Some(mut p) => unsafe { p.as_mut() },
-            None => &mut self.head,
-        };
-        prev_tail.next = Some(new_tail);
-        self.tail = Some(new_tail_ptr);
-        Ok(())
-    }
-
-    pub fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
+    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         let tail: &mut List = match self.tail {
             // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
@@ -555,12 +545,36 @@ impl Group {
             self.head.satisfies(version, group_buf, version_buf)
         }
     }
+
+    /// True when `parse` found no comparator at all (e.g. the input was only unrecognised words).
+    pub fn is_empty(&self) -> bool {
+        self.head.next.is_none()
+            && self.head.head.next.is_none()
+            && !self.head.head.range.has_left()
+    }
+
+    /// True when `parse` passed over a part of the input that is not a comparator (`>=1 && <2`, `1.2.3.4`, `latest`).
+    /// npm refuses such a range.
+    pub fn has_skipped(&self) -> bool {
+        self.flags.is_set(Flags::SKIPPED)
+    }
+
+    /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators.
+    #[inline]
+    pub fn satisfies_including_prerelease(
+        &self,
+        version: Version,
+        group_buf: &[u8],
+        version_buf: &[u8],
+    ) -> bool {
+        self.head.satisfies(version, group_buf, version_buf)
+    }
 }
 
 #[derive(Clone, Copy, Default)]
 pub struct Token {
-    pub tag: TokenTag,
-    pub wildcard: Wildcard,
+    pub(crate) tag: TokenTag,
+    pub(crate) wildcard: Wildcard,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -586,7 +600,12 @@ pub enum Wildcard {
 }
 
 impl Token {
-    pub fn to_range(self, version: &version::Partial<u64>) -> Range {
+    /// `floor` is the tag of a lower bound that's derived instead of written. It's empty, or `-0`
+    /// with `includePrerelease`.
+    pub(crate) fn to_range(self, parsed: &version::ParseResult<u64>, floor: Tag) -> Range {
+        let version = &parsed.version;
+        // Only read for `Wildcard::Major`, which is valid only when it is a written `x`, `X` or `*`.
+        let wildcard_is_written = parsed.valid;
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -594,12 +613,16 @@ impl Token {
                 let mut range = Range::default();
                 'done: {
                     let Some(major) = version.major else {
+                        if wildcard_is_written {
+                            range = Range::init_wildcard(version.min(), Wildcard::Major, floor);
+                        }
                         break 'done;
                     };
                     range.left = Comparator {
                         op: RangeOp::Gte,
                         version: Version {
                             major,
+                            tag: floor,
                             ..Default::default()
                         },
                     };
@@ -609,6 +632,9 @@ impl Token {
                             range.left.version.patch = patch;
                             range.left.version.tag = version.tag;
                             if major == 0 {
+                                if !version.tag.has_pre() {
+                                    range.left.version.tag.pre = floor.pre;
+                                }
                                 range.right = if minor == 0 {
                                     Comparator::lt_next_patch(0, 0, patch)
                                 } else {
@@ -630,6 +656,9 @@ impl Token {
                 let mut range = Range::default();
                 'done: {
                     let Some(major) = version.major else {
+                        if wildcard_is_written {
+                            range = Range::init_wildcard(version.min(), Wildcard::Major, floor);
+                        }
                         break 'done;
                     };
                     range.left = Comparator {
@@ -655,7 +684,7 @@ impl Token {
             TokenTag::None => unreachable!(),
             TokenTag::Version => {
                 if self.wildcard != Wildcard::None {
-                    return Range::init_wildcard(version.min(), self.wildcard);
+                    return Range::init_wildcard(version.min(), self.wildcard, floor);
                 }
 
                 return Range {
@@ -669,142 +698,83 @@ impl Token {
             _ => {}
         }
 
-        match self.wildcard {
-            Wildcard::Major => Range {
-                left: Comparator {
-                    op: RangeOp::Gte,
-                    version: version.min(),
-                },
-                right: Comparator {
-                    op: RangeOp::Lte,
-                    version: Version {
-                        major: u64::MAX,
-                        minor: u64::MAX,
-                        patch: u64::MAX,
-                        ..Default::default()
-                    },
-                },
-            },
-            Wildcard::Minor => match self.tag {
-                TokenTag::Lte => Range {
-                    left: Comparator {
-                        op: RangeOp::Lte,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: u64::MAX,
-                            patch: u64::MAX,
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
-                TokenTag::Lt => Range {
-                    left: Comparator {
-                        op: RangeOp::Lt,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: 0,
-                            patch: 0,
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
-                TokenTag::Gt => Range {
-                    left: Comparator {
-                        op: RangeOp::Gt,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: u64::MAX,
-                            patch: u64::MAX,
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
-                TokenTag::Gte => Range {
-                    left: Comparator {
-                        op: RangeOp::Gte,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: 0,
-                            patch: 0,
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
-                _ => unreachable!(),
-            },
-            Wildcard::Patch => match self.tag {
-                TokenTag::Lte => Range {
-                    left: Comparator {
-                        op: RangeOp::Lte,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: version.minor.unwrap_or(0),
-                            patch: u64::MAX,
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
-                TokenTag::Lt => Range {
-                    left: Comparator {
-                        op: RangeOp::Lt,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: version.minor.unwrap_or(0),
-                            patch: 0,
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
-                TokenTag::Gt => Range {
-                    left: Comparator {
-                        op: RangeOp::Gt,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: version.minor.unwrap_or(0),
-                            patch: u64::MAX,
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
-                TokenTag::Gte => Range {
-                    left: Comparator {
-                        op: RangeOp::Gte,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: version.minor.unwrap_or(0),
-                            patch: 0,
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
-                _ => unreachable!(),
-            },
-            Wildcard::None => Range {
-                left: Comparator {
-                    op: match self.tag {
-                        TokenTag::Gt => RangeOp::Gt,
-                        TokenTag::Gte => RangeOp::Gte,
-                        TokenTag::Lt => RangeOp::Lt,
-                        TokenTag::Lte => RangeOp::Lte,
-                        _ => unreachable!(),
-                    },
-                    version: version.min(),
-                },
+        // node-semver's `replaceXRange`
+        let op = match self.tag {
+            TokenTag::Gt => RangeOp::Gt,
+            TokenTag::Gte => RangeOp::Gte,
+            TokenTag::Lt => RangeOp::Lt,
+            TokenTag::Lte => RangeOp::Lte,
+            _ => unreachable!(),
+        };
+        let (major, minor) = (version.major.unwrap_or(0), version.minor.unwrap_or(0));
+        let first_of_partial = |tag: Tag| Comparator {
+            op,
+            version: Version {
+                major,
+                minor,
+                tag,
                 ..Default::default()
             },
+        };
+        let left = match (op, self.wildcard) {
+            (_, Wildcard::None) => Comparator {
+                op,
+                version: version.min(),
+            },
+            (RangeOp::Gt | RangeOp::Lt, Wildcard::Major) if wildcard_is_written => {
+                Comparator::null_set()
+            }
+            // An operator before text that is not a version (`>latest`, `>xenial`) also gets here.
+            (_, Wildcard::Major) => {
+                return Range::init_wildcard(version.min(), Wildcard::Major, floor);
+            }
+            (RangeOp::Gte, _) => first_of_partial(floor),
+            (RangeOp::Lt, _) => first_of_partial(Tag::ZERO_PRE),
+            (RangeOp::Gt, Wildcard::Minor) => Comparator::gte_next_major(major, floor),
+            (RangeOp::Gt, Wildcard::Patch) => Comparator::gte_next_minor(major, minor, floor),
+            (_, Wildcard::Minor) => Comparator::lt_next_major(major),
+            (_, Wildcard::Patch) => Comparator::lt_next_minor(major, minor),
+        };
+        Range {
+            left,
+            ..Default::default()
         }
     }
 }
 
+impl Range {
+    /// `^version`
+    pub fn caret(version: Version) -> Range {
+        Token {
+            tag: TokenTag::Caret,
+            wildcard: Wildcard::None,
+        }
+        .to_range(
+            &version::ParseResult {
+                version: version::Partial {
+                    major: Some(version.major),
+                    minor: Some(version.minor),
+                    patch: Some(version.patch),
+                    tag: version.tag,
+                },
+                ..Default::default()
+            },
+            Tag::default(),
+        )
+    }
+}
+
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
+    parse_with(input, sliced, Tag::default())
+}
+
+/// Like `parse`, but with node-semver's `includePrerelease`, for `satisfies_including_prerelease`.
+/// `1.x` starts at `1.0.0-0`, and `>1` at `2.0.0-0`.
+pub fn parse_including_prerelease(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
+    parse_with(input, sliced, Tag::ZERO_PRE)
+}
+
+fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
         input: std::ptr::from_ref::<[u8]>(input),
@@ -815,43 +785,38 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
     let mut token = Token::default();
 
-    let mut count: u32 = 0;
     let mut skip_round;
     let mut is_or = false;
+    // Only spaces lie between the cursor and the last comparator, and that comparator is valid.
+    let mut after_comparator = false;
 
     while i < input.len() {
         skip_round = false;
+        let mut no_operator = false;
 
         match input[i] {
-            b'>' => {
-                if input.len() > i + 1 && input[i + 1] == b'=' {
-                    token.tag = TokenTag::Gte;
-                    i += 1;
-                } else {
-                    token.tag = TokenTag::Gt;
-                }
-
+            c @ (b'>' | b'<') => {
                 i += 1;
+                // "< =1" is "<=1"
                 while i < input.len() && input[i] == b' ' {
                     i += 1;
                 }
-            }
-            b'<' => {
-                if input.len() > i + 1 && input[i + 1] == b'=' {
-                    token.tag = TokenTag::Lte;
-                    i += 1;
-                } else {
-                    token.tag = TokenTag::Lt;
-                }
+                let or_equal = i < input.len() && input[i] == b'=';
+                i += or_equal as usize;
+                token.tag = match (c, or_equal) {
+                    (b'>', false) => TokenTag::Gt,
+                    (b'>', true) => TokenTag::Gte,
+                    (_, false) => TokenTag::Lt,
+                    (_, true) => TokenTag::Lte,
+                };
 
-                i += 1;
                 while i < input.len() && input[i] == b' ' {
                     i += 1;
                 }
             }
             b'=' | b'v' => {
                 token.tag = TokenTag::Version;
-                is_or = true;
+                no_operator = true;
                 i += 1;
                 while i < input.len() && input[i] == b' ' {
                     i += 1;
@@ -878,7 +843,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             }
             b'0'..=b'9' | b'X' | b'x' | b'*' => {
                 token.tag = TokenTag::Version;
-                is_or = true;
+                no_operator = true;
             }
             b'|' => {
                 i += 1;
@@ -909,6 +874,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             _ => {
                 i += 1;
                 token.tag = TokenTag::None;
+                after_comparator = false;
 
                 // skip tagged versions
                 // we are assuming this is the beginning of a tagged version like "boop"
@@ -917,11 +883,19 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     i += 1;
                 }
                 skip_round = true;
+                list.flags.set(Flags::SKIPPED);
             }
         }
 
         if !skip_round {
             let parse_result = Version::parse(sliced.sub(&input[i..]));
+            // node-semver rejects the whole range for a number it cannot hold.
+            if parse_result.overflow {
+                return Ok(Group::null_set(input));
+            }
+            if !parse_result.valid {
+                list.flags.set(Flags::SKIPPED);
+            }
             let version = parse_result.version.min();
             if version.tag.has_build() {
                 list.flags.set(Flags::BUILD);
@@ -972,93 +946,60 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             }
             i += (!hyphenate) as usize;
 
-            if hyphenate {
+            let valid = parse_result.valid && !hyphenate;
+            // Malformed text ("=>16.0.0", "1.2.3.4") starts an alternative so that it cannot narrow the range.
+            if no_operator && !(after_comparator && valid) {
+                is_or = true;
+            }
+
+            let range: Range = if hyphenate {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
-                let mut second_version = second_parsed.version.min();
+                if second_parsed.overflow {
+                    return Ok(Group::null_set(input));
+                }
+                if !second_parsed.valid {
+                    list.flags.set(Flags::SKIPPED);
+                }
+                let second_version = second_parsed.version.min();
                 if second_version.tag.has_build() {
                     list.flags.set(Flags::BUILD);
                 }
                 if second_version.tag.has_pre() {
                     list.flags.set(Flags::PRE);
                 }
-                let range: Range = match second_parsed.wildcard {
-                    Wildcard::Major => {
-                        // "1.0.0 - x" --> ">=1.0.0"
-                        Range {
-                            left: Comparator {
-                                op: RangeOp::Gte,
-                                version,
-                            },
-                            ..Default::default()
-                        }
-                    }
-                    Wildcard::Minor => {
-                        // "1.0.0 - 1.x" --> ">=1.0.0 < 2.0.0"
-                        let right = match second_version.major.checked_add(1) {
-                            Some(m) => {
-                                second_version.major = m;
-                                second_version.minor = 0;
-                                second_version.patch = 0;
-                                Comparator {
-                                    op: RangeOp::Lt,
-                                    version: second_version,
-                                }
-                            }
-                            None => Comparator::lt_next_major(second_version.major),
-                        };
+                i += second_parsed.len as usize + 1;
 
-                        Range {
-                            left: Comparator {
-                                op: RangeOp::Gte,
-                                version,
-                            },
-                            right,
+                let mut first_version = version;
+                if !version.tag.has_pre() {
+                    first_version.tag.pre = floor.pre;
+                }
+                Range {
+                    left: Comparator {
+                        op: RangeOp::Gte,
+                        version: first_version,
+                    },
+                    right: match second_parsed.wildcard {
+                        // "1.0.0 - x" --> ">=1.0.0"
+                        Wildcard::Major => Comparator::default(),
+                        // "1.0.0 - 1.x" --> ">=1.0.0 <2.0.0-0"
+                        Wildcard::Minor => Comparator::lt_next_major(second_version.major),
+                        // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0-0"
+                        Wildcard::Patch => {
+                            Comparator::lt_next_minor(second_version.major, second_version.minor)
                         }
-                    }
-                    Wildcard::Patch => {
-                        // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0"
-                        let right = match second_version.minor.checked_add(1) {
-                            Some(m) => {
-                                second_version.minor = m;
-                                second_version.patch = 0;
-                                Comparator {
-                                    op: RangeOp::Lt,
-                                    version: second_version,
-                                }
-                            }
-                            None => Comparator::lt_next_minor(
+                        Wildcard::None if floor.has_pre() && !second_version.tag.has_pre() => {
+                            Comparator::lt_next_patch(
                                 second_version.major,
                                 second_version.minor,
-                            ),
-                        };
-
-                        Range {
-                            left: Comparator {
-                                op: RangeOp::Gte,
-                                version,
-                            },
-                            right,
+                                second_version.patch,
+                            )
                         }
-                    }
-                    Wildcard::None => Range {
-                        left: Comparator {
-                            op: RangeOp::Gte,
-                            version,
-                        },
-                        right: Comparator {
+                        Wildcard::None => Comparator {
                             op: RangeOp::Lte,
                             version: second_version,
                         },
                     },
-                };
-
-                if is_or {
-                    list.or_range(&range)?;
-                } else {
-                    list.and_range(&range)?;
                 }
-
-                i += second_parsed.len as usize + 1;
             } else if token.tag == TokenTag::None {
                 // No pending comparator token for this chunk, so skip it instead of
                 // emitting a comparator, the same way skipped tags like "boop" in
@@ -1067,29 +1008,68 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 // foo/bar@1.2.3@--canary.24) as well as a dangling "-" after a skipped
                 // tag, like "1 || - foo".
                 token.wildcard = Wildcard::None;
+                list.flags.set(Flags::SKIPPED);
                 continue;
-            } else if count == 0 && token.tag == TokenTag::Version {
-                match parse_result.wildcard {
-                    Wildcard::None => {
-                        list.or_version(version)?;
-                    }
-                    _ => {
-                        list.or_range(&token.to_range(&parse_result.version))?;
-                    }
-                }
-            } else if count == 0 {
-                list.and_range(&token.to_range(&parse_result.version))?;
-            } else if is_or {
-                list.or_range(&token.to_range(&parse_result.version))?;
             } else {
-                list.and_range(&token.to_range(&parse_result.version))?;
+                token.to_range(&parse_result, floor)
+            };
+
+            if is_or {
+                list.or_range(&range)?;
+            } else {
+                list.and_range(&range)?;
             }
 
             is_or = false;
-            count += 1;
             token.wildcard = Wildcard::None;
+            after_comparator = valid && input.get(rollback) == Some(&b' ');
         }
     }
 
     Ok(list)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse;
+    use crate::SlicedString;
+
+    #[test]
+    fn has_skipped() {
+        let cases = [
+            ("", false),
+            ("*", false),
+            (">=16", false),
+            (">= 16.x", false),
+            ("^18 || >=20", false),
+            ("16 - 18", false),
+            ("v16", false),
+            (">=v16.0.0", false),
+            ("~>16", false),
+            ("1.2.3-rc.1+build", false),
+            ("16+build", false),
+            ("foo-bar", true),
+            ("latest", true),
+            ("lts/*", true),
+            (">=14 && <17", true),
+            (">=16, <18", true),
+            (">=16 npm", true),
+            ("16.0.0.0", true),
+            ("16-18", true),
+            (">=", true),
+            (">=1.2.3<2.0.0", true),
+            ("-18", true),
+            ("-x", true),
+            ("16 || -18", true),
+            ("16 || - 18.0.0", true),
+            ("01.2.3", false),    // npm refuses it
+            ("1.0.0rc1", false),  // npm refuses it
+            ("^16 | ^18", false), // npm refuses it
+        ];
+        for (text, expected) in cases {
+            let bytes = text.as_bytes();
+            let group = parse(bytes, SlicedString::init(bytes, bytes)).unwrap();
+            assert_eq!(group.has_skipped(), expected, "{text:?}");
+        }
+    }
 }

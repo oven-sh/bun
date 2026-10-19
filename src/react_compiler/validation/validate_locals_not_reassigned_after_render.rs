@@ -5,14 +5,10 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::collections::HashSet;
-
-use crate::collections::IdMap;
+use crate::collections::{IdBitSet, IdMap};
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
 use crate::hir::environment::Environment;
-use crate::hir::visitors::{
-    each_instruction_lvalue_ids, each_instruction_value_operand, each_terminal_operand,
-};
+use crate::hir::visitors::{lvalues, operands, terminal_operands};
 use crate::hir::{
     Effect, HirFunction, Identifier, IdentifierId, IdentifierName, InstructionValue, Place, Type,
 };
@@ -20,8 +16,11 @@ use crate::hir::{
 /// Validates that local variables cannot be reassigned after render.
 /// This prevents a category of bugs in which a closure captures a
 /// binding from one render but does not update.
-pub fn validate_locals_not_reassigned_after_render(func: &HirFunction, env: &mut Environment) {
-    let mut context_variables: HashSet<IdentifierId> = HashSet::new();
+pub(crate) fn validate_locals_not_reassigned_after_render(
+    func: &HirFunction,
+    env: &mut Environment,
+) {
+    let mut context_variables: IdBitSet<IdentifierId> = IdBitSet::default();
     let mut diagnostics: Vec<CompilerDiagnostic> = Vec::new();
 
     let reassignment = get_context_reassignment(
@@ -31,8 +30,7 @@ pub fn validate_locals_not_reassigned_after_render(func: &HirFunction, env: &mut
         &env.functions,
         env,
         &mut context_variables,
-        false,
-        false,
+        Nesting::Outer,
         &mut diagnostics,
     );
 
@@ -76,6 +74,15 @@ fn format_variable_name(place: &Place, identifiers: &[Identifier]) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Nesting {
+    Outer,
+    FunctionExpression {
+        /// Also set when a function expression enclosing this one is async.
+        is_async: bool,
+    },
+}
+
 /// Recursively checks whether a function (or its dependencies) reassigns a
 /// context variable. Returns the reassigned place if found, or None.
 ///
@@ -86,11 +93,18 @@ fn get_context_reassignment(
     types: &[Type],
     functions: &[HirFunction],
     env: &Environment,
-    context_variables: &mut HashSet<IdentifierId>,
-    is_function_expression: bool,
-    is_async: bool,
+    context_variables: &mut IdBitSet<IdentifierId>,
+    nesting: Nesting,
     diagnostics: &mut Vec<CompilerDiagnostic>,
 ) -> Option<Place> {
+    if !env.has_stack() {
+        return None;
+    }
+    let (is_function_expression, is_async) = match nesting {
+        Nesting::Outer => (false, false),
+        Nesting::FunctionExpression { is_async } => (true, is_async),
+    };
+
     // Maps identifiers to the place that they reassign
     let mut reassigning_functions: IdMap<IdentifierId, Place> = IdMap::new();
 
@@ -112,8 +126,9 @@ fn get_context_reassignment(
                         functions,
                         env,
                         context_variables,
-                        true,
-                        inner_is_async,
+                        Nesting::FunctionExpression {
+                            is_async: inner_is_async,
+                        },
                         diagnostics,
                     );
 
@@ -190,8 +205,7 @@ fn get_context_reassignment(
                 InstructionValue::StoreContext { lvalue, value, .. } => {
                     // If we're inside a function expression and the target is a
                     // context variable from the outer scope, this is a reassignment
-                    if is_function_expression
-                        && context_variables.contains(&lvalue.place.identifier)
+                    if is_function_expression && context_variables.contains(lvalue.place.identifier)
                     {
                         return Some(lvalue.place.clone());
                     }
@@ -211,43 +225,45 @@ fn get_context_reassignment(
                 }
 
                 _ => {
+                    // Whichever of the operands are checked, there is nothing to find.
+                    if reassigning_functions.is_empty()
+                        && operands(&instr.value, functions)
+                            .all(|operand| operand.effect != Effect::Unknown)
+                    {
+                        continue;
+                    }
+
                     // For calls with noAlias signatures, only check the callee/receiver
                     // (not args) to avoid false positives from callbacks that reassign
-                    // context variables.
-                    let operands: Vec<Place> = match &instr.value {
-                        InstructionValue::CallExpression { callee, .. } => {
-                            if env.has_no_alias_signature(callee.identifier) {
-                                vec![callee.clone()]
-                            } else {
-                                each_instruction_value_operand(&instr.value, env)
-                            }
+                    // context variables. They come first.
+                    let checked = match &instr.value {
+                        InstructionValue::CallExpression { callee, .. }
+                        | InstructionValue::TaggedTemplateExpression { tag: callee, .. }
+                            if env.has_no_alias_signature(callee.identifier) =>
+                        {
+                            1
                         }
-                        InstructionValue::MethodCall {
-                            receiver, property, ..
-                        } => {
-                            if env.has_no_alias_signature(property.identifier) {
-                                vec![receiver.clone(), property.clone()]
-                            } else {
-                                each_instruction_value_operand(&instr.value, env)
-                            }
+                        InstructionValue::MethodCall { property, .. }
+                            if env.has_no_alias_signature(property.identifier) =>
+                        {
+                            2
                         }
-                        InstructionValue::TaggedTemplateExpression { tag, .. } => {
-                            if env.has_no_alias_signature(tag.identifier) {
-                                vec![tag.clone()]
-                            } else {
-                                each_instruction_value_operand(&instr.value, env)
-                            }
-                        }
-                        _ => each_instruction_value_operand(&instr.value, env),
+                        _ => usize::MAX,
                     };
 
-                    for operand in &operands {
+                    for operand in operands(&instr.value, functions).take(checked) {
                         // Invariant: effects must be inferred before this pass runs
-                        assert!(
-                            operand.effect != Effect::Unknown,
-                            "Expected effects to be inferred prior to \
-                             ValidateLocalsNotReassignedAfterRender"
-                        );
+                        if operand.effect == Effect::Unknown {
+                            diagnostics.push(
+                                crate::diagnostics::cold_invariant(
+                                    "Expected effects to be inferred prior to ValidateLocalsNotReassignedAfterRender",
+                                    None,
+                                    None,
+                                )
+                                .into(),
+                            );
+                            return None;
+                        }
 
                         if let Some(reassignment_place) =
                             reassigning_functions.get(operand.identifier).cloned()
@@ -259,9 +275,9 @@ fn get_context_reassignment(
                             } else {
                                 // If the operand is not frozen but does reassign, then the
                                 // lvalues of the instruction could also be reassigning
-                                for lvalue_id in each_instruction_lvalue_ids(instr) {
+                                for lvalue in lvalues(instr) {
                                     reassigning_functions
-                                        .insert(lvalue_id, reassignment_place.clone());
+                                        .insert(lvalue.identifier, reassignment_place.clone());
                                 }
                             }
                         }
@@ -271,7 +287,10 @@ fn get_context_reassignment(
         }
 
         // Check terminal operands for reassigning functions
-        for operand in each_terminal_operand(&block.terminal) {
+        if reassigning_functions.is_empty() {
+            continue;
+        }
+        for operand in terminal_operands(&block.terminal) {
             if let Some(reassignment_place) = reassigning_functions.get(operand.identifier) {
                 return Some(reassignment_place.clone());
             }

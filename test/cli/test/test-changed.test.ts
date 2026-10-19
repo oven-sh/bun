@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
 import { appendFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
 // headroom on slow ASAN/CI machines.
@@ -507,6 +507,52 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     await waitFor("Ran 1 test across 1 file", before);
     const after = buf.slice(before);
     expect(ranFiles(after, ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts"]);
+
+    proc.kill();
+    reader.releaseLock();
+  }, 60_000);
+
+  test("trigger file path handed to restarted runs has a 128-bit random hex suffix", async () => {
+    using dir = tempDir("test-changed-watch-trigger-name", {
+      "package.json": JSON.stringify({ name: "watch", type: "module" }),
+      "dep-a.ts": `export const A = 1;\n`,
+      "wa.test.ts": `import { test, expect } from "bun:test";\nimport { A } from "./dep-a";\ntest("wa", () => { console.error("TRIGGER=" + JSON.stringify(process.env.BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE ?? null)); expect(A).toBe(1); });\n`,
+    });
+    initRepo(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    async function waitFor(needle: string, from = 0): Promise<void> {
+      while (!buf.slice(from).includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
+        buf += decoder.decode(value, { stream: true });
+      }
+    }
+
+    await waitFor("no changed files");
+    await waitFor("Ran 0 tests");
+
+    const before = buf.length;
+    appendFileSync(join(String(dir), "dep-a.ts"), "// touched\n");
+    await waitFor("Ran 1 test across 1 file", before);
+    const after = buf.slice(before);
+    const match = after.match(/TRIGGER=(.*)/);
+    expect(match).not.toBeNull();
+    const triggerPath = JSON.parse(match![1]);
+    expect(typeof triggerPath).toBe("string");
+    expect(basename(triggerPath)).toMatch(/^\.bun-test-changed-[0-9a-f]{32}\.trigger$/);
 
     proc.kill();
     reader.releaseLock();

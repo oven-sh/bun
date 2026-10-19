@@ -125,6 +125,111 @@ describe("Bun.Transpiler", () => {
     }).toThrow();
   });
 
+  // https://github.com/oven-sh/bun/issues/18477 and #30932
+  // Every case of a switch shares one lexical scope, but a `const` in one case
+  // does not run before a reference in another case. Neither the const local
+  // prefix inliner nor the single-use substitution may fold it across cases.
+  describe("switch case const", () => {
+    it("keeps a const of one case out of the other cases", () => {
+      // `inline` turns the const local prefix inliner on, as `bun run` does.
+      const inlining = new Bun.Transpiler({ loader: "ts", inline: true, minify: { syntax: true } });
+      expect(
+        inlining.transformSync('function f(a) { switch (a) { case "*": const C = 2; return C; case "a": return C } }'),
+      ).toBe(
+        'function f(a) {\n  switch (a) {\n    case "*":\n      const C = 2;\n      return C;\n    case "a":\n      return C;\n  }\n}\n',
+      );
+      // A const before the switch is still inlined into it.
+      expect(inlining.transformSync("function f(a) { const C = 2; switch (a) { case 1: return C } }")).toBe(
+        "function f(a) {\n  switch (a) {\n    case 1:\n      return 2;\n  }\n}\n",
+      );
+      ts.expectPrintedMin_(
+        'function f(a) { switch (a) { case "*": const C = 2; return C; case "a": return C } }',
+        'function f(a) {\n  switch (a) {\n    case "*":\n      const C = 2;\n      return C;\n    case "a":\n      return C;\n  }\n}',
+      );
+      ts.expectPrintedMin_(
+        'function f(a) { switch (a) { case "*": const X = g(); return X; case "a": return X } }',
+        'function f(a) {\n  switch (a) {\n    case "*":\n      const X = g();\n      return X;\n    case "a":\n      return X;\n  }\n}',
+      );
+      // A case that nothing else references still inlines.
+      ts.expectPrintedMin_(
+        'function f(a) { switch (a) { case "*": const X = g(); return X; case "a": return 1 } }',
+        'function f(a) {\n  switch (a) {\n    case "*":\n      return g();\n    case "a":\n      return 1;\n  }\n}',
+      );
+      // A block inside a case has its own scope.
+      ts.expectPrintedMin_(
+        'function f(a) { switch (a) { case "a": { const X = 42; return X } } }',
+        'function f(a) {\n  switch (a) {\n    case "a":\n      return 42;\n  }\n}',
+      );
+    });
+
+    // These run through the transpiler of `bun test` itself.
+    it("literal-initialized const is not inlined into sibling case", () => {
+      function test(action) {
+        switch (action) {
+          case "*":
+            const CONSTANT = 2;
+            return "matched " + CONSTANT;
+          case "a":
+            return "a=" + CONSTANT;
+        }
+      }
+      expect(() => test("a")).toThrow(
+        expect.objectContaining({
+          name: "ReferenceError",
+          message: expect.stringContaining("before initialization"),
+        }),
+      );
+      expect(test("*")).toBe("matched 2");
+    });
+
+    it("non-foldable const is not substituted out of sibling case", () => {
+      function test(action) {
+        switch (action) {
+          case "*":
+            const X = Math.random();
+            return "* " + X;
+          case "a":
+            return "a " + X;
+        }
+      }
+      expect(() => test("a")).toThrow(
+        expect.objectContaining({
+          name: "ReferenceError",
+          message: expect.stringContaining("before initialization"),
+        }),
+      );
+    });
+
+    it("outer const is shadowed by inner const, not leaked through", () => {
+      const CONSTANT = 1;
+      function test(action) {
+        switch (action) {
+          case "*":
+            const CONSTANT = 2;
+            return "* " + CONSTANT;
+          case "a":
+            return "a " + CONSTANT;
+        }
+        return "outer=" + CONSTANT;
+      }
+      expect(() => test("a")).toThrow(ReferenceError);
+      expect(test("*")).toBe("* 2");
+      expect(test("other")).toBe("outer=1");
+    });
+
+    it("fall-through from declaring case still initializes binding", () => {
+      function test() {
+        switch ("a") {
+          case "a":
+            const X = 100;
+          case "b":
+            return "X=" + X;
+        }
+      }
+      expect(test()).toBe("X=100");
+    });
+  });
+
   describe("property access inlining", () => {
     it("bails out with spread", () => {
       ts.expectPrintedMin_("const a = [...b][0];", "const a = [...b][0]");

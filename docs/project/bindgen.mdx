@@ -62,6 +62,12 @@ which is otherwise the number of arguments up to the last that is not written
 `.optional`, `.nullable`, `.falsyAsNull` or `.default()`. The ones after that are
 the ones TypeScript lets a caller leave out.
 
+A function of a `node:*` module names what Node's own source expects of an argument:
+`expected: { data: ["Buffer", "TypedArray", "DataView", "string"] }`. A value the argument's type
+refuses then throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`, "The "data" argument must
+be of type string or an instance of Buffer, TypedArray, or DataView. Received null", and not "data
+must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the same.
+
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
 includes the generated file, the crate root declares `mod generated_bindgen`, and a
 `build.rs` like `src/semver_jsc/build.rs` says where the generated file is, for a `cargo check`
@@ -70,7 +76,7 @@ not compile.
 
 To reach the function:
 
-- from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema;
+- from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema. An argument's type is what it takes, so one that coerces (`.loose`, `.wrap`, `.enforceRange()`) is `any`;
 - from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`.
 
 ### Namespaces
@@ -149,7 +155,7 @@ own Rust function, which gets exactly the types of that signature:
 
 ```ts
 export const read = b.overloads(
-  { args: { path: b.string.utf8, options: ReadOptions.optional }, rustPath: "crate::read_path" },
+  { args: { path: b.string.utf8, options: ReadOptions.default({}) }, rustPath: "crate::read_path" },
   { args: { fd: b.i32, buffer: b.bytes({ from: ["buffer"] }), offset: b.u32.default(0) }, rustPath: "crate::read_fd" },
 );
 ```
@@ -187,18 +193,19 @@ any other: nothing looks at how many there are.
 | `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
 | `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
 | `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
-| `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
+| `b.string`                                       | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
 | `b.bytes(options)`                               | `&'a [u8]`, and others           | see [Bytes](#bytes)                                           |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
+| `b.classRef(name)`                               | `&'a T`                          | an instance of a class of a `.classes.ts` file; see below     |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
-| `b.dictionary(members)`                          | a generated `struct`             | an object that is not an array                                |
+| `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
 | `b.class(options)`                               | `JsWrapper<'a, T>`               | an instance                                                   |
 
@@ -249,9 +256,16 @@ its `toString` runs.
 `bun_core::Utf8Bytes<'static>`, which shares the JS string's buffer when it is 8-bit
 and ASCII and is a transcoded copy otherwise.
 
-`b.string` shares the JS string's storage and can be stored. It belongs to the
+`b.string` shares the JS string's storage. As an argument it is a `&bun_core::String`, which a
+body that keeps it clones. Inside `.optional`, a union or an array, and as the value of a setter,
+it is held by value. The string belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
+
+`b.classRef("TCPSocket")` is a `&'a` of the struct that class wraps, `crate::generated_classes::TCPSocket`.
+The argument's slot in the frame holds the instance, so it is only for an argument, alone or in
+`.nullable` or a union. In a function that can run JavaScript the struct must be one whose own
+methods take `&self`, since they can be called while the body holds the `&`.
 
 ### Dictionaries
 
@@ -265,9 +279,9 @@ export const BracesOptions = b.dictionary({
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, rustName, altNames }` to rename its field or to accept other spellings.
-A dictionary whose members can all be absent implements `Default`. The thunk hands the struct
-over by value, so the body of one over 64 bytes needs
-`#[allow(clippy::large_types_passed_by_value)]`.
+A dictionary whose members can all be absent implements `Default`. As an argument, with
+`.default()` or without, the struct stays in the frame of the thunk and the body borrows it:
+`options: &BracesOptions`. Inside `.optional`, a union or an array it is held by value.
 
 A member is looked up on the object and its prototype chain, **stopping before
 the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot
@@ -315,8 +329,8 @@ reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
 **A value goes to the first alternative, in written order, that takes its kind.** That
 alternative then converts it, and reports what is wrong with it: `1.5` given to
 `b.union({ integer: b.i32, text: b.string })` "must be an integer", not "must be of type integer or string".
-The buffer types and `b.blob` refuse some values of their kinds (a shared buffer, a
-detached `Blob`); those go on to the next alternative that takes the kind and does not
+The buffer types, `b.blob` and `b.classRef` refuse some values of their kinds (a shared buffer, a
+detached `Blob`, an instance that wraps nothing); those go on to the next alternative that takes the kind and does not
 refuse the same. A value no alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
 
 So the order only matters between alternatives that overlap, and one that takes every
@@ -361,7 +375,7 @@ export const gzipSync = b.fn({
 ```
 
 ```rust
-fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: ZlibCompressionOptions<'a>) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>
+fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: &ZlibCompressionOptions<'a>) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>
 ```
 
 | Option      | Values                                               | Meaning                                                                |
@@ -369,6 +383,7 @@ fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: ZlibCompressionOptions
 | `from`      | `"string"`, `"buffer"`, `"blob"`                     | what is taken without `ToString`                                       |
 | `otherwise` | **`"throw"`**, `"toString"`                          | anything else                                                          |
 | `refuse`    | `"undefined"`, `"null"`                              | with `"toString"`: these throw, and are not `"undefined"` and `"null"` |
+| `refuse`    | `"stringObject"`                                     | with `"throw"`: `"string"` is only a string                            |
 | `string`    | **`"utf8"`**, `"asIs"`                               | a string is its UTF-8, or stays a `bun_core::String`                   |
 | `shared`    | **`"borrowed"`**, `"copied"`                         | the bytes of a shared buffer                                           |
 | `held`      | **`"borrowed"`**, `"handle"`, `"copied"`, `"pinned"` | what the body gets                                                     |
@@ -417,7 +432,8 @@ bytes of a buffer are read, copied or pinned after every argument is converted. 
 member of a dictionary, a union or an array. Only `held: "borrowed"` can be `.optional` or
 `.nullable`: an `Option<&'a [u8]>`.
 
-An option that cannot apply is a build error: `refuse` without `"toString"`, `string` where no
+An option that cannot apply is a build error: `refuse` of `undefined` or `null` without `"toString"`,
+of a `String` object with it or where no string is taken, `string` where no
 string is taken, `shared` where no buffer is taken or `held: "copied"` copies it anyway. So is
 what no function needs yet, which is not written: `"asIs"` without `"handle"` or that copies a
 shared buffer, `"pinned"` that takes a `Blob` or copies a shared buffer, and a `"pinned"` argument
@@ -560,3 +576,4 @@ thread when the work completes.
 ## Tests
 
 - `test/internal/bindgen.test.ts`: conversions with hostile inputs, through `src/jsc/bindgen_test.bind.ts`. A schema named `*_test.bind.ts` is only part of a build with assertions (a debug build, CI's ASAN lane), so nothing it binds ships; `$bindgen` of one is `undefined` elsewhere, and its Rust module is `#[cfg(debug_assertions)]`. What that schema does not use is covered by the suites of the APIs that do.
+- `test/integration/bun-types/bun-types.test.ts`: `packages/bun-types` promises nothing that a schema breaks. Every call the published types allow has arguments the schema takes, every result they name is one it gives, and no object has a member that the schema's dictionary or class lacks. A new schema file is listed in `PUBLISHED_AS` there, with what the published types call its exports.

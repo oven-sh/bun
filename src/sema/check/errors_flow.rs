@@ -38,7 +38,7 @@ impl Checker<'_, '_> {
     /// `isSourceElementUnreachable` for a potentially executable node.
     fn is_source_element_unreachable(&mut self, file: FileId, s: StmtId) -> bool {
         let hir = self.hir(file);
-        let flow = self.bound(file).stmt_flow[s.idx()];
+        let flow = self.bound(file).flow_of_stmt(s);
         // `ShouldPreserveConstEnums`
         let preserves_const_enums =
             self.p.files.options.preserve_const_enums || self.p.files.options.isolated_modules;
@@ -73,7 +73,7 @@ impl Checker<'_, '_> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `parent.Statements()`
-        let statements = match bound.stmt_parent[s.idx()] {
+        let statements = match bound.parent_of_stmt(s) {
             Parent::File => Some(hir.body),
             Parent::Module(m) => Some(hir[m].body),
             Parent::FnBody(f) => match hir[f].body {
@@ -110,7 +110,7 @@ impl Checker<'_, '_> {
 
     /// `maybeTypeOfKind(t, TypeFlagsVoid)`
     fn maybe_void(&self, t: TypeId) -> bool {
-        self.maybe_type_of_kind(t, |_, t| t == TypeId::VOID)
+        self.maybe_type_of_kind(t, tf::VOID)
     }
 
     /// `checkFunctionOrMethodDeclaration`, `checkFunctionExpressionOrObjectLiteralMethod`: 8030 for
@@ -175,7 +175,7 @@ impl Checker<'_, '_> {
                 let symbol = self.symbol_of_member(file, m);
                 Some(self.type_of_symbol(symbol))
             }
-            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+            FnOwner::Expr(e) => match bound.parent_of_expr(e) {
                 Parent::Prop(p) => Some(self.type_of_literal_prop(file, p)),
                 _ => None,
             },

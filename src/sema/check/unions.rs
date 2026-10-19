@@ -1,6 +1,7 @@
 //! Construction of union and intersection types.
 
 use super::*;
+use crate::util::{PositionSet, fx_hash};
 
 /// The sort key of a declaration: library files first, then by file, then by position.
 /// `compareNodes`
@@ -8,6 +9,215 @@ type Place = (bool, FileId, u32);
 
 /// The members of a union or an intersection under construction.
 type Flat = smallvec::SmallVec<[TypeId; 16]>;
+
+/// What `create_union` has looked at.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Inspected {
+    /// The members and nothing else. It has evaluated nothing, so a second call with the same types
+    /// cannot be told from no call.
+    Members,
+    /// Also whether string literal types match pattern literal types, which depends on the two
+    /// alone: the same types give the same result for any caller.
+    Patterns,
+    /// Also the constraints of type variables.
+    Constraints,
+}
+
+/// How `add_in_order` has put the members of a union into their order.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum Shortcut {
+    /// `join_by_position`, with the union that has all of them.
+    Joined(TypeId),
+    /// `merge_sorted_runs`
+    Merged,
+}
+
+/// See `Checker::parts_of_union`.
+pub(super) enum PartsOf {
+    /// Some member of one of the types isn't a member of the union.
+    Other,
+    /// Members of the union, but those of one of the types come in another order.
+    OutOfOrder,
+    /// Members of the union, those of each type in the order of the union: their positions.
+    InOrder(PositionSet),
+}
+
+/// A member of a union that is being merged, with what `CompareTypes` looks at first.
+#[derive(Copy, Clone)]
+struct Ranked<'p> {
+    ty: TypeId,
+    /// `sort_order_flags`
+    flags: u32,
+    /// `sort_name`, once `has_name`. Most members never meet a member of another run that has
+    /// their flags.
+    name: Option<&'p [u8]>,
+    has_name: bool,
+}
+
+type Run<'p> = smallvec::SmallVec<[Ranked<'p>; 16]>;
+
+/// Next to a run that is this many times as long, the members of a run are put in their places one
+/// by one.
+const MUCH_LONGER: usize = 8;
+
+/// More runs than this are sorted as one list. Every member then takes part in a comparison anyway,
+/// so every name is looked up, and the sort of the standard library makes use of runs as well.
+const MOST_RUNS_TO_MERGE: usize = 8;
+
+/// See `join_by_position`.
+const MOST_STEPS_FOR_A_POSITION: usize = 32;
+
+/// `UnionReduction`. `UnionReductionSubtype` compares the members, so a call with it is not kept.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum Reduction {
+    None,
+    /// See `union_ex`.
+    Literal {
+        merge_constrained: bool,
+    },
+}
+
+/// The arguments of `getUnionTypeEx`.
+#[derive(Copy, Clone)]
+struct UnionArguments<'a> {
+    reduction: Reduction,
+    types: &'a [TypeId],
+    alias: Option<(Sym, &'a [TypeId])>,
+}
+
+impl<'a> UnionArguments<'a> {
+    fn alias_type_arguments(&self) -> &'a [TypeId] {
+        self.alias.map_or(&[][..], |alias| alias.1)
+    }
+
+    /// Of a long list, the length and both ends: a list of hundreds of types is mostly seen once.
+    /// `UnionCalls::get` compares all of it.
+    fn hash(&self) -> u64 {
+        const END: usize = 16;
+        let (first, last) = match self.types.len() > 2 * END {
+            true => (&self.types[..END], &self.types[self.types.len() - END..]),
+            false => (self.types, &[][..]),
+        };
+        fx_hash(&(self.reduction, self.alias, self.types.len(), first, last))
+    }
+}
+
+#[derive(Copy, Clone)]
+struct KeptUnionCall {
+    /// `UnionArguments::hash`
+    hash: u64,
+    reduction: Reduction,
+    alias: Option<Sym>,
+    /// Where the types are in `UnionCalls::types`. The alias type arguments come after them.
+    start: u32,
+    /// How many types. 0: the place is empty.
+    types: u32,
+    alias_type_arguments: u32,
+    answer: TypeId,
+}
+
+/// FOR SPEED: the most recent calls of `getUnionTypeEx` that `recent_unions` and
+/// `recent_unreduced_unions` have no room for, with their answers. It answers before anything is
+/// flattened. The types are kept in the order in which they were given.
+///
+/// Only a call that reads its members and nothing else is kept (`Inspected::Members`). What it
+/// creates, it creates the first time, what it marks stays marked, and it evaluates nothing. So the
+/// long way would find the same type again and leave no other trace.
+///
+/// A direct-mapped cache, like `instantiate::Recent`: it belongs to one checker, and a new call
+/// overwrites whatever had its place.
+#[derive(Default)]
+pub(super) struct UnionCalls {
+    /// Initially empty, then a power of two of them.
+    places: Vec<KeptUnionCall>,
+    /// A hash shifted right by this amount is an index into `places`.
+    shift: u32,
+    /// How many calls were added since `places` last grew.
+    added: usize,
+    /// The types of the calls in `places`, and of calls that were overwritten.
+    types: Vec<TypeId>,
+}
+
+impl UnionCalls {
+    const MOST_PLACES: usize = 1 << 12;
+    /// With more than this in `types`, everything is dropped. That only costs time.
+    const MOST_TYPES: usize = 1 << 20;
+    const EMPTY: KeptUnionCall = KeptUnionCall {
+        hash: 0,
+        reduction: Reduction::None,
+        alias: None,
+        start: 0,
+        types: 0,
+        alias_type_arguments: 0,
+        answer: TypeId::NEVER,
+    };
+
+    #[inline]
+    fn place(&self, hash: u64) -> usize {
+        (hash.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> self.shift) as usize
+    }
+
+    /// `arguments` has a type or more, and `hash` is its hash.
+    #[inline]
+    fn get(&self, hash: u64, arguments: &UnionArguments) -> Option<TypeId> {
+        let call = self.places.get(self.place(hash))?;
+        if call.hash != hash
+            || call.types as usize != arguments.types.len()
+            || call.reduction != arguments.reduction
+            || call.alias != arguments.alias.map(|alias| alias.0)
+        {
+            return None;
+        }
+        let len = (call.types + call.alias_type_arguments) as usize;
+        let (types, alias_type_arguments) =
+            self.types[call.start as usize..][..len].split_at(call.types as usize);
+        (types == arguments.types && alias_type_arguments == arguments.alias_type_arguments())
+            .then_some(call.answer)
+    }
+
+    fn put(&mut self, hash: u64, arguments: &UnionArguments, answer: TypeId) {
+        let alias_type_arguments = arguments.alias_type_arguments();
+        let len = arguments.types.len() + alias_type_arguments.len();
+        if len > Self::MOST_TYPES {
+            return;
+        }
+        if self.types.len() + len > Self::MOST_TYPES {
+            self.places.fill(Self::EMPTY);
+            self.types.clear();
+            self.added = 0;
+        }
+        if self.added == self.places.len() && self.added < Self::MOST_PLACES {
+            self.grow();
+        }
+        self.added += 1;
+        let place = self.place(hash);
+        self.places[place] = KeptUnionCall {
+            hash,
+            reduction: arguments.reduction,
+            alias: arguments.alias.map(|alias| alias.0),
+            start: self.types.len() as u32,
+            types: arguments.types.len() as u32,
+            alias_type_arguments: alias_type_arguments.len() as u32,
+            answer,
+        };
+        self.types.extend_from_slice(arguments.types);
+        self.types.extend_from_slice(alias_type_arguments);
+    }
+
+    #[cold]
+    fn grow(&mut self) {
+        let len = (self.places.len() * 4).max(64);
+        let old = std::mem::replace(&mut self.places, vec![Self::EMPTY; len]);
+        self.shift = 64 - len.trailing_zeros();
+        self.added = 0;
+        for call in old {
+            if call.types != 0 {
+                let place = self.place(call.hash);
+                self.places[place] = call;
+            }
+        }
+    }
+}
 
 /// `getIntersectionKey`: the set, `IntersectionFlagsNoConstraintReduction`, and without that flag
 /// the alias.
@@ -126,6 +336,16 @@ fn some_first<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
     }
 }
 
+fn sort_by_id(types: &mut [TypeId]) {
+    types.sort_unstable_by_key(|ty| ty.arrival_order());
+}
+
+/// Whether `all` has the items of `some`, in their order.
+fn is_subsequence(some: &[TypeId], all: &[TypeId]) -> bool {
+    let mut rest = all.iter();
+    some.iter().all(|item| rest.any(|it| it == item))
+}
+
 /// A stable sort for `CompareTypes`, which is not a total order: `slice::sort_by` may panic.
 /// A comparison of two instantiations of one alias is expensive, and what is sorted is often nearly
 /// in order or made of sorted runs. A binary insertion sort compares twice as often there.
@@ -196,10 +416,32 @@ impl<'p, 's> Checker<'p, 's> {
     /// created without inspecting the constraint of `T`, which lack
     /// `ObjectFlagsIsConstrainedTypeVariable`.
     fn union_ex(&mut self, types: &[TypeId], merge_constrained: bool) -> TypeId {
+        self.union_ex_inspecting(types, merge_constrained, None).0
+    }
+
+    /// `union(types)`. `positions`: `PartsOf::InOrder` of `types` in the union `whole`.
+    pub(super) fn union_of_parts(
+        &mut self,
+        whole: TypeId,
+        positions: &PositionSet,
+        types: &[TypeId],
+    ) -> TypeId {
+        let found = Some((whole, positions));
+        self.union_ex_inspecting(types, true, found).0
+    }
+
+    /// `union_ex`. Also returns whether it is known to be `Inspected::Members`. `found`: see
+    /// `union_of_parts`.
+    fn union_ex_inspecting(
+        &mut self,
+        types: &[TypeId],
+        merge_constrained: bool,
+        found: Option<(TypeId, &PositionSet)>,
+    ) -> (TypeId, bool) {
         // The union of two types is the same in either order.
         let pair = match *types {
-            [] => return TypeId::NEVER,
-            [one] => return one,
+            [] => return (TypeId::NEVER, true),
+            [one] => return (one, true),
             // `addTypeToUnion` sets `TypeFlagsIncludesError`: only a list of one type is returned
             // unchanged.
             [a, b]
@@ -216,7 +458,7 @@ impl<'p, 's> Checker<'p, 's> {
                             | TypeId::UNIQUE_LITERAL
                     ) =>
             {
-                return a;
+                return (a, true);
             }
             [a, b] if merge_constrained => Some(if a.arrival_order() < b.arrival_order() {
                 (a, b)
@@ -225,16 +467,31 @@ impl<'p, 's> Checker<'p, 's> {
             }),
             _ => None,
         };
-        if let Some((a, b)) = pair
-            && let Some(known) = self.recent_unions.get(a.0, b.0)
-        {
-            return TypeId(known);
+        if let Some((a, b)) = pair {
+            if let Some(known) = self.recent_unions.get(a.0, b.0) {
+                return (TypeId(known), false);
+            }
+            let (union, inspected) = self.create_union(types, merge_constrained, found);
+            if inspected != Inspected::Constraints {
+                self.recent_unions.put(a.0, b.0, union.0);
+            }
+            return (union, inspected == Inspected::Members);
         }
-        let (union, is_plain) = self.create_union(types, merge_constrained);
-        if is_plain && let Some((a, b)) = pair {
-            self.recent_unions.put(a.0, b.0, union.0);
+
+        let call = UnionArguments {
+            reduction: Reduction::Literal { merge_constrained },
+            types,
+            alias: None,
+        };
+        let hash = call.hash();
+        if let Some(known) = self.union_calls.get(hash, &call) {
+            return (known, true);
         }
-        union
+        let (union, inspected) = self.create_union(types, merge_constrained, found);
+        if inspected == Inspected::Members {
+            self.union_calls.put(hash, &call, union);
+        }
+        (union, inspected == Inspected::Members)
     }
 
     /// `getUnionType(types, UnionReductionNone)`: `A | B | ...` with every member preserved,
@@ -255,16 +512,29 @@ impl<'p, 's> Checker<'p, 's> {
             self.recent_unreduced_unions.put(a.0, b.0, union.0);
             return union;
         }
-        self.create_unreduced_union(types)
+        if types.is_empty() {
+            return self.create_unreduced_union(types);
+        }
+        let call = UnionArguments {
+            reduction: Reduction::None,
+            types,
+            alias: None,
+        };
+        let hash = call.hash();
+        if let Some(known) = self.union_calls.get(hash, &call) {
+            return known;
+        }
+        let union = self.create_unreduced_union(types);
+        self.union_calls.put(hash, &call, union);
+        union
     }
 
     fn create_unreduced_union(&mut self, types: &[TypeId]) -> TypeId {
         let mut members = Flat::new();
-        for &ty in types {
-            self.add_to_union(&mut members, ty);
+        let shortcut = self.add_in_order(&mut members, types, None);
+        if shortcut.is_none() {
+            self.add_in_id_order(&mut members, types);
         }
-        members.sort_unstable_by_key(|m| m.arrival_order());
-        members.dedup();
         if members.first() == Some(&TypeId::UNRESOLVED) {
             return TypeId::UNRESOLVED;
         }
@@ -273,45 +543,80 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.p.files.options.strict_null_checks {
             members.retain(|m| !m.is_undefined() && !m.is_null());
         }
-        self.sort_type_set(types, &mut members);
-        match members[..] {
-            [] => TypeId::NEVER,
-            _ => self.union_of_named_unions(types, &members),
-        }
+        self.union_of_type_set(types, members, shortcut, FirstRequest::NONE)
     }
 
-    /// `getUnionTypeWorker` with `UnionReductionLiteral`. Also returns whether only the members
-    /// were inspected, in which case the same types give the same result for any caller.
-    #[inline(never)]
-    fn create_union(&mut self, actual: &[TypeId], merge_constrained: bool) -> (TypeId, bool) {
-        let mut members = Flat::new();
-        for &ty in actual {
-            self.add_to_union(&mut members, ty);
+    /// The members of `types`, each once, by id.
+    fn add_in_id_order(&self, members: &mut Flat, types: &[TypeId]) {
+        for &ty in types {
+            self.add_to_union(members, ty);
         }
-        members.sort_unstable_by_key(|m| m.arrival_order());
+        sort_by_id(members);
         members.dedup();
+    }
+
+    /// The end of `getUnionTypeWorker`: the union of `members`, what is left of the `typeSet` of
+    /// `actual`. They are in order if there is a `shortcut`. `first_request`: see `Types::as_first_request`.
+    fn union_of_type_set(
+        &mut self,
+        actual: &[TypeId],
+        mut members: Flat,
+        shortcut: Option<Shortcut>,
+        first_request: FirstRequest,
+    ) -> TypeId {
+        let is_total_order = match shortcut {
+            Some(_) => true,
+            None => self.sort_type_set(actual, &mut members),
+        };
+        if members.is_empty() {
+            return TypeId::NEVER;
+        }
+        let union = (self.types()).as_first_request(first_request, || {
+            self.union_of_named_unions(actual, &members)
+        });
+        if is_total_order {
+            self.note_sorted_runs(union, actual, &members, shortcut);
+        }
+        union
+    }
+
+    /// `getUnionTypeWorker` with `UnionReductionLiteral`.
+    #[inline(never)]
+    fn create_union(
+        &mut self,
+        actual: &[TypeId],
+        merge_constrained: bool,
+        found: Option<(TypeId, &PositionSet)>,
+    ) -> (TypeId, Inspected) {
+        let mut members = Flat::new();
+        // With a shortcut, no member is `any` or `unknown`.
+        let mut shortcut = self.add_in_order(&mut members, actual, found);
+        if shortcut.is_none() {
+            self.add_in_id_order(&mut members, actual);
+        }
         // `TypeFlagsIncludesWildcard`
-        if members.contains(&TypeId::WILDCARD) {
-            return (TypeId::WILDCARD, true);
+        if shortcut.is_none() && members.contains(&TypeId::WILDCARD) {
+            return (TypeId::WILDCARD, Inspected::Members);
         }
         // `TypeFlagsIncludesError`: the error type takes precedence over `any` and `unknown`.
-        if members.first() != Some(&TypeId::UNRESOLVED)
+        if shortcut.is_none()
+            && members.first() != Some(&TypeId::UNRESOLVED)
             && members.iter().any(|&member| self.is_error_type(member))
         {
-            return (TypeId::ERROR, true);
+            return (TypeId::ERROR, Inspected::Members);
         }
         match members[..] {
-            [] => return (TypeId::NEVER, true),
+            [] => return (TypeId::NEVER, Inspected::Members),
             // The unresolved type, `any` and `unknown`, in this order of precedence, absorb all
             // other members. They have the lowest ids.
-            [TypeId::UNRESOLVED, TypeId::ANY, ..] => return (TypeId::ANY, true),
+            [TypeId::UNRESOLVED, TypeId::ANY, ..] => return (TypeId::ANY, Inspected::Members),
             [
                 first @ (TypeId::UNRESOLVED | TypeId::ANY | TypeId::UNKNOWN),
                 ..,
             ] => {
-                return (first, true);
+                return (first, Inspected::Members);
             }
-            [only] => return (only, true),
+            [only] => return (only, Inspected::Members),
             _ => {}
         }
         // `addTypeToUnion`: without strictNullChecks every type includes null and undefined, and
@@ -331,20 +636,25 @@ impl<'p, 's> Checker<'p, 's> {
                     (false, true) => TypeId::UNDEFINED,
                     (false, false) => TypeId::UNDEFINED_WIDENING,
                 };
-                return (left, true);
+                return (left, Inspected::Members);
             }
         }
-        // A bit for each type that is present among those with the lowest ids. They sort first.
+        // A bit for each type that is present among those with the lowest ids. By id, they come
+        // first.
         let mut low = 0u32;
-        for m in members.iter().take_while(|m| m.arrival_order() < 32) {
-            low |= 1 << m.arrival_order();
+        for m in members.iter() {
+            if m.arrival_order() < 32 {
+                low |= 1 << m.arrival_order();
+            } else if shortcut.is_none() {
+                break;
+            }
         }
         let has = |t: TypeId| low & 1 << t.arrival_order() != 0;
         // The missing type is redundant next to the regular `undefined`.
         if has(TypeId::MISSING) && has(TypeId::UNDEFINED) {
             members.retain(|m| *m != TypeId::MISSING);
         }
-        let mut is_plain = true;
+        let mut inspected = Inspected::Members;
         // `includes&TypeFlagsIncludesInstantiable`, of a member that is removed.
         let mut includes_removed_pattern = false;
         if members.len() > 1 {
@@ -381,11 +691,14 @@ impl<'p, 's> Checker<'p, 's> {
                 has(TypeId::SYMBOL),
             );
             if string || number || bigint || symbol || any_fresh {
-                let snapshot = if any_fresh {
+                let mut snapshot = if any_fresh {
                     Flat::from_slice(&members[..])
                 } else {
                     Flat::new()
                 };
+                if shortcut.is_some() {
+                    sort_by_id(&mut snapshot);
+                }
                 members.retain(|m| {
                     let m = *m;
                     match self.data(m) {
@@ -423,31 +736,34 @@ impl<'p, 's> Checker<'p, 's> {
                 let has_pattern = has_pattern && !string;
                 let has_constrained = has_constrained && merge_constrained;
                 if has_pattern || has_constrained {
-                    // Whether a pattern matches a literal depends on the two alone.
-                    is_plain = !has_constrained;
+                    inspected = match has_constrained {
+                        true => Inspected::Constraints,
+                        false => Inspected::Patterns,
+                    };
                     // Both evaluate something for each member, and evaluation order determines the
                     // creation order of types. tsgo keeps the set sorted from the start.
-                    self.sort_type_set(actual, &mut members);
+                    if shortcut.is_none() {
+                        self.sort_type_set(actual, &mut members);
+                    }
                 }
                 if has_pattern {
                     self.remove_string_literals_matched_by_template_literals(&mut members);
                 }
                 if has_constrained {
                     self.remove_constrained_type_variables(&mut members);
+                    // It may have added a type variable, and then they are ordered by id.
+                    shortcut = None;
                 }
             }
         }
-        // Up to here they were ordered by id.
-        self.sort_type_set(actual, &mut members);
-        let first_new_type_id = self.types().first_new_type_id();
-        let union = match members[..] {
-            [] => TypeId::NEVER,
-            _ => self.union_of_named_unions(actual, &members),
+
+        let first_request = match includes_removed_pattern {
+            true => FirstRequest::WITHOUT_PRIMITIVE_UNION,
+            false => FirstRequest::NONE,
         };
-        if includes_removed_pattern && self.types().is_new_since(union, first_new_type_id) {
-            self.types().mark_without_primitive_union(union);
-        }
-        (union, is_plain)
+        // Without a shortcut, they were ordered by id up to here.
+        let union = self.union_of_type_set(actual, members, shortcut, first_request);
+        (union, inspected)
     }
 
     /// The end of `getUnionTypeWorker`: the union of `members`, in order and at least one, which was
@@ -738,10 +1054,12 @@ impl<'p, 's> Checker<'p, 's> {
             .iter()
             .any(|&m| self.flags(m) & tf::STRUCTURED_OR_INSTANTIABLE != 0)
         {
-            return match is_reduced {
-                true => self.union_of_named_unions(types, &members),
-                false => union,
-            };
+            if !is_reduced {
+                return union;
+            }
+            let reduced = self.union_of_named_unions(types, &members);
+            self.note_part(reduced, union);
+            return reduced;
         }
         let len = members.len();
         let mut actual: Vec<TypeId> = Vec::with_capacity(len);
@@ -873,18 +1191,20 @@ impl<'p, 's> Checker<'p, 's> {
             .filter(|(_, k)| **k)
             .map(|(&m, _)| m)
             .collect();
-        self.sort_type_set(types, &mut kept);
-        match kept[..] {
-            [] => TypeId::NEVER,
-            _ => self.union_of_named_unions(types, &kept),
-        }
+        let shortcut = self.order_as_in(union, &mut kept);
+        self.union_of_type_set(types, kept, shortcut, FirstRequest::NONE)
     }
 
     /// `removeSubtypes`, keyProperty: the first property of `ty` whose type is a unit type, and
     /// that type. The types of the preceding properties are resolved on the way, as
     /// `removeSubtypes` does.
     fn first_unit_property(&mut self, ty: TypeId) -> Option<(Atom, TypeId)> {
-        let apparent = self.apparent_type(ty);
+        // `getPropertiesOfType`
+        let apparent = self.reduced_apparent_type(ty);
+        let apparent = match self.is_union(apparent) {
+            true => self.union_as_object(apparent),
+            false => apparent,
+        };
         let members = self.members(apparent)?;
         for prop in &members.shape().props {
             let of_prop = self.type_of_prop(prop, members.mapper);
@@ -938,25 +1258,27 @@ impl<'p, 's> Checker<'p, 's> {
                                 new_origin = OriginKey::Union(&left);
                             }
                         }
-                        let first_new_type_id = self.types().first_new_type_id();
-                        let filtered = self.types().intern_key_with(
-                            TypeKey::Union(&kept),
-                            &ProvenanceKey {
-                                alias: None,
-                                origin: new_origin,
-                                is_enum: false,
-                                stored_under: None,
-                                is_array_literal: false,
-                                is_array_pattern: false,
-                                has_other_instantiation: false,
-                            },
-                        );
                         // `ObjectFlagsPrimitiveUnion` is forwarded.
-                        if self.types().is_new_since(filtered, first_new_type_id)
-                            && !self.is_primitive_union(ty)
-                        {
-                            self.types().mark_without_primitive_union(filtered);
-                        }
+                        let first_request = match self.is_primitive_union(ty) {
+                            true => FirstRequest::NONE,
+                            false => FirstRequest::WITHOUT_PRIMITIVE_UNION,
+                        };
+                        let types = self.types();
+                        let filtered = types.as_first_request(first_request, || {
+                            types.intern_key_with(
+                                TypeKey::Union(&kept),
+                                &ProvenanceKey {
+                                    alias: None,
+                                    origin: new_origin,
+                                    is_enum: false,
+                                    stored_under: None,
+                                    is_array_literal: false,
+                                    is_array_pattern: false,
+                                    has_other_instantiation: false,
+                                },
+                            )
+                        });
+                        self.note_part(filtered, ty);
                         filtered
                     }
                 }
@@ -1046,6 +1368,7 @@ impl<'p, 's> Checker<'p, 's> {
                         };
                         kept == union || self.has_compared_without_total_order.get()
                     });
+                    self.note_part(kept, ty);
                     kept
                 } else if no_reductions {
                     self.union_unreduced(&mapped)
@@ -1217,19 +1540,41 @@ impl<'p, 's> Checker<'p, 's> {
         if let [only] = types {
             return *only;
         }
-        // `UnionOfUnionKey`
-        if let (Some((alias, _)), &[a, b]) = (alias, types)
-            && (self.is_union(a) || self.is_union(b))
+        let Some((alias, type_arguments)) = alias else {
+            return self.union_ex(types, merge_constrained);
+        };
+        let call = UnionArguments {
+            reduction: Reduction::Literal { merge_constrained },
+            types,
+            alias: Some((alias, type_arguments)),
+        };
+        let hash = (!types.is_empty()).then(|| call.hash());
+        if let Some(hash) = hash
+            && let Some(known) = self.union_calls.get(hash, &call)
         {
-            self.get_symbol_id(alias);
+            return known;
         }
-        let created = self.union_ex(types, merge_constrained);
-        match alias {
-            Some((alias, type_arguments)) if self.is_union(created) => {
-                self.union_type_with_alias(created, alias, type_arguments)
-            }
-            _ => created,
+        let (union, is_kept) = self.create_union_with_alias(&call, alias, merge_constrained);
+        if is_kept && let Some(hash) = hash {
+            self.union_calls.put(hash, &call, union);
         }
+        union
+    }
+
+    /// `union_ex_inspecting`, with `alias`, which is the alias of `call`.
+    fn create_union_with_alias(
+        &mut self,
+        call: &UnionArguments,
+        alias: Sym,
+        merge_constrained: bool,
+    ) -> (TypeId, bool) {
+        let (created, inspects_members) =
+            self.union_ex_inspecting(call.types, merge_constrained, None);
+        if !self.is_union(created) {
+            return (created, inspects_members);
+        }
+        let union = self.union_type_with_alias(created, alias, call.alias_type_arguments());
+        (union, inspects_members)
     }
 
     /// `getIntersectionTypeEx`
@@ -1361,12 +1706,15 @@ impl<'p, 's> Checker<'p, 's> {
             is_constrained_type_variable = true;
         }
         let alias_in_key = alias.filter(|_| !no_constraint_reduction);
-        if let Some((alias, _)) = alias_in_key {
-            self.get_symbol_id(alias);
-        }
         if includes & tf::UNION == 0 {
-            let created =
-                self.intern_key_with_alias(TypeKey::Intersection(&set), alias, OriginKey::None);
+            let first_request = match is_constrained_type_variable {
+                _ if no_constraint_reduction || set.len() != 2 => FirstRequest::NONE,
+                true => FirstRequest::CONSTRAINED_TYPE_VARIABLE,
+                false => FirstRequest::NO_CONSTRAINED_TYPE_VARIABLE,
+            };
+            let created = (self.types()).as_first_request(first_request, || {
+                self.intern_key_with_alias(TypeKey::Intersection(&set), alias, OriginKey::None)
+            });
             if !no_constraint_reduction && set.len() == 2 {
                 self.types()
                     .set_constrained_type_variable(created, is_constrained_type_variable);
@@ -1659,7 +2007,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn contains_undefined(&self, ty: TypeId) -> bool {
-        self.parts(ty).iter().any(|m| m.is_undefined())
+        self.is_some_type_of_kind(ty, tf::UNDEFINED)
     }
 
     // ───────────────────────────── the order of the members of a union ─────────────────────────────
@@ -1702,7 +2050,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn symbol_place(&self, sym: Sym) -> Option<Place> {
         let files = self.files();
         let (file, decl) = if files.flags(sym).contains(SymFlags::MERGED) {
-            files.decls(sym).first().copied()?
+            files.decls_of(sym).first().copied()?
         } else {
             (sym.file, files.symbol(sym).decls.first().copied()?)
         };
@@ -1839,7 +2187,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `compareSymbols`, limited to the comparison of the first declarations.
-    fn compare_symbols(&self, s: Sym, t: Sym) -> std::cmp::Ordering {
+    pub(super) fn compare_symbols(&self, s: Sym, t: Sym) -> std::cmp::Ordering {
         let place = |symbol: Sym| {
             let (_, file, pos) = self.symbol_place(symbol)?;
             Some(self.place_in_program_order(file, pos))
@@ -1853,7 +2201,8 @@ impl<'p, 's> Checker<'p, 's> {
         let (x, y) = (self.alias_symbol_of_type(a), self.alias_symbol_of_type(b));
         some_first(self.type_name(a, x), self.type_name(b, y)).then_with(|| match (x, y) {
             (Some(s), Some(t)) if s == t => {
-                let arguments = |ty: TypeId| self.alias_of_type(ty).map_or(Vec::new(), |it| it.1);
+                let arguments =
+                    |ty: TypeId| self.alias_of_type(ty).map(|it| it.1).unwrap_or_default();
                 self.compare_type_lists(&arguments(a), &arguments(b))
             }
             (None, None) => std::cmp::Ordering::Equal,
@@ -2083,11 +2432,34 @@ impl<'p, 's> Checker<'p, 's> {
                     .then_with(|| x.partial_cmp(&y).unwrap_or(Equal))
             }
             (TypeData::BoolLit { value: x, .. }, TypeData::BoolLit { value: y, .. }) => x.cmp(y),
-            // tsgo orders them by id, and creates `zeroBigIntType` with the checker.
-            (TypeData::BigIntLit { text: x, .. }, TypeData::BigIntLit { text: y, .. }) => {
-                let is_zero =
-                    |text: Atom| atoms.bytes(text).iter().all(|&c| c == b'0' || c == b'n');
-                is_zero(*y).cmp(&is_zero(*x))
+            // TypeScript 7.1: by value.
+            (
+                TypeData::BigIntLit {
+                    text: x,
+                    negative: is_x_negative,
+                    ..
+                },
+                TypeData::BigIntLit {
+                    text: y,
+                    negative: is_y_negative,
+                    ..
+                },
+            ) => {
+                let digits = |text: Atom| {
+                    let text = atoms.bytes(text);
+                    let text = text.strip_suffix(b"n").unwrap_or(text);
+                    &text[text.iter().take_while(|&&c| c == b'0').count()..]
+                };
+                let (x, y) = (digits(*x), digits(*y));
+                let by_magnitude = x.len().cmp(&y.len()).then_with(|| x.cmp(y));
+                match (
+                    *is_x_negative && !x.is_empty(),
+                    *is_y_negative && !y.is_empty(),
+                ) {
+                    (true, true) => by_magnitude.reverse(),
+                    (false, false) => by_magnitude,
+                    (is_x_negative, is_y_negative) => is_y_negative.cmp(&is_x_negative),
+                }
             }
             (
                 TypeData::Marker(Marker::Restrictive(x)),
@@ -2145,11 +2517,24 @@ impl<'p, 's> Checker<'p, 's> {
                     .then_with(|| lists(x, y))
             }
             // TypeScript orders them by id, in the order `getSpreadType` created them: `mapType`
-            // iterates over the left operand, and for each of its members over the right.
+            // iterates over the left operand, and for each of its members over the right. Likewise
+            // `getInstantiationExpressionType`, one expression after the other.
             (TypeData::Synth(x), TypeData::Synth(y)) => match (x.created_from, y.created_from) {
-                (Some((l, r)), Some((m, s))) => (x.spread_rank.cmp(&y.spread_rank))
-                    .then_with(|| types(l, m))
-                    .then_with(|| types(r, s)),
+                (Some((l, r)), Some((m, s))) => {
+                    let node = |shape: &Shape| {
+                        let (file, pos) = match shape.instantiation_expression? {
+                            InstantiationExpression::Expr(file, e) => (file, self.hir(file)[e].pos),
+                            InstantiationExpression::TypeNode(file, node) => {
+                                (file, self.hir(file)[node].pos)
+                            }
+                        };
+                        Some(self.place_in_program_order(file, pos))
+                    };
+                    some_first(node(x), node(y))
+                        .then_with(|| x.spread_rank.cmp(&y.spread_rank))
+                        .then_with(|| types(l, m))
+                        .then_with(|| types(r, s))
+                }
                 _ => match (x.single_signature_arguments, y.single_signature_arguments) {
                     (Some(x), Some(y)) => types(x, y),
                     (x, y) => y.is_some().cmp(&x.is_some()),
@@ -2172,6 +2557,21 @@ impl<'p, 's> Checker<'p, 's> {
             (TypeData::TypeParam(_, _, x), TypeData::TypeParam(_, _, y)) => {
                 self.compare_targets_of_type_mappers(*x, *y)
             }
+            // TypeScript 7.1: by source, mapped type and constraint. 7.0 falls back to the ids.
+            (
+                TypeData::ReverseMapped {
+                    source: s,
+                    mapped: m,
+                    of: c,
+                },
+                TypeData::ReverseMapped {
+                    source: t,
+                    mapped: n,
+                    of: d,
+                },
+            ) => types(*s, *t)
+                .then_with(|| types(*m, *n))
+                .then_with(|| types(*c, *d)),
             // `ObjectFlagsObjectTypeKindMask`, then `compareTypeMappers`: a type without a mapper
             // comes last.
             (x, y) => {
@@ -2184,7 +2584,6 @@ impl<'p, 's> Checker<'p, 's> {
                     TypeData::EvolvingArray(_) => 3,
                     _ => 0,
                 };
-                let kind_of_both_is_mapped = kind(x) == 1 && kind(y) == 1;
                 let mapper = |data: &TypeData| match *data {
                     TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. } => Some(mapper),
                     _ => None,
@@ -2192,12 +2591,7 @@ impl<'p, 's> Checker<'p, 's> {
                 kind(x)
                     .cmp(&kind(y))
                     .then_with(|| match (mapper(x), mapper(y)) {
-                        // `instantiateAnonymousType` combines the mapper of a mapped type with one
-                        // for its fresh type parameter, and `compareTypeMappers` does not order a
-                        // `CompositeTypeMapper`, so the ids decide.
-                        (Some(x), Some(y)) if kind_of_both_is_mapped => {
-                            self.is_instantiating(y).cmp(&self.is_instantiating(x))
-                        }
+                        // TypeScript 7.1: also for two mapped types, without the mapper for the fresh type parameter.
                         (Some(x), Some(y)) => self.compare_type_mappers(x, y),
                         (x, y) => y.is_some().cmp(&x.is_some()),
                     })
@@ -2226,7 +2620,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `CompareTypes`: the order of the constituents of a union, and of an origin that is a union. Where tsgo falls back to the type ids,
-    /// this falls back to `creation_order`.
+    /// this falls back to `content_order`.
     #[inline]
     pub fn compare_types(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         match (self.data(a), self.data(b)) {
@@ -2238,7 +2632,7 @@ impl<'p, 's> Checker<'p, 's> {
             ) if x != y || f != g => {
                 let atoms = &self.atoms();
                 match atoms.bytes(x).cmp(atoms.bytes(y)).then_with(|| f.cmp(&g)) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
+                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b),
                     order => order,
                 }
             }
@@ -2251,7 +2645,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let by_value = (y.is_nan().cmp(&x.is_nan()))
                     .then_with(|| x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal));
                 match by_value.then_with(|| f.cmp(&g)) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
+                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b),
                     order => order,
                 }
             }
@@ -2261,15 +2655,15 @@ impl<'p, 's> Checker<'p, 's> {
                 if s != t =>
             {
                 match self.compare_symbols(s, t) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
+                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b),
                     order => order,
                 }
             }
             (TypeData::Intersection(_), TypeData::Intersection(_)) => {
                 let (s, t) = self.members_that_order_intersections(a, b);
-                self.compare_types_ordered_by(a, b, s, t)
+                self.compare_types_ordered_by(s, t)
             }
-            _ => self.compare_types_ordered_by(a, b, a, b),
+            _ => self.compare_types_ordered_by(a, b),
         }
     }
 
@@ -2288,31 +2682,16 @@ impl<'p, 's> Checker<'p, 's> {
         (s, t)
     }
 
-    /// `compare_types(a, b)`. `s`, `t`: see `members_that_order_intersections`.
-    fn compare_types_ordered_by(
-        &self,
-        a: TypeId,
-        b: TypeId,
-        s: TypeId,
-        t: TypeId,
-    ) -> std::cmp::Ordering {
-        let types = self.types();
-        types.take_has_ordered_by_own_id();
-        let order = self
-            .compare_types_without_ids(s, t)
-            .then_with(|| types.creation_order(s, t));
-        // Here, or further in: `mapping_in_declaration_order`.
-        if types.take_has_ordered_by_own_id() {
-            types.mark_ordered_by_id(a);
-            types.mark_ordered_by_id(b);
-        }
-        order
+    /// `CompareTypes` for `s` and `t`, which decide the order of two types. See `members_that_order_intersections`.
+    fn compare_types_ordered_by(&self, s: TypeId, t: TypeId) -> std::cmp::Ordering {
+        self.compare_types_without_ids(s, t)
+            .then_with(|| self.content_order(s, t))
     }
 
-    /// See `Types::creation_order`.
+    /// See `Types::content_order`.
     #[inline]
-    pub(super) fn creation_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        self.types().creation_order(a, b)
+    pub(super) fn content_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        self.types().content_order(a, b)
     }
 
     /// `slices.BinarySearchFunc(types, t, CompareTypes)`, with its probes: where the order is not
@@ -2364,12 +2743,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Puts `members`, what is left of the `typeSet` of `getUnionTypeWorker(actual, ..)`, into the
-    /// order of that set.
-    fn sort_type_set(&self, actual: &[TypeId], members: &mut Flat) {
+    /// order of that set. Returns whether `CompareTypes` is an order of them.
+    fn sort_type_set(&self, actual: &[TypeId], members: &mut Flat) -> bool {
         // FOR SPEED: a total order gives one result, however it is reached.
         self.sort_types(members);
         if !self.has_compared_without_total_order.get() {
-            return;
+            return true;
         }
         // A type that the search does not find again is a member twice.
         let mut type_set = Flat::new();
@@ -2382,6 +2761,17 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         *members = type_set;
+        false
+    }
+
+    /// What `CompareTypes` orders types with the same `sort_order_flags` by first: the name. String
+    /// literals have one value of the flags and no name: their text decides.
+    fn sort_name(&self, ty: TypeId, flags: u32) -> Option<&'p [u8]> {
+        match *self.data(ty) {
+            TypeData::StringLit { value, .. } => Some(self.atoms().bytes(value)),
+            _ if flags & NAMED != 0 => self.type_name(ty, self.alias_symbol_of_type(ty)),
+            _ => None,
+        }
     }
 
     /// Sorts by `CompareTypes`. `has_compared_without_total_order` tells whether that is an order
@@ -2391,36 +2781,470 @@ impl<'p, 's> Checker<'p, 's> {
         if types.len() < 3 {
             return types.sort_by(|&a, &b| self.compare_types(a, b));
         }
-        // FOR SPEED: `CompareTypes` orders by the flags, then by the names. tsgo reads both from
-        // the type. Here the alias of a type is found through its declaration, so the name of each
-        // type is looked up once, not for every comparison. String literals have one value of the
-        // flags and no name: their text decides.
-        let atoms = self.atoms();
-        let mut keys: smallvec::SmallVec<[(u32, Option<&[u8]>, TypeId); 16]> = types
-            .iter()
-            .map(|&ty| {
-                let flags = self.sort_order_flags(ty);
-                let name = match *self.data(ty) {
-                    TypeData::StringLit { value, .. } => Some(atoms.bytes(value)),
-                    _ if flags & NAMED != 0 => self.type_name(ty, self.alias_symbol_of_type(ty)),
-                    _ => None,
-                };
-                (flags, name, ty)
-            })
-            .collect();
-        keys.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| some_first(a.1, b.1)));
-        let mut buffer = Vec::new();
-        for of_one_name in keys.chunk_by_mut(|a, b| (a.0, a.1) == (b.0, b.1)) {
-            let mut compare = |a: &(_, _, TypeId), b: &(_, _, TypeId)| self.compare_types(a.2, b.2);
-            merge_sort_by(of_one_name, &mut compare, &mut buffer);
-        }
-        for (ty, key) in types.iter_mut().zip(keys) {
-            *ty = key.2;
+        let mut ranked: Run<'p> = types.iter().map(|&ty| self.ranked(ty)).collect();
+        self.sort_ranked(&mut ranked);
+        for (ty, sorted) in types.iter_mut().zip(ranked) {
+            *ty = sorted.ty;
         }
         debug_assert!(
             self.has_compared_without_total_order.get()
                 || types.is_sorted_by(|&a, &b| self.compare_types(a, b).is_le())
         );
+    }
+
+    fn ranked(&self, ty: TypeId) -> Ranked<'p> {
+        Ranked {
+            ty,
+            flags: self.sort_order_flags(ty),
+            name: None,
+            has_name: false,
+        }
+    }
+
+    #[inline]
+    fn look_up_name(&self, ranked: &mut Ranked<'p>) {
+        if !ranked.has_name {
+            ranked.name = self.sort_name(ranked.ty, ranked.flags);
+            ranked.has_name = true;
+        }
+    }
+
+    /// Sorts by `CompareTypes`. A type that is there twice ends up next to itself.
+    ///
+    /// FOR SPEED: `CompareTypes` orders by the flags, then by the names. tsgo reads both from the
+    /// type. Here the alias of a type is found through its declaration, so the name of each type is
+    /// looked up once, not for every comparison.
+    fn sort_ranked(&self, types: &mut [Ranked<'p>]) {
+        for ranked in types.iter_mut() {
+            self.look_up_name(ranked);
+        }
+        types.sort_by(|a, b| {
+            a.flags
+                .cmp(&b.flags)
+                .then_with(|| some_first(a.name, b.name))
+        });
+        let mut buffer = Vec::new();
+        for of_one_name in types.chunk_by_mut(|a, b| (a.flags, a.name) == (b.flags, b.name)) {
+            let mut compare = |a: &Ranked<'p>, b: &Ranked<'p>| match a.ty == b.ty {
+                true => std::cmp::Ordering::Equal,
+                false => self.compare_types(a.ty, b.ty),
+            };
+            merge_sort_by(of_one_name, &mut compare, &mut buffer);
+        }
+    }
+
+    /// FOR SPEED: puts the members of `actual`, each once, into `members`, which is empty, in the
+    /// order of `CompareTypes`, without sorting what is in order already. `None`: `members` is
+    /// still empty, and they are to be sorted.
+    ///
+    /// Most of what a union is made of are unions. The members of one that has
+    /// `Types::is_sorted_run` are a sorted run, which means two things:
+    /// - Each is less than the next, and comparing the two does not set
+    ///   `has_compared_without_total_order`. `CompareTypes` goes through its criteria in one order
+    ///   for all types, and only the criterion that sets the flag is not transitive. So it is a
+    ///   total order of all the members, and of any of them.
+    /// - None is `any` or `unknown`, which take over a union.
+    ///
+    /// Whatever is put together here from sorted runs is a sorted run again, because two members
+    /// end up as neighbors only if they were neighbors in a run or have been compared here. A total
+    /// order gives one result, so that is what `sort_type_set` gives.
+    ///
+    /// Some of the members of a sorted run, in their order, are a sorted run too.
+    ///
+    /// `found`: see `union_of_parts`.
+    fn add_in_order(
+        &self,
+        members: &mut Flat,
+        actual: &[TypeId],
+        found: Option<(TypeId, &PositionSet)>,
+    ) -> Option<Shortcut> {
+        if let Some((whole, positions)) = found
+            && self.has_sorted_runs_for_parts(whole)
+        {
+            let all = self.parts(whole);
+            members.extend(positions.iter().map(|at| all[at]));
+            let shortcut = Shortcut::Joined(whole);
+            return Some(shortcut);
+        }
+        let mut runs = 0;
+        for &ty in actual {
+            let flags = self.flags(ty);
+            if flags & tf::UNION != 0 {
+                if !self.types().is_sorted_run(ty) {
+                    return None;
+                }
+                runs += 1;
+            } else if flags & (tf::ANY | tf::UNKNOWN) != 0 {
+                return None;
+            }
+        }
+        // Two types that aren't unions take one comparison either way.
+        if runs == 0 && actual.len() < 3 {
+            return None;
+        }
+        // Next to one union, to search for the place of a type also tells whether it is there.
+        let joined = match runs > 1 {
+            true => self.join_by_position(members, actual),
+            false => None,
+        };
+        let shortcut = match joined {
+            Some(whole) => Shortcut::Joined(whole),
+            None if self.merge_sorted_runs(members, actual) => Shortcut::Merged,
+            None => return None,
+        };
+        Some(shortcut)
+    }
+
+    /// The same for the members of the union `whole`, if they are known to be a sorted run.
+    fn has_sorted_runs_for_parts(&self, whole: TypeId) -> bool {
+        self.types().is_sorted_run(whole)
+    }
+
+    /// What `types` have of the members of the union `whole`. A type that isn't a union counts as
+    /// its only member.
+    pub(super) fn parts_of_union(&self, whole: TypeId, types: &[TypeId]) -> PartsOf {
+        let all = self.parts(whole);
+        let mut positions = PositionSet::new(all.len());
+        let mut is_in_order = true;
+        for &ty in types {
+            let (parts, mut after) = (self.parts(ty), 0);
+            for (at, member) in parts.iter().enumerate() {
+                let Some(found) = all[after..].iter().position(|it| it == member) else {
+                    if !parts[at..].iter().all(|it| all.contains(it)) {
+                        return PartsOf::Other;
+                    }
+                    is_in_order = false;
+                    break;
+                };
+                after += found + 1;
+                positions.insert(after - 1);
+            }
+        }
+        match is_in_order {
+            true => PartsOf::InOrder(positions),
+            false => PartsOf::OutOfOrder,
+        }
+    }
+
+    /// FOR SPEED: puts `kept`, some of the members of the union `whole`, into the order that they
+    /// have there. `None`: they are to be sorted.
+    fn order_as_in(&self, whole: TypeId, kept: &mut Flat) -> Option<Shortcut> {
+        if !self.has_sorted_runs_for_parts(whole) {
+            return None;
+        }
+        sort_by_id(kept);
+        let is_kept = |member: &TypeId| {
+            kept.binary_search_by_key(&member.arrival_order(), |it| it.arrival_order())
+                .is_ok()
+        };
+        let in_order: Flat = (self.parts(whole).iter().copied())
+            .filter(is_kept)
+            .collect();
+        if in_order.len() != kept.len() {
+            return None;
+        }
+        *kept = in_order;
+        Some(Shortcut::Joined(whole))
+    }
+
+    /// FOR SPEED: narrowing takes members out of a union, and where the branches join again, what
+    /// they have left is put together. If each of `actual` has some of the members of one union, in
+    /// their order, then their union has the members at all those positions, in that order, and
+    /// nothing is compared. Returns that one union.
+    ///
+    /// It is one of `actual`, or the union that one of them was made from. Which union that was is
+    /// only remembered to have something to try: the positions are looked for here.
+    fn join_by_position(&self, members: &mut Flat, actual: &[TypeId]) -> Option<TypeId> {
+        let (mut total, mut longest, mut remembered) = (0, TypeId::NEVER, None);
+        for &ty in actual {
+            let len = self.parts(ty).len();
+            total += len;
+            if len > self.parts(longest).len() {
+                longest = ty;
+            }
+            if remembered.is_none() && len > 1 {
+                remembered = self.wholes_of_unions.get(ty.0, 0).map(TypeId);
+            }
+        }
+        let longest = (remembered != Some(longest)).then_some(longest);
+        for whole in remembered.into_iter().chain(longest) {
+            let all = self.parts(whole);
+            // Each of `actual` is looked for from the start of `all`, which is not worth it in a
+            // union that is long next to what is asked for.
+            if actual.len() * all.len() > MOST_STEPS_FOR_A_POSITION * total
+                || !self.has_sorted_runs_for_parts(whole)
+            {
+                continue;
+            }
+            if let Some(positions) = self.positions_in(all, actual) {
+                members.extend(positions.iter().map(|at| all[at]));
+                return Some(whole);
+            }
+        }
+        None
+    }
+
+    /// Where the members of `actual` are in `all`, if those of each come in the order of `all`.
+    fn positions_in(&self, all: &[TypeId], actual: &[TypeId]) -> Option<PositionSet> {
+        let mut positions = PositionSet::new(all.len());
+        for &ty in actual {
+            let mut after = 0;
+            for member in self.parts(ty) {
+                after += all[after..].iter().position(|it| it == member)? + 1;
+                positions.insert(after - 1);
+            }
+        }
+        Some(positions)
+    }
+
+    /// Merges the members of `actual`, each of which is a sorted run or a type that isn't a union.
+    /// `false`: `CompareTypes` is not known to be an order of them, and `members` is as it was.
+    fn merge_sorted_runs(&self, members: &mut Flat, actual: &[TypeId]) -> bool {
+        self.has_compared_without_total_order.set(false);
+        let mut unions: smallvec::SmallVec<[&'p [TypeId]; 4]> = smallvec::SmallVec::new();
+        // The types that aren't unions make one run. They are sorted unless they come in order.
+        let (mut singles, mut are_in_order) = (Run::new(), true);
+        for &ty in actual {
+            let parts = self.parts(ty);
+            match *parts {
+                [] => {}
+                [only] => {
+                    let mut single = self.ranked(only);
+                    if are_in_order && let Some(last) = singles.last_mut() {
+                        are_in_order = self.compare_ranked(last, &mut single).is_lt();
+                    }
+                    singles.push(single);
+                }
+                _ => unions.push(parts),
+            }
+        }
+        if !are_in_order {
+            self.sort_ranked(&mut singles);
+            singles.dedup_by_key(|it| it.ty);
+        }
+        match unions[..] {
+            [] => members.extend(singles.iter().map(|it| it.ty)),
+            [run] if singles.len() <= 1 || singles.len() * MUCH_LONGER <= run.len() => {
+                self.place_in_run(members, run, &mut singles);
+            }
+            _ => {
+                let merged = self.merge_runs(&unions, &singles);
+                members.extend(merged.iter().map(|it| it.ty));
+            }
+        }
+        if self.has_compared_without_total_order.get() {
+            members.clear();
+            return false;
+        }
+        true
+    }
+
+    /// Adds the members of `run` and `singles`, two sorted runs, to `members`, each once and in
+    /// order. The place of each of `singles` is searched for, and the rest is copied.
+    fn place_in_run(&self, members: &mut Flat, run: &[TypeId], singles: &mut [Ranked<'p>]) {
+        let mut from = 0;
+        for single in singles {
+            let (mut low, mut high) = (from, run.len());
+            while low < high {
+                let middle = (low + high) / 2;
+                let mut member = self.ranked(run[middle]);
+                if self.compare_ranked(&mut member, single).is_lt() {
+                    low = middle + 1;
+                } else {
+                    high = middle;
+                }
+            }
+            members.extend_from_slice(&run[from..low]);
+            if run.get(low) != Some(&single.ty) {
+                members.push(single.ty);
+            }
+            from = low;
+        }
+        members.extend_from_slice(&run[from..]);
+    }
+
+    /// What is in `unions` or in `singles`, all of them sorted runs, each once and in order.
+    fn merge_runs(&self, unions: &[&[TypeId]], singles: &[Ranked<'p>]) -> Run<'p> {
+        let (mut runs, mut merged) = (Run::new(), Run::new());
+        // Where each run ends.
+        let mut ends: smallvec::SmallVec<[usize; 8]> = smallvec::SmallVec::new();
+        for at in 0..unions.len() + usize::from(!singles.is_empty()) {
+            let start = runs.len();
+            match unions.get(at) {
+                Some(run) => runs.extend(run.iter().map(|&ty| self.ranked(ty))),
+                None => runs.extend_from_slice(singles),
+            }
+            // What begins after the end of the run before it makes that run longer.
+            let (before, added) = runs.split_at_mut(start);
+            if let Some(last) = before.last_mut()
+                && self.compare_ranked(last, &mut added[0]).is_lt()
+            {
+                ends.pop();
+            }
+            ends.push(runs.len());
+        }
+        if ends.len() > MOST_RUNS_TO_MERGE {
+            self.sort_ranked(&mut runs);
+            runs.dedup_by_key(|it| it.ty);
+            return runs;
+        }
+        // No run follows the run before it so far.
+        let mut may_follow = false;
+        while ends.len() > 1 {
+            merged.clear();
+            let mut merged_ends: smallvec::SmallVec<[usize; 8]> = smallvec::SmallVec::new();
+            let mut start = 0;
+            for pair in ends.chunks(2) {
+                let end = pair[pair.len() - 1];
+                match *pair {
+                    [middle, _] => {
+                        let (left, right) = runs[start..end].split_at_mut(middle - start);
+                        self.merge_two_runs(left, right, may_follow, &mut merged);
+                    }
+                    _ => merged.extend_from_slice(&runs[start..end]),
+                }
+                merged_ends.push(merged.len());
+                start = end;
+            }
+            std::mem::swap(&mut runs, &mut merged);
+            ends = merged_ends;
+            may_follow = true;
+        }
+        runs
+    }
+
+    /// Adds what is in `left` or in `right`, each once and in order, to `merged`. Neither is empty.
+    /// `may_follow`: `right` may begin after the end of `left`.
+    fn merge_two_runs(
+        &self,
+        left: &mut [Ranked<'p>],
+        right: &mut [Ranked<'p>],
+        may_follow: bool,
+        merged: &mut Run<'p>,
+    ) {
+        let last = left.len() - 1;
+        if may_follow && self.compare_ranked(&mut left[last], &mut right[0]).is_lt() {
+            merged.extend_from_slice(left);
+            merged.extend_from_slice(right);
+            return;
+        }
+        let (long, short) = match left.len() >= right.len() {
+            true => (left, right),
+            false => (right, left),
+        };
+        if short.len() * MUCH_LONGER <= long.len() {
+            // The place of each is searched for in what comes after the place of the one before it.
+            let mut from = 0;
+            for item in short.iter_mut() {
+                let (mut low, mut high) = (from, long.len());
+                while low < high {
+                    let middle = (low + high) / 2;
+                    if self.compare_ranked(&mut long[middle], item).is_lt() {
+                        low = middle + 1;
+                    } else {
+                        high = middle;
+                    }
+                }
+                merged.extend_from_slice(&long[from..low]);
+                if long.get(low).is_none_or(|it| it.ty != item.ty) {
+                    merged.push(*item);
+                }
+                from = low;
+            }
+            merged.extend_from_slice(&long[from..]);
+            return;
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < long.len() && j < short.len() {
+            match self.compare_ranked(&mut long[i], &mut short[j]) {
+                std::cmp::Ordering::Less => {
+                    merged.push(long[i]);
+                    i += 1;
+                }
+                // Only a type and itself compare equal.
+                std::cmp::Ordering::Equal => j += 1,
+                std::cmp::Ordering::Greater => {
+                    merged.push(short[j]);
+                    j += 1;
+                }
+            }
+        }
+        merged.extend_from_slice(&long[i..]);
+        merged.extend_from_slice(&short[j..]);
+    }
+
+    /// `compare_types`. As in `sort_types`, the name of a type is looked up once.
+    fn compare_ranked(&self, a: &mut Ranked<'p>, b: &mut Ranked<'p>) -> std::cmp::Ordering {
+        if a.ty == b.ty {
+            return std::cmp::Ordering::Equal;
+        }
+        if a.flags != b.flags {
+            return a.flags.cmp(&b.flags);
+        }
+        self.look_up_name(a);
+        self.look_up_name(b);
+        some_first(a.name, b.name).then_with(|| self.compare_types(a.ty, b.ty))
+    }
+
+    /// `members` are a sorted run but for `any` and `unknown`, `union` is the union of them, and it
+    /// was made of `actual`. See `add_in_order`.
+    fn note_sorted_runs(
+        &mut self,
+        union: TypeId,
+        actual: &[TypeId],
+        members: &[TypeId],
+        shortcut: Option<Shortcut>,
+    ) {
+        // They have the lowest flags, so they come first.
+        if self.flags(members[0]) & (tf::ANY | tf::UNKNOWN) != 0 {
+            return;
+        }
+        let types = self.types();
+        // Not a named union that has these members and others.
+        if self.is_union(union) && *self.parts(union) == *members {
+            types.mark_sorted_run(union);
+        }
+        match shortcut {
+            Some(Shortcut::Joined(whole)) => self.note_part(union, whole),
+            Some(Shortcut::Merged) => {}
+            // A union among `actual` that is not known to be a sorted run is one if it has some of
+            // these members, in this order.
+            None => {
+                for &ty in actual {
+                    if self.is_union(ty)
+                        && !types.is_sorted_run(ty)
+                        && is_subsequence(self.parts(ty), members)
+                    {
+                        types.mark_sorted_run(ty);
+                    }
+                }
+            }
+        }
+    }
+
+    /// `copy` is `ty` with another alias or origin: a union has the same members. Returns `copy`.
+    pub(super) fn with_members_of(&self, ty: TypeId, copy: TypeId) -> TypeId {
+        if self.types().is_sorted_run(ty) {
+            self.types().mark_sorted_run(copy);
+        }
+        copy
+    }
+
+    /// `part` may have some of the members of the union `whole`, in their order.
+    fn note_part(&mut self, part: TypeId, whole: TypeId) {
+        let types = self.types();
+        if part == whole || !self.is_union(part) || !types.is_sorted_run(whole) {
+            return;
+        }
+        if !types.is_sorted_run(part) {
+            if !is_subsequence(self.parts(part), self.parts(whole)) {
+                return;
+            }
+            types.mark_sorted_run(part);
+        }
+        // `whole` may be a part itself.
+        let whole = self.wholes_of_unions.get(whole.0, 0).unwrap_or(whole.0);
+        self.wholes_of_unions.put(part.0, 0, whole);
     }
 
     /// `containsType` for the members of a union. It tests identity, and a comparison of two types
@@ -2435,7 +3259,10 @@ impl<'p, 's> Checker<'p, 's> {
 
 #[cfg(test)]
 mod tests {
-    use super::PatternsByPrefix;
+    use super::{PatternsByPrefix, Reduction, UnionArguments, UnionCalls, is_subsequence};
+    use crate::bind::SymbolId;
+    use crate::program::{FileId, Sym};
+    use crate::types::TypeId;
 
     /// Every string over `ab` of at most `len` bytes.
     fn strings(len: usize) -> Vec<Vec<u8>> {
@@ -2479,5 +3306,167 @@ mod tests {
             );
             assert_eq!(found, expected, "{:?}", bstr::BStr::new(value));
         }
+    }
+
+    fn get(calls: &UnionCalls, call: &UnionArguments) -> Option<TypeId> {
+        calls.get(call.hash(), call)
+    }
+
+    #[test]
+    fn a_kept_call_answers_the_same_arguments_only() {
+        let alias = |id: u32| Sym {
+            file: FileId(0),
+            id: SymbolId(id),
+        };
+        let literal = Reduction::Literal {
+            merge_constrained: true,
+        };
+        let (types, answer) = ([TypeId(40), TypeId(50), TypeId(60)], TypeId(70));
+        let call = UnionArguments {
+            reduction: literal,
+            types: &types,
+            alias: Some((alias(1), &types[..1])),
+        };
+        let mut calls = UnionCalls::default();
+        assert_eq!(get(&calls, &call), None);
+        calls.put(call.hash(), &call, answer);
+        assert_eq!(get(&calls, &call), Some(answer));
+        let others = [
+            UnionArguments {
+                types: &[TypeId(50), TypeId(40), TypeId(60)],
+                ..call
+            },
+            UnionArguments {
+                types: &types[..2],
+                ..call
+            },
+            // The same numbers, divided in another way.
+            UnionArguments {
+                types: &[TypeId(40), TypeId(50), TypeId(60), TypeId(40)],
+                alias: Some((alias(1), &[])),
+                ..call
+            },
+            UnionArguments {
+                reduction: Reduction::None,
+                ..call
+            },
+            UnionArguments {
+                reduction: Reduction::Literal {
+                    merge_constrained: false,
+                },
+                ..call
+            },
+            UnionArguments {
+                alias: None,
+                ..call
+            },
+            UnionArguments {
+                alias: Some((alias(2), &types[..1])),
+                ..call
+            },
+            UnionArguments {
+                alias: Some((alias(1), &types[1..2])),
+                ..call
+            },
+            UnionArguments {
+                alias: Some((alias(1), &types[..2])),
+                ..call
+            },
+        ];
+        for (at, other) in others.iter().enumerate() {
+            assert_eq!(get(&calls, other), None, "{at}");
+        }
+        for (at, other) in others.iter().enumerate() {
+            calls.put(other.hash(), other, TypeId(at as u32));
+            assert_eq!(get(&calls, other), Some(TypeId(at as u32)));
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn kept_calls_are_overwritten_and_dropped_but_never_mixed_up() {
+        let mut calls = UnionCalls::default();
+        let types_of = |at: u32, len: usize| -> Vec<TypeId> {
+            (0..len as u32).map(|i| TypeId(at * 7 + i)).collect()
+        };
+        // Long enough for `places` to reach its full size, and for `types` to be dropped a few times.
+        let lens = [2, 3, 8, 9, 100, 5000];
+        let count = 3 * UnionCalls::MOST_PLACES as u32;
+        let mut found = 0;
+        for at in 0..count {
+            let types = types_of(at, lens[at as usize % lens.len()]);
+            let call = UnionArguments {
+                reduction: Reduction::None,
+                types: &types,
+                alias: None,
+            };
+            calls.put(call.hash(), &call, TypeId(at));
+            assert_eq!(get(&calls, &call), Some(TypeId(at)));
+            assert!(calls.types.len() <= UnionCalls::MOST_TYPES);
+            // An earlier call is there with its own answer, or it is gone.
+            let earlier = at / 2;
+            let types = types_of(earlier, lens[earlier as usize % lens.len()]);
+            let call = UnionArguments {
+                types: &types,
+                ..call
+            };
+            let known = get(&calls, &call);
+            assert!(known.is_none() || known == Some(TypeId(earlier)));
+            found += u32::from(known.is_some());
+        }
+        assert!(found > 0 && found < count);
+        assert_eq!(calls.places.len(), UnionCalls::MOST_PLACES);
+        let too_long = vec![TypeId(1); UnionCalls::MOST_TYPES + 1];
+        let call = UnionArguments {
+            reduction: Reduction::None,
+            types: &too_long,
+            alias: None,
+        };
+        calls.put(call.hash(), &call, TypeId(1));
+        assert_eq!(get(&calls, &call), None);
+    }
+
+    #[test]
+    fn long_lists_that_differ_in_the_middle_are_told_apart() {
+        fn call(types: &[TypeId]) -> UnionArguments<'_> {
+            UnionArguments {
+                reduction: Reduction::None,
+                types,
+                alias: None,
+            }
+        }
+        for len in [32, 33, 100] {
+            let types: Vec<TypeId> = (0..len).map(TypeId).collect();
+            let mut other = types.clone();
+            other[len as usize / 2] = TypeId(1000);
+            // Only a list of more than 32 has a middle that its hash leaves out.
+            assert_eq!(call(&types).hash() == call(&other).hash(), len > 32);
+            let mut calls = UnionCalls::default();
+            calls.put(call(&types).hash(), &call(&types), TypeId(1));
+            assert_eq!(get(&calls, &call(&types)), Some(TypeId(1)));
+            assert_eq!(get(&calls, &call(&other)), None);
+            calls.put(call(&other).hash(), &call(&other), TypeId(2));
+            assert_eq!(get(&calls, &call(&other)), Some(TypeId(2)));
+        }
+    }
+
+    #[test]
+    fn a_subsequence_has_its_items_in_the_order_of_the_whole() {
+        let ids = |numbers: &[u32]| -> Vec<TypeId> { numbers.iter().map(|&n| TypeId(n)).collect() };
+        let all = ids(&[5, 3, 9, 1, 7]);
+        for some in [&[][..], &[5], &[7], &[5, 7], &[3, 9, 1], &[5, 3, 9, 1, 7]] {
+            assert!(is_subsequence(&ids(some), &all), "{some:?}");
+        }
+        for some in [
+            &[2][..],
+            &[3, 5],
+            &[7, 7],
+            &[5, 3, 9, 1, 7, 7],
+            &[9, 1, 7, 2],
+        ] {
+            assert!(!is_subsequence(&ids(some), &all), "{some:?}");
+        }
+        assert!(is_subsequence(&[], &[]));
+        assert!(!is_subsequence(&all[..1], &[]));
     }
 }

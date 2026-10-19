@@ -181,6 +181,17 @@ pub struct VirtualMachine {
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
+    /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
+    /// `[serve.static] plugins` of bunfig.toml.
+    pub bake_config_plugins: crate::strong::Optional,
+    /// The names of `bake_config_plugins`.
+    pub bake_config_plugin_names: Box<[Box<[u8]>]>,
+    /// `bun bake`: the next `Bun.serve()` (its own) adds the routers of a framework: the one in
+    /// `bake_framework`, or the default React framework. That call clears it.
+    pub bake_pages: bool,
+    /// `bun bake`: the `framework` object of a plugin in `bake.config.ts`, as for the `app` option of
+    /// `Bun.serve()`. Empty for the default React framework.
+    pub bake_framework: crate::strong::Optional,
     pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
     // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
@@ -3240,6 +3251,8 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
+            addr_of_mut!((*vm).bake_config_plugin_names).write(Box::default());
+            addr_of_mut!((*vm).bake_pages).write(false);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
             // Left at the
@@ -4658,22 +4671,29 @@ impl VirtualMachine {
         }
     }
 
+    /// Starts the process again with the same arguments, as `--watch` does on a change. Emits the
+    /// `--watch-kill-signal` JS handlers first, like node. On Windows, this needs the watcher-manager
+    /// parent (`bun_sys::windows::become_watcher_manager`). Returns only when the restart failed and
+    /// `may_return` is true; the error is printed.
+    pub fn restart_process(&mut self, may_return: bool) {
+        crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
+        let should_clear_terminal = !self
+            .env_loader()
+            .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
+        // execve will not reach on_exit; flush the compile cache here like
+        // node's child does via AtExit(FlushCompileCache) on every restart.
+        crate::node_compile_cache::persist_now();
+        bun_core::Output::flush();
+        bun_core::reload_process(should_clear_terminal, may_return);
+    }
+
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
-            // entry promise (node restarts regardless of child state), and
-            // emit the --watch-kill-signal JS handlers first, like node.
-            crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
-            let should_clear_terminal =
-                !self.env_loader().has_set_no_clear_terminal_on_reload(
-                    !bun_core::Output::enable_ansi_colors_stdout(),
-                );
-            // execve will not reach on_exit; flush the compile cache here like
-            // node's child does via AtExit(FlushCompileCache) on every restart.
-            crate::node_compile_cache::persist_now();
-            bun_core::Output::flush();
-            bun_core::reload_process(should_clear_terminal, false);
+            // entry promise (node restarts regardless of child state).
+            self.restart_process(false);
+            unreachable!("reload_process returns only when may_return is true");
         }
 
         if let Some(p) = self.pending_internal_promise() {
@@ -5647,6 +5667,9 @@ impl VirtualMachine {
         drop(core::mem::take(&mut self.main_resolved_path));
 
         self.overridden_main.deinit();
+        self.bake_config_plugins.deinit();
+        drop(core::mem::take(&mut self.bake_config_plugin_names));
+        self.bake_framework.deinit();
         self.pending_internal_promise.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so

@@ -1,8 +1,8 @@
 //! The strongly connected components of the import graph, and their levels. Computed once, at the
 //! end of loading.
 //!
-//! The link step resolves exports and aliases component by component, level by level. Everything
-//! here is a function of the graph and of program order alone.
+//! The link step resolves exports and aliases one component at a time, each after the components
+//! it imports. Everything here depends only on the graph and on program order.
 
 use crate::program::FileId;
 use crate::session::Arena;
@@ -12,6 +12,8 @@ pub struct Component<'s> {
     pub files: &'s [FileId],
     /// 0 if it imports nothing outside itself. Otherwise one more than the highest level of a component it imports.
     pub level: u32,
+    /// Indices in `Components::all` of the other components that its files import, without duplicates.
+    pub imports: &'s [u32],
 }
 
 pub struct Components<'s> {
@@ -53,11 +55,17 @@ impl<'s> Components<'s> {
         // Numbered by the traversal: a component has a higher number than every component it imports.
         let (number_of, numbered) = strongly_connected_components(&edges);
         let mut levels = vec![0u32; numbered.len()];
+        let mut imports: Vec<Vec<usize>> = vec![Vec::new(); numbered.len()];
+        // For each component, the last component found to import it. Used to skip duplicates in `imports`.
+        let mut last_importer = vec![usize::MAX; numbered.len()];
         for (number, nodes) in numbered.iter().enumerate() {
             for &imported in nodes.iter().flat_map(|&node| &edges[node]) {
                 let imported = number_of[imported as usize] as usize;
                 if imported != number {
                     levels[number] = levels[number].max(levels[imported] + 1);
+                    if std::mem::replace(&mut last_importer[imported], number) != number {
+                        imports[number].push(imported);
+                    }
                 }
             }
         }
@@ -70,6 +78,7 @@ impl<'s> Components<'s> {
         let component = |&number: &usize| Component {
             files: arena.alloc_slice_fill_iter(numbered[number].iter().map(|&node| order[node])),
             level: levels[number],
+            imports: arena.alloc_slice_fill_iter(imports[number].iter().map(|&it| index_of[it])),
         };
         let of_node = |&node: &u32| match number_of.get(node as usize) {
             Some(&number) => index_of[number as usize],
@@ -79,16 +88,6 @@ impl<'s> Components<'s> {
             all: arena.alloc_slice_fill_iter(in_program_order.iter().map(component)),
             of_file: arena.alloc_slice_fill_iter(node_of.iter().map(of_node)),
         }
-    }
-
-    /// The indices in `all` of the components of level 0, of level 1, .. Within a level in program order.
-    pub fn by_level(&self) -> Vec<Vec<u32>> {
-        let levels = self.all.iter().map(|it| it.level as usize + 1).max();
-        let mut by_level: Vec<Vec<u32>> = vec![Vec::new(); levels.unwrap_or(0)];
-        for (index, component) in self.all.iter().enumerate() {
-            by_level[component.level as usize].push(index as u32);
-        }
-        by_level
     }
 }
 

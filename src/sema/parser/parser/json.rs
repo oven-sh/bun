@@ -64,7 +64,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             kind: StmtKind::ExportAssign(value),
             start: 0,
             loc: TextRange::default(),
-            modifiers: Span::EMPTY,
         });
         id
     }

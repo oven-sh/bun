@@ -46,12 +46,14 @@ test("http.client.request span is closed when the proxy CONNECT tunnel fails", a
 // Node stamps a trace event in native code with uv_hrtime() / 1000: the process.hrtime() clock, in
 // microseconds. So a stamp that another process takes between two hrtime readings of this process
 // lands between them, and a process.hrtime that user code replaced does not change it.
-test("a trace event is stamped on the process.hrtime() clock", async () => {
+test.concurrent("a trace event is stamped on the process.hrtime() clock", async () => {
   using dir = tempDir("trace-events-ts", {
     "main.mjs": `
       process.on("message", () => {
         process.hrtime = () => [0, 5_000_000];
         console.time("stamp");
+        // A changed title is one more metadata event.
+        process.title = "trace-events-ts";
         process.disconnect();
       });
       process.send("ready");
@@ -60,6 +62,7 @@ test("a trace event is stamped on the process.hrtime() clock", async () => {
   const traceFile = join(String(dir), "node_trace.log");
   const ready = Promise.withResolvers<void>();
 
+  const spawned = process.hrtime.bigint() / 1000n;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--trace-event-categories", "node.console", "--trace-event-file-pattern", traceFile, "main.mjs"],
     env: bunEnv,
@@ -83,11 +86,19 @@ test("a trace event is stamped on the process.hrtime() clock", async () => {
   const stamps = events.filter(e => e.name === "time::stamp").map(e => BigInt(e.ts));
   const ordered = stamps.length === 1 && sent <= stamps[0] && stamps[0] <= received;
   expect({ sent, stamps, received, ordered, exitCode }).toEqual({ sent, stamps, received, ordered: true, exitCode: 0 });
+
+  // Node stamps the metadata events on the same clock: none of them is at 0.
+  const metadata = events.filter(e => e.ph === "M");
+  const unstamped = metadata.filter(e => !(spawned <= BigInt(e.ts) && BigInt(e.ts) <= received));
+  expect({ titles: metadata.filter(e => e.name === "process_name").length, unstamped }).toEqual({
+    titles: 2,
+    unstamped: [],
+  });
 });
 
 // Every thread stamps with the same clock, so in the merged file the event of a worker lies between
 // an event that the main thread emitted before it and one that the main thread emitted after it.
-test("the trace events of a worker are stamped on the clock of the main thread", async () => {
+test.concurrent("the trace events of a worker are stamped on the clock of the main thread", async () => {
   using dir = tempDir("trace-events-worker-ts", {
     "main.cjs": `
       const { Worker, isMainThread, parentPort } = require("node:worker_threads");
@@ -111,6 +122,7 @@ test("the trace events of a worker are stamped on the clock of the main thread",
   });
   const traceFile = join(String(dir), "node_trace.log");
 
+  const spawned = process.hrtime.bigint() / 1000n;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--trace-event-categories", "node.console", "--trace-event-file-pattern", traceFile, "main.cjs"],
     env: bunEnv,
@@ -119,6 +131,7 @@ test("the trace events of a worker are stamped on the clock of the main thread",
     stderr: "inherit",
   });
   const exitCode = await proc.exited;
+  const exited = process.hrtime.bigint() / 1000n;
 
   const events = JSON.parse(readFileSync(traceFile, "utf8")).traceEvents;
   const stamps = (label: string) =>
@@ -133,4 +146,8 @@ test("the trace events of a worker are stamped on the clock of the main thread",
     before[0].ts <= worker[0].ts &&
     worker[0].ts <= after[0].ts;
   expect({ before, worker, after, ordered, exitCode }).toEqual({ before, worker, after, ordered: true, exitCode: 0 });
+
+  // Every event of the file, the thread name of the worker included, lies in the life of the child.
+  const outside = events.filter(e => !(spawned <= BigInt(e.ts) && BigInt(e.ts) <= exited));
+  expect(outside).toEqual([]);
 });

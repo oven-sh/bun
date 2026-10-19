@@ -22,6 +22,7 @@ const everEnabled = new Set<string>();
 
 const events: object[] = [];
 let activated = false;
+let activatedAt: number | undefined;
 let tid = 1;
 let initialTitle: string | undefined;
 let filePattern: string | null = null;
@@ -60,8 +61,12 @@ const kThreadpoolSyncCat = "node,node.threadpoolwork,node.threadpoolwork.sync";
 const kEnvironmentCat = "node,node.environment";
 const kBootstrapCat = "node,node.bootstrap";
 
-// Microseconds on the process.hrtime() clock, as in node. Bound by activate(), which runs before any event is stamped.
-let now: () => number;
+let hrtimeMicroseconds: (() => number) | undefined;
+// Microseconds on the process.hrtime() clock, as in node. Not process.hrtime itself: user code can replace that.
+function now(): number {
+  hrtimeMicroseconds ??= $newCppFunction("BunProcess.cpp", "jsFunctionHRTimeMicroseconds", 0) as () => number;
+  return hrtimeMicroseconds();
+}
 
 function setTid(value: number) {
   tid = value;
@@ -200,8 +205,7 @@ function initFromCli(catString: string, pattern: string | null) {
 function activate() {
   if (activated) return;
   activated = true;
-  // First: a 'newListener' handler that process.on() runs below can emit an event.
-  now = $newCppFunction("BunProcess.cpp", "jsFunctionHRTimeMicroseconds", 0);
+  activatedAt = now();
   initialTitle = process.title;
   process.on("exit", flush);
   installTimerInstrumentation();
@@ -352,9 +356,10 @@ function mergeWorkerParts(fileName: string) {
 }
 
 function emitMetadata(target: object[] = events) {
-  const ts = 0;
+  // Node stamps these when its agent starts, and a changed title when it changes.
+  const startedAt = activatedAt ?? now();
   const pid = process.pid;
-  function meta(name: string, args: unknown, metaTid: number = tid) {
+  function meta(name: string, args: unknown, metaTid: number = tid, ts: number = startedAt) {
     target.push({ pid, tid: metaTid, ts, ph: "M", cat: "__metadata", name, args });
   }
   meta("thread_name", { name: "JavaScriptMainThread" }, tid);
@@ -374,7 +379,7 @@ function emitMetadata(target: object[] = events) {
   meta("process_name", { name: initialTitle });
   const { title } = process;
   if (title !== initialTitle) {
-    meta("process_name", { name: title });
+    meta("process_name", { name: title }, tid, now());
   }
 }
 
@@ -392,7 +397,7 @@ function emitWorkerThreadName(name: unknown, threadId: number) {
   events.push({
     pid: process.pid,
     tid: threadId + 1,
-    ts: 0,
+    ts: now(),
     ph: "M",
     cat: "__metadata",
     name: "thread_name",

@@ -9,6 +9,9 @@
 //! A case passes if the messages are the same (rule, id, text, place, fix, and for each suggestion
 //! id, text, fix and the code after it) and the code after one pass of fixes is.
 //!
+//! Here `--fix` never applies a fix that can change what a program does, even if upstream's `--fix` does. Those fixes
+//! need `--fix-dangerously`. They're compared as regular fixes, and the cases that have one are counted.
+//!
 //! `oxlint/` has the tests of the rules that are ports of oxlint's, with what the executable of oxlint reports. It does not print
 //! its fixes: there the code is compared after what `--fix` applies, then also `--fix-suggestions`, then also `--fix-dangerously`.
 
@@ -700,6 +703,10 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     output_line!(
         "\n{} cases have their messages in another order",
         counts.in_another_order.load(Ordering::Relaxed)
+    );
+    output_line!(
+        "\n{} cases have a fix that --fix holds back",
+        counts.holding_back_a_fix.load(Ordering::Relaxed)
     );
     output_line!(
         "\n{} rules, {perfect} without failures, {missing} not implemented\n{} cases passed, {} failed, {} skipped",

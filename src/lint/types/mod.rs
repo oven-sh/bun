@@ -237,7 +237,6 @@ queries! {
     fn current_directory() -> &'a [u8];
     fn current_file() -> FileId;
     fn file_info(file: FileId) -> FileInfo<'a>;
-    fn source_file(file_name: &[u8]) -> Option<FileId>;
     /// The file that `specifier`, which is written in an import or an export of the file at hand,
     /// resolves to.
     fn resolve_module_name(specifier: &[u8]) -> Option<FileId>;
@@ -301,7 +300,6 @@ queries! {
     fn type_of_property_of_type(ty: TypeId, name: &[u8]) -> Option<TypeId>;
     fn index_infos_of_type(ty: TypeId) -> &'a [IndexInfoData];
     fn signatures_of_type(ty: TypeId, kind: SignatureKind) -> &'a [SigId];
-    fn compare_types(a: TypeId, b: TypeId) -> Option<std::cmp::Ordering>;
     fn type_to_string(ty: TypeId, enclosing: Option<NodeRef>, flags: TypeFormatFlags) -> Vec<u8>;
 
     // ── symbols ──
@@ -315,7 +313,6 @@ queries! {
     fn symbol_table(table: SymbolTable, symbol: SymbolRef) -> &'a [SymbolRef];
     fn is_unknown_symbol(symbol: SymbolRef) -> bool;
     fn deprecation_of_symbol(symbol: SymbolRef) -> Option<&'a [u8]>;
-    fn symbol_to_string(symbol: SymbolRef) -> Vec<u8>;
 
     // ── signatures ──
     fn signature_info(signature: SigId) -> SignatureInfo<'a>;

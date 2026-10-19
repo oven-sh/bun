@@ -1322,6 +1322,51 @@ describe("bun.lock entries that no dependency resolves to", () => {
     await write(join(packageDir, "bun.lock"), JSON.stringify({ ...JSON.parse(lockfile), packages: inUse }));
     expect(await dryRun()).toEqual({ skipped: [], exitCode: 0 });
   });
+
+  // What a workspace depends on is resolved from `workspaces`, under the workspace's own name. Its
+  // dependencies that cannot hoist are also printed below every other key the workspace is at.
+  // Those entries are in use too: a file that Bun wrote is loaded once.
+  it.concurrent.each([
+    [
+      "a workspace that a root dependency of the same name keeps out of the root",
+      { "": { dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.2" } } },
+      { "packages/no-deps": { name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } } },
+      { "packages/beta": { name: "beta", version: "1.0.0", dependencies: { "no-deps": "workspace:*" } } },
+      ["beta/no-deps", "beta/no-deps/a-dep"],
+    ],
+    [
+      "a workspace under a second name",
+      { "": { dependencies: { "not-member": "workspace:member@*", "no-deps": "2.0.0" } } },
+      { "packages/member": { name: "member", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } } },
+      {},
+      ["not-member", "not-member/no-deps"],
+    ],
+    [
+      "a workspace that depends on the project",
+      { "": { name: "a-dep", version: "9.0.0", dependencies: { "no-deps": "^1.0.0", "a-dep": "1.0.1" } } },
+      { "packages/no-deps": { name: "no-deps", version: "5.0.0", dependencies: { "a-dep": "workspace:*" } } },
+      {},
+      ["./no-deps/a-dep", "./no-deps/a-dep/a-dep"],
+    ],
+  ] as const)("Bun writes no such entry for %s", async (_, root, member, dependent, written) => {
+    const manifests = Object.entries({ ...member, ...dependent }).map(([path, json]) => [
+      `${path}/package.json`,
+      JSON.stringify(json),
+    ]);
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"], ...root[""] }),
+        ...Object.fromEntries(manifests),
+      },
+    });
+    const run = makeInstallRunner(packageDir);
+    await run(["install"]);
+    const { packages } = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text());
+    expect(Object.keys(packages)).toEqual(expect.arrayContaining([...written]));
+
+    const { err } = await run(["install", "--frozen-lockfile", "--dry-run", "--verbose"]);
+    expect(err.split("\n").filter(line => line.includes("unused bun.lock"))).toEqual([]);
+  });
 });
 
 // bun.lock stores every package as "<name>@<resolution>" and splits the name back off at the

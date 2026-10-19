@@ -69,6 +69,28 @@ test("an expected failure whose after hook registers a failing before hook", { e
   throw new Error("expected");
 });
 
+// Node cancels what a hook leaves when the hooks are done. A test fails for a
+// subtest that is cancelled, and not for a todo subtest or a hook.
+test("an after hook leaves a todo subtest that is not finished", t => {
+  t.after(() => {
+    t.test("later", { todo: true }, () => new Promise(resolve => setTimeout(resolve, 20)));
+  });
+});
+
+test("an after hook registers a before hook that needs time", t => {
+  t.after(() => {
+    t.before(() => new Promise(resolve => setTimeout(resolve, 20)));
+  });
+});
+
+test("a subtest that is done or skipped is not one that a hook leaves", async t => {
+  t.after(() => {
+    t.test("skipped", { skip: true }, () => {});
+    t.before(() => new Promise(resolve => setTimeout(resolve, 20)));
+  });
+  await t.test("done", () => {});
+});
+
 test("the hooks and their subtests ran", () => {
   assert.deepStrictEqual(events.slice(0, 2), ["from after", "from afterEach"]);
   // Node runs a before hook when it is registered. bun runs it in the order of the subtests of the test.

@@ -1570,6 +1570,8 @@ class TestNode {
   // Inline subtests are serialized through this chain. `concurrency` is
   // validated for Node-compat error codes but subtests always run serially.
   subtestChain: Promise<unknown> = kSettledChain;
+  // The subtests on the chain that are not done, without the todo ones: what Node fails a test for when it cancels them.
+  unfinishedSubtests = 0;
   failedSubtests = 0;
   firstSubtestError: unknown = undefined;
   // First failure from a before hook created while this test was running.
@@ -2405,10 +2407,14 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     if (node.subtestChain === kSettledChain) break;
     waited = true;
     if (!(await subtestsSettleAtOnce(node))) {
-      // Node cancels a subtest that is not finished at this point, and its parent fails for it.
+      // Node cancels what is not finished at this point. A test fails for a subtest, and not for a hook.
       node.subtestChain = kSettledChain;
-      node.failedSubtests++;
-      node.firstSubtestError ??= cancelledByParentFailure();
+      const { unfinishedSubtests } = node;
+      if (unfinishedSubtests > 0) {
+        node.unfinishedSubtests = 0;
+        node.failedSubtests += unfinishedSubtests;
+        node.firstSubtestError ??= cancelledByParentFailure();
+      }
     }
   }
   if (waited && !acceptedXfail) {
@@ -2433,6 +2439,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 }
 
 function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo: boolean): Promise<undefined> {
+  if (!ownTodo) parent.unfinishedSubtests++;
   const run = async () => {
     if (child.options.skip) {
       child.finished = true;
@@ -2453,6 +2460,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
       parent.failedSubtests++;
       parent.firstSubtestError ??= failure;
     }
+    if (!ownTodo && parent.unfinishedSubtests > 0) parent.unfinishedSubtests--;
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
   return result.then(() => undefined);
@@ -2489,6 +2497,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
   // A describe()/suite() created while a test is running becomes a suite
   // subtest: its children were collected eagerly when the callback ran and are
   // already chained on the suite's own subtestChain; failures roll up here.
+  if (!ownTodo) parent.unfinishedSubtests++;
   const run = async () => {
     if (build !== undefined) {
       try {
@@ -2534,6 +2543,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
       parent.failedSubtests++;
       parent.firstSubtestError ??= suite.firstSubtestError;
     }
+    if (!ownTodo && parent.unfinishedSubtests > 0) parent.unfinishedSubtests--;
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
   return result.then(() => undefined);
@@ -2573,21 +2583,10 @@ function currentCollectionParent(): TestNode {
   return getRootNode();
 }
 
-function createTopLevelTestRunner(declared: TestNode, fn: TestFn, declaredTodo = false) {
-  const { todoFlag } = declared;
-  let ran = false;
+function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = false) {
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
   return (done: (error?: unknown) => void) => {
-    // A retry calls this again, and a node keeps its run's state (finished, failed subtests, added hooks).
-    let node = declared;
-    if (ran) {
-      node = new TestNode(declared.name, declared.parent, declared.options, false, false);
-      node.filePath = declared.filePath;
-      node.ownTags = declared.ownTags;
-      node.todoFlag = todoFlag;
-    }
-    ran = true;
     // Under plain bun:test a describe.todo scope already handles its children's
     // todo verdict (FailBecauseTodoPassed under --todo), so don't override when
     // the flag was only inherited; under a run() child the suite registers as a

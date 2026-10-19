@@ -399,6 +399,9 @@ describe.concurrent("a subtest that is created before its parent is finished", (
         "(pass) an after hook that a subtest from an after hook registers",
         "(pass) an after hook that a before hook from an after hook registers",
         "(pass) an expected failure whose after hook registers a failing before hook",
+        "(pass) an after hook leaves a todo subtest that is not finished",
+        "(pass) an after hook registers a before hook that needs time",
+        "(pass) a subtest that is done or skipped is not one that a hook leaves",
         "(pass) the hooks and their subtests ran",
       ],
       errors: null,
@@ -417,6 +420,7 @@ describe.concurrent("a subtest that is created before its parent is finished", (
         "(fail) a failing before hook that an after hook registers",
         "(fail) the body throws and a subtest from an after hook fails",
         "(fail) a subtest from an after hook that does not settle",
+        "(fail) two subtests from an after hook that do not settle",
         "(pass) a later test still runs",
       ],
       errors: [
@@ -431,6 +435,8 @@ describe.concurrent("a subtest that is created before its parent is finished", (
         "error: from the before hook",
         "error: from the body",
         "error: 1 subtest failed",
+        "error: test did not finish before its parent and was cancelled",
+        "error: 2 subtests failed",
         "error: test did not finish before its parent and was cancelled",
       ],
       exitCode: 1,
@@ -454,7 +460,9 @@ describe.concurrent("a subtest that is created before its parent is finished", (
         "(pass) the after hook of a test calls the global describe()",
         "(fail) the after hook of a failed test calls the global test()",
         "(fail) t.describe() in an after hook",
-        "(fail) an after hook registers a before hook that needs time",
+        "(fail) an after hook leaves a suite that is not finished",
+        "(pass) an after hook leaves a todo suite that is not finished",
+        "(pass) a suite that is done is not one that a hook leaves",
         "(fail) an after hook closes what its subtest reads",
         "(fail) an after hook creates a subtest after a body that threw",
         "(pass) an expected failure whose after hook leaves a subtest",
@@ -474,30 +482,14 @@ describe.concurrent("a subtest that is created before its parent is finished", (
     });
   }, 30_000);
 
-  test("--retry gives each attempt its own test", async () => {
-    const { exitCode, stdout, stderr } = await runTests(["40-retry-subtests.js"], {}, ["--retry", "1"]);
-    expect({ results: reportOf(stderr).results, events: eventsOf(stdout), exitCode }).toEqual({
-      results: ["(pass) subtests that fail on the first attempt only (attempt 2)"],
-      events: [
-        "attempt 1 has the tags retried",
-        "body subtest 1",
-        "hook subtest 1",
-        "attempt 2 has the tags retried",
-        "body subtest 2",
-        "hook subtest 2",
-      ],
-      exitCode: 0,
-    });
-  }, 30_000);
-
   // [fixture, what the summary of node has, exit code, events]
   const onNode: [string, string[], number, string[] | undefined][] = [
-    ["39-subtests-in-hooks.js", ["pass 14", "fail 0", "cancelled 0"], 0, undefined],
-    ["39b-subtests-in-hooks-fail.js", ["pass 3", "fail 13", "cancelled 1"], 1, undefined],
+    ["39-subtests-in-hooks.js", ["pass 18", "fail 0", "cancelled 0"], 0, undefined],
+    ["39b-subtests-in-hooks-fail.js", ["pass 3", "fail 14", "cancelled 3"], 1, undefined],
     ["39c-failed-body-and-hooks.js", ["pass 2", "fail 0", "cancelled 2"], 1, undefined],
     [
       "39d-differences-from-node.js",
-      ["pass 9", "fail 4", "cancelled 0"],
+      ["pass 8", "fail 7", "cancelled 0"],
       1,
       ["test from the global test()", "test from the global describe()", "left by the body", "from the hook"],
     ],

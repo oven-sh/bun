@@ -49,11 +49,29 @@ test("t.describe() in an after hook", t => {
   });
 });
 
-// Node runs a before hook when it is registered, and does not wait for it.
-// bun waits for it as for a subtest, and it is not finished in time.
-test("an after hook registers a before hook that needs time", t => {
+// On bun a suite from t.describe() counts for its parent as a subtest does.
+test("an after hook leaves a suite that is not finished", t => {
+  t.after(() => {
+    t.describe("left", () => {
+      it("does not settle", () => new Promise(() => {}));
+    });
+  });
+});
+
+test("an after hook leaves a todo suite that is not finished", t => {
+  t.after(() => {
+    t.describe("left", { todo: true }, () => {
+      it("does not settle", () => new Promise(() => {}));
+    });
+  });
+});
+
+test("a suite that is done is not one that a hook leaves", async t => {
   t.after(() => {
     t.before(() => new Promise(resolve => setTimeout(resolve, 20)));
+  });
+  await t.describe("done", () => {
+    it("child", () => {});
   });
 });
 

@@ -63,4 +63,11 @@ test("a subtest from an after hook that does not settle", t => {
   });
 });
 
+test("two subtests from an after hook that do not settle", t => {
+  t.after(() => {
+    t.test("first", () => new Promise(() => {}));
+    t.test("second", () => new Promise(() => {}));
+  });
+});
+
 test("a later test still runs", () => {});

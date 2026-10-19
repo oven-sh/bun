@@ -1231,6 +1231,128 @@ describe("sign/verify context option", () => {
   });
 });
 
+// OpenSSL keeps one error queue per thread, and an operation can leave entries in it. A key pair
+// generation that fails must report its own error, whatever ran on its thread before it. This
+// runs in a child process, because it leaves entries in those queues on purpose.
+it("generateKeyPair reports its own error after earlier operations left errors on its thread", async () => {
+  // Generations that fail: [type, options, the code of the failure].
+  const failing = {
+    rsa: ["rsa", { modulusLength: 128 }, "ERR_OSSL_EVP_INVALID_KEYBITS"],
+    // This one fails in the keygen step, where BoringSSL empties the queue itself. The others fail before it.
+    "rsa, in keygen": ["rsa", { modulusLength: 32768 }, "ERR_OSSL_RSA_MODULUS_TOO_LARGE"],
+    dsa: ["dsa", { modulusLength: 2048 }, "ERR_OSSL_EVP_UNSUPPORTED_ALGORITHM"],
+    dh: ["dh", { primeLength: 1 }, "ERR_OSSL_EVP_UNSUPPORTED_ALGORITHM"],
+    ec: ["ec", { namedCurve: "secp224k1" }, "ERR_OSSL_EC_UNKNOWN_GROUP"],
+    ed448: ["ed448", {}, "ERR_OSSL_EVP_UNSUPPORTED_ALGORITHM"],
+  };
+  const script = `
+    import crypto from "node:crypto";
+    import tls from "node:tls";
+    import { promisify } from "node:util";
+
+    const failing = ${JSON.stringify(failing)};
+    const codeOf = call => {
+      try {
+        call();
+        return "no error";
+      } catch (e) {
+        return e.code;
+      }
+    };
+    const callbackCode = (type, options) =>
+      new Promise(resolve => crypto.generateKeyPair(type, options, err => resolve(err ? err.code : "no error")));
+
+    // Each of these calls leaves entries in the error queue of the JS thread.
+    const earlierCalls = {
+      "createSecureContext throws": () => codeOf(() => tls.createSecureContext({ key: "not a pem", cert: "not a pem" })),
+      "verifySpkac returns false": () => "returned " + crypto.Certificate.verifySpkac(Buffer.from("not an spkac")),
+    };
+    // Here the key is generated and its encoding fails: BoringSSL has no AES-GCM for PKCS#8.
+    const encrypted = { type: "pkcs8", format: "pem", cipher: "aes-256-gcm", passphrase: "secret" };
+    const encodings = { publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: encrypted };
+    const { privateKey } = crypto.generateKeyPairSync("ed25519");
+    const jsThread = {};
+    for (const [earlier, earlierCall] of Object.entries(earlierCalls)) {
+      const run = call => ({ alone: codeOf(call), earlier: earlierCall(), after: codeOf(call) });
+      const after = {};
+      for (const [name, [type, options]] of Object.entries(failing)) {
+        after[name] = run(() => crypto.generateKeyPairSync(type, options));
+      }
+      after["encode, generateKeyPairSync"] = run(() => crypto.generateKeyPairSync("ed25519", encodings));
+      after["encode, KeyObject.export"] = run(() => privateKey.export(encrypted));
+      // The callback form encodes on the JS thread when the job completes, which is after earlierCall().
+      const alone = await callbackCode("ed25519", encodings);
+      const pending = callbackCode("ed25519", encodings);
+      after["encode, generateKeyPair"] = { alone, earlier: earlierCall(), after: await pending };
+      jsThread[earlier] = after;
+    }
+
+    const tally = outcomes => outcomes.reduce((counts, o) => ((counts[o] = (counts[o] || 0) + 1), counts), {});
+    const times32 = job => Promise.all(Array.from({ length: 32 }, job)).then(tally);
+    const { publicKey } = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+    // Each of these jobs leaves an entry in the error queue of the work pool thread that runs it.
+    const earlierJobs = {
+      "generatePrime fails": () =>
+        new Promise(resolve => crypto.generatePrime(1, err => resolve(err ? "failed" : "generated"))),
+      "subtle.verify resolves false": () =>
+        crypto.subtle
+          .verify({ name: "ECDSA", hash: "SHA-256" }, publicKey, new Uint8Array(64), new Uint8Array(1))
+          .then(ok => "resolved " + ok),
+    };
+    const generateKeyPair = promisify(crypto.generateKeyPair);
+    const generations = { "ed448, promise form": () => generateKeyPair("ed448").then(() => "no error", err => err.code) };
+    for (const [name, [type, options]] of Object.entries(failing)) {
+      generations[name] = () => callbackCode(type, options);
+    }
+    const workPool = {};
+    for (const [earlier, earlierJob] of Object.entries(earlierJobs)) {
+      workPool[earlier] = {};
+      for (const [name, generation] of Object.entries(generations)) {
+        workPool[earlier][name] = { earlier: await times32(earlierJob), after: await times32(generation) };
+      }
+    }
+    workPool["ed25519 after them"] = await times32(() => callbackCode("ed25519", {}));
+
+    console.log(JSON.stringify({ "JS thread": jsThread, "work pool": workPool }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    // Two pool threads, so that the earlier jobs reach every thread that runs a generation.
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  const forEachFailing = value =>
+    Object.fromEntries(Object.entries(failing).map(([name, [, , code]]) => [name, value(code)]));
+  const onJSThread = outcome => {
+    const own = code => ({ alone: code, earlier: outcome, after: code });
+    return {
+      ...forEachFailing(own),
+      "encode, generateKeyPairSync": own("ERR_OSSL_UNSUPPORTED_CIPHER"),
+      "encode, KeyObject.export": own("ERR_OSSL_UNSUPPORTED_CIPHER"),
+      "encode, generateKeyPair": own("ERR_OSSL_UNSUPPORTED_CIPHER"),
+    };
+  };
+  const onWorkPool = outcome => {
+    const own = code => ({ earlier: { [outcome]: 32 }, after: { [code]: 32 } });
+    return { ...forEachFailing(own), "ed448, promise form": own(failing.ed448[2]) };
+  };
+  expect(JSON.parse(stdout)).toEqual({
+    "JS thread": {
+      "createSecureContext throws": onJSThread("ERR_OSSL_PEM_NO_START_LINE"),
+      "verifySpkac returns false": onJSThread("returned false"),
+    },
+    "work pool": {
+      "generatePrime fails": onWorkPool("failed"),
+      "subtle.verify resolves false": onWorkPool("resolved false"),
+      "ed25519 after them": { "no error": 32 },
+    },
+  });
+  expect(exitCode).toBe(0);
+});
+
 describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
   describe.each([
     ["ed25519", undefined, 32, 32],

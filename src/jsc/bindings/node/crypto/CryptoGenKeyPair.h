@@ -23,7 +23,9 @@ public:
     {
     }
 
-    void runTask(JSC::JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPointer& ctx);
+    // Every key pair generation runs here: generateKeyPairSync on the JS thread, the generateKeyPair jobs on the work pool.
+    template<typename Ctx> static void generate(Ctx&);
+
     JSCallbackArgs runFromJS(JSC::JSGlobalObject* globalObject);
 
     int err() const { return m_opensslError; };
@@ -33,8 +35,23 @@ public:
 
     // keyObj is set after work is done
     KeyObject m_keyObj;
+
+private:
+    bool keygen(ncrypto::EVPKeyCtxPointer&);
+
     int m_opensslError = 0;
 };
+
+template<typename Ctx>
+void KeyPairJobCtx::generate(Ctx& ctx)
+{
+    // Without this, the error read below can be one that an earlier operation left on this thread.
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+    ncrypto::EVPKeyCtxPointer keyCtx = ctx.setup();
+    if (!keyCtx || !ctx.keygen(keyCtx)) {
+        ctx.m_opensslError = ERR_get_error();
+    }
+}
 
 KeyEncodingConfig parseKeyEncodingConfig(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyTypeValue, JSC::JSValue optionsValue);
 

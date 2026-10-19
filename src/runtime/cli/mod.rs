@@ -1383,6 +1383,7 @@ pub(crate) mod command {
     #[cold]
     #[inline(never)]
     fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
+        bun_bunfig::bunfig::IGNORE_PRELOAD.store(true, core::sync::atomic::Ordering::Relaxed);
         // Inits with RunCommand (repl reuses run params).
         let ctx = init(Tag::RunCommand, log)?;
         super::repl_command::ReplCommand::exec(ctx)

@@ -307,7 +307,8 @@ export default [
     values: [
       "response",
       "inputStream",
-      "outputStream",
+      // The output's ReadableStream once `.body` is read, or the promise of a read that waits on the pending body.
+      "outputConsumer",
       "pendingPromise",
       "handlerError",
       "suspensionPromise",
